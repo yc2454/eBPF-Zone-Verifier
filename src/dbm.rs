@@ -21,6 +21,18 @@ impl Dbm {
         self.data.len()
     }
 
+    pub fn dim(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn raw(&self, i: usize, j: usize) -> i64 {
+        self.data[i][j]
+    }
+
+    pub fn set_raw(&mut self, i: usize, j: usize, v: i64) {
+        self.data[i][j] = v;
+    }
+
     // low-level idx ops if you need them
     pub fn get_idx(&self, i: usize, j: usize) -> i64 {
         self.data[i][j]

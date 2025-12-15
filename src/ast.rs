@@ -17,8 +17,11 @@ pub enum Instr {
     /// rX += rY
     AddReg      { dst: Var, src: Var },
 
+    /// rX = rY + rZ
+    AddRegReg   { dst: Var, src1: Var, src2: Var },
+
     /// if rX >= imm goto target_pc
-    IfGeImm     { reg: Var, imm: i64, target: usize },
+    IfUgeImm     { reg: Var, imm: i64, target: usize },
 
     /// wX &= mask  (we abstract as 0 <= X <= mask)
     AndImmMask  { dst: Var, mask: u32 },
@@ -50,7 +53,10 @@ impl fmt::Display for Instr {
             AddReg { dst, src } =>
                 write!(f, "{} += {}", dst.name(), src.name()),
 
-            IfGeImm { reg, imm, target } =>
+            AddRegReg { dst, src1, src2 } =>
+                write!(f, "{} = {} + {}", dst.name(), src1.name(), src2.name()),
+
+            IfUgeImm { reg, imm, target } =>
                 write!(f, "if {} >= {} goto {}", reg.name(), imm, target),
 
             AndImmMask { dst, mask } =>

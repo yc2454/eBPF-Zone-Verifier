@@ -11,6 +11,7 @@ use crate::domain::{
     assign_zero,
     assume_less_than,
     assume_ge_const,
+    assign_add,
     add_imm
 };
 
@@ -100,8 +101,10 @@ fn transfer_instr(
     let mut out = Vec::new();
 
     match *instr {
-        MovArg0 { dst: _ } => {
-            let dbm = dbm_in.clone(); // unconstrained
+        MovArg0 { dst } => {
+            let mut dbm = dbm_in.clone();
+            dbm.forget_var(dst);
+            dbm.close();
             out.push((pc + 1, dbm));
         }
 
@@ -147,7 +150,13 @@ fn transfer_instr(
             out.push((pc + 1, dbm));
         }
 
-        Instr::IfGeImm { reg, imm, target } => {
+        AddRegReg { dst, src1, src2 } => {
+            let mut dbm = dbm_in.clone();
+            assign_add(&mut dbm, dst, src1, src2, ctx.zero);
+            out.push((pc + 1, dbm));
+        }
+
+        Instr::IfUgeImm { reg, imm, target } => {
             // then: reg >= imm
             let mut dbm_then = dbm_in.clone();
             assume_ge_const(&mut dbm_then, reg, ctx.zero, imm);
@@ -155,9 +164,10 @@ fn transfer_instr(
                 out.push((target, dbm_then));
             }
 
-            // else: reg < imm
+            // else: 0 <= reg < imm
             let mut dbm_else = dbm_in.clone();
-            assume_less_than(&mut dbm_else, reg, ctx.zero, imm);
+            assume_less_than(&mut dbm_else, reg, ctx.zero, imm); // reg <= imm - 1
+            assume_ge_const(&mut dbm_else, reg, ctx.zero, 0);    // reg >= 0
             if !dbm_else.is_inconsistent() {
                 out.push((pc + 1, dbm_else));
             }
