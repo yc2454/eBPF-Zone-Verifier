@@ -95,6 +95,10 @@ impl VarEnv {
     pub fn index(&self, v: Var) -> usize {
         v.idx()
     }
+
+    pub fn var_of_index(&self, idx: usize) -> Var {
+        self.all()[idx]
+    }
 }
 
 /// Global env you can use anywhere without initializing in `main`.

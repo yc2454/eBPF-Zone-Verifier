@@ -64,7 +64,7 @@ impl Certificate {
                     for j in 0..dim {
                         let tok = it.next().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "matrix token"))?;
                         let v = if tok == "INF" { INF } else {
-                            tok.parse::<i32>().map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "int parse"))?
+                            tok.parse::<i64>().map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "int parse"))?
                         };
                         dbm.set_raw(i, j, v);
                     }

@@ -14,6 +14,7 @@ pub fn registry() -> &'static [NamedProgram] {
         NamedProgram { name: "safe_via_mask_small_offset", build: safe_via_mask_small_offset },
         NamedProgram { name: "merge_two_offsets_join",     build: merge_two_offsets_join },
         NamedProgram { name: "addreg_const_offset_demo",   build: addreg_const_offset_demo },
+        NamedProgram { name: "masked_copy_index",          build: masked_copy_index },
     ]
 }
 
@@ -23,6 +24,37 @@ pub fn names() -> impl Iterator<Item = &'static str> {
 
 pub fn get(name: &str) -> Option<Program> {
     registry().iter().find(|p| p.name == name).map(|p| (p.build)())
+}
+
+fn masked_copy_index() -> Program {
+    use Instr::*;
+    Program {
+        instrs: vec![
+            // PC 0: r0 = arg0
+            MovArg0 { dst: Var::R0 },
+
+            // PC 1: r0 &= 31
+            AndImmMask { dst: Var::R0, mask: 31 },
+
+            // PC 2: r1 = r0
+            MovReg { dst: Var::R1, src: Var::R0 },
+
+            // PC 3: r2 = r10
+            MovReg { dst: Var::R2, src: Var::R10 },
+
+            // PC 4: r2 += -32
+            AddImm { dst: Var::R2, imm: -32 },
+
+            // PC 5: r2 += r1
+            AddReg { dst: Var::R2, src: Var::R1 },
+
+            // PC 6: r0 = *(u8 *)(r2 + 0)
+            LoadStackU8 { base: Var::R2 },
+
+            // PC 7: exit
+            Exit,
+        ],
+    }
 }
 
 fn canonical_relational_guard() -> Program {

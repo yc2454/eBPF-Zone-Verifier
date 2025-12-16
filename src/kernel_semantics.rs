@@ -1,9 +1,10 @@
 use crate::ast::Instr;
 use crate::dbm::{Dbm, INF};
-use crate::domain::{Var, VAR_ENV};
+use crate::domain::{VAR_ENV};
 use crate::exec::ExecContext;
+use crate::utils::{dbm_add, dbm_add3};
 
-fn inconsistent(dbm: &Dbm) -> bool {
+pub fn inconsistent(dbm: &Dbm) -> bool {
     let n = dbm.dim();
     for i in 0..n {
         if dbm.raw(i, i) < 0 {
@@ -29,7 +30,8 @@ fn saturate_one_edge(dbm: &mut Dbm, u: usize, v: usize, c: i64) {
                 continue;
             }
 
-            let via = diu.saturating_add(c).saturating_add(dvj);
+            let via = dbm_add3(diu, c, dvj);
+
             if via < dbm.raw(i, j) {
                 dbm.set_raw(i, j, via);
             }
@@ -53,22 +55,9 @@ fn forget_var_by_index(dbm: &mut Dbm, x: usize) {
     dbm.set_raw(x, x, 0);
 }
 
-pub fn included(a: &Dbm, b: &Dbm) -> bool {
-    let n = a.dim();
-    for i in 0..n {
-        for j in 0..n {
-            if a.raw(i, j) > b.raw(i, j) {
-                return false;
-            }
-        }
-    }
-    true
-}
-
-// Kernel-sim local transfer:
+// local transfer:
 // - assumes `pre` is closed (certificate guarantee)
-// - does NOT call global closure
-// - uses only O(n^2) saturation when adding a constraint edge
+// - O(n^2) saturation when adding a constraint edge
 pub fn transfer_one_kernel(
     ctx: &ExecContext,
     pc: usize,
@@ -96,14 +85,23 @@ pub fn transfer_one_kernel(
             let y = VAR_ENV.index(src);
             let n = d.dim();
 
+            // forget dst
             forget_var_by_index(&mut d, x);
 
-            // dst := src, preserve closure by copying row/col from src
-            for i in 0..n {
-                d.set_raw(x, i, pre.raw(y, i));
-                d.set_raw(i, x, pre.raw(i, y));
+            if src == ctx.r10 {
+                // dst := r10  ==> dst offset-from-frame = 0
+                // encode dst == 0:
+                // dst - 0 <= 0  AND  0 - dst <= 0
+                add_edge_and_saturate(&mut d, x, zero_i, 0);
+                add_edge_and_saturate(&mut d, zero_i, x, 0);
+            } else {
+                // dst := src, preserve closure by copying row/col from src
+                for i in 0..n {
+                    d.set_raw(x, i, pre.raw(y, i));
+                    d.set_raw(i, x, pre.raw(i, y));
+                }
+                d.set_raw(x, x, 0);
             }
-            d.set_raw(x, x, 0);
 
             if !inconsistent(&d) {
                 out.push((pc + 1, d));
@@ -118,13 +116,9 @@ pub fn transfer_one_kernel(
             // dst := dst + imm, closure preserved by row/col shift
             for i in 0..n {
                 let xv = pre.raw(x, i);
-                if xv < INF {
-                    d.set_raw(x, i, xv.saturating_add(imm));
-                }
+                d.set_raw(x, i, dbm_add(xv, imm));
                 let vx = pre.raw(i, x);
-                if vx < INF {
-                    d.set_raw(i, x, vx.saturating_sub(imm));
-                }
+                d.set_raw(i, x, dbm_add(vx, -imm));
             }
             d.set_raw(x, x, 0);
 
@@ -167,6 +161,26 @@ pub fn transfer_one_kernel(
 
             if !inconsistent(&d) {
                 out.push((pc + 1, d));
+            }
+        }
+
+        Instr::IfUgeImm { reg, imm, target } => {
+            // Unsigned: then reg >= imm, else 0 <= reg <= imm-1
+            let r = VAR_ENV.index(reg);
+
+            // then branch: reg >= imm  <=> 0 - reg <= -imm
+            let mut dt = pre.clone();
+            add_edge_and_saturate(&mut dt, zero_i, r, -imm);
+            if !inconsistent(&dt) {
+                out.push((target, dt));
+            }
+
+            // else branch: reg <= imm-1 AND reg >= 0
+            let mut de = pre.clone();
+            add_edge_and_saturate(&mut de, r, zero_i, imm - 1);
+            add_edge_and_saturate(&mut de, zero_i, r, 0);
+            if !inconsistent(&de) {
+                out.push((pc + 1, de));
             }
         }
 

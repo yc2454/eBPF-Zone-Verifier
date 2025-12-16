@@ -253,4 +253,3 @@ pub fn analyze_program(ctx: &ExecContext, prog: &Program, entry_dbm: Dbm) -> Vec
         .map(|opt| opt.unwrap_or_else(|| Dbm::new(VAR_ENV.len())))
         .collect()
 }
-
