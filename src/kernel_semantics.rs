@@ -14,24 +14,38 @@ pub fn inconsistent(dbm: &Dbm) -> bool {
     false
 }
 
-// assumes dbm is closed before adding u - v <= c
+// Propagate the effect of adding a single constraint (u - v <= c)
+// assuming the DBM was already closed before the addition.
+// A full closure would consider all triples (i, k, j)
+// This function considers only paths that go through the newly added edge (u → v)
 fn saturate_one_edge(dbm: &mut Dbm, u: usize, v: usize, c: i64) {
     let n = dbm.dim();
 
+    // Consider all possible sources i
     for i in 0..n {
+        // Current best bound for (i - u)
         let diu = dbm.raw(i, u);
+
+        // If i cannot reach u, then paths i -> u -> v -> j are impossible
         if diu >= INF {
             continue;
         }
 
+        // Consider all possible targets j
         for j in 0..n {
+            // Current best bound for (v - j)
             let dvj = dbm.raw(v, j);
+
+            // If v cannot reach j, then paths i -> u -> v -> j are impossible
             if dvj >= INF {
                 continue;
             }
 
+            // Candidate new bound for (i - j) via the new edge:
+            //   i -> u  +  (u - v <= c)  +  v -> j
             let via = dbm_add3(diu, c, dvj);
 
+            // If this path improves the existing bound, update it
             if via < dbm.raw(i, j) {
                 dbm.set_raw(i, j, via);
             }
@@ -39,13 +53,18 @@ fn saturate_one_edge(dbm: &mut Dbm, u: usize, v: usize, c: i64) {
     }
 }
 
+/// Adds the constraint (u - v <= c) to a closed DBM and try restore closure with local saturation.
+/// If the constraint is not tighter than the existing one, does nothing.
 fn add_edge_and_saturate(dbm: &mut Dbm, u: usize, v: usize, c: i64) {
+    // Only tighten. Never relax constraints during transfer.
     if c < dbm.raw(u, v) {
         dbm.set_raw(u, v, c);
         saturate_one_edge(dbm, u, v, c);
     }
 }
 
+/// Removes all constraints involving variable x, leaving it unconstrained.
+/// Used for assignments and imprecise operations.
 fn forget_var_by_index(dbm: &mut Dbm, x: usize) {
     let n = dbm.dim();
     for i in 0..n {
