@@ -13,7 +13,7 @@ pub fn clamp_to_inf(v: i64) -> i64 {
 }
 
 #[inline]
-pub fn dbm_add(a: i64, b: i64) -> i64 {
+pub fn clamped_add(a: i64, b: i64) -> i64 {
     if is_infinite(a) || is_infinite(b) {
         INF
     } else {
@@ -22,7 +22,7 @@ pub fn dbm_add(a: i64, b: i64) -> i64 {
 }
 
 #[inline]
-pub fn dbm_add3(a: i64, b: i64, c: i64) -> i64 {
+pub fn clamped_add3(a: i64, b: i64, c: i64) -> i64 {
     if is_infinite(a) || is_infinite(b) || is_infinite(c) {
         INF
     } else {

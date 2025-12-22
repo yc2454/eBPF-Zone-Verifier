@@ -2,7 +2,7 @@ use crate::ast::Instr;
 use crate::dbm::{Dbm, INF};
 use crate::domain::{VAR_ENV};
 use crate::exec::ExecContext;
-use crate::utils::{dbm_add, dbm_add3};
+use crate::utils::{clamped_add, clamped_add3};
 
 pub fn inconsistent(dbm: &Dbm) -> bool {
     let n = dbm.dim();
@@ -43,7 +43,7 @@ fn saturate_one_edge(dbm: &mut Dbm, u: usize, v: usize, c: i64) {
 
             // Candidate new bound for (i - j) via the new edge:
             //   i -> u  +  (u - v <= c)  +  v -> j
-            let via = dbm_add3(diu, c, dvj);
+            let via = clamped_add3(diu, c, dvj);
 
             // If this path improves the existing bound, update it
             if via < dbm.raw(i, j) {
@@ -135,9 +135,9 @@ pub fn transfer_one_kernel(
             // dst := dst + imm, closure preserved by row/col shift
             for i in 0..n {
                 let xv = pre.raw(x, i);
-                d.set_raw(x, i, dbm_add(xv, imm));
+                d.set_raw(x, i, clamped_add(xv, imm));
                 let vx = pre.raw(i, x);
-                d.set_raw(i, x, dbm_add(vx, -imm));
+                d.set_raw(i, x, clamped_add(vx, -imm));
             }
             d.set_raw(x, x, 0);
 

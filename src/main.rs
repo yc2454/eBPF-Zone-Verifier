@@ -8,6 +8,9 @@ mod programs;
 mod kernel_semantics;
 mod check;
 mod utils;
+mod bpf_insn;
+mod bpf_to_ast;
+mod elf_loader;
 
 use crate::ast::Program;
 use crate::dbm::Dbm;
