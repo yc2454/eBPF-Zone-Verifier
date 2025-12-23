@@ -49,3 +49,17 @@ pub fn dbm_is_inconsistent(dbm: &Dbm) -> bool {
     }
     false
 }
+
+pub fn dbm_equals(a: &Dbm, b: &Dbm) -> bool {
+    if a.num_vars() != b.num_vars() {
+        return false;
+    }
+    for i in 0..a.num_vars() {
+        for j in 0..a.num_vars() {
+            if a.get_idx(i, j) != b.get_idx(i, j) {
+                return false;
+            }
+        }
+    }
+    true
+}

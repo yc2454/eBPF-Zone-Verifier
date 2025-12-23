@@ -1,5 +1,6 @@
 // src/programs.rs
-use crate::ast::{Instr, Program};
+
+use crate::ast::{AluOp, CmpOp, Instr, MemSize, Operand, Program, Width};
 use crate::domain::Var;
 
 pub struct NamedProgram {
@@ -26,6 +27,50 @@ pub fn get(name: &str) -> Option<Program> {
     registry().iter().find(|p| p.name == name).map(|p| (p.build)())
 }
 
+// ---- Tiny “macros” (as helper constructors) ---------------------------------
+
+#[inline]
+fn mov_r(dst: Var, src: Var) -> Instr {
+    Instr::Alu { width: Width::W64, op: AluOp::Mov, dst, src: Operand::Reg(src) }
+}
+
+#[inline]
+fn mov_i(dst: Var, imm: i64) -> Instr {
+    Instr::Alu { width: Width::W64, op: AluOp::Mov, dst, src: Operand::Imm(imm) }
+}
+
+#[inline]
+fn add_r(dst: Var, src: Var) -> Instr {
+    Instr::Alu { width: Width::W64, op: AluOp::Add, dst, src: Operand::Reg(src) }
+}
+
+#[inline]
+fn add_i(dst: Var, imm: i64) -> Instr {
+    Instr::Alu { width: Width::W64, op: AluOp::Add, dst, src: Operand::Imm(imm) }
+}
+
+#[inline]
+fn and_i(dst: Var, imm: i64) -> Instr {
+    Instr::Alu { width: Width::W64, op: AluOp::And, dst, src: Operand::Imm(imm) }
+}
+
+#[inline]
+fn if_uge_i(left: Var, imm: i64, target: usize) -> Instr {
+    Instr::If { left, op: CmpOp::UGe, right: Operand::Imm(imm), target }
+}
+
+#[inline]
+fn if_uge_r(left: Var, right: Var, target: usize) -> Instr {
+    Instr::If { left, op: CmpOp::UGe, right: Operand::Reg(right), target }
+}
+
+#[inline]
+fn load_u8(dst: Var, base: Var, off: i16) -> Instr {
+    Instr::Load { size: MemSize::U8, dst, base, off }
+}
+
+// -----------------------------------------------------------------------------
+
 // masked_copy_index
 //
 // r0 = arg0
@@ -40,17 +85,16 @@ pub fn get(name: &str) -> Option<Program> {
 // Safe due to relational fact r1 == r0 and r0 ∈ [0,31].
 // Requires propagating equality across copy.
 fn masked_copy_index() -> Program {
-    use Instr::*;
     Program {
         instrs: vec![
-            MovArg0 { dst: Var::R0 },
-            AndImmMask { dst: Var::R0, mask: 31 },
-            MovReg { dst: Var::R1, src: Var::R0 },
-            MovReg { dst: Var::R2, src: Var::R10 },
-            AddImm { dst: Var::R2, imm: -32 },
-            AddReg { dst: Var::R2, src: Var::R1 },
-            LoadStackU8 { base: Var::R2 },
-            Exit,
+            Instr::MovArg0 { dst: Var::R0 },
+            and_i(Var::R0, 31),
+            mov_r(Var::R1, Var::R0),
+            mov_r(Var::R2, Var::R10),
+            add_i(Var::R2, -32),
+            add_r(Var::R2, Var::R1),
+            load_u8(Var::R0, Var::R2, 0),
+            Instr::Exit,
         ],
     }
 }
@@ -72,17 +116,16 @@ fn canonical_relational_guard() -> Program {
     let r0 = Var::R0;
     let r1 = Var::R1;
     let r2 = Var::R2;
-    let r10 = Var::R10;
 
     Program {
         instrs: vec![
             Instr::MovArg0 { dst: r0 },
-            Instr::MovReg  { dst: r1, src: r0 },
-            Instr::IfUgeImm { reg: r1, imm: 16, target: 7 },
-            Instr::MovReg  { dst: r2, src: r10 },
-            Instr::AddImm  { dst: r2, imm: -16 },
-            Instr::AddReg  { dst: r2, src: r0 },
-            Instr::LoadStackU8 { base: r2 },
+            mov_r(r1, r0),
+            if_uge_i(r1, 16, 7), // if r1 >= 16 goto pc 7 (Exit)
+            mov_r(r2, Var::R10),
+            add_i(r2, -16),
+            add_r(r2, r0),
+            load_u8(r0, r2, 0),
             Instr::Exit,
         ],
     }
@@ -102,15 +145,14 @@ fn canonical_relational_guard() -> Program {
 fn unsafe_no_constraints() -> Program {
     let r0 = Var::R0;
     let r2 = Var::R2;
-    let r10 = Var::R10;
 
     Program {
         instrs: vec![
             Instr::MovArg0 { dst: r0 },
-            Instr::MovReg  { dst: r2, src: r10 },
-            Instr::AddImm  { dst: r2, imm: -16 },
-            Instr::AddReg  { dst: r2, src: r0 },
-            Instr::LoadStackU8 { base: r2 },
+            mov_r(r2, Var::R10),
+            add_i(r2, -16),
+            add_r(r2, r0),
+            load_u8(r0, r2, 0),
             Instr::Exit,
         ],
     }
@@ -131,16 +173,15 @@ fn unsafe_no_constraints() -> Program {
 fn safe_via_mask_small_offset() -> Program {
     let r0 = Var::R0;
     let r2 = Var::R2;
-    let r10 = Var::R10;
 
     Program {
         instrs: vec![
-            Instr::MovArg0     { dst: r0 },
-            Instr::AndImmMask  { dst: r0, mask: 7 },
-            Instr::MovReg      { dst: r2, src: r10 },
-            Instr::AddImm      { dst: r2, imm: -8 },
-            Instr::AddReg      { dst: r2, src: r0 },
-            Instr::LoadStackU8 { base: r2 },
+            Instr::MovArg0 { dst: r0 },
+            and_i(r0, 7),
+            mov_r(r2, Var::R10),
+            add_i(r2, -8),
+            add_r(r2, r0),
+            load_u8(r0, r2, 0),
             Instr::Exit,
         ],
     }
@@ -164,26 +205,26 @@ fn safe_via_mask_small_offset() -> Program {
 //
 // Each path is safe; join requires reasoning across branches.
 fn merge_two_offsets_join() -> Program {
-    let z = Var::Zero;
+    let z  = Var::Zero;
     let r0 = Var::R0;
     let r2 = Var::R2;
-    let r10 = Var::R10;
 
     Program {
         instrs: vec![
-            Instr::MovArg0    { dst: r0 },
-            Instr::AndImmMask { dst: r0, mask: 1 },
-            Instr::IfUgeImm    { reg: r0, imm: 1, target: 6 },
+            Instr::MovArg0 { dst: r0 },
+            and_i(r0, 1),
+            if_uge_i(r0, 1, 6), // if r0 >= 1 goto pc 6
 
-            Instr::MovReg     { dst: r2, src: r10 },
-            Instr::AddImm     { dst: r2, imm: -16 },
-            Instr::IfUgeImm    { reg: z, imm: 0, target: 8 },
+            mov_r(r2, Var::R10),
+            add_i(r2, -16),
+            // unconditional jump via (0 >= 0) to pc 8
+            if_uge_i(z, 0, 8),
 
-            Instr::MovReg     { dst: r2, src: r10 },
-            Instr::AddImm     { dst: r2, imm: -32 },
+            mov_r(r2, Var::R10),
+            add_i(r2, -32),
 
-            Instr::AddReg      { dst: r2, src: r0 },
-            Instr::LoadStackU8 { base: r2 },
+            add_r(r2, r0),
+            load_u8(r0, r2, 0),
             Instr::Exit,
         ],
     }
@@ -209,14 +250,17 @@ fn addreg_const_offset_demo() -> Program {
 
     Program {
         instrs: vec![
-            Instr::MovArg0     { dst: r0 },
-            Instr::MovReg      { dst: r1, src: r0 },
-            Instr::AndImmMask  { dst: r1, mask: 7 },
+            Instr::MovArg0 { dst: r0 },
+            mov_r(r1, r0),
+            and_i(r1, 7),
 
-            Instr::MovReg      { dst: r2, src: z },
-            Instr::AddImm      { dst: r2, imm: 3 },
+            // r2 = 0
+            mov_r(r2, z),
+            // r2 += 3
+            add_i(r2, 3),
+            // r2 += r1
+            add_r(r2, r1),
 
-            Instr::AddReg      { dst: r2, src: r1 },
             Instr::Exit,
         ],
     }

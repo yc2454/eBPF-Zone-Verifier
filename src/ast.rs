@@ -2,42 +2,86 @@
 use std::fmt;
 
 use crate::domain::Var;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Operand {
+    Reg(Var),
+    Imm(i64),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Width {
+    W32,
+    W64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AluOp {
+    Add,
+    Sub,
+    And,
+    Or,
+    Xor,
+    Mov,  // yes: MOV is just an ALU op in BPF land
+    // later: Mul, Div, Mod, Lsh, Rsh, Arsh, Neg, etc.
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CmpOp {
+    UGe, ULe, UGt, ULt,
+    Eq, Ne,
+    // later: SGe, SLe, SGt, SLt
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemSize {
+    U8,
+    U16,
+    U32,
+    U64,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum Instr {
-    /// rX = arg0   (modeling call result)
-    MovArg0     { dst: Var },
+    /// rX = arg0 (your synthetic entry source)
+    MovArg0 { dst: Var },
 
-    /// rX = rY
-    MovReg      { dst: Var, src: Var },
+    /// dst = ALU(dst, src/imm)   (includes MOV as AluOp::Mov)
+    /// Width matters for BPF (wX vs rX). For now you can keep it and ignore in zones.
+    Alu {
+        width: Width,
+        op: AluOp,
+        dst: Var,
+        src: Operand,
+    },
 
-    /// rX += imm
-    AddImm      { dst: Var, imm: i64 },
+    /// if left (op) right goto target; else fallthrough
+    If {
+        left: Var,
+        op: CmpOp,
+        right: Operand,
+        target: usize,
+    },
 
-    /// rX += rY
-    AddReg      { dst: Var, src: Var },
+    /// dst = *(size *)(base + off)
+    /// For now: treat as "unknown scalar into dst" unless base==r10 and you want stack checks.
+    Load {
+        size: MemSize,
+        dst: Var,
+        base: Var,
+        off: i16,
+    },
 
-    /// rX = rY + rZ
-    // AddRegReg   { dst: Var, src1: Var, src2: Var },
-
-    /// if rX >= imm goto target_pc
-    IfUgeImm     { reg: Var, imm: i64, target: usize },
-
-    /// wX &= mask  (we abstract as 0 <= X <= mask)
-    AndImmMask  { dst: Var, mask: u32 },
-
-    /// r0 = *(u8 *)(base + 0)
-    LoadStackU8 { base: Var },
-
-    // NEW: load a 32-bit scalar from context/packet memory.
-    // Semantically for now: dst becomes an unconstrained scalar.
-    LoadCtxU32 { dst: Var, base: Var, off: i16 },
-
-    /// Unsigned reg–reg compare: if left <= right goto target; else fall through.
-    IfUleReg { left: Var, right: Var, target: usize },
+    /// *(size *)(base + off) = src
+    Store {
+        size: MemSize,
+        base: Var,
+        off: i16,
+        src: Var,
+    },
 
     Exit,
 }
+
 
 #[derive(Debug)]
 pub struct Program {
@@ -51,32 +95,61 @@ impl fmt::Display for Instr {
             MovArg0 { dst } =>
                 write!(f, "{} = arg0", dst.name()),
 
-            MovReg { dst, src } =>
-                write!(f, "{} = {}", dst.name(), src.name()),
+            Alu { width, op, dst, src } => {
+                let op_str = match op {
+                    AluOp::Add => "+",
+                    AluOp::Sub => "-",
+                    AluOp::And => "&",
+                    AluOp::Or  => "|",
+                    AluOp::Xor => "^",
+                    AluOp::Mov => "=",
+                };
+                let src_str = match src {
+                    Operand::Reg(r) => r.name().to_string(),
+                    Operand::Imm(i) => format!("{}", i),
+                };
+                let width_str = match width {
+                    Width::W32 => "w",
+                    Width::W64 => "r",
+                };
+                write!(f, "{}{} {} {} {}", width_str, dst.name(), op_str, dst.name(), src_str)
+            },
 
-            AddImm { dst, imm } =>
-                write!(f, "{} += {}", dst.name(), imm),
+            If { left, op, right, target } => {
+                let op_str = match op {
+                    CmpOp::UGe => ">=u",
+                    CmpOp::ULe => "<=u",
+                    CmpOp::UGt => ">u",
+                    CmpOp::ULt => "<u",
+                    CmpOp::Eq  => "==",
+                    CmpOp::Ne  => "!=",
+                };
+                let right_str = match right {
+                    Operand::Reg(r) => r.name().to_string(),
+                    Operand::Imm(i) => format!("{}", i),
+                };
+                write!(f, "if {} {} {} goto {}", left.name(), op_str, right_str, target)
+            },
 
-            AddReg { dst, src } =>
-                write!(f, "{} += {}", dst.name(), src.name()),
+            Load { size, dst, base, off } => {
+                let size_str = match size {
+                    MemSize::U8  => "u8",
+                    MemSize::U16 => "u16",
+                    MemSize::U32 => "u32",
+                    MemSize::U64 => "u64",
+                };
+                write!(f, "{} = *({} *)({} + {})", dst.name(), size_str, base.name(), off)
+            },
 
-            // AddRegReg { dst, src1, src2 } =>
-            //     write!(f, "{} = {} + {}", dst.name(), src1.name(), src2.name()),
-
-            IfUgeImm { reg, imm, target } =>
-                write!(f, "if {} >= {} goto {}", reg.name(), imm, target),
-
-            AndImmMask { dst, mask } =>
-                write!(f, "{} &= {}", dst.name(), mask),
-
-            LoadStackU8 { base } =>
-                write!(f, "r0 = *(u8 *)({} + 0)", base.name()),
-
-            LoadCtxU32 { dst, base, off } =>
-                write!(f, "{} = *(u32 *)({} + {})", dst.name(), base.name(), off),
-
-            IfUleReg { left, right, target } =>
-                write!(f, "if {} <= {} goto {}", left.name(), right.name(), target),
+            Store { size, base, off, src } => {
+                let size_str = match size {
+                    MemSize::U8  => "u8",
+                    MemSize::U16 => "u16",
+                    MemSize::U32 => "u32",
+                    MemSize::U64 => "u64",
+                };
+                write!(f, "*({} *)({} + {}) = {}", size_str, base.name(), off, src.name())
+            },
 
             Exit =>
                 write!(f, "exit"),

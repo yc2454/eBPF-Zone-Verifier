@@ -1,39 +1,27 @@
 // src/exec.rs
 use std::collections::VecDeque;
 
-use crate::ast::{Instr, Program};
+use crate::ast::{AluOp, CmpOp, Instr, MemSize, Operand, Program, Width};
 use crate::dbm::Dbm;
 use crate::domain::{
-    Var,
-    VAR_ENV,
-    assign_eq,
-    assign_add_const,
-    assign_zero,
-    assume_less_than,
-    assume_ge_const,
-    assign_add,
-    add_imm
+    Var, VAR_ENV,
+    // --- assignment / forget ---
+    assign_eq, assign_zero,
+    assign_add_imm, assign_add_reg,
+    assign_and_mask,
+    forget,
+    // --- assume/guards ---
+    assume_ge_const, assume_le_const, assume_less_than,
+    assume_ge_var, assume_le_var, assume_gt_var, assume_le_var_plus_const,
 };
+use crate::utils::{dbm_equals}; // if you have this; otherwise keep your existing helper
 
+#[derive(Clone, Copy)]
 pub struct ExecContext {
     pub zero: Var,
     pub r10: Var,
     pub stack_min: i64,
     pub stack_max: i64,
-}
-
-fn dbm_equals(a: &Dbm, b: &Dbm) -> bool {
-    if a.num_vars() != b.num_vars() {
-        return false;
-    }
-    for i in 0..a.num_vars() {
-        for j in 0..a.num_vars() {
-            if a.get_idx(i, j) != b.get_idx(i, j) {
-                return false;
-            }
-        }
-    }
-    true
 }
 
 fn check_stack_load(ctx: &ExecContext, dbm: &Dbm, base: Var) {
@@ -90,122 +78,219 @@ fn check_stack_load(ctx: &ExecContext, dbm: &Dbm, base: Var) {
     }
 }
 
+fn transfer_mov_arg0(dbm_in: &Dbm, pc: usize, dst: Var) -> Vec<(usize, Dbm)> {
+    let mut dbm = dbm_in.clone();
+    forget(&mut dbm, dst);
+    vec![(pc + 1, dbm)]
+}
+
+fn transfer_alu(
+    ctx: &ExecContext,
+    dbm_in: &Dbm,
+    pc: usize,
+    _width: Width,
+    op: AluOp,
+    dst: Var,
+    src: Operand,
+) -> Vec<(usize, Dbm)> {
+    let mut dbm = dbm_in.clone();
+
+    match op {
+        AluOp::Mov => {
+            match src {
+                Operand::Reg(r) => {
+                    if r == ctx.r10 {
+                        // dst = r10  ⇒ treat as "offset from fp is 0"
+                        assign_zero(&mut dbm, dst, ctx.zero);
+                    } else {
+                        assign_eq(&mut dbm, dst, r);
+                    }
+                }
+                Operand::Imm(c) => {
+                    // dst = c
+                    assign_zero(&mut dbm, dst, ctx.zero);
+                    // encode dst = c via bounds; if you have assign_const use it
+                    // simplest: dst - 0 <= c and 0 - dst <= -c
+                    assume_le_const(&mut dbm, dst, ctx.zero, c);
+                    assume_ge_const(&mut dbm, dst, ctx.zero, c);
+                }
+            }
+        }
+
+        AluOp::Add => {
+            match src {
+                Operand::Imm(c) => assign_add_imm(&mut dbm, dst, c),
+                Operand::Reg(r) => assign_add_reg(&mut dbm, dst, r, ctx.zero),
+            }
+        }
+
+        AluOp::And => {
+            match src {
+                Operand::Imm(mask) => assign_and_mask(&mut dbm, dst, mask, ctx.zero),
+                Operand::Reg(_r) => {
+                    // You can support this later; for now stay sound:
+                    // dst &= unknown ⇒ dst becomes unknown
+                    forget(&mut dbm, dst);
+                }
+            }
+        }
+
+        // Not needed yet; keep sound default
+        AluOp::Sub | AluOp::Or | AluOp::Xor => {
+            forget(&mut dbm, dst);
+        }
+    }
+
+    if dbm.is_inconsistent() {
+        vec![]
+    } else {
+        vec![(pc + 1, dbm)]
+    }
+}
+
+fn transfer_if(
+    ctx: &ExecContext,
+    dbm_in: &Dbm,
+    pc: usize,
+    left: Var,
+    op: CmpOp,
+    right: Operand,
+    target: usize,
+) -> Vec<(usize, Dbm)> {
+    let mut out = Vec::new();
+
+    // THEN branch: condition holds
+    let mut dbm_then = dbm_in.clone();
+    // ELSE branch: condition does not hold
+    let mut dbm_else = dbm_in.clone();
+
+    match (op, right) {
+        // ---------- left >= imm ----------
+        (CmpOp::UGe, Operand::Imm(c)) => {
+            assume_ge_const(&mut dbm_then, left, ctx.zero, c);
+            assume_less_than(&mut dbm_else, left, ctx.zero, c);
+        }
+
+        // ---------- left <= imm ----------
+        (CmpOp::ULe, Operand::Imm(c)) => {
+            assume_le_const(&mut dbm_then, left, ctx.zero, c);
+            assume_ge_const(&mut dbm_else, left, ctx.zero, c + 1);
+        }
+
+        // ---------- left >= reg ----------
+        (CmpOp::UGe, Operand::Reg(r)) => {
+            // left >= r  <=>  r - left <= 0
+            assume_ge_var(&mut dbm_then, left, r);
+
+            // else: left < r  <=> left <= r - 1  <=> left - r <= -1
+            assume_le_var_plus_const(&mut dbm_else, left, r, -1);
+        }
+
+        // ---------- left <= reg ----------
+        (CmpOp::ULe, Operand::Reg(r)) => {
+            // left <= r
+            assume_le_var(&mut dbm_then, left, r);
+            // else: left > r
+            assume_gt_var(&mut dbm_else, left, r);
+        }
+
+        // Eq/Ne not needed yet: stay sound (no refinement)
+        (CmpOp::Eq, _) | (CmpOp::Ne, _) | (CmpOp::UGt, _) | (CmpOp::ULt, _) => {
+            // Conservative: no constraints; just fork
+        }
+    }
+
+    if !dbm_then.is_inconsistent() {
+        out.push((target, dbm_then));
+    }
+    if !dbm_else.is_inconsistent() {
+        out.push((pc + 1, dbm_else));
+    }
+    out
+}
+
+fn transfer_load(
+    ctx: &ExecContext,
+    dbm_in: &Dbm,
+    pc: usize,
+    size: MemSize,
+    dst: Var,
+    base: Var,
+    off: i16,
+) -> Vec<(usize, Dbm)> {
+    // For now, we only “verify” stack loads (base is an offset-from-fp var).
+    // Effective address offset = base + off
+    let (lo, hi) = crate::domain::get_bounds(dbm_in, base, ctx.zero);
+
+    let eff_lo = lo.map(|x| x + off as i64);
+    let eff_hi = hi.map(|x| x + off as i64);
+
+    // require fully within stack range
+    let ok = match (eff_lo, eff_hi) {
+        (Some(l), Some(h)) => l >= ctx.stack_min && h <= ctx.stack_max,
+        _ => false, // unknown ⇒ reject (verifier-style)
+    };
+
+    if !ok {
+        println!(
+            "Load check failed at pc {}: {:?} from base {:?}+{} not provably within [{}, {}] (bounds: {:?}..{:?})",
+            pc, size, base, off, ctx.stack_min, ctx.stack_max, eff_lo, eff_hi
+        );
+        return vec![];
+    }
+
+    let mut dbm = dbm_in.clone();
+    forget(&mut dbm, dst);
+    vec![(pc + 1, dbm)]
+}
+
+fn transfer_store(
+    ctx: &ExecContext,
+    dbm_in: &Dbm,
+    pc: usize,
+    size: MemSize,
+    base: Var,
+    off: i16,
+    _src: Var,
+) -> Vec<(usize, Dbm)> {
+    let (lo, hi) = crate::domain::get_bounds(dbm_in, base, ctx.zero);
+    let eff_lo = lo.map(|x| x + off as i64);
+    let eff_hi = hi.map(|x| x + off as i64);
+
+    let ok = match (eff_lo, eff_hi) {
+        (Some(l), Some(h)) => l >= ctx.stack_min && h <= ctx.stack_max,
+        _ => false,
+    };
+
+    if !ok {
+        println!(
+            "Store check failed at pc {}: {:?} to base {:?}+{} not provably within [{}, {}] (bounds: {:?}..{:?})",
+            pc, size, base, off, ctx.stack_min, ctx.stack_max, eff_lo, eff_hi
+        );
+        return vec![];
+    }
+
+    vec![(pc + 1, dbm_in.clone())]
+}
+
+
 /// Single-step semantic transfer: from (pc, dbm_in) to successors
-fn transfer_instr(
+pub fn transfer_instr(
     ctx: &ExecContext,
     dbm_in: &Dbm,
     pc: usize,
     instr: &Instr,
 ) -> Vec<(usize, Dbm)> {
-    use Instr::*;
-    let mut out = Vec::new();
-
-    match *instr {
-        MovArg0 { dst } => {
-            let mut dbm = dbm_in.clone();
-            dbm.forget_var(dst);
-            dbm.close();
-            out.push((pc + 1, dbm));
-        }
-
-        MovReg { dst, src } => {
-            let mut dbm = dbm_in.clone();
-            if src == ctx.r10 {
-                // dst = r10  ⇒ offset relative to frame is 0
-                assign_zero(&mut dbm, dst, ctx.zero);
-            } else {
-                assign_eq(&mut dbm, dst, src);
-            }
-            out.push((pc + 1, dbm));
-        }
-
-        AddImm { dst, imm } => {
-            let mut dbm = dbm_in.clone();
-            add_imm(&mut dbm, dst, imm);
-            out.push((pc + 1, dbm));
-        }
-
-        AddReg { dst, src } => {
-            let mut dbm = dbm_in.clone();
-
-            // generic x += y is *not* in zones, but if old x is constant c
-            // we can rewrite as x := y + c.
-            if let Some((lb, ub)) = dbm.var_bounds(dst, ctx.zero) {
-                if lb == ub {
-                    let c = lb;
-                    assign_add_const(&mut dbm, dst, src, c);
-                } else {
-                    println!(
-                        "Warning: AddReg on {} with non-constant old value; ignoring.",
-                        dst.name()
-                    );
-                }
-            } else {
-                println!(
-                    "Warning: AddReg on {} with unknown old value; ignoring.",
-                    dst.name()
-                );
-            }
-
-            out.push((pc + 1, dbm));
-        }
-
-        // AddRegReg { dst, src1, src2 } => {
-        //     let mut dbm = dbm_in.clone();
-        //     assign_add(&mut dbm, dst, src1, src2, ctx.zero);
-        //     out.push((pc + 1, dbm));
-        // }
-
-        Instr::IfUgeImm { reg, imm, target } => {
-            // then: reg >= imm
-            let mut dbm_then = dbm_in.clone();
-            assume_ge_const(&mut dbm_then, reg, ctx.zero, imm);
-            if !dbm_then.is_inconsistent() {
-                out.push((target, dbm_then));
-            }
-
-            // else: 0 <= reg < imm
-            let mut dbm_else = dbm_in.clone();
-            assume_less_than(&mut dbm_else, reg, ctx.zero, imm); // reg <= imm - 1
-            assume_ge_const(&mut dbm_else, reg, ctx.zero, 0);    // reg >= 0
-            if !dbm_else.is_inconsistent() {
-                out.push((pc + 1, dbm_else));
-            }
-        }
-
-        AndImmMask { dst, mask } => {
-            let mut dbm = dbm_in.clone();
-            let ub = mask as i64;
-
-            // 0 <= dst
-            assume_ge_const(&mut dbm, dst, ctx.zero, 0);
-            // dst <= mask (encoded as dst < mask+1)
-            assume_less_than(&mut dbm, dst, ctx.zero, ub + 1);
-
-            out.push((pc + 1, dbm));
-        }
-
-        LoadStackU8 { base } => {
-            let dbm = dbm_in.clone();
-            check_stack_load(ctx, &dbm, base);
-            out.push((pc + 1, dbm));
-        }
-
-        Instr::LoadCtxU32 { dst, .. } => {
-            // Load unknown 32-bit scalar from context/packet into dst:
-            // sound but imprecise: drop all constraints on dst.
-            let mut dbm = dbm_in.clone();
-            dbm.forget_var(dst);
-            out.push((pc + 1, dbm));
-        }
-
-        Exit => {
-            // no successors
-        }
+    match instr {
+        Instr::MovArg0 { dst } => transfer_mov_arg0(dbm_in, pc, *dst),
+        Instr::Alu { width, op, dst, src } => transfer_alu(ctx, dbm_in, pc, *width, *op, *dst, *src),
+        Instr::If { left, op, right, target } => transfer_if(ctx, dbm_in, pc, *left, *op, *right, *target),
+        Instr::Load { size, dst, base, off } => transfer_load(ctx, dbm_in, pc, *size, *dst, *base, *off),
+        Instr::Store { size, base, off, src } => transfer_store(ctx, dbm_in, pc, *size, *base, *off, *src),
+        Instr::Exit => vec![],
     }
-
-    out
 }
+
 
 pub fn analyze_program(ctx: &ExecContext, prog: &Program, entry_dbm: Dbm) -> Vec<Dbm> {
     let n = prog.instrs.len();

@@ -1,6 +1,8 @@
-use crate::ast::Instr;
+// src/kernel_semantics.rs
+
+use crate::ast::{AluOp, CmpOp, Instr, Operand};
 use crate::dbm::{Dbm, INF};
-use crate::domain::{VAR_ENV};
+use crate::domain::VAR_ENV;
 use crate::exec::ExecContext;
 use crate::utils::{clamped_add, clamped_add3};
 
@@ -14,38 +16,24 @@ pub fn inconsistent(dbm: &Dbm) -> bool {
     false
 }
 
-// Propagate the effect of adding a single constraint (u - v <= c)
-// assuming the DBM was already closed before the addition.
-// A full closure would consider all triples (i, k, j)
-// This function considers only paths that go through the newly added edge (u → v)
+// --- local saturation machinery ---
+
 fn saturate_one_edge(dbm: &mut Dbm, u: usize, v: usize, c: i64) {
     let n = dbm.dim();
 
-    // Consider all possible sources i
     for i in 0..n {
-        // Current best bound for (i - u)
         let diu = dbm.raw(i, u);
-
-        // If i cannot reach u, then paths i -> u -> v -> j are impossible
         if diu >= INF {
             continue;
         }
 
-        // Consider all possible targets j
         for j in 0..n {
-            // Current best bound for (v - j)
             let dvj = dbm.raw(v, j);
-
-            // If v cannot reach j, then paths i -> u -> v -> j are impossible
             if dvj >= INF {
                 continue;
             }
 
-            // Candidate new bound for (i - j) via the new edge:
-            //   i -> u  +  (u - v <= c)  +  v -> j
             let via = clamped_add3(diu, c, dvj);
-
-            // If this path improves the existing bound, update it
             if via < dbm.raw(i, j) {
                 dbm.set_raw(i, j, via);
             }
@@ -53,18 +41,13 @@ fn saturate_one_edge(dbm: &mut Dbm, u: usize, v: usize, c: i64) {
     }
 }
 
-/// Adds the constraint (u - v <= c) to a closed DBM and try restore closure with local saturation.
-/// If the constraint is not tighter than the existing one, does nothing.
 fn add_edge_and_saturate(dbm: &mut Dbm, u: usize, v: usize, c: i64) {
-    // Only tighten. Never relax constraints during transfer.
     if c < dbm.raw(u, v) {
         dbm.set_raw(u, v, c);
         saturate_one_edge(dbm, u, v, c);
     }
 }
 
-/// Removes all constraints involving variable x, leaving it unconstrained.
-/// Used for assignments and imprecise operations.
 fn forget_var_by_index(dbm: &mut Dbm, x: usize) {
     let n = dbm.dim();
     for i in 0..n {
@@ -74,145 +57,248 @@ fn forget_var_by_index(dbm: &mut Dbm, x: usize) {
     dbm.set_raw(x, x, 0);
 }
 
-// local transfer:
-// - assumes `pre` is closed (certificate guarantee)
-// - O(n^2) saturation when adding a constraint edge
+// --- tiny top-level dispatcher ---
+
 pub fn transfer_one_kernel(
     ctx: &ExecContext,
     pc: usize,
     instr: &Instr,
     pre: &Dbm,
 ) -> Vec<(usize, Dbm)> {
-    use Instr::*;
-    let mut out = Vec::new();
+    match instr {
+        Instr::MovArg0 { dst } => transfer_mov_arg0(ctx, pc, *dst, pre),
+        Instr::Alu { op, dst, src, .. } => transfer_alu(ctx, pc, *op, *dst, *src, pre),
+        Instr::If { left, op, right, target } => transfer_if(ctx, pc, *left, *op, *right, *target, pre),
+        Instr::Load { dst, .. } => transfer_load(pc, *dst, pre),
+        Instr::Store { .. } => vec![(pc + 1, pre.clone())],
+        Instr::Exit => vec![],
+    }
+}
 
+// --- per-instruction helpers ---
+
+fn transfer_mov_arg0(ctx: &ExecContext, pc: usize, dst: crate::domain::Var, pre: &Dbm) -> Vec<(usize, Dbm)> {
+    let mut d = pre.clone();
+    let x = VAR_ENV.index(dst);
+    let _zero_i = VAR_ENV.index(ctx.zero);
+
+    forget_var_by_index(&mut d, x);
+
+    if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
+}
+
+fn transfer_alu(
+    ctx: &ExecContext,
+    pc: usize,
+    op: AluOp,
+    dst: crate::domain::Var,
+    src: Operand,
+    pre: &Dbm,
+) -> Vec<(usize, Dbm)> {
+    match op {
+        AluOp::Mov => transfer_mov(ctx, pc, dst, src, pre),
+        AluOp::Add => transfer_add(ctx, pc, dst, src, pre),
+        AluOp::And => transfer_and(ctx, pc, dst, src, pre),
+
+        // MVP: conservative for the rest
+        AluOp::Sub | AluOp::Or | AluOp::Xor => transfer_forget_dst(pc, dst, pre),
+    }
+}
+
+fn transfer_mov(ctx: &ExecContext, pc: usize, dst: crate::domain::Var, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
     let zero_i = VAR_ENV.index(ctx.zero);
+    let mut d = pre.clone();
+    let x = VAR_ENV.index(dst);
+    let n = d.dim();
 
-    match *instr {
-        MovArg0 { dst } => {
-            let mut d = pre.clone();
-            let x = VAR_ENV.index(dst);
-            forget_var_by_index(&mut d, x);
-            if !inconsistent(&d) {
-                out.push((pc + 1, d));
-            }
-        }
+    forget_var_by_index(&mut d, x);
 
-        MovReg { dst, src } => {
-            let mut d = pre.clone();
-            let x = VAR_ENV.index(dst);
-            let y = VAR_ENV.index(src);
-            let n = d.dim();
-
-            // forget dst
-            forget_var_by_index(&mut d, x);
-
-            if src == ctx.r10 {
-                // dst := r10  ==> dst offset-from-frame = 0
-                // encode dst == 0:
-                // dst - 0 <= 0  AND  0 - dst <= 0
+    match src {
+        Operand::Reg(r) => {
+            if r == ctx.r10 {
+                // dst := r10  ==> offset-from-frame = 0
                 add_edge_and_saturate(&mut d, x, zero_i, 0);
                 add_edge_and_saturate(&mut d, zero_i, x, 0);
             } else {
-                // dst := src, preserve closure by copying row/col from src
+                // Copy row/col from src in the *pre* DBM (closed).
+                let y = VAR_ENV.index(r);
                 for i in 0..n {
-                    d.set_raw(x, i, pre.raw(y, i));
-                    d.set_raw(i, x, pre.raw(i, y));
+                    d.set_raw(x, i, pre.raw(y, i)); // x - i
+                    d.set_raw(i, x, pre.raw(i, y)); // i - x
                 }
                 d.set_raw(x, x, 0);
             }
-
-            if !inconsistent(&d) {
-                out.push((pc + 1, d));
-            }
         }
-
-        AddImm { dst, imm } => {
-            let mut d = pre.clone();
-            let x = VAR_ENV.index(dst);
-            let n = d.dim();
-
-            // dst := dst + imm, closure preserved by row/col shift
-            for i in 0..n {
-                let xv = pre.raw(x, i);
-                d.set_raw(x, i, clamped_add(xv, imm));
-                let vx = pre.raw(i, x);
-                d.set_raw(i, x, clamped_add(vx, -imm));
-            }
-            d.set_raw(x, x, 0);
-
-            if !inconsistent(&d) {
-                out.push((pc + 1, d));
-            }
+        Operand::Imm(c) => {
+            // dst := c  ==> dst == c
+            add_edge_and_saturate(&mut d, x, zero_i, c);
+            add_edge_and_saturate(&mut d, zero_i, x, -c);
         }
+    }
 
-        AddReg { dst, src } => {
-            // MVP behavior: exact only if dst is provably constant, else forget dst
-            let mut d = pre.clone();
-            let x = VAR_ENV.index(dst);
-            let y = VAR_ENV.index(src);
+    if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
+}
 
-            let ub = pre.raw(x, zero_i);
-            let lb_neg = pre.raw(zero_i, x);
-            let is_const = ub < INF && lb_neg < INF && ub == -lb_neg;
+fn transfer_add(ctx: &ExecContext, pc: usize, dst: crate::domain::Var, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
+    match src {
+        Operand::Imm(imm) => transfer_add_imm(pc, dst, imm, pre),
+        Operand::Reg(r) => transfer_add_reg_mvp(ctx, pc, dst, r, pre),
+    }
+}
 
-            forget_var_by_index(&mut d, x);
+fn transfer_add_imm(pc: usize, dst: crate::domain::Var, imm: i64, pre: &Dbm) -> Vec<(usize, Dbm)> {
+    let mut d = pre.clone();
+    let x = VAR_ENV.index(dst);
+    let n = d.dim();
 
-            if is_const {
-                let c = ub;
-                add_edge_and_saturate(&mut d, x, y, c);   // dst - src <= c
-                add_edge_and_saturate(&mut d, y, x, -c);  // src - dst <= -c
-            }
+    // dst := dst + imm, closure preserved by row/col shift
+    for i in 0..n {
+        let xv = pre.raw(x, i);
+        d.set_raw(x, i, clamped_add(xv, imm));
 
-            if !inconsistent(&d) {
-                out.push((pc + 1, d));
-            }
-        }
+        let vx = pre.raw(i, x);
+        d.set_raw(i, x, clamped_add(vx, -imm));
+    }
+    d.set_raw(x, x, 0);
 
-        AndImmMask { dst, mask } => {
-            let mut d = pre.clone();
-            let x = VAR_ENV.index(dst);
+    if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
+}
 
-            forget_var_by_index(&mut d, x);
+fn transfer_add_reg_mvp(ctx: &ExecContext, pc: usize, dst: crate::domain::Var, src: crate::domain::Var, pre: &Dbm) -> Vec<(usize, Dbm)> {
+    // MVP rule (same as your current):
+    // - if dst is provably constant, keep exact relation: dst := src + c
+    // - else: forget dst
+    let zero_i = VAR_ENV.index(ctx.zero);
+    let mut d = pre.clone();
+    let x = VAR_ENV.index(dst);
+    let y = VAR_ENV.index(src);
 
-            add_edge_and_saturate(&mut d, x, zero_i, mask.into()); // dst <= mask
-            add_edge_and_saturate(&mut d, zero_i, x, 0);    // dst >= 0
+    let ub = pre.raw(x, zero_i);
+    let lb_neg = pre.raw(zero_i, x);
+    let is_const = ub < INF && lb_neg < INF && ub == -lb_neg;
 
-            if !inconsistent(&d) {
-                out.push((pc + 1, d));
-            }
-        }
+    forget_var_by_index(&mut d, x);
 
-        Instr::IfUgeImm { reg, imm, target } => {
-            // Unsigned: then reg >= imm, else 0 <= reg <= imm-1
-            let r = VAR_ENV.index(reg);
+    if is_const {
+        let c = ub;
+        add_edge_and_saturate(&mut d, x, y, c);
+        add_edge_and_saturate(&mut d, y, x, -c);
+    }
 
-            // then branch: reg >= imm  <=> 0 - reg <= -imm
+    if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
+}
+
+fn transfer_and(ctx: &ExecContext, pc: usize, dst: crate::domain::Var, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
+    // We only model AND with immediate masks for now.
+    let zero_i = VAR_ENV.index(ctx.zero);
+    let mut d = pre.clone();
+    let x = VAR_ENV.index(dst);
+
+    forget_var_by_index(&mut d, x);
+
+    if let Operand::Imm(mask) = src {
+        // sound approximation for unsigned mask:
+        // 0 <= dst <= mask
+        add_edge_and_saturate(&mut d, x, zero_i, mask);
+        add_edge_and_saturate(&mut d, zero_i, x, 0);
+    }
+
+    if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
+}
+
+fn transfer_forget_dst(pc: usize, dst: crate::domain::Var, pre: &Dbm) -> Vec<(usize, Dbm)> {
+    let mut d = pre.clone();
+    let x = VAR_ENV.index(dst);
+    forget_var_by_index(&mut d, x);
+    if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
+}
+
+fn transfer_if(
+    ctx: &ExecContext,
+    pc: usize,
+    left: crate::domain::Var,
+    op: CmpOp,
+    right: Operand,
+    target: usize,
+    pre: &Dbm,
+) -> Vec<(usize, Dbm)> {
+    // In your AST: If { left, op, right, target }
+    // Semantics: if cond true -> goto target else -> fallthrough pc+1
+    let zero_i = VAR_ENV.index(ctx.zero);
+    let l = VAR_ENV.index(left);
+
+    let mut out = Vec::new();
+
+    match (op, right) {
+        (CmpOp::UGe, Operand::Imm(imm)) => {
+            // then: left >= imm  <=> 0 - left <= -imm
             let mut dt = pre.clone();
-            add_edge_and_saturate(&mut dt, zero_i, r, -imm);
-            if !inconsistent(&dt) {
-                out.push((target, dt));
-            }
+            add_edge_and_saturate(&mut dt, zero_i, l, -imm);
+            if !inconsistent(&dt) { out.push((target, dt)); }
 
-            // else branch: reg <= imm-1 AND reg >= 0
+            // else: 0 <= left <= imm-1
             let mut de = pre.clone();
-            add_edge_and_saturate(&mut de, r, zero_i, imm - 1);
-            add_edge_and_saturate(&mut de, zero_i, r, 0);
-            if !inconsistent(&de) {
-                out.push((pc + 1, de));
-            }
+            add_edge_and_saturate(&mut de, l, zero_i, imm - 1);
+            add_edge_and_saturate(&mut de, zero_i, l, 0);
+            if !inconsistent(&de) { out.push((pc + 1, de)); }
         }
 
-        LoadStackU8 { .. } => {
-            out.push((pc + 1, pre.clone()));
+        (CmpOp::ULe, Operand::Imm(imm)) => {
+            // then: 0 <= left <= imm
+            let mut dt = pre.clone();
+            add_edge_and_saturate(&mut dt, l, zero_i, imm);
+            add_edge_and_saturate(&mut dt, zero_i, l, 0);
+            if !inconsistent(&dt) { out.push((target, dt)); }
+
+            // else: left >= imm+1  <=> 0 - left <= -(imm+1)
+            let mut de = pre.clone();
+            add_edge_and_saturate(&mut de, zero_i, l, -(imm + 1));
+            if !inconsistent(&de) { out.push((pc + 1, de)); }
         }
 
-        Exit => {},
+        (CmpOp::UGe, Operand::Reg(r)) => {
+            let rr = VAR_ENV.index(r);
 
+            // then: left >= r  <=> r - left <= 0
+            let mut dt = pre.clone();
+            add_edge_and_saturate(&mut dt, rr, l, 0);
+            if !inconsistent(&dt) { out.push((target, dt)); }
+
+            // else: left < r  <=> left - r <= -1
+            let mut de = pre.clone();
+            add_edge_and_saturate(&mut de, l, rr, -1);
+            if !inconsistent(&de) { out.push((pc + 1, de)); }
+        }
+
+        (CmpOp::ULe, Operand::Reg(r)) => {
+            let rr = VAR_ENV.index(r);
+
+            // then: left <= r  <=> left - r <= 0
+            let mut dt = pre.clone();
+            add_edge_and_saturate(&mut dt, l, rr, 0);
+            if !inconsistent(&dt) { out.push((target, dt)); }
+
+            // else: left > r  <=> r - left <= -1
+            let mut de = pre.clone();
+            add_edge_and_saturate(&mut de, rr, l, -1);
+            if !inconsistent(&de) { out.push((pc + 1, de)); }
+        }
+
+        // MVP: other compares not yet refined, just fork
         _ => {
-            panic!("Unsupported instruction in kernel-sim: {:?}", instr);
+            out.push((target, pre.clone()));
+            out.push((pc + 1, pre.clone()));
         }
     }
 
     out
+}
+
+fn transfer_load(pc: usize, dst: crate::domain::Var, pre: &Dbm) -> Vec<(usize, Dbm)> {
+    // Local transfer does not check memory safety.
+    // Effect on registers: dst becomes unknown.
+    let mut d = pre.clone();
+    let x = VAR_ENV.index(dst);
+    forget_var_by_index(&mut d, x);
+    if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
 }

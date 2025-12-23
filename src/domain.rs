@@ -104,7 +104,96 @@ impl VarEnv {
 /// Global env you can use anywhere without initializing in `main`.
 pub static VAR_ENV: VarEnv = VarEnv;
 
+/// --- analysis helpers ---
+/// 
+// Extract bounds if finite.
+// ub from: x - 0 <= ub
+// lb from: 0 - x <= -lb  => lb = - (0 - x bound)
+pub fn get_bounds(dbm: &Dbm, x: Var, zero: Var) -> (Option<i64>, Option<i64>) {
+    let ub = dbm.get(x, zero);
+    let lb_neg = dbm.get(zero, x);
+
+    let ub_opt = if ub >= INF { None } else { Some(ub) };
+    let lb_opt = if lb_neg >= INF { None } else { Some(-lb_neg) };
+
+    (lb_opt, ub_opt)
+}
+
+// If both bounds exist and match, x is provably constant.
+pub fn get_const(dbm: &Dbm, x: Var, zero: Var) -> Option<i64> {
+    let (lb, ub) = get_bounds(dbm, x, zero);
+    match (lb, ub) {
+        (Some(l), Some(u)) if l == u => Some(l),
+        _ => None,
+    }
+}
+
 // --- transfer functions ---
+// exec.rs wants a uniform name.
+pub fn forget(dbm: &mut Dbm, x: Var) {
+    dbm.forget_var(x);
+    dbm.close(); // keep the "always closed" invariant
+}
+
+// dst += imm
+pub fn assign_add_imm(dbm: &mut Dbm, dst: Var, imm: i64) {
+    add_imm(dbm, dst, imm); // your add_imm already closes
+}
+
+// dst += src
+pub fn assign_add_reg(dbm: &mut Dbm, dst: Var, src: Var, zero: Var) {
+    // dst := dst + src  (sound interval-style update)
+    let (ld, ud) = get_bounds(dbm, dst, zero);
+    let (ls, us) = get_bounds(dbm, src, zero);
+
+    dbm.forget_var(dst);
+
+    if let (Some(ld), Some(ls)) = (ld, ls) {
+        assume_ge_const(dbm, dst, zero, ld + ls); // closes
+    }
+    if let (Some(ud), Some(us)) = (ud, us) {
+        assume_le_const(dbm, dst, zero, ud + us); // closes
+    }
+
+    // If neither bound exists, dst becomes unconstrained; still close to keep invariant.
+    dbm.close();
+}
+
+// dst &= mask
+pub fn assign_and_mask(dbm: &mut Dbm, dst: Var, mask: i64, zero: Var) {
+    dbm.forget_var(dst);
+
+    // 0 <= dst <= mask
+    dbm.add_constraint(dst, zero, mask);
+    dbm.add_constraint(zero, dst, 0);
+
+    dbm.close();
+}
+
+// x <= y  encoded as: x - y <= 0
+pub fn assume_le_var(dbm: &mut Dbm, x: Var, y: Var) {
+    dbm.add_constraint(x, y, 0);
+    dbm.close();
+}
+
+// x >= y  encoded as: y - x <= 0
+pub fn assume_ge_var(dbm: &mut Dbm, x: Var, y: Var) {
+    dbm.add_constraint(y, x, 0);
+    dbm.close();
+}
+
+// x > y  encoded as: y - x <= -1
+pub fn assume_gt_var(dbm: &mut Dbm, x: Var, y: Var) {
+    dbm.add_constraint(y, x, -1);
+    dbm.close();
+}
+
+// x <= y + c  encoded as: x - y <= c
+pub fn assume_le_var_plus_const(dbm: &mut Dbm, x: Var, y: Var, c: i64) {
+    dbm.add_constraint(x, y, c);
+    dbm.close();
+}
+
 pub fn assign_zero(d: &mut Dbm, x: Var, zero: Var) {
     d.add_constraint(x, zero, 0);
     d.add_constraint(zero, x, 0);
@@ -149,28 +238,6 @@ pub fn assume_eq_var_plus_const(dbm: &mut Dbm, dst: Var, src: Var, c: i64) {
     dbm.add_constraint(dst, src, c);
     dbm.add_constraint(src, dst, -c);
     dbm.close();
-}
-
-// Extract bounds if finite.
-// ub from: x - 0 <= ub
-// lb from: 0 - x <= -lb  => lb = - (0 - x bound)
-pub fn get_bounds(dbm: &Dbm, x: Var, zero: Var) -> (Option<i64>, Option<i64>) {
-    let ub = dbm.get(x, zero);
-    let lb_neg = dbm.get(zero, x);
-
-    let ub_opt = if ub >= INF { None } else { Some(ub) };
-    let lb_opt = if lb_neg >= INF { None } else { Some(-lb_neg) };
-
-    (lb_opt, ub_opt)
-}
-
-// If both bounds exist and match, x is provably constant.
-pub fn get_const(dbm: &Dbm, x: Var, zero: Var) -> Option<i64> {
-    let (lb, ub) = get_bounds(dbm, x, zero);
-    match (lb, ub) {
-        (Some(l), Some(u)) if l == u => Some(l),
-        _ => None,
-    }
 }
 
 pub fn assign_add_const(d: &mut Dbm, x: Var, y: Var, c: i64) {
