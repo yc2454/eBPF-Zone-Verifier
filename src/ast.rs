@@ -18,7 +18,7 @@ pub enum Instr {
     AddReg      { dst: Var, src: Var },
 
     /// rX = rY + rZ
-    AddRegReg   { dst: Var, src1: Var, src2: Var },
+    // AddRegReg   { dst: Var, src1: Var, src2: Var },
 
     /// if rX >= imm goto target_pc
     IfUgeImm     { reg: Var, imm: i64, target: usize },
@@ -28,6 +28,13 @@ pub enum Instr {
 
     /// r0 = *(u8 *)(base + 0)
     LoadStackU8 { base: Var },
+
+    // NEW: load a 32-bit scalar from context/packet memory.
+    // Semantically for now: dst becomes an unconstrained scalar.
+    LoadCtxU32 { dst: Var, base: Var, off: i16 },
+
+    /// Unsigned reg–reg compare: if left <= right goto target; else fall through.
+    IfUleReg { left: Var, right: Var, target: usize },
 
     Exit,
 }
@@ -53,8 +60,8 @@ impl fmt::Display for Instr {
             AddReg { dst, src } =>
                 write!(f, "{} += {}", dst.name(), src.name()),
 
-            AddRegReg { dst, src1, src2 } =>
-                write!(f, "{} = {} + {}", dst.name(), src1.name(), src2.name()),
+            // AddRegReg { dst, src1, src2 } =>
+            //     write!(f, "{} = {} + {}", dst.name(), src1.name(), src2.name()),
 
             IfUgeImm { reg, imm, target } =>
                 write!(f, "if {} >= {} goto {}", reg.name(), imm, target),
@@ -64,6 +71,12 @@ impl fmt::Display for Instr {
 
             LoadStackU8 { base } =>
                 write!(f, "r0 = *(u8 *)({} + 0)", base.name()),
+
+            LoadCtxU32 { dst, base, off } =>
+                write!(f, "{} = *(u32 *)({} + {})", dst.name(), base.name(), off),
+
+            IfUleReg { left, right, target } =>
+                write!(f, "if {} <= {} goto {}", left.name(), right.name(), target),
 
             Exit =>
                 write!(f, "exit"),

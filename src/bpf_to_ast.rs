@@ -50,6 +50,30 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             // exit      (JMP | EXIT)       0x95
             0x95 => Instr::Exit,
 
+            0x61 => Instr::LoadCtxU32 {
+                dst,
+                base: src,
+                off: insn.off,
+            },
+
+            // NEW: JLE reg, reg
+            0xbd => {
+                // eBPF: if dst <= src goto pc + 1 + off
+                let target_pc = (pc as isize + 1 + insn.off as isize) as isize;
+                if target_pc < 0 || target_pc as usize >= raw.len() {
+                    return Err(LowerError {
+                        pc,
+                        code: insn.code,
+                        msg: format!("branch target out of range: {}", target_pc),
+                    });
+                }
+                Instr::IfUleReg {
+                    left: dst,
+                    right: src,
+                    target: target_pc as usize,
+                }
+            }
+
             // not yet supported: loads, stores, more jumps, helpers, etc.
             other => {
                 return Err(LowerError {

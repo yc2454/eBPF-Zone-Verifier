@@ -150,11 +150,11 @@ fn transfer_instr(
             out.push((pc + 1, dbm));
         }
 
-        AddRegReg { dst, src1, src2 } => {
-            let mut dbm = dbm_in.clone();
-            assign_add(&mut dbm, dst, src1, src2, ctx.zero);
-            out.push((pc + 1, dbm));
-        }
+        // AddRegReg { dst, src1, src2 } => {
+        //     let mut dbm = dbm_in.clone();
+        //     assign_add(&mut dbm, dst, src1, src2, ctx.zero);
+        //     out.push((pc + 1, dbm));
+        // }
 
         Instr::IfUgeImm { reg, imm, target } => {
             // then: reg >= imm
@@ -188,6 +188,14 @@ fn transfer_instr(
         LoadStackU8 { base } => {
             let dbm = dbm_in.clone();
             check_stack_load(ctx, &dbm, base);
+            out.push((pc + 1, dbm));
+        }
+
+        Instr::LoadCtxU32 { dst, .. } => {
+            // Load unknown 32-bit scalar from context/packet into dst:
+            // sound but imprecise: drop all constraints on dst.
+            let mut dbm = dbm_in.clone();
+            dbm.forget_var(dst);
             out.push((pc + 1, dbm));
         }
 
