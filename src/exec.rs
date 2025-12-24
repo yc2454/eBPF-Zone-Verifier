@@ -143,6 +143,20 @@ fn transfer_alu(
             }
         }
 
+        AluOp::Sub => {
+            match src {
+                Operand::Imm(c) => {
+                    // dst -= c  ==  dst += (-c)
+                    assign_add_imm(&mut dbm, dst, -c);
+                }
+                Operand::Reg(_r) => {
+                    // dst -= reg is nonlinear in zones (x := x - y).
+                    // For now, stay sound and just forget dst.
+                    forget(&mut dbm, dst);
+                }
+            }
+        }
+
         AluOp::And => {
             match src {
                 Operand::Imm(mask) => {
@@ -155,6 +169,27 @@ fn transfer_alu(
                 }
                 Operand::Reg(_r) => {
                     // dst &= unknown ⇒ dst becomes unknown
+                    forget(&mut dbm, dst);
+                }
+            }
+        }
+
+        AluOp::Or => {
+            match src {
+                Operand::Imm(_mask) => {
+                    if width == Width::W32 {
+                        // w_dst |= mask: result is a 32-bit value, but relation to old dst is nonlinear.
+                        // MVP: forget dst, then enforce 0 <= dst <= 0xffff_ffff (like other W32 ops).
+                        forget(&mut dbm, dst);
+                        assume_ge_const(&mut dbm, dst, ctx.zero, 0);
+                        assume_le_const(&mut dbm, dst, ctx.zero, 0xffff_ffff);
+                    } else {
+                        // OR64 imm: we can't model it usefully in zones; just forget dst.
+                        forget(&mut dbm, dst);
+                    }
+                }
+                Operand::Reg(_r) => {
+                    // dst |= reg: nonlinear, just forget.
                     forget(&mut dbm, dst);
                 }
             }
@@ -251,12 +286,21 @@ fn transfer_if(
     // For JMP32 Eq/Ne with imm, only refine if left is already known to be u32-range.
     if width == Width::W32 {
         if let Operand::Imm(_c) = right {
-            if matches!(op, CmpOp::Eq | CmpOp::Ne) && !proven_u32_range(dbm_in, left, ctx.zero) {
-                // Can't model low32 equality safely -> fork without refinement
+            if matches!(
+                op,
+                CmpOp::Eq
+                    | CmpOp::Ne
+                    | CmpOp::UGe
+                    | CmpOp::ULe
+                    | CmpOp::UGt
+                    | CmpOp::ULt
+            ) && !proven_u32_range(dbm_in, left, ctx.zero)
+            {
+                // Can't model low32 comparison safely -> fork without refinement.
                 return vec![(pc + 1, dbm_in.clone()), (target, dbm_in.clone())];
             }
         } else {
-            // Reg comparisons in JMP32: don't refine in MVP
+            // Reg comparisons in JMP32: too tricky with low32 semantics, don't refine.
             return vec![(pc + 1, dbm_in.clone()), (target, dbm_in.clone())];
         }
     }
@@ -272,6 +316,22 @@ fn transfer_if(
         (CmpOp::ULe, Operand::Imm(c)) => {
             assume_le_const(&mut dbm_then, left, ctx.zero, c);
             assume_ge_const(&mut dbm_else, left, ctx.zero, c + 1);
+        }
+
+        // ---------- left > imm ----------
+        (CmpOp::UGt, Operand::Imm(c)) => {
+            // then: left > c  => left >= c + 1
+            assume_ge_const(&mut dbm_then, left, ctx.zero, c + 1);
+            // else: left <= c
+            assume_le_const(&mut dbm_else, left, ctx.zero, c);
+        }
+
+        // ---------- left < imm ----------
+        (CmpOp::ULt, Operand::Imm(c)) => {
+            // then: left < c  => left <= c - 1
+            assume_less_than(&mut dbm_then, left, ctx.zero, c);
+            // else: left >= c
+            assume_ge_const(&mut dbm_else, left, ctx.zero, c);
         }
 
         (CmpOp::Ne, Operand::Imm(imm)) => {
@@ -298,8 +358,24 @@ fn transfer_if(
             assume_gt_var(&mut dbm_else, left, r);
         }
 
+        // ---------- left > reg ----------
+        (CmpOp::UGt, Operand::Reg(r)) => {
+            // then: left > r
+            assume_gt_var(&mut dbm_then, left, r);
+            // else: left <= r
+            assume_le_var(&mut dbm_else, left, r);
+        }
+
+        // ---------- left < reg ----------
+        (CmpOp::ULt, Operand::Reg(r)) => {
+            // then: left < r  => left <= r - 1
+            assume_le_var_plus_const(&mut dbm_then, left, r, -1);
+            // else: left >= r
+            assume_ge_var(&mut dbm_else, left, r);
+        }
+
         // Eq/Ne not needed yet: stay sound (no refinement)
-        (CmpOp::Eq, _) | (CmpOp::Ne, _) | (CmpOp::UGt, _) | (CmpOp::ULt, _) => {
+        (CmpOp::Eq, _) | (CmpOp::Ne, _) => {
             // Conservative: no constraints; just fork
         }
     }

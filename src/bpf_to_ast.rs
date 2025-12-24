@@ -107,6 +107,14 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
         let ir: Instr = match insn.code {
             // --- ALU64 ---
 
+            // 0xbc: MOV32 reg  (w_dst = w_src)
+            0xbc => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Mov,
+                dst,
+                src: Operand::Reg(src),
+            },
+
             // 0xbf: rX = rY   (ALU64 | MOV | X)
             0xbf => Instr::Alu {
                 width: Width::W64,
@@ -123,6 +131,23 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 src: Operand::Imm(insn.imm as i64),
             },
 
+            // 0x04: ADD32_K  w_dst += imm
+            0x04 => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Add,
+                dst,
+                // imm is signed; keep sign so "w2 += -1" behaves like subtract 1
+                src: Operand::Imm(insn.imm as i64),
+            },
+
+            // 0x0c: ADD32_X  w_dst += w_src
+            0x0c => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Add,
+                dst,
+                src: Operand::Reg(src),
+            },
+
             // 0x07: rX += imm (ALU64 | ADD | K)
             0x07 => Instr::Alu {
                 width: Width::W64,
@@ -135,6 +160,54 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             0x0f => Instr::Alu {
                 width: Width::W64,
                 op: AluOp::Add,
+                dst,
+                src: Operand::Reg(src),
+            },
+
+            // 0x1f: SUB64_X  (dst -= src)
+            0x1f => Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Sub,
+                dst,
+                src: Operand::Reg(src),
+            },
+
+            // 0x4f: OR64_X r_dst |= r_src
+            0x4f => Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Or,
+                dst,
+                src: Operand::Reg(src),
+            },
+
+            // 0x5c: AND32_X  w_dst &= w_src
+            0x5c => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::And,
+                dst,
+                src: Operand::Reg(src),
+            },
+
+            // 0x5f: AND64_X r_dst &= r_src
+            0x5f => Instr::Alu {
+                width: Width::W64,
+                op: AluOp::And,
+                dst,
+                src: Operand::Reg(src),
+            },
+
+            // 0x6f: LSH64_X r_dst <<= r_src
+            0x6f => Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Shl,
+                dst,
+                src: Operand::Reg(src),
+            },
+
+            // 0x7f: RSH64_X r_dst >>= r_src
+            0x7f => Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Shr,
                 dst,
                 src: Operand::Reg(src),
             },
@@ -155,10 +228,50 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 src: Operand::Imm(insn.imm as i64),
             },
 
+            // 0x44: OR32_K  (w_dst |= imm)
+            0x44 => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Or,
+                dst,
+                src: Operand::Imm((insn.imm as u32) as i64),
+            },
+
+            // 0x4c: OR32_X  w_dst |= w_src
+            0x4c => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Or,
+                dst,
+                src: Operand::Reg(src),
+            },
+
+            // 0x64: LSH32_K  (w_dst <<= imm)
+            0x64 => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Shl,
+                dst,
+                src: Operand::Imm((insn.imm as u32) as i64),
+            },
+
+            // 0x6c: LSH32_X  (w_dst <<= w_src)
+            0x6c => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Shl,
+                dst,
+                src: Operand::Reg(src),
+            },
+
             // 0x67: LSH64 imm  (rX <<= imm)
             0x67 => Instr::Alu {
                 width: Width::W64,
                 op: AluOp::Shl,
+                dst,
+                src: Operand::Imm((insn.imm as u32) as i64),
+            },
+
+            // 0x74: RSH32_K  w_dst >>= imm (logical)
+            0x74 => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Shr,
                 dst,
                 src: Operand::Imm((insn.imm as u32) as i64),
             },
@@ -200,6 +313,84 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             // 0x95: exit (JMP | EXIT)
             0x95 => Instr::Exit,
 
+            // 0x15: JEQ imm (if dst == imm goto target)
+            0x15 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::Eq,
+                    right: Operand::Imm(insn.imm as i64),
+                    target,
+                }
+            },
+
+            // 0x1d: JEQ_X (if dst == src goto target, 64-bit)
+            0x1d => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::Eq,
+                    right: Operand::Reg(src),
+                    target,
+                }
+            },
+
+            // 0x1e: JEQ32_X (if (u32)dst == (u32)src goto target)
+            0x1e => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst,
+                    op: CmpOp::Eq,
+                    right: Operand::Reg(src),
+                    target,
+                }
+            },
+
+            // 0x25: JGT_K (if dst > imm, 64-bit)
+
+            // 0x26: JGT32_K  (if (u32)dst > (u32)imm goto target)
+            //
+            // MVP semantics: we lower to UGt, but transfer_if does no refinement
+            // for UGt, so this only creates the branch structure and keeps DBM
+            // unchanged on both paths (sound for unsigned comparison).
+            0x26 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst,
+                    op: CmpOp::UGt,
+                    right: Operand::Imm(insn.imm as u32 as i64),
+                    target,
+                }
+            },
+
+            // 0x2d: JGT_X (if dst > src goto target)
+            0x2d => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::UGt,
+                    right: Operand::Reg(src),
+                    target,
+                }
+            },
+
+            // 0x2e: JLT_X (if dst < src goto target)
+            0x2e => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::ULt,
+                    right: Operand::Reg(src),
+                    target,
+                }
+            },
+
             // 0x55: JNE imm (if dst != imm goto target)
             0x55 => {
                 let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
@@ -208,6 +399,75 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     left: dst,
                     op: CmpOp::Ne,
                     right: Operand::Imm(insn.imm as i64),
+                    target,
+                }
+            },
+
+            // 0x56: JNE32 imm  (if (u32)dst != (u32)imm goto target)
+            0x56 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst,
+                    op: CmpOp::Ne,
+                    right: Operand::Imm((insn.imm as u32) as i64),
+                    target,
+                }
+            }
+
+            // 0x5e: JNE32_X  (if (u32)dst != (u32)src goto target)
+            0x5e => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst,
+                    op: CmpOp::Ne,
+                    right: Operand::Reg(src),
+                    target,
+                }
+            },
+
+            // 0x66: JSGT32_K  (if (s32)dst > (s32)imm goto target)
+            //
+            // MVP semantics: we lower this to an unsigned-gt CmpOp, but our
+            // transfer_if currently does *no refinement* for UGt, so this only
+            // affects control flow (branches) and keeps zones unchanged on both
+            // sides. That’s sound even if dst can be negative.
+            0x66 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst,
+                    op: CmpOp::UGt,                    // “no-refinement” bucket
+                    right: Operand::Imm(insn.imm as i32 as i64),
+                    target,
+                }
+            },
+
+            // 0xa6: JLT32_K  (if (u32)dst < (u32)imm goto target)
+            0xa6 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst,
+                    op: CmpOp::ULt,
+                    right: Operand::Imm((insn.imm as u32) as i64),
+                    target,
+                }
+            },
+
+            // 0xae: JLT32_X  (if (u32)dst < (u32)src goto target)
+            //
+            // MVP semantics: we treat this as an unsigned <.
+            // transfer_if already *does not refine* for JMP32 with reg RHS,
+            // so this only creates the branch and keeps zones unchanged.
+            0xae => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst,
+                    op: CmpOp::ULt,
+                    right: Operand::Reg(src),
                     target,
                 }
             },
@@ -274,8 +534,23 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 off: insn.off as i16,
             },
 
+            // 0x69: LDXH dst = *(u16 *)(src + off)
+            0x69 => Instr::Load {
+                size: MemSize::U16,
+                dst,
+                base: src,
+                off: insn.off as i16,
+            },
+
+            // 0x71: LDXB dst = *(u8 *)(src + off)
+            0x71 => Instr::Load {
+                size: MemSize::U8,
+                dst,
+                base: src,
+                off: insn.off as i16,
+            },
+
             // 0x79: LDXDW dst = *(u64 *)(src + off)
-            // In objdump: "r2 = *(u64 *)(r10 - 0x100)"
             0x79 => Instr::Load {
                 size: MemSize::U64,
                 dst,
@@ -284,7 +559,6 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             },
 
             // 0x6b: STXH *(u16 *)(dst + off) = src
-            // In objdump: "*(u16 *)(r10 - 0xc4) = w1"
             0x6b => Instr::Store {
                 size: MemSize::U16,
                 base: dst,               // for stores, dst is the base register

@@ -116,12 +116,48 @@ fn transfer_alu(
     match op {
         AluOp::Mov => transfer_mov(ctx, pc, width, dst, src, pre),
         AluOp::Add => transfer_add(ctx, pc, dst, src, pre),
+        AluOp::Sub => transfer_sub(ctx, pc, width, dst, src, pre),
         AluOp::And => transfer_and(ctx, pc, width, dst, src, pre),
         AluOp::Shr => transfer_shr(ctx, pc, width, dst, src, pre),
         AluOp::Shl => transfer_shl(pc, dst, pre),
+        AluOp::Or  => transfer_or(ctx, pc, width, dst, src, pre),
 
         // MVP: conservative for the rest
-        AluOp::Sub | AluOp::Or | AluOp::Xor => transfer_forget_dst(pc, dst, pre),
+        AluOp::Xor => transfer_forget_dst(pc, dst, pre),
+    }
+}
+
+fn transfer_sub(
+    ctx: &ExecContext,
+    pc: usize,
+    _width: Width,
+    dst: crate::domain::Var,
+    src: Operand,
+    pre: &Dbm,
+) -> Vec<(usize, Dbm)> {
+    let mut d = pre.clone();
+    let x = VAR_ENV.index(dst);
+    let z = VAR_ENV.index(ctx.zero);
+
+    // Kill old info about dst
+    forget_var_by_index(&mut d, x);
+
+    match src {
+        Operand::Imm(c) => {
+            // dst -= c  ==  dst += (-c)
+            // If you already have a transfer_add helper, you could reuse it.
+            // Here we just say nothing beyond "dst is some integer".
+            // (Optional) You could keep this as pure forget; nothing more to add.
+        }
+        Operand::Reg(_r) => {
+            // dst -= reg: nonlinear; we keep it as "unknown".
+        }
+    }
+
+    if inconsistent(&d) {
+        vec![]
+    } else {
+        vec![(pc + 1, d)]
     }
 }
 
@@ -204,6 +240,35 @@ fn transfer_add(ctx: &ExecContext, pc: usize, dst: crate::domain::Var, src: Oper
     match src {
         Operand::Imm(imm) => transfer_add_imm(pc, dst, imm, pre),
         Operand::Reg(r) => transfer_add_reg_mvp(ctx, pc, dst, r, pre),
+    }
+}
+
+fn transfer_or(ctx: &ExecContext, pc: usize, width: Width,
+    dst: crate::domain::Var, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
+    let x = VAR_ENV.index(dst);
+    let z = VAR_ENV.index(ctx.zero);
+    let mut d = pre.clone();
+
+    forget_var_by_index(&mut d, x);
+
+    match src {
+        Operand::Imm(_mask) => {
+            if width == Width::W32 {
+                // w_dst |= C : 0 <= dst <= 0xffff_ffff
+                add_edge_and_saturate(&mut d, x, z, 0xffff_ffff);
+                add_edge_and_saturate(&mut d, z, x, 0);
+            }
+            // For W64, or reg: nothing more to say beyond forget.
+        }
+        Operand::Reg(_r) => {
+            // Just forget; nothing else.
+        }
+    }
+
+    if inconsistent(&d) {
+        vec![]
+    } else {
+        vec![(pc + 1, d)]
     }
 }
 
@@ -335,19 +400,21 @@ fn transfer_if(
     // - Otherwise: no refinement, just fork.
     let (op, right) = if width == Width::W32 {
         match (op, right) {
-            (CmpOp::Eq, Operand::Imm(imm)) => {
+            (CmpOp::Eq,  Operand::Imm(imm))
+            | (CmpOp::Ne,  Operand::Imm(imm))
+            | (CmpOp::UGe, Operand::Imm(imm))
+            | (CmpOp::ULe, Operand::Imm(imm))
+            | (CmpOp::UGt, Operand::Imm(imm))
+            | (CmpOp::ULt, Operand::Imm(imm)) => {
                 if !proven_u32_range(pre, left, ctx.zero) {
+                    // Can't safely interpret low32 comparison as full-width; fork.
                     return vec![(target, pre.clone()), (pc + 1, pre.clone())];
                 }
-                (CmpOp::Eq, Operand::Imm((imm as u32) as i64))
-            }
-            (CmpOp::Ne, Operand::Imm(imm)) => {
-                if !proven_u32_range(pre, left, ctx.zero) {
-                    return vec![(target, pre.clone()), (pc + 1, pre.clone())];
-                }
-                (CmpOp::Ne, Operand::Imm((imm as u32) as i64))
+                // Normalize imm to zero-extended u32.
+                (op, Operand::Imm((imm as u32) as i64))
             }
             _ => {
+                // JMP32 with reg RHS, or other ops: fork without refinement.
                 return vec![(target, pre.clone()), (pc + 1, pre.clone())];
             }
         }
@@ -408,6 +475,34 @@ fn transfer_if(
             if !inconsistent(&de) { out.push((pc + 1, de)); }
         }
 
+        // ---------- left > imm ----------
+        (CmpOp::UGt, Operand::Imm(imm)) => {
+            // then: left > imm  => left >= imm+1  <=> 0 - left <= -(imm+1)
+            let mut dt = pre.clone();
+            add_edge_and_saturate(&mut dt, zero_i, l, -(imm + 1));
+            if !inconsistent(&dt) { out.push((target, dt)); }
+
+            // else: left <= imm, and 0 <= left
+            let mut de = pre.clone();
+            add_edge_and_saturate(&mut de, l, zero_i, imm);
+            add_edge_and_saturate(&mut de, zero_i, l, 0);
+            if !inconsistent(&de) { out.push((pc + 1, de)); }
+        }
+
+        // ---------- left < imm ----------
+        (CmpOp::ULt, Operand::Imm(imm)) => {
+            // then: left < imm  => 0 <= left <= imm-1
+            let mut dt = pre.clone();
+            add_edge_and_saturate(&mut dt, l, zero_i, imm - 1);
+            add_edge_and_saturate(&mut dt, zero_i, l, 0);
+            if !inconsistent(&dt) { out.push((target, dt)); }
+
+            // else: left >= imm  <=> 0 - left <= -imm
+            let mut de = pre.clone();
+            add_edge_and_saturate(&mut de, zero_i, l, -imm);
+            if !inconsistent(&de) { out.push((pc + 1, de)); }
+        }
+
         (CmpOp::UGe, Operand::Reg(r)) => {
             let rr = VAR_ENV.index(r);
 
@@ -433,6 +528,36 @@ fn transfer_if(
             // else: left > r  <=> r - left <= -1
             let mut de = pre.clone();
             add_edge_and_saturate(&mut de, rr, l, -1);
+            if !inconsistent(&de) { out.push((pc + 1, de)); }
+        }
+
+        // ---------- left > r ----------
+        (CmpOp::UGt, Operand::Reg(r)) => {
+            let rr = VAR_ENV.index(r);
+
+            // then: left > r  <=> r - left <= -1
+            let mut dt = pre.clone();
+            add_edge_and_saturate(&mut dt, rr, l, -1);
+            if !inconsistent(&dt) { out.push((target, dt)); }
+
+            // else: left <= r  <=> left - r <= 0
+            let mut de = pre.clone();
+            add_edge_and_saturate(&mut de, l, rr, 0);
+            if !inconsistent(&de) { out.push((pc + 1, de)); }
+        }
+
+        // ---------- left < r ----------
+        (CmpOp::ULt, Operand::Reg(r)) => {
+            let rr = VAR_ENV.index(r);
+
+            // then: left < r  <=> left - r <= -1
+            let mut dt = pre.clone();
+            add_edge_and_saturate(&mut dt, l, rr, -1);
+            if !inconsistent(&dt) { out.push((target, dt)); }
+
+            // else: left >= r  <=> r - left <= 0
+            let mut de = pre.clone();
+            add_edge_and_saturate(&mut de, rr, l, 0);
             if !inconsistent(&de) { out.push((pc + 1, de)); }
         }
 
