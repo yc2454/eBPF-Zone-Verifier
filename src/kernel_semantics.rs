@@ -121,6 +121,20 @@ fn transfer_alu(
         AluOp::Shr => transfer_shr(ctx, pc, width, dst, src, pre),
         AluOp::Shl => transfer_shl(pc, dst, pre),
         AluOp::Or  => transfer_or(ctx, pc, width, dst, src, pre),
+        AluOp::Arsh => {
+            // Arithmetic right shift (sign-propagating).
+            // Zones don’t track bit-level sign; modeling this precisely would
+            // require case-splitting on sign. MVP: sound but coarse — just forget.
+            transfer_forget_dst(pc, dst, pre)
+        }
+        AluOp::Mul => {
+            // Multiplication is nonlinear; we just forget dst.
+            transfer_forget_dst(pc, dst, pre)
+        }
+        AluOp::Mod => {
+            // Modulo is nonlinear; we just forget dst.
+            transfer_forget_dst(pc, dst, pre)
+        }
 
         // MVP: conservative for the rest
         AluOp::Xor => transfer_forget_dst(pc, dst, pre),

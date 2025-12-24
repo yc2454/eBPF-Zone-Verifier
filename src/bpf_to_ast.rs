@@ -172,6 +172,54 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 src: Operand::Reg(src),
             },
 
+            // 0x14: SUB32_K  w_dst -= imm   (you may already have this)
+            0x14 => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Sub,
+                dst,
+                src: Operand::Imm(insn.imm as i64),
+            },
+
+            // 0x1c: SUB32_X  w_dst -= w_src   ← new
+            0x1c => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Sub,
+                dst,
+                src: Operand::Reg(src),
+            },
+
+            // 0x24: MUL32_K  w_dst *= imm
+            0x24 => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Mul,
+                dst,
+                src: Operand::Imm(insn.imm as i64),
+            },
+
+            // 0x2c: MUL32_X  w_dst *= w_src
+            0x2c => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Mul,
+                dst,
+                src: Operand::Reg(src),
+            },
+
+            // 0x27: MUL64_K  r_dst *= imm
+            0x27 => Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Mul,
+                dst,
+                src: Operand::Imm(insn.imm as i64),
+            },
+
+            // 0x2f: MUL64_X  r_dst *= r_src
+            0x2f => Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Mul,
+                dst,
+                src: Operand::Reg(src),
+            },
+
             // 0x4f: OR64_X r_dst |= r_src
             0x4f => Instr::Alu {
                 width: Width::W64,
@@ -244,6 +292,15 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 src: Operand::Reg(src),
             },
 
+            // 0x47: OR64_K  r_dst |= imm
+            0x47 => Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Or,
+                dst,
+                // immediate is effectively used as an unsigned bitmask
+                src: Operand::Imm((insn.imm as u32) as i64),
+            },
+
             // 0x64: LSH32_K  (w_dst <<= imm)
             0x64 => Instr::Alu {
                 width: Width::W32,
@@ -282,6 +339,101 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 op: AluOp::Shr,
                 dst,
                 src: Operand::Imm((insn.imm as u32) as i64),
+            },
+
+            // 0x94: MOD32_K  w_dst %= imm
+            0x94 => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Mod,
+                dst,
+                src: Operand::Imm(insn.imm as i64),
+            },
+
+            // 0x9c: MOD32_X  w_dst %= w_src
+            0x9c => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Mod,
+                dst,
+                src: Operand::Reg(src),
+            },
+
+            0x97 => Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Mod,
+                dst,
+                src: Operand::Imm(insn.imm as i64),
+            },
+
+            // 0x9f: MOD64_X  r_dst %= r_src
+            0x9f => Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Mod,
+                dst,
+                src: Operand::Reg(src),
+            },
+
+            // 0xa4: XOR32_K  w_dst ^= imm
+            0xa4 => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Xor,
+                dst,
+                src: Operand::Imm((insn.imm as u32) as i64),
+            },
+
+            // 0xac: XOR32_X  w_dst ^= w_src
+            0xac => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Xor,
+                dst,
+                src: Operand::Reg(src),
+            },
+
+            // 0xa7: XOR64_K  r_dst ^= imm
+            0xa7 => Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Xor,
+                dst,
+                src: Operand::Imm(insn.imm as i64),
+            },
+
+            // 0xaf: XOR64_X  r_dst ^= r_src
+            0xaf => Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Xor,
+                dst,
+                src: Operand::Reg(src),
+            },
+
+            // 0xc4: ARSH32_K  w_dst s>>= imm
+            0xc4 => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Arsh,
+                dst,
+                src: Operand::Imm((insn.imm as u32) as i64),
+            },
+
+            // 0xcc: ARSH32_X  w_dst s>>= w_src
+            0xcc => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Arsh,
+                dst,
+                src: Operand::Reg(src),
+            },
+
+            // 0xc7: ARSH64_K  r_dst s>>= imm
+            0xc7 => Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Arsh,
+                dst,
+                src: Operand::Imm((insn.imm as u32) as i64),
+            },
+
+            // 0xcf: ARSH64_X  r_dst s>>= r_src
+            0xcf => Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Arsh,
+                dst,
+                src: Operand::Reg(src),
             },
 
             // --- ENDIAN ---
@@ -387,6 +539,18 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     left: dst,
                     op: CmpOp::ULt,
                     right: Operand::Reg(src),
+                    target,
+                }
+            },
+
+            // 0x3d: JGE_X (if dst >= src goto target, 64-bit)
+            0x3d => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,                 // r7 here
+                    op: CmpOp::UGe,
+                    right: Operand::Reg(src),  // r1 here
                     target,
                 }
             },

@@ -310,3 +310,45 @@ pub fn add_imm(d: &mut Dbm, x: Var, c: i64) {
 
     d.close();
 }
+
+// dst *= imm
+pub fn assign_mul_imm(dbm: &mut Dbm, dst: Var, imm: i64, zero: Var) {
+    // Handle easy special cases first.
+    if imm == 0 {
+        // dst = 0
+        assign_zero(dbm, dst, zero);
+        return;
+    }
+
+    if imm == 1 {
+        // No-op on zones.
+        return;
+    }
+
+    if imm < 0 {
+        // Multiplication by negative constant flips the ordering of bounds.
+        // We *could* do the full interval transform here, but for now stay
+        // simple and sound: drop info about dst.
+        forget(dbm, dst);
+        return;
+    }
+
+    // imm > 0: monotone scaling, so we can scale bounds.
+    let (ld_opt, ud_opt) = get_bounds(dbm, dst, zero);
+
+    // Kill old relational info about dst.
+    dbm.forget_var(dst);
+
+    if let Some(ld) = ld_opt {
+        let new_lb = ld.saturating_mul(imm);
+        assume_ge_const(dbm, dst, zero, new_lb);
+    }
+    if let Some(ud) = ud_opt {
+        let new_ub = ud.saturating_mul(imm);
+        assume_le_const(dbm, dst, zero, new_ub);
+    }
+
+    // If we had no bounds, dst just becomes unconstrained.
+    dbm.close();
+}
+

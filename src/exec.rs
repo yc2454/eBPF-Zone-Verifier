@@ -8,7 +8,7 @@ use crate::domain::{
     // --- assignment / forget ---
     assign_eq, assign_zero,
     assign_add_imm, assign_add_reg,
-    assign_and_mask,
+    assign_and_mask, assign_mul_imm,
     forget,
     // --- assume/guards ---
     assume_ge_const, assume_le_const, assume_less_than, assume_eq_const,
@@ -225,8 +225,50 @@ fn transfer_alu(
             }
         }
 
+        AluOp::Arsh => {
+            // Arithmetic right shift (sign-propagating).
+            // Zones don’t track bit-level sign; modeling this precisely would
+            // require case-splitting on sign. MVP: sound but coarse — just forget.
+            forget(&mut dbm, dst);
+        }
+        
+        AluOp::Mul => {
+            match src {
+                Operand::Imm(c) => {
+                    // Try to keep an interval when multiplying by constant.
+                    assign_mul_imm(&mut dbm, dst, c, ctx.zero);
+                }
+                Operand::Reg(_r) => {
+                    // dst *= reg: product of two unknowns; interval logic gets messy
+                    // and likely not worth it for now. Stay sound and conservative.
+                    forget(&mut dbm, dst);
+                }
+            }
+        }
+
+        AluOp::Mod => {
+            match src {
+                Operand::Imm(c) => {
+                    if c <= 0 {
+                        // avoid divide-by-zero / negative nonsense: just forget
+                        forget(&mut dbm, dst);
+                    } else {
+                        // dst %= c  ⇒  0 <= dst <= c-1
+                        forget(&mut dbm, dst);
+                        assume_ge_const(&mut dbm, dst, ctx.zero, 0);
+                        assume_le_const(&mut dbm, dst, ctx.zero, c - 1);
+                    }
+                }
+                Operand::Reg(_r) => {
+                    // dst %= reg: result in [0, reg-1], but reg is unknown.
+                    // To stay simple & sound, just forget dst for now.
+                    forget(&mut dbm, dst);
+                }
+            }
+        }
+
         // Not needed yet; keep sound default
-        AluOp::Sub | AluOp::Or | AluOp::Xor => {
+        AluOp::Xor => {
             forget(&mut dbm, dst);
         }
     }

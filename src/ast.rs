@@ -24,7 +24,10 @@ pub enum AluOp {
     Mov,
     Shl,
     Shr,
-    // later: Mul, Div, Mod, Arsh, Neg, etc.
+    Arsh,   // arithmetic right shift
+    Mul,
+    Mod,
+    // later: Div, Neg, etc.
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,6 +133,9 @@ impl fmt::Display for Instr {
                     AluOp::Mov => "=",
                     AluOp::Shl => "<<",
                     AluOp::Shr => ">>",
+                    AluOp::Arsh => "s>>",
+                    AluOp::Mul => "*",
+                    AluOp::Mod => "%",
                 };
                 let src_str = match src {
                     Operand::Reg(r) => r.name().to_string(),
