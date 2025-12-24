@@ -1,6 +1,6 @@
 // src/kernel_semantics.rs
 
-use crate::ast::{AluOp, CmpOp, Instr, Operand};
+use crate::ast::{AluOp, CmpOp, Instr, Operand, Width};
 use crate::dbm::{Dbm, INF};
 use crate::domain::VAR_ENV;
 use crate::exec::ExecContext;
@@ -67,7 +67,7 @@ pub fn transfer_one_kernel(
 ) -> Vec<(usize, Dbm)> {
     match instr {
         Instr::MovArg0 { dst } => transfer_mov_arg0(ctx, pc, *dst, pre),
-        Instr::Alu { op, dst, src, .. } => transfer_alu(ctx, pc, *op, *dst, *src, pre),
+        Instr::Alu { op, dst, src, width } => transfer_alu(ctx, pc, *op, *width, *dst, *src, pre),
         Instr::If { left, op, right, target } => transfer_if(ctx, pc, *left, *op, *right, *target, pre),
         Instr::Load { dst, .. } => transfer_load(pc, *dst, pre),
         Instr::Store { .. } => vec![(pc + 1, pre.clone())],
@@ -91,12 +91,13 @@ fn transfer_alu(
     ctx: &ExecContext,
     pc: usize,
     op: AluOp,
+    width: Width,
     dst: crate::domain::Var,
     src: Operand,
     pre: &Dbm,
 ) -> Vec<(usize, Dbm)> {
     match op {
-        AluOp::Mov => transfer_mov(ctx, pc, dst, src, pre),
+        AluOp::Mov => transfer_mov(ctx, pc, width, dst, src, pre),
         AluOp::Add => transfer_add(ctx, pc, dst, src, pre),
         AluOp::And => transfer_and(ctx, pc, dst, src, pre),
 
@@ -105,7 +106,7 @@ fn transfer_alu(
     }
 }
 
-fn transfer_mov(ctx: &ExecContext, pc: usize, dst: crate::domain::Var, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_mov(ctx: &ExecContext, pc: usize, width: Width, dst: crate::domain::Var, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
     let zero_i = VAR_ENV.index(ctx.zero);
     let mut d = pre.clone();
     let x = VAR_ENV.index(dst);
@@ -119,8 +120,12 @@ fn transfer_mov(ctx: &ExecContext, pc: usize, dst: crate::domain::Var, src: Oper
                 // dst := r10  ==> offset-from-frame = 0
                 add_edge_and_saturate(&mut d, x, zero_i, 0);
                 add_edge_and_saturate(&mut d, zero_i, x, 0);
+            } else if width == Width::W32 {
+                // mov32 reg: can't express low32 copy; stay sound with range bound
+                add_edge_and_saturate(&mut d, x, zero_i, 0xffff_ffff);
+                add_edge_and_saturate(&mut d, zero_i, x, 0);
             } else {
-                // Copy row/col from src in the *pre* DBM (closed).
+                // mov64 reg: Copy row/col from src in the *pre* DBM (closed).
                 let y = VAR_ENV.index(r);
                 for i in 0..n {
                     d.set_raw(x, i, pre.raw(y, i)); // x - i
@@ -130,6 +135,9 @@ fn transfer_mov(ctx: &ExecContext, pc: usize, dst: crate::domain::Var, src: Oper
             }
         }
         Operand::Imm(c) => {
+            // mov32 imm: u32 then zero-extend
+            let c = if width == Width::W32 { (c as u32) as i64 } else { c };
+
             // dst := c  ==> dst == c
             add_edge_and_saturate(&mut d, x, zero_i, c);
             add_edge_and_saturate(&mut d, zero_i, x, -c);

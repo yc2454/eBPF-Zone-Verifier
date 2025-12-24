@@ -88,7 +88,7 @@ fn transfer_alu(
     ctx: &ExecContext,
     dbm_in: &Dbm,
     pc: usize,
-    _width: Width,
+    width: Width,
     op: AluOp,
     dst: Var,
     src: Operand,
@@ -99,18 +99,28 @@ fn transfer_alu(
         AluOp::Mov => {
             match src {
                 Operand::Reg(r) => {
-                    if r == ctx.r10 {
-                        // dst = r10  ⇒ treat as "offset from fp is 0"
-                        assign_zero(&mut dbm, dst, ctx.zero);
+                    if width == Width::W32 {
+                        // mov32 reg: result is in [0, 0xffff_ffff], but we can't express
+                        // dst = (r mod 2^32) relationally in zones. Stay sound:
+                        forget(&mut dbm, dst);
+                        assume_ge_const(&mut dbm, dst, ctx.zero, 0);
+                        assume_le_const(&mut dbm, dst, ctx.zero, 0xffff_ffff);
                     } else {
-                        assign_eq(&mut dbm, dst, r);
+                        // mov64 reg (existing behavior)
+                        if r == ctx.r10 {
+                            // dst = r10  ⇒ treat as "offset from fp is 0"
+                            assign_zero(&mut dbm, dst, ctx.zero);
+                        } else {
+                            assign_eq(&mut dbm, dst, r);
+                        }
                     }
                 }
                 Operand::Imm(c) => {
+                    // mov32 imm: immediate is u32 then zero-extended
+                    let c = if width == Width::W32 { (c as u32) as i64 } else { c };
+
                     // dst = c
                     assign_zero(&mut dbm, dst, ctx.zero);
-                    // encode dst = c via bounds; if you have assign_const use it
-                    // simplest: dst - 0 <= c and 0 - dst <= -c
                     assume_le_const(&mut dbm, dst, ctx.zero, c);
                     assume_ge_const(&mut dbm, dst, ctx.zero, c);
                 }

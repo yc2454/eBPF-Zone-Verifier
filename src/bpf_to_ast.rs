@@ -104,7 +104,16 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            }
+            },
+
+            // 0xb4: wX = imm  (ALU32 | MOV | K)  == mov32 imm (zero-extend)
+            0xb4 => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Mov,
+                dst,
+                // IMPORTANT: mov32 uses u32 then zero-extends to 64
+                src: Operand::Imm((insn.imm as u32) as i64),
+            },
 
             // (Optional, but you’ll want it soon)
             // 0xb5: if rX >= imm goto +off (JMP | JGE | K)
@@ -127,6 +136,31 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 dst,
                 base: src,
                 off: insn.off as i16,
+            },
+
+            // 0x6b: STXH *(u16 *)(dst + off) = src
+            // In objdump: "*(u16 *)(r10 - 0xc4) = w1"
+            0x6b => Instr::Store {
+                size: MemSize::U16,
+                base: dst,               // for stores, dst is the base register
+                off: insn.off,
+                src,                     // value comes from src register
+            },
+
+            // 0x63: STXW *(u32 *)(dst + off) = src
+            0x63 => Instr::Store {
+                size: MemSize::U32,
+                base: dst,        // dst field is the base register for stores
+                off: insn.off,
+                src,              // src field is the value register
+            },
+
+            // 0x7b: STXDW *(u64 *)(dst + off) = src
+            0x7b => Instr::Store {
+                size: MemSize::U64,
+                base: dst,
+                off: insn.off,
+                src,
             },
 
             other => {
