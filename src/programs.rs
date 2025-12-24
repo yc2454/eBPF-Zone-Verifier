@@ -56,12 +56,12 @@ fn and_i(dst: Var, imm: i64) -> Instr {
 
 #[inline]
 fn if_uge_i(left: Var, imm: i64, target: usize) -> Instr {
-    Instr::If { left, op: CmpOp::UGe, right: Operand::Imm(imm), target }
+    Instr::If { left, width: Width::W64, op: CmpOp::UGe, right: Operand::Imm(imm), target }
 }
 
 #[inline]
 fn if_uge_r(left: Var, right: Var, target: usize) -> Instr {
-    Instr::If { left, op: CmpOp::UGe, right: Operand::Reg(right), target }
+    Instr::If { left, width: Width::W64, op: CmpOp::UGe, right: Operand::Reg(right), target }
 }
 
 #[inline]

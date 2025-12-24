@@ -57,6 +57,17 @@ fn forget_var_by_index(dbm: &mut Dbm, x: usize) {
     dbm.set_raw(x, x, 0);
 }
 
+fn proven_u32_range(dbm: &Dbm, v: crate::domain::Var, zero: crate::domain::Var) -> bool {
+    // Need: 0 <= v <= 0xffff_ffff
+    let vi = VAR_ENV.index(v);
+    let zi = VAR_ENV.index(zero);
+
+    let ub = dbm.raw(vi, zi); // v - 0 <= ub
+    let lb = dbm.raw(zi, vi); // 0 - v <= lb  (lb <= 0 => v >= 0)
+
+    ub <= 0xffff_ffff && lb <= 0
+}
+
 // --- tiny top-level dispatcher ---
 
 pub fn transfer_one_kernel(
@@ -68,9 +79,12 @@ pub fn transfer_one_kernel(
     match instr {
         Instr::MovArg0 { dst } => transfer_mov_arg0(ctx, pc, *dst, pre),
         Instr::Alu { op, dst, src, width } => transfer_alu(ctx, pc, *op, *width, *dst, *src, pre),
-        Instr::If { left, op, right, target } => transfer_if(ctx, pc, *left, *op, *right, *target, pre),
+        Instr::If { width, left, op, right, target } => 
+        transfer_if(ctx, pc, *width, *left, *op, *right, *target, pre),
+        Instr::Jmp { target } => vec![(*target, pre.clone())],
         Instr::Load { dst, .. } => transfer_load(pc, *dst, pre),
         Instr::Store { .. } => vec![(pc + 1, pre.clone())],
+        Instr::Call { helper } => transfer_call(pc, *helper, pre),
         Instr::Exit => vec![],
     }
 }
@@ -99,7 +113,7 @@ fn transfer_alu(
     match op {
         AluOp::Mov => transfer_mov(ctx, pc, width, dst, src, pre),
         AluOp::Add => transfer_add(ctx, pc, dst, src, pre),
-        AluOp::And => transfer_and(ctx, pc, dst, src, pre),
+        AluOp::And => transfer_and(ctx, pc, width, dst, src, pre),
 
         // MVP: conservative for the rest
         AluOp::Sub | AluOp::Or | AluOp::Xor => transfer_forget_dst(pc, dst, pre),
@@ -196,7 +210,8 @@ fn transfer_add_reg_mvp(ctx: &ExecContext, pc: usize, dst: crate::domain::Var, s
     if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
 }
 
-fn transfer_and(ctx: &ExecContext, pc: usize, dst: crate::domain::Var, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_and(ctx: &ExecContext, pc: usize, width: Width,
+    dst: crate::domain::Var, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
     // We only model AND with immediate masks for now.
     let zero_i = VAR_ENV.index(ctx.zero);
     let mut d = pre.clone();
@@ -205,6 +220,7 @@ fn transfer_and(ctx: &ExecContext, pc: usize, dst: crate::domain::Var, src: Oper
     forget_var_by_index(&mut d, x);
 
     if let Operand::Imm(mask) = src {
+        let mask = if width == Width::W32 { (mask as u32) as i64 } else { mask };
         // sound approximation for unsigned mask:
         // 0 <= dst <= mask
         add_edge_and_saturate(&mut d, x, zero_i, mask);
@@ -224,20 +240,71 @@ fn transfer_forget_dst(pc: usize, dst: crate::domain::Var, pre: &Dbm) -> Vec<(us
 fn transfer_if(
     ctx: &ExecContext,
     pc: usize,
+    width: Width,
     left: crate::domain::Var,
     op: CmpOp,
     right: Operand,
     target: usize,
     pre: &Dbm,
 ) -> Vec<(usize, Dbm)> {
-    // In your AST: If { left, op, right, target }
     // Semantics: if cond true -> goto target else -> fallthrough pc+1
     let zero_i = VAR_ENV.index(ctx.zero);
     let l = VAR_ENV.index(left);
 
+    // JMP32 compares only low 32 bits. Zones don't model low32(x) relationally.
+    // MVP policy:
+    // - For Eq/Ne with imm: refine only if left already known in [0, 0xffff_ffff],
+    //   in which case low32(left)==k <=> left==k (with k zero-extended).
+    // - Otherwise: no refinement, just fork.
+    let (op, right) = if width == Width::W32 {
+        match (op, right) {
+            (CmpOp::Eq, Operand::Imm(imm)) => {
+                if !proven_u32_range(pre, left, ctx.zero) {
+                    return vec![(target, pre.clone()), (pc + 1, pre.clone())];
+                }
+                (CmpOp::Eq, Operand::Imm((imm as u32) as i64))
+            }
+            (CmpOp::Ne, Operand::Imm(imm)) => {
+                if !proven_u32_range(pre, left, ctx.zero) {
+                    return vec![(target, pre.clone()), (pc + 1, pre.clone())];
+                }
+                (CmpOp::Ne, Operand::Imm((imm as u32) as i64))
+            }
+            _ => {
+                return vec![(target, pre.clone()), (pc + 1, pre.clone())];
+            }
+        }
+    } else {
+        (op, right)
+    };
+
     let mut out = Vec::new();
 
     match (op, right) {
+        // ======= Eq/Ne immediate (W64, or W32 gated+normalized above) =======
+        (CmpOp::Eq, Operand::Imm(imm)) => {
+            // then: left == imm
+            let mut dt = pre.clone();
+            add_edge_and_saturate(&mut dt, l, zero_i, imm);
+            add_edge_and_saturate(&mut dt, zero_i, l, -imm);
+            if !inconsistent(&dt) { out.push((target, dt)); }
+
+            // else: left != imm  (DBM can't express disequality; no refinement)
+            out.push((pc + 1, pre.clone()));
+        }
+
+        (CmpOp::Ne, Operand::Imm(imm)) => {
+            // then: left != imm (no refinement)
+            out.push((target, pre.clone()));
+
+            // else: left == imm
+            let mut de = pre.clone();
+            add_edge_and_saturate(&mut de, l, zero_i, imm);
+            add_edge_and_saturate(&mut de, zero_i, l, -imm);
+            if !inconsistent(&de) { out.push((pc + 1, de)); }
+        }
+
+        // ======= Existing UGe/ULe cases (W64 only in MVP; W32 returns earlier) =======
         (CmpOp::UGe, Operand::Imm(imm)) => {
             // then: left >= imm  <=> 0 - left <= -imm
             let mut dt = pre.clone();
@@ -300,6 +367,24 @@ fn transfer_if(
     }
 
     out
+}
+
+fn transfer_call(pc: usize, _helper: u32, pre: &Dbm) -> Vec<(usize, Dbm)> {
+    let mut d = pre.clone();
+
+    // Same MVP ABI model as userspace:
+    // clobber r0..r5, preserve r6..r10.
+    for v in [crate::domain::Var::R0,
+              crate::domain::Var::R1,
+              crate::domain::Var::R2,
+              crate::domain::Var::R3,
+              crate::domain::Var::R4,
+              crate::domain::Var::R5] {
+        let idx = VAR_ENV.index(v);
+        forget_var_by_index(&mut d, idx);
+    }
+
+    if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
 }
 
 fn transfer_load(pc: usize, dst: crate::domain::Var, pre: &Dbm) -> Vec<(usize, Dbm)> {

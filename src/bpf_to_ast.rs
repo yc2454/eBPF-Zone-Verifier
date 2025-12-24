@@ -43,9 +43,66 @@ fn branch_target(pc: usize, off: i16, len: usize, code: u8) -> Result<usize, Low
 pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
     let mut instrs = Vec::with_capacity(raw.len());
 
-    for (pc, insn) in raw.iter().enumerate() {
+    let mut pc: usize = 0;
+    while pc < raw.len() {
+        let insn = &raw[pc];
         let dst = reg_to_var(insn.dst);
         let src = reg_to_var(insn.src);
+
+        // 0x18: LDIMM64 
+        // Special case: takes two instruction slots.
+        if insn.code == 0x18 {
+            if pc + 1 >= raw.len() {
+                return Err(LowerError {
+                    pc,
+                    code: insn.code,
+                    msg: "LDIMM64 at end of stream missing continuation slot".to_string(),
+                });
+            }
+
+            let cont = &raw[pc + 1];
+
+            // The continuation slot should have code 0x00 in typical encodings.
+            // If it's not, fail fast so we don't silently desync.
+            if cont.code != 0x00 {
+                return Err(LowerError {
+                    pc,
+                    code: cont.code,
+                    msg: format!(
+                        "LDIMM64 continuation slot had unexpected opcode 0x{:02x}",
+                        cont.code
+                    ),
+                });
+            }
+
+            let low: u32 = insn.imm as u32;
+            let high: u32 = cont.imm as u32;
+            let imm_u64: u64 = (low as u64) | ((high as u64) << 32);
+
+            // Best-effort: keep it as i64 when it fits; otherwise keep bits (wrap).
+            // (For your current string literals, this will be positive and safe.)
+            let imm_i64: i64 = imm_u64 as i64;
+
+            // Slot pc: actual load
+            instrs.push(Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Mov,
+                dst,
+                src: Operand::Imm(imm_i64),
+            });
+
+            // Slot pc+1: emit a semantic no-op so AST PCs stay aligned with raw PCs.
+            // Self-move is a good no-op in your current semantics.
+            instrs.push(Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Mov,
+                dst: Var::R0,
+                src: Operand::Reg(Var::R0),
+            });
+
+            pc += 2;
+            continue;
+        }
 
         let ir: Instr = match insn.code {
             // --- ALU64 ---
@@ -82,6 +139,14 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 src: Operand::Reg(src),
             },
 
+            // 0x54: AND32 imm  (wX &= imm32)
+            0x54 => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::And,
+                dst,
+                src: Operand::Imm((insn.imm as u32) as i64), // u32 mask
+            },
+
             // 0x57: rX &= imm (ALU64 | AND | K)
             0x57 => Instr::Alu {
                 width: Width::W64,
@@ -95,10 +160,23 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             // 0x95: exit (JMP | EXIT)
             0x95 => Instr::Exit,
 
+            // 0x55: JNE imm (if dst != imm goto target)
+            0x55 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::Ne,
+                    right: Operand::Imm(insn.imm as i64),
+                    target,
+                }
+            },
+
             // 0xbd: if rX <= rY goto +off (JMP | JLE | X)  (unsigned compare)
             0xbd => {
                 let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
                 Instr::If {
+                    width: Width::W64,
                     left: dst,
                     op: CmpOp::ULe,
                     right: Operand::Reg(src),
@@ -115,16 +193,34 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 src: Operand::Imm((insn.imm as u32) as i64),
             },
 
-            // (Optional, but you’ll want it soon)
             // 0xb5: if rX >= imm goto +off (JMP | JGE | K)
             0xb5 => {
                 let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
                 Instr::If {
+                    width: Width::W64,
                     left: dst,
                     op: CmpOp::UGe,
                     right: Operand::Imm(insn.imm as i64),
                     target,
                 }
+            }
+
+            // 0x16: JEQ32 imm  if (u32)dst == (u32)imm goto target
+            0x16 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst, // dst field is the left operand for jumps
+                    op: CmpOp::Eq,
+                    right: Operand::Imm((insn.imm as u32) as i64),
+                    target,
+                }
+            }
+
+            // 0x05: JA (unconditional jump): goto pc + 1 + off
+            0x05 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::Jmp { target }
             }
 
             // --- LD/LDX --- (minimal support for your current 0x61 case)
@@ -155,6 +251,14 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 src,              // src field is the value register
             },
 
+            // 0x73: STXB *(u8 *)(dst + off) = src
+            0x73 => Instr::Store {
+                size: MemSize::U8,
+                base: dst,           // dst field is the base register for stores
+                off: insn.off as i16,
+                src,                 // src field is the value register
+            },
+
             // 0x7b: STXDW *(u64 *)(dst + off) = src
             0x7b => Instr::Store {
                 size: MemSize::U64,
@@ -162,6 +266,20 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 off: insn.off,
                 src,
             },
+
+            // 0x85: call imm (JMP | CALL)
+            0x85 => Instr::Call {
+                helper: insn.imm as u32,
+            },
+
+            // Optional: guard against stray continuation opcodes outside 0x18
+            0x00 => {
+                return Err(LowerError {
+                    pc,
+                    code: insn.code,
+                    msg: "unexpected opcode 0x00 (LDIMM64 continuation without prefix?)".to_string(),
+                });
+            }
 
             other => {
                 return Err(LowerError {
@@ -173,6 +291,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
         };
 
         instrs.push(ir);
+        pc += 1;
     }
 
     Ok(Program { instrs })

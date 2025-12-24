@@ -78,6 +78,15 @@ fn check_stack_load(ctx: &ExecContext, dbm: &Dbm, base: Var) {
     }
 }
 
+fn proven_u32_range(dbm: &Dbm, v: Var, zero: Var) -> bool {
+    // requires: (v - 0) <= 0xffff_ffff  AND  (0 - v) <= 0
+    let vi = VAR_ENV.index(v);
+    let zi = VAR_ENV.index(zero);
+    let ub = dbm.raw(vi, zi); // v - 0
+    let lb = dbm.raw(zi, vi); // 0 - v  (<= 0 means v >= 0)
+    ub <= 0xffff_ffff && lb <= 0
+}
+
 fn transfer_mov_arg0(dbm_in: &Dbm, pc: usize, dst: Var) -> Vec<(usize, Dbm)> {
     let mut dbm = dbm_in.clone();
     forget(&mut dbm, dst);
@@ -136,9 +145,15 @@ fn transfer_alu(
 
         AluOp::And => {
             match src {
-                Operand::Imm(mask) => assign_and_mask(&mut dbm, dst, mask, ctx.zero),
+                Operand::Imm(mask) => {
+                    let mask = if width == Width::W32 {
+                        (mask as u32) as i64
+                    } else {
+                        mask
+                    };
+                    assign_and_mask(&mut dbm, dst, mask, ctx.zero)
+                }
                 Operand::Reg(_r) => {
-                    // You can support this later; for now stay sound:
                     // dst &= unknown ⇒ dst becomes unknown
                     forget(&mut dbm, dst);
                 }
@@ -162,6 +177,7 @@ fn transfer_if(
     ctx: &ExecContext,
     dbm_in: &Dbm,
     pc: usize,
+    width: Width,
     left: Var,
     op: CmpOp,
     right: Operand,
@@ -283,6 +299,19 @@ fn transfer_store(
     vec![(pc + 1, dbm_in.clone())]
 }
 
+fn transfer_call(dbm_in: &Dbm, pc: usize, _helper: u32) -> Vec<(usize, Dbm)> {
+    let mut dbm = dbm_in.clone();
+
+    // MVP ABI model for helper calls:
+    // - r0 is return value (clobbered)
+    // - r1..r5 are argument regs (treat as clobbered)
+    // - r6..r10 preserved (r10 is fp)
+    for v in [Var::R0, Var::R1, Var::R2, Var::R3, Var::R4, Var::R5] {
+        forget(&mut dbm, v);
+    }
+
+    vec![(pc + 1, dbm)]
+}
 
 /// Single-step semantic transfer: from (pc, dbm_in) to successors
 pub fn transfer_instr(
@@ -294,9 +323,11 @@ pub fn transfer_instr(
     match instr {
         Instr::MovArg0 { dst } => transfer_mov_arg0(dbm_in, pc, *dst),
         Instr::Alu { width, op, dst, src } => transfer_alu(ctx, dbm_in, pc, *width, *op, *dst, *src),
-        Instr::If { left, op, right, target } => transfer_if(ctx, dbm_in, pc, *left, *op, *right, *target),
+        Instr::If { width, left, op, right, target } => transfer_if(ctx, dbm_in, pc, *width, *left, *op, *right, *target),
         Instr::Load { size, dst, base, off } => transfer_load(ctx, dbm_in, pc, *size, *dst, *base, *off),
         Instr::Store { size, base, off, src } => transfer_store(ctx, dbm_in, pc, *size, *base, *off, *src),
+        Instr::Call { helper } => transfer_call(dbm_in, pc, *helper),
+        Instr::Jmp { target } => vec![(*target, dbm_in.clone())],
         Instr::Exit => vec![],
     }
 }

@@ -56,9 +56,15 @@ pub enum Instr {
 
     /// if left (op) right goto target; else fallthrough
     If {
+        width: Width,
         left: Var,
         op: CmpOp,
         right: Operand,
+        target: usize,
+    },
+
+    /// Unconditional jump to an absolute PC target.
+    Jmp {
         target: usize,
     },
 
@@ -77,6 +83,10 @@ pub enum Instr {
         base: Var,
         off: i16,
         src: Var,
+    },
+
+    Call {
+        helper: u32,
     },
 
     Exit,
@@ -115,7 +125,7 @@ impl fmt::Display for Instr {
                 write!(f, "{}{} {} {} {}", width_str, dst.name(), op_str, dst.name(), src_str)
             },
 
-            If { left, op, right, target } => {
+            If { width, left, op, right, target } => {
                 let op_str = match op {
                     CmpOp::UGe => ">=u",
                     CmpOp::ULe => "<=u",
@@ -128,8 +138,15 @@ impl fmt::Display for Instr {
                     Operand::Reg(r) => r.name().to_string(),
                     Operand::Imm(i) => format!("{}", i),
                 };
-                write!(f, "if {} {} {} goto {}", left.name(), op_str, right_str, target)
+                let width_str = match width {
+                    Width::W32 => "w",
+                    Width::W64 => "r",
+                };
+                write!(f, "if {} {} {} {} goto {}", left.name(), op_str, right_str, width_str, target)
             },
+
+            Jmp { target } =>
+                write!(f, "goto {}", target),
 
             Load { size, dst, base, off } => {
                 let size_str = match size {
@@ -150,6 +167,9 @@ impl fmt::Display for Instr {
                 };
                 write!(f, "*({} *)({} + {}) = {}", size_str, base.name(), off, src.name())
             },
+
+            Call { helper } =>
+                write!(f, "call {}", helper),
 
             Exit =>
                 write!(f, "exit"),
