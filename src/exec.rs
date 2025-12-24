@@ -1,7 +1,7 @@
 // src/exec.rs
 use std::collections::VecDeque;
 
-use crate::ast::{AluOp, CmpOp, Instr, MemSize, Operand, Program, Width};
+use crate::ast::{AluOp, CmpOp, Instr, MemSize, Operand, Program, Width, EndianKind};
 use crate::dbm::Dbm;
 use crate::domain::{
     Var, VAR_ENV,
@@ -11,7 +11,7 @@ use crate::domain::{
     assign_and_mask,
     forget,
     // --- assume/guards ---
-    assume_ge_const, assume_le_const, assume_less_than,
+    assume_ge_const, assume_le_const, assume_less_than, assume_eq_const,
     assume_ge_var, assume_le_var, assume_gt_var, assume_le_var_plus_const,
 };
 use crate::utils::{dbm_equals}; // if you have this; otherwise keep your existing helper
@@ -160,6 +160,36 @@ fn transfer_alu(
             }
         }
 
+        AluOp::Shl => {
+            // Nonlinear bit op; MVP: forget
+            forget(&mut dbm, dst);
+        }
+
+        AluOp::Shr => {
+            match src {
+                Operand::Imm(k) => {
+                    let bits = if width == Width::W32 { 32u32 } else { 64u32 };
+                    let k = (k as u32).min(bits); // clamp defensively
+
+                    // result is unsigned logical shift => 0 <= dst <= 2^(bits-k)-1
+                    forget(&mut dbm, dst);
+                    assume_ge_const(&mut dbm, dst, ctx.zero, 0);
+
+                    if k < bits {
+                        let ub: i64 = ((1u128 << (bits - k)) - 1) as i64;
+                        assume_le_const(&mut dbm, dst, ctx.zero, ub);
+                    } else {
+                        // shift by >= bits => result 0 in real semantics; MVP just set to 0
+                        assume_eq_const(&mut dbm, dst, ctx.zero, 0);
+                    }
+                }
+                Operand::Reg(_) => {
+                    // shift-by-reg: not modeling yet
+                    forget(&mut dbm, dst);
+                }
+            }
+        }
+
         // Not needed yet; keep sound default
         AluOp::Sub | AluOp::Or | AluOp::Xor => {
             forget(&mut dbm, dst);
@@ -171,6 +201,34 @@ fn transfer_alu(
     } else {
         vec![(pc + 1, dbm)]
     }
+}
+
+fn transfer_endian(
+    ctx: &ExecContext,
+    dbm_in: &Dbm,
+    pc: usize,
+    dst: Var,
+    kind: EndianKind,
+) -> Vec<(usize, Dbm)> {
+    let mut dbm = dbm_in.clone();
+
+    // Endian ops are nonlinear bit permutations; we cannot track the relation
+    // to the old value. MVP: forget, then approximate the guaranteed range.
+    forget(&mut dbm, dst);
+
+    let (lo, hi) = match kind {
+        EndianKind::Be16 => (0i64, 0x0000_ffff),
+        EndianKind::Be32 => (0i64, 0xffff_ffff),
+        EndianKind::Be64 => {
+            // Byteswap64 preserves full 64-bit domain; no useful bound.
+            return vec![(pc + 1, dbm)];
+        }
+    };
+
+    assume_ge_const(&mut dbm, dst, ctx.zero, lo);
+    assume_le_const(&mut dbm, dst, ctx.zero, hi);
+
+    vec![(pc + 1, dbm)]
 }
 
 fn transfer_if(
@@ -190,6 +248,19 @@ fn transfer_if(
     // ELSE branch: condition does not hold
     let mut dbm_else = dbm_in.clone();
 
+    // For JMP32 Eq/Ne with imm, only refine if left is already known to be u32-range.
+    if width == Width::W32 {
+        if let Operand::Imm(_c) = right {
+            if matches!(op, CmpOp::Eq | CmpOp::Ne) && !proven_u32_range(dbm_in, left, ctx.zero) {
+                // Can't model low32 equality safely -> fork without refinement
+                return vec![(pc + 1, dbm_in.clone()), (target, dbm_in.clone())];
+            }
+        } else {
+            // Reg comparisons in JMP32: don't refine in MVP
+            return vec![(pc + 1, dbm_in.clone()), (target, dbm_in.clone())];
+        }
+    }
+
     match (op, right) {
         // ---------- left >= imm ----------
         (CmpOp::UGe, Operand::Imm(c)) => {
@@ -201,6 +272,13 @@ fn transfer_if(
         (CmpOp::ULe, Operand::Imm(c)) => {
             assume_le_const(&mut dbm_then, left, ctx.zero, c);
             assume_ge_const(&mut dbm_else, left, ctx.zero, c + 1);
+        }
+
+        (CmpOp::Ne, Operand::Imm(imm)) => {
+            // then: left != imm  (DBM can't express disequality => no refinement)
+            // else: left == imm
+            assume_eq_const(&mut dbm_else, left, ctx.zero, imm);
+            // keep dbm_then unchanged
         }
 
         // ---------- left >= reg ----------
@@ -322,10 +400,16 @@ pub fn transfer_instr(
 ) -> Vec<(usize, Dbm)> {
     match instr {
         Instr::MovArg0 { dst } => transfer_mov_arg0(dbm_in, pc, *dst),
-        Instr::Alu { width, op, dst, src } => transfer_alu(ctx, dbm_in, pc, *width, *op, *dst, *src),
-        Instr::If { width, left, op, right, target } => transfer_if(ctx, dbm_in, pc, *width, *left, *op, *right, *target),
-        Instr::Load { size, dst, base, off } => transfer_load(ctx, dbm_in, pc, *size, *dst, *base, *off),
-        Instr::Store { size, base, off, src } => transfer_store(ctx, dbm_in, pc, *size, *base, *off, *src),
+        Instr::Alu { width, op, dst, src } => 
+            transfer_alu(ctx, dbm_in, pc, *width, *op, *dst, *src),
+        Instr::Endian { dst, kind } => 
+            transfer_endian(ctx, dbm_in, pc, *dst, *kind),
+        Instr::If { width, left, op, right, target } => 
+            transfer_if(ctx, dbm_in, pc, *width, *left, *op, *right, *target),
+        Instr::Load { size, dst, base, off } => 
+            transfer_load(ctx, dbm_in, pc, *size, *dst, *base, *off),
+        Instr::Store { size, base, off, src } => 
+            transfer_store(ctx, dbm_in, pc, *size, *base, *off, *src),
         Instr::Call { helper } => transfer_call(dbm_in, pc, *helper),
         Instr::Jmp { target } => vec![(*target, dbm_in.clone())],
         Instr::Exit => vec![],

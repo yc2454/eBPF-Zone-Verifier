@@ -1,5 +1,5 @@
 // src/bpf_to_ast.rs
-use crate::ast::{AluOp, CmpOp, Instr, Operand, Program, Width, MemSize};
+use crate::ast::{AluOp, CmpOp, Instr, Operand, Program, Width, MemSize, EndianKind};
 use crate::bpf_insn::RawBpfInsn;
 use crate::domain::Var;
 
@@ -155,6 +155,46 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 src: Operand::Imm(insn.imm as i64),
             },
 
+            // 0x67: LSH64 imm  (rX <<= imm)
+            0x67 => Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Shl,
+                dst,
+                src: Operand::Imm((insn.imm as u32) as i64),
+            },
+
+            // 0x77: RSH64 imm  (logical) (rX >>= imm)
+            0x77 => Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Shr,
+                dst,
+                src: Operand::Imm((insn.imm as u32) as i64),
+            },
+
+            // --- ENDIAN ---
+            // 0xdc: BPF_END: endian conversion on dst.
+            // src (insn.src) encodes LE vs BE; imm encodes width (16/32/64).
+            // In your objdump you see: "r4 = be16 r4"  (imm == 16, BE).
+            0xdc => {
+                let bits = insn.imm as u32;
+                let kind = match bits {
+                    16 => EndianKind::Be16,
+                    32 => EndianKind::Be32,
+                    64 => EndianKind::Be64,
+                    _ => {
+                        return Err(LowerError {
+                            pc,
+                            code: insn.code,
+                            msg: format!("unsupported endian width imm={} for opcode 0xdc", bits),
+                        });
+                    }
+                };
+
+                // MVP: ignore LE vs BE; we only handle BE semantics,
+                // and we approximate via range constraints in semantics.
+                Instr::Endian { dst, kind }
+            }
+
             // --- JMP ---
 
             // 0x95: exit (JMP | EXIT)
@@ -229,6 +269,15 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             // In objdump: "w1 = *(u32 *)(r8 + 0x4c)"
             0x61 => Instr::Load {
                 size: MemSize::U32,
+                dst,
+                base: src,
+                off: insn.off as i16,
+            },
+
+            // 0x79: LDXDW dst = *(u64 *)(src + off)
+            // In objdump: "r2 = *(u64 *)(r10 - 0x100)"
+            0x79 => Instr::Load {
+                size: MemSize::U64,
                 dst,
                 base: src,
                 off: insn.off as i16,

@@ -21,8 +21,10 @@ pub enum AluOp {
     And,
     Or,
     Xor,
-    Mov,  // yes: MOV is just an ALU op in BPF land
-    // later: Mul, Div, Mod, Lsh, Rsh, Arsh, Neg, etc.
+    Mov,
+    Shl,
+    Shr,
+    // later: Mul, Div, Mod, Arsh, Neg, etc.
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,6 +32,13 @@ pub enum CmpOp {
     UGe, ULe, UGt, ULt,
     Eq, Ne,
     // later: SGe, SLe, SGt, SLt
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum EndianKind {
+    Be16,
+    Be32,
+    Be64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,6 +61,12 @@ pub enum Instr {
         op: AluOp,
         dst: Var,
         src: Operand,
+    },
+
+    /// Endian conversion on a register (BPF_END)
+    Endian {
+        dst: Var,
+        kind: EndianKind,
     },
 
     /// if left (op) right goto target; else fallthrough
@@ -113,6 +128,8 @@ impl fmt::Display for Instr {
                     AluOp::Or  => "|",
                     AluOp::Xor => "^",
                     AluOp::Mov => "=",
+                    AluOp::Shl => "<<",
+                    AluOp::Shr => ">>",
                 };
                 let src_str = match src {
                     Operand::Reg(r) => r.name().to_string(),
@@ -123,6 +140,15 @@ impl fmt::Display for Instr {
                     Width::W64 => "r",
                 };
                 write!(f, "{}{} {} {} {}", width_str, dst.name(), op_str, dst.name(), src_str)
+            },
+
+            Endian { dst, kind } => {
+                let kind_str = match kind {
+                    EndianKind::Be16 => "be16",
+                    EndianKind::Be32 => "be32",
+                    EndianKind::Be64 => "be64",
+                };
+                write!(f, "{} = endian_{}", dst.name(), kind_str)
             },
 
             If { width, left, op, right, target } => {

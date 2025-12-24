@@ -1,6 +1,6 @@
 // src/kernel_semantics.rs
 
-use crate::ast::{AluOp, CmpOp, Instr, Operand, Width};
+use crate::ast::{AluOp, CmpOp, Instr, Operand, Width, EndianKind};
 use crate::dbm::{Dbm, INF};
 use crate::domain::VAR_ENV;
 use crate::exec::ExecContext;
@@ -78,9 +78,12 @@ pub fn transfer_one_kernel(
 ) -> Vec<(usize, Dbm)> {
     match instr {
         Instr::MovArg0 { dst } => transfer_mov_arg0(ctx, pc, *dst, pre),
-        Instr::Alu { op, dst, src, width } => transfer_alu(ctx, pc, *op, *width, *dst, *src, pre),
+        Instr::Alu { op, dst, src, width } => 
+            transfer_alu(ctx, pc, *op, *width, *dst, *src, pre),
+        Instr::Endian { dst, kind } => 
+            transfer_endian(ctx, pc, *dst, *kind, pre),
         Instr::If { width, left, op, right, target } => 
-        transfer_if(ctx, pc, *width, *left, *op, *right, *target, pre),
+            transfer_if(ctx, pc, *width, *left, *op, *right, *target, pre),
         Instr::Jmp { target } => vec![(*target, pre.clone())],
         Instr::Load { dst, .. } => transfer_load(pc, *dst, pre),
         Instr::Store { .. } => vec![(pc + 1, pre.clone())],
@@ -114,10 +117,46 @@ fn transfer_alu(
         AluOp::Mov => transfer_mov(ctx, pc, width, dst, src, pre),
         AluOp::Add => transfer_add(ctx, pc, dst, src, pre),
         AluOp::And => transfer_and(ctx, pc, width, dst, src, pre),
+        AluOp::Shr => transfer_shr(ctx, pc, width, dst, src, pre),
+        AluOp::Shl => transfer_shl(pc, dst, pre),
 
         // MVP: conservative for the rest
         AluOp::Sub | AluOp::Or | AluOp::Xor => transfer_forget_dst(pc, dst, pre),
     }
+}
+
+fn transfer_shr(ctx: &ExecContext, pc: usize, width: Width, dst: crate::domain::Var, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
+    let mut d = pre.clone();
+    let x = VAR_ENV.index(dst);
+    let z = VAR_ENV.index(ctx.zero);
+
+    forget_var_by_index(&mut d, x);
+
+    if let Operand::Imm(k) = src {
+        let bits = if width == Width::W32 { 32u32 } else { 64u32 };
+        let k = (k as u32).min(bits);
+
+        // 0 <= dst
+        add_edge_and_saturate(&mut d, z, x, 0);
+
+        if k < bits {
+            let ub: i64 = ((1u128 << (bits - k)) - 1) as i64;
+            add_edge_and_saturate(&mut d, x, z, ub);
+        } else {
+            // shift by >= bits => 0
+            add_edge_and_saturate(&mut d, x, z, 0);
+            add_edge_and_saturate(&mut d, z, x, 0);
+        }
+    }
+
+    if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
+}
+
+fn transfer_shl(pc: usize, dst: crate::domain::Var, pre: &Dbm) -> Vec<(usize, Dbm)> {
+    let mut d = pre.clone();
+    let x = VAR_ENV.index(dst);
+    forget_var_by_index(&mut d, x);
+    if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
 }
 
 fn transfer_mov(ctx: &ExecContext, pc: usize, width: Width, dst: crate::domain::Var, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
@@ -165,6 +204,44 @@ fn transfer_add(ctx: &ExecContext, pc: usize, dst: crate::domain::Var, src: Oper
     match src {
         Operand::Imm(imm) => transfer_add_imm(pc, dst, imm, pre),
         Operand::Reg(r) => transfer_add_reg_mvp(ctx, pc, dst, r, pre),
+    }
+}
+
+fn transfer_endian(
+    ctx: &ExecContext,
+    pc: usize,
+    dst: crate::domain::Var,
+    kind: EndianKind,
+    pre: &Dbm,
+) -> Vec<(usize, Dbm)> {
+    let mut d = pre.clone();
+    let x = VAR_ENV.index(dst);
+    let z = VAR_ENV.index(ctx.zero);
+
+    // Forget old value of dst.
+    forget_var_by_index(&mut d, x);
+
+    match kind {
+        EndianKind::Be16 => {
+            // 0 <= dst <= 0xffff
+            add_edge_and_saturate(&mut d, x, z, 0x0000_ffff);
+            add_edge_and_saturate(&mut d, z, x, 0);
+        }
+        EndianKind::Be32 => {
+            // 0 <= dst <= 0xffff_ffff
+            add_edge_and_saturate(&mut d, x, z, 0xffff_ffff);
+            add_edge_and_saturate(&mut d, z, x, 0);
+        }
+        EndianKind::Be64 => {
+            // Byteswap64 doesn't give a useful range; leave dst unconstrained
+            // beyond the forget().
+        }
+    }
+
+    if inconsistent(&d) {
+        vec![]
+    } else {
+        vec![(pc + 1, d)]
     }
 }
 
@@ -294,7 +371,7 @@ fn transfer_if(
         }
 
         (CmpOp::Ne, Operand::Imm(imm)) => {
-            // then: left != imm (no refinement)
+            // then: left != imm  (DBM can't express disequality => no refinement)
             out.push((target, pre.clone()));
 
             // else: left == imm
