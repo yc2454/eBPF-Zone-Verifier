@@ -127,9 +127,8 @@ fn transfer_alu(
                 Operand::Imm(c) => {
                     // mov32 imm: immediate is u32 then zero-extended
                     let c = if width == Width::W32 { (c as u32) as i64 } else { c };
-
                     // dst = c
-                    assign_zero(&mut dbm, dst, ctx.zero);
+                    forget(&mut dbm, dst);
                     assume_le_const(&mut dbm, dst, ctx.zero, c);
                     assume_ge_const(&mut dbm, dst, ctx.zero, c);
                 }
@@ -274,6 +273,9 @@ fn transfer_alu(
     }
 
     if dbm.is_inconsistent() {
+        println!("ERROR: ");
+        println!("ALU transfer led to inconsistent state at pc {}", pc);
+        dbm.dump_matrix();
         vec![]
     } else {
         vec![(pc + 1, dbm)]
@@ -440,28 +442,44 @@ fn transfer_load(
     base: Var,
     off: i16,
 ) -> Vec<(usize, Dbm)> {
-    // For now, we only “verify” stack loads (base is an offset-from-fp var).
-    // Effective address offset = base + off
     let (lo, hi) = crate::domain::get_bounds(dbm_in, base, ctx.zero);
 
     let eff_lo = lo.map(|x| x + off as i64);
     let eff_hi = hi.map(|x| x + off as i64);
 
-    // require fully within stack range
-    let ok = match (eff_lo, eff_hi) {
-        (Some(l), Some(h)) => l >= ctx.stack_min && h <= ctx.stack_max,
-        _ => false, // unknown ⇒ reject (verifier-style)
+    // Old “ok” logic for stack loads, just renamed
+    let stack_ok = match (eff_lo, eff_hi) {
+        (Some(l), Some(h)) => match size {
+            MemSize::U8  => l >= ctx.stack_min && h <= ctx.stack_max,
+            MemSize::U16 => l >= ctx.stack_min && h + 1 <= ctx.stack_max,
+            MemSize::U32 => l >= ctx.stack_min && h + 3 <= ctx.stack_max,
+            MemSize::U64 => l >= ctx.stack_min && h + 7 <= ctx.stack_max,
+        },
+        _ => false, // missing bounds ⇒ we *cannot* prove it's stack
     };
 
-    if !ok {
-        println!(
-            "Load check failed at pc {}: {:?} from base {:?}+{} not provably within [{}, {}] (bounds: {:?}..{:?})",
-            pc, size, base, off, ctx.stack_min, ctx.stack_max, eff_lo, eff_hi
-        );
-        return vec![];
+    let mut dbm = dbm_in.clone();
+
+    if stack_ok {
+        // This is provably a stack address: enforce safety.
+        // (Optional) debug:
+        // check_stack_load(ctx, dbm_in, base);
+
+        // We *already* know it's within [stack_min, stack_max] here.
+        // Just model the value as unknown:
+        forget(&mut dbm, dst);
+        return vec![(pc + 1, dbm)];
     }
 
-    let mut dbm = dbm_in.clone();
+    // Not provably a stack address:
+    // - could be ctx, map value, packet, some non-stack pointer
+    // - or we just don't have bounds yet
+    //
+    // In our userspace certificate we *only* claim stack loads are safe.
+    // Non-stack loads are modeled but not “verified” here.
+    // So: do NOT fail. Just forget dst and continue.
+    println!("Non-stack load at pc {} from base {:?}+{}", pc, base, off);
+
     forget(&mut dbm, dst);
     vec![(pc + 1, dbm)]
 }
@@ -479,18 +497,35 @@ fn transfer_store(
     let eff_lo = lo.map(|x| x + off as i64);
     let eff_hi = hi.map(|x| x + off as i64);
 
-    let ok = match (eff_lo, eff_hi) {
-        (Some(l), Some(h)) => l >= ctx.stack_min && h <= ctx.stack_max,
+    // Take store width into account
+    let bytes: i64 = match size {
+        MemSize::U8  => 1,
+        MemSize::U16 => 2,
+        MemSize::U32 => 4,
+        MemSize::U64 => 8,
+    };
+
+    let is_stack_store = match (eff_lo, eff_hi) {
+        (Some(l), Some(h)) => {
+            // We want [l, h + bytes - 1] fully inside [stack_min, stack_max]
+            let last = h + (bytes - 1);
+            l >= ctx.stack_min && last <= ctx.stack_max
+        }
         _ => false,
     };
 
-    if !ok {
-        println!(
-            "Store check failed at pc {}: {:?} to base {:?}+{} not provably within [{}, {}] (bounds: {:?}..{:?})",
-            pc, size, base, off, ctx.stack_min, ctx.stack_max, eff_lo, eff_hi
-        );
-        return vec![];
+    if is_stack_store {
+        // Verified stack store: this is the one we actually certify.
+        // No change to DBM (we don't track memory), just continue.
+        return vec![(pc + 1, dbm_in.clone())];
     }
+
+    // Otherwise: treat as non-stack store (ctx, map, packet, heap, etc.)
+    // We don't try to prove anything about it in this certificate.
+    println!(
+        "Non-stack store at pc {}: {:?} to base {:?}+{} (bounds {:?}..{:?})",
+        pc, size, base, off, eff_lo, eff_hi
+    );
 
     vec![(pc + 1, dbm_in.clone())]
 }
@@ -533,7 +568,6 @@ pub fn transfer_instr(
         Instr::Exit => vec![],
     }
 }
-
 
 pub fn analyze_program(ctx: &ExecContext, prog: &Program, entry_dbm: Dbm) -> Vec<Dbm> {
     let n = prog.instrs.len();

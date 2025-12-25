@@ -100,6 +100,7 @@ impl Dbm {
     pub fn is_inconsistent(&self) -> bool {
         for i in 0..self.num_vars() {
             if self.data[i][i] < 0 {
+                println!("Inconsistency detected at var {}", VAR_ENV.var_of_index(i).name());
                 return true;
             }
         }

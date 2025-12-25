@@ -125,28 +125,42 @@ impl fmt::Display for Instr {
 
             Alu { width, op, dst, src } => {
                 let op_str = match op {
-                    AluOp::Add => "+",
-                    AluOp::Sub => "-",
-                    AluOp::And => "&",
-                    AluOp::Or  => "|",
-                    AluOp::Xor => "^",
-                    AluOp::Mov => "=",
-                    AluOp::Shl => "<<",
-                    AluOp::Shr => ">>",
+                    AluOp::Add  => "+",
+                    AluOp::Sub  => "-",
+                    AluOp::And  => "&",
+                    AluOp::Or   => "|",
+                    AluOp::Xor  => "^",
+                    AluOp::Mov  => "=",
+                    AluOp::Shl  => "<<",
+                    AluOp::Shr  => ">>",
                     AluOp::Arsh => "s>>",
-                    AluOp::Mul => "*",
-                    AluOp::Mod => "%",
+                    AluOp::Mul  => "*",
+                    AluOp::Mod  => "%",
                 };
+
                 let src_str = match src {
                     Operand::Reg(r) => r.name().to_string(),
                     Operand::Imm(i) => format!("{}", i),
                 };
-                let width_str = match width {
-                    Width::W32 => "w",
-                    Width::W64 => "r",
+
+                // dst.name() is "r0", "r1", ...
+                let base = dst.name();         // e.g. "r1"
+                let idx  = &base[1..];         // e.g. "1"
+
+                // LHS uses width: "w1" or "r1"
+                let lhs = match width {
+                    Width::W32 => format!("w{}", idx),
+                    Width::W64 => format!("r{}", idx),
                 };
-                write!(f, "{}{} {} {} {}", width_str, dst.name(), op_str, dst.name(), src_str)
-            },
+
+                // MOV is special: just `w1 = r6` or `r3 = 5`
+                if let AluOp::Mov = op {
+                    return write!(f, "{} = {}", lhs, src_str);
+                }
+
+                // everything else: `w1 = r1 + 3`
+                write!(f, "{} = {} {} {}", lhs, dst.name(), op_str, src_str)
+            }
 
             Endian { dst, kind } => {
                 let kind_str = match kind {

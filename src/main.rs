@@ -14,7 +14,7 @@ mod elf_loader;
 
 use crate::ast::Program;
 use crate::dbm::Dbm;
-use crate::domain::{Var, VAR_ENV};
+use crate::domain::{Var, VAR_ENV, assign_zero};
 use crate::exec::{analyze_program, ExecContext};
 
 fn usage() {
@@ -77,6 +77,19 @@ fn load_program_from_elf(path: &str, section: &str) -> Program {
     }
 }
 
+
+fn make_entry_state(ctx: &ExecContext) -> Dbm {
+    let mut dbm = Dbm::new(VAR_ENV.len());
+
+    // zero variable is always 0
+    // (DBM constructor usually sets all diagonals to 0, so this is already ok)
+
+    // r10 starts as “offset 0 from fp”
+    assign_zero(&mut dbm, ctx.r10, ctx.zero);
+
+    dbm
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
@@ -102,7 +115,7 @@ fn main() {
     }
 
     let ctx = default_exec_ctx();
-    let entry = Dbm::new(VAR_ENV.len());
+    let entry = make_entry_state(&ctx);
 
     match cmd.as_str() {
         // old flow: programs.rs
