@@ -130,7 +130,6 @@ fn main() {
             }
         }
 
-        // NEW: ELF-backed commands
         "elf-analyze" => {
             if args.len() < 4 {
                 usage();
@@ -142,7 +141,6 @@ fn main() {
             println!("=== ELF analyze: file='{}', section='{}' ===", path, section);
             let prog = load_program_from_elf(path, section);
 
-            // You may later want to give this a synthetic name like "elf::<path>::<section>"
             let _cert = analyze_program(&ctx, &prog, entry);
         }
 

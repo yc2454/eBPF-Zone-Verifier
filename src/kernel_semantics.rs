@@ -142,7 +142,7 @@ fn transfer_alu(
 }
 
 fn transfer_sub(
-    ctx: &ExecContext,
+    _ctx: &ExecContext,
     pc: usize,
     _width: Width,
     dst: crate::domain::Var,
@@ -151,13 +151,12 @@ fn transfer_sub(
 ) -> Vec<(usize, Dbm)> {
     let mut d = pre.clone();
     let x = VAR_ENV.index(dst);
-    let z = VAR_ENV.index(ctx.zero);
 
     // Kill old info about dst
     forget_var_by_index(&mut d, x);
 
     match src {
-        Operand::Imm(c) => {
+        Operand::Imm(_c) => {
             // dst -= c  ==  dst += (-c)
             // If you already have a transfer_add helper, you could reuse it.
             // Here we just say nothing beyond "dst is some integer".

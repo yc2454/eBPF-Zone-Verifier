@@ -226,64 +226,10 @@ pub fn assume_eq_const(dbm: &mut Dbm, x: Var, zero: Var, c: i64) {
     dbm.close();
 }
 
-// x == y   encoded as: x - y <= 0 AND y - x <= 0
-pub fn assume_eq_var(dbm: &mut Dbm, x: Var, y: Var) {
-    dbm.add_constraint(x, y, 0);
-    dbm.add_constraint(y, x, 0);
-    dbm.close();
-}
-
-// dst == src + c  encoded as: dst - src <= c AND src - dst <= -c
-pub fn assume_eq_var_plus_const(dbm: &mut Dbm, dst: Var, src: Var, c: i64) {
-    dbm.add_constraint(dst, src, c);
-    dbm.add_constraint(src, dst, -c);
-    dbm.close();
-}
-
-pub fn assign_add_const(d: &mut Dbm, x: Var, y: Var, c: i64) {
-    d.forget_var(x);
-    d.add_constraint(x, y, c);     // x - y <= c
-    d.add_constraint(y, x, -c);    // y - x <= -c
-    d.close();
-}
-
 pub fn assume_less_than(d: &mut Dbm, x: Var, zero: Var, c: i64) {
     let bound = c - 1;
     d.add_constraint(x, zero, bound);
     d.close();
-}
-
-// x = y + z
-pub fn assign_add(dbm: &mut Dbm, dst: Var, y: Var, z: Var, zero: Var) {
-    // kill old facts about dst
-    dbm.forget_var(dst);
-
-    // 1) exact if one operand is constant
-    if let Some(c) = get_const(dbm, z, zero) {
-        // dst = y + c
-        assume_eq_var_plus_const(dbm, dst, y, c);
-        dbm.close();
-        return;
-    }
-    if let Some(c) = get_const(dbm, y, zero) {
-        // dst = z + c
-        assume_eq_var_plus_const(dbm, dst, z, c);
-        dbm.close();
-        return;
-    }
-
-    // 2) fallback: interval sum
-    let (ly, uy) = get_bounds(dbm, y, zero);
-    let (lz, uz) = get_bounds(dbm, z, zero);
-
-    if let (Some(ly), Some(lz)) = (ly, lz) {
-        assume_ge_const(dbm, dst, zero, ly + lz);
-    }
-    if let (Some(uy), Some(uz)) = (uy, uz) {
-        assume_le_const(dbm, dst, zero, uy + uz);
-    }
-
-    dbm.close();
 }
 
 pub fn add_imm(d: &mut Dbm, x: Var, c: i64) {
