@@ -3,7 +3,7 @@ use crate::Dbm;
 use crate::dbm::INF;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-pub enum Var {
+pub enum Reg {
     Zero,   // constant 0
     R0,
     R1,
@@ -19,39 +19,39 @@ pub enum Var {
     // Later you can add Scratch(u16) or MapVal(u16) etc.
 }
 
-impl Var {
+impl Reg {
     /// All "built-in" vars in index order used by DBM.
-    pub const ALL: [Var; 12] = [
-        Var::Zero,
-        Var::R0,
-        Var::R1,
-        Var::R2,
-        Var::R3,
-        Var::R4,
-        Var::R5,
-        Var::R6,
-        Var::R7,
-        Var::R8,
-        Var::R9,
-        Var::R10,
+    pub const ALL: [Reg; 12] = [
+        Reg::Zero,
+        Reg::R0,
+        Reg::R1,
+        Reg::R2,
+        Reg::R3,
+        Reg::R4,
+        Reg::R5,
+        Reg::R6,
+        Reg::R7,
+        Reg::R8,
+        Reg::R9,
+        Reg::R10,
     ];
 
     /// Index used inside the DBM matrix.
     #[inline]
     pub fn idx(self) -> usize {
         match self {
-            Var::Zero => 0,
-            Var::R0   => 1,
-            Var::R1   => 2,
-            Var::R2   => 3,
-            Var::R3   => 4,
-            Var::R4   => 5,
-            Var::R5   => 6,
-            Var::R6   => 7,
-            Var::R7   => 8,
-            Var::R8   => 9,
-            Var::R9   => 10,
-            Var::R10  => 11,
+            Reg::Zero => 0,
+            Reg::R0   => 1,
+            Reg::R1   => 2,
+            Reg::R2   => 3,
+            Reg::R3   => 4,
+            Reg::R4   => 5,
+            Reg::R5   => 6,
+            Reg::R6   => 7,
+            Reg::R7   => 8,
+            Reg::R8   => 9,
+            Reg::R9   => 10,
+            Reg::R10  => 11,
         }
     }
 
@@ -59,57 +59,57 @@ impl Var {
     #[inline]
     pub fn name(self) -> &'static str {
         match self {
-            Var::Zero => "0",
-            Var::R0   => "r0",
-            Var::R1   => "r1",
-            Var::R2   => "r2",
-            Var::R3   => "r3",
-            Var::R4   => "r4",
-            Var::R5   => "r5",
-            Var::R6   => "r6",
-            Var::R7   => "r7",
-            Var::R8   => "r8",
-            Var::R9   => "r9",
-            Var::R10  => "r10",
+            Reg::Zero => "0",
+            Reg::R0   => "r0",
+            Reg::R1   => "r1",
+            Reg::R2   => "r2",
+            Reg::R3   => "r3",
+            Reg::R4   => "r4",
+            Reg::R5   => "r5",
+            Reg::R6   => "r6",
+            Reg::R7   => "r7",
+            Reg::R8   => "r8",
+            Reg::R9   => "r9",
+            Reg::R10  => "r10",
         }
     }
 }
 
 /// Simple wrapper so you can pass around an env if you want to extend later.
 #[derive(Debug)]
-pub struct VarEnv;
+pub struct RegEnv;
 
-impl VarEnv {
+impl RegEnv {
     pub fn len(&self) -> usize {
-        Var::ALL.len()
+        Reg::ALL.len()
     }
 
-    pub fn name(&self, v: Var) -> &'static str {
+    pub fn name(&self, v: Reg) -> &'static str {
         v.name()
     }
 
-    pub fn all(&self) -> &'static [Var] {
-        &Var::ALL
+    pub fn all(&self) -> &'static [Reg] {
+        &Reg::ALL
     }
 
-    pub fn index(&self, v: Var) -> usize {
+    pub fn index(&self, v: Reg) -> usize {
         v.idx()
     }
 
-    pub fn var_of_index(&self, idx: usize) -> Var {
+    pub fn var_of_index(&self, idx: usize) -> Reg {
         self.all()[idx]
     }
 }
 
 /// Global env you can use anywhere without initializing in `main`.
-pub static VAR_ENV: VarEnv = VarEnv;
+pub static REG_ENV: RegEnv = RegEnv;
 
 /// --- analysis helpers ---
 /// 
 // Extract bounds if finite.
 // ub from: x - 0 <= ub
 // lb from: 0 - x <= -lb  => lb = - (0 - x bound)
-pub fn get_bounds(dbm: &Dbm, x: Var, zero: Var) -> (Option<i64>, Option<i64>) {
+pub fn get_bounds(dbm: &Dbm, x: Reg, zero: Reg) -> (Option<i64>, Option<i64>) {
     let ub = dbm.get(x, zero);
     let lb_neg = dbm.get(zero, x);
 
@@ -121,18 +121,18 @@ pub fn get_bounds(dbm: &Dbm, x: Var, zero: Var) -> (Option<i64>, Option<i64>) {
 
 // --- transfer functions ---
 // exec.rs wants a uniform name.
-pub fn forget(dbm: &mut Dbm, x: Var) {
+pub fn forget(dbm: &mut Dbm, x: Reg) {
     dbm.forget_var(x);
     dbm.close(); // keep the "always closed" invariant
 }
 
 // dst += imm
-pub fn assign_add_imm(dbm: &mut Dbm, dst: Var, imm: i64) {
+pub fn assign_add_imm(dbm: &mut Dbm, dst: Reg, imm: i64) {
     add_imm(dbm, dst, imm); // your add_imm already closes
 }
 
 // dst += src
-pub fn assign_add_reg(dbm: &mut Dbm, dst: Var, src: Var, zero: Var) {
+pub fn assign_add_reg(dbm: &mut Dbm, dst: Reg, src: Reg, zero: Reg) {
     // dst := dst + src  (sound interval-style update)
     let (ld, ud) = get_bounds(dbm, dst, zero);
     let (ls, us) = get_bounds(dbm, src, zero);
@@ -151,7 +151,7 @@ pub fn assign_add_reg(dbm: &mut Dbm, dst: Var, src: Var, zero: Var) {
 }
 
 // dst &= mask
-pub fn assign_and_mask(dbm: &mut Dbm, dst: Var, mask: i64, zero: Var) {
+pub fn assign_and_mask(dbm: &mut Dbm, dst: Reg, mask: i64, zero: Reg) {
     dbm.forget_var(dst);
 
     // 0 <= dst <= mask
@@ -162,30 +162,30 @@ pub fn assign_and_mask(dbm: &mut Dbm, dst: Var, mask: i64, zero: Var) {
 }
 
 // x <= y  encoded as: x - y <= 0
-pub fn assume_le_var(dbm: &mut Dbm, x: Var, y: Var) {
+pub fn assume_le_var(dbm: &mut Dbm, x: Reg, y: Reg) {
     dbm.add_constraint(x, y, 0);
     dbm.close();
 }
 
 // x >= y  encoded as: y - x <= 0
-pub fn assume_ge_var(dbm: &mut Dbm, x: Var, y: Var) {
+pub fn assume_ge_var(dbm: &mut Dbm, x: Reg, y: Reg) {
     dbm.add_constraint(y, x, 0);
     dbm.close();
 }
 
 // x > y  encoded as: y - x <= -1
-pub fn assume_gt_var(dbm: &mut Dbm, x: Var, y: Var) {
+pub fn assume_gt_var(dbm: &mut Dbm, x: Reg, y: Reg) {
     dbm.add_constraint(y, x, -1);
     dbm.close();
 }
 
 // x <= y + c  encoded as: x - y <= c
-pub fn assume_le_var_plus_const(dbm: &mut Dbm, x: Var, y: Var, c: i64) {
+pub fn assume_le_var_plus_const(dbm: &mut Dbm, x: Reg, y: Reg, c: i64) {
     dbm.add_constraint(x, y, c);
     dbm.close();
 }
 
-pub fn assign_zero(dbm: &mut Dbm, x: Var, zero: Var) {
+pub fn assign_zero(dbm: &mut Dbm, x: Reg, zero: Reg) {
     // Overwrite x: kill all old info about x
     dbm.forget_var(x);
 
@@ -196,7 +196,7 @@ pub fn assign_zero(dbm: &mut Dbm, x: Var, zero: Var) {
     dbm.close();
 }
 
-pub fn assign_eq(dbm: &mut Dbm, x: Var, y: Var) {
+pub fn assign_eq(dbm: &mut Dbm, x: Reg, y: Reg) {
     dbm.forget_var(x);
     dbm.add_constraint(x, y, 0);
     dbm.add_constraint(y, x, 0);
@@ -204,31 +204,31 @@ pub fn assign_eq(dbm: &mut Dbm, x: Var, y: Var) {
 }
 
 // x <= c   encoded as: x - 0 <= c
-pub fn assume_le_const(dbm: &mut Dbm, x: Var, zero: Var, c: i64) {
+pub fn assume_le_const(dbm: &mut Dbm, x: Reg, zero: Reg, c: i64) {
     dbm.add_constraint(x, zero, c);
     dbm.close();
 }
 
 // x >= c   encoded as: 0 - x <= -c
-pub fn assume_ge_const(dbm: &mut Dbm, x: Var, zero: Var, c: i64) {
+pub fn assume_ge_const(dbm: &mut Dbm, x: Reg, zero: Reg, c: i64) {
     dbm.add_constraint(zero, x, -c);
     dbm.close();
 }
 
 // x == c   encoded as: x <= c AND x >= c
-pub fn assume_eq_const(dbm: &mut Dbm, x: Var, zero: Var, c: i64) {
+pub fn assume_eq_const(dbm: &mut Dbm, x: Reg, zero: Reg, c: i64) {
     dbm.add_constraint(x, zero, c);
     dbm.add_constraint(zero, x, -c);
     dbm.close();
 }
 
-pub fn assume_less_than(d: &mut Dbm, x: Var, zero: Var, c: i64) {
+pub fn assume_less_than(d: &mut Dbm, x: Reg, zero: Reg, c: i64) {
     let bound = c - 1;
     d.add_constraint(x, zero, bound);
     d.close();
 }
 
-pub fn add_imm(d: &mut Dbm, x: Var, c: i64) {
+pub fn add_imm(d: &mut Dbm, x: Reg, c: i64) {
     let xi = x.idx();
     let n = d.num_vars();
 
@@ -254,7 +254,7 @@ pub fn add_imm(d: &mut Dbm, x: Var, c: i64) {
 }
 
 // dst *= imm
-pub fn assign_mul_imm(dbm: &mut Dbm, dst: Var, imm: i64, zero: Var) {
+pub fn assign_mul_imm(dbm: &mut Dbm, dst: Reg, imm: i64, zero: Reg) {
     // Handle easy special cases first.
     if imm == 0 {
         // dst = 0

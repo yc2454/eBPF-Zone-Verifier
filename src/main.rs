@@ -16,7 +16,7 @@ mod batch;
 
 use crate::ast::Program;
 use crate::dbm::Dbm;
-use crate::domain::{Var, VAR_ENV, assign_zero};
+use crate::domain::{Reg, REG_ENV, assign_zero};
 use crate::exec::{analyze_program, ExecContext};
 
 fn usage() {
@@ -42,8 +42,8 @@ fn get_program(name: &str) -> Program {
 /// Common execution context for all runs.
 fn default_exec_ctx() -> ExecContext {
     ExecContext {
-        zero: Var::Zero,
-        r10: Var::R10,
+        zero: Reg::Zero,
+        r10: Reg::R10,
         stack_min: -512,
         stack_max: -1,
     }
@@ -81,7 +81,7 @@ fn load_program_from_elf(path: &str, section: &str) -> Program {
 
 
 fn make_entry_state(ctx: &ExecContext) -> Dbm {
-    let mut dbm = Dbm::new(VAR_ENV.len());
+    let mut dbm = Dbm::new(REG_ENV.len());
 
     // zero variable is always 0
     // (DBM constructor usually sets all diagonals to 0, so this is already ok)

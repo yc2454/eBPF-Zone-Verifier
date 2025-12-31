@@ -2,7 +2,7 @@ use crate::ast::Program;
 use crate::dbm::Dbm;
 use crate::exec::ExecContext;
 use crate::kernel_semantics;
-use crate::domain::{Var, VAR_ENV};
+use crate::domain::{Reg, REG_ENV};
 use crate::utils::clamp_upper_bound;
 
 pub struct CheckError {
@@ -21,8 +21,8 @@ impl CheckError {
 pub struct InclusionFailure {
     pub post: i64,
     pub cert: i64,
-    pub xi: Var,
-    pub xj: Var,
+    pub xi: Reg,
+    pub xj: Reg,
 }
 
 pub fn check_included(post: &Dbm, cert: &Dbm) -> Result<(), InclusionFailure> {
@@ -32,8 +32,8 @@ pub fn check_included(post: &Dbm, cert: &Dbm) -> Result<(), InclusionFailure> {
             let post_v = clamp_upper_bound(post.raw(i, j));
             let cert_v = clamp_upper_bound(cert.raw(i, j));
             if post_v > cert_v {
-                let xi = VAR_ENV.var_of_index(i);
-                let xj = VAR_ENV.var_of_index(j);
+                let xi = REG_ENV.var_of_index(i);
+                let xj = REG_ENV.var_of_index(j);
                 return Err(InclusionFailure { post: post_v, cert: cert_v, xi, xj });
             }
         }
@@ -104,8 +104,8 @@ pub fn check_certificate_against_kernel_sim(
 
 pub fn format_inclusion_failure(f: &InclusionFailure) -> String {
     // Interpreting DBM entry: xi - xj <= c
-    let xi_name = VAR_ENV.name(f.xi);
-    let xj_name = VAR_ENV.name(f.xj);
+    let xi_name = REG_ENV.name(f.xi);
+    let xj_name = REG_ENV.name(f.xj);
 
     format!(
         "violated constraint at entry ({}, {}): {} - {} <= {}\n  post has {}\n  cert has {}",

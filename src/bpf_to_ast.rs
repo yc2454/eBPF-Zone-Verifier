@@ -1,7 +1,7 @@
 // src/bpf_to_ast.rs
 use crate::ast::{AluOp, CmpOp, Instr, Operand, Program, Width, MemSize, EndianKind};
 use crate::bpf_insn::RawBpfInsn;
-use crate::domain::Var;
+use crate::domain::Reg;
 
 #[derive(Debug)]
 pub struct LowerError {
@@ -10,19 +10,19 @@ pub struct LowerError {
     pub msg: String,
 }
 
-fn reg_to_var(r: u8) -> Var {
+fn reg_to_var(r: u8) -> Reg {
     match r {
-        0 => Var::R0,
-        1 => Var::R1,
-        2 => Var::R2,
-        3 => Var::R3,
-        4 => Var::R4,
-        5 => Var::R5,
-        6 => Var::R6,
-        7 => Var::R7,
-        8 => Var::R8,
-        9 => Var::R9,
-        10 => Var::R10,
+        0 => Reg::R0,
+        1 => Reg::R1,
+        2 => Reg::R2,
+        3 => Reg::R3,
+        4 => Reg::R4,
+        5 => Reg::R5,
+        6 => Reg::R6,
+        7 => Reg::R7,
+        8 => Reg::R8,
+        9 => Reg::R9,
+        10 => Reg::R10,
         _ => panic!("invalid BPF register {}", r),
     }
 }
@@ -96,8 +96,8 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             instrs.push(Instr::Alu {
                 width: Width::W64,
                 op: AluOp::Mov,
-                dst: Var::R0,
-                src: Operand::Reg(Var::R0),
+                dst: Reg::R0,
+                src: Operand::Reg(Reg::R0),
             });
 
             pc += 2;

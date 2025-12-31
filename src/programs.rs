@@ -1,7 +1,7 @@
 // src/programs.rs
 
 use crate::ast::{AluOp, CmpOp, Instr, MemSize, Operand, Program, Width};
-use crate::domain::Var;
+use crate::domain::Reg;
 
 pub struct NamedProgram {
     pub name: &'static str,
@@ -30,42 +30,42 @@ pub fn get(name: &str) -> Option<Program> {
 // ---- Tiny “macros” (as helper constructors) ---------------------------------
 
 #[inline]
-fn mov_r(dst: Var, src: Var) -> Instr {
+fn mov_r(dst: Reg, src: Reg) -> Instr {
     Instr::Alu { width: Width::W64, op: AluOp::Mov, dst, src: Operand::Reg(src) }
 }
 
 #[inline]
-fn mov_i(dst: Var, imm: i64) -> Instr {
+fn mov_i(dst: Reg, imm: i64) -> Instr {
     Instr::Alu { width: Width::W64, op: AluOp::Mov, dst, src: Operand::Imm(imm) }
 }
 
 #[inline]
-fn add_r(dst: Var, src: Var) -> Instr {
+fn add_r(dst: Reg, src: Reg) -> Instr {
     Instr::Alu { width: Width::W64, op: AluOp::Add, dst, src: Operand::Reg(src) }
 }
 
 #[inline]
-fn add_i(dst: Var, imm: i64) -> Instr {
+fn add_i(dst: Reg, imm: i64) -> Instr {
     Instr::Alu { width: Width::W64, op: AluOp::Add, dst, src: Operand::Imm(imm) }
 }
 
 #[inline]
-fn and_i(dst: Var, imm: i64) -> Instr {
+fn and_i(dst: Reg, imm: i64) -> Instr {
     Instr::Alu { width: Width::W64, op: AluOp::And, dst, src: Operand::Imm(imm) }
 }
 
 #[inline]
-fn if_uge_i(left: Var, imm: i64, target: usize) -> Instr {
+fn if_uge_i(left: Reg, imm: i64, target: usize) -> Instr {
     Instr::If { left, width: Width::W64, op: CmpOp::UGe, right: Operand::Imm(imm), target }
 }
 
 #[inline]
-fn if_uge_r(left: Var, right: Var, target: usize) -> Instr {
+fn if_uge_r(left: Reg, right: Reg, target: usize) -> Instr {
     Instr::If { left, width: Width::W64, op: CmpOp::UGe, right: Operand::Reg(right), target }
 }
 
 #[inline]
-fn load_u8(dst: Var, base: Var, off: i16) -> Instr {
+fn load_u8(dst: Reg, base: Reg, off: i16) -> Instr {
     Instr::Load { size: MemSize::U8, dst, base, off }
 }
 
@@ -87,13 +87,13 @@ fn load_u8(dst: Var, base: Var, off: i16) -> Instr {
 fn masked_copy_index() -> Program {
     Program {
         instrs: vec![
-            Instr::MovArg0 { dst: Var::R0 },
-            and_i(Var::R0, 31),
-            mov_r(Var::R1, Var::R0),
-            mov_r(Var::R2, Var::R10),
-            add_i(Var::R2, -32),
-            add_r(Var::R2, Var::R1),
-            load_u8(Var::R0, Var::R2, 0),
+            Instr::MovArg0 { dst: Reg::R0 },
+            and_i(Reg::R0, 31),
+            mov_r(Reg::R1, Reg::R0),
+            mov_r(Reg::R2, Reg::R10),
+            add_i(Reg::R2, -32),
+            add_r(Reg::R2, Reg::R1),
+            load_u8(Reg::R0, Reg::R2, 0),
             Instr::Exit,
         ],
     }
@@ -113,16 +113,16 @@ fn masked_copy_index() -> Program {
 // Bound is enforced via r1 but used via r0.
 // Requires preserving r1 == r0 across the branch.
 fn canonical_relational_guard() -> Program {
-    let r0 = Var::R0;
-    let r1 = Var::R1;
-    let r2 = Var::R2;
+    let r0 = Reg::R0;
+    let r1 = Reg::R1;
+    let r2 = Reg::R2;
 
     Program {
         instrs: vec![
             Instr::MovArg0 { dst: r0 },
             mov_r(r1, r0),
             if_uge_i(r1, 16, 7), // if r1 >= 16 goto pc 7 (Exit)
-            mov_r(r2, Var::R10),
+            mov_r(r2, Reg::R10),
             add_i(r2, -16),
             add_r(r2, r0),
             load_u8(r0, r2, 0),
@@ -143,13 +143,13 @@ fn canonical_relational_guard() -> Program {
 // r0 is unconstrained; stack offset unbounded.
 // Genuinely unsafe.
 fn unsafe_no_constraints() -> Program {
-    let r0 = Var::R0;
-    let r2 = Var::R2;
+    let r0 = Reg::R0;
+    let r2 = Reg::R2;
 
     Program {
         instrs: vec![
             Instr::MovArg0 { dst: r0 },
-            mov_r(r2, Var::R10),
+            mov_r(r2, Reg::R10),
             add_i(r2, -16),
             add_r(r2, r0),
             load_u8(r0, r2, 0),
@@ -171,14 +171,14 @@ fn unsafe_no_constraints() -> Program {
 // Interval-friendly example.
 // Kernel verifier typically accepts this.
 fn safe_via_mask_small_offset() -> Program {
-    let r0 = Var::R0;
-    let r2 = Var::R2;
+    let r0 = Reg::R0;
+    let r2 = Reg::R2;
 
     Program {
         instrs: vec![
             Instr::MovArg0 { dst: r0 },
             and_i(r0, 7),
-            mov_r(r2, Var::R10),
+            mov_r(r2, Reg::R10),
             add_i(r2, -8),
             add_r(r2, r0),
             load_u8(r0, r2, 0),
@@ -205,9 +205,9 @@ fn safe_via_mask_small_offset() -> Program {
 //
 // Each path is safe; join requires reasoning across branches.
 fn merge_two_offsets_join() -> Program {
-    let z  = Var::Zero;
-    let r0 = Var::R0;
-    let r2 = Var::R2;
+    let z  = Reg::Zero;
+    let r0 = Reg::R0;
+    let r2 = Reg::R2;
 
     Program {
         instrs: vec![
@@ -215,12 +215,12 @@ fn merge_two_offsets_join() -> Program {
             and_i(r0, 1),
             if_uge_i(r0, 1, 6), // if r0 >= 1 goto pc 6
 
-            mov_r(r2, Var::R10),
+            mov_r(r2, Reg::R10),
             add_i(r2, -16),
             // unconditional jump via (0 >= 0) to pc 8
             if_uge_i(z, 0, 8),
 
-            mov_r(r2, Var::R10),
+            mov_r(r2, Reg::R10),
             add_i(r2, -32),
 
             add_r(r2, r0),
@@ -243,10 +243,10 @@ fn merge_two_offsets_join() -> Program {
 // No memory access.
 // Demonstrates rx = ry + rz transfer semantics.
 fn addreg_const_offset_demo() -> Program {
-    let z  = Var::Zero;
-    let r0 = Var::R0;
-    let r1 = Var::R1;
-    let r2 = Var::R2;
+    let z  = Reg::Zero;
+    let r0 = Reg::R0;
+    let r1 = Reg::R1;
+    let r2 = Reg::R2;
 
     Program {
         instrs: vec![

@@ -1,10 +1,10 @@
 // src/ast.rs
 use std::fmt;
 
-use crate::domain::Var;
+use crate::domain::Reg;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Operand {
-    Reg(Var),
+    Reg(Reg),
     Imm(i64),
 }
 
@@ -55,27 +55,27 @@ pub enum MemSize {
 #[derive(Debug, Clone, Copy)]
 pub enum Instr {
     /// rX = arg0 (your synthetic entry source)
-    MovArg0 { dst: Var },
+    MovArg0 { dst: Reg },
 
     /// dst = ALU(dst, src/imm)   (includes MOV as AluOp::Mov)
     /// Width matters for BPF (wX vs rX). For now you can keep it and ignore in zones.
     Alu {
         width: Width,
         op: AluOp,
-        dst: Var,
+        dst: Reg,
         src: Operand,
     },
 
     /// Endian conversion on a register (BPF_END)
     Endian {
-        dst: Var,
+        dst: Reg,
         kind: EndianKind,
     },
 
     /// if left (op) right goto target; else fallthrough
     If {
         width: Width,
-        left: Var,
+        left: Reg,
         op: CmpOp,
         right: Operand,
         target: usize,
@@ -90,17 +90,17 @@ pub enum Instr {
     /// For now: treat as "unknown scalar into dst" unless base==r10 and you want stack checks.
     Load {
         size: MemSize,
-        dst: Var,
-        base: Var,
+        dst: Reg,
+        base: Reg,
         off: i16,
     },
 
     /// *(size *)(base + off) = src
     Store {
         size: MemSize,
-        base: Var,
+        base: Reg,
         off: i16,
-        src: Var,
+        src: Reg,
     },
 
     Call {

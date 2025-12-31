@@ -1,5 +1,5 @@
 // src/dbm.rs
-use crate::domain::{Var, VAR_ENV};
+use crate::domain::{Reg, REG_ENV};
 use crate::utils::{clamp_upper_bound, clamped_add};
 
 pub const INF: i64 = i64::MAX / 4;
@@ -45,16 +45,16 @@ impl Dbm {
 
     // Var-level helpers
     #[inline]
-    pub fn get(&self, i: Var, j: Var) -> i64 {
+    pub fn get(&self, i: Reg, j: Reg) -> i64 {
         self.data[i.idx()][j.idx()]
     }
 
     #[inline]
-    pub fn set(&mut self, i: Var, j: Var, val: i64) {
+    pub fn set(&mut self, i: Reg, j: Reg, val: i64) {
         self.data[i.idx()][j.idx()] = val;
     }
 
-    pub fn add_constraint(&mut self, i: Var, j: Var, c: i64) {
+    pub fn add_constraint(&mut self, i: Reg, j: Reg, c: i64) {
         // Constraint: i - j <= c
         let c = clamp_upper_bound(c);
         let old = self.get(i, j);
@@ -68,7 +68,7 @@ impl Dbm {
         }
     }
 
-    pub fn forget_var(&mut self, x: Var) {
+    pub fn forget_var(&mut self, x: Reg) {
         let i = x.idx();
         let n = self.num_vars();
 
@@ -117,14 +117,14 @@ impl Dbm {
     pub fn is_inconsistent(&self) -> bool {
         for i in 0..self.num_vars() {
             if self.data[i][i] < 0 {
-                println!("Inconsistency detected at var {}", VAR_ENV.var_of_index(i).name());
+                println!("Inconsistency detected at var {}", REG_ENV.var_of_index(i).name());
                 return true;
             }
         }
         false
     }
 
-    pub fn var_bounds(&self, x: Var, zero: Var) -> Option<(i64, i64)> {
+    pub fn var_bounds(&self, x: Reg, zero: Reg) -> Option<(i64, i64)> {
         let ub = self.get(x, zero);
         let lb_c = self.get(zero, x);
 
@@ -144,7 +144,7 @@ impl Dbm {
     }
 
     pub fn dump_matrix(&self) {
-        let vars = VAR_ENV.all();
+        let vars = REG_ENV.all();
         let n = self.num_vars();
 
         // Sanity: only print as many vars as the matrix actually has

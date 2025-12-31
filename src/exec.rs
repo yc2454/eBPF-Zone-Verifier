@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use crate::ast::{AluOp, CmpOp, Instr, MemSize, Operand, Program, Width, EndianKind};
 use crate::dbm::Dbm;
 use crate::domain::{
-    Var, VAR_ENV,
+    Reg, REG_ENV,
     // --- assignment / forget ---
     assign_eq, assign_zero,
     assign_add_imm, assign_add_reg,
@@ -19,22 +19,22 @@ use crate::stats::{AnalysisStats};
 
 #[derive(Clone, Copy)]
 pub struct ExecContext {
-    pub zero: Var,
-    pub r10: Var,
+    pub zero: Reg,
+    pub r10: Reg,
     pub stack_min: i64,
     pub stack_max: i64,
 }
 
-fn proven_u32_range(dbm: &Dbm, v: Var, zero: Var) -> bool {
+fn proven_u32_range(dbm: &Dbm, v: Reg, zero: Reg) -> bool {
     // requires: (v - 0) <= 0xffff_ffff  AND  (0 - v) <= 0
-    let vi = VAR_ENV.index(v);
-    let zi = VAR_ENV.index(zero);
+    let vi = REG_ENV.index(v);
+    let zi = REG_ENV.index(zero);
     let ub = dbm.raw(vi, zi); // v - 0
     let lb = dbm.raw(zi, vi); // 0 - v  (<= 0 means v >= 0)
     ub <= 0xffff_ffff && lb <= 0
 }
 
-fn transfer_mov_arg0(dbm_in: &Dbm, pc: usize, dst: Var) -> Vec<(usize, Dbm)> {
+fn transfer_mov_arg0(dbm_in: &Dbm, pc: usize, dst: Reg) -> Vec<(usize, Dbm)> {
     let mut dbm = dbm_in.clone();
     forget(&mut dbm, dst);
     vec![(pc + 1, dbm)]
@@ -46,7 +46,7 @@ fn transfer_alu(
     pc: usize,
     width: Width,
     op: AluOp,
-    dst: Var,
+    dst: Reg,
     src: Operand,
     stats: &mut AnalysisStats,
 ) -> Vec<(usize, Dbm)> {
@@ -235,7 +235,7 @@ fn transfer_endian(
     ctx: &ExecContext,
     dbm_in: &Dbm,
     pc: usize,
-    dst: Var,
+    dst: Reg,
     kind: EndianKind,
 ) -> Vec<(usize, Dbm)> {
     let mut dbm = dbm_in.clone();
@@ -264,7 +264,7 @@ fn transfer_if(
     dbm_in: &Dbm,
     pc: usize,
     width: Width,
-    left: Var,
+    left: Reg,
     op: CmpOp,
     right: Operand,
     target: usize,
@@ -387,8 +387,8 @@ fn transfer_load(
     dbm_in: &Dbm,
     pc: usize,
     size: MemSize,
-    dst: Var,
-    base: Var,
+    dst: Reg,
+    base: Reg,
     off: i16,
     stats: &mut AnalysisStats,
 ) -> Vec<(usize, Dbm)> {
@@ -440,9 +440,9 @@ fn transfer_store(
     dbm_in: &Dbm,
     pc: usize,
     size: MemSize,
-    base: Var,
+    base: Reg,
     off: i16,
-    _src: Var,
+    _src: Reg,
     stats: &mut AnalysisStats,
 ) -> Vec<(usize, Dbm)> {
     let (lo, hi) = crate::domain::get_bounds(dbm_in, base, ctx.zero);
@@ -490,7 +490,7 @@ fn transfer_call(dbm_in: &Dbm, pc: usize, _helper: u32) -> Vec<(usize, Dbm)> {
     // - r0 is return value (clobbered)
     // - r1..r5 are argument regs (treat as clobbered)
     // - r6..r10 preserved (r10 is fp)
-    for v in [Var::R0, Var::R1, Var::R2, Var::R3, Var::R4, Var::R5] {
+    for v in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
         forget(&mut dbm, v);
     }
 
@@ -584,7 +584,7 @@ pub fn analyze_program(ctx: &ExecContext, prog: &Program, entry_dbm: Dbm, stats:
 
     states
         .into_iter()
-        .map(|opt| opt.unwrap_or_else(|| Dbm::new(VAR_ENV.len())))
+        .map(|opt| opt.unwrap_or_else(|| Dbm::new(REG_ENV.len())))
         .collect()
 }
 
@@ -599,13 +599,13 @@ pub fn analyze_program_for_file(
     let mut stats = AnalysisStats::default();
 
     let ctx = ExecContext {
-        zero: Var::Zero,
-        r10: Var::R10,
+        zero: Reg::Zero,
+        r10: Reg::R10,
         stack_min: -512,
         stack_max: -1,
     };
 
-    let mut entry = Dbm::new(VAR_ENV.len());
+    let mut entry = Dbm::new(REG_ENV.len());
     crate::domain::assign_zero(&mut entry, ctx.r10, ctx.zero);
 
     analyze_program(&ctx, &prog, entry, &mut stats);
