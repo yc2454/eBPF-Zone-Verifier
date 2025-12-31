@@ -5,17 +5,19 @@ use crate::ast::{AluOp, CmpOp, Instr, MemSize, Operand, Program, Width, EndianKi
 use crate::dbm::Dbm;
 use crate::domain::{
     Reg, REG_ENV,
-    // --- assignment / forget ---
+    // assignment / forget
     assign_eq, assign_zero,
     assign_add_imm, assign_add_reg,
     assign_and_mask, assign_mul_imm,
     forget,
-    // --- assume/guards ---
+    // assume / guards
     assume_ge_const, assume_le_const, assume_less_than, assume_eq_const,
     assume_ge_var, assume_le_var, assume_gt_var, assume_le_var_plus_const,
+    // new: register types
+    RegType, RegTypes, reg_to_index, join_reg_type,
 };
 use crate::utils::{dbm_equals, load_program_from_elf};
-use crate::stats::{AnalysisStats};
+use crate::stats::AnalysisStats;
 
 #[derive(Clone, Copy)]
 pub struct ExecContext {
@@ -25,6 +27,7 @@ pub struct ExecContext {
     pub stack_max: i64,
 }
 
+/// Is v provably in [0, 0xffffffff] as a 32-bit unsigned value?
 fn proven_u32_range(dbm: &Dbm, v: Reg, zero: Reg) -> bool {
     // requires: (v - 0) <= 0xffff_ffff  AND  (0 - v) <= 0
     let vi = REG_ENV.index(v);
@@ -178,7 +181,7 @@ fn transfer_alu(
             // require case-splitting on sign. MVP: sound but coarse — just forget.
             forget(&mut dbm, dst);
         }
-        
+
         AluOp::Mul => {
             match src {
                 Operand::Imm(c) => {
@@ -506,29 +509,139 @@ pub fn transfer_instr(
     stats: &mut AnalysisStats,
 ) -> Vec<(usize, Dbm)> {
     match instr {
-        Instr::MovArg0 { dst } => transfer_mov_arg0(dbm_in, pc, *dst),
-        Instr::Alu { width, op, dst, src } => 
+        Instr::MovArg0 { dst } =>
+            transfer_mov_arg0(dbm_in, pc, *dst),
+        Instr::Alu { width, op, dst, src } =>
             transfer_alu(ctx, dbm_in, pc, *width, *op, *dst, *src, stats),
-        Instr::Endian { dst, kind } => 
+        Instr::Endian { dst, kind } =>
             transfer_endian(ctx, dbm_in, pc, *dst, *kind),
-        Instr::If { width, left, op, right, target } => 
+        Instr::If { width, left, op, right, target } =>
             transfer_if(ctx, dbm_in, pc, *width, *left, *op, *right, *target),
-        Instr::Load { size, dst, base, off } => 
+        Instr::Load { size, dst, base, off } =>
             transfer_load(ctx, dbm_in, pc, *size, *dst, *base, *off, stats),
-        Instr::Store { size, base, off, src } => 
+        Instr::Store { size, base, off, src } =>
             transfer_store(ctx, dbm_in, pc, *size, *base, *off, *src, stats),
-        Instr::Call { helper } => transfer_call(dbm_in, pc, *helper),
-        Instr::Jmp { target } => vec![(*target, dbm_in.clone())],
-        Instr::Exit => vec![],
+        Instr::Call { helper } =>
+            transfer_call(dbm_in, pc, *helper),
+        Instr::Jmp { target } =>
+            vec![(*target, dbm_in.clone())],
+        Instr::Exit =>
+            vec![],
     }
 }
 
-pub fn analyze_program(ctx: &ExecContext, prog: &Program, entry_dbm: Dbm, stats: &mut AnalysisStats) -> Vec<Dbm> {
+/// Track register types (RegType) alongside DBM state.
+/// This mirrors the kernel's bpf_reg_type tracking conceptually.
+fn update_reg_types_for_instr(
+    _ctx: &ExecContext,
+    instr: &Instr,
+    types: &mut RegTypes,
+) {
+    use Instr::*;
+    use RegType::*;
+
+    match instr {
+        MovArg0 { dst } => {
+            if let Some(i) = reg_to_index(*dst) {
+                types[i] = ScalarValue;
+            }
+        }
+
+        Alu { op, dst, src, .. } => {
+            use crate::ast::AluOp;
+            match op {
+                AluOp::Mov => {
+                    match src {
+                        Operand::Reg(r) => {
+                            if let (Some(di), Some(si)) = (reg_to_index(*dst), reg_to_index(*r)) {
+                                types[di] = types[si];
+                            }
+                        }
+                        Operand::Imm(_) => {
+                            if let Some(di) = reg_to_index(*dst) {
+                                types[di] = ScalarValue;
+                            }
+                        }
+                    }
+                }
+                // All other ALU ops destroy pointer structure for now.
+                _ => {
+                    if let Some(di) = reg_to_index(*dst) {
+                        types[di] = ScalarValue;
+                    }
+                }
+            }
+        }
+
+        Endian { dst, .. } => {
+            if let Some(di) = reg_to_index(*dst) {
+                types[di] = ScalarValue;
+            }
+        }
+
+        If { .. } => {
+            // No direct effect on types.
+        }
+
+        Load { dst, .. } => {
+            // For now: loads always produce scalars unless we special-case helpers later.
+            if let Some(di) = reg_to_index(*dst) {
+                types[di] = ScalarValue;
+            }
+        }
+
+        Store { .. } => {
+            // Stores don't change register types.
+        }
+
+        Call { .. } => {
+            // Simple ABI model: r0..r5 clobbered as unknown, r6..r10 preserved.
+            for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                if let Some(i) = reg_to_index(r) {
+                    types[i] = Unknown;
+                }
+            }
+        }
+
+        Jmp { .. } | Exit => {
+            // No direct effect on types.
+        }
+    }
+}
+
+pub fn analyze_program(
+    ctx: &ExecContext,
+    prog: &Program,
+    entry_dbm: Dbm,
+    stats: &mut AnalysisStats,
+) -> Vec<Dbm> {
     let n = prog.instrs.len();
+
+    // Numeric state per PC
     let mut states: Vec<Option<Dbm>> = vec![None; n];
+    // Register-type state per PC
+    let mut type_states: Vec<Option<RegTypes>> = vec![None; n];
+
+    // Entry register types, loosely mirroring kernel:
+    let mut entry_types: RegTypes = [RegType::NotInit; 11];
+
+    // R1 is PTR_TO_CTX at entry
+    if let Some(i) = reg_to_index(Reg::R1) {
+        entry_types[i] = RegType::PtrToCtx;
+    }
+    // R10 is frame pointer / stack base
+    if let Some(i) = reg_to_index(ctx.r10) {
+        entry_types[i] = RegType::PtrToStack;
+    }
+    // R0 as scalar return value placeholder
+    if let Some(i) = reg_to_index(Reg::R0) {
+        entry_types[i] = RegType::ScalarValue;
+    }
+
     let mut worklist = VecDeque::new();
 
     states[0] = Some(entry_dbm);
+    type_states[0] = Some(entry_types);
     worklist.push_back(0);
 
     while let Some(pc) = worklist.pop_front() {
@@ -539,6 +652,7 @@ pub fn analyze_program(ctx: &ExecContext, prog: &Program, entry_dbm: Dbm, stats:
 
         let instr = &prog.instrs[pc];
         let in_dbm = states[pc].as_ref().unwrap();
+        let in_types = type_states[pc].expect("type state must exist when DBM state exists");
 
         println!("=== PC {} ===", pc);
         println!("Instr: {}", instr);
@@ -547,7 +661,7 @@ pub fn analyze_program(ctx: &ExecContext, prog: &Program, entry_dbm: Dbm, stats:
         println!("IN:");
         in_dbm.dump_matrix();
 
-        // 2) Compute successors *once* so we can both print and propagate
+        // 2) Numeric transfer
         let succs = transfer_instr(ctx, in_dbm, pc, instr, stats);
 
         if stats.abort {
@@ -561,22 +675,47 @@ pub fn analyze_program(ctx: &ExecContext, prog: &Program, entry_dbm: Dbm, stats:
             succ_dbm.dump_matrix();
         }
 
-        // 4) Dataflow propagation as before
+        // 4) Dataflow propagation: DBM + RegType
         for (succ_pc, succ_dbm) in succs {
             if succ_pc >= n {
                 continue;
             }
-            match &mut states[succ_pc] {
-                None => {
-                    states[succ_pc] = Some(succ_dbm);
+
+            // Compute edge types after this instruction starting from in_types.
+            let mut edge_types = in_types;
+            update_reg_types_for_instr(ctx, instr, &mut edge_types);
+
+            match (&mut states[succ_pc], &mut type_states[succ_pc]) {
+                (slot_dbm @ None, slot_types @ None) => {
+                    // First time reaching this pc
+                    *slot_dbm = Some(succ_dbm);
+                    *slot_types = Some(edge_types);
                     worklist.push_back(succ_pc);
                 }
-                Some(existing) => {
-                    let joined = existing.join(&succ_dbm);
-                    if !dbm_equals(existing, &joined) {
-                        *existing = joined;
+                (Some(existing_dbm), Some(existing_types)) => {
+                    let joined_dbm = existing_dbm.join(&succ_dbm);
+                    let dbm_changed = !dbm_equals(existing_dbm, &joined_dbm);
+                    *existing_dbm = joined_dbm;
+
+                    let mut merged_types = *existing_types;
+                    let mut types_changed = false;
+                    for i in 0..merged_types.len() {
+                        let before = merged_types[i];
+                        let after = join_reg_type(before, edge_types[i]);
+                        if after != before {
+                            types_changed = true;
+                            merged_types[i] = after;
+                        }
+                    }
+                    *existing_types = merged_types;
+
+                    if dbm_changed || types_changed {
                         worklist.push_back(succ_pc);
                     }
+                }
+                _ => {
+                    // Invariant: DBM and type state presence must match.
+                    panic!("Inconsistent state: DBM and type state presence differ at pc {}", succ_pc);
                 }
             }
         }
@@ -612,4 +751,3 @@ pub fn analyze_program_for_file(
 
     Ok(stats)
 }
-

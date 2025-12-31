@@ -75,6 +75,62 @@ impl Reg {
     }
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum RegType {
+    NotInit,        // NOT_INIT
+    ScalarValue,    // SCALAR_VALUE
+    PtrToCtx,       // PTR_TO_CTX
+    PtrToStack,     // PTR_TO_STACK
+    PtrToMapValue,  // PTR_TO_MAP_VALUE
+    PtrToMapKey,    // PTR_TO_MAP_KEY
+    PtrToPacket,    // PTR_TO_PACKET
+    PtrToPacketMeta,// PTR_TO_PACKET_META
+    PtrToPacketEnd, // PTR_TO_PACKET_END
+    PtrToMem,       // PTR_TO_MEM
+    Unknown,        // our "top" / fallback for now
+    // later: PtrToSocket, PtrToBtfId, PtrToBuf, etc.
+}
+
+impl Default for RegType {
+    fn default() -> Self {
+        RegType::NotInit
+    }
+}
+
+/// We track types for actual R0..R10; Reg::Zero is not a real reg.
+pub type RegTypes = [RegType; 11];
+
+pub fn reg_to_index(r: Reg) -> Option<usize> {
+    match r {
+        Reg::R0  => Some(0),
+        Reg::R1  => Some(1),
+        Reg::R2  => Some(2),
+        Reg::R3  => Some(3),
+        Reg::R4  => Some(4),
+        Reg::R5  => Some(5),
+        Reg::R6  => Some(6),
+        Reg::R7  => Some(7),
+        Reg::R8  => Some(8),
+        Reg::R9  => Some(9),
+        Reg::R10 => Some(10),
+        Reg::Zero => None,
+    }
+}
+
+pub fn join_reg_type(a: RegType, b: RegType) -> RegType {
+    use RegType::*;
+    if a == b { return a; }
+
+    match (a, b) {
+        (NotInit, t) | (t, NotInit) => t,
+        (Unknown, _t) | (_t, Unknown) => Unknown, // top
+        // Scalar vs pointer kind: for now go to Unknown (lossy but safe)
+        (ScalarValue, _) | (_, ScalarValue) => Unknown,
+        // Different pointer flavors: also Unknown for now
+        _ => Unknown,
+    }
+}
+
 /// Simple wrapper so you can pass around an env if you want to extend later.
 #[derive(Debug)]
 pub struct RegEnv;
