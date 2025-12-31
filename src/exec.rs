@@ -1,6 +1,5 @@
 // src/exec.rs
 use std::collections::VecDeque;
-use std::os::macos::raw::stat;
 
 use crate::ast::{AluOp, CmpOp, Instr, MemSize, Operand, Program, Width, EndianKind};
 use crate::dbm::Dbm;
@@ -16,7 +15,7 @@ use crate::domain::{
     assume_ge_var, assume_le_var, assume_gt_var, assume_le_var_plus_const,
 };
 use crate::utils::{dbm_equals, load_program_from_elf};
-use crate::stats::{self, AnalysisStats};
+use crate::stats::{AnalysisStats};
 
 #[derive(Clone, Copy)]
 pub struct ExecContext {
@@ -24,60 +23,6 @@ pub struct ExecContext {
     pub r10: Var,
     pub stack_min: i64,
     pub stack_max: i64,
-}
-
-fn check_stack_load(ctx: &ExecContext, dbm: &Dbm, base: Var) {
-    use crate::dbm::INF;
-
-    let ub = dbm.get(base, ctx.zero);      // base - 0 <= ub
-    let lb_c = dbm.get(ctx.zero, base);   // 0 - base <= lb_c  ≡ base >= -lb_c
-
-    let lb_str;
-    let ub_str;
-
-    let mut has_lb = false;
-    let mut has_ub = false;
-    let mut lb_val = 0i64;
-    let mut ub_val = 0i64;
-
-    if lb_c != INF {
-        has_lb = true;
-        lb_val = -lb_c;
-        lb_str = lb_val.to_string();
-    } else {
-        lb_str = "-∞".to_string();
-    }
-
-    if ub != INF {
-        has_ub = true;
-        ub_val = ub;
-        ub_str = ub_val.to_string();
-    } else {
-        ub_str = "+∞".to_string();
-    }
-
-    println!(
-        "Load check: {} (offset) ∈ [{}, {}]",
-        base.name(),
-        lb_str,
-        ub_str
-    );
-
-    // Only say "SAFE" if we actually have both finite bounds
-    if has_lb && has_ub
-        && lb_val >= ctx.stack_min
-        && ub_val <= ctx.stack_max
-    {
-        println!(
-            "  => SAFE: within stack [{}, {}]",
-            ctx.stack_min, ctx.stack_max
-        );
-    } else {
-        println!(
-            "  => VIOLATION (or unknown): not fully within stack [{}, {}]",
-            ctx.stack_min, ctx.stack_max
-        );
-    }
 }
 
 fn proven_u32_range(dbm: &Dbm, v: Var, zero: Var) -> bool {
@@ -609,7 +554,7 @@ pub fn analyze_program(ctx: &ExecContext, prog: &Program, entry_dbm: Dbm, stats:
             println!("Analysis aborted due to previous errors.");
             break;
         }
-        
+
         // 3) Print *output* states for each successor
         for (succ_pc, succ_dbm) in &succs {
             println!("OUT → PC {}:", succ_pc);

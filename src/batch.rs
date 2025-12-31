@@ -79,9 +79,6 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
             if stats.dbm_inconsistent {
                 println!("      * DBM inconsistency");
             }
-            if stats.unsupported_opcode {
-                println!("      * unsupported opcode");
-            }
         }
     }
 
