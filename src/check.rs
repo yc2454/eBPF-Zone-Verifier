@@ -3,7 +3,7 @@ use crate::dbm::Dbm;
 use crate::exec::ExecContext;
 use crate::kernel_semantics;
 use crate::domain::{Var, VAR_ENV};
-use crate::utils::clamp_to_inf;
+use crate::utils::clamp_upper_bound;
 
 pub struct CheckError {
     pub pc: usize,
@@ -29,8 +29,8 @@ pub fn check_included(post: &Dbm, cert: &Dbm) -> Result<(), InclusionFailure> {
     let n = post.dim();
     for i in 0..n {
         for j in 0..n {
-            let post_v = clamp_to_inf(post.raw(i, j));
-            let cert_v = clamp_to_inf(cert.raw(i, j));
+            let post_v = clamp_upper_bound(post.raw(i, j));
+            let cert_v = clamp_upper_bound(cert.raw(i, j));
             if post_v > cert_v {
                 let xi = VAR_ENV.var_of_index(i);
                 let xj = VAR_ENV.var_of_index(j);

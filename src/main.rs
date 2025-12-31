@@ -11,6 +11,8 @@ mod utils;
 mod bpf_insn;
 mod bpf_to_ast;
 mod elf_loader;
+mod stats;
+mod batch;
 
 use crate::ast::Program;
 use crate::dbm::Dbm;
@@ -115,6 +117,7 @@ fn main() {
     }
 
     let ctx = default_exec_ctx();
+    let stats = &mut stats::AnalysisStats::default();
     let entry = make_entry_state(&ctx);
 
     match cmd.as_str() {
@@ -123,7 +126,7 @@ fn main() {
             let name = &args[2];
             let prog = get_program(name);
             println!("=== Analyzing program: {} ===", name);
-            let _cert = analyze_program(&ctx, &prog, entry);
+            let _cert = analyze_program(&ctx, &prog, entry, stats);
         }
 
         "check" => {
@@ -131,7 +134,7 @@ fn main() {
             let prog = get_program(name);
 
             println!("=== Analyzing program: {} ===", name);
-            let cert = analyze_program(&ctx, &prog, entry);
+            let cert = analyze_program(&ctx, &prog, entry, stats);
 
             println!("\n=== Kernel-sim checking: {} ===", name);
             match check::check_certificate_against_kernel_sim(&ctx, &prog, &cert) {
@@ -154,7 +157,9 @@ fn main() {
             println!("=== ELF analyze: file='{}', section='{}' ===", path, section);
             let prog = load_program_from_elf(path, section);
 
-            let _cert = analyze_program(&ctx, &prog, entry);
+            let _cert = analyze_program(&ctx, &prog, entry, stats);
+
+            println!("=== Analysis complete ===");
         }
 
         "elf-check" => {
@@ -168,7 +173,7 @@ fn main() {
             println!("=== ELF check: file='{}', section='{}' ===", path, section);
             let prog = load_program_from_elf(path, section);
 
-            let cert = analyze_program(&ctx, &prog, entry);
+            let cert = analyze_program(&ctx, &prog, entry, stats);
 
             println!("\n=== Kernel-sim checking (ELF): file='{}', section='{}' ===", path, section);
             match check::check_certificate_against_kernel_sim(&ctx, &prog, &cert) {

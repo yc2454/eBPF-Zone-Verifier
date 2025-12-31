@@ -119,15 +119,6 @@ pub fn get_bounds(dbm: &Dbm, x: Var, zero: Var) -> (Option<i64>, Option<i64>) {
     (lb_opt, ub_opt)
 }
 
-// If both bounds exist and match, x is provably constant.
-pub fn get_const(dbm: &Dbm, x: Var, zero: Var) -> Option<i64> {
-    let (lb, ub) = get_bounds(dbm, x, zero);
-    match (lb, ub) {
-        (Some(l), Some(u)) if l == u => Some(l),
-        _ => None,
-    }
-}
-
 // --- transfer functions ---
 // exec.rs wants a uniform name.
 pub fn forget(dbm: &mut Dbm, x: Var) {
@@ -194,17 +185,22 @@ pub fn assume_le_var_plus_const(dbm: &mut Dbm, x: Var, y: Var, c: i64) {
     dbm.close();
 }
 
-pub fn assign_zero(d: &mut Dbm, x: Var, zero: Var) {
-    d.add_constraint(x, zero, 0);
-    d.add_constraint(zero, x, 0);
-    d.close();
+pub fn assign_zero(dbm: &mut Dbm, x: Var, zero: Var) {
+    // Overwrite x: kill all old info about x
+    dbm.forget_var(x);
+
+    // Now enforce x == 0 (relative to `zero` var)
+    dbm.add_constraint(x, zero, 0);   // x - 0 ≤ 0  ⇒ x ≤ 0
+    dbm.add_constraint(zero, x, 0);   // 0 - x ≤ 0  ⇒ x ≥ 0
+
+    dbm.close();
 }
 
-pub fn assign_eq(d: &mut Dbm, x: Var, y: Var) {
-    d.forget_var(x);
-    d.add_constraint(x, y, 0);
-    d.add_constraint(y, x, 0);
-    d.close();
+pub fn assign_eq(dbm: &mut Dbm, x: Var, y: Var) {
+    dbm.forget_var(x);
+    dbm.add_constraint(x, y, 0);
+    dbm.add_constraint(y, x, 0);
+    dbm.close();
 }
 
 // x <= c   encoded as: x - 0 <= c

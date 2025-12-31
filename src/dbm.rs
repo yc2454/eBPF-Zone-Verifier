@@ -1,5 +1,6 @@
 // src/dbm.rs
 use crate::domain::{Var, VAR_ENV};
+use crate::utils::{clamp_upper_bound, clamped_add};
 
 pub const INF: i64 = i64::MAX / 4;
 
@@ -54,7 +55,14 @@ impl Dbm {
     }
 
     pub fn add_constraint(&mut self, i: Var, j: Var, c: i64) {
+        // Constraint: i - j <= c
+        let c = clamp_upper_bound(c);
         let old = self.get(i, j);
+
+        // If c becomes INF, it's "no constraint". Only tighten if we had a finite bound before.
+        if c == INF {
+            return;
+        }
         if c < old {
             self.set(i, j, c);
         }
@@ -87,8 +95,17 @@ impl Dbm {
         let n = self.num_vars();
         for k in 0..n {
             for i in 0..n {
+                let dik = self.data[i][k];
+                if dik >= INF {
+                    continue;
+                }
                 for j in 0..n {
-                    let via = self.data[i][k].saturating_add(self.data[k][j]);
+                    let dkj = self.data[k][j];
+                    if dkj >= INF {
+                        continue;
+                    }
+
+                    let via = clamped_add(dik, dkj);
                     if via < self.data[i][j] {
                         self.data[i][j] = via;
                     }

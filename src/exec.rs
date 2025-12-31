@@ -1,5 +1,6 @@
 // src/exec.rs
 use std::collections::VecDeque;
+use std::os::macos::raw::stat;
 
 use crate::ast::{AluOp, CmpOp, Instr, MemSize, Operand, Program, Width, EndianKind};
 use crate::dbm::Dbm;
@@ -14,7 +15,8 @@ use crate::domain::{
     assume_ge_const, assume_le_const, assume_less_than, assume_eq_const,
     assume_ge_var, assume_le_var, assume_gt_var, assume_le_var_plus_const,
 };
-use crate::utils::{dbm_equals}; // if you have this; otherwise keep your existing helper
+use crate::utils::{dbm_equals, load_program_from_elf};
+use crate::stats::{self, AnalysisStats};
 
 #[derive(Clone, Copy)]
 pub struct ExecContext {
@@ -101,6 +103,7 @@ fn transfer_alu(
     op: AluOp,
     dst: Var,
     src: Operand,
+    stats: &mut AnalysisStats,
 ) -> Vec<(usize, Dbm)> {
     let mut dbm = dbm_in.clone();
 
@@ -276,6 +279,7 @@ fn transfer_alu(
         println!("ERROR: ");
         println!("ALU transfer led to inconsistent state at pc {}", pc);
         dbm.dump_matrix();
+        stats.mark_dbm_inconsistent();
         vec![]
     } else {
         vec![(pc + 1, dbm)]
@@ -441,6 +445,7 @@ fn transfer_load(
     dst: Var,
     base: Var,
     off: i16,
+    stats: &mut AnalysisStats,
 ) -> Vec<(usize, Dbm)> {
     let (lo, hi) = crate::domain::get_bounds(dbm_in, base, ctx.zero);
 
@@ -479,6 +484,7 @@ fn transfer_load(
     // Non-stack loads are modeled but not “verified” here.
     // So: do NOT fail. Just forget dst and continue.
     println!("Non-stack load at pc {} from base {:?}+{}", pc, base, off);
+    stats.mark_unsafe_load();
 
     forget(&mut dbm, dst);
     vec![(pc + 1, dbm)]
@@ -492,6 +498,7 @@ fn transfer_store(
     base: Var,
     off: i16,
     _src: Var,
+    stats: &mut AnalysisStats,
 ) -> Vec<(usize, Dbm)> {
     let (lo, hi) = crate::domain::get_bounds(dbm_in, base, ctx.zero);
     let eff_lo = lo.map(|x| x + off as i64);
@@ -526,6 +533,7 @@ fn transfer_store(
         "Non-stack store at pc {}: {:?} to base {:?}+{} (bounds {:?}..{:?})",
         pc, size, base, off, eff_lo, eff_hi
     );
+    stats.mark_unsafe_store();
 
     vec![(pc + 1, dbm_in.clone())]
 }
@@ -550,26 +558,27 @@ pub fn transfer_instr(
     dbm_in: &Dbm,
     pc: usize,
     instr: &Instr,
+    stats: &mut AnalysisStats,
 ) -> Vec<(usize, Dbm)> {
     match instr {
         Instr::MovArg0 { dst } => transfer_mov_arg0(dbm_in, pc, *dst),
         Instr::Alu { width, op, dst, src } => 
-            transfer_alu(ctx, dbm_in, pc, *width, *op, *dst, *src),
+            transfer_alu(ctx, dbm_in, pc, *width, *op, *dst, *src, stats),
         Instr::Endian { dst, kind } => 
             transfer_endian(ctx, dbm_in, pc, *dst, *kind),
         Instr::If { width, left, op, right, target } => 
             transfer_if(ctx, dbm_in, pc, *width, *left, *op, *right, *target),
         Instr::Load { size, dst, base, off } => 
-            transfer_load(ctx, dbm_in, pc, *size, *dst, *base, *off),
+            transfer_load(ctx, dbm_in, pc, *size, *dst, *base, *off, stats),
         Instr::Store { size, base, off, src } => 
-            transfer_store(ctx, dbm_in, pc, *size, *base, *off, *src),
+            transfer_store(ctx, dbm_in, pc, *size, *base, *off, *src, stats),
         Instr::Call { helper } => transfer_call(dbm_in, pc, *helper),
         Instr::Jmp { target } => vec![(*target, dbm_in.clone())],
         Instr::Exit => vec![],
     }
 }
 
-pub fn analyze_program(ctx: &ExecContext, prog: &Program, entry_dbm: Dbm) -> Vec<Dbm> {
+pub fn analyze_program(ctx: &ExecContext, prog: &Program, entry_dbm: Dbm, stats: &mut AnalysisStats) -> Vec<Dbm> {
     let n = prog.instrs.len();
     let mut states: Vec<Option<Dbm>> = vec![None; n];
     let mut worklist = VecDeque::new();
@@ -578,6 +587,11 @@ pub fn analyze_program(ctx: &ExecContext, prog: &Program, entry_dbm: Dbm) -> Vec
     worklist.push_back(0);
 
     while let Some(pc) = worklist.pop_front() {
+        if stats.abort {
+            println!("Analysis aborted due to previous errors.");
+            break;
+        }
+
         let instr = &prog.instrs[pc];
         let in_dbm = states[pc].as_ref().unwrap();
 
@@ -589,8 +603,13 @@ pub fn analyze_program(ctx: &ExecContext, prog: &Program, entry_dbm: Dbm) -> Vec
         in_dbm.dump_matrix();
 
         // 2) Compute successors *once* so we can both print and propagate
-        let succs = transfer_instr(ctx, in_dbm, pc, instr);
+        let succs = transfer_instr(ctx, in_dbm, pc, instr, stats);
 
+        if stats.abort {
+            println!("Analysis aborted due to previous errors.");
+            break;
+        }
+        
         // 3) Print *output* states for each successor
         for (succ_pc, succ_dbm) in &succs {
             println!("OUT → PC {}:", succ_pc);
@@ -623,3 +642,29 @@ pub fn analyze_program(ctx: &ExecContext, prog: &Program, entry_dbm: Dbm) -> Vec
         .map(|opt| opt.unwrap_or_else(|| Dbm::new(VAR_ENV.len())))
         .collect()
 }
+
+pub fn analyze_program_for_file(
+    path: &std::path::Path,
+) -> Result<AnalysisStats, Box<dyn std::error::Error>> {
+    let prog = load_program_from_elf(
+        path.to_str().ok_or("Invalid path")?,
+        ".text",
+    );
+
+    let mut stats = AnalysisStats::default();
+
+    let ctx = ExecContext {
+        zero: Var::Zero,
+        r10: Var::R10,
+        stack_min: -512,
+        stack_max: -1,
+    };
+
+    let mut entry = Dbm::new(VAR_ENV.len());
+    crate::domain::assign_zero(&mut entry, ctx.r10, ctx.zero);
+
+    analyze_program(&ctx, &prog, entry, &mut stats);
+
+    Ok(stats)
+}
+

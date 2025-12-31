@@ -1,53 +1,44 @@
 use crate::dbm::{Dbm, INF};
+use crate::bpf_to_ast;
+use crate::bpf_insn;
+use crate::ast::Program;
+use crate::elf_loader;
 
-pub const INF_GUARD_BAND: i64 = 1 << 40;
+// Bounds for finite constraints inside the DBM.
+// We never store anything > POS_BOUND or < NEG_BOUND.
+const POS_BOUND: i64 = INF / 2;
+const NEG_BOUND: i64 = -POS_BOUND;
 
 #[inline]
-pub fn is_infinite(v: i64) -> bool {
-    v >= INF - INF_GUARD_BAND
-}
-
-#[inline]
-pub fn clamp_to_inf(v: i64) -> i64 {
-    if is_infinite(v) { INF } else { v }
+pub fn clamp_upper_bound(c: i64) -> i64 {
+    // We represent "no constraint" as INF.
+    // For x - y <= c with huge positive c, we can treat it as no constraint.
+    if c > POS_BOUND {
+        INF
+    } else if c < NEG_BOUND {
+        // Very strong negative bound; weaken to NEG_BOUND
+        NEG_BOUND
+    } else {
+        c
+    }
 }
 
 #[inline]
 pub fn clamped_add(a: i64, b: i64) -> i64 {
-    if is_infinite(a) || is_infinite(b) {
-        INF
-    } else {
-        clamp_to_inf(a + b)
+    // Safe addition for Floyd–Warshall.
+    // If either side is INF, or the sum overflows, treat as INF (no useful bound).
+    if a >= INF || b >= INF {
+        return INF;
+    }
+    match a.checked_add(b) {
+        Some(sum) => clamp_upper_bound(sum),
+        None => INF,
     }
 }
 
-#[inline]
 pub fn clamped_add3(a: i64, b: i64, c: i64) -> i64 {
-    if is_infinite(a) || is_infinite(b) || is_infinite(c) {
-        INF
-    } else {
-        clamp_to_inf(a + b + c)
-    }
-}
-
-pub fn canonicalize_infinity(dbm: &mut Dbm) {
-    let n = dbm.dim();
-    for i in 0..n {
-        for j in 0..n {
-            let v = dbm.raw(i, j);
-            dbm.set_raw(i, j, clamp_to_inf(v));
-        }
-    }
-}
-
-pub fn dbm_is_inconsistent(dbm: &Dbm) -> bool {
-    let n = dbm.dim();
-    for i in 0..n {
-        if dbm.raw(i, i) < 0 {
-            return true;
-        }
-    }
-    false
+    let ab = clamped_add(a, b);
+    clamped_add(ab, c)
 }
 
 pub fn dbm_equals(a: &Dbm, b: &Dbm) -> bool {
@@ -62,4 +53,34 @@ pub fn dbm_equals(a: &Dbm, b: &Dbm) -> bool {
         }
     }
     true
+}
+
+/// Load a Program from an ELF section by:
+///   ELF -> bytes -> RawBpfInsn -> Program (via bpf_to_ast).
+pub fn load_program_from_elf(path: &str, section: &str) -> Program {
+    let bytes = elf_loader::load_bpf_insn_stream_section(path, section)
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to load ELF section '{}': {e:?}", section);
+            std::process::exit(1);
+        });
+
+    let raw_insns = bpf_insn::decode_insns(&bytes);
+    println!(
+        "Loaded section '{}' from '{}': {} bytes, {} instructions",
+        section,
+        path,
+        bytes.len(),
+        raw_insns.len()
+    );
+
+    match bpf_to_ast::lower_raw_to_program(&raw_insns) {
+        Ok(prog) => prog,
+        Err(e) => {
+            eprintln!(
+                "Lowering ELF → AST failed at pc {} (opcode 0x{:02x}): {}",
+                e.pc, e.code, e.msg
+            );
+            std::process::exit(1);
+        }
+    }
 }
