@@ -392,50 +392,77 @@ fn transfer_load(
     size: MemSize,
     dst: Reg,
     base: Reg,
+    base_type: RegType,
     off: i16,
     stats: &mut AnalysisStats,
 ) -> Vec<(usize, Dbm)> {
-    let (lo, hi) = crate::domain::get_bounds(dbm_in, base, ctx.zero);
-
-    let eff_lo = lo.map(|x| x + off as i64);
-    let eff_hi = hi.map(|x| x + off as i64);
-
-    // Old “ok” logic for stack loads, just renamed
-    let stack_ok = match (eff_lo, eff_hi) {
-        (Some(l), Some(h)) => match size {
-            MemSize::U8  => l >= ctx.stack_min && h <= ctx.stack_max,
-            MemSize::U16 => l >= ctx.stack_min && h + 1 <= ctx.stack_max,
-            MemSize::U32 => l >= ctx.stack_min && h + 3 <= ctx.stack_max,
-            MemSize::U64 => l >= ctx.stack_min && h + 7 <= ctx.stack_max,
-        },
-        _ => false, // missing bounds ⇒ we *cannot* prove it's stack
-    };
+    use RegType::*;
 
     let mut dbm = dbm_in.clone();
 
-    if stack_ok {
-        // This is provably a stack address: enforce safety.
-        // (Optional) debug:
-        // check_stack_load(ctx, dbm_in, base);
+    match base_type {
+        PtrToStack => {
+            // Old stack logic, unchanged
+            let (lo, hi) = crate::domain::get_bounds(dbm_in, base, ctx.zero);
 
-        // We *already* know it's within [stack_min, stack_max] here.
-        // Just model the value as unknown:
-        forget(&mut dbm, dst);
-        return vec![(pc + 1, dbm)];
+            let eff_lo = lo.map(|x| x + off as i64);
+            let eff_hi = hi.map(|x| x + off as i64);
+
+            let stack_ok = match (eff_lo, eff_hi) {
+                (Some(l), Some(h)) => match size {
+                    MemSize::U8  => l >= ctx.stack_min && h <= ctx.stack_max,
+                    MemSize::U16 => l >= ctx.stack_min && h + 1 <= ctx.stack_max,
+                    MemSize::U32 => l >= ctx.stack_min && h + 3 <= ctx.stack_max,
+                    MemSize::U64 => l >= ctx.stack_min && h + 7 <= ctx.stack_max,
+                },
+                _ => false,
+            };
+
+            if stack_ok {
+                // Proven-safe stack load.
+                // (Optional debug: check_stack_load(ctx, dbm_in, base);)
+                forget(&mut dbm, dst);
+                return vec![(pc + 1, dbm)];
+            }
+
+            println!(
+                "Stack load not proven safe at pc {}: base {:?}+{}",
+                pc, base, off
+            );
+            stats.mark_unsafe_load();
+            // Model result as unknown scalar; still continue for now.
+            forget(&mut dbm, dst);
+            vec![(pc + 1, dbm)]
+        }
+
+        PtrToCtx => {
+            // This is a context pointer like kernel PTR_TO_CTX.
+            // We don't yet model the exact layout (is_valid_access),
+            // but we *know* it's not a stack access. For now:
+            //  - treat it as allowed
+            //  - do NOT mark unsafe_load
+            //  - result is an unknown scalar
+            println!(
+                "CTX load at pc {}: dst {:?} = *(...)(base {:?}+{})",
+                pc, dst, base, off
+            );
+            forget(&mut dbm, dst);
+            vec![(pc + 1, dbm)]
+        }
+
+        _ => {
+            // Any other base type: non-stack, non-ctx pointer (or scalar / unknown).
+            // Keep previous "non-stack load" behavior: mark as unsafe.
+            println!(
+                "Non-stack, non-ctx load at pc {} from base {:?}+{} (reg_type={:?})",
+                pc, base, off, base_type
+            );
+            stats.mark_unsafe_load();
+
+            forget(&mut dbm, dst);
+            vec![(pc + 1, dbm)]
+        }
     }
-
-    // Not provably a stack address:
-    // - could be ctx, map value, packet, some non-stack pointer
-    // - or we just don't have bounds yet
-    //
-    // In our userspace certificate we *only* claim stack loads are safe.
-    // Non-stack loads are modeled but not “verified” here.
-    // So: do NOT fail. Just forget dst and continue.
-    println!("Non-stack load at pc {} from base {:?}+{}", pc, base, off);
-    stats.mark_unsafe_load();
-
-    forget(&mut dbm, dst);
-    vec![(pc + 1, dbm)]
 }
 
 fn transfer_store(
@@ -444,6 +471,7 @@ fn transfer_store(
     pc: usize,
     size: MemSize,
     base: Reg,
+    base_type: RegType,
     off: i16,
     _src: Reg,
     stats: &mut AnalysisStats,
@@ -507,6 +535,7 @@ pub fn transfer_instr(
     pc: usize,
     instr: &Instr,
     stats: &mut AnalysisStats,
+    reg_types: &RegTypes,
 ) -> Vec<(usize, Dbm)> {
     match instr {
         Instr::MovArg0 { dst } =>
@@ -518,9 +547,19 @@ pub fn transfer_instr(
         Instr::If { width, left, op, right, target } =>
             transfer_if(ctx, dbm_in, pc, *width, *left, *op, *right, *target),
         Instr::Load { size, dst, base, off } =>
-            transfer_load(ctx, dbm_in, pc, *size, *dst, *base, *off, stats),
+            {
+                let base_ty = reg_to_index(*base)
+                    .map(|i| reg_types[i])
+                    .unwrap_or(RegType::Unknown);
+                transfer_load(ctx, dbm_in, pc, *size, *dst, *base, base_ty, *off, stats)
+            },
         Instr::Store { size, base, off, src } =>
-            transfer_store(ctx, dbm_in, pc, *size, *base, *off, *src, stats),
+            {
+                let base_ty = reg_to_index(*base)
+                    .map(|i| reg_types[i])
+                    .unwrap_or(RegType::Unknown);
+                transfer_store(ctx, dbm_in, pc, *size, *base, base_ty, *off, *src, stats)
+            },
         Instr::Call { helper } =>
             transfer_call(dbm_in, pc, *helper),
         Instr::Jmp { target } =>
@@ -549,26 +588,66 @@ fn update_reg_types_for_instr(
 
         Alu { op, dst, src, .. } => {
             use crate::ast::AluOp;
+            use RegType::*;
+
+            let di = match reg_to_index(*dst) {
+                Some(i) => i,
+                None => return,
+            };
+            let old_ty = types[di];
+
             match op {
                 AluOp::Mov => {
                     match src {
                         Operand::Reg(r) => {
-                            if let (Some(di), Some(si)) = (reg_to_index(*dst), reg_to_index(*r)) {
+                            if let Some(si) = reg_to_index(*r) {
                                 types[di] = types[si];
+                            } else {
+                                types[di] = ScalarValue;
                             }
                         }
                         Operand::Imm(_) => {
-                            if let Some(di) = reg_to_index(*dst) {
+                            types[di] = ScalarValue;
+                        }
+                    }
+                }
+
+                AluOp::Add | AluOp::Sub => {
+                    // Model pointer arithmetic:
+                    //
+                    // - pointer + scalar  => pointer   (same kind)
+                    // - pointer + pointer => we give up (ScalarValue)
+                    // - scalar + anything => ScalarValue
+                    match src {
+                        Operand::Imm(_) => {
+                            // dst = dst +/- imm
+                            if old_ty.is_pointer() {
+                                // keep pointer type
+                                // e.g., PtrToStack stays PtrToStack, PtrToCtx stays PtrToCtx
+                            } else {
+                                types[di] = ScalarValue;
+                            }
+                        }
+                        Operand::Reg(r) => {
+                            let src_ty = reg_to_index(*r).map(|si| types[si]).unwrap_or(Unknown);
+                            if old_ty.is_pointer() && !src_ty.is_pointer() {
+                                // pointer +/- scalar ⇒ still pointer
+                                // (kernel also insists src must be SCALAR_VALUE, but
+                                // for now we approximate: "not a pointer" = scalar-ish)
+                            } else if !old_ty.is_pointer() {
+                                // scalar +/- anything ⇒ scalar
+                                types[di] = ScalarValue;
+                            } else {
+                                // pointer +/- pointer ⇒ we give up
                                 types[di] = ScalarValue;
                             }
                         }
                     }
                 }
-                // All other ALU ops destroy pointer structure for now.
+
+                // Bitwise ops, mul, mod, shifts etc. typically break pointer structure.
                 _ => {
-                    if let Some(di) = reg_to_index(*dst) {
-                        types[di] = ScalarValue;
-                    }
+                    types[di] = ScalarValue;
                 }
             }
         }
@@ -661,8 +740,19 @@ pub fn analyze_program(
         println!("IN:");
         in_dbm.dump_matrix();
 
+        println!("RegTypes IN:");
+        for r in [
+            Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4,
+            Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9, Reg::R10,
+        ] {
+            if let Some(i) = reg_to_index(r) {
+                println!("  {:>3}: {:?}", r.name(), in_types[i]);
+            }
+        }
+        println!();
+
         // 2) Numeric transfer
-        let succs = transfer_instr(ctx, in_dbm, pc, instr, stats);
+        let succs = transfer_instr(ctx, in_dbm, pc, instr, stats, &in_types);
 
         if stats.abort {
             println!("Analysis aborted due to previous errors.");

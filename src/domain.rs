@@ -97,6 +97,23 @@ impl Default for RegType {
     }
 }
 
+impl RegType {
+    pub fn is_pointer(self) -> bool {
+        use RegType::*;
+        matches!(
+            self,
+            PtrToCtx
+                | PtrToStack
+                | PtrToMapValue
+                | PtrToMapKey
+                | PtrToPacket
+                | PtrToPacketMeta
+                | PtrToPacketEnd
+                | PtrToMem
+        )
+    }
+}
+
 /// We track types for actual R0..R10; Reg::Zero is not a real reg.
 pub type RegTypes = [RegType; 11];
 
