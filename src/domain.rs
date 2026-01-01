@@ -1,6 +1,7 @@
 // src/domain.rs
 use crate::Dbm;
 use crate::dbm::INF;
+use crate::ctx_model::MemRegionId;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Reg {
@@ -86,7 +87,7 @@ pub enum RegType {
     PtrToPacket,    // PTR_TO_PACKET
     PtrToPacketMeta,// PTR_TO_PACKET_META
     PtrToPacketEnd, // PTR_TO_PACKET_END
-    PtrToMem,       // PTR_TO_MEM
+    PtrToMem { region: MemRegionId },       // PTR_TO_MEM
     Unknown,        // our "top" / fallback for now
     // later: PtrToSocket, PtrToBtfId, PtrToBuf, etc.
 }
@@ -109,13 +110,32 @@ impl RegType {
                 | PtrToPacket
                 | PtrToPacketMeta
                 | PtrToPacketEnd
-                | PtrToMem
+                | PtrToMem { .. }
         )
     }
 }
 
 /// We track types for actual R0..R10; Reg::Zero is not a real reg.
 pub type RegTypes = [RegType; 11];
+
+pub struct RegTypeState {
+    pub types: RegTypes,
+}
+
+impl RegTypeState {
+    pub fn get(&self, r: Reg) -> RegType {
+        match r {
+            Reg::Zero => RegType::NotInit, // or panic?
+            _ => self.types[r.idx() - 1],
+        }
+    }
+    pub fn set(&mut self, r: Reg, t: RegType) {
+        match r {
+            Reg::Zero => {} // ignore or panic?
+            _ => self.types[r.idx() - 1] = t,
+        }
+    }
+}
 
 pub fn reg_to_index(r: Reg) -> Option<usize> {
     match r {

@@ -3,6 +3,7 @@ use crate::bpf_to_ast;
 use crate::bpf_insn;
 use crate::ast::Program;
 use crate::elf_loader;
+use crate::ast::ProgramKind;
 
 // Bounds for finite constraints inside the DBM.
 // We never store anything > POS_BOUND or < NEG_BOUND.
@@ -55,6 +56,24 @@ pub fn dbm_equals(a: &Dbm, b: &Dbm) -> bool {
     true
 }
 
+pub fn infer_program_kind(section_name: &str) -> ProgramKind {
+    let sec = section_name;
+
+    // Very simple heuristic for now, tuned to your use case:
+    if sec == "tc" || sec.starts_with("tc/") {
+        ProgramKind::Tc
+    } else if sec == "xdp" || sec.starts_with("xdp/") {
+        ProgramKind::Xdp
+    } else if sec == ".text" {
+        // Fallback for “bare” BPF objects:
+        // if you're mostly using TC with .text, feel free to default to Tc instead.
+        ProgramKind::Tc
+    } else {
+        // Reasonable default for your current project
+        ProgramKind::Tc
+    }
+}
+
 /// Load a Program from an ELF section by:
 ///   ELF -> bytes -> RawBpfInsn -> Program (via bpf_to_ast).
 pub fn load_program_from_elf(path: &str, section: &str) -> Program {
@@ -73,7 +92,9 @@ pub fn load_program_from_elf(path: &str, section: &str) -> Program {
         raw_insns.len()
     );
 
-    match bpf_to_ast::lower_raw_to_program(&raw_insns) {
+    let kind = infer_program_kind(section);
+    
+    match bpf_to_ast::lower_raw_to_program(&raw_insns, kind) {
         Ok(prog) => prog,
         Err(e) => {
             eprintln!(

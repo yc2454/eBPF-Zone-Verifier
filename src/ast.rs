@@ -110,10 +110,17 @@ pub enum Instr {
     Exit,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum ProgramKind {
+    Tc,
+    Xdp,
+    // later: CgroupSkb, CgroupSock, Lsm, Kprobe, …
+}
 
 #[derive(Debug)]
 pub struct Program {
     pub instrs: Vec<Instr>,
+    pub kind: ProgramKind,
 }
 
 impl fmt::Display for Instr {

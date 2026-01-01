@@ -13,11 +13,13 @@ mod bpf_to_ast;
 mod elf_loader;
 mod stats;
 mod batch;
+mod ctx_model;
 
 use crate::ast::Program;
 use crate::dbm::Dbm;
 use crate::domain::{Reg, REG_ENV, assign_zero};
 use crate::exec::{analyze_program, ExecContext};
+use crate::utils::load_program_from_elf;
 
 fn usage() {
     eprintln!("Usage:");
@@ -48,37 +50,6 @@ fn default_exec_ctx() -> ExecContext {
         stack_max: -1,
     }
 }
-
-/// Load a Program from an ELF section by:
-///   ELF -> bytes -> RawBpfInsn -> Program (via bpf_to_ast).
-fn load_program_from_elf(path: &str, section: &str) -> Program {
-    let bytes = elf_loader::load_bpf_insn_stream_section(path, section)
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to load ELF section '{}': {e:?}", section);
-            std::process::exit(1);
-        });
-
-    let raw_insns = bpf_insn::decode_insns(&bytes);
-    println!(
-        "Loaded section '{}' from '{}': {} bytes, {} instructions",
-        section,
-        path,
-        bytes.len(),
-        raw_insns.len()
-    );
-
-    match bpf_to_ast::lower_raw_to_program(&raw_insns) {
-        Ok(prog) => prog,
-        Err(e) => {
-            eprintln!(
-                "Lowering ELF → AST failed at pc {} (opcode 0x{:02x}): {}",
-                e.pc, e.code, e.msg
-            );
-            std::process::exit(1);
-        }
-    }
-}
-
 
 fn make_entry_state(ctx: &ExecContext) -> Dbm {
     let mut dbm = Dbm::new(REG_ENV.len());

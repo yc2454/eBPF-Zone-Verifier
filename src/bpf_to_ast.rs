@@ -1,5 +1,5 @@
 // src/bpf_to_ast.rs
-use crate::ast::{AluOp, CmpOp, Instr, Operand, Program, Width, MemSize, EndianKind};
+use crate::ast::{AluOp, CmpOp, Instr, Operand, Program, Width, MemSize, EndianKind, ProgramKind};
 use crate::bpf_insn::RawBpfInsn;
 use crate::domain::Reg;
 
@@ -40,7 +40,7 @@ fn branch_target(pc: usize, off: i16, len: usize, code: u8) -> Result<usize, Low
     Ok(t as usize)
 }
 
-pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
+pub fn lower_raw_to_program(raw: &[RawBpfInsn], kind: ProgramKind) -> Result<Program, LowerError> {
     let mut instrs = Vec::with_capacity(raw.len());
 
     let mut pc: usize = 0;
@@ -781,5 +781,5 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
         pc += 1;
     }
 
-    Ok(Program { instrs })
+    Ok(Program { instrs, kind })
 }
