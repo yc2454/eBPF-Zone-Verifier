@@ -115,26 +115,62 @@ impl RegType {
     }
 }
 
-/// We track types for actual R0..R10; Reg::Zero is not a real reg.
-pub type RegTypes = [RegType; 11];
+pub const NUM_REGS: usize = 11; // number of RegType variants
 
+/// We track types for actual R0..R10; Reg::Zero is not a real reg.
+pub type RegTypes = [RegType; NUM_REGS];
+
+#[derive(Copy, Clone, Debug)]
 pub struct RegTypeState {
-    pub types: RegTypes,
+    pub regs: RegTypes,
 }
 
 impl RegTypeState {
+    pub fn new_not_init() -> Self {
+        Self {
+            regs: [RegType::NotInit; NUM_REGS],
+        }
+    }
+
     pub fn get(&self, r: Reg) -> RegType {
-        match r {
-            Reg::Zero => RegType::NotInit, // or panic?
-            _ => self.types[r.idx() - 1],
+        if let Some(i) = reg_to_index(r) {
+            self.regs[i]
+        } else {
+            RegType::NotInit // or panic? Zero has no type
         }
     }
-    pub fn set(&mut self, r: Reg, t: RegType) {
-        match r {
-            Reg::Zero => {} // ignore or panic?
-            _ => self.types[r.idx() - 1] = t,
+
+    pub fn set(&mut self, r: Reg, ty: RegType) {
+        if let Some(i) = reg_to_index(r) {
+            self.regs[i] = ty;
         }
     }
+
+    /// Join in-place with `other`. Returns true if anything changed.
+    /// A simple lattice join: if equal, keep; else go to Unknown.
+    pub fn join_in_place(&mut self, other: &RegTypeState) -> bool {
+        let mut changed = false;
+        for i in 0..NUM_REGS {
+            let before = self.regs[i];
+            let after = join_reg_type(before, other.regs[i]);
+            if after != before {
+                self.regs[i] = after;
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    pub fn iter_regs(&self) -> impl Iterator<Item = (Reg, RegType)> + '_ {
+        Reg::ALL.iter().filter_map(|&r| {
+            if let Some(i) = reg_to_index(r) {
+                Some((r, self.regs[i]))
+            } else {
+                None
+            }
+        })
+    }
+
 }
 
 pub fn reg_to_index(r: Reg) -> Option<usize> {

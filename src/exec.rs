@@ -14,7 +14,7 @@ use crate::domain::{
     assume_ge_const, assume_le_const, assume_less_than, assume_eq_const,
     assume_ge_var, assume_le_var, assume_gt_var, assume_le_var_plus_const,
     // new: register types
-    RegType, RegTypes, reg_to_index, join_reg_type,
+    RegType, RegTypeState, reg_to_index, join_reg_type,
 };
 use crate::utils::{dbm_equals, load_program_from_elf};
 use crate::stats::AnalysisStats;
@@ -471,7 +471,7 @@ fn transfer_store(
     pc: usize,
     size: MemSize,
     base: Reg,
-    base_type: RegType,
+    _base_type: RegType,
     off: i16,
     _src: Reg,
     stats: &mut AnalysisStats,
@@ -535,7 +535,7 @@ pub fn transfer_instr(
     pc: usize,
     instr: &Instr,
     stats: &mut AnalysisStats,
-    reg_types: &RegTypes,
+    reg_types: &RegTypeState,
 ) -> Vec<(usize, Dbm)> {
     match instr {
         Instr::MovArg0 { dst } =>
@@ -548,16 +548,12 @@ pub fn transfer_instr(
             transfer_if(ctx, dbm_in, pc, *width, *left, *op, *right, *target),
         Instr::Load { size, dst, base, off } =>
             {
-                let base_ty = reg_to_index(*base)
-                    .map(|i| reg_types[i])
-                    .unwrap_or(RegType::Unknown);
+                let base_ty = reg_types.get(*base);
                 transfer_load(ctx, dbm_in, pc, *size, *dst, *base, base_ty, *off, stats)
             },
         Instr::Store { size, base, off, src } =>
             {
-                let base_ty = reg_to_index(*base)
-                    .map(|i| reg_types[i])
-                    .unwrap_or(RegType::Unknown);
+                let base_ty = reg_types.get(*base);
                 transfer_store(ctx, dbm_in, pc, *size, *base, base_ty, *off, *src, stats)
             },
         Instr::Call { helper } =>
@@ -574,40 +570,30 @@ pub fn transfer_instr(
 fn update_reg_types_for_instr(
     _ctx: &ExecContext,
     instr: &Instr,
-    types: &mut RegTypes,
+    types: &mut RegTypeState,
 ) {
     use Instr::*;
     use RegType::*;
 
     match instr {
         MovArg0 { dst } => {
-            if let Some(i) = reg_to_index(*dst) {
-                types[i] = ScalarValue;
-            }
+            types.set(*dst, ScalarValue);
         }
 
         Alu { op, dst, src, .. } => {
             use crate::ast::AluOp;
             use RegType::*;
 
-            let di = match reg_to_index(*dst) {
-                Some(i) => i,
-                None => return,
-            };
-            let old_ty = types[di];
+            let old_ty = types.get(*dst);
 
             match op {
                 AluOp::Mov => {
                     match src {
                         Operand::Reg(r) => {
-                            if let Some(si) = reg_to_index(*r) {
-                                types[di] = types[si];
-                            } else {
-                                types[di] = ScalarValue;
-                            }
+                            types.set(*dst, types.get(*r));
                         }
                         Operand::Imm(_) => {
-                            types[di] = ScalarValue;
+                            types.set(*dst, ScalarValue);
                         }
                     }
                 }
@@ -625,21 +611,21 @@ fn update_reg_types_for_instr(
                                 // keep pointer type
                                 // e.g., PtrToStack stays PtrToStack, PtrToCtx stays PtrToCtx
                             } else {
-                                types[di] = ScalarValue;
+                                types.set(*dst, ScalarValue);
                             }
                         }
                         Operand::Reg(r) => {
-                            let src_ty = reg_to_index(*r).map(|si| types[si]).unwrap_or(Unknown);
+                            let src_ty = types.get(*r);
                             if old_ty.is_pointer() && !src_ty.is_pointer() {
                                 // pointer +/- scalar ⇒ still pointer
                                 // (kernel also insists src must be SCALAR_VALUE, but
                                 // for now we approximate: "not a pointer" = scalar-ish)
                             } else if !old_ty.is_pointer() {
                                 // scalar +/- anything ⇒ scalar
-                                types[di] = ScalarValue;
+                                types.set(*dst, ScalarValue);
                             } else {
                                 // pointer +/- pointer ⇒ we give up
-                                types[di] = ScalarValue;
+                                types.set(*dst, ScalarValue);
                             }
                         }
                     }
@@ -647,15 +633,13 @@ fn update_reg_types_for_instr(
 
                 // Bitwise ops, mul, mod, shifts etc. typically break pointer structure.
                 _ => {
-                    types[di] = ScalarValue;
+                    types.set(*dst, ScalarValue);
                 }
             }
         }
 
         Endian { dst, .. } => {
-            if let Some(di) = reg_to_index(*dst) {
-                types[di] = ScalarValue;
-            }
+            types.set(*dst, ScalarValue);
         }
 
         If { .. } => {
@@ -664,9 +648,7 @@ fn update_reg_types_for_instr(
 
         Load { dst, .. } => {
             // For now: loads always produce scalars unless we special-case helpers later.
-            if let Some(di) = reg_to_index(*dst) {
-                types[di] = ScalarValue;
-            }
+            types.set(*dst, ScalarValue);
         }
 
         Store { .. } => {
@@ -676,9 +658,7 @@ fn update_reg_types_for_instr(
         Call { .. } => {
             // Simple ABI model: r0..r5 clobbered as unknown, r6..r10 preserved.
             for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-                if let Some(i) = reg_to_index(r) {
-                    types[i] = Unknown;
-                }
+                types.set(r, Unknown);
             }
         }
 
@@ -699,23 +679,19 @@ pub fn analyze_program(
     // Numeric state per PC
     let mut states: Vec<Option<Dbm>> = vec![None; n];
     // Register-type state per PC
-    let mut type_states: Vec<Option<RegTypes>> = vec![None; n];
+    let mut type_states: Vec<Option<RegTypeState>> = vec![None; n];
 
     // Entry register types, loosely mirroring kernel:
-    let mut entry_types: RegTypes = [RegType::NotInit; 11];
+    let mut entry_types = RegTypeState::new_not_init();
 
     // R1 is PTR_TO_CTX at entry
-    if let Some(i) = reg_to_index(Reg::R1) {
-        entry_types[i] = RegType::PtrToCtx;
-    }
+    entry_types.set(Reg::R1, RegType::PtrToCtx);
+
     // R10 is frame pointer / stack base
-    if let Some(i) = reg_to_index(ctx.r10) {
-        entry_types[i] = RegType::PtrToStack;
-    }
+    entry_types.set(ctx.r10, RegType::PtrToStack);
+
     // R0 as scalar return value placeholder
-    if let Some(i) = reg_to_index(Reg::R0) {
-        entry_types[i] = RegType::ScalarValue;
-    }
+    entry_types.set(Reg::R0, RegType::ScalarValue);
 
     let mut worklist = VecDeque::new();
 
@@ -736,22 +712,18 @@ pub fn analyze_program(
         println!("=== PC {} ===", pc);
         println!("Instr: {}", instr);
 
-        // 1) Print *input* state to this instruction
+        // 1) Print *input* DBM state
         println!("IN:");
         in_dbm.dump_matrix();
 
+        // 1b) Print *input* register types
         println!("RegTypes IN:");
-        for r in [
-            Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4,
-            Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9, Reg::R10,
-        ] {
-            if let Some(i) = reg_to_index(r) {
-                println!("  {:>3}: {:?}", r.name(), in_types[i]);
-            }
+        for (r, ty) in in_types.iter_regs() {
+            println!("  {:>3}: {:?}", r.name(), ty);
         }
         println!();
 
-        // 2) Numeric transfer
+        // 2) Numeric transfer: note we pass &in_types into transfer_instr
         let succs = transfer_instr(ctx, in_dbm, pc, instr, stats, &in_types);
 
         if stats.abort {
@@ -759,7 +731,7 @@ pub fn analyze_program(
             break;
         }
 
-        // 3) Print *output* states for each successor
+        // 3) Print *output* numeric states for each successor
         for (succ_pc, succ_dbm) in &succs {
             println!("OUT → PC {}:", succ_pc);
             succ_dbm.dump_matrix();
@@ -787,17 +759,7 @@ pub fn analyze_program(
                     let dbm_changed = !dbm_equals(existing_dbm, &joined_dbm);
                     *existing_dbm = joined_dbm;
 
-                    let mut merged_types = *existing_types;
-                    let mut types_changed = false;
-                    for i in 0..merged_types.len() {
-                        let before = merged_types[i];
-                        let after = join_reg_type(before, edge_types[i]);
-                        if after != before {
-                            types_changed = true;
-                            merged_types[i] = after;
-                        }
-                    }
-                    *existing_types = merged_types;
+                    let types_changed = existing_types.join_in_place(&edge_types);
 
                     if dbm_changed || types_changed {
                         worklist.push_back(succ_pc);
@@ -805,7 +767,10 @@ pub fn analyze_program(
                 }
                 _ => {
                     // Invariant: DBM and type state presence must match.
-                    panic!("Inconsistent state: DBM and type state presence differ at pc {}", succ_pc);
+                    panic!(
+                        "Inconsistent state: DBM and type state presence differ at pc {}",
+                        succ_pc
+                    );
                 }
             }
         }
@@ -816,6 +781,7 @@ pub fn analyze_program(
         .map(|opt| opt.unwrap_or_else(|| Dbm::new(REG_ENV.len())))
         .collect()
 }
+
 
 pub fn analyze_program_for_file(
     path: &std::path::Path,
