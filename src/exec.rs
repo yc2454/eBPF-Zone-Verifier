@@ -14,10 +14,11 @@ use crate::domain::{
     assume_ge_const, assume_le_const, assume_less_than, assume_eq_const,
     assume_ge_var, assume_le_var, assume_gt_var, assume_le_var_plus_const,
     // new: register types
-    RegType, RegTypeState, reg_to_index, join_reg_type,
+    RegType, RegTypeState,
 };
 use crate::utils::{dbm_equals, load_program_from_elf};
 use crate::stats::AnalysisStats;
+use crate::ctx_model::{classify_tc_ctx_field, CtxFieldKind};
 
 #[derive(Clone, Copy)]
 pub struct ExecContext {
@@ -450,6 +451,16 @@ fn transfer_load(
             vec![(pc + 1, dbm)]
         }
 
+        PtrToMem { region: _ } => {
+            // Model result as unknown scalar; still continue for now.
+            println!(
+                "Memory-region load at pc {}: dst {:?} = *(...)(base {:?}+{})",
+                pc, dst, base, off
+            );
+            forget(&mut dbm, dst);
+            vec![(pc + 1, dbm)]
+        }
+
         _ => {
             // Any other base type: non-stack, non-ctx pointer (or scalar / unknown).
             // Keep previous "non-stack load" behavior: mark as unsafe.
@@ -471,47 +482,82 @@ fn transfer_store(
     pc: usize,
     size: MemSize,
     base: Reg,
-    _base_type: RegType,
     off: i16,
     _src: Reg,
     stats: &mut AnalysisStats,
+    reg_types: &RegTypeState,
 ) -> Vec<(usize, Dbm)> {
-    let (lo, hi) = crate::domain::get_bounds(dbm_in, base, ctx.zero);
-    let eff_lo = lo.map(|x| x + off as i64);
-    let eff_hi = hi.map(|x| x + off as i64);
+    use crate::domain::RegType;
 
-    // Take store width into account
-    let bytes: i64 = match size {
-        MemSize::U8  => 1,
-        MemSize::U16 => 2,
-        MemSize::U32 => 4,
-        MemSize::U64 => 8,
-    };
+    let base_ty = reg_types.get(base);
 
-    let is_stack_store = match (eff_lo, eff_hi) {
-        (Some(l), Some(h)) => {
-            // We want [l, h + bytes - 1] fully inside [stack_min, stack_max]
-            let last = h + (bytes - 1);
-            l >= ctx.stack_min && last <= ctx.stack_max
+    match base_ty {
+        RegType::PtrToStack => {
+            // Old stack-bounds logic, but now only for actual stack pointers.
+            let (lo, hi) = crate::domain::get_bounds(dbm_in, base, ctx.zero);
+            let eff_lo = lo.map(|x| x + off as i64);
+            let eff_hi = hi.map(|x| x + off as i64);
+
+            let bytes: i64 = match size {
+                MemSize::U8  => 1,
+                MemSize::U16 => 2,
+                MemSize::U32 => 4,
+                MemSize::U64 => 8,
+            };
+
+            let is_stack_store = match (eff_lo, eff_hi) {
+                (Some(l), Some(h)) => {
+                    let last = h + (bytes - 1);
+                    l >= ctx.stack_min && last <= ctx.stack_max
+                }
+                _ => false,
+            };
+
+            if is_stack_store {
+                // Verified stack store: we don't track memory contents.
+                return vec![(pc + 1, dbm_in.clone())];
+            }
+
+            println!(
+                "Unsafe stack store at pc {}: {:?} to base {:?}+{} (bounds {:?}..{:?})",
+                pc, size, base, off, eff_lo, eff_hi
+            );
+            stats.mark_unsafe_store();
+            stats.abort = true;
+            vec![]
         }
-        _ => false,
-    };
 
-    if is_stack_store {
-        // Verified stack store: this is the one we actually certify.
-        // No change to DBM (we don't track memory), just continue.
-        return vec![(pc + 1, dbm_in.clone())];
+        RegType::PtrToCtx => {
+            // Writes into the ctx struct: allowed for now.
+            // We don't certify anything about them yet.
+            println!(
+                "Ctx store at pc {}: {:?} to base {:?}+{} (ignored for stack cert)",
+                pc, size, base, off
+            );
+            vec![(pc + 1, dbm_in.clone())]
+        }
+
+        RegType::PtrToMem { .. } => {
+            // Store into some metadata / heap / buffer region.
+            // For now, we ignore it in the stack certificate.
+            println!(
+                "Non-stack pointer store at pc {}: {:?} to base {:?}+{}",
+                pc, size, base, off
+            );
+            vec![(pc + 1, dbm_in.clone())]
+        }
+
+        other => {
+            // Clearly bad: deref through scalar or uninitialized.
+            println!(
+                "Unsafe store at pc {}: base {:?}+{} has non-pointer type {:?}",
+                pc, base, off, other
+            );
+            stats.mark_unsafe_store();
+            stats.abort = true;
+            vec![]
+        }
     }
-
-    // Otherwise: treat as non-stack store (ctx, map, packet, heap, etc.)
-    // We don't try to prove anything about it in this certificate.
-    println!(
-        "Non-stack store at pc {}: {:?} to base {:?}+{} (bounds {:?}..{:?})",
-        pc, size, base, off, eff_lo, eff_hi
-    );
-    stats.mark_unsafe_store();
-
-    vec![(pc + 1, dbm_in.clone())]
 }
 
 fn transfer_call(dbm_in: &Dbm, pc: usize, _helper: u32) -> Vec<(usize, Dbm)> {
@@ -553,8 +599,7 @@ pub fn transfer_instr(
             },
         Instr::Store { size, base, off, src } =>
             {
-                let base_ty = reg_types.get(*base);
-                transfer_store(ctx, dbm_in, pc, *size, *base, base_ty, *off, *src, stats)
+                transfer_store(ctx, dbm_in, pc, *size, *base, *off, *src, stats, reg_types)
             },
         Instr::Call { helper } =>
             transfer_call(dbm_in, pc, *helper),
@@ -572,98 +617,87 @@ fn update_reg_types_for_instr(
     instr: &Instr,
     types: &mut RegTypeState,
 ) {
-    use Instr::*;
-    use RegType::*;
-
-    match instr {
-        MovArg0 { dst } => {
-            types.set(*dst, ScalarValue);
+    match *instr {
+        Instr::MovArg0 { dst } => {
+            // Synthetic entry: arg0 is ctx pointer
+            types.set(dst, RegType::PtrToCtx);
         }
 
-        Alu { op, dst, src, .. } => {
-            use crate::ast::AluOp;
-            use RegType::*;
-
-            let old_ty = types.get(*dst);
-
+        Instr::Alu { op, dst, src, .. } => {
             match op {
                 AluOp::Mov => {
                     match src {
-                        Operand::Reg(r) => {
-                            types.set(*dst, types.get(*r));
+                        Operand::Reg(s) => {
+                            let ty = types.get(s);
+                            types.set(dst, ty);
                         }
                         Operand::Imm(_) => {
-                            types.set(*dst, ScalarValue);
+                            types.set(dst, RegType::ScalarValue);
                         }
                     }
                 }
 
-                AluOp::Add | AluOp::Sub => {
-                    // Model pointer arithmetic:
-                    //
-                    // - pointer + scalar  => pointer   (same kind)
-                    // - pointer + pointer => we give up (ScalarValue)
-                    // - scalar + anything => ScalarValue
-                    match src {
-                        Operand::Imm(_) => {
-                            // dst = dst +/- imm
-                            if old_ty.is_pointer() {
-                                // keep pointer type
-                                // e.g., PtrToStack stays PtrToStack, PtrToCtx stays PtrToCtx
-                            } else {
-                                types.set(*dst, ScalarValue);
-                            }
-                        }
-                        Operand::Reg(r) => {
-                            let src_ty = types.get(*r);
-                            if old_ty.is_pointer() && !src_ty.is_pointer() {
-                                // pointer +/- scalar ⇒ still pointer
-                                // (kernel also insists src must be SCALAR_VALUE, but
-                                // for now we approximate: "not a pointer" = scalar-ish)
-                            } else if !old_ty.is_pointer() {
-                                // scalar +/- anything ⇒ scalar
-                                types.set(*dst, ScalarValue);
-                            } else {
-                                // pointer +/- pointer ⇒ we give up
-                                types.set(*dst, ScalarValue);
-                            }
-                        }
-                    }
-                }
-
-                // Bitwise ops, mul, mod, shifts etc. typically break pointer structure.
+                // Any non-MOV arithmetic on pointers: for now, we drop pointer info.
                 _ => {
-                    types.set(*dst, ScalarValue);
+                    let ty = types.get(dst);
+                    match ty {
+                        RegType::PtrToCtx
+                        | RegType::PtrToStack
+                        | RegType::PtrToMem { .. } => {
+                            types.set(dst, RegType::ScalarValue);
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
 
-        Endian { dst, .. } => {
-            types.set(*dst, ScalarValue);
-        }
+        Instr::Load { size, dst, base, off } => {
+            let base_ty = types.get(base);
 
-        If { .. } => {
-            // No direct effect on types.
-        }
+            match base_ty {
+                RegType::PtrToCtx => {
+                    // This is a ctx field load. Ask ctx_model what it is.
+                    if let Some(kind) = classify_tc_ctx_field(off, size) {
+                        match kind {
+                            CtxFieldKind::Scalar => {
+                                types.set(dst, RegType::ScalarValue);
+                            }
+                            CtxFieldKind::PtrToMem { region } => {
+                                types.set(dst, RegType::PtrToMem { region });
+                            }
+                            CtxFieldKind::MemEnd { region } => {
+                                // For now treat end pointer as a pointer into same region.
+                                types.set(dst, RegType::PtrToMem { region });
+                            }
+                        }
+                    } else {
+                        // Unknown ctx field ⇒ treat as scalar.
+                        types.set(dst, RegType::ScalarValue);
+                    }
+                }
 
-        Load { dst, .. } => {
-            // For now: loads always produce scalars unless we special-case helpers later.
-            types.set(*dst, ScalarValue);
-        }
-
-        Store { .. } => {
-            // Stores don't change register types.
-        }
-
-        Call { .. } => {
-            // Simple ABI model: r0..r5 clobbered as unknown, r6..r10 preserved.
-            for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-                types.set(r, Unknown);
+                // Load from any other base: generic “read from memory” ⇒ scalar.
+                _ => {
+                    types.set(dst, RegType::ScalarValue);
+                }
             }
         }
 
-        Jmp { .. } | Exit => {
-            // No direct effect on types.
+        Instr::Store { .. } => {
+            // For now, stores don’t change register types.
+        }
+
+        Instr::Call { .. } => {
+            // Simple ABI: helpers clobber r0..r5 (set them to scalar),
+            // preserve r6..r9 and r10.
+            for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                types.set(r, RegType::ScalarValue);
+            }
+        }
+
+        Instr::If { .. } | Instr::Jmp { .. } | Instr::Endian { .. } | Instr::Exit => {
+            // No reg-type changes.
         }
     }
 }
