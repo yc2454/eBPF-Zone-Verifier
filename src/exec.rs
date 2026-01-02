@@ -15,18 +15,21 @@ use crate::domain::{
     assume_ge_var, assume_le_var, assume_gt_var, assume_le_var_plus_const,
     // new: register types
     RegType, RegTypeState,
-    get_bounds
+    get_bounds, BpfMapDef
 };
 use crate::utils::{dbm_equals};
 use crate::stats::AnalysisStats;
 use crate::ctx_model::{classify_tc_ctx_field, CtxFieldKind};
+use std::collections::HashMap;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct ExecContext {
     pub zero: Reg,
     pub r10: Reg,
     pub stack_min: i64,
     pub stack_max: i64,
+    pub map_defs: Vec<BpfMapDef>,
+    pub pc_to_map_idx: HashMap<usize, usize>,
 }
 
 /// Is v provably in [0, 0xffffffff] as a 32-bit unsigned value?
@@ -82,7 +85,7 @@ fn refine_branch_types(
 fn maybe_promote_map_val(types: &mut RegTypeState, reg: Reg) {
     // 1. Check if the register is actually a MapValueOrNull
     let target_id = match types.get(reg) {
-        RegType::PtrToMapValueOrNull { id } => id,
+        RegType::PtrToMapValueOrNull { id, map_idx: _ } => id,
         _ => return,
     };
 
@@ -90,9 +93,9 @@ fn maybe_promote_map_val(types: &mut RegTypeState, reg: Reg) {
 
     // 2. Find ALL registers with this ID and promote them
     for r in Reg::ALL {
-        if let RegType::PtrToMapValueOrNull { id } = types.get(r) {
+        if let RegType::PtrToMapValueOrNull { id, map_idx } = types.get(r) {
             if id == target_id {
-                types.set(r, RegType::PtrToMapValue { offset: 0 });
+                types.set(r, RegType::PtrToMapValue { offset: 0, map_idx });
             }
         }
     }
@@ -713,22 +716,33 @@ fn transfer_store(
     };
 
     match base_ty {
-        RegType::PtrToMapValue { offset: map_off } => {
-             // Access: base + off. Total offset = map_off + off
+        RegType::PtrToMapValue { offset: map_off, map_idx } => {
              let final_offset = map_off + (off as i64);
-             
-             // TODO: Check against Max Map Size. 
-             // Since we don't have map definitions loaded yet, we can't check upper bounds perfectly.
-             // For this MVP, check lower bound >= 0.
-             
-             if final_offset >= 0 {
-                 // Safe (optimistically assuming map is large enough for now)
-                 return vec![(pc + 1, dbm_in.clone(), next_types)];
-             }
-             
-             println!("Unsafe map store negative offset: {}", final_offset);
-             stats.mark_unsafe_store();
-             vec![]
+            let access_end = final_offset + access_size;
+
+            // 1. Retrieve Map Definition
+            // If map_idx is valid, get the size. Else assume unsafe or infinite.
+            let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) {
+                def.value_size as i64
+            } else {
+                // If we lost the map index (e.g. sentinel usize::MAX), 
+                // we can't verify bounds. Mark unsafe.
+                -1 
+            };
+
+            // 2. Bounds Check
+            if final_offset >= 0 && access_end <= map_limit {
+                // Safe!
+                return vec![(pc + 1, dbm_in.clone(), next_types)];
+            } else {
+                println!(
+                    "Unsafe map store at pc {}: off {} size {} limit {}", 
+                    pc, final_offset, access_size, map_limit
+                );
+                stats.mark_unsafe_store();
+                stats.abort = true;
+                vec![]
+            }
         }
 
         RegType::PtrToStack => {
@@ -823,32 +837,39 @@ fn transfer_store(
 }
 
 fn transfer_call(
-    dbm_in: &Dbm, 
-    pc: usize, 
+    _ctx: &ExecContext,   // Add ctx if needed later
+    dbm_in: &Dbm,
+    pc: usize,
     helper: u32,
-    reg_types: &RegTypeState, // Add this argument
+    reg_types: &RegTypeState, // INPUT types (read-only)
 ) -> Vec<(usize, Dbm, RegTypeState)> {
     let mut dbm = dbm_in.clone();
     let mut next_types = reg_types.clone();
 
-    // 1. Clobber caller-saved registers (R1-R5)
+    // 1. Read Arg1 (R1) type from INPUT state
+    let r1_type = reg_types.get(Reg::R1);
+
+    // 2. Clobber R1-R5
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
         forget(&mut dbm, r);
         next_types.set(r, RegType::ScalarValue);
     }
-    
-    // 2. Handle Return Value (R0)
     forget(&mut dbm, Reg::R0);
-    
+
+    // 3. Set Return Type
     match helper {
         1 => { // bpf_map_lookup_elem
-            // Returns a pointer that might be NULL.
-            // Assign a new ID so we can track the NULL check later.
-            let id = crate::domain::new_packet_id(); // Reuse your ID generator
-            next_types.set(Reg::R0, RegType::PtrToMapValueOrNull { id });
+            let map_idx = if let RegType::PtrToMapObject { map_idx } = r1_type {
+                map_idx
+            } else {
+                usize::MAX // Sentinel for "Unknown Map"
+            };
+
+            // Return "MapValueOrNull" tagged with the specific Map ID
+            let new_id = crate::domain::new_packet_id();
+            next_types.set(Reg::R0, RegType::PtrToMapValueOrNull { id: new_id, map_idx });
         }
         _ => {
-            // Default: Unknown scalar return
             next_types.set(Reg::R0, RegType::ScalarValue);
         }
     }
@@ -884,7 +905,7 @@ pub fn transfer_instr(
                 transfer_store(ctx, dbm_in, pc, *size, *base, *off, *src, stats, reg_types)
             },
         Instr::Call { helper } =>
-            transfer_call(dbm_in, pc, *helper, reg_types),
+            transfer_call(ctx, dbm_in, pc, *helper, reg_types),
         Instr::Jmp { target } =>
             vec![(*target, dbm_in.clone(), reg_types.clone())],
         Instr::Exit =>
@@ -893,9 +914,10 @@ pub fn transfer_instr(
 }
 
 pub fn update_reg_types_for_instr(
-    _ctx: &ExecContext,
+    ctx: &ExecContext,
     instr: &Instr,
     types: &mut RegTypeState,
+    pc: usize
 ) {
     match *instr {
         Instr::MovArg0 { dst } => {
@@ -903,7 +925,7 @@ pub fn update_reg_types_for_instr(
         }
 
         Instr::Alu { width, op, dst, src } => {
-            update_alu_types(types, width, op, dst, src);
+            update_alu_types(ctx, pc, types, width, op, dst, src);
         }
 
         Instr::Load { size, dst, base, off } => {
@@ -925,6 +947,8 @@ pub fn update_reg_types_for_instr(
 // -----------------------------------------------------------------------------
 
 fn update_alu_types(
+    ctx: &ExecContext,
+    pc: usize,
     types: &mut RegTypeState,
     width: Width,
     op: AluOp,
@@ -939,7 +963,7 @@ fn update_alu_types(
     }
 
     match op {
-        AluOp::Mov => handle_mov(types, dst, src),
+        AluOp::Mov => handle_mov(ctx, pc, types, dst, src),
         AluOp::Add => handle_add(types, dst, src),
         AluOp::Sub => handle_sub(types, dst, src),
         // All other ops (Mul, And, Or, Shl, etc.) result in Scalars
@@ -947,14 +971,28 @@ fn update_alu_types(
     }
 }
 
-fn handle_mov(types: &mut RegTypeState, dst: Reg, src: Operand) {
+fn handle_mov(
+    ctx: &ExecContext,
+    pc: usize,
+    types: &mut RegTypeState,
+    dst: Reg,
+    src: Operand,
+) {
     match src {
         Operand::Reg(r) => {
-            // Copy the exact type (ID, Range, Offset) from source
+            // Copy type from register
             types.set(dst, types.get(r));
         }
         Operand::Imm(_) => {
-            types.set(dst, RegType::ScalarValue);
+            // CHECK FOR RELOCATION!
+            // If this is `r1 = 0 ll` AND there is a map relocation at this PC:
+            if let Some(&map_idx) = ctx.pc_to_map_idx.get(&pc) {
+                // It is a Map Object (struct bpf_map *)
+                types.set(dst, RegType::PtrToMapObject { map_idx });
+            } else {
+                // Otherwise it's just a number
+                types.set(dst, RegType::ScalarValue);
+            }
         }
     }
 }
@@ -975,8 +1013,8 @@ fn handle_add(types: &mut RegTypeState, dst: Reg, src: Operand) {
                 types.set(dst, RegType::PtrToPacket { id, range: new_range });
             }
             // Map: Ptr += K shifts the offset
-            RegType::PtrToMapValue { offset } => {
-                types.set(dst, RegType::PtrToMapValue { offset: offset + k });
+            RegType::PtrToMapValue { offset, map_idx } => {
+                types.set(dst, RegType::PtrToMapValue { offset: offset + k, map_idx });
             }
             // Others (Ctx, Stack): Preserve type, assume DBM tracks numeric bounds
             _ => types.set(dst, dst_ty),
@@ -1002,8 +1040,8 @@ fn handle_sub(types: &mut RegTypeState, dst: Reg, src: Operand) {
                 types.set(dst, RegType::PtrToPacket { id, range: new_range });
             }
             // Map: Ptr -= K shifts offset backwards
-            RegType::PtrToMapValue { offset } => {
-                types.set(dst, RegType::PtrToMapValue { offset: offset - k });
+            RegType::PtrToMapValue { offset, map_idx } => {
+                types.set(dst, RegType::PtrToMapValue { offset: offset - k, map_idx });
             }
             _ => types.set(dst, dst_ty),
         }
@@ -1071,7 +1109,7 @@ fn update_call_types(types: &mut RegTypeState, helper: u32) {
             // Returns a pointer that might be NULL. 
             // We assign a fresh ID to track the future NULL check.
             let new_id = crate::domain::new_packet_id();
-            types.set(Reg::R0, RegType::PtrToMapValueOrNull { id: new_id });
+            types.set(Reg::R0, RegType::PtrToMapValueOrNull { id: new_id, map_idx: 0 });
         }
         // Add other helpers here (e.g. bpf_get_smp_processor_id returns scalar)
         _ => {
@@ -1158,7 +1196,7 @@ pub fn analyze_program(
             // 1. Update Types for Edge
             // Compute edge types after this instruction starting from in_types.
             let mut edge_types = in_types;
-            update_reg_types_for_instr(ctx, instr, &mut edge_types);
+            update_reg_types_for_instr(ctx, instr, &mut edge_types, succ_pc);
 
             // 2. Refine Types (Flow-sensitive)
             refine_branch_types(instr, succ_pc, &succ_dbm, &mut edge_types);

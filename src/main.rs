@@ -19,6 +19,8 @@ use crate::dbm::Dbm;
 use crate::domain::{Reg, REG_ENV, assign_zero};
 use crate::exec::{analyze_program, ExecContext};
 use crate::utils::load_program_from_elf;
+use std::collections::HashMap;
+use crate::elf_loader::{load_maps, load_relocations};
 
 fn usage() {
     eprintln!("Usage:");
@@ -47,6 +49,8 @@ fn default_exec_ctx() -> ExecContext {
         r10: Reg::R10,
         stack_min: -512,
         stack_max: -1,
+        map_defs: Vec::new(),
+        pc_to_map_idx: HashMap::new(),
     }
 }
 
@@ -86,7 +90,7 @@ fn main() {
         return;
     }
 
-    let ctx = default_exec_ctx();
+    let mut ctx = default_exec_ctx();
     let stats = &mut stats::AnalysisStats::default();
     let entry = make_entry_state(&ctx);
 
@@ -125,6 +129,15 @@ fn main() {
             let section = &args[3];
 
             println!("=== ELF analyze: file='{}', section='{}' ===", path, section);
+            // 1. Load Maps
+            let map_defs = 
+                load_maps(path).unwrap_or_default();
+            // 2. Load Relocations
+            let pc_to_map_idx = 
+                load_relocations(path, &map_defs).unwrap_or_default();
+            ctx.map_defs = map_defs;
+            ctx.pc_to_map_idx = pc_to_map_idx;
+
             let prog = load_program_from_elf(path, section);
 
             let _cert = analyze_program(&ctx, &prog, entry, stats);

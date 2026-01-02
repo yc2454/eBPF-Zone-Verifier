@@ -76,6 +76,16 @@ impl Reg {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct BpfMapDef {
+    pub type_: u32,
+    pub key_size: u32,
+    pub value_size: u32,
+    pub max_entries: u32,
+    pub map_flags: u32,
+    pub name: String, 
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum RegType {
     NotInit,        // NOT_INIT
@@ -89,9 +99,10 @@ pub enum RegType {
     Unknown,        // our "top" / fallback for now
 
     // Map Support
-    PtrToMapValue { offset: i64 },          // Verified safe (non-null)
-    PtrToMapValueOrNull { id: u32 },        // Result of lookup, might be 0
-    PtrToMapKey,    // PTR_TO_MAP_KEY
+    PtrToMapObject { map_idx: usize }, // r1 before call
+    PtrToMapValueOrNull { id: u32, map_idx: usize }, // r0 after call
+    PtrToMapValue { offset: i64, map_idx: usize },   // r0 after check
+    PtrToMapKey,                                    // Result of &key for bpf_map_lookup_elem
     // later: PtrToSocket, PtrToBtfId, PtrToBuf, etc.
 }
 
