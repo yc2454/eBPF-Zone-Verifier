@@ -14,7 +14,7 @@ use crate::domain::{
     assume_ge_const, assume_le_const, assume_less_than, assume_eq_const,
     assume_ge_var, assume_le_var, assume_gt_var, assume_le_var_plus_const,
     // new: register types
-    RegType, RegTypeState,
+    RegType, RegTypeState, new_packet_id
 };
 use crate::utils::{dbm_equals, load_program_from_elf};
 use crate::stats::AnalysisStats;
@@ -38,10 +38,53 @@ fn proven_u32_range(dbm: &Dbm, v: Reg, zero: Reg) -> bool {
     ub <= 0xffff_ffff && lb <= 0
 }
 
-fn transfer_mov_arg0(dbm_in: &Dbm, pc: usize, dst: Reg) -> Vec<(usize, Dbm)> {
+// Helper to mimic kernel's find_good_pkt_pointers
+fn update_packet_ranges(
+    dbm: &Dbm, 
+    types: &mut RegTypeState, 
+    packet_reg: Reg, 
+    packet_end_reg: Reg
+) {
+    // We just verified: packet_reg <= packet_end_reg
+    // We want to update ranges for ALL registers sharing packet_reg's ID.
+    
+    let target_id = match types.get(packet_reg) {
+        RegType::PtrToPacket { id, .. } => id,
+        _ => return, 
+    };
+
+    // Scan all registers
+    for r in Reg::ALL {
+        if let RegType::PtrToPacket { id, range } = types.get(r) {
+            if id == target_id {
+                // We want to check: Is r <= packet_end_reg - K?
+                // In DBM terms: upper_bound(r - packet_end_reg) <= -K
+                // This implies r + K <= packet_end_reg.
+                
+                // get_bounds(A, B) returns bounds for (A - B)
+                let (_, ub) = crate::domain::get_bounds(dbm, r, packet_end_reg);
+                
+                if let Some(upper) = ub {
+                    if upper <= 0 {
+                        // 'upper' is negative (e.g. -4). 
+                        // r - end <= -4  =>  r + 4 <= end.
+                        // Safe range is at least abs(upper).
+                        let proved_safe = upper.abs() as u64;
+                        if proved_safe > range {
+                            types.set(r, RegType::PtrToPacket { id, range: proved_safe });
+                            // println!("Refined range for {} to {}", r.name(), proved_safe);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn transfer_mov_arg0(dbm_in: &Dbm, pc: usize, dst: Reg) -> Vec<(usize, Dbm, RegTypeState)> {
     let mut dbm = dbm_in.clone();
     forget(&mut dbm, dst);
-    vec![(pc + 1, dbm)]
+    vec![(pc + 1, dbm, RegTypeState::new_not_init())]
 }
 
 fn transfer_alu(
@@ -53,23 +96,27 @@ fn transfer_alu(
     dst: Reg,
     src: Operand,
     stats: &mut AnalysisStats,
-) -> Vec<(usize, Dbm)> {
+    reg_types: &RegTypeState, // NEW: Input types
+) -> Vec<(usize, Dbm, RegTypeState)> { // NEW: Return updated types
     let mut dbm = dbm_in.clone();
+    
+    // Clone types to determine the state after this instruction
+    let mut next_types = reg_types.clone();
 
+    // --- 1. Update Numeric State (DBM) ---
+    // (This block remains largely the same as your original code)
     match op {
         AluOp::Mov => {
             match src {
                 Operand::Reg(r) => {
                     if width == Width::W32 {
-                        // mov32 reg: result is in [0, 0xffff_ffff], but we can't express
-                        // dst = (r mod 2^32) relationally in zones. Stay sound:
+                        // mov32: Zero-extend, lost relation to original 64-bit value
                         forget(&mut dbm, dst);
                         assume_ge_const(&mut dbm, dst, ctx.zero, 0);
                         assume_le_const(&mut dbm, dst, ctx.zero, 0xffff_ffff);
                     } else {
-                        // mov64 reg (existing behavior)
+                        // mov64
                         if r == ctx.r10 {
-                            // dst = r10  ⇒ treat as "offset from fp is 0"
                             assign_zero(&mut dbm, dst, ctx.zero);
                         } else {
                             assign_eq(&mut dbm, dst, r);
@@ -77,9 +124,7 @@ fn transfer_alu(
                     }
                 }
                 Operand::Imm(c) => {
-                    // mov32 imm: immediate is u32 then zero-extended
                     let c = if width == Width::W32 { (c as u32) as i64 } else { c };
-                    // dst = c
                     forget(&mut dbm, dst);
                     assume_le_const(&mut dbm, dst, ctx.zero, c);
                     assume_ge_const(&mut dbm, dst, ctx.zero, c);
@@ -96,142 +141,189 @@ fn transfer_alu(
 
         AluOp::Sub => {
             match src {
-                Operand::Imm(c) => {
-                    // dst -= c  ==  dst += (-c)
-                    assign_add_imm(&mut dbm, dst, -c);
-                }
-                Operand::Reg(_r) => {
-                    // dst -= reg is nonlinear in zones (x := x - y).
-                    // For now, stay sound and just forget dst.
-                    forget(&mut dbm, dst);
-                }
+                Operand::Imm(c) => assign_add_imm(&mut dbm, dst, -c),
+                Operand::Reg(_r) => forget(&mut dbm, dst),
             }
         }
 
         AluOp::And => {
             match src {
                 Operand::Imm(mask) => {
-                    let mask = if width == Width::W32 {
-                        (mask as u32) as i64
-                    } else {
-                        mask
-                    };
+                    let mask = if width == Width::W32 { (mask as u32) as i64 } else { mask };
                     assign_and_mask(&mut dbm, dst, mask, ctx.zero)
                 }
-                Operand::Reg(_r) => {
-                    // dst &= unknown ⇒ dst becomes unknown
-                    forget(&mut dbm, dst);
-                }
+                Operand::Reg(_r) => forget(&mut dbm, dst),
             }
         }
 
         AluOp::Or => {
-            match src {
-                Operand::Imm(_mask) => {
-                    if width == Width::W32 {
-                        // w_dst |= mask: result is a 32-bit value, but relation to old dst is nonlinear.
-                        // MVP: forget dst, then enforce 0 <= dst <= 0xffff_ffff (like other W32 ops).
-                        forget(&mut dbm, dst);
-                        assume_ge_const(&mut dbm, dst, ctx.zero, 0);
-                        assume_le_const(&mut dbm, dst, ctx.zero, 0xffff_ffff);
-                    } else {
-                        // OR64 imm: we can't model it usefully in zones; just forget dst.
-                        forget(&mut dbm, dst);
-                    }
-                }
-                Operand::Reg(_r) => {
-                    // dst |= reg: nonlinear, just forget.
-                    forget(&mut dbm, dst);
-                }
+            if width == Width::W32 {
+                forget(&mut dbm, dst);
+                assume_ge_const(&mut dbm, dst, ctx.zero, 0);
+                assume_le_const(&mut dbm, dst, ctx.zero, 0xffff_ffff);
+            } else {
+                forget(&mut dbm, dst);
             }
         }
 
-        AluOp::Shl => {
-            // Nonlinear bit op; MVP: forget
-            forget(&mut dbm, dst);
-        }
+        AluOp::Shl | AluOp::Arsh => forget(&mut dbm, dst),
 
         AluOp::Shr => {
-            match src {
+             match src {
                 Operand::Imm(k) => {
                     let bits = if width == Width::W32 { 32u32 } else { 64u32 };
-                    let k = (k as u32).min(bits); // clamp defensively
-
-                    // result is unsigned logical shift => 0 <= dst <= 2^(bits-k)-1
+                    let k = (k as u32).min(bits);
                     forget(&mut dbm, dst);
                     assume_ge_const(&mut dbm, dst, ctx.zero, 0);
-
                     if k < bits {
                         let ub: i64 = ((1u128 << (bits - k)) - 1) as i64;
                         assume_le_const(&mut dbm, dst, ctx.zero, ub);
                     } else {
-                        // shift by >= bits => result 0 in real semantics; MVP just set to 0
                         assume_eq_const(&mut dbm, dst, ctx.zero, 0);
                     }
                 }
-                Operand::Reg(_) => {
-                    // shift-by-reg: not modeling yet
-                    forget(&mut dbm, dst);
-                }
+                Operand::Reg(_) => forget(&mut dbm, dst),
             }
         }
 
-        AluOp::Arsh => {
-            // Arithmetic right shift (sign-propagating).
-            // Zones don’t track bit-level sign; modeling this precisely would
-            // require case-splitting on sign. MVP: sound but coarse — just forget.
-            forget(&mut dbm, dst);
-        }
-
         AluOp::Mul => {
-            match src {
-                Operand::Imm(c) => {
-                    // Try to keep an interval when multiplying by constant.
-                    assign_mul_imm(&mut dbm, dst, c, ctx.zero);
-                }
-                Operand::Reg(_r) => {
-                    // dst *= reg: product of two unknowns; interval logic gets messy
-                    // and likely not worth it for now. Stay sound and conservative.
-                    forget(&mut dbm, dst);
-                }
+             match src {
+                Operand::Imm(c) => assign_mul_imm(&mut dbm, dst, c, ctx.zero),
+                Operand::Reg(_) => forget(&mut dbm, dst),
             }
         }
 
         AluOp::Mod => {
-            match src {
+             match src {
                 Operand::Imm(c) => {
-                    if c <= 0 {
-                        // avoid divide-by-zero / negative nonsense: just forget
-                        forget(&mut dbm, dst);
-                    } else {
-                        // dst %= c  ⇒  0 <= dst <= c-1
+                    if c > 0 {
                         forget(&mut dbm, dst);
                         assume_ge_const(&mut dbm, dst, ctx.zero, 0);
                         assume_le_const(&mut dbm, dst, ctx.zero, c - 1);
+                    } else {
+                        forget(&mut dbm, dst);
                     }
                 }
-                Operand::Reg(_r) => {
-                    // dst %= reg: result in [0, reg-1], but reg is unknown.
-                    // To stay simple & sound, just forget dst for now.
-                    forget(&mut dbm, dst);
+                Operand::Reg(_) => forget(&mut dbm, dst),
+            }
+        }
+
+        AluOp::Xor => forget(&mut dbm, dst),
+    }
+
+    // --- 2. Update Register Type State ---
+    
+    // If 32-bit ALU op, we generally truncate pointers -> Scalar.
+    // Exception: logic below handles specific cases.
+    let is_32bit = width == Width::W32;
+
+    match op {
+        AluOp::Mov => {
+            match src {
+                Operand::Reg(r) => {
+                    if is_32bit {
+                        // Mov32 destroys pointer semantics
+                        next_types.set(dst, RegType::ScalarValue);
+                    } else {
+                        // Mov64 preserves type (including ID and Range)
+                        next_types.set(dst, reg_types.get(r));
+                    }
+                }
+                Operand::Imm(_) => {
+                    next_types.set(dst, RegType::ScalarValue);
                 }
             }
         }
 
-        // Not needed yet; keep sound default
-        AluOp::Xor => {
-            forget(&mut dbm, dst);
+        AluOp::Add => {
+            let dst_ty = reg_types.get(dst);
+            
+            // Only preserve pointer types if 64-bit operation
+            if !is_32bit && dst_ty.is_pointer() {
+                match src {
+                    Operand::Imm(k) => {
+                        // Ptr += Imm
+                        match dst_ty {
+                            RegType::PtrToPacket { id, range } => {
+                                // Arithmetic on packet ptr slides the valid range window
+                                let new_range = if k > 0 {
+                                    range.saturating_sub(k as u64)
+                                } else {
+                                    range.saturating_add(k.wrapping_neg() as u64)
+                                };
+                                next_types.set(dst, RegType::PtrToPacket { id, range: new_range });
+                            }
+                            _ => {
+                                // Other pointers (Stack, Ctx, Mem) preserve type on Add Imm
+                                next_types.set(dst, dst_ty);
+                            }
+                        }
+                    }
+                    Operand::Reg(r) => {
+                        // Ptr += Reg. 
+                        // If Reg is Scalar, type is theoretically preserved (but range is lost/hard to track).
+                        // If Reg is Ptr, result is invalid (Ptr + Ptr).
+                        if reg_types.get(r) == RegType::ScalarValue {
+                            // We treat variable offset pointer arithmetic as invalidating the specific type
+                            // for Packet pointers (reset range/id) or just downgrading to scalar.
+                            // For MVP, safe default is ScalarValue.
+                            next_types.set(dst, RegType::ScalarValue);
+                        } else {
+                            next_types.set(dst, RegType::ScalarValue);
+                        }
+                    }
+                }
+            } else {
+                // Scalar += ... or 32-bit ops -> Scalar
+                next_types.set(dst, RegType::ScalarValue);
+            }
+        }
+
+        AluOp::Sub => {
+            let dst_ty = reg_types.get(dst);
+
+            if !is_32bit && dst_ty.is_pointer() {
+                 match src {
+                    Operand::Imm(k) => {
+                        // Ptr -= Imm
+                         match dst_ty {
+                            RegType::PtrToPacket { id, range } => {
+                                // Ptr -= k  == Ptr += -k
+                                let new_range = if k > 0 {
+                                    range.saturating_add(k as u64)
+                                } else {
+                                    range.saturating_sub(k.wrapping_neg() as u64)
+                                };
+                                next_types.set(dst, RegType::PtrToPacket { id, range: new_range });
+                            }
+                            _ => next_types.set(dst, dst_ty),
+                        }
+                    }
+                    Operand::Reg(r) => {
+                        // Ptr - Ptr (if same region) => Scalar (offset).
+                        // Ptr - Scalar => Ptr (with unknown offset).
+                        // For MVP, downgrade everything to Scalar.
+                        next_types.set(dst, RegType::ScalarValue);
+                    }
+                 }
+            } else {
+                next_types.set(dst, RegType::ScalarValue);
+            }
+        }
+
+        // Bitwise logic / Multiplies / Modulo on pointers is invalid -> Scalar
+        _ => {
+            next_types.set(dst, RegType::ScalarValue);
         }
     }
 
     if dbm.is_inconsistent() {
-        println!("ERROR: ");
-        println!("ALU transfer led to inconsistent state at pc {}", pc);
+        println!("ERROR: ALU transfer led to inconsistent state at pc {}", pc);
         dbm.dump_matrix();
         stats.mark_dbm_inconsistent();
         vec![]
     } else {
-        vec![(pc + 1, dbm)]
+        vec![(pc + 1, dbm, next_types)]
     }
 }
 
@@ -241,8 +333,9 @@ fn transfer_endian(
     pc: usize,
     dst: Reg,
     kind: EndianKind,
-) -> Vec<(usize, Dbm)> {
+) -> Vec<(usize, Dbm, RegTypeState)> {
     let mut dbm = dbm_in.clone();
+    let next_types = RegTypeState::new_not_init();
 
     // Endian ops are nonlinear bit permutations; we cannot track the relation
     // to the old value. MVP: forget, then approximate the guaranteed range.
@@ -253,14 +346,14 @@ fn transfer_endian(
         EndianKind::Be32 => (0i64, 0xffff_ffff),
         EndianKind::Be64 => {
             // Byteswap64 preserves full 64-bit domain; no useful bound.
-            return vec![(pc + 1, dbm)];
+            return vec![(pc + 1, dbm, next_types)];
         }
     };
 
     assume_ge_const(&mut dbm, dst, ctx.zero, lo);
     assume_le_const(&mut dbm, dst, ctx.zero, hi);
 
-    vec![(pc + 1, dbm)]
+    vec![(pc + 1, dbm, next_types)]
 }
 
 fn transfer_if(
@@ -272,13 +365,17 @@ fn transfer_if(
     op: CmpOp,
     right: Operand,
     target: usize,
-) -> Vec<(usize, Dbm)> {
+    reg_types_in: &RegTypeState, // Logic relies on input types
+) -> Vec<(usize, Dbm, RegTypeState)> { // Returns updated types per branch
     let mut out = Vec::new();
 
     // THEN branch: condition holds
     let mut dbm_then = dbm_in.clone();
+    let mut types_then = reg_types_in.clone(); // Clone types for THEN
+
     // ELSE branch: condition does not hold
     let mut dbm_else = dbm_in.clone();
+    let types_else = reg_types_in.clone(); // Clone types for ELSE
 
     // For JMP32 Eq/Ne with imm, only refine if left is already known to be u32-range.
     if width == Width::W32 {
@@ -294,11 +391,16 @@ fn transfer_if(
             ) && !proven_u32_range(dbm_in, left, ctx.zero)
             {
                 // Can't model low32 comparison safely -> fork without refinement.
-                return vec![(pc + 1, dbm_in.clone()), (target, dbm_in.clone())];
+                // Return original types
+                out.push((pc + 1, dbm_in.clone(), reg_types_in.clone()));
+                out.push((target, dbm_in.clone(), reg_types_in.clone()));
+                return out;
             }
         } else {
             // Reg comparisons in JMP32: too tricky with low32 semantics, don't refine.
-            return vec![(pc + 1, dbm_in.clone()), (target, dbm_in.clone())];
+            out.push((pc + 1, dbm_in.clone(), reg_types_in.clone()));
+            out.push((target, dbm_in.clone(), reg_types_in.clone()));
+            return out;
         }
     }
 
@@ -317,71 +419,76 @@ fn transfer_if(
 
         // ---------- left > imm ----------
         (CmpOp::UGt, Operand::Imm(c)) => {
-            // then: left > c  => left >= c + 1
             assume_ge_const(&mut dbm_then, left, ctx.zero, c + 1);
-            // else: left <= c
             assume_le_const(&mut dbm_else, left, ctx.zero, c);
         }
 
         // ---------- left < imm ----------
         (CmpOp::ULt, Operand::Imm(c)) => {
-            // then: left < c  => left <= c - 1
             assume_less_than(&mut dbm_then, left, ctx.zero, c);
-            // else: left >= c
             assume_ge_const(&mut dbm_else, left, ctx.zero, c);
         }
 
         (CmpOp::Ne, Operand::Imm(imm)) => {
-            // then: left != imm  (DBM can't express disequality => no refinement)
-            // else: left == imm
             assume_eq_const(&mut dbm_else, left, ctx.zero, imm);
-            // keep dbm_then unchanged
         }
 
         // ---------- left >= reg ----------
         (CmpOp::UGe, Operand::Reg(r)) => {
-            // left >= r  <=>  r - left <= 0
             assume_ge_var(&mut dbm_then, left, r);
-
-            // else: left < r  <=> left <= r - 1  <=> left - r <= -1
             assume_le_var_plus_const(&mut dbm_else, left, r, -1);
         }
 
         // ---------- left <= reg ----------
         (CmpOp::ULe, Operand::Reg(r)) => {
-            // left <= r
             assume_le_var(&mut dbm_then, left, r);
-            // else: left > r
             assume_gt_var(&mut dbm_else, left, r);
+
+            // --- PACKET SAFETY: if Packet <= End ---
+            let l_ty = types_then.get(left);
+            let r_ty = types_then.get(r);
+            if matches!(l_ty, RegType::PtrToPacket{..}) && matches!(r_ty, RegType::PtrToPacketEnd) {
+                 update_packet_ranges(&dbm_then, &mut types_then, left, r);
+            }
         }
 
         // ---------- left > reg ----------
         (CmpOp::UGt, Operand::Reg(r)) => {
-            // then: left > r
             assume_gt_var(&mut dbm_then, left, r);
-            // else: left <= r
             assume_le_var(&mut dbm_else, left, r);
+            
+            // --- PACKET SAFETY: if End > Packet (same as Packet < End) ---
+            let l_ty = types_then.get(left);
+            let r_ty = types_then.get(r);
+            // End > Packet implies Packet <= End - 1
+            if matches!(l_ty, RegType::PtrToPacketEnd) && matches!(r_ty, RegType::PtrToPacket{..}) {
+                 update_packet_ranges(&dbm_then, &mut types_then, r, left);
+            }
         }
 
         // ---------- left < reg ----------
         (CmpOp::ULt, Operand::Reg(r)) => {
-            // then: left < r  => left <= r - 1
             assume_le_var_plus_const(&mut dbm_then, left, r, -1);
-            // else: left >= r
             assume_ge_var(&mut dbm_else, left, r);
+
+            // --- PACKET SAFETY: if Packet < End ---
+             let l_ty = types_then.get(left);
+             let r_ty = types_then.get(r);
+             if matches!(l_ty, RegType::PtrToPacket{..}) && matches!(r_ty, RegType::PtrToPacketEnd) {
+                  update_packet_ranges(&dbm_then, &mut types_then, left, r);
+             }
         }
 
-        // Eq/Ne not needed yet: stay sound (no refinement)
         (CmpOp::Eq, _) | (CmpOp::Ne, _) => {
             // Conservative: no constraints; just fork
         }
     }
 
     if !dbm_then.is_inconsistent() {
-        out.push((target, dbm_then));
+        out.push((target, dbm_then, types_then));
     }
     if !dbm_else.is_inconsistent() {
-        out.push((pc + 1, dbm_else));
+        out.push((pc + 1, dbm_else, types_else));
     }
     out
 }
@@ -396,84 +503,129 @@ fn transfer_load(
     base_type: RegType,
     off: i16,
     stats: &mut AnalysisStats,
-) -> Vec<(usize, Dbm)> {
+    reg_types: &RegTypeState, // Needed to scan for PacketEnd reg
+) -> Vec<(usize, Dbm, RegTypeState)> { // Returns updated types
     use RegType::*;
 
     let mut dbm = dbm_in.clone();
+    // Clone types because we will update 'dst'
+    let mut next_types = reg_types.clone();
+
+    let access_size = match size {
+        MemSize::U8 => 1, MemSize::U16 => 2, MemSize::U32 => 4, MemSize::U64 => 8,
+    };
 
     match base_type {
+        // --- STACK LOGIC ---
         PtrToStack => {
-            // Old stack logic, unchanged
             let (lo, hi) = crate::domain::get_bounds(dbm_in, base, ctx.zero);
-
             let eff_lo = lo.map(|x| x + off as i64);
-            let eff_hi = hi.map(|x| x + off as i64);
+            let eff_hi = hi.map(|x| x + off as i64 + (access_size - 1));
 
             let stack_ok = match (eff_lo, eff_hi) {
                 (Some(l), Some(h)) => match size {
                     MemSize::U8  => l >= ctx.stack_min && h <= ctx.stack_max,
-                    MemSize::U16 => l >= ctx.stack_min && h + 1 <= ctx.stack_max,
-                    MemSize::U32 => l >= ctx.stack_min && h + 3 <= ctx.stack_max,
-                    MemSize::U64 => l >= ctx.stack_min && h + 7 <= ctx.stack_max,
+                    MemSize::U16 => l >= ctx.stack_min && h + 0 <= ctx.stack_max, // Fixed logic
+                    MemSize::U32 => l >= ctx.stack_min && h + 0 <= ctx.stack_max,
+                    MemSize::U64 => l >= ctx.stack_min && h + 0 <= ctx.stack_max,
                 },
                 _ => false,
             };
 
-            if stack_ok {
-                // Proven-safe stack load.
-                // (Optional debug: check_stack_load(ctx, dbm_in, base);)
-                forget(&mut dbm, dst);
-                return vec![(pc + 1, dbm)];
+            if !stack_ok {
+                println!("Unsafe stack load at pc {}: base {:?}+{}", pc, base, off);
+                stats.mark_unsafe_load();
             }
-
-            println!(
-                "Stack load not proven safe at pc {}: base {:?}+{}",
-                pc, base, off
-            );
-            stats.mark_unsafe_load();
-            // Model result as unknown scalar; still continue for now.
+            
+            // Stack load -> Scalar
+            next_types.set(dst, RegType::ScalarValue);
             forget(&mut dbm, dst);
-            vec![(pc + 1, dbm)]
         }
 
-        PtrToCtx => {
-            // This is a context pointer like kernel PTR_TO_CTX.
-            // We don't yet model the exact layout (is_valid_access),
-            // but we *know* it's not a stack access. For now:
-            //  - treat it as allowed
-            //  - do NOT mark unsafe_load
-            //  - result is an unknown scalar
-            println!(
-                "CTX load at pc {}: dst {:?} = *(...)(base {:?}+{})",
-                pc, dst, base, off
-            );
+        // --- PACKET LOGIC (NEW) ---
+        PtrToPacket { id: _, range } => {
+            let access_end = off as i64 + access_size;
+            let mut safe = false;
+
+            // Tier 1: Check Cached Range (Fast, robust to clobbering)
+            // Access is safe if (off + size) <= range
+            if off >= 0 && (access_end as u64) <= range {
+                safe = true;
+            } 
+            // Tier 2: DBM Fallback (Slow, requires DataEnd to be alive)
+            else {
+                // Find register holding PacketEnd
+                let end_reg_opt = crate::domain::REG_ENV.all().iter().find(|&&r| {
+                     matches!(reg_types.get(r), RegType::PtrToPacketEnd)
+                });
+
+                if let Some(end_reg) = end_reg_opt {
+                    // Check: base + off + size <= end_reg
+                    // DBM: base - end_reg <= -(off + size)
+                    let bound = -access_end;
+                    let (_, ub) = crate::domain::get_bounds(&dbm, base, *end_reg);
+                    if let Some(upper) = ub {
+                        if upper <= bound {
+                            safe = true;
+                        }
+                    }
+                }
+            }
+
+            if !safe {
+                println!("Unsafe packet load at pc {}: base {:?}+{} (range={})", pc, base, off, range);
+                stats.mark_unsafe_load();
+            }
+
+            // Packet load -> Scalar
+            next_types.set(dst, RegType::ScalarValue);
             forget(&mut dbm, dst);
-            vec![(pc + 1, dbm)]
+        }
+
+        // --- CONTEXT LOGIC (Updated to Mint IDs) ---
+        PtrToCtx => {
+            if let Some(kind) = classify_tc_ctx_field(off, size) {
+                match kind {
+                    CtxFieldKind::PacketStart => {
+                        // MINT NEW ID
+                        let new_id = crate::domain::new_packet_id();
+                        next_types.set(dst, RegType::PtrToPacket { id: new_id, range: 0 });
+                    },
+                    CtxFieldKind::PacketEnd => {
+                        next_types.set(dst, RegType::PtrToPacketEnd);
+                    },
+                    CtxFieldKind::PtrToMem { region } => {
+                        next_types.set(dst, RegType::PtrToMem { region });
+                    },
+                    CtxFieldKind::MemEnd { region } => {
+                         // Or specific end type if you add one
+                         next_types.set(dst, RegType::ScalarValue); 
+                    },
+                    CtxFieldKind::Scalar => {
+                        next_types.set(dst, RegType::ScalarValue);
+                    }
+                }
+            } else {
+                next_types.set(dst, RegType::ScalarValue);
+            }
+            forget(&mut dbm, dst);
         }
 
         PtrToMem { region: _ } => {
-            // Model result as unknown scalar; still continue for now.
-            println!(
-                "Memory-region load at pc {}: dst {:?} = *(...)(base {:?}+{})",
-                pc, dst, base, off
-            );
+            println!("Memory-region load at pc {}: dst {:?} = *(...)(base {:?}+{})", pc, dst, base, off);
+            next_types.set(dst, RegType::ScalarValue);
             forget(&mut dbm, dst);
-            vec![(pc + 1, dbm)]
         }
 
         _ => {
-            // Any other base type: non-stack, non-ctx pointer (or scalar / unknown).
-            // Keep previous "non-stack load" behavior: mark as unsafe.
-            println!(
-                "Non-stack, non-ctx load at pc {} from base {:?}+{} (reg_type={:?})",
-                pc, base, off, base_type
-            );
+            println!("Non-stack, non-ctx load at pc {} from base {:?}+{}", pc, base, off);
             stats.mark_unsafe_load();
-
+            next_types.set(dst, RegType::ScalarValue);
             forget(&mut dbm, dst);
-            vec![(pc + 1, dbm)]
         }
     }
+    
+    vec![(pc + 1, dbm, next_types)]
 }
 
 fn transfer_store(
@@ -486,36 +638,37 @@ fn transfer_store(
     _src: Reg,
     stats: &mut AnalysisStats,
     reg_types: &RegTypeState,
-) -> Vec<(usize, Dbm)> {
+) -> Vec<(usize, Dbm, RegTypeState)> { // Updated return type
     use crate::domain::RegType;
 
     let base_ty = reg_types.get(base);
+    // Stores do not modify register types (unless they clobber registers, which STX does not)
+    let next_types = reg_types.clone();
+
+    let access_size = match size {
+        MemSize::U8  => 1,
+        MemSize::U16 => 2,
+        MemSize::U32 => 4,
+        MemSize::U64 => 8,
+    };
 
     match base_ty {
         RegType::PtrToStack => {
-            // Old stack-bounds logic, but now only for actual stack pointers.
             let (lo, hi) = crate::domain::get_bounds(dbm_in, base, ctx.zero);
             let eff_lo = lo.map(|x| x + off as i64);
             let eff_hi = hi.map(|x| x + off as i64);
 
-            let bytes: i64 = match size {
-                MemSize::U8  => 1,
-                MemSize::U16 => 2,
-                MemSize::U32 => 4,
-                MemSize::U64 => 8,
-            };
-
             let is_stack_store = match (eff_lo, eff_hi) {
                 (Some(l), Some(h)) => {
-                    let last = h + (bytes - 1);
+                    let last = h + (access_size - 1);
                     l >= ctx.stack_min && last <= ctx.stack_max
                 }
                 _ => false,
             };
 
             if is_stack_store {
-                // Verified stack store: we don't track memory contents.
-                return vec![(pc + 1, dbm_in.clone())];
+                // Verified stack store
+                return vec![(pc + 1, dbm_in.clone(), next_types)];
             }
 
             println!(
@@ -527,28 +680,59 @@ fn transfer_store(
             vec![]
         }
 
+        // --- NEW: PACKET STORE LOGIC ---
+        RegType::PtrToPacket { id: _, range } => {
+            let access_end = off as i64 + access_size;
+            let mut safe = false;
+
+            // Tier 1: Check Cached Range (Fast)
+            if off >= 0 && (access_end as u64) <= range {
+                safe = true;
+            } 
+            // Tier 2: DBM Fallback (Slow)
+            else {
+                let end_reg_opt = crate::domain::REG_ENV.all().iter().find(|&&r| {
+                     matches!(reg_types.get(r), RegType::PtrToPacketEnd)
+                });
+
+                if let Some(end_reg) = end_reg_opt {
+                    let bound = -access_end;
+                    let (_, ub) = crate::domain::get_bounds(dbm_in, base, *end_reg);
+                    if let Some(upper) = ub {
+                        if upper <= bound {
+                            safe = true;
+                        }
+                    }
+                }
+            }
+
+            if safe {
+                return vec![(pc + 1, dbm_in.clone(), next_types)];
+            }
+
+            println!("Unsafe packet store at pc {}: base {:?}+{} (range={})", pc, base, off, range);
+            stats.mark_unsafe_store();
+            stats.abort = true;
+            vec![]
+        }
+
         RegType::PtrToCtx => {
-            // Writes into the ctx struct: allowed for now.
-            // We don't certify anything about them yet.
             println!(
                 "Ctx store at pc {}: {:?} to base {:?}+{} (ignored for stack cert)",
                 pc, size, base, off
             );
-            vec![(pc + 1, dbm_in.clone())]
+            vec![(pc + 1, dbm_in.clone(), next_types)]
         }
 
         RegType::PtrToMem { .. } => {
-            // Store into some metadata / heap / buffer region.
-            // For now, we ignore it in the stack certificate.
             println!(
                 "Non-stack pointer store at pc {}: {:?} to base {:?}+{}",
                 pc, size, base, off
             );
-            vec![(pc + 1, dbm_in.clone())]
+            vec![(pc + 1, dbm_in.clone(), next_types)]
         }
 
         other => {
-            // Clearly bad: deref through scalar or uninitialized.
             println!(
                 "Unsafe store at pc {}: base {:?}+{} has non-pointer type {:?}",
                 pc, base, off, other
@@ -560,8 +744,9 @@ fn transfer_store(
     }
 }
 
-fn transfer_call(dbm_in: &Dbm, pc: usize, _helper: u32) -> Vec<(usize, Dbm)> {
+fn transfer_call(dbm_in: &Dbm, pc: usize, _helper: u32) -> Vec<(usize, Dbm, RegTypeState)> {
     let mut dbm = dbm_in.clone();
+    let types = RegTypeState::new_not_init();
 
     // MVP ABI model for helper calls:
     // - r0 is return value (clobbered)
@@ -571,7 +756,7 @@ fn transfer_call(dbm_in: &Dbm, pc: usize, _helper: u32) -> Vec<(usize, Dbm)> {
         forget(&mut dbm, v);
     }
 
-    vec![(pc + 1, dbm)]
+    vec![(pc + 1, dbm, types)]
 }
 
 /// Single-step semantic transfer: from (pc, dbm_in) to successors
@@ -582,20 +767,20 @@ pub fn transfer_instr(
     instr: &Instr,
     stats: &mut AnalysisStats,
     reg_types: &RegTypeState,
-) -> Vec<(usize, Dbm)> {
+) -> Vec<(usize, Dbm, RegTypeState)> {
     match instr {
         Instr::MovArg0 { dst } =>
             transfer_mov_arg0(dbm_in, pc, *dst),
         Instr::Alu { width, op, dst, src } =>
-            transfer_alu(ctx, dbm_in, pc, *width, *op, *dst, *src, stats),
+            transfer_alu(ctx, dbm_in, pc, *width, *op, *dst, *src, stats, reg_types),
         Instr::Endian { dst, kind } =>
             transfer_endian(ctx, dbm_in, pc, *dst, *kind),
         Instr::If { width, left, op, right, target } =>
-            transfer_if(ctx, dbm_in, pc, *width, *left, *op, *right, *target),
+            transfer_if(ctx, dbm_in, pc, *width, *left, *op, *right, *target, reg_types),
         Instr::Load { size, dst, base, off } =>
             {
                 let base_ty = reg_types.get(*base);
-                transfer_load(ctx, dbm_in, pc, *size, *dst, *base, base_ty, *off, stats)
+                transfer_load(ctx, dbm_in, pc, *size, *dst, *base, base_ty, *off, stats, reg_types)
             },
         Instr::Store { size, base, off, src } =>
             {
@@ -604,7 +789,7 @@ pub fn transfer_instr(
         Instr::Call { helper } =>
             transfer_call(dbm_in, pc, *helper),
         Instr::Jmp { target } =>
-            vec![(*target, dbm_in.clone())],
+            vec![(*target, dbm_in.clone(), reg_types.clone())],
         Instr::Exit =>
             vec![],
     }
@@ -637,6 +822,26 @@ fn update_reg_types_for_instr(
                     }
                 }
 
+                AluOp::Add => {
+                    let dst_ty = types.get(dst);
+                    if let RegType::PtrToPacket { id, range } = dst_ty {
+                        if let Operand::Imm(k) = src {
+                            // Ptr + K: Range decreases by K (saturation at 0)
+                            // e.g. if r6 safe for 10, r6+4 is safe for 6.
+                            let new_range = if k > 0 {
+                                range.saturating_sub(k as u64)
+                            } else {
+                                // Ptr + (-K): Range increases
+                                range.saturating_add(k.abs() as u64)
+                            };
+                            types.set(dst, RegType::PtrToPacket { id, range: new_range });
+                        } else {
+                            // Ptr + Reg: Invalidate packet pointer (too complex for MVP)
+                            types.set(dst, RegType::ScalarValue);
+                        }
+                    }
+                }
+
                 // Any non-MOV arithmetic on pointers: for now, we drop pointer info.
                 _ => {
                     let ty = types.get(dst);
@@ -660,6 +865,14 @@ fn update_reg_types_for_instr(
                     // This is a ctx field load. Ask ctx_model what it is.
                     if let Some(kind) = classify_tc_ctx_field(off, size) {
                         match kind {
+                            // MINT A NEW ID HERE
+                            CtxFieldKind::PacketStart => {
+                                let new_id = new_packet_id();
+                                types.set(dst, RegType::PtrToPacket { id: new_id, range: 0 });
+                            },
+                            CtxFieldKind::PacketEnd => {
+                                types.set(dst, RegType::PtrToPacketEnd);
+                            },
                             CtxFieldKind::Scalar => {
                                 types.set(dst, RegType::ScalarValue);
                             }
@@ -766,13 +979,13 @@ pub fn analyze_program(
         }
 
         // 3) Print *output* numeric states for each successor
-        for (succ_pc, succ_dbm) in &succs {
+        for (succ_pc, succ_dbm, _succ_types) in &succs {
             println!("OUT → PC {}:", succ_pc);
             succ_dbm.dump_matrix();
         }
 
         // 4) Dataflow propagation: DBM + RegType
-        for (succ_pc, succ_dbm) in succs {
+        for (succ_pc, succ_dbm, _succ_types) in succs {
             if succ_pc >= n {
                 continue;
             }

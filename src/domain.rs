@@ -84,7 +84,7 @@ pub enum RegType {
     PtrToStack,     // PTR_TO_STACK
     PtrToMapValue,  // PTR_TO_MAP_VALUE
     PtrToMapKey,    // PTR_TO_MAP_KEY
-    PtrToPacket,    // PTR_TO_PACKET
+    PtrToPacket { id: u32, range: u64 },    // PTR_TO_PACKET
     PtrToPacketMeta,// PTR_TO_PACKET_META
     PtrToPacketEnd, // PTR_TO_PACKET_END
     PtrToMem { region: MemRegionId },       // PTR_TO_MEM
@@ -107,7 +107,7 @@ impl RegType {
                 | PtrToStack
                 | PtrToMapValue
                 | PtrToMapKey
-                | PtrToPacket
+                | PtrToPacket { .. }
                 | PtrToPacketMeta
                 | PtrToPacketEnd
                 | PtrToMem { .. }
@@ -199,9 +199,18 @@ pub fn join_reg_type(a: RegType, b: RegType) -> RegType {
         (Unknown, _t) | (_t, Unknown) => Unknown, // top
         // Scalar vs pointer kind: for now go to Unknown (lossy but safe)
         (ScalarValue, _) | (_, ScalarValue) => Unknown,
+        (PtrToPacket { id: i1, range: r1 }, PtrToPacket { id: i2, range: r2 }) if i1 == i2 => {
+            PtrToPacket { id: i1, range: r1.min(r2) }
+        }
         // Different pointer flavors: also Unknown for now
         _ => Unknown,
     }
+}
+
+pub fn new_packet_id() -> u32 {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static PACKET_ID_COUNTER: AtomicU32 = AtomicU32::new(1); // start from 1
+    PACKET_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
 /// Simple wrapper so you can pass around an env if you want to extend later.

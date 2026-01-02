@@ -33,6 +33,12 @@ pub enum CtxFieldKind {
     MemEnd {
         region: MemRegionId,
     },
+
+    /// Pointer to the start of the packet data.
+    PacketStart,
+    
+    /// Pointer to the end of the packet data.
+    PacketEnd,
 }
 
 /// TC-specific ctx classifier.
