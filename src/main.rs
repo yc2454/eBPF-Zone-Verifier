@@ -12,7 +12,6 @@ mod bpf_insn;
 mod bpf_to_ast;
 mod elf_loader;
 mod stats;
-mod batch;
 mod ctx_model;
 
 use crate::ast::Program;

@@ -82,13 +82,16 @@ pub enum RegType {
     ScalarValue,    // SCALAR_VALUE
     PtrToCtx,       // PTR_TO_CTX
     PtrToStack,     // PTR_TO_STACK
-    PtrToMapValue,  // PTR_TO_MAP_VALUE
-    PtrToMapKey,    // PTR_TO_MAP_KEY
     PtrToPacket { id: u32, range: u64 },    // PTR_TO_PACKET
     PtrToPacketMeta,// PTR_TO_PACKET_META
     PtrToPacketEnd, // PTR_TO_PACKET_END
     PtrToMem { region: MemRegionId },       // PTR_TO_MEM
     Unknown,        // our "top" / fallback for now
+
+    // Map Support
+    PtrToMapValue { offset: i64 },          // Verified safe (non-null)
+    PtrToMapValueOrNull { id: u32 },        // Result of lookup, might be 0
+    PtrToMapKey,    // PTR_TO_MAP_KEY
     // later: PtrToSocket, PtrToBtfId, PtrToBuf, etc.
 }
 
@@ -105,12 +108,13 @@ impl RegType {
             self,
             PtrToCtx
                 | PtrToStack
-                | PtrToMapValue
+                | PtrToMapValue { .. }
                 | PtrToMapKey
                 | PtrToPacket { .. }
                 | PtrToPacketMeta
                 | PtrToPacketEnd
                 | PtrToMem { .. }
+                | PtrToMapValueOrNull { .. }
         )
     }
 }

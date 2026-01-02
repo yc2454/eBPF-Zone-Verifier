@@ -14,9 +14,10 @@ use crate::domain::{
     assume_ge_const, assume_le_const, assume_less_than, assume_eq_const,
     assume_ge_var, assume_le_var, assume_gt_var, assume_le_var_plus_const,
     // new: register types
-    RegType, RegTypeState, new_packet_id
+    RegType, RegTypeState,
+    get_bounds
 };
-use crate::utils::{dbm_equals, load_program_from_elf};
+use crate::utils::{dbm_equals};
 use crate::stats::AnalysisStats;
 use crate::ctx_model::{classify_tc_ctx_field, CtxFieldKind};
 
@@ -36,6 +37,65 @@ fn proven_u32_range(dbm: &Dbm, v: Reg, zero: Reg) -> bool {
     let ub = dbm.raw(vi, zi); // v - 0
     let lb = dbm.raw(zi, vi); // 0 - v  (<= 0 means v >= 0)
     ub <= 0xffff_ffff && lb <= 0
+}
+
+fn refine_branch_types(
+    instr: &Instr,
+    succ_pc: usize,
+    _succ_dbm: &Dbm,
+    types: &mut RegTypeState,
+) {
+    match instr {
+        // Pattern: if reg != 0 goto target
+        Instr::If { op: CmpOp::Ne, left, right: Operand::Imm(0), target, .. } => {
+            // If we are jumping to 'target', then 'reg != 0' is True.
+            if succ_pc == *target {
+                println!("[Refine] PC {}: Promoting {:?} (Ne 0) on branch to {}", succ_pc, left, target);
+                maybe_promote_map_val(types, *left);
+            }
+        },
+
+        // Pattern: if reg == 0 goto target
+        Instr::If { op: CmpOp::Eq, left, right: Operand::Imm(0), target, .. } => {
+            // If we are falling through (NOT jumping), then 'reg == 0' is False => 'reg != 0'.
+            if succ_pc != *target {
+                println!("[Refine] PC {}: Promoting {:?} (Eq 0 Fallthrough)", succ_pc, left);
+                maybe_promote_map_val(types, *left);
+            }
+        },
+
+        // Pattern: if reg > 0 goto target (Unsigned)
+        // For pointers, x > 0 implies x != 0.
+        Instr::If { op: CmpOp::UGt, left, right: Operand::Imm(0), target, .. } => {
+            if succ_pc == *target {
+                println!("[Refine] PC {}: Promoting {:?} (Gt 0) on branch to {}", succ_pc, left, target);
+                maybe_promote_map_val(types, *left);
+            }
+        },
+
+        _ => {}
+    }
+    
+    // (Your existing Packet Range refinement logic can stay here too)
+}
+
+fn maybe_promote_map_val(types: &mut RegTypeState, reg: Reg) {
+    // 1. Check if the register is actually a MapValueOrNull
+    let target_id = match types.get(reg) {
+        RegType::PtrToMapValueOrNull { id } => id,
+        _ => return,
+    };
+
+    println!("[Refine] Promoting ID {} to safe PtrToMapValue", target_id);
+
+    // 2. Find ALL registers with this ID and promote them
+    for r in Reg::ALL {
+        if let RegType::PtrToMapValueOrNull { id } = types.get(r) {
+            if id == target_id {
+                types.set(r, RegType::PtrToMapValue { offset: 0 });
+            }
+        }
+    }
 }
 
 // Helper to mimic kernel's find_good_pkt_pointers
@@ -299,7 +359,7 @@ fn transfer_alu(
                             _ => next_types.set(dst, dst_ty),
                         }
                     }
-                    Operand::Reg(r) => {
+                    Operand::Reg(_r) => {
                         // Ptr - Ptr (if same region) => Scalar (offset).
                         // Ptr - Scalar => Ptr (with unknown offset).
                         // For MVP, downgrade everything to Scalar.
@@ -597,7 +657,7 @@ fn transfer_load(
                     CtxFieldKind::PtrToMem { region } => {
                         next_types.set(dst, RegType::PtrToMem { region });
                     },
-                    CtxFieldKind::MemEnd { region } => {
+                    CtxFieldKind::MemEnd { region: _ } => {
                          // Or specific end type if you add one
                          next_types.set(dst, RegType::ScalarValue); 
                     },
@@ -653,6 +713,24 @@ fn transfer_store(
     };
 
     match base_ty {
+        RegType::PtrToMapValue { offset: map_off } => {
+             // Access: base + off. Total offset = map_off + off
+             let final_offset = map_off + (off as i64);
+             
+             // TODO: Check against Max Map Size. 
+             // Since we don't have map definitions loaded yet, we can't check upper bounds perfectly.
+             // For this MVP, check lower bound >= 0.
+             
+             if final_offset >= 0 {
+                 // Safe (optimistically assuming map is large enough for now)
+                 return vec![(pc + 1, dbm_in.clone(), next_types)];
+             }
+             
+             println!("Unsafe map store negative offset: {}", final_offset);
+             stats.mark_unsafe_store();
+             vec![]
+        }
+
         RegType::PtrToStack => {
             let (lo, hi) = crate::domain::get_bounds(dbm_in, base, ctx.zero);
             let eff_lo = lo.map(|x| x + off as i64);
@@ -697,7 +775,7 @@ fn transfer_store(
 
                 if let Some(end_reg) = end_reg_opt {
                     let bound = -access_end;
-                    let (_, ub) = crate::domain::get_bounds(dbm_in, base, *end_reg);
+                    let (_, ub) = get_bounds(dbm_in, base, *end_reg);
                     if let Some(upper) = ub {
                         if upper <= bound {
                             safe = true;
@@ -744,19 +822,38 @@ fn transfer_store(
     }
 }
 
-fn transfer_call(dbm_in: &Dbm, pc: usize, _helper: u32) -> Vec<(usize, Dbm, RegTypeState)> {
+fn transfer_call(
+    dbm_in: &Dbm, 
+    pc: usize, 
+    helper: u32,
+    reg_types: &RegTypeState, // Add this argument
+) -> Vec<(usize, Dbm, RegTypeState)> {
     let mut dbm = dbm_in.clone();
-    let types = RegTypeState::new_not_init();
+    let mut next_types = reg_types.clone();
 
-    // MVP ABI model for helper calls:
-    // - r0 is return value (clobbered)
-    // - r1..r5 are argument regs (treat as clobbered)
-    // - r6..r10 preserved (r10 is fp)
-    for v in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-        forget(&mut dbm, v);
+    // 1. Clobber caller-saved registers (R1-R5)
+    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+        forget(&mut dbm, r);
+        next_types.set(r, RegType::ScalarValue);
+    }
+    
+    // 2. Handle Return Value (R0)
+    forget(&mut dbm, Reg::R0);
+    
+    match helper {
+        1 => { // bpf_map_lookup_elem
+            // Returns a pointer that might be NULL.
+            // Assign a new ID so we can track the NULL check later.
+            let id = crate::domain::new_packet_id(); // Reuse your ID generator
+            next_types.set(Reg::R0, RegType::PtrToMapValueOrNull { id });
+        }
+        _ => {
+            // Default: Unknown scalar return
+            next_types.set(Reg::R0, RegType::ScalarValue);
+        }
     }
 
-    vec![(pc + 1, dbm, types)]
+    vec![(pc + 1, dbm, next_types)]
 }
 
 /// Single-step semantic transfer: from (pc, dbm_in) to successors
@@ -787,7 +884,7 @@ pub fn transfer_instr(
                 transfer_store(ctx, dbm_in, pc, *size, *base, *off, *src, stats, reg_types)
             },
         Instr::Call { helper } =>
-            transfer_call(dbm_in, pc, *helper),
+            transfer_call(dbm_in, pc, *helper, reg_types),
         Instr::Jmp { target } =>
             vec![(*target, dbm_in.clone(), reg_types.clone())],
         Instr::Exit =>
@@ -795,122 +892,190 @@ pub fn transfer_instr(
     }
 }
 
-/// Track register types (RegType) alongside DBM state.
-/// This mirrors the kernel's bpf_reg_type tracking conceptually.
-fn update_reg_types_for_instr(
+pub fn update_reg_types_for_instr(
     _ctx: &ExecContext,
     instr: &Instr,
     types: &mut RegTypeState,
 ) {
     match *instr {
         Instr::MovArg0 { dst } => {
-            // Synthetic entry: arg0 is ctx pointer
             types.set(dst, RegType::PtrToCtx);
         }
 
-        Instr::Alu { op, dst, src, .. } => {
-            match op {
-                AluOp::Mov => {
-                    match src {
-                        Operand::Reg(s) => {
-                            let ty = types.get(s);
-                            types.set(dst, ty);
-                        }
-                        Operand::Imm(_) => {
-                            types.set(dst, RegType::ScalarValue);
-                        }
-                    }
-                }
-
-                AluOp::Add => {
-                    let dst_ty = types.get(dst);
-                    if let RegType::PtrToPacket { id, range } = dst_ty {
-                        if let Operand::Imm(k) = src {
-                            // Ptr + K: Range decreases by K (saturation at 0)
-                            // e.g. if r6 safe for 10, r6+4 is safe for 6.
-                            let new_range = if k > 0 {
-                                range.saturating_sub(k as u64)
-                            } else {
-                                // Ptr + (-K): Range increases
-                                range.saturating_add(k.abs() as u64)
-                            };
-                            types.set(dst, RegType::PtrToPacket { id, range: new_range });
-                        } else {
-                            // Ptr + Reg: Invalidate packet pointer (too complex for MVP)
-                            types.set(dst, RegType::ScalarValue);
-                        }
-                    }
-                }
-
-                // Any non-MOV arithmetic on pointers: for now, we drop pointer info.
-                _ => {
-                    let ty = types.get(dst);
-                    match ty {
-                        RegType::PtrToCtx
-                        | RegType::PtrToStack
-                        | RegType::PtrToMem { .. } => {
-                            types.set(dst, RegType::ScalarValue);
-                        }
-                        _ => {}
-                    }
-                }
-            }
+        Instr::Alu { width, op, dst, src } => {
+            update_alu_types(types, width, op, dst, src);
         }
 
         Instr::Load { size, dst, base, off } => {
-            let base_ty = types.get(base);
+            update_load_types(types, size, dst, base, off);
+        }
 
-            match base_ty {
-                RegType::PtrToCtx => {
-                    // This is a ctx field load. Ask ctx_model what it is.
-                    if let Some(kind) = classify_tc_ctx_field(off, size) {
-                        match kind {
-                            // MINT A NEW ID HERE
-                            CtxFieldKind::PacketStart => {
-                                let new_id = new_packet_id();
-                                types.set(dst, RegType::PtrToPacket { id: new_id, range: 0 });
-                            },
-                            CtxFieldKind::PacketEnd => {
-                                types.set(dst, RegType::PtrToPacketEnd);
-                            },
-                            CtxFieldKind::Scalar => {
-                                types.set(dst, RegType::ScalarValue);
-                            }
-                            CtxFieldKind::PtrToMem { region } => {
-                                types.set(dst, RegType::PtrToMem { region });
-                            }
-                            CtxFieldKind::MemEnd { region } => {
-                                // For now treat end pointer as a pointer into same region.
-                                types.set(dst, RegType::PtrToMem { region });
-                            }
-                        }
-                    } else {
-                        // Unknown ctx field ⇒ treat as scalar.
-                        types.set(dst, RegType::ScalarValue);
+        Instr::Call { helper } => {
+            update_call_types(types, helper);
+        }
+
+        // Stores, Jumps, Exits do not change register types
+        Instr::Store { .. } | Instr::Jmp { .. } | Instr::If { .. } | Instr::Exit 
+        | Instr::Endian { .. } => {}
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Helper 1: ALU Operations
+// -----------------------------------------------------------------------------
+
+fn update_alu_types(
+    types: &mut RegTypeState,
+    width: Width,
+    op: AluOp,
+    dst: Reg,
+    src: Operand,
+) {
+    // 32-bit operations (e.g., w1 = w2) generally destroy pointer semantics 
+    // because they zero-extend the upper 32 bits.
+    if width == Width::W32 {
+        types.set(dst, RegType::ScalarValue);
+        return;
+    }
+
+    match op {
+        AluOp::Mov => handle_mov(types, dst, src),
+        AluOp::Add => handle_add(types, dst, src),
+        AluOp::Sub => handle_sub(types, dst, src),
+        // All other ops (Mul, And, Or, Shl, etc.) result in Scalars
+        _ => types.set(dst, RegType::ScalarValue),
+    }
+}
+
+fn handle_mov(types: &mut RegTypeState, dst: Reg, src: Operand) {
+    match src {
+        Operand::Reg(r) => {
+            // Copy the exact type (ID, Range, Offset) from source
+            types.set(dst, types.get(r));
+        }
+        Operand::Imm(_) => {
+            types.set(dst, RegType::ScalarValue);
+        }
+    }
+}
+
+fn handle_add(types: &mut RegTypeState, dst: Reg, src: Operand) {
+    let dst_ty = types.get(dst);
+    
+    // We only support pointer arithmetic with Immediates (Ptr + K)
+    if let (true, Operand::Imm(k)) = (dst_ty.is_pointer(), src) {
+        match dst_ty {
+            // Packet: Ptr += K shrinks the safe window
+            RegType::PtrToPacket { id, range } => {
+                let new_range = if k > 0 {
+                    range.saturating_sub(k as u64)
+                } else {
+                    range.saturating_add(k.wrapping_neg() as u64)
+                };
+                types.set(dst, RegType::PtrToPacket { id, range: new_range });
+            }
+            // Map: Ptr += K shifts the offset
+            RegType::PtrToMapValue { offset } => {
+                types.set(dst, RegType::PtrToMapValue { offset: offset + k });
+            }
+            // Others (Ctx, Stack): Preserve type, assume DBM tracks numeric bounds
+            _ => types.set(dst, dst_ty),
+        }
+    } else {
+        // Ptr + Reg or Scalar + ... results in Scalar
+        types.set(dst, RegType::ScalarValue);
+    }
+}
+
+fn handle_sub(types: &mut RegTypeState, dst: Reg, src: Operand) {
+    let dst_ty = types.get(dst);
+
+    if let (true, Operand::Imm(k)) = (dst_ty.is_pointer(), src) {
+        match dst_ty {
+            // Packet: Ptr -= K (moving backwards) grows the safe window
+            RegType::PtrToPacket { id, range } => {
+                let new_range = if k > 0 {
+                    range.saturating_add(k as u64)
+                } else {
+                    range.saturating_sub(k.wrapping_neg() as u64)
+                };
+                types.set(dst, RegType::PtrToPacket { id, range: new_range });
+            }
+            // Map: Ptr -= K shifts offset backwards
+            RegType::PtrToMapValue { offset } => {
+                types.set(dst, RegType::PtrToMapValue { offset: offset - k });
+            }
+            _ => types.set(dst, dst_ty),
+        }
+    } else {
+        types.set(dst, RegType::ScalarValue);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Helper 2: Load Operations (Context Classification)
+// -----------------------------------------------------------------------------
+
+fn update_load_types(
+    types: &mut RegTypeState,
+    size: MemSize,
+    dst: Reg,
+    base: Reg,
+    off: i16,
+) {
+    let base_ty = types.get(base);
+
+    match base_ty {
+        RegType::PtrToCtx => {
+            // Consult the model to see if we are loading a special pointer
+            if let Some(kind) = classify_tc_ctx_field(off, size) {
+                match kind {
+                    CtxFieldKind::PacketStart => {
+                        // Mint new ID for Packet pointers
+                        let new_id = crate::domain::new_packet_id();
+                        types.set(dst, RegType::PtrToPacket { id: new_id, range: 0 });
                     }
+                    CtxFieldKind::PacketEnd => {
+                        types.set(dst, RegType::PtrToPacketEnd);
+                    }
+                    CtxFieldKind::PtrToMem { region } => {
+                        types.set(dst, RegType::PtrToMem { region });
+                    }
+                    // Everything else from context is scalar
+                    _ => types.set(dst, RegType::ScalarValue),
                 }
-
-                // Load from any other base: generic “read from memory” ⇒ scalar.
-                _ => {
-                    types.set(dst, RegType::ScalarValue);
-                }
+            } else {
+                types.set(dst, RegType::ScalarValue);
             }
         }
+        // Loading FROM Stack/Packet/Map results in data (Scalar)
+        // (Unless we support spilling pointers to stack, which we don't yet)
+        _ => types.set(dst, RegType::ScalarValue),
+    }
+}
 
-        Instr::Store { .. } => {
-            // For now, stores don’t change register types.
+// -----------------------------------------------------------------------------
+// Helper 3: Call Operations (Helpers)
+// -----------------------------------------------------------------------------
+
+fn update_call_types(types: &mut RegTypeState, helper: u32) {
+    // 1. Clobber Caller-Saved Registers (R1-R5)
+    // The helper function uses these, so we lose whatever was in them.
+    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+        types.set(r, RegType::ScalarValue);
+    }
+
+    // 2. Set Return Value (R0) type based on helper ID
+    match helper {
+        1 => { // bpf_map_lookup_elem
+            // Returns a pointer that might be NULL. 
+            // We assign a fresh ID to track the future NULL check.
+            let new_id = crate::domain::new_packet_id();
+            types.set(Reg::R0, RegType::PtrToMapValueOrNull { id: new_id });
         }
-
-        Instr::Call { .. } => {
-            // Simple ABI: helpers clobber r0..r5 (set them to scalar),
-            // preserve r6..r9 and r10.
-            for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-                types.set(r, RegType::ScalarValue);
-            }
-        }
-
-        Instr::If { .. } | Instr::Jmp { .. } | Instr::Endian { .. } | Instr::Exit => {
-            // No reg-type changes.
+        // Add other helpers here (e.g. bpf_get_smp_processor_id returns scalar)
+        _ => {
+            types.set(Reg::R0, RegType::ScalarValue);
         }
     }
 }
@@ -990,9 +1155,13 @@ pub fn analyze_program(
                 continue;
             }
 
+            // 1. Update Types for Edge
             // Compute edge types after this instruction starting from in_types.
             let mut edge_types = in_types;
             update_reg_types_for_instr(ctx, instr, &mut edge_types);
+
+            // 2. Refine Types (Flow-sensitive)
+            refine_branch_types(instr, succ_pc, &succ_dbm, &mut edge_types);
 
             match (&mut states[succ_pc], &mut type_states[succ_pc]) {
                 (slot_dbm @ None, slot_types @ None) => {
@@ -1030,27 +1199,27 @@ pub fn analyze_program(
 }
 
 
-pub fn analyze_program_for_file(
-    path: &std::path::Path,
-) -> Result<AnalysisStats, Box<dyn std::error::Error>> {
-    let prog = load_program_from_elf(
-        path.to_str().ok_or("Invalid path")?,
-        ".text",
-    );
+// pub fn analyze_program_for_file(
+//     path: &std::path::Path,
+// ) -> Result<AnalysisStats, Box<dyn std::error::Error>> {
+//     let prog = load_program_from_elf(
+//         path.to_str().ok_or("Invalid path")?,
+//         ".text",
+//     );
 
-    let mut stats = AnalysisStats::default();
+//     let mut stats = AnalysisStats::default();
 
-    let ctx = ExecContext {
-        zero: Reg::Zero,
-        r10: Reg::R10,
-        stack_min: -512,
-        stack_max: -1,
-    };
+//     let ctx = ExecContext {
+//         zero: Reg::Zero,
+//         r10: Reg::R10,
+//         stack_min: -512,
+//         stack_max: -1,
+//     };
 
-    let mut entry = Dbm::new(REG_ENV.len());
-    crate::domain::assign_zero(&mut entry, ctx.r10, ctx.zero);
+//     let mut entry = Dbm::new(REG_ENV.len());
+//     crate::domain::assign_zero(&mut entry, ctx.r10, ctx.zero);
 
-    analyze_program(&ctx, &prog, entry, &mut stats);
+//     analyze_program(&ctx, &prog, entry, &mut stats);
 
-    Ok(stats)
-}
+//     Ok(stats)
+// }
