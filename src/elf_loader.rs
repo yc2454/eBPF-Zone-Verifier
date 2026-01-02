@@ -3,66 +3,66 @@ use std::path::Path;
 
 use goblin::elf::Elf;
 use std::collections::HashMap;
+use crate::btf; // Import the new module
 use crate::domain::BpfMapDef;
 
-/// Parse the "maps" section into a vector of definitions.
-/// Assumes standard "struct bpf_map_def" layout (20-28 bytes depending on padding).
 pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>, ElfLoadError> {
-    let buf = fs::read(path)?;
+    let buf = fs::read(&path)?;
     let elf = Elf::parse(&buf)?;
-
     let mut maps = Vec::new();
+    let mut btf_data = None;
 
-    // 1. Find the "maps" section
-    for (i, sh) in elf.section_headers.iter().enumerate() {
+    // 1. First pass: Check for Legacy Maps and find BTF section
+    for (_i, sh) in elf.section_headers.iter().enumerate() {
         if let Some(name) = elf.shdr_strtab.get_at(sh.sh_name) {
-            if name == "maps" {
+            if name == "maps" || name == ".maps" {
+                // ... (Existing Legacy Parsing Code) ...
+                // Keep your existing code here! 
+                // But if legacy map size is 0, we might want to overwrite it later.
+            } 
+            else if name == ".BTF" {
                 let start = sh.sh_offset as usize;
                 let end = start + sh.sh_size as usize;
-                let data = &buf[start..end];
-                
-                // 2. Iterate chunks. standard bpf_map_def is 24 or 28 bytes.
-                // Let's assume 28 bytes (u32 type, key, val, max, flags, inner_idx/padding).
-                // Or 24 bytes (older). Calico usually uses standard sizes.
-                // Let's try to parse based on symbol sizes or fixed stride.
-                
-                // Better strategy: Use the Symbol Table. 
-                // Symbols in the "maps" section point to the start of each definition.
-                for sym in &elf.syms {
-                    if sym.st_shndx == i {
-                        // This symbol is in the maps section.
-                        let offset = sym.st_value as usize; // Offset within the section data? 
-                        // Note: st_value for relocatable files is offset within section.
-                        
-                        if offset + 20 <= data.len() {
-                            // Manual parsing of C struct (Little Endian)
-                            let d = &data[offset..];
-                            let type_ = u32::from_le_bytes(d[0..4].try_into().unwrap());
-                            let key = u32::from_le_bytes(d[4..8].try_into().unwrap());
-                            let val = u32::from_le_bytes(d[8..12].try_into().unwrap());
-                            let max = u32::from_le_bytes(d[12..16].try_into().unwrap());
-                            let flags = u32::from_le_bytes(d[16..20].try_into().unwrap());
-                            
-                            let name = elf.strtab.get_at(sym.st_name).unwrap_or("<unknown>").to_string();
-
-                            maps.push(BpfMapDef {
-                                type_,
-                                key_size: key,
-                                value_size: val,
-                                max_entries: max,
-                                map_flags: flags,
-                                name,
-                            });
-                        }
-                    }
+                if end <= buf.len() {
+                    btf_data = Some(&buf[start..end]);
                 }
             }
         }
     }
-    
-    // Sort maps by the order they appear? Actually, relocations refer to Symbols.
-    // We need to return a map of SymbolIndex -> MapDef
-    // But for simplicity, let's just return the list and we'll resolve via symbols later.
+
+    // 2. BTF Fallback strategy
+    // If we found legacy maps but they have size 0, or if we found no maps, try BTF.
+    let needs_btf = maps.is_empty() || maps.iter().any(|m: &BpfMapDef| m.value_size == 0);
+
+    if needs_btf {
+        if let Some(btf_bytes) = btf_data {
+            println!("Attempting to load maps from BTF...");
+            if let Ok(btf_maps) = btf::parse_btf_map_defs(btf_bytes) {
+                // Merge strategy: 
+                // If we have legacy maps (names), verify sizes against BTF.
+                // If we have nothing, just use BTF.
+                
+                if maps.is_empty() {
+                    println!("Loaded {} maps from BTF", btf_maps.len());
+                    maps = btf_maps;
+                } else {
+                    // Update size-0 maps with data from BTF
+                    for m in &mut maps {
+                        if m.value_size == 0 {
+                            if let Some(btf_m) = btf_maps.iter().find(|bm| bm.name == m.name) {
+                                m.value_size = btf_m.value_size;
+                                m.key_size = btf_m.key_size;
+                                println!("Updated Map '{}' size to {} from BTF", m.name, m.value_size);
+                            }
+                        }
+                    }
+                }
+            } else {
+                println!("Failed to parse BTF section");
+            }
+        }
+    }
+
     Ok(maps)
 }
 

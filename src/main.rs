@@ -13,6 +13,7 @@ mod bpf_to_ast;
 mod elf_loader;
 mod stats;
 mod ctx_model;
+mod btf;
 
 use crate::ast::Program;
 use crate::dbm::Dbm;
