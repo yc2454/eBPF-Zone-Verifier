@@ -2,6 +2,7 @@
 use crate::Dbm;
 use crate::dbm::INF;
 use crate::ctx_model::MemRegionId;
+use std::collections::BTreeMap;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Reg {
@@ -135,15 +136,17 @@ pub const NUM_REGS: usize = 11; // number of RegType variants
 /// We track types for actual R0..R10; Reg::Zero is not a real reg.
 pub type RegTypes = [RegType; NUM_REGS];
 
-#[derive(Copy, Clone, Debug)]
-pub struct RegTypeState {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TypeState {
     pub regs: RegTypes,
+    pub stack: BTreeMap<i16, RegType>,
 }
 
-impl RegTypeState {
+impl TypeState {
     pub fn new_not_init() -> Self {
         Self {
             regs: [RegType::NotInit; NUM_REGS],
+            stack: BTreeMap::new(),
         }
     }
 
@@ -161,18 +164,116 @@ impl RegTypeState {
         }
     }
 
+    pub fn get_stack(&self, off: i16) -> RegType {
+        *self.stack.get(&off).unwrap_or(&RegType::ScalarValue)
+    }
+
+    pub fn set_stack(&mut self, off: i16, ty: RegType) {
+        self.stack.insert(off, ty);
+    }
+
+    // Helper: Check if two types are compatible for merging
+    fn are_compatible(t1: &RegType, t2: &RegType) -> bool {
+        match (t1, t2) {
+            // Exact match is always compatible
+            (a, b) if a == b => true,
+            
+            // Fuzzy match for Map Pointers (ignore ID, check Map Index)
+            (RegType::PtrToMapValueOrNull { map_idx: m1, .. }, 
+             RegType::PtrToMapValueOrNull { map_idx: m2, .. }) => m1 == m2,
+
+            (RegType::PtrToMapValue { map_idx: m1, .. }, 
+             RegType::PtrToMapValue { map_idx: m2, .. }) => m1 == m2,
+
+            // One is NotInit, one is something else -> Compatible (we upgrade to the something else)
+            (RegType::NotInit, _) => true,
+            (_, RegType::NotInit) => true,
+
+            _ => false,
+        }
+    }
+
+    fn merge_types(t1: RegType, t2: RegType) -> RegType {
+        match (t1, t2) {
+            // 1. Exact Match
+            (a, b) if a == b => a,
+
+            // 2. Fuzzy Match for Loop IDs (Safe Ptr)
+            (RegType::PtrToMapValue { map_idx: m1, .. }, 
+             RegType::PtrToMapValue { map_idx: m2, .. }) if m1 == m2 => {
+                 t1 // Keep t1's ID/Offset
+            },
+
+            // 3. Fuzzy Match for Loop IDs (Nullable Ptr)
+            (RegType::PtrToMapValueOrNull { map_idx: m1, .. }, 
+             RegType::PtrToMapValueOrNull { map_idx: m2, .. }) if m1 == m2 => {
+                 t1 
+            },
+
+            // 4. Lattice Downgrade: Safe Ptr + Nullable Ptr -> Nullable Ptr
+            // If one path says "Defintely Safe" and other says "Maybe Null",
+            // the result is "Maybe Null".
+            (RegType::PtrToMapValue { map_idx: m1, .. }, 
+             RegType::PtrToMapValueOrNull { map_idx: m2, id, .. }) if m1 == m2 => {
+                 RegType::PtrToMapValueOrNull { id, map_idx: m1 }
+            },
+            (RegType::PtrToMapValueOrNull { map_idx: m1, id, .. }, 
+             RegType::PtrToMapValue { map_idx: m2, .. }) if m1 == m2 => {
+                 RegType::PtrToMapValueOrNull { id, map_idx: m1 }
+            },
+
+            // 5. NotInit handling
+            (RegType::NotInit, t) => t,
+            (t, RegType::NotInit) => t,
+
+            // 6. Default: Incompatible -> Scalar
+            _ => RegType::ScalarValue,
+        }
+    }
+
     /// Join in-place with `other`. Returns true if anything changed.
     /// A simple lattice join: if equal, keep; else go to Unknown.
-    pub fn join_in_place(&mut self, other: &RegTypeState) -> bool {
+    pub fn join_in_place(&mut self, other: &TypeState) -> bool {
         let mut changed = false;
-        for i in 0..NUM_REGS {
-            let before = self.regs[i];
-            let after = join_reg_type(before, other.regs[i]);
-            if after != before {
-                self.regs[i] = after;
+
+        // 1. Join Registers
+        for i in 0..11 {
+            let t1 = self.regs[i];
+            let t2 = other.regs[i];
+            
+            let joined = Self::merge_types(t1, t2);
+
+            if joined != t1 {
+                self.regs[i] = joined;
                 changed = true;
             }
         }
+
+        // 2. Join Stack
+        let my_keys: Vec<i16> = self.stack.keys().cloned().collect();
+        for k in my_keys {
+            let t1 = self.stack[&k];
+            
+            if let Some(t2) = other.stack.get(&k) {
+                let joined = Self::merge_types(t1, *t2);
+                
+                // If the merge resulted in Scalar, it means they were incompatible.
+                // For stack slots, Scalar is equivalent to "Empty/Garbage", so we remove it.
+                if joined == RegType::ScalarValue {
+                    self.stack.remove(&k);
+                    changed = true;
+                } else if joined != t1 {
+                    // We downgraded (e.g. Safe -> Nullable), so update the slot
+                    self.stack.insert(k, joined);
+                    changed = true;
+                }
+            } else {
+                // Other path has nothing here -> Intersection is nothing.
+                self.stack.remove(&k);
+                changed = true;
+            }
+        }
+        
         changed
     }
 
@@ -202,23 +303,6 @@ pub fn reg_to_index(r: Reg) -> Option<usize> {
         Reg::R9  => Some(9),
         Reg::R10 => Some(10),
         Reg::Zero => None,
-    }
-}
-
-pub fn join_reg_type(a: RegType, b: RegType) -> RegType {
-    use RegType::*;
-    if a == b { return a; }
-
-    match (a, b) {
-        (NotInit, t) | (t, NotInit) => t,
-        (Unknown, _t) | (_t, Unknown) => Unknown, // top
-        // Scalar vs pointer kind: for now go to Unknown (lossy but safe)
-        (ScalarValue, _) | (_, ScalarValue) => Unknown,
-        (PtrToPacket { id: i1, range: r1 }, PtrToPacket { id: i2, range: r2 }) if i1 == i2 => {
-            PtrToPacket { id: i1, range: r1.min(r2) }
-        }
-        // Different pointer flavors: also Unknown for now
-        _ => Unknown,
     }
 }
 

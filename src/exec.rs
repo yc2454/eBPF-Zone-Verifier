@@ -14,7 +14,7 @@ use crate::domain::{
     assume_ge_const, assume_le_const, assume_less_than, assume_eq_const,
     assume_ge_var, assume_le_var, assume_gt_var, assume_le_var_plus_const,
     // new: register types
-    RegType, RegTypeState,
+    RegType, TypeState,
     get_bounds, BpfMapDef
 };
 use crate::utils::{dbm_equals};
@@ -46,7 +46,7 @@ fn refine_branch_types(
     instr: &Instr,
     succ_pc: usize,
     _succ_dbm: &Dbm,
-    types: &mut RegTypeState,
+    types: &mut TypeState,
 ) {
     match instr {
         // Pattern: if reg != 0 goto target
@@ -82,7 +82,7 @@ fn refine_branch_types(
     // (Your existing Packet Range refinement logic can stay here too)
 }
 
-fn maybe_promote_map_val(types: &mut RegTypeState, reg: Reg) {
+fn maybe_promote_map_val(types: &mut TypeState, reg: Reg) {
     // 1. Check if the register is actually a MapValueOrNull
     //    AND capture the 'map_idx' stored in it!
     let (target_id, target_map_idx) = match types.get(reg) {
@@ -112,7 +112,7 @@ fn maybe_promote_map_val(types: &mut RegTypeState, reg: Reg) {
 // Helper to mimic kernel's find_good_pkt_pointers
 fn update_packet_ranges(
     dbm: &Dbm, 
-    types: &mut RegTypeState, 
+    types: &mut TypeState, 
     packet_reg: Reg, 
     packet_end_reg: Reg
 ) {
@@ -152,10 +152,10 @@ fn update_packet_ranges(
     }
 }
 
-fn transfer_mov_arg0(dbm_in: &Dbm, pc: usize, dst: Reg) -> Vec<(usize, Dbm, RegTypeState)> {
+fn transfer_mov_arg0(dbm_in: &Dbm, pc: usize, dst: Reg) -> Vec<(usize, Dbm, TypeState)> {
     let mut dbm = dbm_in.clone();
     forget(&mut dbm, dst);
-    vec![(pc + 1, dbm, RegTypeState::new_not_init())]
+    vec![(pc + 1, dbm, TypeState::new_not_init())]
 }
 
 fn transfer_alu(
@@ -167,8 +167,8 @@ fn transfer_alu(
     dst: Reg,
     src: Operand,
     stats: &mut AnalysisStats,
-    reg_types: &RegTypeState, // NEW: Input types
-) -> Vec<(usize, Dbm, RegTypeState)> { // NEW: Return updated types
+    reg_types: &TypeState, // NEW: Input types
+) -> Vec<(usize, Dbm, TypeState)> { // NEW: Return updated types
     let mut dbm = dbm_in.clone();
     
     // Clone types to determine the state after this instruction
@@ -404,9 +404,9 @@ fn transfer_endian(
     pc: usize,
     dst: Reg,
     kind: EndianKind,
-) -> Vec<(usize, Dbm, RegTypeState)> {
+) -> Vec<(usize, Dbm, TypeState)> {
     let mut dbm = dbm_in.clone();
-    let next_types = RegTypeState::new_not_init();
+    let next_types = TypeState::new_not_init();
 
     // Endian ops are nonlinear bit permutations; we cannot track the relation
     // to the old value. MVP: forget, then approximate the guaranteed range.
@@ -436,8 +436,8 @@ fn transfer_if(
     op: CmpOp,
     right: Operand,
     target: usize,
-    reg_types_in: &RegTypeState, // Logic relies on input types
-) -> Vec<(usize, Dbm, RegTypeState)> { // Returns updated types per branch
+    reg_types_in: &TypeState, // Logic relies on input types
+) -> Vec<(usize, Dbm, TypeState)> { // Returns updated types per branch
     let mut out = Vec::new();
 
     // THEN branch: condition holds
@@ -574,8 +574,8 @@ fn transfer_load(
     base_type: RegType,
     off: i16,
     stats: &mut AnalysisStats,
-    reg_types: &RegTypeState, // Needed to scan for PacketEnd reg
-) -> Vec<(usize, Dbm, RegTypeState)> { // Returns updated types
+    reg_types: &TypeState, // Needed to scan for PacketEnd reg
+) -> Vec<(usize, Dbm, TypeState)> { // Returns updated types
     use RegType::*;
 
     let mut dbm = dbm_in.clone();
@@ -688,6 +688,25 @@ fn transfer_load(
             forget(&mut dbm, dst);
         }
 
+        RegType::PtrToMapValue { offset: map_off, map_idx } => {
+            let final_offset = map_off + (off as i64);
+            let access_end = final_offset + access_size;
+
+            let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) {
+                def.value_size as i64
+            } else {
+                4096 // Fallback for BTF maps if size missing
+            };
+
+            if final_offset >= 0 && access_end <= map_limit {
+                // Safe Map Read!
+                return vec![(pc + 1, dbm_in.clone(), next_types)];
+            } else {
+                println!("Unsafe map load at pc {}: off {} size {} limit {}", 
+                         pc, final_offset, access_size, map_limit);
+            }
+        }
+
         _ => {
             println!("Non-stack, non-ctx load at pc {} from base {:?}+{}", pc, base, off);
             stats.mark_unsafe_load();
@@ -708,8 +727,8 @@ fn transfer_store(
     off: i16,
     _src: Reg,
     stats: &mut AnalysisStats,
-    reg_types: &RegTypeState,
-) -> Vec<(usize, Dbm, RegTypeState)> { // Updated return type
+    reg_types: &TypeState,
+) -> Vec<(usize, Dbm, TypeState)> { // Updated return type
     use crate::domain::RegType;
 
     let base_ty = reg_types.get(base);
@@ -847,8 +866,8 @@ fn transfer_call(
     dbm_in: &Dbm,
     pc: usize,
     helper: u32,
-    reg_types: &RegTypeState, // INPUT types (read-only)
-) -> Vec<(usize, Dbm, RegTypeState)> {
+    reg_types: &TypeState, // INPUT types (read-only)
+) -> Vec<(usize, Dbm, TypeState)> {
     let mut dbm = dbm_in.clone();
     let mut next_types = reg_types.clone();
 
@@ -890,8 +909,8 @@ pub fn transfer_instr(
     pc: usize,
     instr: &Instr,
     stats: &mut AnalysisStats,
-    reg_types: &RegTypeState,
-) -> Vec<(usize, Dbm, RegTypeState)> {
+    reg_types: &TypeState,
+) -> Vec<(usize, Dbm, TypeState)> {
     match instr {
         Instr::MovArg0 { dst } =>
             transfer_mov_arg0(dbm_in, pc, *dst),
@@ -922,7 +941,7 @@ pub fn transfer_instr(
 pub fn update_reg_types_for_instr(
     ctx: &ExecContext,
     instr: &Instr,
-    types: &mut RegTypeState,
+    types: &mut TypeState,
     pc: usize
 ) {
     match *instr {
@@ -938,12 +957,16 @@ pub fn update_reg_types_for_instr(
             update_load_types(types, size, dst, base, off);
         }
 
+        Instr::Store { size, base, off, src } => {
+            update_store_types(types, size, base, off, src);
+        }
+
         Instr::Call { helper } => {
             update_call_types(types, helper);
         }
 
         // Stores, Jumps, Exits do not change register types
-        Instr::Store { .. } | Instr::Jmp { .. } | Instr::If { .. } | Instr::Exit 
+        Instr::Jmp { .. } | Instr::If { .. } | Instr::Exit 
         | Instr::Endian { .. } => {}
     }
 }
@@ -955,7 +978,7 @@ pub fn update_reg_types_for_instr(
 fn update_alu_types(
     ctx: &ExecContext,
     pc: usize,
-    types: &mut RegTypeState,
+    types: &mut TypeState,
     width: Width,
     op: AluOp,
     dst: Reg,
@@ -980,7 +1003,7 @@ fn update_alu_types(
 fn handle_mov(
     ctx: &ExecContext,
     pc: usize,
-    types: &mut RegTypeState,
+    types: &mut TypeState,
     dst: Reg,
     src: Operand,
 ) {
@@ -1026,7 +1049,7 @@ fn handle_mov(
     }
 }
 
-fn handle_add(types: &mut RegTypeState, dst: Reg, src: Operand) {
+fn handle_add(types: &mut TypeState, dst: Reg, src: Operand) {
     let dst_ty = types.get(dst);
     
     // We only support pointer arithmetic with Immediates (Ptr + K)
@@ -1054,7 +1077,7 @@ fn handle_add(types: &mut RegTypeState, dst: Reg, src: Operand) {
     }
 }
 
-fn handle_sub(types: &mut RegTypeState, dst: Reg, src: Operand) {
+fn handle_sub(types: &mut TypeState, dst: Reg, src: Operand) {
     let dst_ty = types.get(dst);
 
     if let (true, Operand::Imm(k)) = (dst_ty.is_pointer(), src) {
@@ -1084,7 +1107,7 @@ fn handle_sub(types: &mut RegTypeState, dst: Reg, src: Operand) {
 // -----------------------------------------------------------------------------
 
 fn update_load_types(
-    types: &mut RegTypeState,
+    types: &mut TypeState,
     size: MemSize,
     dst: Reg,
     base: Reg,
@@ -1115,9 +1138,46 @@ fn update_load_types(
                 types.set(dst, RegType::ScalarValue);
             }
         }
+        RegType::PtrToStack => {
+            if size == MemSize::U64 {
+                let ty = types.get_stack(off);
+                // DEBUG: Watch R6 reloads
+                if dst == Reg::R6 {
+                    println!("[Stack] Reloading R6 from [R10{:+}] -> {:?}", off, ty);
+                }
+                types.set(dst, ty);
+            } else {
+                if dst == Reg::R6 { println!("[Stack] Reloading R6 (Small Size) -> Scalar"); }
+                types.set(dst, RegType::ScalarValue);
+            }
+        }
         // Loading FROM Stack/Packet/Map results in data (Scalar)
         // (Unless we support spilling pointers to stack, which we don't yet)
         _ => types.set(dst, RegType::ScalarValue),
+    }
+}
+
+fn update_store_types(
+    types: &mut TypeState,
+    size: MemSize,
+    base: Reg,
+    off: i16,
+    src: Reg,
+) {
+    // Only track spills to R10 (Frame Pointer)
+    if base == Reg::R10 {
+        if size == MemSize::U64 {
+            // Standard spill: *(u64*)(r10 - k) = reg
+            // Record the type of the register being stored
+            let src_ty = types.get(src);
+            types.set_stack(off, src_ty);
+        } else {
+            // If writing < 64 bits, we might be partially overwriting a slot.
+            // For soundness, we should invalidate any overlapping 64-bit slot.
+            // E.g. writing u8 at -8 destroys the u64 at -8.
+            types.stack.remove(&off);
+            // (A full memory model would check range [-7, +0], but exact match is usually enough for BPF compilers)
+        }
     }
 }
 
@@ -1125,26 +1185,34 @@ fn update_load_types(
 // Helper 3: Call Operations (Helpers)
 // -----------------------------------------------------------------------------
 
-fn update_call_types(types: &mut RegTypeState, helper: u32) {
-    // CRITICAL FIX: Read R1 (the map pointer) BEFORE clobbering it!
+fn update_call_types(types: &mut TypeState, helper: u32) {
+    // -----------------------------------------------------------------------
+    // 1. CAPTURE STATE BEFORE CLOBBERING
+    // -----------------------------------------------------------------------
+    // We must read R1 *now* because it holds the map pointer.
+    // If we wait until after the loop below, R1 will be ScalarValue.
     let r1_type = types.get(Reg::R1);
-    
-    // 1. Clobber Caller-Saved Registers (R1-R5)
+
+    // -----------------------------------------------------------------------
+    // 2. CLOBBER CALLER-SAVED REGISTERS (R1-R5)
+    // -----------------------------------------------------------------------
+    // BPF helper calls invalidate R1 through R5.
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
         types.set(r, RegType::ScalarValue);
     }
 
-    // 2. Set Return Value (R0) type based on helper ID
+    // -----------------------------------------------------------------------
+    // 3. DETERMINE RETURN TYPE (R0)
+    // -----------------------------------------------------------------------
     match helper {
         1 => { // bpf_map_lookup_elem
-            // Use the captured r1_type, not the now-clobbered types.get(R1)
+            // We use the *captured* r1_type from step 1.
             let map_idx = if let RegType::PtrToMapObject { map_idx } = r1_type {
                 map_idx
             } else {
-                // If R1 wasn't a map pointer, we can't verify the map size.
-                // Defaulting to 0 is dangerous if Map 0 is small.
-                // Let's use usize::MAX to indicate "Unknown Map" (or handle gracefully).
-                // But for now, if logic is correct, this branch shouldn't be hit for valid code.
+                // If R1 wasn't a map object, we can't trust the return value type.
+                // We return a safe default or scalar to avoid "Limit 4" (Map 0) errors.
+                // Using a dummy index (e.g. 9999) would isolate the error better than 0.
                 0 
             };
 
@@ -1168,10 +1236,10 @@ pub fn analyze_program(
     // Numeric state per PC
     let mut states: Vec<Option<Dbm>> = vec![None; n];
     // Register-type state per PC
-    let mut type_states: Vec<Option<RegTypeState>> = vec![None; n];
+    let mut type_states: Vec<Option<TypeState>> = vec![None; n];
 
     // Entry register types, loosely mirroring kernel:
-    let mut entry_types = RegTypeState::new_not_init();
+    let mut entry_types = TypeState::new_not_init();
 
     // R1 is PTR_TO_CTX at entry
     entry_types.set(Reg::R1, RegType::PtrToCtx);
@@ -1194,16 +1262,20 @@ pub fn analyze_program(
 
         let instr = &prog.instrs[pc];
         
-        // CRITICAL FIX: Get the Raw PC for the CURRENT instruction.
+        // Get the Raw PC for the CURRENT instruction.
         // This is what maps to the relocation table.
         let raw_pc = prog.pc_map[pc]; 
 
         let in_dbm = states[pc].as_ref().unwrap();
-        let in_types = type_states[pc].expect("type state must exist when DBM state exists");
+        let in_types = type_states[pc].as_ref().unwrap().clone();
 
-        // Debug prints (optional)
-        // println!("=== PC {} (Raw {}) ===", pc, raw_pc);
-        // println!("Instr: {}", instr);
+        // 3) Print current state
+        println!("--- PC {} (Raw PC {}) ---", pc, raw_pc);
+        for r in crate::domain::REG_ENV.all() {
+            let ty = in_types.get(*r);
+            println!("  {:?}: {:?}", r, ty);
+        }
+        // ---------------------------------------------------------------------
 
         // 2) Numeric transfer
         let succs = transfer_instr(ctx, in_dbm, pc, instr, stats, &in_types);
@@ -1221,7 +1293,7 @@ pub fn analyze_program(
 
             // 1. Update Types for Edge (Static Effects)
             // We start from the input types of the current instruction
-            let mut edge_types = in_types;
+            let mut edge_types = in_types.clone();
             
             // Pass 'raw_pc' so we can look up map relocations for ld_imm64
             update_reg_types_for_instr(ctx, instr, &mut edge_types, raw_pc);
