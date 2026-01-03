@@ -68,59 +68,61 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>, ElfLoadError
 
 /// Build a map of Instruction Index -> Map ID
 /// Returns: HashMap<PC, MapIndex>
-pub fn load_relocations<P: AsRef<Path>>(path: P, maps: &[BpfMapDef]) -> Result<HashMap<usize, usize>, ElfLoadError> {
+pub fn load_relocations<P: AsRef<Path>>(
+    path: P, 
+    maps: &[BpfMapDef],
+    target_section_name: &str // NEW ARGUMENT
+) -> Result<HashMap<usize, usize>, ElfLoadError> {
     let buf = fs::read(path)?;
     let elf = Elf::parse(&buf)?;
 
     let mut pc_to_map = HashMap::new();
-
-    // Find the symbol indices that correspond to our maps
-    // We map "Symbol Name" to "Index in `maps` vector"
     let mut sym_name_to_map_idx = HashMap::new();
+    
+    // Build symbol map
     for (i, m) in maps.iter().enumerate() {
         sym_name_to_map_idx.insert(m.name.as_str(), i);
     }
 
-    // Find .rel.text or .rel<section_name>
-    // For simplicity, let's scan all Relocation Sections
-    for sh in &elf.section_headers {
-        if let Some(name) = elf.shdr_strtab.get_at(sh.sh_name) {
-            // Check if this is a relocation section for our code
-            // (You might need to be more specific, e.g., ".rel.text")
-            if name.starts_with(".rel") {
-                // Parse relocations
-                let start = sh.sh_offset as usize;
-                let end = start + sh.sh_size as usize;
-                // Goblin provides an iterator if we just used sh_type, but let's assume we use the data:
-                // Actually goblin `elf.shdr_relocs` iterates all.
+    // 1. Find the index of the target section (e.g., "tc")
+    let target_sec_idx = elf.section_headers.iter().enumerate()
+        .find(|(_, sh)| {
+            if let Some(name) = elf.shdr_strtab.get_at(sh.sh_name) {
+                return name == target_section_name;
+            }
+            false
+        })
+        .map(|(i, _)| i)
+        .ok_or_else(|| ElfLoadError::SectionNotFound { name: target_section_name.to_string() })?;
+
+    println!("Loading relocations for section '{}' (Index {})", target_section_name, target_sec_idx);
+
+    // 2. Iterate Relocations, but FILTER by target section
+    for (reloc_sec_idx, section_relocs) in elf.shdr_relocs.iter() {
+        let sh = &elf.section_headers[*reloc_sec_idx];
+        
+        // sh_info contains the section index these relocations apply to
+        if sh.sh_info as usize == target_sec_idx {
+            println!("Found matching relocation section index {}", reloc_sec_idx);
+            
+            for reloc in section_relocs {
+                let offset = reloc.r_offset;
+                let sym_idx = reloc.r_sym;
+                let pc = (offset / 8) as usize;
+
+                if let Some(sym) = elf.syms.get(sym_idx) {
+                    if let Some(name) = elf.strtab.get_at(sym.st_name) {
+                        // ADD THIS PRINT:
+                        println!("  [Loader] Offset {} (PC {}) -> Symbol '{}'", offset, pc, name);
+
+                        if let Some(&map_idx) = sym_name_to_map_idx.get(name) {
+                            println!("      -> Mapped to Map Index {}", map_idx); // ADD THIS
+                            pc_to_map.insert(pc, map_idx);
+                        }
+                    }
+                }
             }
         }
-    }
-
-    // Goblin exposes relocations directly on the section if we iterate them.
-    // But simplest way with Goblin:
-    for (sec_idx, section_relocs) in elf.shdr_relocs.iter() {
-         // Is this section modifying the text section?
-         // We'd need to check if section `sec_idx` target is the text section.
-         // Let's assume yes for the main code.
-         
-         for reloc in section_relocs {
-             let offset = reloc.r_offset; // Byte offset in code
-             let sym_idx = reloc.r_sym;   // Symbol table index
-             
-             // Calculate PC: offset / 8
-             let pc = (offset / 8) as usize;
-
-             // Resolve symbol
-             if let Some(sym) = elf.syms.get(sym_idx) {
-                 if let Some(name) = elf.strtab.get_at(sym.st_name) {
-                     if let Some(&map_idx) = sym_name_to_map_idx.get(name) {
-                         // Found it! This instruction loads this map.
-                         pc_to_map.insert(pc, map_idx);
-                     }
-                 }
-             }
-         }
     }
 
     Ok(pc_to_map)

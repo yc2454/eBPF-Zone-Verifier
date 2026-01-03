@@ -135,7 +135,7 @@ fn main() {
                 load_maps(path).unwrap_or_default();
             // 2. Load Relocations
             let pc_to_map_idx = 
-                load_relocations(path, &map_defs).unwrap_or_default();
+                load_relocations(path, &map_defs, section).unwrap_or_default();
             ctx.map_defs = map_defs;
             ctx.pc_to_map_idx = pc_to_map_idx;
 

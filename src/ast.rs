@@ -121,6 +121,7 @@ pub enum ProgramKind {
 pub struct Program {
     pub instrs: Vec<Instr>,
     pub kind: ProgramKind,
+    pub pc_map: Vec<usize>,
 }
 
 impl fmt::Display for Instr {

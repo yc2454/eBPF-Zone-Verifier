@@ -97,6 +97,7 @@ fn masked_copy_index() -> Program {
             Instr::Exit,
         ],
         kind: ProgramKind::Tc,
+        pc_map: vec![],
     }
 }
 
@@ -130,6 +131,7 @@ fn canonical_relational_guard() -> Program {
             Instr::Exit,
         ],
         kind: ProgramKind::Tc,
+        pc_map: vec![],
     }
 }
 
@@ -158,6 +160,7 @@ fn unsafe_no_constraints() -> Program {
             Instr::Exit,
         ],
         kind: ProgramKind::Tc,
+        pc_map: vec![],
     }
 }
 
@@ -188,6 +191,7 @@ fn safe_via_mask_small_offset() -> Program {
             Instr::Exit,
         ],
         kind: ProgramKind::Tc,
+        pc_map: vec![],
     }
 }
 
@@ -232,6 +236,7 @@ fn merge_two_offsets_join() -> Program {
             Instr::Exit,
         ],
         kind: ProgramKind::Tc,
+        pc_map: vec![],
     }
 }
 
@@ -269,5 +274,6 @@ fn addreg_const_offset_demo() -> Program {
             Instr::Exit,
         ],
         kind: ProgramKind::Tc,
+        pc_map: vec![],
     }
 }

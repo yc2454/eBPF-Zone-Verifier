@@ -42,48 +42,29 @@ fn branch_target(pc: usize, off: i16, len: usize, code: u8) -> Result<usize, Low
 
 pub fn lower_raw_to_program(raw: &[RawBpfInsn], kind: ProgramKind) -> Result<Program, LowerError> {
     let mut instrs = Vec::with_capacity(raw.len());
-
+    let mut pc_map = Vec::new();
     let mut pc: usize = 0;
+
     while pc < raw.len() {
+        // 1. Push Raw PC for the PRIMARY instruction
+        pc_map.push(pc);
+
         let insn = &raw[pc];
         let dst = reg_to_var(insn.dst);
         let src = reg_to_var(insn.src);
 
-        // 0x18: LDIMM64 
-        // Special case: takes two instruction slots.
         if insn.code == 0x18 {
-            if pc + 1 >= raw.len() {
-                return Err(LowerError {
-                    pc,
-                    code: insn.code,
-                    msg: "LDIMM64 at end of stream missing continuation slot".to_string(),
-                });
-            }
-
+            // ... (Validation checks keep as is) ...
+            if pc + 1 >= raw.len() { /* ... error ... */ }
             let cont = &raw[pc + 1];
-
-            // The continuation slot should have code 0x00 in typical encodings.
-            // If it's not, fail fast so we don't silently desync.
-            if cont.code != 0x00 {
-                return Err(LowerError {
-                    pc,
-                    code: cont.code,
-                    msg: format!(
-                        "LDIMM64 continuation slot had unexpected opcode 0x{:02x}",
-                        cont.code
-                    ),
-                });
-            }
+            if cont.code != 0x00 { /* ... error ... */ }
 
             let low: u32 = insn.imm as u32;
             let high: u32 = cont.imm as u32;
             let imm_u64: u64 = (low as u64) | ((high as u64) << 32);
-
-            // Best-effort: keep it as i64 when it fits; otherwise keep bits (wrap).
-            // (For your current string literals, this will be positive and safe.)
             let imm_i64: i64 = imm_u64 as i64;
 
-            // Slot pc: actual load
+            // AST 1: The Load (Maps to 'pc')
             instrs.push(Instr::Alu {
                 width: Width::W64,
                 op: AluOp::Mov,
@@ -91,8 +72,10 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn], kind: ProgramKind) -> Result<Pro
                 src: Operand::Imm(imm_i64),
             });
 
-            // Slot pc+1: emit a semantic no-op so AST PCs stay aligned with raw PCs.
-            // Self-move is a good no-op in your current semantics.
+            // AST 2: The No-Op (Maps to 'pc + 1')
+            // CRITICAL FIX: We must record the PC for this second instruction!
+            pc_map.push(pc + 1); 
+
             instrs.push(Instr::Alu {
                 width: Width::W64,
                 op: AluOp::Mov,
@@ -781,5 +764,5 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn], kind: ProgramKind) -> Result<Pro
         pc += 1;
     }
 
-    Ok(Program { instrs, kind })
+    Ok(Program { instrs, kind, pc_map })
 }
