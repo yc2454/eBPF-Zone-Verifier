@@ -116,46 +116,61 @@ fn update_packet_ranges(
     packet_reg: Reg, 
     packet_end_reg: Reg
 ) {
-    // We just verified: packet_reg <= packet_end_reg
-    // We want to update ranges for ALL registers sharing packet_reg's ID.
-    
+    println!("[PacketRefine] Checking bounds for PacketReg={:?} vs EndReg={:?}", packet_reg, packet_end_reg);
+
+    // 1. Identify the Packet ID
     let target_id = match types.get(packet_reg) {
         RegType::PtrToPacket { id, .. } => id,
-        _ => return, 
+        _ => {
+            println!("[PacketRefine] packet_reg {:?} is not PtrToPacket!", packet_reg);
+            return;
+        }, 
     };
 
-    // Scan all registers
+    // 2. Scan all registers for this ID
     for r in Reg::ALL {
         if let RegType::PtrToPacket { id, range } = types.get(r) {
             if id == target_id {
                 // We want to check: Is r <= packet_end_reg - K?
-                // In DBM terms: upper_bound(r - packet_end_reg) <= -K
-                // This implies r + K <= packet_end_reg.
-                
-                // get_bounds(A, B) returns bounds for (A - B)
+                // DBM: r - packet_end_reg <= -K
                 let (_, ub) = crate::domain::get_bounds(dbm, r, packet_end_reg);
                 
                 if let Some(upper) = ub {
+                    println!("[PacketRefine] Reg {:?} (ID {}) - {:?} <= {}", r, id, packet_end_reg, upper);
+                    
                     if upper <= 0 {
-                        // 'upper' is negative (e.g. -4). 
-                        // r - end <= -4  =>  r + 4 <= end.
-                        // Safe range is at least abs(upper).
+                        // Found a bound! r + K <= End
                         let proved_safe = upper.abs() as u64;
                         if proved_safe > range {
+                            println!("[PacketRefine] SUCCESS! Updating {:?} range {} -> {}", r, range, proved_safe);
                             types.set(r, RegType::PtrToPacket { id, range: proved_safe });
-                            // println!("Refined range for {} to {}", r.name(), proved_safe);
                         }
+                    } else {
+                         println!("[PacketRefine] Bound {} is positive (not safe)", upper);
                     }
+                } else {
+                    println!("[PacketRefine] No bound found between {:?} and {:?}", r, packet_end_reg);
                 }
             }
         }
     }
 }
 
-fn transfer_mov_arg0(dbm_in: &Dbm, pc: usize, dst: Reg) -> Vec<(usize, Dbm, TypeState)> {
+fn transfer_mov_arg0(
+    dbm_in: &Dbm, 
+    pc: usize, 
+    dst: Reg, 
+    reg_types: &TypeState 
+) -> Vec<(usize, Dbm, TypeState)> {
     let mut dbm = dbm_in.clone();
+    let mut next_types = reg_types.clone();
+    
     forget(&mut dbm, dst);
-    vec![(pc + 1, dbm, TypeState::new_not_init())]
+    
+    // mov_arg0 (loading ctx) sets dst to PtrToCtx
+    next_types.set(dst, RegType::PtrToCtx);
+    
+    vec![(pc + 1, dbm, next_types)]
 }
 
 fn transfer_alu(
@@ -404,9 +419,10 @@ fn transfer_endian(
     pc: usize,
     dst: Reg,
     kind: EndianKind,
+    reg_types_in: &TypeState
 ) -> Vec<(usize, Dbm, TypeState)> {
     let mut dbm = dbm_in.clone();
-    let next_types = TypeState::new_not_init();
+    let next_types = reg_types_in.clone();
 
     // Endian ops are nonlinear bit permutations; we cannot track the relation
     // to the old value. MVP: forget, then approximate the guaranteed range.
@@ -446,7 +462,7 @@ fn transfer_if(
 
     // ELSE branch: condition does not hold
     let mut dbm_else = dbm_in.clone();
-    let types_else = reg_types_in.clone(); // Clone types for ELSE
+    let mut types_else = reg_types_in.clone(); // Clone types for ELSE
 
     // For JMP32 Eq/Ne with imm, only refine if left is already known to be u32-range.
     if width == Width::W32 {
@@ -512,15 +528,15 @@ fn transfer_if(
 
         // ---------- left <= reg ----------
         (CmpOp::ULe, Operand::Reg(r)) => {
-            assume_le_var(&mut dbm_then, left, r);
-            assume_gt_var(&mut dbm_else, left, r);
+             assume_le_var(&mut dbm_then, left, r);
+             assume_gt_var(&mut dbm_else, left, r);
 
-            // --- PACKET SAFETY: if Packet <= End ---
-            let l_ty = types_then.get(left);
-            let r_ty = types_then.get(r);
-            if matches!(l_ty, RegType::PtrToPacket{..}) && matches!(r_ty, RegType::PtrToPacketEnd) {
+             // if Packet <= End (Jump to Safety)
+             let l_ty = types_then.get(left);
+             let r_ty = types_then.get(r);
+             if matches!(l_ty, RegType::PtrToPacket{..}) && matches!(r_ty, RegType::PtrToPacketEnd) {
                  update_packet_ranges(&dbm_then, &mut types_then, left, r);
-            }
+             }
         }
 
         // ---------- left > reg ----------
@@ -528,12 +544,24 @@ fn transfer_if(
             assume_gt_var(&mut dbm_then, left, r);
             assume_le_var(&mut dbm_else, left, r);
             
-            // --- PACKET SAFETY: if End > Packet (same as Packet < End) ---
+            // 1. Existing check (Safety on Jump)
+            // e.g. if End > Packet goto Safe
             let l_ty = types_then.get(left);
             let r_ty = types_then.get(r);
-            // End > Packet implies Packet <= End - 1
             if matches!(l_ty, RegType::PtrToPacketEnd) && matches!(r_ty, RegType::PtrToPacket{..}) {
                  update_packet_ranges(&dbm_then, &mut types_then, r, left);
+            }
+
+            // 2. Safety on Fallthrough
+            // e.g. if Packet > End goto Error (Fallthrough means Packet <= End)
+            let l_ty_else = types_else.get(left);
+            let r_ty_else = types_else.get(r);
+            
+            // If Left is Packet and Right is End...
+            if matches!(l_ty_else, RegType::PtrToPacket{..}) && matches!(r_ty_else, RegType::PtrToPacketEnd) {
+                 // ...then on the Else path, we know Packet <= End.
+                 // We call update_packet_ranges to lock in this bound.
+                 update_packet_ranges(&dbm_else, &mut types_else, left, r);
             }
         }
 
@@ -542,11 +570,18 @@ fn transfer_if(
             assume_le_var_plus_const(&mut dbm_then, left, r, -1);
             assume_ge_var(&mut dbm_else, left, r);
 
-            // --- PACKET SAFETY: if Packet < End ---
+            // Case A: if Packet < End (Jump to Safety)
              let l_ty = types_then.get(left);
              let r_ty = types_then.get(r);
              if matches!(l_ty, RegType::PtrToPacket{..}) && matches!(r_ty, RegType::PtrToPacketEnd) {
                   update_packet_ranges(&dbm_then, &mut types_then, left, r);
+             }
+             
+             // Case B: if End < Packet (Jump to Failure) -> Else is Safe
+             let l_ty_else = types_else.get(left);
+             let r_ty_else = types_else.get(r);
+             if matches!(l_ty_else, RegType::PtrToPacketEnd) && matches!(r_ty_else, RegType::PtrToPacket{..}) {
+                  update_packet_ranges(&dbm_else, &mut types_else, r, left);
              }
         }
 
@@ -912,11 +947,11 @@ pub fn transfer_instr(
 ) -> Vec<(usize, Dbm, TypeState)> {
     match instr {
         Instr::MovArg0 { dst } =>
-            transfer_mov_arg0(dbm_in, pc, *dst),
+            transfer_mov_arg0(dbm_in, pc, *dst, reg_types),
         Instr::Alu { width, op, dst, src } =>
             transfer_alu(ctx, dbm_in, pc, *width, *op, *dst, *src, stats, reg_types),
         Instr::Endian { dst, kind } =>
-            transfer_endian(ctx, dbm_in, pc, *dst, *kind),
+            transfer_endian(ctx, dbm_in, pc, *dst, *kind, reg_types),
         Instr::If { width, left, op, right, target } =>
             transfer_if(ctx, dbm_in, pc, *width, *left, *op, *right, *target, reg_types),
         Instr::Load { size, dst, base, off } =>
@@ -1116,6 +1151,19 @@ fn update_load_types(
 
     match base_ty {
         RegType::PtrToCtx => {
+            // Hardcode eBPF ABI checks to guarantee 32-bit loads work
+            if size == MemSize::U32 {
+                if off == 76 { // data
+                     let new_id = crate::domain::new_packet_id();
+                     types.set(dst, RegType::PtrToPacket { id: new_id, range: 0 });
+                     return;
+                }
+                if off == 80 { // data_end
+                     types.set(dst, RegType::PtrToPacketEnd);
+                     return;
+                }
+            }
+
             // Consult the model to see if we are loading a special pointer
             if let Some(kind) = classify_tc_ctx_field(off, size) {
                 match kind {
@@ -1270,10 +1318,11 @@ pub fn analyze_program(
 
         // 3) Print current state
         println!("--- PC {} (Raw PC {}) ---", pc, raw_pc);
-        for r in crate::domain::REG_ENV.all() {
-            let ty = in_types.get(*r);
-            println!("  {:?}: {:?}", r, ty);
-        }
+        // in_dbm.dump_matrix();
+        // for r in crate::domain::REG_ENV.all() {
+        //     let ty = in_types.get(*r);
+        //     println!("  {:?}: {:?}", r, ty);
+        // }
         // ---------------------------------------------------------------------
 
         // 2) Numeric transfer
@@ -1285,21 +1334,24 @@ pub fn analyze_program(
         }
 
         // 4) Dataflow propagation: DBM + RegType
-        for (succ_pc, succ_dbm, _succ_types) in succs {
+        for (succ_pc, succ_dbm, succ_types) in succs {
             if succ_pc >= n {
                 continue;
             }
 
             // 1. Update Types for Edge (Static Effects)
             // We start from the input types of the current instruction
-            let mut edge_types = in_types.clone();
+            let mut edge_types = succ_types.clone();
             
-            // Pass 'raw_pc' so we can look up map relocations for ld_imm64
-            update_reg_types_for_instr(ctx, instr, &mut edge_types, raw_pc);
+            // 2. Apply Raw PC-dependent updates (Map Relocations, Stack Spills)
+            // Skip this for Calls! 
+            // transfer_call already handled the types correctly. 
+            if !matches!(instr, Instr::Call { .. }) {
+                update_reg_types_for_instr(ctx, instr, &mut edge_types, raw_pc);
+            }
             println!("Instr: {} (Raw PC: {})", instr, raw_pc);
 
             // 2. Refine Types (Flow-sensitive Effects)
-            // e.g., if (r6 != 0) -> promote r6 to safe pointer
             refine_branch_types(instr, succ_pc, &succ_dbm, &mut edge_types);
 
             match (&mut states[succ_pc], &mut type_states[succ_pc]) {

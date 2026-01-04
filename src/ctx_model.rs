@@ -36,7 +36,7 @@ pub enum CtxFieldKind {
 
     /// Pointer to the start of the packet data.
     PacketStart,
-    
+
     /// Pointer to the end of the packet data.
     PacketEnd,
 }
@@ -46,28 +46,22 @@ pub enum CtxFieldKind {
 /// Given an offset and size of a load from PTR_TO_CTX, classify the field.
 /// Offsets here are *very* specific to your current Calico program pattern
 /// and can be refined later.
-///
-/// For now we hard-code just enough to understand:
-///   w1 = *(u32 *)(r8 + 0x4c)
-///   w6 = *(u32 *)(r8 + 0x8c)
 pub fn classify_tc_ctx_field(off: i16, size: MemSize) -> Option<CtxFieldKind> {
     match (off, size) {
-        // ctx + 0x4c: treat as "end" pointer / bound of CalicoMetaRegion.
-        // This matches the pattern:
-        //   r6 = *(ctx + 0x8c)    // start
-        //   r1 = *(ctx + 0x4c)    // end
-        //   r2 = r6; r2 += 4; if r2 <= r1 ... safe load from r6
-        (0x4c, MemSize::U32) => Some(CtxFieldKind::MemEnd {
-            region: MemRegionId::CalicoMetaRegion,
-        }),
+        // Offset 76 (0x4c) == data (Packet Start)
+        // Previously this was incorrectly mapped to MemEnd for CalicoMeta
+        (0x4c, MemSize::U32) => Some(CtxFieldKind::PacketStart),
 
-        // ctx + 0x8c: treat as pointer into the same region.
+        // Offset 80 (0x50) == data_end (Packet End)
+        (0x50, MemSize::U32) => Some(CtxFieldKind::PacketEnd),
+
+        // Offset 140 (0x8c) == Calico Specific Pointer
+        // We keep this as PtrToMem for your specific metadata logic
         (0x8c, MemSize::U32) => Some(CtxFieldKind::PtrToMem {
             region: MemRegionId::CalicoMetaRegion,
         }),
 
         // Everything else: for now, we consider it scalar.
-        // You can expand this table as you learn more of __sk_buff / Calico layout.
         _ => Some(CtxFieldKind::Scalar),
     }
 }
