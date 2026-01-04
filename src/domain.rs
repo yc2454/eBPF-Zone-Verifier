@@ -194,45 +194,60 @@ impl TypeState {
     }
 
     fn merge_types(t1: RegType, t2: RegType) -> RegType {
+        use RegType::*;
         match (t1, t2) {
             // 1. Exact Match
             (a, b) if a == b => a,
 
-            // 2. Fuzzy Match for Loop IDs (Safe Ptr)
-            (RegType::PtrToMapValue { map_idx: m1, .. }, 
-             RegType::PtrToMapValue { map_idx: m2, .. }) if m1 == m2 => {
-                 t1 // Keep t1's ID/Offset
+            // 2. NotInit (Bottom)
+            (NotInit, t) => t,
+            (t, NotInit) => t,
+
+            // 3. Map Pointers: Robust Merge
+            // Case A: Both Safe -> Keep Safe
+            (PtrToMapValue { map_idx: m1, offset: o1 }, 
+             PtrToMapValue { map_idx: m2, offset: o2 }) 
+             if m1 == m2 && o1 == o2 => t1,
+
+            // Case B: Both Nullable -> Keep Nullable
+            (PtrToMapValueOrNull { map_idx: m1, id: id1 }, 
+             PtrToMapValueOrNull { map_idx: m2, .. }) 
+             if m1 == m2 => PtrToMapValueOrNull { map_idx: m1, id: id1 },
+
+            // Case C: Safe + Nullable -> Downgrade to Nullable
+            (PtrToMapValue { map_idx: m1, .. }, 
+             PtrToMapValueOrNull { map_idx: m2, id, .. }) 
+             if m1 == m2 => PtrToMapValueOrNull { map_idx: m1, id },
+
+            (PtrToMapValueOrNull { map_idx: m1, id, .. }, 
+             PtrToMapValue { map_idx: m2, .. }) 
+             if m1 == m2 => PtrToMapValueOrNull { map_idx: m1, id },
+
+            // Case D: Ptr + Scalar (assuming Scalar is 0/NULL) -> Downgrade to Nullable
+            (PtrToMapValue { map_idx, .. }, ScalarValue) |
+            (ScalarValue, PtrToMapValue { map_idx, .. }) => {
+                // We create a dummy ID since we lost the original one from the scalar side
+                PtrToMapValueOrNull { map_idx, id: 0 }
+            },
+            (PtrToMapValueOrNull { map_idx, id }, ScalarValue) |
+            (ScalarValue, PtrToMapValueOrNull { map_idx, id }) => {
+                PtrToMapValueOrNull { map_idx, id }
             },
 
-            // 3. Fuzzy Match for Loop IDs (Nullable Ptr)
-            (RegType::PtrToMapValueOrNull { map_idx: m1, .. }, 
-             RegType::PtrToMapValueOrNull { map_idx: m2, .. }) if m1 == m2 => {
-                 t1 
+            // 4. Packet Pointers
+            (PtrToPacket { id: _, range: r1 }, PtrToPacket { id: id2, range: r2 }) => {
+                 PtrToPacket { id: id2, range: r1.min(r2) }
             },
-
-            // 4. Lattice Downgrade: Safe Ptr + Nullable Ptr -> Nullable Ptr
-            // If one path says "Defintely Safe" and other says "Maybe Null",
-            // the result is "Maybe Null".
-            (RegType::PtrToMapValue { map_idx: m1, .. }, 
-             RegType::PtrToMapValueOrNull { map_idx: m2, id, .. }) if m1 == m2 => {
-                 RegType::PtrToMapValueOrNull { id, map_idx: m1 }
-            },
-            (RegType::PtrToMapValueOrNull { map_idx: m1, id, .. }, 
-             RegType::PtrToMapValue { map_idx: m2, .. }) if m1 == m2 => {
-                 RegType::PtrToMapValueOrNull { id, map_idx: m1 }
-            },
-
-            // 5. NotInit handling
-            (RegType::NotInit, t) => t,
-            (t, RegType::NotInit) => t,
-
-            // 6. Default: Incompatible -> Scalar
-            _ => RegType::ScalarValue,
+            
+            // 5. Context
+            (PtrToCtx, PtrToCtx) => PtrToCtx,
+            (PtrToPacketEnd, PtrToPacketEnd) => PtrToPacketEnd,
+            
+            // Default
+            _ => ScalarValue,
         }
     }
 
-    /// Join in-place with `other`. Returns true if anything changed.
-    /// A simple lattice join: if equal, keep; else go to Unknown.
     pub fn join_in_place(&mut self, other: &TypeState) -> bool {
         let mut changed = false;
 
@@ -240,35 +255,30 @@ impl TypeState {
         for i in 0..11 {
             let t1 = self.regs[i];
             let t2 = other.regs[i];
-            
             let joined = Self::merge_types(t1, t2);
-
             if joined != t1 {
                 self.regs[i] = joined;
                 changed = true;
             }
         }
 
-        // 2. Join Stack
+        // 2. Join Stack (Intersection)
         let my_keys: Vec<i16> = self.stack.keys().cloned().collect();
         for k in my_keys {
             let t1 = self.stack[&k];
-            
             if let Some(t2) = other.stack.get(&k) {
                 let joined = Self::merge_types(t1, *t2);
                 
-                // If the merge resulted in Scalar, it means they were incompatible.
-                // For stack slots, Scalar is equivalent to "Empty/Garbage", so we remove it.
+                // If merge failed (Scalar) or types incompatible, drop the slot
                 if joined == RegType::ScalarValue {
                     self.stack.remove(&k);
                     changed = true;
                 } else if joined != t1 {
-                    // We downgraded (e.g. Safe -> Nullable), so update the slot
                     self.stack.insert(k, joined);
                     changed = true;
                 }
             } else {
-                // Other path has nothing here -> Intersection is nothing.
+                // Slot missing on one path -> Remove (Strict Intersection)
                 self.stack.remove(&k);
                 changed = true;
             }

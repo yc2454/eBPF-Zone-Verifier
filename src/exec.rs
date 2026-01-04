@@ -687,7 +687,6 @@ fn transfer_load(
             forget(&mut dbm, dst);
         }
 
-        // --- CONTEXT LOGIC (Updated to Mint IDs) ---
         PtrToCtx => {
             if let Some(kind) = classify_tc_ctx_field(off, size) {
                 match kind {
@@ -722,7 +721,7 @@ fn transfer_load(
             forget(&mut dbm, dst);
         }
 
-        RegType::PtrToMapValue { offset: map_off, map_idx } => {
+        PtrToMapValue { offset: map_off, map_idx } => {
             let final_offset = map_off + (off as i64);
             let access_end = final_offset + access_size;
 
@@ -738,6 +737,23 @@ fn transfer_load(
             } else {
                 println!("Unsafe map load at pc {}: off {} size {} limit {}", 
                          pc, final_offset, access_size, map_limit);
+            }
+        }
+
+        PtrToMapValueOrNull { map_idx, .. } => {
+            // "OrNull" pointers don't track offset in your current struct, 
+            // so we assume offset is 0 relative to the map value start.
+            let final_offset = off as i64;
+            let access_end = final_offset + access_size;
+            
+            let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) {
+                def.value_size as i64
+            } else { 4096 };
+
+            if final_offset >= 0 && access_end <= map_limit {
+                return vec![(pc + 1, dbm_in.clone(), next_types)];
+            } else {
+                println!("Unsafe nullable map load at pc {}: off {} limit {}", pc, final_offset, map_limit);
             }
         }
 
@@ -881,6 +897,23 @@ fn transfer_store(
                 pc, size, base, off
             );
             vec![(pc + 1, dbm_in.clone(), next_types)]
+        }
+
+        RegType::PtrToMapValueOrNull { map_idx, .. } => {
+             let final_offset = off as i64; // Assume base offset 0
+             let access_end = final_offset + access_size;
+             
+             let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) {
+                 def.value_size as i64
+             } else { 4096 };
+
+             if final_offset >= 0 && access_end <= map_limit {
+                 return vec![(pc + 1, dbm_in.clone(), next_types)];
+             }
+             println!("Unsafe nullable map store at pc {}", pc);
+             stats.mark_unsafe_store();
+             stats.abort = true;
+             vec![]
         }
 
         other => {
@@ -1319,10 +1352,10 @@ pub fn analyze_program(
         // 3) Print current state
         println!("--- PC {} (Raw PC {}) ---", pc, raw_pc);
         // in_dbm.dump_matrix();
-        // for r in crate::domain::REG_ENV.all() {
-        //     let ty = in_types.get(*r);
-        //     println!("  {:?}: {:?}", r, ty);
-        // }
+        for r in crate::domain::REG_ENV.all() {
+            let ty = in_types.get(*r);
+            println!("  {:?}: {:?}", r, ty);
+        }
         // ---------------------------------------------------------------------
 
         // 2) Numeric transfer
