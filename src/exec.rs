@@ -613,7 +613,6 @@ fn transfer_load(
             forget(&mut dbm, dst);
         }
 
-        // --- PACKET LOGIC (NEW) ---
         PtrToPacket { id: _, range } => {
             let access_end = off as i64 + access_size;
             let mut safe = false;
