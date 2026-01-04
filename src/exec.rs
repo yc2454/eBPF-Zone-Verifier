@@ -116,40 +116,60 @@ fn update_packet_ranges(
     packet_reg: Reg, 
     packet_end_reg: Reg
 ) {
-    println!("[PacketRefine] Checking bounds for PacketReg={:?} vs EndReg={:?}", packet_reg, packet_end_reg);
-
-    // 1. Identify the Packet ID
     let target_id = match types.get(packet_reg) {
         RegType::PtrToPacket { id, .. } => id,
-        _ => {
-            println!("[PacketRefine] packet_reg {:?} is not PtrToPacket!", packet_reg);
-            return;
-        }, 
+        _ => return, 
     };
 
-    // 2. Scan all registers for this ID
-    for r in Reg::ALL {
-        if let RegType::PtrToPacket { id, range } = types.get(r) {
+    println!("[PacketRefine] Refining Packet ID {} (Triggered by {:?} <= {:?})", target_id, packet_reg, packet_end_reg);
+
+    // 1. Update Registers
+    let mut max_new_range = 0;
+
+    for r in crate::domain::REG_ENV.all() {
+        if let RegType::PtrToPacket { id, range } = types.get(*r) {
             if id == target_id {
-                // We want to check: Is r <= packet_end_reg - K?
-                // DBM: r - packet_end_reg <= -K
-                let (_, ub) = crate::domain::get_bounds(dbm, r, packet_end_reg);
+                // Check bound for THIS specific register against PacketEnd
+                // DBM Constraint: r - packet_end <= upper
+                let (_, ub) = crate::domain::get_bounds(dbm, *r, packet_end_reg);
                 
                 if let Some(upper) = ub {
-                    println!("[PacketRefine] Reg {:?} (ID {}) - {:?} <= {}", r, id, packet_end_reg, upper);
-                    
+                    // Safe if r <= end, i.e., r - end <= 0
                     if upper <= 0 {
-                        // Found a bound! r + K <= End
-                        let proved_safe = upper.abs() as u64;
-                        if proved_safe > range {
-                            println!("[PacketRefine] SUCCESS! Updating {:?} range {} -> {}", r, range, proved_safe);
-                            types.set(r, RegType::PtrToPacket { id, range: proved_safe });
+                        let safe_bytes = upper.abs() as u64;
+                        // println!("[PacketRefine] DBM Check {:?}: upper={} -> safe={}", r, upper, safe_bytes);
+                        
+                        if safe_bytes > range {
+                            println!("[PacketRefine] SUCCESS! Updating Reg {:?} range {} -> {}", r, range, safe_bytes);
+                            types.set(*r, RegType::PtrToPacket { id, range: safe_bytes });
+                            if safe_bytes > max_new_range {
+                                max_new_range = safe_bytes;
+                            }
+                        } else if range > max_new_range {
+                            max_new_range = range;
                         }
                     } else {
-                         println!("[PacketRefine] Bound {} is positive (not safe)", upper);
+                        println!("[PacketRefine] DBM Check {:?}: upper={} (Positive, unsafe)", r, upper);
                     }
                 } else {
-                    println!("[PacketRefine] No bound found between {:?} and {:?}", r, packet_end_reg);
+                    println!("[PacketRefine] DBM Check {:?}: No bound found", r);
+                }
+            }
+        }
+    }
+
+    // 2. Update Stack Slots
+    // We update all stack slots sharing this ID to the BEST range found in any register.
+    // This handles the spill-check-reload pattern.
+    if max_new_range > 0 {
+        let stack_keys: Vec<i16> = types.stack.keys().cloned().collect();
+        for k in stack_keys {
+            if let RegType::PtrToPacket { id, range } = types.get_stack(k) {
+                if id == target_id {
+                    if max_new_range > range {
+                        println!("[PacketRefine] Updating Stack[{}] range {} -> {}", k, range, max_new_range);
+                        types.set_stack(k, RegType::PtrToPacket { id, range: max_new_range });
+                    }
                 }
             }
         }

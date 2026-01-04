@@ -194,8 +194,10 @@ impl TypeState {
             // ==========================
             // Packet Pointers
             // ==========================
-            (PtrToPacket { id: _, range: r1 }, PtrToPacket { id: id2, range: r2 }) => {
-                 PtrToPacket { id: id2, range: r1.min(r2) }
+            (PtrToPacket { id: id1, range: r1 }, PtrToPacket { id: id2, range: r2 }) => {
+                let new = r1.max(r2);
+                println!("[Merge] Packet ID {} ({}) + ID {} ({}) -> Max {}", id1, r1, id2, r2, new);
+                PtrToPacket { id: id2, range: new }
             },
             
             // NEW: Optimistic Merge for Packet + Scalar
