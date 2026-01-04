@@ -172,49 +172,56 @@ impl TypeState {
         self.stack.insert(off, ty);
     }
 
-    // Helper: Check if two types are compatible for merging
-    fn are_compatible(t1: &RegType, t2: &RegType) -> bool {
-        match (t1, t2) {
-            // Exact match is always compatible
-            (a, b) if a == b => true,
-            
-            // Fuzzy match for Map Pointers (ignore ID, check Map Index)
-            (RegType::PtrToMapValueOrNull { map_idx: m1, .. }, 
-             RegType::PtrToMapValueOrNull { map_idx: m2, .. }) => m1 == m2,
-
-            (RegType::PtrToMapValue { map_idx: m1, .. }, 
-             RegType::PtrToMapValue { map_idx: m2, .. }) => m1 == m2,
-
-            // One is NotInit, one is something else -> Compatible (we upgrade to the something else)
-            (RegType::NotInit, _) => true,
-            (_, RegType::NotInit) => true,
-
-            _ => false,
-        }
-    }
-
     fn merge_types(t1: RegType, t2: RegType) -> RegType {
         use RegType::*;
+        
+        // Helper to debug packet downgrades
+        let log_downgrade = |reason: &str| {
+            // Only log if it involves a Packet pointer, to reduce noise
+            if matches!(t1, PtrToPacket{..}) || matches!(t2, PtrToPacket{..}) {
+                println!("[Merge] Downgrading Packet Ptr: {:?} vs {:?} -> Scalar ({})", t1, t2, reason);
+            }
+        };
+
         match (t1, t2) {
             // 1. Exact Match
             (a, b) if a == b => a,
 
-            // 2. NotInit (Bottom)
+            // 2. NotInit
             (NotInit, t) => t,
             (t, NotInit) => t,
 
-            // 3. Map Pointers: Robust Merge
-            // Case A: Both Safe -> Keep Safe
+            // ==========================
+            // Packet Pointers
+            // ==========================
+            (PtrToPacket { id: _, range: r1 }, PtrToPacket { id: id2, range: r2 }) => {
+                 PtrToPacket { id: id2, range: r1.min(r2) }
+            },
+            
+            // NEW: Optimistic Merge for Packet + Scalar
+            (PtrToPacket { id, range }, ScalarValue) => {
+                // println!("[Merge] Preserving Packet {:?} against Scalar", id);
+                PtrToPacket { id, range }
+            },
+            (ScalarValue, PtrToPacket { id, range }) => {
+                // println!("[Merge] Preserving Packet {:?} against Scalar", id);
+                PtrToPacket { id, range }
+            },
+
+            // ==========================
+            // Map Pointers
+            // ==========================
+            // Safe + Safe
             (PtrToMapValue { map_idx: m1, offset: o1 }, 
              PtrToMapValue { map_idx: m2, offset: o2 }) 
              if m1 == m2 && o1 == o2 => t1,
 
-            // Case B: Both Nullable -> Keep Nullable
+            // Nullable + Nullable
             (PtrToMapValueOrNull { map_idx: m1, id: id1 }, 
              PtrToMapValueOrNull { map_idx: m2, .. }) 
              if m1 == m2 => PtrToMapValueOrNull { map_idx: m1, id: id1 },
 
-            // Case C: Safe + Nullable -> Downgrade to Nullable
+            // Safe + Nullable -> Nullable
             (PtrToMapValue { map_idx: m1, .. }, 
              PtrToMapValueOrNull { map_idx: m2, id, .. }) 
              if m1 == m2 => PtrToMapValueOrNull { map_idx: m1, id },
@@ -223,28 +230,36 @@ impl TypeState {
              PtrToMapValue { map_idx: m2, .. }) 
              if m1 == m2 => PtrToMapValueOrNull { map_idx: m1, id },
 
-            // Case D: Ptr + Scalar (assuming Scalar is 0/NULL) -> Downgrade to Nullable
+            // Ptr + Scalar -> Nullable
             (PtrToMapValue { map_idx, .. }, ScalarValue) |
-            (ScalarValue, PtrToMapValue { map_idx, .. }) => {
-                // We create a dummy ID since we lost the original one from the scalar side
-                PtrToMapValueOrNull { map_idx, id: 0 }
-            },
-            (PtrToMapValueOrNull { map_idx, id }, ScalarValue) |
-            (ScalarValue, PtrToMapValueOrNull { map_idx, id }) => {
-                PtrToMapValueOrNull { map_idx, id }
-            },
+            (ScalarValue, PtrToMapValue { map_idx, .. }) => 
+                PtrToMapValueOrNull { map_idx, id: 0 },
 
-            // 4. Packet Pointers
-            (PtrToPacket { id: _, range: r1 }, PtrToPacket { id: id2, range: r2 }) => {
-                 PtrToPacket { id: id2, range: r1.min(r2) }
-            },
-            
-            // 5. Context
+            (PtrToMapValueOrNull { map_idx, id }, ScalarValue) |
+            (ScalarValue, PtrToMapValueOrNull { map_idx, id }) =>
+                PtrToMapValueOrNull { map_idx, id },
+
+            // ==========================
+            // Other Pointers (Ctx, Mem)
+            // ==========================
             (PtrToCtx, PtrToCtx) => PtrToCtx,
             (PtrToPacketEnd, PtrToPacketEnd) => PtrToPacketEnd,
             
-            // Default
-            _ => ScalarValue,
+            // Context/Mem + Scalar -> Keep Ptr
+            (PtrToCtx, ScalarValue) => PtrToCtx,
+            (ScalarValue, PtrToCtx) => PtrToCtx,
+            
+            (PtrToMem { region: r1 }, PtrToMem { region: r2 }) if r1 == r2 => t1,
+            (PtrToMem { region }, ScalarValue) => PtrToMem { region },
+            (ScalarValue, PtrToMem { region }) => PtrToMem { region },
+
+            // ==========================
+            // Default / Fallback
+            // ==========================
+            _ => {
+                log_downgrade("Incompatible Types");
+                ScalarValue
+            },
         }
     }
 
@@ -262,25 +277,39 @@ impl TypeState {
             }
         }
 
-        // 2. Join Stack (Intersection)
-        let my_keys: Vec<i16> = self.stack.keys().cloned().collect();
-        for k in my_keys {
-            let t1 = self.stack[&k];
-            if let Some(t2) = other.stack.get(&k) {
-                let joined = Self::merge_types(t1, *t2);
-                
-                // If merge failed (Scalar) or types incompatible, drop the slot
-                if joined == RegType::ScalarValue {
+        // 2. Join Stack (Union Logic)
+        // We must consider keys present in EITHER map.
+        let mut all_keys: Vec<i16> = self.stack.keys().cloned().collect();
+        for k in other.stack.keys() {
+            if !self.stack.contains_key(k) {
+                all_keys.push(*k);
+            }
+        }
+
+        for k in all_keys {
+            let t1 = *self.stack.get(&k).unwrap_or(&RegType::NotInit);
+            let t2 = *other.stack.get(&k).unwrap_or(&RegType::NotInit);
+            
+            let joined = Self::merge_types(t1, t2);
+
+            // Update self.stack
+            if joined == RegType::NotInit {
+                // If result is NotInit, ensure slot is removed
+                if self.stack.contains_key(&k) {
                     self.stack.remove(&k);
-                    changed = true;
-                } else if joined != t1 {
-                    self.stack.insert(k, joined);
                     changed = true;
                 }
             } else {
-                // Slot missing on one path -> Remove (Strict Intersection)
-                self.stack.remove(&k);
-                changed = true;
+                // If result is valid (Scalar/Ptr), ensure it's inserted/updated
+                if let Some(existing) = self.stack.get(&k) {
+                    if *existing != joined {
+                        self.stack.insert(k, joined);
+                        changed = true;
+                    }
+                } else {
+                    self.stack.insert(k, joined);
+                    changed = true;
+                }
             }
         }
         
