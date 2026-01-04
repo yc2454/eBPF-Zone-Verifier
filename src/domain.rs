@@ -255,6 +255,12 @@ impl TypeState {
             (PtrToMem { region }, ScalarValue) => PtrToMem { region },
             (ScalarValue, PtrToMem { region }) => PtrToMem { region },
 
+            // NEW: Stack Pointers
+            (PtrToStack, PtrToStack) => PtrToStack,
+            // Stack + Scalar -> Keep Stack (Optimistic)
+            (PtrToStack, ScalarValue) => PtrToStack,
+            (ScalarValue, PtrToStack) => PtrToStack,
+
             // ==========================
             // Default / Fallback
             // ==========================
