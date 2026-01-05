@@ -52,7 +52,7 @@ pub fn analyze_program(
         let in_dbm = states[pc].as_ref().unwrap();
         let in_types = type_states[pc].as_ref().unwrap().clone();
         
-        println!("--- PC {} (Raw PC {}) ---", pc, raw_pc);
+        println!("Instr: {} (Raw PC: {})", instr, raw_pc);
 
         // 1. Transfer Function (Compute Next State)
         let succs = transfer_instr(ctx, in_dbm, pc, instr, stats, &in_types);
@@ -70,7 +70,7 @@ pub fn analyze_program(
             // 2. State Updates (Reg Types, Range Refinement, Stack Protection)
             // Skip update_reg_types for calls to preserve R0 return type
             if !matches!(instr, Instr::Call { .. }) {
-                update_reg_types_for_instr(ctx, instr, &mut edge_types, raw_pc);
+                update_reg_types_for_instr(ctx, instr, &mut edge_types, &in_types, raw_pc);
             }
             
             println!("Instr: {} (Raw PC: {})", instr, raw_pc);

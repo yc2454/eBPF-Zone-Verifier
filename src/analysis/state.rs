@@ -95,7 +95,7 @@ pub fn update_packet_ranges(
         }
     }
 
-    // 2. Update Stack Slots (Critical for spilled registers)
+    // 2. Update Stack Slots
     if max_new_range > 0 {
         let stack_keys: Vec<i16> = types.stack.keys().cloned().collect();
         for k in stack_keys {
@@ -116,15 +116,18 @@ pub fn update_packet_ranges(
 pub fn update_reg_types_for_instr(
     ctx: &ExecContext,
     instr: &Instr,
-    types: &mut TypeState,
+    types: &mut TypeState, // OUT state (to be modified)
+    in_types: &TypeState,  // IN state (for checking previous types)
     pc: usize
 ) {
     match *instr {
         Instr::MovArg0 { dst } => { types.set(dst, RegType::PtrToCtx); }
-        Instr::Alu { width, op, dst, src } => { update_alu_types(ctx, pc, types, width, op, dst, src); }
+        Instr::Alu { width, op, dst, src } => { 
+            update_alu_types(ctx, pc, types, in_types, width, op, dst, src); 
+        }
         Instr::Load { size, dst, base, off } => { update_load_types(types, size, dst, base, off); }
-        Instr::Store { size, base, off, src } => { update_store_types(types, size, base, off, src); }
-        Instr::Call { helper } => { update_call_types(types, helper); }
+        Instr::Store { size, base, off, src } => { update_store_types(types, in_types, size, base, off, src); }
+        Instr::Call { helper } => { update_call_types(types, in_types, helper); }
         _ => {}
     }
 }
@@ -133,33 +136,57 @@ fn update_alu_types(
     ctx: &ExecContext,
     pc: usize,
     types: &mut TypeState,
+    in_types: &TypeState,
     width: Width,
     op: AluOp,
     dst: Reg,
     src: Operand,
 ) {
-    if width == Width::W32 { types.set(dst, RegType::ScalarValue); return; }
+    if width == Width::W32 { 
+        // 32-bit ops always result in Scalars (truncating pointers is unsafe/undefined in this analysis)
+        types.set(dst, RegType::ScalarValue); 
+        return; 
+    }
+    
     match op {
-        AluOp::Mov => handle_mov(ctx, pc, types, dst, src),
-        AluOp::Add => handle_add(types, dst, src),
-        AluOp::Sub => handle_sub(types, dst, src),
+        AluOp::Mov => handle_mov(ctx, pc, types, in_types, dst, src),
+        AluOp::Add => handle_add(types, in_types, dst, src),
+        AluOp::Sub => handle_sub(types, in_types, dst, src),
+        // For other ALU ops (Mul, Div, etc), result is Scalar
         _ => types.set(dst, RegType::ScalarValue),
     }
 }
 
-fn handle_mov(ctx: &ExecContext, pc: usize, types: &mut TypeState, dst: Reg, src: Operand) {
+fn handle_mov(
+    ctx: &ExecContext, 
+    pc: usize, 
+    types: &mut TypeState, 
+    in_types: &TypeState, 
+    dst: Reg, 
+    src: Operand
+) {
     match src {
-        Operand::Reg(r) => { types.set(dst, types.get(r)); }
+        Operand::Reg(r) => { 
+            // Copy type from input state
+            types.set(dst, in_types.get(r)); 
+        }
         Operand::Imm(_) => {
+            // Check for map relocation (loading map ptr from Imm)
             let mut map_idx_opt = ctx.pc_to_map_idx.get(&pc);
             if map_idx_opt.is_none() { map_idx_opt = ctx.pc_to_map_idx.get(&(pc + 1)); }
+            
             if let Some(&map_idx) = map_idx_opt {
                 if map_idx < ctx.map_defs.len() {
                     let def = &ctx.map_defs[map_idx];
                     println!("[Reloc] Raw PC {} -> Loaded Map '{}' (Idx {})", pc, def.name, map_idx);
                     types.set(dst, RegType::PtrToMapObject { map_idx });
-                } else { types.set(dst, RegType::ScalarValue); }
+                } else { 
+                    types.set(dst, RegType::ScalarValue); 
+                }
             } else {
+                // IMPORTANT: If we are not reloading a map, we might be overwriting a pointer.
+                // But this is MOV Imm, so the result is definitely Scalar (or Map Ptr).
+                // We don't preserve the old dst type here.
                 let old_ty = types.get(dst);
                 if !matches!(old_ty, RegType::PtrToMapObject{..}) {
                     types.set(dst, RegType::ScalarValue);
@@ -169,35 +196,48 @@ fn handle_mov(ctx: &ExecContext, pc: usize, types: &mut TypeState, dst: Reg, src
     }
 }
 
-fn handle_add(types: &mut TypeState, dst: Reg, src: Operand) {
-    let dst_ty = types.get(dst);
+fn handle_add(types: &mut TypeState, in_types: &TypeState, dst: Reg, src: Operand) {
+    // CRITICAL FIX: Check the INPUT type of dst, not the currently-modified type
+    let dst_ty = in_types.get(dst);
+    
     if let (true, Operand::Imm(k)) = (dst_ty.is_pointer(), src) {
         match dst_ty {
             RegType::PtrToPacket { id, range } => {
                 let new_range = if k > 0 { range.saturating_sub(k as u64) } else { range.saturating_add(k.wrapping_neg() as u64) };
                 types.set(dst, RegType::PtrToPacket { id, range: new_range });
             }
-            RegType::PtrToMapValue { offset, map_idx } => { types.set(dst, RegType::PtrToMapValue { offset: offset + k, map_idx }); }
-            _ => types.set(dst, dst_ty),
+            RegType::PtrToMapValue { offset, map_idx } => { 
+                types.set(dst, RegType::PtrToMapValue { offset: offset + k, map_idx }); 
+            }
+            _ => types.set(dst, dst_ty), // Other pointers (Stack/Ctx) preserve type on Add
         }
-    } else { types.set(dst, RegType::ScalarValue); }
+    } else { 
+        types.set(dst, RegType::ScalarValue); 
+    }
 }
 
-fn handle_sub(types: &mut TypeState, dst: Reg, src: Operand) {
-    let dst_ty = types.get(dst);
+fn handle_sub(types: &mut TypeState, in_types: &TypeState, dst: Reg, src: Operand) {
+    // CRITICAL FIX: Check INPUT type
+    let dst_ty = in_types.get(dst);
+    
     if let (true, Operand::Imm(k)) = (dst_ty.is_pointer(), src) {
         match dst_ty {
             RegType::PtrToPacket { id, range } => {
                 let new_range = if k > 0 { range.saturating_add(k as u64) } else { range.saturating_sub(k.wrapping_neg() as u64) };
                 types.set(dst, RegType::PtrToPacket { id, range: new_range });
             }
-            RegType::PtrToMapValue { offset, map_idx } => { types.set(dst, RegType::PtrToMapValue { offset: offset - k, map_idx }); }
+            RegType::PtrToMapValue { offset, map_idx } => { 
+                types.set(dst, RegType::PtrToMapValue { offset: offset - k, map_idx }); 
+            }
             _ => types.set(dst, dst_ty),
         }
-    } else { types.set(dst, RegType::ScalarValue); }
+    } else { 
+        types.set(dst, RegType::ScalarValue); 
+    }
 }
 
 fn update_load_types(types: &mut TypeState, size: MemSize, dst: Reg, base: Reg, off: i16) {
+    // For loads, we usually reset dst to Scalar unless we load from Stack/Ctx
     let base_ty = types.get(base);
     match base_ty {
         RegType::PtrToCtx => {
@@ -221,21 +261,27 @@ fn update_load_types(types: &mut TypeState, size: MemSize, dst: Reg, base: Reg, 
     }
 }
 
-// *** POINTER WRITE PROTECTION IMPLEMENTED HERE ***
-fn update_store_types(types: &mut TypeState, size: MemSize, base: Reg, off: i16, src: Reg) {
+fn update_store_types(
+    types: &mut TypeState, 
+    in_types: &TypeState, // Added for consistency, though currently we look at 'types' (the output) for stack status
+    size: MemSize, 
+    base: Reg, 
+    off: i16, 
+    src: Reg
+) {
     if base == Reg::R10 {
         if size == MemSize::U64 { 
-            let new_type = types.get(src);
+            // We use 'in_types' for the source type to be safe (though src shouldn't have changed in this instr)
+            let new_type = in_types.get(src); 
             let current_type = types.get_stack(off);
 
-            // FIX: If stack holds Pointer and we write Scalar (0), ignore it.
+            // POINTER WRITE PROTECTION
             if current_type.is_pointer() && !new_type.is_pointer() {
                 println!("[Verifier] Ignoring Scalar overwrite of Pointer at Stack[{}] ({:?} <- {:?})", off, current_type, new_type);
                 return;
             }
             types.set_stack(off, new_type); 
         } else { 
-            // FIX: Protect Partial overwrites too
             let current_type = types.get_stack(off);
             if current_type.is_pointer() {
                  println!("[Verifier] Ignoring partial overwrite of Pointer at Stack[{}] (Size {:?})", off, size);
@@ -246,8 +292,8 @@ fn update_store_types(types: &mut TypeState, size: MemSize, base: Reg, off: i16,
     }
 }
 
-fn update_call_types(types: &mut TypeState, helper: u32) {
-    let r1_type = types.get(Reg::R1);
+fn update_call_types(types: &mut TypeState, in_types: &TypeState, helper: u32) {
+    let r1_type = in_types.get(Reg::R1); // Check INPUT R1 for map pointer
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] { types.set(r, RegType::ScalarValue); }
     match helper {
         1 => {
