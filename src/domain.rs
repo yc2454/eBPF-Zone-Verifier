@@ -175,99 +175,59 @@ impl TypeState {
     fn merge_types(t1: RegType, t2: RegType) -> RegType {
         use RegType::*;
         
-        // Helper to debug packet downgrades
-        let log_downgrade = |reason: &str| {
-            // Only log if it involves a Packet pointer, to reduce noise
-            if matches!(t1, PtrToPacket{..}) || matches!(t2, PtrToPacket{..}) {
-                println!("[Merge] Downgrading Packet Ptr: {:?} vs {:?} -> Scalar ({})", t1, t2, reason);
-            }
-        };
+        // 1. Identical Types
+        if t1 == t2 { return t1; }
 
+        // 2. NotInit Handling
+        if let NotInit = t1 { return t2; }
+        if let NotInit = t2 { return t1; }
+
+        // 3. Scalar Handling (Aggressively Preserve Pointers)
+        // If one is a Pointer and the other is Scalar, KEEP THE POINTER.
+        if let ScalarValue = t1 { return t2; }
+        if let ScalarValue = t2 { return t1; }
+
+        // 4. Pointer Collision Resolution
         match (t1, t2) {
-            // 1. Exact Match
-            (a, b) if a == b => a,
+            // --- Packet Pointers (Highest Priority) ---
+            (PtrToPacket { id: _, range: r1 }, PtrToPacket { id: id2, range: r2 }) => 
+                PtrToPacket { id: id2, range: r1.max(r2) }, // Max range optimization
 
-            // 2. NotInit
-            (NotInit, t) => t,
-            (t, NotInit) => t,
+            (PtrToPacket { id, range }, _) => PtrToPacket { id, range },
+            (_, PtrToPacket { id, range }) => PtrToPacket { id, range },
 
-            // ==========================
-            // Packet Pointers
-            // ==========================
-            (PtrToPacket { id: id1, range: r1 }, PtrToPacket { id: id2, range: r2 }) => {
-                let new = r1.max(r2);
-                println!("[Merge] Packet ID {} ({}) + ID {} ({}) -> Max {}", id1, r1, id2, r2, new);
-                PtrToPacket { id: id2, range: new }
-            },
-            
-            // NEW: Optimistic Merge for Packet + Scalar
-            (PtrToPacket { id, range }, ScalarValue) => {
-                // println!("[Merge] Preserving Packet {:?} against Scalar", id);
-                PtrToPacket { id, range }
-            },
-            (ScalarValue, PtrToPacket { id, range }) => {
-                // println!("[Merge] Preserving Packet {:?} against Scalar", id);
-                PtrToPacket { id, range }
-            },
+            // --- Map Pointers (Second Priority) ---
+            // Safe Map + Safe Map (Same or Different Maps -> Optimistic)
+            (PtrToMapValue { map_idx: m1, offset: o1 }, PtrToMapValue { .. }) => 
+                PtrToMapValue { map_idx: m1, offset: o1 },
 
-            // ==========================
-            // Map Pointers
-            // ==========================
-            // Safe + Safe
-            (PtrToMapValue { map_idx: m1, offset: o1 }, 
-             PtrToMapValue { map_idx: m2, offset: o2 }) 
-             if m1 == m2 && o1 == o2 => t1,
-
-            // Nullable + Nullable
-            (PtrToMapValueOrNull { map_idx: m1, id: id1 }, 
-             PtrToMapValueOrNull { map_idx: m2, .. }) 
-             if m1 == m2 => PtrToMapValueOrNull { map_idx: m1, id: id1 },
-
-            // Safe + Nullable -> Nullable
-            (PtrToMapValue { map_idx: m1, .. }, 
-             PtrToMapValueOrNull { map_idx: m2, id, .. }) 
-             if m1 == m2 => PtrToMapValueOrNull { map_idx: m1, id },
-
-            (PtrToMapValueOrNull { map_idx: m1, id, .. }, 
-             PtrToMapValue { map_idx: m2, .. }) 
-             if m1 == m2 => PtrToMapValueOrNull { map_idx: m1, id },
-
-            // Ptr + Scalar -> Nullable
-            (PtrToMapValue { map_idx, .. }, ScalarValue) |
-            (ScalarValue, PtrToMapValue { map_idx, .. }) => 
-                PtrToMapValueOrNull { map_idx, id: 0 },
-
-            (PtrToMapValueOrNull { map_idx, id }, ScalarValue) |
-            (ScalarValue, PtrToMapValueOrNull { map_idx, id }) =>
+            // Nullable + Nullable (Optimistic)
+            (PtrToMapValueOrNull { map_idx, id }, PtrToMapValueOrNull { .. }) => 
                 PtrToMapValueOrNull { map_idx, id },
 
-            // ==========================
-            // Other Pointers (Ctx, Mem)
-            // ==========================
+            // Safe + Nullable -> Nullable (Downgrade to handle null check requirements)
+            (PtrToMapValue { map_idx, .. }, PtrToMapValueOrNull { id, .. }) => 
+                PtrToMapValueOrNull { map_idx, id },
+            (PtrToMapValueOrNull { map_idx, id }, PtrToMapValue { .. }) => 
+                PtrToMapValueOrNull { map_idx, id },
+
+            // Map vs Stack/Ctx/Mem -> Map
+            (PtrToMapValue { .. }, _) | (PtrToMapValueOrNull { .. }, _) => t1,
+            (_, PtrToMapValue { .. }) | (_, PtrToMapValueOrNull { .. }) => t2,
+
+            // --- Stack Pointers (Third Priority) ---
+            (PtrToStack, PtrToStack) => PtrToStack,
+            (PtrToStack, _) => t1,
+            (_, PtrToStack) => t2,
+
+            // --- Context / PacketEnd / Mem ---
             (PtrToCtx, PtrToCtx) => PtrToCtx,
             (PtrToPacketEnd, PtrToPacketEnd) => PtrToPacketEnd,
-            
-            // Context/Mem + Scalar -> Keep Ptr
-            (PtrToCtx, ScalarValue) => PtrToCtx,
-            (ScalarValue, PtrToCtx) => PtrToCtx,
-            
             (PtrToMem { region: r1 }, PtrToMem { region: r2 }) if r1 == r2 => t1,
-            (PtrToMem { region }, ScalarValue) => PtrToMem { region },
-            (ScalarValue, PtrToMem { region }) => PtrToMem { region },
 
-            // NEW: Stack Pointers
-            (PtrToStack, PtrToStack) => PtrToStack,
-            // Stack + Scalar -> Keep Stack (Optimistic)
-            (PtrToStack, ScalarValue) => PtrToStack,
-            (ScalarValue, PtrToStack) => PtrToStack,
-
-            // ==========================
-            // Default / Fallback
-            // ==========================
-            _ => {
-                log_downgrade("Incompatible Types");
-                ScalarValue
-            },
+            // Default: If we have two totally disparate pointers (e.g. Ctx vs Mem),
+            // picking one is better than returning Scalar and crashing.
+            _ => t1,
         }
     }
 

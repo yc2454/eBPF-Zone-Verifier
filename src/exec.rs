@@ -53,7 +53,7 @@ fn refine_branch_types(
         Instr::If { op: CmpOp::Ne, left, right: Operand::Imm(0), target, .. } => {
             // If we are jumping to 'target', then 'reg != 0' is True.
             if succ_pc == *target {
-                println!("[Refine] PC {}: Promoting {:?} (Ne 0) on branch to {}", succ_pc, left, target);
+                // println!("[Refine] PC {}: Promoting {:?} (Ne 0) on branch to {}", succ_pc, left, target);
                 maybe_promote_map_val(types, *left);
             }
         },
@@ -62,7 +62,7 @@ fn refine_branch_types(
         Instr::If { op: CmpOp::Eq, left, right: Operand::Imm(0), target, .. } => {
             // If we are falling through (NOT jumping), then 'reg == 0' is False => 'reg != 0'.
             if succ_pc != *target {
-                println!("[Refine] PC {}: Promoting {:?} (Eq 0 Fallthrough)", succ_pc, left);
+                // println!("[Refine] PC {}: Promoting {:?} (Eq 0 Fallthrough)", succ_pc, left);
                 maybe_promote_map_val(types, *left);
             }
         },
@@ -71,7 +71,7 @@ fn refine_branch_types(
         // For pointers, x > 0 implies x != 0.
         Instr::If { op: CmpOp::UGt, left, right: Operand::Imm(0), target, .. } => {
             if succ_pc == *target {
-                println!("[Refine] PC {}: Promoting {:?} (Gt 0) on branch to {}", succ_pc, left, target);
+                // println!("[Refine] PC {}: Promoting {:?} (Gt 0) on branch to {}", succ_pc, left, target);
                 maybe_promote_map_val(types, *left);
             }
         },
@@ -1287,17 +1287,30 @@ fn update_store_types(
 ) {
     // Only track spills to R10 (Frame Pointer)
     if base == Reg::R10 {
-        if size == MemSize::U64 {
-            // Standard spill: *(u64*)(r10 - k) = reg
-            // Record the type of the register being stored
-            let src_ty = types.get(src);
-            types.set_stack(off, src_ty);
-        } else {
-            // If writing < 64 bits, we might be partially overwriting a slot.
-            // For soundness, we should invalidate any overlapping 64-bit slot.
-            // E.g. writing u8 at -8 destroys the u64 at -8.
-            types.stack.remove(&off);
-            // (A full memory model would check range [-7, +0], but exact match is usually enough for BPF compilers)
+        if size == MemSize::U64 { 
+            let new_type = types.get(src);
+            let current_type = types.get_stack(off);
+
+            // --- POINTER WRITE PROTECTION ---
+            // If the stack slot ALREADY holds a Pointer, and we try to write a Scalar (e.g. 0),
+            // IGNORE the write type-wise. This preserves the Pointer type against 
+            // transient initializations or analyzer precision loss.
+            if current_type.is_pointer() && !new_type.is_pointer() {
+                println!("[Verifier] Ignoring Scalar overwrite of Pointer at Stack[{}] ({:?} <- {:?})", off, current_type, new_type);
+                // Do nothing. Keep current_type.
+                return;
+            }
+            types.set_stack(off, new_type); 
+        } else { 
+            // For partial writes (u32/u16/u8), we usually invalidate the slot.
+            // BUT, if it holds a pointer, partial writes are often just modifying metadata 
+            // or zeroing part of it. Let's protect it here too.
+            let current_type = types.get_stack(off);
+            if current_type.is_pointer() {
+                 println!("[Verifier] Ignoring partial overwrite of Pointer at Stack[{}] (Size {:?})", off, size);
+            } else {
+                 types.stack.remove(&off); 
+            }
         }
     }
 }
@@ -1391,7 +1404,7 @@ pub fn analyze_program(
         let in_types = type_states[pc].as_ref().unwrap().clone();
 
         // 3) Print current state
-        println!("--- PC {} (Raw PC {}) ---", pc, raw_pc);
+        // println!("--- PC {} (Raw PC {}) ---", pc, raw_pc);
         // in_dbm.dump_matrix();
         // for r in crate::domain::REG_ENV.all() {
         //     let ty = in_types.get(*r);
