@@ -91,10 +91,8 @@ pub fn load_program_from_elf(path: &str, section: &str) -> Program {
         bytes.len(),
         raw_insns.len()
     );
-
-    let kind = infer_program_kind(section);
     
-    match bpf_to_ast::lower_raw_to_program(&raw_insns, kind) {
+    match bpf_to_ast::lower_raw_to_program(&raw_insns) {
         Ok(prog) => prog,
         Err(e) => {
             eprintln!(

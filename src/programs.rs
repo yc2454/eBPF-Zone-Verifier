@@ -1,6 +1,6 @@
 // src/programs.rs
 
-use crate::ast::{AluOp, CmpOp, Instr, MemSize, Operand, Program, Width, ProgramKind};
+use crate::ast::{AluOp, CmpOp, Instr, MemSize, Operand, Program, Width};
 use crate::domain::Reg;
 
 pub struct NamedProgram {
@@ -96,7 +96,6 @@ fn masked_copy_index() -> Program {
             load_u8(Reg::R0, Reg::R2, 0),
             Instr::Exit,
         ],
-        kind: ProgramKind::Tc,
         pc_map: vec![],
     }
 }
@@ -130,7 +129,6 @@ fn canonical_relational_guard() -> Program {
             load_u8(r0, r2, 0),
             Instr::Exit,
         ],
-        kind: ProgramKind::Tc,
         pc_map: vec![],
     }
 }
@@ -159,7 +157,6 @@ fn unsafe_no_constraints() -> Program {
             load_u8(r0, r2, 0),
             Instr::Exit,
         ],
-        kind: ProgramKind::Tc,
         pc_map: vec![],
     }
 }
@@ -190,7 +187,6 @@ fn safe_via_mask_small_offset() -> Program {
             load_u8(r0, r2, 0),
             Instr::Exit,
         ],
-        kind: ProgramKind::Tc,
         pc_map: vec![],
     }
 }
@@ -235,7 +231,6 @@ fn merge_two_offsets_join() -> Program {
             load_u8(r0, r2, 0),
             Instr::Exit,
         ],
-        kind: ProgramKind::Tc,
         pc_map: vec![],
     }
 }
@@ -273,7 +268,6 @@ fn addreg_const_offset_demo() -> Program {
 
             Instr::Exit,
         ],
-        kind: ProgramKind::Tc,
         pc_map: vec![],
     }
 }

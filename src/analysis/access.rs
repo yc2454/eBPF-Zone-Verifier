@@ -110,6 +110,7 @@ pub fn perform_memory_load(
             forget(&mut dbm, dst);
         }
         PtrToMapValue { offset: map_off, map_idx } => {
+            let map_def = ctx.map_defs.get(map_idx);
             let final_offset = map_off + (off as i64);
             let access_end = final_offset + access_size;
             let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) {
@@ -119,6 +120,39 @@ pub fn perform_memory_load(
             };
             if final_offset >= 0 && access_end <= map_limit {
                 // Safe Map Read!
+                if let Some(def) = ctx.map_defs.get(map_idx) {
+                    if let Some(type_id) = def.btf_val_type_id {
+                        println!("[DEBUG PC {}] Checking BTF for Map '{}' (ID {}), Offset {}", 
+                                 pc, def.name, type_id, final_offset);
+                        
+                        let resolved = ctx.btf.resolve_field_type_id(type_id, final_offset as u32);
+                        println!("          -> Resolved Field Type: {:?}", resolved);
+                        
+                        if let Some(tid) = resolved {
+                            println!("          -> Is Pointer? {}", ctx.btf.is_pointer(tid));
+                        }
+                    } else {
+                        println!("[DEBUG PC {}] Map '{}' has NO BTF Type ID", pc, def.name);
+                    }
+                }
+                if let Some(def) = map_def {
+                    if let Some(type_id) = def.btf_val_type_id {
+                        // Check if the member at this offset is a Pointer
+                        // We cast offset to u32. Assuming offset is small and positive.
+                        if let Some(member_type_id) = ctx.btf.resolve_field_type_id(type_id, final_offset as u32) {
+                            if ctx.btf.is_pointer(member_type_id) {
+                                println!("[BTF] PC {}: Found Pointer in Map {} at offset {}", pc, def.name, final_offset);
+                                // If it's a pointer, we treat it as a generic Map Value Pointer for now.
+                                // In reality, we should check *what* it points to (another map?).
+                                // For linked lists, it usually points to the same struct type.
+                                next_types.set(dst, RegType::PtrToMapValue { offset: 0, map_idx });
+                                return vec![(pc + 1, dbm_in.clone(), next_types)];
+                            }
+                        }
+                    }
+                }
+                // If no BTF or not a pointer, assume Scalar
+                next_types.set(dst, RegType::ScalarValue);
                 return vec![(pc + 1, dbm_in.clone(), next_types)];
             } else {
                 println!("Unsafe map load at pc {}: off {} size {} limit {}", 

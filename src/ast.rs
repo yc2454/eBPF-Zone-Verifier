@@ -120,7 +120,6 @@ pub enum ProgramKind {
 #[derive(Debug)]
 pub struct Program {
     pub instrs: Vec<Instr>,
-    pub kind: ProgramKind,
     pub pc_map: Vec<usize>,
 }
 

@@ -136,11 +136,28 @@ fn main() {
             // 1. Load Maps
             let map_defs = 
                 load_maps(path).unwrap_or_default();
+            for (i, m) in map_defs.iter().enumerate() {
+                println!("Map {}: '{}' (ValSize: {}, TypeID: {:?})", 
+                        i, m.name, m.value_size, m.btf_val_type_id);
+            }
             // 2. Load Relocations
             let pc_to_map_idx = 
                 load_relocations(path, &map_defs, section).unwrap_or_default();
+            let btf_bytes = elf_loader::load_section_bytes(path, ".BTF", false).unwrap_or_default();
+    
+            let btf_ctx = if !btf_bytes.is_empty() {
+                crate::btf::parse_btf(&btf_bytes).unwrap_or_else(|e| {
+                    println!("BTF Parse Error: {}", e);
+                    crate::btf::BtfContext::new()
+                })
+            } else {
+                println!("No .BTF section found.");
+                crate::btf::BtfContext::new()
+            };
+
             cctx.map_defs = map_defs;
             cctx.pc_to_map_idx = pc_to_map_idx;
+            cctx.btf = btf_ctx;
 
             let prog = load_program_from_elf(path, section);
 

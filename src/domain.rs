@@ -85,6 +85,7 @@ pub struct BpfMapDef {
     pub max_entries: u32,
     pub map_flags: u32,
     pub name: String, 
+    pub btf_val_type_id: Option<u32>,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -292,6 +293,12 @@ impl TypeState {
                 None
             }
         })
+    }
+
+    pub fn print_regs(&self) {
+        for (r, ty) in self.iter_regs() {
+            println!("  {}: {:?}", r.name(), ty);
+        }
     }
 
 }

@@ -40,7 +40,7 @@ fn branch_target(pc: usize, off: i16, len: usize, code: u8) -> Result<usize, Low
     Ok(t as usize)
 }
 
-pub fn lower_raw_to_program(raw: &[RawBpfInsn], kind: ProgramKind) -> Result<Program, LowerError> {
+pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
     let mut instrs = Vec::with_capacity(raw.len());
     let mut pc_map = Vec::new();
     let mut pc: usize = 0;
@@ -444,7 +444,6 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn], kind: ProgramKind) -> Result<Pro
             }
 
             // --- JMP ---
-
             // 0x95: exit (JMP | EXIT)
             0x95 => Instr::Exit,
 
@@ -485,6 +484,16 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn], kind: ProgramKind) -> Result<Pro
             },
 
             // 0x25: JGT_K (if dst > imm, 64-bit)
+            0x25 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::UGt,
+                    right: Operand::Imm(insn.imm as i64),
+                    target,
+                }
+            },
 
             // 0x26: JGT32_K  (if (u32)dst > (u32)imm goto target)
             //
@@ -562,6 +571,18 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn], kind: ProgramKind) -> Result<Pro
                 }
             }
 
+            // 0x5d: JNE_X (if dst != src goto target)
+            0x5d => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::Ne,
+                    right: Operand::Reg(src),
+                    target,
+                }
+            },
+
             // 0x5e: JNE32_X  (if (u32)dst != (u32)src goto target)
             0x5e => {
                 let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
@@ -591,6 +612,18 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn], kind: ProgramKind) -> Result<Pro
                 }
             },
 
+            // 0x6e: JSGT32_X (if (s32)dst > (s32)src goto target)
+            0x6e => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst,
+                    op: CmpOp::UGt, // MVP: Map to unsigned bucket (no refinement)
+                    right: Operand::Reg(src),
+                    target,
+                }
+            },
+
             // 0xa6: JLT32_K  (if (u32)dst < (u32)imm goto target)
             0xa6 => {
                 let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
@@ -599,6 +632,18 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn], kind: ProgramKind) -> Result<Pro
                     left: dst,
                     op: CmpOp::ULt,
                     right: Operand::Imm((insn.imm as u32) as i64),
+                    target,
+                }
+            },
+
+            // 0xad: JLT_X (if dst < src goto target)
+            0xad => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::ULt,
+                    right: Operand::Reg(src),
                     target,
                 }
             },
@@ -764,5 +809,5 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn], kind: ProgramKind) -> Result<Pro
         pc += 1;
     }
 
-    Ok(Program { instrs, kind, pc_map })
+    Ok(Program { instrs, pc_map })
 }

@@ -53,6 +53,7 @@ pub fn analyze_program(
         let in_types = type_states[pc].as_ref().unwrap().clone();
         
         println!("Instr: {} (Raw PC: {})", instr, raw_pc);
+        // in_types.print_regs();
 
         // 1. Transfer Function (Compute Next State)
         let succs = transfer_instr(ctx, in_dbm, pc, instr, stats, &in_types);

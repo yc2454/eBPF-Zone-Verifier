@@ -1,29 +1,187 @@
 // src/btf.rs
+use std::collections::HashMap;
 use std::convert::TryInto;
 use crate::domain::BpfMapDef;
 
 const BTF_MAGIC: u16 = 0xeB9F;
 
 // Kinds
-const BTF_KIND_INT: u8 = 1;
-const BTF_KIND_PTR: u8 = 2;
-const BTF_KIND_ARRAY: u8 = 3;
-const BTF_KIND_STRUCT: u8 = 4;
-const BTF_KIND_UNION: u8 = 5;
-const BTF_KIND_ENUM: u8 = 6;
-const BTF_KIND_FWD: u8 = 7;
-const BTF_KIND_TYPEDEF: u8 = 8;
-const BTF_KIND_VOLATILE: u8 = 9;
-const BTF_KIND_CONST: u8 = 10;
-const BTF_KIND_RESTRICT: u8 = 11;
-const BTF_KIND_FUNC: u8 = 12;
-const BTF_KIND_FUNC_PROTO: u8 = 13;
-const BTF_KIND_VAR: u8 = 14;
-const BTF_KIND_DATASEC: u8 = 15;
-const BTF_KIND_FLOAT: u8 = 16;
-const BTF_KIND_DECL_TAG: u8 = 17;
-const BTF_KIND_TYPE_TAG: u8 = 18;
-const BTF_KIND_ENUM64: u8 = 19;
+pub const BTF_KIND_INT: u8 = 1;
+pub const BTF_KIND_PTR: u8 = 2;
+pub const BTF_KIND_ARRAY: u8 = 3;
+pub const BTF_KIND_STRUCT: u8 = 4;
+pub const BTF_KIND_UNION: u8 = 5;
+pub const BTF_KIND_ENUM: u8 = 6;
+pub const BTF_KIND_FWD: u8 = 7;
+pub const BTF_KIND_TYPEDEF: u8 = 8;
+pub const BTF_KIND_VOLATILE: u8 = 9;
+pub const BTF_KIND_CONST: u8 = 10;
+pub const BTF_KIND_RESTRICT: u8 = 11;
+pub const BTF_KIND_FUNC: u8 = 12;
+pub const BTF_KIND_FUNC_PROTO: u8 = 13;
+pub const BTF_KIND_VAR: u8 = 14;
+pub const BTF_KIND_DATASEC: u8 = 15;
+pub const BTF_KIND_FLOAT: u8 = 16;
+pub const BTF_KIND_DECL_TAG: u8 = 17;
+pub const BTF_KIND_TYPE_TAG: u8 = 18;
+pub const BTF_KIND_ENUM64: u8 = 19;
+
+// -----------------------------------------------------------------------------
+// PART 1: Public Interface for Analyzer (The "Context" view)
+// -----------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct BtfMember {
+    pub name_off: u32,
+    pub type_id: u32,
+    pub offset: u32, // Offset in bits
+}
+
+#[derive(Debug, Clone)]
+pub struct BtfType {
+    pub id: u32,
+    pub name_off: u32,
+    pub info: u32,
+    pub size_or_type: u32, 
+    pub members: Vec<BtfMember>,
+}
+
+impl BtfType {
+    pub fn kind(&self) -> u8 { ((self.info >> 24) & 0x1f) as u8 }
+}
+
+#[derive(Clone)]
+pub struct BtfContext {
+    pub types: HashMap<u32, BtfType>,
+    pub strings: Vec<u8>,
+}
+
+impl BtfContext {
+    pub fn new() -> Self {
+        BtfContext {
+            types: HashMap::new(),
+            strings: Vec::new(),
+        }
+    }
+
+    /// Looks up a struct member at a specific byte offset.
+    /// Returns the Type ID of that member if found.
+    pub fn resolve_field_type_id(&self, struct_id: u32, byte_offset: u32) -> Option<u32> {
+        let bit_offset = byte_offset * 8;
+        
+        if let Some(ty) = self.types.get(&struct_id) {
+            match ty.kind() {
+                BTF_KIND_STRUCT | BTF_KIND_UNION => {
+                    for member in &ty.members {
+                        // Exact match for now
+                        if member.offset == bit_offset {
+                            return Some(member.type_id);
+                        }
+                    }
+                },
+                // Handle typedefs/const/volatile by peeling the wrapper
+                BTF_KIND_TYPEDEF | BTF_KIND_VOLATILE | BTF_KIND_CONST | BTF_KIND_RESTRICT => {
+                    return self.resolve_field_type_id(ty.size_or_type, byte_offset);
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Helper to check if a type ID effectively resolves to a Pointer.
+    pub fn is_pointer(&self, mut type_id: u32) -> bool {
+        let mut depth = 0;
+        while let Some(ty) = self.types.get(&type_id) {
+            let kind = ty.kind();
+            match kind {
+                BTF_KIND_PTR => return true,
+                BTF_KIND_TYPEDEF | BTF_KIND_VOLATILE | BTF_KIND_CONST | BTF_KIND_RESTRICT => {
+                    type_id = ty.size_or_type;
+                }
+                _ => return false,
+            }
+            depth += 1;
+            if depth > 10 { break; } // Prevent loops
+        }
+        false
+    }
+}
+
+/// Parses the .BTF section into a structured Context for analysis
+pub fn parse_btf(bytes: &[u8]) -> Result<BtfContext, String> {
+    if bytes.len() < 24 { return Err("BTF too short".into()); }
+
+    let hdr_len = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+    let type_off = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+    let type_len = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
+    let str_off = u32::from_le_bytes(bytes[16..20].try_into().unwrap());
+    let str_len = u32::from_le_bytes(bytes[20..24].try_into().unwrap());
+
+    let type_start = (hdr_len + type_off) as usize;
+    let type_end = type_start + type_len as usize;
+    let str_start = (hdr_len + str_off) as usize;
+    let str_end = str_start + str_len as usize;
+
+    if type_end > bytes.len() || str_end > bytes.len() {
+        return Err("BTF sections out of bounds".into());
+    }
+
+    let strings = bytes[str_start..str_end].to_vec();
+    let mut types = HashMap::new();
+    let mut cursor = type_start;
+    let mut type_id = 1;
+
+    while cursor < type_end {
+        if cursor + 12 > type_end { break; }
+        
+        let name_off = u32::from_le_bytes(bytes[cursor..cursor+4].try_into().unwrap());
+        let info = u32::from_le_bytes(bytes[cursor+4..cursor+8].try_into().unwrap());
+        let size_or_type = u32::from_le_bytes(bytes[cursor+8..cursor+12].try_into().unwrap());
+        cursor += 12;
+
+        let kind = ((info >> 24) & 0x1f) as u8;
+        let vlen = (info & 0xffff) as usize;
+        let mut members = Vec::new();
+
+        // Extract extra data based on Kind
+        match kind {
+            BTF_KIND_STRUCT | BTF_KIND_UNION => {
+                for _ in 0..vlen {
+                    if cursor + 12 > type_end { break; }
+                    let m_name = u32::from_le_bytes(bytes[cursor..cursor+4].try_into().unwrap());
+                    let m_type = u32::from_le_bytes(bytes[cursor+4..cursor+8].try_into().unwrap());
+                    let m_off = u32::from_le_bytes(bytes[cursor+8..cursor+12].try_into().unwrap());
+                    cursor += 12;
+                    members.push(BtfMember { name_off: m_name, type_id: m_type, offset: m_off });
+                }
+            }
+            BTF_KIND_INT => { cursor += 4; }
+            BTF_KIND_ARRAY => { cursor += 12; }
+            BTF_KIND_VAR => { cursor += 4; }
+            BTF_KIND_DATASEC | BTF_KIND_ENUM64 => { cursor += vlen * 12; }
+            BTF_KIND_ENUM | BTF_KIND_FUNC_PROTO => { cursor += vlen * 8; }
+            BTF_KIND_DECL_TAG => { cursor += 4; }
+            _ => {} 
+        }
+
+        types.insert(type_id, BtfType {
+            id: type_id,
+            name_off,
+            info,
+            size_or_type,
+            members,
+        });
+
+        type_id += 1;
+    }
+
+    Ok(BtfContext { types, strings })
+}
+
+// -----------------------------------------------------------------------------
+// PART 2: Helper Interface for Map Loader (Your existing logic)
+// -----------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 struct BtfTypeRaw {
@@ -41,10 +199,6 @@ impl BtfTypeRaw {
 pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
     if bytes.len() < 24 { return Err("BTF too short".into()); }
 
-    // 1. Parse Header
-    let magic = u16::from_le_bytes(bytes[0..2].try_into().unwrap());
-    if magic != BTF_MAGIC { return Err("Invalid BTF magic".into()); }
-    
     let hdr_len = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
     let type_off = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
     let type_len = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
@@ -60,10 +214,9 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
         return Err("BTF sections out of bounds".into());
     }
 
-    // 2. Parse Types
+    // Parse Types purely for Map Discovery
     let mut types = Vec::new();
-    // BTF Type IDs are 1-based. 0 is VOID.
-    types.push(BtfTypeRaw { name_off: 0, info: 0, size_or_type: 0, data: vec![] });
+    types.push(BtfTypeRaw { name_off: 0, info: 0, size_or_type: 0, data: vec![] }); // ID 0
 
     let mut cursor = type_start;
     while cursor < type_end {
@@ -77,18 +230,17 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
         let kind = ((info >> 24) & 0x1f) as u8;
         let vlen = (info & 0xffff) as usize;
 
-        // Calculate size of additional data based on Kind
         let extra = match kind {
             BTF_KIND_INT => 4,
             BTF_KIND_ARRAY => 12,
-            BTF_KIND_STRUCT | BTF_KIND_UNION => vlen * 12, // members
-            BTF_KIND_ENUM => vlen * 8,                     // enum entries
-            BTF_KIND_FUNC_PROTO => vlen * 8,               // args
+            BTF_KIND_STRUCT | BTF_KIND_UNION => vlen * 12,
+            BTF_KIND_ENUM => vlen * 8,
+            BTF_KIND_FUNC_PROTO => vlen * 8,
             BTF_KIND_VAR => 4,
-            BTF_KIND_DATASEC => vlen * 12,                 // vars
+            BTF_KIND_DATASEC => vlen * 12,
             BTF_KIND_DECL_TAG => 4,
             BTF_KIND_ENUM64 => vlen * 12,
-            _ => 0, // PTR, TYPEDEF, VOLATILE, CONST, etc. have no extra data
+            _ => 0,
         };
 
         if cursor + extra > bytes.len() { break; }
@@ -98,7 +250,6 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
         types.push(BtfTypeRaw { name_off, info, size_or_type, data });
     }
 
-    // Helper: Strings
     let get_str = |off: u32| -> String {
         let start = str_start + off as usize;
         if start >= bytes.len() { return String::new(); }
@@ -106,7 +257,6 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
         slice.iter().take_while(|&&c| c != 0).map(|&c| c as char).collect()
     };
 
-    // Helper: Size Resolution
     fn get_resolved_size(types: &[BtfTypeRaw], type_id: u32, depth: u32) -> u32 {
         if depth > 5 || type_id == 0 || (type_id as usize) >= types.len() { return 0; }
         let t = &types[type_id as usize];
@@ -127,24 +277,22 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
         }
     }
 
-    // 3. Scan for Maps (Strategy: Look for all VARs, regardless of DATASEC)
     let mut map_defs = Vec::new();
+    println!("Scanning {} BTF types for Maps...", types.len());
 
-    println!("Scanning {} BTF types...", types.len());
-
-    for t in &types {
+    for (i, t) in types.iter().enumerate() {
         if t.kind() == BTF_KIND_VAR {
             let name = get_str(t.name_off);
-            
             let def_id = t.size_or_type;
+            
             if (def_id as usize) < types.len() {
                 let def_t = &types[def_id as usize];
-                
                 if def_t.kind() == BTF_KIND_STRUCT {
                     let mut is_map = false;
                     let mut value_size = 0;
                     let mut key_size = 0;
                     let mut max_entries = 0;
+                    let mut btf_val_type_id = None; // STORE THIS!
 
                     let members = def_t.vlen() as usize;
                     let mut m_cursor = 0;
@@ -156,12 +304,9 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                         m_cursor += 12;
 
                         let m_name = get_str(m_name_off);
-                        
-                        // --- FIX STARTS HERE ---
                         if m_name == "key" || m_name == "value" {
                             is_map = true;
                             
-                            // Check if the type is a Pointer. If so, strip it to get the actual struct size.
                             let mut actual_type_id = m_type_id;
                             if (actual_type_id as usize) < types.len() {
                                 let field_t = &types[actual_type_id as usize];
@@ -169,21 +314,22 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                                     actual_type_id = field_t.size_or_type;
                                 }
                             }
-
                             let size = get_resolved_size(&types, actual_type_id, 0);
                             
-                            if m_name == "value" { value_size = size; }
+                            if m_name == "value" { 
+                                value_size = size; 
+                                // NEW: Save the Type ID for the analyzer!
+                                btf_val_type_id = Some(actual_type_id);
+                            }
                             else { key_size = size; }
                         }
-                        // --- FIX ENDS HERE ---
-                        
                         else if m_name == "max_entries" {
-                             // max_entries logic (less critical)
+                             // Extract max_entries if needed
                         }
                     }
 
                     if is_map && value_size > 0 {
-                        println!("[BTF] Found Map: '{}' (Key: {}, Value: {})", name, key_size, value_size);
+                        println!("[BTF] Found Map: '{}' (ValSize: {}, TypeID: {:?})", name, value_size, btf_val_type_id);
                         map_defs.push(BpfMapDef {
                             name: name.clone(),
                             type_: 0,
@@ -191,6 +337,7 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                             value_size,
                             max_entries,
                             map_flags: 0,
+                            btf_val_type_id, // Populate it
                         });
                     }
                 }

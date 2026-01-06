@@ -2,6 +2,7 @@
 use crate::domain::{Reg, REG_ENV, BpfMapDef};
 use crate::dbm::Dbm;
 use std::collections::HashMap;
+use crate::btf::BtfContext;
 
 #[derive(Clone)]
 pub struct ExecContext {
@@ -11,6 +12,7 @@ pub struct ExecContext {
     pub stack_max: i64,
     pub map_defs: Vec<BpfMapDef>,
     pub pc_to_map_idx: HashMap<usize, usize>,
+    pub btf: BtfContext,
 }
 
 /// Helper: Is v provably in [0, 0xffffffff]?
@@ -31,5 +33,6 @@ pub fn default_exec_ctx() -> ExecContext {
         stack_max: -1,
         map_defs: Vec::new(),
         pc_to_map_idx: HashMap::new(),
+        btf: BtfContext::new(),
     }
 }
