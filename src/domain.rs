@@ -103,7 +103,7 @@ pub enum RegType {
     // Map Support
     PtrToMapObject { map_idx: usize }, // r1 before call
     PtrToMapValueOrNull { id: u32, map_idx: usize }, // r0 after call
-    PtrToMapValue { offset: i64, map_idx: usize },   // r0 after check
+    PtrToMapValue { offset: Option<i64>, map_idx: usize },   // r0 after check
     PtrToMapKey,                                    // Result of &key for bpf_map_lookup_elem
     // later: PtrToSocket, PtrToBtfId, PtrToBuf, etc.
 }
@@ -199,8 +199,15 @@ impl TypeState {
 
             // --- Map Pointers (Second Priority) ---
             // Safe Map + Safe Map (Same or Different Maps -> Optimistic)
-            (PtrToMapValue { map_idx: m1, offset: o1 }, PtrToMapValue { .. }) => 
-                PtrToMapValue { map_idx: m1, offset: o1 },
+            (PtrToMapValue { offset: o1, map_idx: m1 }, PtrToMapValue { offset: o2, map_idx: m2 }) => {
+                if m1 == m2 {
+                    // If offsets match, keep it. If one is unknown or they differ, result is Unknown (None).
+                    let new_off = if o1 == o2 { o1 } else { None };
+                    PtrToMapValue { offset: new_off, map_idx: m1 }
+                } else {
+                    t1 // Conflict, pick one
+                }
+            },
 
             // Nullable + Nullable (Optimistic)
             (PtrToMapValueOrNull { map_idx, id }, PtrToMapValueOrNull { .. }) => 

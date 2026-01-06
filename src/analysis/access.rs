@@ -109,56 +109,58 @@ pub fn perform_memory_load(
             } else { next_types.set(dst, RegType::ScalarValue); }
             forget(&mut dbm, dst);
         }
-        PtrToMapValue { offset: map_off, map_idx } => {
+        RegType::PtrToMapValue { offset: map_off_opt, map_idx } => {
             let map_def = ctx.map_defs.get(map_idx);
-            let final_offset = map_off + (off as i64);
-            let access_end = final_offset + access_size;
-            let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) {
-                def.value_size as i64
-            } else {
-                4096 // Fallback for BTF maps if size missing
-            };
-            if final_offset >= 0 && access_end <= map_limit {
-                // Safe Map Read!
-                if let Some(def) = ctx.map_defs.get(map_idx) {
-                    if let Some(type_id) = def.btf_val_type_id {
-                        println!("[DEBUG PC {}] Checking BTF for Map '{}' (ID {}), Offset {}", 
-                                 pc, def.name, type_id, final_offset);
-                        
-                        let resolved = ctx.btf.resolve_field_type_id(type_id, final_offset as u32);
-                        println!("          -> Resolved Field Type: {:?}", resolved);
-                        
-                        if let Some(tid) = resolved {
-                            println!("          -> Is Pointer? {}", ctx.btf.is_pointer(tid));
-                        }
-                    } else {
-                        println!("[DEBUG PC {}] Map '{}' has NO BTF Type ID", pc, def.name);
-                    }
-                }
-                if let Some(def) = map_def {
-                    if let Some(type_id) = def.btf_val_type_id {
-                        // Check if the member at this offset is a Pointer
-                        // We cast offset to u32. Assuming offset is small and positive.
-                        if let Some(member_type_id) = ctx.btf.resolve_field_type_id(type_id, final_offset as u32) {
-                            if ctx.btf.is_pointer(member_type_id) {
-                                println!("[BTF] PC {}: Found Pointer in Map {} at offset {}", pc, def.name, final_offset);
-                                // If it's a pointer, we treat it as a generic Map Value Pointer for now.
-                                // In reality, we should check *what* it points to (another map?).
-                                // For linked lists, it usually points to the same struct type.
-                                next_types.set(dst, RegType::PtrToMapValue { offset: 0, map_idx });
-                                return vec![(pc + 1, dbm_in.clone(), next_types)];
+            let map_limit = map_def.map(|d| d.value_size as i64).unwrap_or(4096);
+
+            // Case A: Known Offset (e.g., r1 = map_val; r1 += 8)
+            if let Some(map_off) = map_off_opt {
+                let final_offset = map_off + (off as i64);
+                let access_end = final_offset + access_size;
+
+                if final_offset >= 0 && access_end <= map_limit {
+                    // Safe Range! Now Check BTF.
+                    if let Some(def) = map_def {
+                        if let Some(type_id) = def.btf_val_type_id {
+                             println!("[DEBUG PC {}] Checking BTF for Map '{}' (ID {}), Offset {}", 
+                                     pc, def.name, type_id, final_offset);
+
+                            // Resolve the field at this exact offset
+                            if let Some(member_type) = ctx.btf.resolve_field_type_id(type_id, final_offset as u32) {
+                                if ctx.btf.is_pointer(member_type) {
+                                    println!("[BTF] PC {}: Found Pointer in Map {} at offset {}", pc, def.name, final_offset);
+                                    // It's a pointer! Upgrade loaded value to PtrToMapValue (Offset 0).
+                                    next_types.set(dst, RegType::PtrToMapValue { offset: Some(0), map_idx });
+                                    return vec![(pc + 1, dbm_in.clone(), next_types)];
+                                }
                             }
                         }
                     }
+                    
+                    // Not a pointer? Load as Scalar.
+                    next_types.set(dst, RegType::ScalarValue);
+                    return vec![(pc + 1, dbm_in.clone(), next_types)];
+                } else {
+                    println!("Unsafe map load at pc {}: off {} limit {}", pc, final_offset, map_limit);
+                    stats.mark_unsafe_load();
                 }
-                // If no BTF or not a pointer, assume Scalar
+            } 
+            // Case B: Unknown/Variable Offset (e.g., r1 += r2)
+            else {
+                println!("[Analysis] Variable Offset Load from Map {} at PC {}", map_idx, pc);
+                
+                // HEURISTIC: If loading 64-bits from a map with BTF, assume it's a pointer.
+                // This is necessary for Linked List traversal where offsets are dynamic or hard to track.
+                if size == MemSize::U64 {
+                     println!("[BTF/Heuristic] Variable load (u64) -> Assuming PtrToMapValue to survive linked list traversal");
+                     next_types.set(dst, RegType::PtrToMapValue { offset: Some(0), map_idx });
+                     return vec![(pc + 1, dbm_in.clone(), next_types)];
+                }
+
                 next_types.set(dst, RegType::ScalarValue);
                 return vec![(pc + 1, dbm_in.clone(), next_types)];
-            } else {
-                println!("Unsafe map load at pc {}: off {} size {} limit {}", 
-                         pc, final_offset, access_size, map_limit);
             }
-        }
+        },
         PtrToMapValueOrNull { map_idx, .. } => {
             // "OrNull" pointers don't track offset in your current struct, 
             // so we assume offset is 0 relative to the map value start.
@@ -218,7 +220,7 @@ pub fn perform_memory_store(
 
     match base_ty {
         RegType::PtrToMapValue { offset: map_off, map_idx } => {
-             let final_offset = map_off + (off as i64);
+             let final_offset = map_off.unwrap_or(0) + (off as i64);
              let access_end = final_offset + access_size;
              let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) { def.value_size as i64 } else { 4096 };
              if final_offset >= 0 && access_end <= map_limit {

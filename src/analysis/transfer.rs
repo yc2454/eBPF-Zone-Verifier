@@ -138,6 +138,7 @@ fn transfer_alu(
     if dbm.is_inconsistent() {
         println!("ERROR: ALU transfer led to inconsistent state at pc {}", pc);
         stats.mark_dbm_inconsistent();
+        dbm.dump_matrix();
         vec![]
     } else {
         vec![(pc + 1, dbm, next_types)]

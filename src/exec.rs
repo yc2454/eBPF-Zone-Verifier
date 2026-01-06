@@ -101,7 +101,7 @@ fn maybe_promote_map_val(types: &mut TypeState, reg: Reg) {
                 let final_map_idx = map_idx;
                 
                 types.set(r, RegType::PtrToMapValue { 
-                    offset: 0, 
+                    offset: Some(0), 
                     map_idx: final_map_idx 
                 });
             }
@@ -765,7 +765,7 @@ fn transfer_load(
         }
 
         PtrToMapValue { offset: map_off, map_idx } => {
-            let final_offset = map_off + (off as i64);
+            let final_offset = map_off.map(|x| x + (off as i64)).unwrap_or(off as i64);
             let access_end = final_offset + access_size;
 
             let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) {
@@ -837,7 +837,7 @@ fn transfer_store(
 
     match base_ty {
         RegType::PtrToMapValue { offset: map_off, map_idx } => {
-             let final_offset = map_off + (off as i64);
+             let final_offset = map_off.map(|x| x + (off as i64)).unwrap_or(off as i64);
              let access_end = final_offset + access_size;
 
              // 1. Retrieve Map Definition
@@ -1174,7 +1174,8 @@ fn handle_add(types: &mut TypeState, dst: Reg, src: Operand) {
             }
             // Map: Ptr += K shifts the offset
             RegType::PtrToMapValue { offset, map_idx } => {
-                types.set(dst, RegType::PtrToMapValue { offset: offset + k, map_idx });
+                let new_offset = offset.map(|x| x + k);
+                types.set(dst, RegType::PtrToMapValue { offset: new_offset, map_idx });
             }
             // Others (Ctx, Stack): Preserve type, assume DBM tracks numeric bounds
             _ => types.set(dst, dst_ty),
@@ -1201,7 +1202,7 @@ fn handle_sub(types: &mut TypeState, dst: Reg, src: Operand) {
             }
             // Map: Ptr -= K shifts offset backwards
             RegType::PtrToMapValue { offset, map_idx } => {
-                types.set(dst, RegType::PtrToMapValue { offset: offset - k, map_idx });
+                types.set(dst, RegType::PtrToMapValue { offset: offset.map(|x| x - k), map_idx });
             }
             _ => types.set(dst, dst_ty),
         }

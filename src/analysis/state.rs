@@ -46,7 +46,7 @@ fn maybe_promote_map_val(types: &mut TypeState, reg: Reg) {
             if id == target_id {
                 let final_map_idx = map_idx;
                 types.set(r, RegType::PtrToMapValue { 
-                    offset: 0, 
+                    offset: Some(0), 
                     map_idx: final_map_idx 
                 });
             }
@@ -197,19 +197,28 @@ fn handle_mov(
 }
 
 fn handle_add(types: &mut TypeState, in_types: &TypeState, dst: Reg, src: Operand) {
-    // CRITICAL FIX: Check the INPUT type of dst, not the currently-modified type
     let dst_ty = in_types.get(dst);
     
-    if let (true, Operand::Imm(k)) = (dst_ty.is_pointer(), src) {
-        match dst_ty {
-            RegType::PtrToPacket { id, range } => {
-                let new_range = if k > 0 { range.saturating_sub(k as u64) } else { range.saturating_add(k.wrapping_neg() as u64) };
-                types.set(dst, RegType::PtrToPacket { id, range: new_range });
-            }
-            RegType::PtrToMapValue { offset, map_idx } => { 
-                types.set(dst, RegType::PtrToMapValue { offset: offset + k, map_idx }); 
-            }
-            _ => types.set(dst, dst_ty), // Other pointers (Stack/Ctx) preserve type on Add
+    if dst_ty.is_pointer() {
+        match (dst_ty, src) {
+            // Case A: Ptr + Imm
+            (RegType::PtrToMapValue { offset, map_idx }, Operand::Imm(k)) => {
+                // If offset was known, add k. If unknown, stays unknown.
+                let new_off = offset.map(|o| o + k);
+                types.set(dst, RegType::PtrToMapValue { offset: new_off, map_idx });
+            },
+            // Case B: Ptr + Reg (Variable Offset!)
+            (RegType::PtrToMapValue { map_idx, .. }, Operand::Reg(_)) => {
+                println!("[Analysis] PtrToMapValue + Reg -> PtrToMapValue (Unknown Offset)");
+                types.set(dst, RegType::PtrToMapValue { offset: None, map_idx });
+            },
+            // Packet Logic (Keep existing)
+            (RegType::PtrToPacket { id, range }, Operand::Imm(k)) => {
+                 let new_range = if k > 0 { range.saturating_sub(k as u64) } else { range.saturating_add(k.wrapping_neg() as u64) };
+                 types.set(dst, RegType::PtrToPacket { id, range: new_range });
+            },
+            // Default downgrade
+            _ => types.set(dst, RegType::ScalarValue),
         }
     } else { 
         types.set(dst, RegType::ScalarValue); 
@@ -217,22 +226,21 @@ fn handle_add(types: &mut TypeState, in_types: &TypeState, dst: Reg, src: Operan
 }
 
 fn handle_sub(types: &mut TypeState, in_types: &TypeState, dst: Reg, src: Operand) {
-    // CRITICAL FIX: Check INPUT type
     let dst_ty = in_types.get(dst);
-    
     if let (true, Operand::Imm(k)) = (dst_ty.is_pointer(), src) {
         match dst_ty {
+            RegType::PtrToMapValue { offset, map_idx } => {
+                let new_off = offset.map(|o| o - k);
+                types.set(dst, RegType::PtrToMapValue { offset: new_off, map_idx });
+            },
             RegType::PtrToPacket { id, range } => {
                 let new_range = if k > 0 { range.saturating_add(k as u64) } else { range.saturating_sub(k.wrapping_neg() as u64) };
                 types.set(dst, RegType::PtrToPacket { id, range: new_range });
             }
-            RegType::PtrToMapValue { offset, map_idx } => { 
-                types.set(dst, RegType::PtrToMapValue { offset: offset - k, map_idx }); 
-            }
             _ => types.set(dst, dst_ty),
         }
-    } else { 
-        types.set(dst, RegType::ScalarValue); 
+    } else {
+        types.set(dst, RegType::ScalarValue);
     }
 }
 
