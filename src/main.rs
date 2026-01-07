@@ -15,6 +15,7 @@ mod stats;
 mod ctx_model;
 mod btf;
 mod analysis;
+mod loop_check;
 
 use crate::analysis::context;
 use crate::ast::Program;
@@ -160,6 +161,15 @@ fn main() {
             cctx.btf = btf_ctx;
 
             let prog = load_program_from_elf(path, section);
+            println!("Program size: {} instructions", prog.instrs.len());
+
+            // // 4. CHECK FOR LOOPS (The Kernel Verifier Step)
+            // if let Err(e) = crate::loop_check::check_for_loops(&prog) {
+            //     println!("Error: {}", e);
+            //     println!("Analysis aborted because the program contains loops.");
+            //     return;
+            // }
+            // println!("Loop check passed (DAG confirmed).");
 
             let _cert = analysis::analyze_program(&cctx, &prog, entry, stats);
 

@@ -124,25 +124,6 @@ impl Dbm {
         false
     }
 
-    pub fn var_bounds(&self, x: Reg, zero: Reg) -> Option<(i64, i64)> {
-        let ub = self.get(x, zero);
-        let lb_c = self.get(zero, x);
-
-        if ub == INF && lb_c == INF {
-            return None;
-        }
-
-        let ub_opt = if ub == INF { None } else { Some(ub) };
-        let lb_opt = if lb_c == INF { None } else { Some(-lb_c) };
-
-        match (lb_opt, ub_opt) {
-            (Some(lb), Some(ub)) => Some((lb, ub)),
-            (Some(lb), None)     => Some((lb, i64::MAX / 4)),
-            (None, Some(ub))     => Some((i64::MIN / 4, ub)),
-            (None, None)         => None,
-        }
-    }
-
     pub fn dump_matrix(&self) {
         let vars = REG_ENV.all();
         let n = self.num_vars();
@@ -188,5 +169,25 @@ impl Dbm {
         }
         res.close();
         res
+    }
+
+    /// Returns true if `other` is a subset of `self` (self covers other).
+    /// Logic: other.matrix[i][j] <= self.matrix[i][j] for all i, j.
+    pub fn contains(&self, other: &Dbm) -> bool {
+        if self.matrix.len() != other.matrix.len() {
+            return false;
+        }
+
+        let dim = self.matrix.len();
+        for i in 0..dim {
+            for j in 0..dim {
+                // If other's upper bound is looser (larger) than ours, 
+                // it contains points we don't allow. Not a subset.
+                if other.matrix[i][j] > self.matrix[i][j] {
+                    return false;
+                }
+            }
+        }
+        true
     }
 }

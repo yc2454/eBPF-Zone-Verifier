@@ -19,6 +19,8 @@ use self::context::ExecContext;
 use self::transfer::transfer_instr;
 use self::state::{refine_branch_types, update_reg_types_for_instr};
 
+const MAX_PROCESSED_INSNS: usize = 100_000; 
+
 pub fn analyze_program(
     ctx: &ExecContext,
     prog: &Program,
@@ -40,11 +42,30 @@ pub fn analyze_program(
     type_states[0] = Some(entry_types);
     worklist.push_back(0);
 
+    // --- NEW: Instruction Counter ---
+    let mut processed_insns = 0;
+    // --------------------------------
+
     while let Some(pc) = worklist.pop_front() {
         if stats.abort { 
             println!("Analysis aborted due to previous errors."); 
             break; 
         }
+
+        // --- NEW: Bounded Loop Check ---
+        processed_insns += 1;
+        if processed_insns > MAX_PROCESSED_INSNS {
+            println!("[Verifier] Hit complexity limit ({} instructions). Aborting to prevent hang.", MAX_PROCESSED_INSNS);
+            println!("[Verifier] The program likely contains a loop that is being unrolled too many times.");
+            stats.abort = true;
+            break;
+        }
+        
+        // Progress heartbeat every 10k instructions
+        if processed_insns % 10_000 == 0 {
+            println!("[Verifier] Processed {} instructions...", processed_insns);
+        }
+        // -------------------------------
 
         let instr = &prog.instrs[pc];
         let raw_pc = prog.pc_map[pc]; 
@@ -52,36 +73,29 @@ pub fn analyze_program(
         let in_dbm = states[pc].as_ref().unwrap();
         let in_types = type_states[pc].as_ref().unwrap().clone();
         
-        println!("Instr: {} (Raw PC: {})", instr, raw_pc);
-        // in_types.print_regs();
-        in_dbm.dump_matrix();
-
-        // 1. Transfer Function (Compute Next State)
-        let succs = transfer_instr(ctx, in_dbm, pc, instr, stats, &in_types);
-        
-        if stats.abort { 
-            println!("Analysis aborted due to previous errors."); 
-            break; 
+        // Only print verbose logs for the first 50 steps
+        if processed_insns < 50 {
+            println!("--- PC {} (Raw PC {}) ---", pc, raw_pc);
         }
 
-        for (succ_pc, succ_dbm, succ_types) in succs {
-            if succ_pc >= n { continue; }
-            
-            let mut edge_types = succ_types;
-            
-            // 2. State Updates (Reg Types, Range Refinement, Stack Protection)
-            // Skip update_reg_types for calls to preserve R0 return type
-            if !matches!(instr, Instr::Call { .. }) {
-                update_reg_types_for_instr(ctx, instr, &mut edge_types, &in_types, raw_pc);
-            }
-            
-            println!("Instr: {} (Raw PC: {})", instr, raw_pc);
-            
-            // 3. Branch Refinement (Packet Ranges, Map Pointers)
-            refine_branch_types(instr, succ_pc, &succ_dbm, &mut edge_types);
+        // 1. Transfer Function
+        let succs = transfer_instr(ctx, in_dbm, pc, instr, stats, &in_types);
+        
+        if stats.abort { break; }
 
-            // 4. Join / Fixpoint Check
-            match (&mut states[succ_pc], &mut type_states[succ_pc]) {
+        for (succ_pc, succ_dbm, succ_types) in succs {
+             if succ_pc >= n { continue; }
+            
+             let mut edge_types = succ_types;
+             if !matches!(instr, Instr::Call { .. }) {
+                update_reg_types_for_instr(ctx, instr, &mut edge_types, &in_types, raw_pc);
+             }
+
+             // Refinement
+             refine_branch_types(instr, succ_pc, &succ_dbm, &mut edge_types);
+
+             // Join Logic
+             match (&mut states[succ_pc], &mut type_states[succ_pc]) {
                 (slot_dbm @ None, slot_types @ None) => {
                     *slot_dbm = Some(succ_dbm);
                     *slot_types = Some(edge_types);
@@ -92,16 +106,13 @@ pub fn analyze_program(
                     let dbm_changed = !dbm_equals(existing_dbm, &joined_dbm);
                     *existing_dbm = joined_dbm;
 
-                    // Note: join_in_place contains the Aggressive Merge logic
                     let types_changed = existing_types.join_in_place(&edge_types);
                     
                     if dbm_changed || types_changed { 
                         worklist.push_back(succ_pc); 
                     }
                 }
-                _ => { 
-                    panic!("Inconsistent state at pc {}", succ_pc); 
-                }
+                _ => { panic!("Inconsistent state at pc {}", succ_pc); }
             }
         }
     }

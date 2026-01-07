@@ -69,12 +69,47 @@ fn transfer_alu(
             }
         }
         AluOp::And => {
-            match src {
-                Operand::Imm(mask) => {
-                    let mask = if width == Width::W32 { (mask as u32) as i64 } else { mask };
-                    assign_and_mask(&mut dbm, dst, mask, ctx.zero)
+            // Kernel Behavior (scalar_min_max_and):
+            // dst_reg->umax_value = min(dst_reg->umax_value, src_reg->umax_value);
+            
+            // 1. Capture the old state before we forget it
+            let (old_lo, old_hi) = get_bounds(&dbm, dst, ctx.zero);
+
+            // 2. Forget constraints on dst (reset to -Inf..+Inf)
+            forget(&mut dbm, dst);
+            
+            // 3. Re-apply bounds based on Kernel Logic
+            if let Operand::Imm(mask) = src {
+                let mask = if width == Width::W32 { (mask as u32) as i64 } else { mask };
+
+                if mask >= 0 {
+                    // Case A: Positive Mask (e.g., 0xFF)
+                    // Result is definitely in [0, mask]
+                    assume_ge_const(&mut dbm, dst, ctx.zero, 0);
+                    assume_le_const(&mut dbm, dst, ctx.zero, mask);
+                } else {
+                    // Case B: Negative Mask (e.g., -13 / 0xFF...F3)
+                    // Result is effectively Unsigned AND.
+                    // The value cannot grow larger than it was. 
+                    // If it was positive before, it stays positive and <= old_hi.
+                    if let (Some(l), Some(h)) = (old_lo, old_hi) {
+                        if l >= 0 {
+                            assume_ge_const(&mut dbm, dst, ctx.zero, 0);
+                            assume_le_const(&mut dbm, dst, ctx.zero, h);
+                        }
+                    }
+                    // If we didn't know it was positive, we can't say much safely 
+                    // without tracking bits (which DBM doesn't do), so we leave it unbounded.
                 }
-                Operand::Reg(_r) => forget(&mut dbm, dst),
+            } else {
+                // Register Src:
+                // dst = dst & src. Result <= dst.
+                if let (Some(l), Some(h)) = (old_lo, old_hi) {
+                     if l >= 0 {
+                        assume_ge_const(&mut dbm, dst, ctx.zero, 0);
+                        assume_le_const(&mut dbm, dst, ctx.zero, h);
+                     }
+                }
             }
         }
         AluOp::Or => { forget(&mut dbm, dst); }
