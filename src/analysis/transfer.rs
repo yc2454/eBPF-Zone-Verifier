@@ -1,350 +1,305 @@
 // src/analysis/transfer.rs
-use crate::ast::{AluOp, CmpOp, Instr, Operand, Width, EndianKind, MemSize};
-use crate::domain::{RegType, TypeState, get_bounds, forget, Reg};
-use crate::dbm::Dbm;
-use crate::analysis::context::{ExecContext, proven_u32_range};
+use crate::analysis::env::VerifierEnv;
+use crate::analysis::state::State;
+use crate::analysis::reg_types::{RegType, TypeState, new_packet_id};
+use crate::ast::{Instr, AluOp, CmpOp, Operand, Width, EndianKind, MemSize};
+use crate::domain::{Reg, forget, get_bounds, assign_add_imm, assign_add_reg, assign_eq, assume_eq_const, assume_ge_const, assume_le_const, assume_less_than, assume_ge_var, assume_le_var, assume_gt_var, assume_le_var_plus_const, assign_zero, assign_mul_imm, assign_and_mask};
 use crate::stats::AnalysisStats;
-use crate::domain::{
-    assign_eq, assign_zero, assign_add_imm, assign_add_reg,
-    assign_and_mask, assign_mul_imm,
-    assume_ge_const, assume_le_const, assume_less_than, assume_eq_const,
-    assume_ge_var, assume_le_var, assume_gt_var, assume_le_var_plus_const,
-};
-use crate::analysis::access::{perform_memory_load, perform_memory_store};
-use crate::analysis::state::update_packet_ranges;
+use crate::analysis::access;
+use crate::domain::proven_u32_range;
+use crate::ctx_model::{classify_tc_ctx_field, CtxFieldKind};
+use crate::dbm::Dbm;
 
-fn transfer_mov_arg0(dbm_in: &Dbm, pc: usize, dst: Reg, reg_types: &TypeState) -> Vec<(usize, Dbm, TypeState)> {
-    let mut dbm = dbm_in.clone();
-    let mut next_types = reg_types.clone();
-    forget(&mut dbm, dst);
-    next_types.set(dst, RegType::PtrToCtx);
-    vec![(pc + 1, dbm, next_types)]
+pub fn transfer(
+    env: &mut VerifierEnv,
+    mut state: State,
+    instr: &Instr,
+    stats: &mut AnalysisStats,
+) -> Vec<State> {
+    
+    // 1. Mark as Seen
+    if state.pc < env.insn_aux_data.len() {
+        env.insn_aux_data[state.pc].seen = true;
+    }
+
+    match instr {
+        Instr::MovArg0 { dst } => transfer_mov_arg0(state, *dst),
+        Instr::Alu { width, op, dst, src } => transfer_alu(env, state, *width, *op, *dst, src.clone(), stats),
+        Instr::Endian { dst, kind } => transfer_endian(env, state, *dst, *kind),
+        Instr::If { width, left, op, right, target } => transfer_if(env, state, *width, *left, *op, right.clone(), *target),
+        Instr::Load { size, dst, base, off } => {
+            access::check_load(env, &state, *base, *size, *off, stats);
+            update_load_types(&mut state.types, *size, *dst, *base, *off);
+            forget(&mut state.dbm, *dst);
+            state.pc += 1;
+            vec![state]
+        },
+        Instr::Store { size, base, off, src } => {
+            access::check_store(env, &state, *base, *size, *off, stats);
+            let src_type = state.types.get(*src);
+            update_store_types(&mut state.types, src_type, *size, *base, *off);
+            state.pc += 1;
+            vec![state]
+        },
+        Instr::Call { helper } => transfer_call(env, state, *helper),
+        Instr::Jmp { target } => {
+            state.pc = *target;
+            vec![state]
+        },
+        Instr::Exit => vec![],
+    }
+}
+
+fn transfer_mov_arg0(mut state: State, dst: Reg) -> Vec<State> {
+    forget(&mut state.dbm, dst);
+    state.types.set(dst, RegType::PtrToCtx);
+    state.pc += 1;
+    vec![state]
 }
 
 fn transfer_alu(
-    ctx: &ExecContext,
-    dbm_in: &Dbm,
-    pc: usize,
+    env: &VerifierEnv,
+    mut state: State,
     width: Width,
     op: AluOp,
     dst: Reg,
     src: Operand,
     stats: &mut AnalysisStats,
-    reg_types: &TypeState,
-) -> Vec<(usize, Dbm, TypeState)> {
-    let mut dbm = dbm_in.clone();
-    let mut next_types = reg_types.clone();
+) -> Vec<State> {
+    let ctx = env.ctx;
+    // Clone input types for logic that needs original values
+    let in_types = state.types.clone();
+    
+    update_alu_types(env, &in_types, &mut state.types, width, op, dst, &src, state.pc);
 
+    let dbm = &mut state.dbm;
     match op {
         AluOp::Mov => {
             match src {
                 Operand::Reg(r) => {
                     if width == Width::W32 {
-                        forget(&mut dbm, dst);
-                        assume_ge_const(&mut dbm, dst, ctx.zero, 0);
-                        assume_le_const(&mut dbm, dst, ctx.zero, 0xffff_ffff);
+                        forget(dbm, dst);
+                        assume_ge_const(dbm, dst, ctx.zero, 0);
+                        assume_le_const(dbm, dst, ctx.zero, 0xffff_ffff);
                     } else {
-                        if r == ctx.r10 { assign_zero(&mut dbm, dst, ctx.zero); } 
-                        else { assign_eq(&mut dbm, dst, r); }
+                        if r == ctx.r10 { assign_zero(dbm, dst, ctx.zero); } 
+                        else { assign_eq(dbm, dst, r); }
                     }
                 }
                 Operand::Imm(c) => {
                     let c = if width == Width::W32 { (c as u32) as i64 } else { c };
-                    forget(&mut dbm, dst);
-                    assume_le_const(&mut dbm, dst, ctx.zero, c);
-                    assume_ge_const(&mut dbm, dst, ctx.zero, c);
+                    forget(dbm, dst);
+                    assume_le_const(dbm, dst, ctx.zero, c);
+                    assume_ge_const(dbm, dst, ctx.zero, c);
                 }
             }
         }
         AluOp::Add => {
             match src {
-                Operand::Imm(c) => assign_add_imm(&mut dbm, dst, c),
-                Operand::Reg(r) => assign_add_reg(&mut dbm, dst, r, ctx.zero),
+                Operand::Imm(c) => assign_add_imm(dbm, dst, c),
+                Operand::Reg(r) => assign_add_reg(dbm, dst, r, ctx.zero),
             }
         }
         AluOp::Sub => {
             match src {
-                Operand::Imm(c) => assign_add_imm(&mut dbm, dst, -c),
-                Operand::Reg(_r) => forget(&mut dbm, dst),
+                Operand::Imm(c) => assign_add_imm(dbm, dst, -c),
+                Operand::Reg(_r) => forget(dbm, dst), 
             }
         }
         AluOp::And => {
-            // Kernel Behavior (scalar_min_max_and):
-            // dst_reg->umax_value = min(dst_reg->umax_value, src_reg->umax_value);
-            
-            // 1. Capture the old state before we forget it
-            let (old_lo, old_hi) = get_bounds(&dbm, dst, ctx.zero);
-
-            // 2. Forget constraints on dst (reset to -Inf..+Inf)
-            forget(&mut dbm, dst);
-            
-            // 3. Re-apply bounds based on Kernel Logic
+            let (old_lo, old_hi) = get_bounds(dbm, dst, ctx.zero);
+            forget(dbm, dst);
             if let Operand::Imm(mask) = src {
                 let mask = if width == Width::W32 { (mask as u32) as i64 } else { mask };
-
                 if mask >= 0 {
-                    // Case A: Positive Mask (e.g., 0xFF)
-                    // Result is definitely in [0, mask]
-                    assume_ge_const(&mut dbm, dst, ctx.zero, 0);
-                    assume_le_const(&mut dbm, dst, ctx.zero, mask);
-                } else {
-                    // Case B: Negative Mask (e.g., -13 / 0xFF...F3)
-                    // Result is effectively Unsigned AND.
-                    // The value cannot grow larger than it was. 
-                    // If it was positive before, it stays positive and <= old_hi.
-                    if let (Some(l), Some(h)) = (old_lo, old_hi) {
-                        if l >= 0 {
-                            assume_ge_const(&mut dbm, dst, ctx.zero, 0);
-                            assume_le_const(&mut dbm, dst, ctx.zero, h);
-                        }
+                    assign_and_mask(dbm, dst, mask, ctx.zero);
+                } else if let (Some(l), Some(h)) = (old_lo, old_hi) {
+                    if l >= 0 {
+                        assume_ge_const(dbm, dst, ctx.zero, 0);
+                        assume_le_const(dbm, dst, ctx.zero, h);
                     }
-                    // If we didn't know it was positive, we can't say much safely 
-                    // without tracking bits (which DBM doesn't do), so we leave it unbounded.
                 }
-            } else {
-                // Register Src:
-                // dst = dst & src. Result <= dst.
-                if let (Some(l), Some(h)) = (old_lo, old_hi) {
-                     if l >= 0 {
-                        assume_ge_const(&mut dbm, dst, ctx.zero, 0);
-                        assume_le_const(&mut dbm, dst, ctx.zero, h);
-                     }
-                }
+            } else if let (Some(l), Some(h)) = (old_lo, old_hi) {
+                 if l >= 0 {
+                    assume_ge_const(dbm, dst, ctx.zero, 0);
+                    assume_le_const(dbm, dst, ctx.zero, h);
+                 }
             }
         }
-        AluOp::Or => { forget(&mut dbm, dst); }
-        AluOp::Shl | AluOp::Arsh => forget(&mut dbm, dst),
+        AluOp::Or | AluOp::Xor | AluOp::Shl | AluOp::Arsh => forget(dbm, dst),
         AluOp::Shr => {
              match src {
                 Operand::Imm(k) => {
                     let bits = if width == Width::W32 { 32u32 } else { 64u32 };
                     let k = (k as u32).min(bits);
-                    forget(&mut dbm, dst);
-                    assume_ge_const(&mut dbm, dst, ctx.zero, 0);
+                    forget(dbm, dst);
+                    assume_ge_const(dbm, dst, ctx.zero, 0);
                     if k < bits {
                         let ub: i64 = ((1u128 << (bits - k)) - 1) as i64;
-                        assume_le_const(&mut dbm, dst, ctx.zero, ub);
+                        assume_le_const(dbm, dst, ctx.zero, ub);
                     } else {
-                        assume_eq_const(&mut dbm, dst, ctx.zero, 0);
+                        assume_eq_const(dbm, dst, ctx.zero, 0);
                     }
                 }
-                Operand::Reg(_) => forget(&mut dbm, dst),
+                Operand::Reg(_) => forget(dbm, dst),
             }
         }
         AluOp::Mul => {
              match src {
-                Operand::Imm(c) => assign_mul_imm(&mut dbm, dst, c, ctx.zero),
-                Operand::Reg(_) => forget(&mut dbm, dst),
+                Operand::Imm(c) => assign_mul_imm(dbm, dst, c, ctx.zero),
+                Operand::Reg(_) => forget(dbm, dst),
             }
         }
         AluOp::Mod => {
              match src {
                 Operand::Imm(c) => {
                     if c > 0 {
-                        forget(&mut dbm, dst);
-                        assume_ge_const(&mut dbm, dst, ctx.zero, 0);
-                        assume_le_const(&mut dbm, dst, ctx.zero, c - 1);
-                    } else { forget(&mut dbm, dst); }
+                        forget(dbm, dst);
+                        assume_ge_const(dbm, dst, ctx.zero, 0);
+                        assume_le_const(dbm, dst, ctx.zero, c - 1);
+                    } else { forget(dbm, dst); }
                 }
-                Operand::Reg(_) => forget(&mut dbm, dst),
+                Operand::Reg(_) => forget(dbm, dst),
             }
         }
-        AluOp::Xor => forget(&mut dbm, dst),
     }
 
-    // Note: Type updates for ALU are handled in state::update_reg_types_for_instr
-    // Here we just reset to Scalar if it's a basic ALU op.
-    let is_32bit = width == Width::W32;
-    match op {
-        AluOp::Mov => {
-            match src {
-                Operand::Reg(r) => {
-                    if is_32bit { next_types.set(dst, RegType::ScalarValue); } 
-                    else { next_types.set(dst, reg_types.get(r)); }
-                }
-                Operand::Imm(_) => { next_types.set(dst, RegType::ScalarValue); }
-            }
-        }
-        // Arithmetic on Pointers is calculated in `update_reg_types_for_instr`
-        // We set to Scalar here as a default, expecting it to be overwritten if it's a valid ptr arithmetic
-        _ => { next_types.set(dst, RegType::ScalarValue); }
-    }
-
-    if dbm.is_inconsistent() {
-        println!("ERROR: ALU transfer led to inconsistent state at pc {}", pc);
+    if state.dbm.is_inconsistent() {
         stats.mark_dbm_inconsistent();
-        dbm.dump_matrix();
         vec![]
     } else {
-        vec![(pc + 1, dbm, next_types)]
+        state.pc += 1;
+        vec![state]
     }
 }
 
 fn transfer_endian(
-    ctx: &ExecContext,
-    dbm_in: &Dbm,
-    pc: usize,
+    env: &VerifierEnv,
+    mut state: State,
     dst: Reg,
     kind: EndianKind,
-    reg_types: &TypeState,
-) -> Vec<(usize, Dbm, TypeState)> {
-    let mut dbm = dbm_in.clone();
-    let mut next_types = reg_types.clone();
-
-    forget(&mut dbm, dst);
+) -> Vec<State> {
+    forget(&mut state.dbm, dst);
     let (lo, hi) = match kind {
         EndianKind::Be16 => (0i64, 0x0000_ffff),
         EndianKind::Be32 => (0i64, 0xffff_ffff),
         EndianKind::Be64 => {
-             next_types.set(dst, RegType::ScalarValue);
-             return vec![(pc + 1, dbm, next_types)];
+             state.types.set(dst, RegType::ScalarValue);
+             state.pc += 1;
+             return vec![state];
         }
     };
-    assume_ge_const(&mut dbm, dst, ctx.zero, lo);
-    assume_le_const(&mut dbm, dst, ctx.zero, hi);
-    next_types.set(dst, RegType::ScalarValue);
-    vec![(pc + 1, dbm, next_types)]
+    assume_ge_const(&mut state.dbm, dst, env.ctx.zero, lo);
+    assume_le_const(&mut state.dbm, dst, env.ctx.zero, hi);
+    state.types.set(dst, RegType::ScalarValue);
+    state.pc += 1;
+    vec![state]
 }
 
 fn transfer_if(
-    ctx: &ExecContext,
-    dbm_in: &Dbm,
-    pc: usize,
+    env: &VerifierEnv,
+    state: State,
     width: Width,
     left: Reg,
     op: CmpOp,
     right: Operand,
     target: usize,
-    reg_types_in: &TypeState,
-) -> Vec<(usize, Dbm, TypeState)> {
+) -> Vec<State> {
+    let ctx = env.ctx;
     let mut out = Vec::new();
-    let mut dbm_then = dbm_in.clone();
-    let mut types_then = reg_types_in.clone();
-    let mut dbm_else = dbm_in.clone();
-    let mut types_else = reg_types_in.clone();
 
-    // 1. Literal Checks (Eq, Ne)
-    match (op, right) {
+    let mut state_then = state.clone();
+    let mut state_else = state.clone();
+
+    state_then.pc = target;
+    state_else.pc = state.pc + 1;
+
+    let dbm_in = &state.dbm;
+
+    // 1. DBM Literal Optimization
+    match (op, &right) {
         (CmpOp::Ne, Operand::Imm(imm)) => {
-            assume_eq_const(&mut dbm_else, left, ctx.zero, imm);
+            assume_eq_const(&mut state_else.dbm, left, ctx.zero, *imm);
             let (lo, hi) = get_bounds(dbm_in, left, ctx.zero);
             if let (Some(l), Some(h)) = (lo, hi) {
-                if l == imm && h == imm {
-                    assume_less_than(&mut dbm_then, ctx.zero, ctx.zero, 0); 
-                }
+                if l == *imm && h == *imm { assume_less_than(&mut state_then.dbm, ctx.zero, ctx.zero, 0); }
             }
         }
         (CmpOp::Eq, Operand::Imm(imm)) => {
-             assume_eq_const(&mut dbm_then, left, ctx.zero, imm);
+             assume_eq_const(&mut state_then.dbm, left, ctx.zero, *imm);
              let (lo, hi) = get_bounds(dbm_in, left, ctx.zero);
              if let (Some(l), Some(h)) = (lo, hi) {
-                if l == imm && h == imm {
-                    assume_less_than(&mut dbm_else, ctx.zero, ctx.zero, 0);
-                }
+                if l == *imm && h == *imm { assume_less_than(&mut state_else.dbm, ctx.zero, ctx.zero, 0); }
              }
         }
         _ => {}
     }
 
-    // 2. 32-bit Logic (Fallback)
+    // 2. 32-bit Logic Fallback
     if width == Width::W32 {
-        if let Operand::Imm(_c) = right {
-            // For simple range checks on u32, if not proven safe, bail to both paths
-            if matches!(op, CmpOp::Eq | CmpOp::Ne | CmpOp::UGe | CmpOp::ULe | CmpOp::UGt | CmpOp::ULt) && !proven_u32_range(dbm_in, left, ctx.zero) {
-                out.push((pc + 1, dbm_in.clone(), reg_types_in.clone()));
-                out.push((target, dbm_in.clone(), reg_types_in.clone()));
-                return out;
+         if let Operand::Imm(_c) = right {
+            if matches!(op, CmpOp::Eq | CmpOp::Ne | CmpOp::UGe | CmpOp::ULe | CmpOp::UGt | CmpOp::ULt) 
+               && !proven_u32_range(dbm_in, left, ctx.zero) {
+                return vec![state_else, state_then];
             }
         } else {
-            out.push((pc + 1, dbm_in.clone(), reg_types_in.clone()));
-            out.push((target, dbm_in.clone(), reg_types_in.clone()));
-            return out;
+             return vec![state_else, state_then];
         }
     }
 
-    // 3. Register Comparisons (The Critical Packet Logic)
-    match (op, right) {
+    // 3. Register Comparisons
+    match (op, &right) {
         (CmpOp::UGe, Operand::Imm(c)) => {
-            assume_ge_const(&mut dbm_then, left, ctx.zero, c);
-            assume_less_than(&mut dbm_else, left, ctx.zero, c);
+            assume_ge_const(&mut state_then.dbm, left, ctx.zero, *c);
+            assume_less_than(&mut state_else.dbm, left, ctx.zero, *c);
         }
         (CmpOp::ULe, Operand::Imm(c)) => {
-            assume_le_const(&mut dbm_then, left, ctx.zero, c);
-            assume_ge_const(&mut dbm_else, left, ctx.zero, c + 1);
+            assume_le_const(&mut state_then.dbm, left, ctx.zero, *c);
+            assume_ge_const(&mut state_else.dbm, left, ctx.zero, c + 1);
         }
         (CmpOp::UGt, Operand::Imm(c)) => {
-            assume_ge_const(&mut dbm_then, left, ctx.zero, c + 1);
-            assume_le_const(&mut dbm_else, left, ctx.zero, c);
+            assume_ge_const(&mut state_then.dbm, left, ctx.zero, c + 1);
+            assume_le_const(&mut state_else.dbm, left, ctx.zero, *c);
         }
         (CmpOp::ULt, Operand::Imm(c)) => {
-            assume_less_than(&mut dbm_then, left, ctx.zero, c);
-            assume_ge_const(&mut dbm_else, left, ctx.zero, c);
+            assume_less_than(&mut state_then.dbm, left, ctx.zero, *c);
+            assume_ge_const(&mut state_else.dbm, left, ctx.zero, *c);
         }
-
-        // --- PACKET VS END COMPARISONS ---
         (cmp_op, Operand::Reg(r)) => {
-            let right_reg = r;
-            
-            // Apply Constraints
+            let right_reg = *r;
             match cmp_op {
-                CmpOp::UGe => { // Left >= Right
-                    assume_ge_var(&mut dbm_then, left, right_reg);
-                    assume_le_var_plus_const(&mut dbm_else, left, right_reg, -1);
+                CmpOp::UGe => { 
+                    assume_ge_var(&mut state_then.dbm, left, right_reg);
+                    assume_le_var_plus_const(&mut state_else.dbm, left, right_reg, -1);
                 }
-                CmpOp::ULe => { // Left <= Right
-                    assume_le_var(&mut dbm_then, left, right_reg);
-                    assume_gt_var(&mut dbm_else, left, right_reg);
+                CmpOp::ULe => { 
+                    assume_le_var(&mut state_then.dbm, left, right_reg);
+                    assume_gt_var(&mut state_else.dbm, left, right_reg);
                 }
-                CmpOp::UGt => { // Left > Right
-                    assume_gt_var(&mut dbm_then, left, right_reg);
-                    assume_le_var(&mut dbm_else, left, right_reg);
+                CmpOp::UGt => { 
+                    assume_gt_var(&mut state_then.dbm, left, right_reg);
+                    assume_le_var(&mut state_else.dbm, left, right_reg);
                 }
-                CmpOp::ULt => { // Left < Right
-                    assume_le_var_plus_const(&mut dbm_then, left, right_reg, -1);
-                    assume_ge_var(&mut dbm_else, left, right_reg);
+                CmpOp::ULt => { 
+                    assume_le_var_plus_const(&mut state_then.dbm, left, right_reg, -1);
+                    assume_ge_var(&mut state_else.dbm, left, right_reg);
                 }
                 _ => {}
             }
-
-            // Check Refinement for Packet/PacketEnd
-            let l_ty_then = types_then.get(left);
-            let r_ty_then = types_then.get(right_reg);
-            
-            let l_ty_else = types_else.get(left);
-            let r_ty_else = types_else.get(right_reg);
-
-            // --- THEN Branch Refinement ---
-            // If condition implies Packet <= End, refine
-            match cmp_op {
+            // Packet Refinement
+             match cmp_op {
                 CmpOp::ULe | CmpOp::ULt => {
-                    // Packet <= End
-                    if matches!(l_ty_then, RegType::PtrToPacket{..}) && matches!(r_ty_then, RegType::PtrToPacketEnd) {
-                        update_packet_ranges(&dbm_then, &mut types_then, left, right_reg);
-                    }
-                    // End >= Packet (Swapped operands)
-                    if matches!(l_ty_then, RegType::PtrToPacketEnd) && matches!(r_ty_then, RegType::PtrToPacket{..}) {
-                        update_packet_ranges(&dbm_then, &mut types_then, right_reg, left);
-                    }
+                    refine_packet_ranges(&state_then.dbm, &mut state_then.types, left, right_reg);
+                    refine_packet_ranges(&state_then.dbm, &mut state_then.types, right_reg, left);
                 }
                 _ => {}
             }
-
-            // --- ELSE Branch Refinement ---
-            // If condition implies Packet > End is FALSE, then Packet <= End
             match cmp_op {
                 CmpOp::UGt | CmpOp::UGe => {
-                     // !(Packet > End) => Packet <= End
-                     if matches!(l_ty_else, RegType::PtrToPacket{..}) && matches!(r_ty_else, RegType::PtrToPacketEnd) {
-                         update_packet_ranges(&dbm_else, &mut types_else, left, right_reg);
-                     }
-                     // !(End >= Packet) => End < Packet (Unsafe) - No refinement here
-                     // But if !(End < Packet) i.e. !(End < Packet) => End >= Packet => Packet <= End
+                    refine_packet_ranges(&state_else.dbm, &mut state_else.types, left, right_reg);
                 }
-                CmpOp::ULt => { // Check if !(End < Packet)
-                     // If test was End < Packet, then Else is End >= Packet (Safe)
-                     if matches!(l_ty_else, RegType::PtrToPacketEnd) && matches!(r_ty_else, RegType::PtrToPacket{..}) {
-                         update_packet_ranges(&dbm_else, &mut types_else, right_reg, left);
-                     }
+                CmpOp::ULt => {
+                    refine_packet_ranges(&state_else.dbm, &mut state_else.types, right_reg, left);
                 }
                 _ => {}
             }
@@ -352,88 +307,216 @@ fn transfer_if(
         _ => {}
     }
 
-    if !dbm_then.is_inconsistent() { out.push((target, dbm_then, types_then)); }
-    if !dbm_else.is_inconsistent() { out.push((pc + 1, dbm_else, types_else)); }
+    // 4. Branch Type Refinement
+    refine_branch(&mut state_then.types, &state_then.dbm, &Instr::If { width, left, op, right: right.clone(), target });
+    refine_branch(&mut state_else.types, &state_else.dbm, &Instr::If { width, left, op, right: right.clone(), target });
+
+    if !state_else.dbm.is_inconsistent() { out.push(state_else); }
+    if !state_then.dbm.is_inconsistent() { out.push(state_then); }
     out
 }
 
 fn transfer_call(
-    _ctx: &ExecContext,
-    dbm_in: &Dbm,
-    pc: usize,
+    _env: &VerifierEnv,
+    mut state: State,
     helper: u32,
-    reg_types: &TypeState,
-) -> Vec<(usize, Dbm, TypeState)> {
-    let mut dbm = dbm_in.clone();
-    let mut next_types = reg_types.clone();
-    let r1_type = reg_types.get(Reg::R1);
-    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-        forget(&mut dbm, r);
-        next_types.set(r, RegType::ScalarValue);
+) -> Vec<State> {
+    let in_types = state.types.clone();
+    update_call_types(&in_types, &mut state.types, helper);
+    for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+        forget(&mut state.dbm, r);
     }
-    forget(&mut dbm, Reg::R0);
-    match helper {
-        1 => { // bpf_map_lookup_elem
-            let map_idx = if let RegType::PtrToMapObject { map_idx } = r1_type { map_idx } else { 0 };
-            let new_id = crate::domain::new_packet_id();
-            next_types.set(Reg::R0, RegType::PtrToMapValueOrNull { id: new_id, map_idx });
-        }
-        _ => { next_types.set(Reg::R0, RegType::ScalarValue); }
-    }
-    vec![(pc + 1, dbm, next_types)]
+    state.pc += 1;
+    vec![state]
 }
 
-pub fn transfer_instr(
-    ctx: &ExecContext,
-    dbm_in: &Dbm,
-    pc: usize,
-    instr: &Instr,
-    stats: &mut AnalysisStats,
-    reg_types: &TypeState,
-) -> Vec<(usize, Dbm, TypeState)> {
-    match instr {
-        Instr::MovArg0 { dst } => transfer_mov_arg0(dbm_in, pc, *dst, reg_types),
-        Instr::Alu { width, op, dst, src } => transfer_alu(ctx, dbm_in, pc, *width, *op, *dst, *src, stats, reg_types),
-        Instr::Endian { dst, kind } => transfer_endian(ctx, dbm_in, pc, *dst, *kind, reg_types),
-        Instr::If { width, left, op, right, target } => transfer_if(ctx, dbm_in, pc, *width, *left, *op, *right, *target, reg_types),
-        Instr::Load { size, dst, base, off } => {
-                let base_ty = reg_types.get(*base);
-                transfer_load(ctx, dbm_in, pc, *size, *dst, *base, base_ty, *off, stats, reg_types)
-            },
-        Instr::Store { size, base, off, src } => transfer_store(ctx, dbm_in, pc, *size, *base, *off, *src, stats, reg_types),
-        Instr::Call { helper } => transfer_call(ctx, dbm_in, pc, *helper, reg_types),
-        Instr::Jmp { target } => vec![(*target, dbm_in.clone(), reg_types.clone())],
-        Instr::Exit => vec![],
-    }
-}
+// --- Helper Functions for Type Updates ---
 
-fn transfer_load(
-    ctx: &ExecContext,
-    dbm_in: &Dbm,
-    pc: usize,
-    size: MemSize,
+fn update_alu_types(
+    env: &VerifierEnv, 
+    in_types: &TypeState, 
+    types: &mut TypeState,
+    width: Width,
+    op: AluOp,
     dst: Reg,
-    base: Reg,
-    base_type: RegType,
-    off: i16,
-    stats: &mut AnalysisStats,
-    reg_types: &TypeState,
-) -> Vec<(usize, Dbm, TypeState)> {
-    // Delegate to access logic
-    perform_memory_load(ctx, dbm_in, pc, size, dst, base, base_type, off, stats, reg_types)
+    src: &Operand,
+    pc: usize
+) {
+    if width == Width::W32 { 
+        types.set(dst, RegType::ScalarValue); 
+        return; 
+    }
+    match op {
+        AluOp::Mov => {
+             match src {
+                Operand::Reg(r) => { types.set(dst, in_types.get(*r)); }
+                Operand::Imm(_) => {
+                    // Check Relocations
+                    let mut map_idx_opt = env.ctx.pc_to_map_idx.get(&pc);
+                    if map_idx_opt.is_none() { map_idx_opt = env.ctx.pc_to_map_idx.get(&(pc + 1)); }
+                    
+                    if let Some(&map_idx) = map_idx_opt {
+                        if map_idx < env.ctx.map_defs.len() {
+                             types.set(dst, RegType::PtrToMapObject { map_idx });
+                        } else {
+                             types.set(dst, RegType::ScalarValue);
+                        }
+                    } else {
+                        types.set(dst, RegType::ScalarValue);
+                    }
+                }
+            }
+        },
+        AluOp::Add => {
+             let dst_ty = in_types.get(dst);
+             if dst_ty.is_pointer() {
+                 match (dst_ty, src) {
+                     (RegType::PtrToMapValue { offset, map_idx }, Operand::Imm(k)) => {
+                         let new_off = offset.map(|o| o + k);
+                         types.set(dst, RegType::PtrToMapValue { offset: new_off, map_idx });
+                     },
+                     (RegType::PtrToMapValue { map_idx, .. }, Operand::Reg(_)) => {
+                         types.set(dst, RegType::PtrToMapValue { offset: None, map_idx });
+                     },
+                     (RegType::PtrToPacket { id, range }, Operand::Imm(k)) => {
+                         let new_range = if *k > 0 { range.saturating_sub(*k as u64) } else { range.saturating_add(k.wrapping_neg() as u64) };
+                         types.set(dst, RegType::PtrToPacket { id, range: new_range });
+                     },
+                     _ => types.set(dst, RegType::ScalarValue),
+                 }
+             } else {
+                 types.set(dst, RegType::ScalarValue);
+             }
+        },
+        AluOp::Sub => {
+             let dst_ty = in_types.get(dst);
+             if let (true, Operand::Imm(k)) = (dst_ty.is_pointer(), src) {
+                  match dst_ty {
+                      RegType::PtrToMapValue { offset, map_idx } => {
+                          let new_off = offset.map(|o| o - k);
+                          types.set(dst, RegType::PtrToMapValue { offset: new_off, map_idx });
+                      },
+                      RegType::PtrToPacket { id, range } => {
+                           let new_range = if *k > 0 { range.saturating_add(*k as u64) } else { range.saturating_sub(k.wrapping_neg() as u64) };
+                           types.set(dst, RegType::PtrToPacket { id, range: new_range });
+                      },
+                      _ => types.set(dst, RegType::ScalarValue),
+                  }
+             } else {
+                  types.set(dst, RegType::ScalarValue);
+             }
+        },
+        _ => types.set(dst, RegType::ScalarValue),
+    }
 }
 
-fn transfer_store(
-    ctx: &ExecContext,
-    dbm_in: &Dbm,
-    pc: usize,
-    size: MemSize,
-    base: Reg,
-    off: i16,
-    src: Reg,
-    stats: &mut AnalysisStats,
-    reg_types: &TypeState,
-) -> Vec<(usize, Dbm, TypeState)> {
-    // Delegate to access logic
-    perform_memory_store(ctx, dbm_in, pc, size, base, off, src, stats, reg_types)
+fn update_load_types(types: &mut TypeState, size: MemSize, dst: Reg, base: Reg, off: i16) {
+    let base_ty = types.get(base);
+    match base_ty {
+        RegType::PtrToCtx => {
+            if let Some(kind) = classify_tc_ctx_field(off, size) {
+                match kind {
+                    CtxFieldKind::PacketStart => { let new_id = new_packet_id(); types.set(dst, RegType::PtrToPacket { id: new_id, range: 0 }); }
+                    CtxFieldKind::PacketEnd => { types.set(dst, RegType::PtrToPacketEnd); }
+                    CtxFieldKind::PtrToMem { region } => { types.set(dst, RegType::PtrToMem { region }); }
+                    _ => types.set(dst, RegType::ScalarValue),
+                }
+            } else { types.set(dst, RegType::ScalarValue); }
+        }
+        RegType::PtrToStack => {
+            if size == MemSize::U64 { types.set(dst, types.get_stack(off)); } 
+            else { types.set(dst, RegType::ScalarValue); }
+        }
+        _ => types.set(dst, RegType::ScalarValue),
+    }
+}
+
+fn update_store_types(types: &mut TypeState, src_type: RegType, size: MemSize, base: Reg, off: i16) {
+    if base == Reg::R10 {
+        if size == MemSize::U64 {
+            types.set_stack(off, src_type);
+        } else {
+            types.stack.remove(&off);
+        }
+    }
+}
+
+fn update_call_types(in_types: &TypeState, types: &mut TypeState, helper: u32) {
+    let r1_type = in_types.get(Reg::R1);
+    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] { types.set(r, RegType::ScalarValue); }
+    match helper {
+        1 => {
+             let map_idx = if let RegType::PtrToMapObject { map_idx } = r1_type { map_idx } else { 0 };
+             let new_id = new_packet_id();
+             types.set(Reg::R0, RegType::PtrToMapValueOrNull { id: new_id, map_idx });
+        }
+        _ => types.set(Reg::R0, RegType::ScalarValue),
+    }
+}
+
+// --- Refinement Logic ---
+
+fn refine_packet_ranges(dbm: &Dbm, types: &mut TypeState, packet_reg: Reg, end_reg: Reg) {
+    let target_id = match types.get(packet_reg) {
+        RegType::PtrToPacket { id, .. } => id,
+        _ => return, 
+    };
+    let mut max_new_range = 0;
+    for r in crate::domain::Reg::ALL {
+        if let RegType::PtrToPacket { id, range } = types.get(r) {
+            if id == target_id {
+                let dist = dbm.get(r, end_reg);
+                if dist < crate::dbm::INF {
+                    if dist <= 0 {
+                        let safe_bytes = dist.checked_abs().unwrap_or(0) as u64;
+                        if safe_bytes > range {
+                            types.set(r, RegType::PtrToPacket { id, range: safe_bytes });
+                            if safe_bytes > max_new_range { max_new_range = safe_bytes; }
+                        } else if range > max_new_range { max_new_range = range; }
+                    }
+                }
+            }
+        }
+    }
+    if max_new_range > 0 {
+        let stack_keys: Vec<i16> = types.stack.keys().cloned().collect();
+        for k in stack_keys {
+            if let RegType::PtrToPacket { id, range } = types.get_stack(k) {
+                if id == target_id && max_new_range > range {
+                    types.set_stack(k, RegType::PtrToPacket { id, range: max_new_range });
+                }
+            }
+        }
+    }
+}
+
+fn refine_branch(types: &mut TypeState, _dbm: &Dbm, instr: &Instr) {
+    match instr {
+        Instr::If { op: CmpOp::Ne, left, right: Operand::Imm(0), .. } => {
+            maybe_promote_map_val(types, *left);
+        },
+        _ => {}
+    }
+}
+
+fn maybe_promote_map_val(types: &mut TypeState, reg: Reg) {
+    let (target_id, _target_map_idx) = match types.get(reg) {
+        RegType::PtrToMapValueOrNull { id, map_idx } => (id, map_idx),
+        _ => return,
+    };
+    for r in crate::domain::Reg::ALL {
+        if let RegType::PtrToMapValueOrNull { id, map_idx } = types.get(r) {
+            if id == target_id {
+                types.set(r, RegType::PtrToMapValue { offset: Some(0), map_idx });
+            }
+        }
+    }
+    let stack_keys: Vec<i16> = types.stack.keys().cloned().collect();
+    for k in stack_keys {
+        if let RegType::PtrToMapValueOrNull { id, map_idx } = types.get_stack(k) {
+            if id == target_id {
+                types.set_stack(k, RegType::PtrToMapValue { offset: Some(0), map_idx });
+            }
+        }
+    }
 }

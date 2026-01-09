@@ -3,7 +3,6 @@
 mod ast;
 mod dbm;
 mod domain;
-mod exec;
 mod programs;
 mod kernel_semantics;
 mod check;
@@ -17,14 +16,13 @@ mod btf;
 mod analysis;
 mod loop_check;
 
-use crate::analysis::context;
+use crate::analysis::context::{ExecContext, default_exec_ctx};
 use crate::ast::Program;
 use crate::dbm::Dbm;
 use crate::domain::{Reg, REG_ENV, assign_zero};
-use crate::exec::{analyze_program, ExecContext};
 use crate::utils::load_program_from_elf;
-use std::collections::HashMap;
 use crate::elf_loader::{load_maps, load_relocations};
+use crate::analysis::analyze_program;
 
 fn usage() {
     eprintln!("Usage:");
@@ -44,18 +42,6 @@ fn get_program(name: &str) -> Program {
         }
         std::process::exit(1);
     })
-}
-
-/// Common execution context for all runs.
-fn default_exec_ctx() -> ExecContext {
-    ExecContext {
-        zero: Reg::Zero,
-        r10: Reg::R10,
-        stack_min: -512,
-        stack_max: -1,
-        map_defs: Vec::new(),
-        pc_to_map_idx: HashMap::new(),
-    }
 }
 
 fn make_entry_state(ctx: &ExecContext) -> Dbm {
@@ -95,7 +81,7 @@ fn main() {
     }
 
     let ctx = default_exec_ctx();
-    let mut cctx = context::default_exec_ctx();
+    let mut cctx = default_exec_ctx();
     let stats = &mut stats::AnalysisStats::default();
     let entry = make_entry_state(&ctx);
 

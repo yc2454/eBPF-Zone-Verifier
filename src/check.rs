@@ -1,6 +1,6 @@
 use crate::ast::Program;
 use crate::dbm::Dbm;
-use crate::exec::ExecContext;
+use crate::analysis::context::ExecContext;
 use crate::kernel_semantics;
 use crate::domain::{Reg, REG_ENV};
 use crate::utils::clamp_upper_bound;

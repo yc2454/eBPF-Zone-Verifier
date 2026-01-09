@@ -3,7 +3,7 @@ use crate::ast::MemSize;
 
 /// Determines if a packet load is safe based on networking heuristics
 /// (e.g. allowing access to IP headers if Ethernet is verified).
-pub fn is_safe_packet_read(off: i16, size: MemSize, verified_range: u64) -> bool {
+pub fn _is_safe_packet_read(off: i16, size: MemSize, verified_range: u64) -> bool {
     let access_size = match size { 
         MemSize::U8 => 1, 
         MemSize::U16 => 2, 

@@ -1,6 +1,5 @@
 // src/analysis/context.rs
-use crate::domain::{Reg, REG_ENV, BpfMapDef};
-use crate::dbm::Dbm;
+use crate::domain::{Reg, BpfMapDef};
 use std::collections::HashMap;
 use crate::btf::BtfContext;
 
@@ -13,16 +12,6 @@ pub struct ExecContext {
     pub map_defs: Vec<BpfMapDef>,
     pub pc_to_map_idx: HashMap<usize, usize>,
     pub btf: BtfContext,
-}
-
-/// Helper: Is v provably in [0, 0xffffffff]?
-pub fn proven_u32_range(dbm: &Dbm, v: Reg, zero: Reg) -> bool {
-    let vi = REG_ENV.index(v);
-    let zi = REG_ENV.index(zero);
-    let ub = dbm.raw(vi, zi);
-    let lb = dbm.raw(zi, vi);
-    // 0 <= v <= u32::MAX
-    ub <= 0xffff_ffff && lb <= 0
 }
 
 pub fn default_exec_ctx() -> ExecContext {
