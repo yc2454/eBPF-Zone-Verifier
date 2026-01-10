@@ -3,19 +3,18 @@ use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;
 use crate::analysis::reg_types::RegType;
 use crate::ast::MemSize;
-use crate::stats::AnalysisStats;
 use crate::domain::get_bounds;
 use crate::analysis::heuristics;
+use crate::analysis::env::VerificationError;
 
 /// Validates memory load safety.
 /// Does NOT update the state (types/dbm); that happens in transfer.rs.
 pub fn check_load(
-    env: &VerifierEnv,
+    env: &mut VerifierEnv,
     state: &State,
     base: crate::domain::Reg,
     size: MemSize,
     off: i16,
-    stats: &mut AnalysisStats,
 ) {
     use RegType::*;
     let ctx = env.ctx;
@@ -40,7 +39,7 @@ pub fn check_load(
 
             if !stack_ok {
                 println!("Unsafe stack load at pc {}: base {:?}+{}", pc, base, off);
-                stats.mark_unsafe_load();
+                env.fail(VerificationError::UnsafeStackLoad { pc, off, size });
             }
         }
         PtrToPacket { id: _, range } => {
@@ -68,7 +67,7 @@ pub fn check_load(
             
             if !safe {
                 println!("Unsafe packet load at pc {}: base {:?}+{} (range={})", pc, base, off, range);
-                stats.mark_unsafe_load();
+                env.fail(VerificationError::UnsafePacketLoad { pc, off, size, range });
             }
         }
         PtrToCtx => {
@@ -89,7 +88,11 @@ pub fn check_load(
                     // BTF checks for pointers happen in transfer.rs to update types.
                 } else {
                     println!("Unsafe map load at pc {}: off {} limit {}", pc, final_offset, map_limit);
-                    stats.mark_unsafe_load();
+                    env.fail(VerificationError::UnsafeMapLoad { pc, 
+                        off: final_offset, 
+                        size,
+                        limit: map_limit
+                     } );
                 }
             } 
             // Case B: Unknown/Variable Offset
@@ -107,7 +110,11 @@ pub fn check_load(
 
             if !(final_offset >= 0 && access_end <= map_limit) {
                 println!("Unsafe nullable map load at pc {}: off {} limit {}", pc, final_offset, map_limit);
-                stats.mark_unsafe_load();
+                env.fail(VerificationError::UnsafeMapLoad { pc, 
+                    off: final_offset, 
+                    size,
+                    limit: map_limit
+                 } );
             }
         }
         PtrToMem { region: _ } => {
@@ -116,24 +123,23 @@ pub fn check_load(
         ScalarValue | NotInit => {
             if !heuristics::is_safe_scalar_load(base, off) {
                 println!("Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})", pc, base, off, base_type);
-                stats.mark_unsafe_load();
+                env.fail(VerificationError::UnsafeGenericLoad { pc, base, off });
             }
         }
         _ => {
             println!("Non-stack, non-ctx load at pc {} from base {:?}+{}", pc, base, off);
-            stats.mark_unsafe_load();
+            env.fail(VerificationError::UnsafeGenericLoad { pc, base, off });
         }
     }
 }
 
 /// Validates memory store safety.
 pub fn check_store(
-    env: &VerifierEnv,
+    env: &mut VerifierEnv,
     state: &State,
     base: crate::domain::Reg,
     size: MemSize,
     off: i16,
-    stats: &mut AnalysisStats,
 ) {
     let ctx = env.ctx;
     let base_ty = state.types.get(base);
@@ -147,8 +153,11 @@ pub fn check_store(
              let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) { def.value_size as i64 } else { 4096 };
              if !(final_offset >= 0 && access_end <= map_limit) {
                  println!("Unsafe map store at pc {}: off {} limit {}", pc, final_offset, map_limit);
-                 stats.mark_unsafe_store();
-                 stats.abort = true;
+                 env.fail(VerificationError::UnsafeMapStore { pc, 
+                    off: final_offset, 
+                    size,
+                    limit: map_limit
+                 } );
              }
         }
         RegType::PtrToStack => {
@@ -161,8 +170,7 @@ pub fn check_store(
             };
             if !is_stack_store {
                 println!("Unsafe stack store at pc {}: {:?} to base {:?}+{}", pc, size, base, off);
-                stats.mark_unsafe_store();
-                stats.abort = true;
+                env.fail(VerificationError::UnsafeStackStore { pc, off, size });
             }
         }
         RegType::PtrToPacket { id: _, range } => {
@@ -188,8 +196,7 @@ pub fn check_store(
 
             if !safe {
                 println!("Unsafe packet store at pc {}: base {:?}+{} (range={})", pc, base, off, range);
-                stats.mark_unsafe_store();
-                stats.abort = true;
+                env.fail(VerificationError::UnsafePacketStore { pc, off, size });
             }
         }
         RegType::PtrToCtx | RegType::PtrToMem { .. } => {
@@ -202,15 +209,17 @@ pub fn check_store(
                  def.value_size as i64
              } else { 4096 };
              if !(final_offset >= 0 && access_end <= map_limit) {
-                 println!("Unsafe nullable map store at pc {}", pc);
-                 stats.mark_unsafe_store();
-                 stats.abort = true;
+                println!("Unsafe nullable map store at pc {}", pc);
+                    env.fail(VerificationError::UnsafeMapStore { pc, 
+                    off: final_offset, 
+                    size,
+                    limit: map_limit
+                } );
              }
         }
         _ => {
             println!("Unsafe store at pc {}: base {:?}+{} has non-pointer type {:?}", pc, base, off, base_ty);
-            stats.mark_unsafe_store();
-            stats.abort = true;
+            env.fail(VerificationError::UnsafeGenericStore { pc, base, off });
         }
     }
 }

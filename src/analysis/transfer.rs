@@ -3,18 +3,22 @@ use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;
 use crate::analysis::reg_types::{RegType, TypeState, new_packet_id};
 use crate::ast::{Instr, AluOp, CmpOp, Operand, Width, EndianKind, MemSize};
-use crate::domain::{Reg, forget, get_bounds, assign_add_imm, assign_add_reg, assign_eq, assume_eq_const, assume_ge_const, assume_le_const, assume_less_than, assume_ge_var, assume_le_var, assume_gt_var, assume_le_var_plus_const, assign_zero, assign_mul_imm, assign_and_mask};
-use crate::stats::AnalysisStats;
+use crate::domain::{Reg, forget, get_bounds, 
+    assign_add_imm, assign_add_reg, assign_eq, 
+    assume_eq_const, assume_ge_const, assume_le_const, 
+    assume_less_than, assume_ge_var, assume_le_var, 
+    assume_gt_var, assume_le_var_plus_const, 
+    assign_zero, assign_mul_imm, assign_and_mask};
 use crate::analysis::access;
 use crate::domain::proven_u32_range;
 use crate::ctx_model::{classify_tc_ctx_field, CtxFieldKind};
+use crate::analysis::env::VerificationError;
 use crate::dbm::Dbm;
 
 pub fn transfer(
     env: &mut VerifierEnv,
     mut state: State,
     instr: &Instr,
-    stats: &mut AnalysisStats,
 ) -> Vec<State> {
     
     // 1. Mark as Seen
@@ -24,18 +28,18 @@ pub fn transfer(
 
     match instr {
         Instr::MovArg0 { dst } => transfer_mov_arg0(state, *dst),
-        Instr::Alu { width, op, dst, src } => transfer_alu(env, state, *width, *op, *dst, src.clone(), stats),
+        Instr::Alu { width, op, dst, src } => transfer_alu(env, state, *width, *op, *dst, src.clone()),
         Instr::Endian { dst, kind } => transfer_endian(env, state, *dst, *kind),
         Instr::If { width, left, op, right, target } => transfer_if(env, state, *width, *left, *op, right.clone(), *target),
         Instr::Load { size, dst, base, off } => {
-            access::check_load(env, &state, *base, *size, *off, stats);
+            access::check_load(env, &state, *base, *size, *off);
             update_load_types(&mut state.types, *size, *dst, *base, *off);
             forget(&mut state.dbm, *dst);
             state.pc += 1;
             vec![state]
         },
         Instr::Store { size, base, off, src } => {
-            access::check_store(env, &state, *base, *size, *off, stats);
+            access::check_store(env, &state, *base, *size, *off);
             let src_type = state.types.get(*src);
             update_store_types(&mut state.types, src_type, *size, *base, *off);
             state.pc += 1;
@@ -58,13 +62,12 @@ fn transfer_mov_arg0(mut state: State, dst: Reg) -> Vec<State> {
 }
 
 fn transfer_alu(
-    env: &VerifierEnv,
+    env: &mut VerifierEnv,
     mut state: State,
     width: Width,
     op: AluOp,
     dst: Reg,
     src: Operand,
-    stats: &mut AnalysisStats,
 ) -> Vec<State> {
     let ctx = env.ctx;
     // Clone input types for logic that needs original values
@@ -165,7 +168,8 @@ fn transfer_alu(
     }
 
     if state.dbm.is_inconsistent() {
-        stats.mark_dbm_inconsistent();
+        env.fail(VerificationError::DbmInconsistent { pc: state.pc });
+        println!("[Verifier] DBM became inconsistent at pc {}", state.pc);
         vec![]
     } else {
         state.pc += 1;
@@ -308,8 +312,8 @@ fn transfer_if(
     }
 
     // 4. Branch Type Refinement
-    refine_branch(&mut state_then.types, &state_then.dbm, &Instr::If { width, left, op, right: right.clone(), target });
-    refine_branch(&mut state_else.types, &state_else.dbm, &Instr::If { width, left, op, right: right.clone(), target });
+    refine_branch(&mut state_then.types, &state_then.dbm, &Instr::If { width, left, op, right: right.clone(), target }, true);
+    refine_branch(&mut state_else.types, &state_else.dbm, &Instr::If { width, left, op, right: right.clone(), target }, false);
 
     if !state_else.dbm.is_inconsistent() { out.push(state_else); }
     if !state_then.dbm.is_inconsistent() { out.push(state_then); }
@@ -490,10 +494,27 @@ fn refine_packet_ranges(dbm: &Dbm, types: &mut TypeState, packet_reg: Reg, end_r
     }
 }
 
-fn refine_branch(types: &mut TypeState, _dbm: &Dbm, instr: &Instr) {
+fn refine_branch(
+    types: &mut TypeState, 
+    _dbm: &Dbm, 
+    instr: &Instr, 
+    branch_taken: bool // True if we are analyzing the branch-taken path, False if fallthrough
+) {
     match instr {
-        Instr::If { op: CmpOp::Ne, left, right: Operand::Imm(0), .. } => {
-            maybe_promote_map_val(types, *left);
+        Instr::If { op, left, right: Operand::Imm(0), .. } => {
+            match op {
+                CmpOp::Ne => {
+                    // if (reg != 0) goto Target;
+                    // Taken (True) -> reg != 0 -> SAFE
+                    if branch_taken { maybe_promote_map_val(types, *left); }
+                },
+                CmpOp::Eq => {
+                    // if (reg == 0) goto Target;
+                    // Fallthrough (False) -> reg != 0 -> SAFE
+                    if !branch_taken { maybe_promote_map_val(types, *left); }
+                },
+                _ => {}
+            }
         },
         _ => {}
     }

@@ -1,30 +1,43 @@
 // src/analysis/env.rs
-use crate::ast::Program;
+use crate::ast::{Program, MemSize};
 use crate::analysis::state::State;
 use crate::analysis::context::ExecContext;
 use std::collections::{HashMap, HashSet};
 use crate::domain::Reg;
 
-/// Mirrors `struct bpf_insn_aux_data`.
-#[derive(Clone, Default, Debug)]
-pub struct InsnAuxData {
-    pub prune_point: bool,        // Should we check history here?
-    pub seen: bool,               // Has analysis reached this instruction?
-    pub live_regs: HashSet<Reg>,  // Which registers are live here?
+#[derive(Clone, Debug)]
+pub enum VerificationError {
+    UnsafeStackLoad { pc: usize, off: i16, size: MemSize },
+    UnsafeStackStore { pc: usize, off: i16, size: MemSize },
+    UnsafePacketLoad { pc: usize, off: i16, size: MemSize, range: u64 },
+    UnsafePacketStore { pc: usize, off: i16, size: MemSize },
+    UnsafeMapLoad { pc: usize, off: i64, size: MemSize, limit: i64 },
+    UnsafeMapStore { pc: usize, off: i64, size: MemSize, limit: i64 },
+    UnsafeGenericLoad { pc: usize, base: Reg, off: i16 },
+    UnsafeGenericStore { pc: usize, base: Reg, off: i16 },
+    DbmInconsistent { pc: usize },
+    ComplexityLimitExceeded { limit: usize },
+    CfgError(String),
 }
 
-/// The God Object.
-/// Holds the Immutable Config (ctx) + Mutable Verification History.
+#[derive(Clone, Default, Debug)]
+pub struct InsnAuxData {
+    pub prune_point: bool,
+    pub seen: bool,
+    pub live_regs: HashSet<Reg>,
+}
+
 pub struct VerifierEnv<'a> {
-    // --- Static Context ---
-    /// Access to Maps, BTF, R10/Zero constants, etc.
     pub ctx: &'a ExecContext, 
     pub prog: &'a Program,
-
-    // --- Dynamic Verification State ---
-    pub insn_processed: usize,
     pub explored_states: HashMap<usize, Vec<State>>,
     pub insn_aux_data: Vec<InsnAuxData>,
+
+    // --- Dynamic State ---
+    pub insn_processed: usize,
+    /// Holds the FIRST critical failure encountered. 
+    /// If this is Some, the analysis should halt immediately.
+    pub error: Option<VerificationError>, 
 }
 
 impl<'a> VerifierEnv<'a> {
@@ -32,9 +45,21 @@ impl<'a> VerifierEnv<'a> {
         VerifierEnv {
             ctx,
             prog,
-            insn_processed: 0,
             explored_states: HashMap::new(),
             insn_aux_data: vec![InsnAuxData::default(); prog.instrs.len()],
+            insn_processed: 0,
+            error: None,
         }
+    }
+
+    /// Report a failure. Only the first failure is recorded.
+    pub fn fail(&mut self, err: VerificationError) {
+        if self.error.is_none() {
+            self.error = Some(err);
+        }
+    }
+
+    pub fn failed(&self) -> bool {
+        self.error.is_some()
     }
 }

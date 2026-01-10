@@ -82,7 +82,6 @@ fn main() {
 
     let ctx = default_exec_ctx();
     let mut cctx = default_exec_ctx();
-    let stats = &mut stats::AnalysisStats::default();
     let entry = make_entry_state(&ctx);
 
     match cmd.as_str() {
@@ -91,7 +90,7 @@ fn main() {
             let name = &args[2];
             let prog = get_program(name);
             println!("=== Analyzing program: {} ===", name);
-            let _cert = analyze_program(&ctx, &prog, entry, stats);
+            let _cert = analyze_program(&ctx, &prog, entry);
         }
 
         "check" => {
@@ -99,7 +98,7 @@ fn main() {
             let prog = get_program(name);
 
             println!("=== Analyzing program: {} ===", name);
-            let cert = analyze_program(&ctx, &prog, entry, stats);
+            let cert = analyze_program(&ctx, &prog, entry);
 
             println!("\n=== Kernel-sim checking: {} ===", name);
             match check::check_certificate_against_kernel_sim(&ctx, &prog, &cert) {
@@ -157,7 +156,7 @@ fn main() {
             // }
             // println!("Loop check passed (DAG confirmed).");
 
-            let _cert = analysis::analyze_program(&cctx, &prog, entry, stats);
+            let _cert = analysis::analyze_program(&cctx, &prog, entry);
 
             println!("=== Analysis complete ===");
         }
@@ -173,7 +172,7 @@ fn main() {
             println!("=== ELF check: file='{}', section='{}' ===", path, section);
             let prog = load_program_from_elf(path, section);
 
-            let cert = analyze_program(&ctx, &prog, entry, stats);
+            let cert = analyze_program(&ctx, &prog, entry);
 
             println!("\n=== Kernel-sim checking (ELF): file='{}', section='{}' ===", path, section);
             match check::check_certificate_against_kernel_sim(&ctx, &prog, &cert) {
