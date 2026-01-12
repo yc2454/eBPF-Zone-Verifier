@@ -20,6 +20,46 @@ pub enum VerificationError {
     CfgError(String),
 }
 
+impl VerificationError {
+    pub fn description(&self) -> String {
+        match self {
+            VerificationError::UnsafeStackLoad { pc, off, size } => {
+                format!("Unsafe stack load at pc {}: offset {}, size {:?}", pc, off, size)
+            }
+            VerificationError::UnsafeStackStore { pc, off, size } => {
+                format!("Unsafe stack store at pc {}: offset {}, size {:?}", pc, off, size)
+            }
+            VerificationError::UnsafePacketLoad { pc, off, size, range } => {
+                format!("Unsafe packet load at pc {}: offset {}, size {:?}, range {}", pc, off, size, range)
+            }
+            VerificationError::UnsafePacketStore { pc, off, size } => {
+                format!("Unsafe packet store at pc {}: offset {}, size {:?}", pc, off, size)
+            }
+            VerificationError::UnsafeMapLoad { pc, off, size, limit } => {
+                format!("Unsafe map load at pc {}: offset {}, size {:?}, limit {}", pc, off, size, limit)
+            }
+            VerificationError::UnsafeMapStore { pc, off, size, limit } => {
+                format!("Unsafe map store at pc {}: offset {}, size {:?}, limit {}", pc, off, size, limit)
+            }
+            VerificationError::UnsafeGenericLoad { pc, base, off } => {
+                format!("Unsafe generic load at pc {}: base {:?}, offset {}", pc, base, off)
+            }
+            VerificationError::UnsafeGenericStore { pc, base, off } => {
+                format!("Unsafe generic store at pc {}: base {:?}, offset {}", pc, base, off)
+            }
+            VerificationError::DbmInconsistent { pc } => {
+                format!("DBM inconsistent at pc {}", pc)
+            }
+            VerificationError::ComplexityLimitExceeded { limit } => {
+                format!("Complexity limit of {} exceeded", limit)
+            }
+            VerificationError::CfgError(msg) => {
+                format!("CFG error: {}", msg)
+            }
+        }
+    }
+}
+
 #[derive(Clone, Default, Debug)]
 pub struct InsnAuxData {
     pub prune_point: bool,

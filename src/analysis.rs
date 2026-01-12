@@ -48,6 +48,7 @@ pub fn analyze_program(
 
     if let Err(e) = cfg::check_cfg(prog, &mut env) {
         println!("[Analysis] CFG Error: {}", e);
+        env.fail(env::VerificationError::CfgError(e));
         return vec![];
     }
 
@@ -87,6 +88,7 @@ pub fn analyze_program(
 
         // C. Pruning Check
         if pruning::is_state_visited(&mut env, &state) {
+            println!("[Verifier] Pruned state at PC {} (already visited).", state.pc);
             continue;
         }
 
@@ -116,7 +118,7 @@ pub fn analyze_program(
 
         // G. Critical Failure Check
         if env.failed() {
-            println!("[Verifier] Analysis halted due to critical error: {:?}", env.error);
+            println!("[Verifier] Analysis halted due to critical error: {}", env.error.as_ref().unwrap().description());
             break;
         }
 

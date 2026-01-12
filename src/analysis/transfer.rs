@@ -458,8 +458,23 @@ fn update_call_types(in_types: &TypeState, types: &mut TypeState, helper: u32) {
     }
 }
 
-// --- Refinement Logic ---
+// --- Type Refinement Logic ---
 
+/// Refines the safe access range of packet pointers based on numerical constraints.
+///
+/// This function bridges the Numerical Domain (DBM) and the Type System. It queries
+/// the DBM to determine the distance between a packet pointer and the packet end register.
+/// If the DBM proves that `pointer <= end - K`, then `K` bytes are safe to access.
+///
+/// This function handles aliasing: if multiple registers or stack slots point to the
+/// same packet ID, they are all updated with the newly discovered safe range.
+///
+/// # Arguments
+///
+/// * `dbm` - The Difference Bound Matrix containing numerical constraints (e.g., `r1 < r2`).
+/// * `types` - The mutable type state to update with new ranges.
+/// * `packet_reg` - The register holding the packet pointer being compared.
+/// * `end_reg` - The register holding the pointer to the end of the packet (`PtrToPacketEnd`).
 fn refine_packet_ranges(dbm: &Dbm, types: &mut TypeState, packet_reg: Reg, end_reg: Reg) {
     let target_id = match types.get(packet_reg) {
         RegType::PtrToPacket { id, .. } => id,
@@ -494,6 +509,24 @@ fn refine_packet_ranges(dbm: &Dbm, types: &mut TypeState, packet_reg: Reg, end_r
     }
 }
 
+/// Refines register types based on the outcome of a conditional branch.
+///
+/// This function analyzes the branch condition to promote types from "Unsafe" or "Nullable"
+/// to "Safe". Specifically, it handles NULL checks for map values.
+///
+/// For example, given `if r0 != 0 goto Label`:
+/// * In the **Taken** path (`branch_taken = true`), `r0` is known to be non-zero, so it is promoted to a safe pointer.
+/// * In the **Fallthrough** path, `r0` is zero (NULL).
+///
+/// Conversely, given `if r0 == 0 goto Label`:
+/// * In the **Fallthrough** path (`branch_taken = false`), `r0` is known to be non-zero.
+///
+/// # Arguments
+///
+/// * `types` - The mutable type state to update.
+/// * `_dbm` - The DBM (currently unused, reserved for future range-based refinements).
+/// * `instr` - The `If` instruction causing the branch.
+/// * `branch_taken` - `true` if analyzing the path where the jump occurs; `false` if analyzing the fallthrough.
 fn refine_branch(
     types: &mut TypeState, 
     _dbm: &Dbm, 
@@ -520,6 +553,20 @@ fn refine_branch(
     }
 }
 
+/// Promotes a Nullable Map Pointer to a Safe Map Pointer.
+///
+/// This helper function is called when a register is proven to be non-zero (non-NULL).
+/// It transitions a register from `RegType::PtrToMapValueOrNull` to `RegType::PtrToMapValue`.
+///
+/// # Aliasing
+/// This function scans **all** registers and **all** stack slots. Any location holding
+/// a pointer with the same unique ID as `reg` is also promoted. This ensures that verifying
+/// one alias (e.g., `if r1 != 0`) validates all copies of that pointer (e.g., `r2 = r1`).
+///
+/// # Arguments
+///
+/// * `types` - The mutable type state to update.
+/// * `reg` - The register that was validated as non-null.
 fn maybe_promote_map_val(types: &mut TypeState, reg: Reg) {
     let (target_id, _target_map_idx) = match types.get(reg) {
         RegType::PtrToMapValueOrNull { id, map_idx } => (id, map_idx),
