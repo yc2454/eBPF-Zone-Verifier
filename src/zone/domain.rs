@@ -1,7 +1,5 @@
 // src/domain.rs
 use crate::zone::dbm::{INF, Dbm};
-use crate::parsing::ctx_model::MemRegionId;
-use std::collections::BTreeMap;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Reg {
@@ -76,17 +74,6 @@ impl Reg {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct BpfMapDef {
-    pub type_: u32,
-    pub key_size: u32,
-    pub value_size: u32,
-    pub max_entries: u32,
-    pub map_flags: u32,
-    pub name: String, 
-    pub btf_val_type_id: Option<u32>,
-}
-
 pub fn reg_to_index(r: Reg) -> Option<usize> {
     match r {
         Reg::R0  => Some(0),
@@ -104,12 +91,6 @@ pub fn reg_to_index(r: Reg) -> Option<usize> {
     }
 }
 
-pub fn new_packet_id() -> u32 {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    static PACKET_ID_COUNTER: AtomicU32 = AtomicU32::new(1); // start from 1
-    PACKET_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
-}
-
 /// Simple wrapper so you can pass around an env if you want to extend later.
 #[derive(Debug)]
 pub struct RegEnv;
@@ -117,10 +98,6 @@ pub struct RegEnv;
 impl RegEnv {
     pub fn len(&self) -> usize {
         Reg::ALL.len()
-    }
-
-    pub fn name(&self, v: Reg) -> &'static str {
-        v.name()
     }
 
     pub fn all(&self) -> &'static [Reg] {
@@ -131,9 +108,6 @@ impl RegEnv {
         v.idx()
     }
 
-    pub fn var_of_index(&self, idx: usize) -> Reg {
-        self.all()[idx]
-    }
 }
 
 /// Global env you can use anywhere without initializing in `main`.

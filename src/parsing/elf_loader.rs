@@ -4,7 +4,16 @@ use std::path::Path;
 use goblin::elf::Elf;
 use std::collections::HashMap;
 use crate::parsing::btf; // Import the new module
-use crate::zone::domain::BpfMapDef;
+#[derive(Clone, Debug)]
+pub struct BpfMapDef {
+    pub type_: u32,
+    pub key_size: u32,
+    pub value_size: u32,
+    pub max_entries: u32,
+    pub map_flags: u32,
+    pub name: String, 
+    pub btf_val_type_id: Option<u32>,
+}
 
 pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>, ElfLoadError> {
     let buf = fs::read(&path)?;
