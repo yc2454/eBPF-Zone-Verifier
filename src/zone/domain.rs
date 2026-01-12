@@ -1,7 +1,6 @@
 // src/domain.rs
-use crate::Dbm;
-use crate::dbm::INF;
-use crate::ctx_model::MemRegionId;
+use crate::zone::dbm::{INF, Dbm};
+use crate::parsing::ctx_model::MemRegionId;
 use std::collections::BTreeMap;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]

@@ -3,8 +3,8 @@ use std::path::Path;
 
 use goblin::elf::Elf;
 use std::collections::HashMap;
-use crate::btf; // Import the new module
-use crate::domain::BpfMapDef;
+use crate::parsing::btf; // Import the new module
+use crate::zone::domain::BpfMapDef;
 
 pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>, ElfLoadError> {
     let buf = fs::read(&path)?;

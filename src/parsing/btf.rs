@@ -1,7 +1,7 @@
 // src/btf.rs
 use std::collections::HashMap;
 use std::convert::TryInto;
-use crate::domain::BpfMapDef;
+use crate::zone::domain::BpfMapDef;
 
 const BTF_MAGIC: u16 = 0xeB9F;
 

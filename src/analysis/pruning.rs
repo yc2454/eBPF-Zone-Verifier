@@ -2,7 +2,7 @@
 use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;
 use crate::analysis::reg_types::RegType;
-use crate::domain::Reg;
+use crate::zone::domain::Reg;
 
 /// Returns TRUE if the current state is covered by a previously explored state.
 /// If TRUE, we can safely prune (stop analyzing this path).
@@ -114,8 +114,8 @@ fn stack_safe(old: &State, cur: &State) -> bool {
 
 /// Checks if `cur_dbm` is a subset of `old_dbm` for live registers.
 fn dbm_safe(
-    old_dbm: &crate::dbm::Dbm, 
-    cur_dbm: &crate::dbm::Dbm, 
+    old_dbm: &crate::zone::dbm::Dbm, 
+    cur_dbm: &crate::zone::dbm::Dbm, 
     live_regs: &std::collections::HashSet<Reg>
 ) -> bool {
     // 1. Identify relevant DBM indices (Zero + Live Regs)

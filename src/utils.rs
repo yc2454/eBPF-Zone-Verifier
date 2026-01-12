@@ -1,9 +1,8 @@
-use crate::dbm::{Dbm, INF};
-use crate::bpf_to_ast;
-use crate::bpf_insn;
-use crate::ast::Program;
+use crate::zone::dbm::{Dbm, INF};
+use crate::parsing::bpf_to_ast;
+use crate::parsing::bpf_insn;
+use crate::ast::{Program, ProgramKind};
 use crate::elf_loader;
-use crate::ast::ProgramKind;
 
 // Bounds for finite constraints inside the DBM.
 // We never store anything > POS_BOUND or < NEG_BOUND.

@@ -1,5 +1,5 @@
 // src/analysis/context.rs
-use crate::domain::{Reg, BpfMapDef};
+use crate::zone::domain::{Reg, BpfMapDef};
 use std::collections::HashMap;
 use crate::btf::BtfContext;
 

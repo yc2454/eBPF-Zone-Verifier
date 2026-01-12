@@ -1,8 +1,8 @@
 // src/kernel_semantics.rs
 
 use crate::ast::{AluOp, CmpOp, Instr, Operand, Width, EndianKind};
-use crate::dbm::{Dbm, INF};
-use crate::domain::REG_ENV;
+use crate::zone::dbm::{Dbm, INF};
+use crate::zone::domain::REG_ENV;
 use crate::analysis::context::ExecContext;
 use crate::utils::{clamped_add, clamped_add3};
 
@@ -57,7 +57,7 @@ fn forget_var_by_index(dbm: &mut Dbm, x: usize) {
     dbm.set_raw(x, x, 0);
 }
 
-fn proven_u32_range(dbm: &Dbm, v: crate::domain::Reg, zero: crate::domain::Reg) -> bool {
+fn proven_u32_range(dbm: &Dbm, v: crate::zone::domain::Reg, zero: crate::zone::domain::Reg) -> bool {
     // Need: 0 <= v <= 0xffff_ffff
     let vi = REG_ENV.index(v);
     let zi = REG_ENV.index(zero);
@@ -94,7 +94,7 @@ pub fn transfer_one_kernel(
 
 // --- per-instruction helpers ---
 
-fn transfer_mov_arg0(ctx: &ExecContext, pc: usize, dst: crate::domain::Reg, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_mov_arg0(ctx: &ExecContext, pc: usize, dst: crate::zone::domain::Reg, pre: &Dbm) -> Vec<(usize, Dbm)> {
     let mut d = pre.clone();
     let x = REG_ENV.index(dst);
     let _zero_i = REG_ENV.index(ctx.zero);
@@ -109,7 +109,7 @@ fn transfer_alu(
     pc: usize,
     op: AluOp,
     width: Width,
-    dst: crate::domain::Reg,
+    dst: crate::zone::domain::Reg,
     src: Operand,
     pre: &Dbm,
 ) -> Vec<(usize, Dbm)> {
@@ -145,7 +145,7 @@ fn transfer_sub(
     _ctx: &ExecContext,
     pc: usize,
     _width: Width,
-    dst: crate::domain::Reg,
+    dst: crate::zone::domain::Reg,
     src: Operand,
     pre: &Dbm,
 ) -> Vec<(usize, Dbm)> {
@@ -174,7 +174,7 @@ fn transfer_sub(
     }
 }
 
-fn transfer_shr(ctx: &ExecContext, pc: usize, width: Width, dst: crate::domain::Reg, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_shr(ctx: &ExecContext, pc: usize, width: Width, dst: crate::zone::domain::Reg, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
     let mut d = pre.clone();
     let x = REG_ENV.index(dst);
     let z = REG_ENV.index(ctx.zero);
@@ -201,14 +201,14 @@ fn transfer_shr(ctx: &ExecContext, pc: usize, width: Width, dst: crate::domain::
     if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
 }
 
-fn transfer_shl(pc: usize, dst: crate::domain::Reg, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_shl(pc: usize, dst: crate::zone::domain::Reg, pre: &Dbm) -> Vec<(usize, Dbm)> {
     let mut d = pre.clone();
     let x = REG_ENV.index(dst);
     forget_var_by_index(&mut d, x);
     if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
 }
 
-fn transfer_mov(ctx: &ExecContext, pc: usize, width: Width, dst: crate::domain::Reg, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_mov(ctx: &ExecContext, pc: usize, width: Width, dst: crate::zone::domain::Reg, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
     let zero_i = REG_ENV.index(ctx.zero);
     let mut d = pre.clone();
     let x = REG_ENV.index(dst);
@@ -249,7 +249,7 @@ fn transfer_mov(ctx: &ExecContext, pc: usize, width: Width, dst: crate::domain::
     if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
 }
 
-fn transfer_add(ctx: &ExecContext, pc: usize, dst: crate::domain::Reg, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_add(ctx: &ExecContext, pc: usize, dst: crate::zone::domain::Reg, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
     match src {
         Operand::Imm(imm) => transfer_add_imm(pc, dst, imm, pre),
         Operand::Reg(r) => transfer_add_reg_mvp(ctx, pc, dst, r, pre),
@@ -257,7 +257,7 @@ fn transfer_add(ctx: &ExecContext, pc: usize, dst: crate::domain::Reg, src: Oper
 }
 
 fn transfer_or(ctx: &ExecContext, pc: usize, width: Width,
-    dst: crate::domain::Reg, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
+    dst: crate::zone::domain::Reg, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
     let x = REG_ENV.index(dst);
     let z = REG_ENV.index(ctx.zero);
     let mut d = pre.clone();
@@ -288,7 +288,7 @@ fn transfer_or(ctx: &ExecContext, pc: usize, width: Width,
 fn transfer_endian(
     ctx: &ExecContext,
     pc: usize,
-    dst: crate::domain::Reg,
+    dst: crate::zone::domain::Reg,
     kind: EndianKind,
     pre: &Dbm,
 ) -> Vec<(usize, Dbm)> {
@@ -323,7 +323,7 @@ fn transfer_endian(
     }
 }
 
-fn transfer_add_imm(pc: usize, dst: crate::domain::Reg, imm: i64, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_add_imm(pc: usize, dst: crate::zone::domain::Reg, imm: i64, pre: &Dbm) -> Vec<(usize, Dbm)> {
     let mut d = pre.clone();
     let x = REG_ENV.index(dst);
     let n = d.dim();
@@ -341,7 +341,7 @@ fn transfer_add_imm(pc: usize, dst: crate::domain::Reg, imm: i64, pre: &Dbm) -> 
     if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
 }
 
-fn transfer_add_reg_mvp(ctx: &ExecContext, pc: usize, dst: crate::domain::Reg, src: crate::domain::Reg, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_add_reg_mvp(ctx: &ExecContext, pc: usize, dst: crate::zone::domain::Reg, src: crate::zone::domain::Reg, pre: &Dbm) -> Vec<(usize, Dbm)> {
     // MVP rule (same as your current):
     // - if dst is provably constant, keep exact relation: dst := src + c
     // - else: forget dst
@@ -366,7 +366,7 @@ fn transfer_add_reg_mvp(ctx: &ExecContext, pc: usize, dst: crate::domain::Reg, s
 }
 
 fn transfer_and(ctx: &ExecContext, pc: usize, width: Width,
-    dst: crate::domain::Reg, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
+    dst: crate::zone::domain::Reg, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
     // We only model AND with immediate masks for now.
     let zero_i = REG_ENV.index(ctx.zero);
     let mut d = pre.clone();
@@ -385,7 +385,7 @@ fn transfer_and(ctx: &ExecContext, pc: usize, width: Width,
     if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
 }
 
-fn transfer_forget_dst(pc: usize, dst: crate::domain::Reg, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_forget_dst(pc: usize, dst: crate::zone::domain::Reg, pre: &Dbm) -> Vec<(usize, Dbm)> {
     let mut d = pre.clone();
     let x = REG_ENV.index(dst);
     forget_var_by_index(&mut d, x);
@@ -396,7 +396,7 @@ fn transfer_if(
     ctx: &ExecContext,
     pc: usize,
     width: Width,
-    left: crate::domain::Reg,
+    left: crate::zone::domain::Reg,
     op: CmpOp,
     right: Operand,
     target: usize,
@@ -589,12 +589,12 @@ fn transfer_call(pc: usize, _helper: u32, pre: &Dbm) -> Vec<(usize, Dbm)> {
 
     // Same MVP ABI model as userspace:
     // clobber r0..r5, preserve r6..r10.
-    for v in [crate::domain::Reg::R0,
-              crate::domain::Reg::R1,
-              crate::domain::Reg::R2,
-              crate::domain::Reg::R3,
-              crate::domain::Reg::R4,
-              crate::domain::Reg::R5] {
+    for v in [crate::zone::domain::Reg::R0,
+              crate::zone::domain::Reg::R1,
+              crate::zone::domain::Reg::R2,
+              crate::zone::domain::Reg::R3,
+              crate::zone::domain::Reg::R4,
+              crate::zone::domain::Reg::R5] {
         let idx = REG_ENV.index(v);
         forget_var_by_index(&mut d, idx);
     }
@@ -602,7 +602,7 @@ fn transfer_call(pc: usize, _helper: u32, pre: &Dbm) -> Vec<(usize, Dbm)> {
     if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
 }
 
-fn transfer_load(pc: usize, dst: crate::domain::Reg, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_load(pc: usize, dst: crate::zone::domain::Reg, pre: &Dbm) -> Vec<(usize, Dbm)> {
     // Local transfer does not check memory safety.
     // Effect on registers: dst becomes unknown.
     let mut d = pre.clone();

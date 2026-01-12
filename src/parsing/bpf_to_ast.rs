@@ -1,7 +1,7 @@
 // src/bpf_to_ast.rs
 use crate::ast::{AluOp, CmpOp, Instr, Operand, Program, Width, MemSize, EndianKind, ProgramKind};
-use crate::bpf_insn::RawBpfInsn;
-use crate::domain::Reg;
+use crate::parsing::bpf_insn::RawBpfInsn;
+use crate::zone::domain::Reg;
 
 #[derive(Debug)]
 pub struct LowerError {

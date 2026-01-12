@@ -1,5 +1,5 @@
 // src/analysis/state.rs
-use crate::dbm::Dbm;
+use crate::zone::dbm::Dbm;
 use crate::analysis::reg_types::TypeState;
 
 /// Mirrors `struct bpf_verifier_state` (partially).

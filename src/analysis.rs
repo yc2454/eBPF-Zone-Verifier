@@ -10,11 +10,12 @@ pub mod env;
 pub mod liveness;
 pub mod cfg;
 pub mod pruning;
+pub mod loop_check;
 
 use std::collections::VecDeque;
 use crate::ast::Program;
-use crate::dbm::Dbm;
-use crate::domain::{REG_ENV, Reg};
+use crate::zone::dbm::Dbm;
+use crate::zone::domain::{REG_ENV, Reg};
 
 use self::context::ExecContext;
 use self::env::VerifierEnv;

@@ -3,7 +3,7 @@ use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;
 use crate::analysis::reg_types::RegType;
 use crate::ast::MemSize;
-use crate::domain::get_bounds;
+use crate::zone::domain::get_bounds;
 use crate::analysis::heuristics;
 use crate::analysis::env::VerificationError;
 
@@ -12,7 +12,7 @@ use crate::analysis::env::VerificationError;
 pub fn check_load(
     env: &mut VerifierEnv,
     state: &State,
-    base: crate::domain::Reg,
+    base: crate::zone::domain::Reg,
     size: MemSize,
     off: i16,
 ) {
@@ -57,7 +57,7 @@ pub fn check_load(
             }
             // 3. DBM Fallback
             else {
-                let end_reg_opt = crate::domain::REG_ENV.all().iter().find(|&&r| matches!(state.types.get(r), RegType::PtrToPacketEnd));
+                let end_reg_opt = crate::zone::domain::REG_ENV.all().iter().find(|&&r| matches!(state.types.get(r), RegType::PtrToPacketEnd));
                 if let Some(end_reg) = end_reg_opt {
                     let bound = -access_end;
                     let (_, ub) = get_bounds(&state.dbm, base, *end_reg);
@@ -137,7 +137,7 @@ pub fn check_load(
 pub fn check_store(
     env: &mut VerifierEnv,
     state: &State,
-    base: crate::domain::Reg,
+    base: crate::zone::domain::Reg,
     size: MemSize,
     off: i16,
 ) {
@@ -186,7 +186,7 @@ pub fn check_store(
             }
             // 3. DBM Fallback
             else {
-                let end_reg_opt = crate::domain::REG_ENV.all().iter().find(|&&r| matches!(state.types.get(r), RegType::PtrToPacketEnd));
+                let end_reg_opt = crate::zone::domain::REG_ENV.all().iter().find(|&&r| matches!(state.types.get(r), RegType::PtrToPacketEnd));
                 if let Some(end_reg) = end_reg_opt {
                     let bound = -access_end;
                     let (_, ub) = get_bounds(&state.dbm, base, *end_reg);

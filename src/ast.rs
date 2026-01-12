@@ -1,7 +1,7 @@
 // src/ast.rs
 use std::fmt;
 
-use crate::domain::Reg;
+use crate::zone::domain::Reg;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Operand {
     Reg(Reg),

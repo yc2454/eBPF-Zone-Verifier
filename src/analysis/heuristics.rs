@@ -33,7 +33,7 @@ pub fn _is_safe_packet_read(off: i16, size: MemSize, verified_range: u64) -> boo
 
 /// Determines if a scalar load (blind load) is safe based on heuristics.
 /// Used when the analyzer loses track of a pointer type.
-pub fn is_safe_scalar_load(base_reg: crate::domain::Reg, off: i16) -> bool {
+pub fn is_safe_scalar_load(base_reg: crate::zone::domain::Reg, off: i16) -> bool {
     // Blind load heuristic for when pointer type is lost (Scalar).
     // Real BPF code rarely loads from small Scalar offsets unless it's a valid pointer.
     if off >= 0 && off < 256 {

@@ -1,7 +1,7 @@
 // src/programs.rs
 
 use crate::ast::{AluOp, CmpOp, Instr, MemSize, Operand, Program, Width};
-use crate::domain::Reg;
+use crate::zone::domain::Reg;
 
 pub struct NamedProgram {
     pub name: &'static str,

@@ -1,6 +1,6 @@
 // src/analysis/liveness.rs
 use crate::ast::{Program, Instr, Operand};
-use crate::domain::Reg;
+use crate::zone::domain::Reg;
 use crate::analysis::env::VerifierEnv;
 use std::collections::{HashSet};
 

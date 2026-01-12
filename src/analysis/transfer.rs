@@ -3,17 +3,17 @@ use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;
 use crate::analysis::reg_types::{RegType, TypeState, new_packet_id};
 use crate::ast::{Instr, AluOp, CmpOp, Operand, Width, EndianKind, MemSize};
-use crate::domain::{Reg, forget, get_bounds, 
+use crate::zone::domain::{Reg, forget, get_bounds, 
     assign_add_imm, assign_add_reg, assign_eq, 
     assume_eq_const, assume_ge_const, assume_le_const, 
     assume_less_than, assume_ge_var, assume_le_var, 
     assume_gt_var, assume_le_var_plus_const, 
     assign_zero, assign_mul_imm, assign_and_mask};
 use crate::analysis::access;
-use crate::domain::proven_u32_range;
-use crate::ctx_model::{classify_tc_ctx_field, CtxFieldKind};
+use crate::zone::domain::proven_u32_range;
+use crate::parsing::ctx_model::{classify_tc_ctx_field, CtxFieldKind};
 use crate::analysis::env::VerificationError;
-use crate::dbm::Dbm;
+use crate::zone::dbm::Dbm;
 
 pub fn transfer(
     env: &mut VerifierEnv,
@@ -481,11 +481,11 @@ fn refine_packet_ranges(dbm: &Dbm, types: &mut TypeState, packet_reg: Reg, end_r
         _ => return, 
     };
     let mut max_new_range = 0;
-    for r in crate::domain::Reg::ALL {
+    for r in crate::zone::domain::Reg::ALL {
         if let RegType::PtrToPacket { id, range } = types.get(r) {
             if id == target_id {
                 let dist = dbm.get(r, end_reg);
-                if dist < crate::dbm::INF {
+                if dist < crate::zone::dbm::INF {
                     if dist <= 0 {
                         let safe_bytes = dist.checked_abs().unwrap_or(0) as u64;
                         if safe_bytes > range {
@@ -572,7 +572,7 @@ fn maybe_promote_map_val(types: &mut TypeState, reg: Reg) {
         RegType::PtrToMapValueOrNull { id, map_idx } => (id, map_idx),
         _ => return,
     };
-    for r in crate::domain::Reg::ALL {
+    for r in crate::zone::domain::Reg::ALL {
         if let RegType::PtrToMapValueOrNull { id, map_idx } = types.get(r) {
             if id == target_id {
                 types.set(r, RegType::PtrToMapValue { offset: Some(0), map_idx });

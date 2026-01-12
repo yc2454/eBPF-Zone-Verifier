@@ -1,27 +1,23 @@
 // src/main.rs
 
 mod ast;
-mod dbm;
-mod domain;
 mod programs;
 mod kernel_semantics;
 mod check;
 mod utils;
-mod bpf_insn;
-mod bpf_to_ast;
-mod elf_loader;
-mod ctx_model;
-mod btf;
 mod analysis;
-mod loop_check;
+mod parsing;
+mod zone;
 
 use crate::analysis::context::{ExecContext, default_exec_ctx};
 use crate::ast::Program;
-use crate::dbm::Dbm;
-use crate::domain::{REG_ENV, assign_zero};
+use crate::zone::dbm::Dbm;
+use crate::zone::domain::{REG_ENV, assign_zero};
 use crate::utils::load_program_from_elf;
-use crate::elf_loader::{load_maps, load_relocations};
+use crate::parsing::elf_loader::{load_maps, load_relocations};
 use crate::analysis::analyze_program;
+use crate::parsing::elf_loader;
+use crate::parsing::btf;
 
 fn usage() {
     eprintln!("Usage:");
@@ -131,13 +127,13 @@ fn main() {
             let btf_bytes = elf_loader::load_section_bytes(path, ".BTF", false).unwrap_or_default();
     
             let btf_ctx = if !btf_bytes.is_empty() {
-                crate::btf::parse_btf(&btf_bytes).unwrap_or_else(|e| {
+                btf::parse_btf(&btf_bytes).unwrap_or_else(|e| {
                     println!("BTF Parse Error: {}", e);
-                    crate::btf::BtfContext::new()
+                    btf::BtfContext::new()
                 })
             } else {
                 println!("No .BTF section found.");
-                crate::btf::BtfContext::new()
+                btf::BtfContext::new()
             };
 
             cctx.map_defs = map_defs;

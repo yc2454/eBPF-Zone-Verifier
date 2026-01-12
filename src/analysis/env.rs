@@ -3,7 +3,7 @@ use crate::ast::{Program, MemSize};
 use crate::analysis::state::State;
 use crate::analysis::context::ExecContext;
 use std::collections::{HashMap, HashSet};
-use crate::domain::Reg;
+use crate::zone::domain::Reg;
 
 #[derive(Clone, Debug)]
 pub enum VerificationError {

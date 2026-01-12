@@ -1,7 +1,7 @@
 // src/analysis/reg_types.rs
 use std::collections::BTreeMap;
-use crate::domain::Reg;
-use crate::ctx_model::MemRegionId;
+use crate::zone::domain::Reg;
+use crate::parsing::ctx_model::MemRegionId;
 
 pub const NUM_REGS: usize = 11; 
 
@@ -55,7 +55,7 @@ impl TypeState {
     }
 
     pub fn get(&self, r: Reg) -> RegType {
-        if let Some(i) = crate::domain::reg_to_index(r) {
+        if let Some(i) = crate::zone::domain::reg_to_index(r) {
             self.regs[i]
         } else {
             RegType::NotInit 
@@ -63,7 +63,7 @@ impl TypeState {
     }
 
     pub fn set(&mut self, r: Reg, ty: RegType) {
-        if let Some(i) = crate::domain::reg_to_index(r) {
+        if let Some(i) = crate::zone::domain::reg_to_index(r) {
             self.regs[i] = ty;
         }
     }
