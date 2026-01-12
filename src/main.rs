@@ -1,19 +1,17 @@
 // src/main.rs
 
 mod ast;
-mod programs;
-mod kernel_semantics;
-mod check;
-mod utils;
 mod analysis;
 mod parsing;
 mod zone;
+mod misc;
 
 use crate::analysis::context::{ExecContext, default_exec_ctx};
 use crate::ast::Program;
 use crate::zone::dbm::Dbm;
 use crate::zone::domain::{REG_ENV, assign_zero};
-use crate::utils::load_program_from_elf;
+use crate::misc::utils::load_program_from_elf;
+use crate::misc::programs;
 use crate::parsing::elf_loader::{load_maps, load_relocations};
 use crate::analysis::analyze_program;
 use crate::parsing::elf_loader;
@@ -88,22 +86,22 @@ fn main() {
             let _cert = analyze_program(&ctx, &prog, entry);
         }
 
-        "check" => {
-            let name = &args[2];
-            let prog = get_program(name);
+        // "check" => {
+        //     let name = &args[2];
+        //     let prog = get_program(name);
 
-            println!("=== Analyzing program: {} ===", name);
-            let cert = analyze_program(&ctx, &prog, entry);
+        //     println!("=== Analyzing program: {} ===", name);
+        //     let cert = analyze_program(&ctx, &prog, entry);
 
-            println!("\n=== Kernel-sim checking: {} ===", name);
-            match check::check_certificate_against_kernel_sim(&ctx, &prog, &cert) {
-                Ok(()) => println!("CHECK OK"),
-                Err(e) => {
-                    println!("CHECK FAILED: {}", e.format());
-                    std::process::exit(1);
-                }
-            }
-        }
+        //     println!("\n=== Kernel-sim checking: {} ===", name);
+        //     match check::check_certificate_against_kernel_sim(&ctx, &prog, &cert) {
+        //         Ok(()) => println!("CHECK OK"),
+        //         Err(e) => {
+        //             println!("CHECK FAILED: {}", e.format());
+        //             std::process::exit(1);
+        //         }
+        //     }
+        // }
 
         "elf-analyze" => {
             if args.len() < 4 {
@@ -154,29 +152,6 @@ fn main() {
             let _cert = analysis::analyze_program(&cctx, &prog, entry);
 
             println!("=== Analysis complete ===");
-        }
-
-        "elf-check" => {
-            if args.len() < 4 {
-                usage();
-                return;
-            }
-            let path = &args[2];
-            let section = &args[3];
-
-            println!("=== ELF check: file='{}', section='{}' ===", path, section);
-            let prog = load_program_from_elf(path, section);
-
-            let cert = analyze_program(&ctx, &prog, entry);
-
-            println!("\n=== Kernel-sim checking (ELF): file='{}', section='{}' ===", path, section);
-            match check::check_certificate_against_kernel_sim(&ctx, &prog, &cert) {
-                Ok(()) => println!("CHECK OK"),
-                Err(e) => {
-                    println!("CHECK FAILED: {}", e.format());
-                    std::process::exit(1);
-                }
-            }
         }
 
         _ => {
