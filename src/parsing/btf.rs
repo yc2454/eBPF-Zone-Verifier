@@ -291,7 +291,7 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                     let mut is_map = false;
                     let mut value_size = 0;
                     let mut key_size = 0;
-                    let mut max_entries = 0;
+                    let max_entries = 0;
                     let mut btf_val_type_id = None; // STORE THIS!
 
                     let members = def_t.vlen() as usize;

@@ -6,6 +6,7 @@ use crate::ast::MemSize;
 use crate::zone::domain::get_bounds;
 use crate::analysis::heuristics;
 use crate::analysis::env::VerificationError;
+use RegType::*;
 
 /// Validates memory load safety.
 /// Does NOT update the state (types/dbm); that happens in transfer.rs.
@@ -16,7 +17,6 @@ pub fn check_load(
     size: MemSize,
     off: i16,
 ) {
-    use RegType::*;
     let ctx = env.ctx;
     let base_type = state.types.get(base);
     let access_size = match size { MemSize::U8 => 1, MemSize::U16 => 2, MemSize::U32 => 4, MemSize::U64 => 8 };
@@ -64,7 +64,6 @@ pub fn check_load(
                     if let Some(upper) = ub { if upper <= bound { safe = true; } }
                 }
             }
-            
             if !safe {
                 println!("Unsafe packet load at pc {}: base {:?}+{} (range={})", pc, base, off, range);
                 env.fail(VerificationError::UnsafePacketLoad { pc, off, size, range });
@@ -147,7 +146,7 @@ pub fn check_store(
     let pc = state.pc;
 
     match base_ty {
-        RegType::PtrToMapValue { offset: map_off, map_idx } => {
+        PtrToMapValue { offset: map_off, map_idx } => {
              let final_offset = map_off.unwrap_or(0) + (off as i64);
              let access_end = final_offset + access_size;
              let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) { def.value_size as i64 } else { 4096 };
@@ -160,7 +159,7 @@ pub fn check_store(
                  } );
              }
         }
-        RegType::PtrToStack => {
+        PtrToStack => {
             let (lo, hi) = get_bounds(&state.dbm, base, ctx.zero);
             let eff_lo = lo.map(|x| x + off as i64);
             let eff_hi = hi.map(|x| x + off as i64);
@@ -173,7 +172,7 @@ pub fn check_store(
                 env.fail(VerificationError::UnsafeStackStore { pc, off, size });
             }
         }
-        RegType::PtrToPacket { id: _, range } => {
+        PtrToPacket { id: _, range } => {
             let access_end = off as i64 + access_size;
             let mut safe = false;
             
@@ -186,7 +185,7 @@ pub fn check_store(
             }
             // 3. DBM Fallback
             else {
-                let end_reg_opt = crate::zone::domain::REG_ENV.all().iter().find(|&&r| matches!(state.types.get(r), RegType::PtrToPacketEnd));
+                let end_reg_opt = crate::zone::domain::REG_ENV.all().iter().find(|&&r| matches!(state.types.get(r), PtrToPacketEnd));
                 if let Some(end_reg) = end_reg_opt {
                     let bound = -access_end;
                     let (_, ub) = get_bounds(&state.dbm, base, *end_reg);
@@ -199,10 +198,7 @@ pub fn check_store(
                 env.fail(VerificationError::UnsafePacketStore { pc, off, size });
             }
         }
-        RegType::PtrToCtx | RegType::PtrToMem { .. } => {
-            // Safe?
-        }
-        RegType::PtrToMapValueOrNull { map_idx, .. } => {
+        PtrToMapValueOrNull { map_idx, .. } => {
              let final_offset = off as i64;
              let access_end = final_offset + access_size;
              let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) {

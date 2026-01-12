@@ -97,9 +97,7 @@ pub fn analyze_program(
         if state.pc >= prog.instrs.len() { continue; }
         let instr = &prog.instrs[state.pc];
         
-        // E. Verbose Logging
-        // We log if VERBOSITY is high enough OR if this specific PC is targeted.
-        // We also log the first 50 steps at Level 1 just to show it's working.
+        // E. Logging
         let is_target = DEBUG_PC.map(|t| t == state.pc).unwrap_or(false);
         let show_trace = is_target || VERBOSITY >= 2 || (VERBOSITY >= 1 && env.insn_processed <= 50);
         let show_debug = is_target || VERBOSITY >= 3;
