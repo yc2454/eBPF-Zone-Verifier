@@ -28,11 +28,18 @@ pub fn check_load(
             let eff_lo = lo.map(|x| x + off as i64);
             let eff_hi = hi.map(|x| x + off as i64 + (access_size - 1));
             let stack_ok = match (eff_lo, eff_hi) {
-                (Some(l), Some(h)) => match size {
-                    MemSize::U8  => l >= ctx.stack_min && h <= ctx.stack_max,
-                    MemSize::U16 => l >= ctx.stack_min && h + 0 <= ctx.stack_max,
-                    MemSize::U32 => l >= ctx.stack_min && h + 0 <= ctx.stack_max,
-                    MemSize::U64 => l >= ctx.stack_min && h + 0 <= ctx.stack_max,
+                (Some(l), Some(h)) => {
+                    // 1. Check strict bounds
+                    let within_bounds = l >= ctx.stack_min && h <= ctx.stack_max;
+                    // 2. (Optional but recommended) Check Alignment
+                    // BPF usually enforces that a u64 load is 8-byte aligned, etc.
+                    // This prevents reading a u64 from r10-7.
+                    let aligned = if l < 0 {
+                        (l.abs() % access_size) == 0
+                    } else {
+                        (l % access_size) == 0
+                    };
+                    within_bounds && aligned
                 },
                 _ => false,
             };
@@ -115,9 +122,6 @@ pub fn check_load(
                     limit: map_limit
                  } );
             }
-        }
-        PtrToMem { region: _ } => {
-            // Assumed safe within region logic?
         }
         ScalarValue | NotInit => {
             if !heuristics::is_safe_scalar_load(base, off) {
