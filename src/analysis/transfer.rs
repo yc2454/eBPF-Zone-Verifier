@@ -14,6 +14,7 @@ use crate::zone::domain::proven_u32_range;
 use crate::parsing::ctx_model::{classify_tc_ctx_field, CtxFieldKind};
 use crate::analysis::env::VerificationError;
 use crate::zone::dbm::Dbm;
+use crate::analysis::constants;
 
 pub fn transfer(
     env: &mut VerifierEnv,
@@ -321,15 +322,87 @@ fn transfer_if(
 }
 
 fn transfer_call(
-    _env: &VerifierEnv,
+    env: &VerifierEnv,
     mut state: State,
     helper: u32,
 ) -> Vec<State> {
     let in_types = state.types.clone();
+    let ctx = env.ctx;
+    let pc = state.pc;
+    
+    // ========================================================================
+    // SPECIAL CASE: bpf_tail_call
+    // 
+    // Semantics:
+    //   - SUCCESS: Jump to target program, NEVER RETURNS (like exit)
+    //   - FAILURE: Falls through to next instruction
+    //
+    // We only model the FAILURE path. Success means execution went elsewhere.
+    // ========================================================================
+    if helper == constants::BPF_TAIL_CALL {
+        // Validate arguments (optional warnings)
+        if !matches!(in_types.get(Reg::R1), RegType::PtrToCtx) {
+            println!("[Verifier] Warning: tail_call R1 should be PTR_TO_CTX at pc {}", pc);
+        }
+        if !matches!(in_types.get(Reg::R2), RegType::PtrToMapObject { .. }) {
+            println!("[Verifier] Warning: tail_call R2 should be PTR_TO_MAP at pc {}", pc);
+        }
+        
+        // Update types (clobber caller-saved, R0 = scalar)
+        update_call_types(&in_types, &mut state.types, helper);
+        
+        // Forget caller-saved in DBM
+        for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+            forget(&mut state.dbm, r);
+        }
+        
+        // Return only the failure path (fall through)
+        state.pc += 1;
+        return vec![state];
+    }
+    
+    // ========================================================================
+    // Normal helper handling
+    // ========================================================================
+
+    // 1. Update types
     update_call_types(&in_types, &mut state.types, helper);
+    
+    // 2. Update DBM - forget caller-saved registers
     for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
         forget(&mut state.dbm, r);
     }
+    
+    // 3. Apply return value bounds for specific helpers
+    match helper {
+        constants::BPF_REDIRECT => {
+            // Returns TC_ACT_* (0-7)
+            assume_ge_const(&mut state.dbm, Reg::R0, ctx.zero, 0);
+            assume_le_const(&mut state.dbm, Reg::R0, ctx.zero, 7);
+        }
+        constants::BPF_FIB_LOOKUP => {
+            // Returns BPF_FIB_LKUP_RET_* (0-8)
+            assume_ge_const(&mut state.dbm, Reg::R0, ctx.zero, 0);
+            assume_le_const(&mut state.dbm, Reg::R0, ctx.zero, 8);
+        }
+        constants::BPF_MAP_UPDATE_ELEM | 
+        constants::BPF_MAP_DELETE_ELEM |
+        constants::BPF_SKB_STORE_BYTES |
+        constants::BPF_XDP_ADJUST_HEAD => {
+            // Returns 0 on success, negative on error
+            // Could add bounds but being conservative for now
+        }
+        _ => {}
+    }
+    
+    // 4. Forget packet pointer DBM entries if they were invalidated
+    if helper_invalidates_packets(helper) {
+        for r in Reg::ALL {
+            forget(&mut state.dbm, r);
+        }
+    }
+    
+    // 5. Advance PC and return
     state.pc += 1;
     vec![state]
 }
@@ -445,16 +518,74 @@ fn update_store_types(types: &mut TypeState, src_type: RegType, size: MemSize, b
     }
 }
 
-fn update_call_types(in_types: &TypeState, types: &mut TypeState, helper: u32) {
-    let r1_type = in_types.get(Reg::R1);
-    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] { types.set(r, RegType::ScalarValue); }
-    match helper {
-        1 => {
-             let map_idx = if let RegType::PtrToMapObject { map_idx } = r1_type { map_idx } else { 0 };
-             let new_id = new_packet_id();
-             types.set(Reg::R0, RegType::PtrToMapValueOrNull { id: new_id, map_idx });
+/// Checks if a helper invalidates packet pointers.
+fn helper_invalidates_packets(helper: u32) -> bool {
+    matches!(helper,
+        constants::BPF_XDP_ADJUST_HEAD |
+        constants::BPF_XDP_ADJUST_META |
+        constants::BPF_SKB_PULL_DATA |
+        constants::BPF_SKB_CHANGE_HEAD |
+        constants::BPF_SKB_CHANGE_TAIL |
+        constants::BPF_SKB_CHANGE_PROTO |
+        constants::BPF_SKB_ADJUST_ROOM
+    )
+}
+
+/// Invalidates packet pointers on the stack.
+fn invalidate_stack_packet_pointers(types: &mut TypeState) {
+    let keys: Vec<i16> = types.stack.keys().cloned().collect();
+    for k in keys {
+        match types.get_stack(k) {
+            RegType::PtrToPacket { .. } | RegType::PtrToPacketEnd => {
+                types.set_stack(k, RegType::ScalarValue);
+            }
+            _ => {}
         }
-        _ => types.set(Reg::R0, RegType::ScalarValue),
+    }
+}
+
+// ============================================================================
+// Type Update Logic (separate function, matching existing pattern)
+// ============================================================================
+
+fn update_call_types(in_types: &TypeState, types: &mut TypeState, helper: u32) {
+    // 1. Clobber caller-saved registers
+    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+        types.set(r, RegType::ScalarValue);
+    }
+    
+    // 2. Set R0 based on helper return type
+    match helper {
+        constants::BPF_MAP_LOOKUP_ELEM => {
+            let map_idx = match in_types.get(Reg::R1) {
+                RegType::PtrToMapObject { map_idx } => map_idx,
+                _ => 0,
+            };
+            let id = new_packet_id();
+            types.set(Reg::R0, RegType::PtrToMapValueOrNull { id, map_idx });
+        }
+        
+        // tail_call: R0 is undefined on failure path (we model it as scalar)
+        constants::BPF_TAIL_CALL => {
+            types.set(Reg::R0, RegType::ScalarValue);
+        }
+        
+        _ => {
+            types.set(Reg::R0, RegType::ScalarValue);
+        }
+    }
+    
+    // 3. Invalidate packet pointers if needed
+    if helper_invalidates_packets(helper) {
+        for r in Reg::ALL {
+            match types.get(r) {
+                RegType::PtrToPacket { .. } | RegType::PtrToPacketEnd => {
+                    types.set(r, RegType::ScalarValue);
+                }
+                _ => {}
+            }
+        }
+        invalidate_stack_packet_pointers(types);
     }
 }
 

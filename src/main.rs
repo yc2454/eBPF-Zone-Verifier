@@ -7,13 +7,10 @@ mod zone;
 mod misc;
 
 use crate::analysis::context::{ExecContext, default_exec_ctx};
-use crate::ast::Program;
 use crate::zone::dbm::Dbm;
 use crate::zone::domain::{REG_ENV, assign_zero};
 use crate::misc::utils::load_program_from_elf;
-use crate::misc::programs;
 use crate::parsing::elf_loader::{load_maps, load_relocations};
-use crate::analysis::analyze_program;
 use crate::parsing::elf_loader;
 use crate::parsing::btf;
 
@@ -24,17 +21,6 @@ fn usage() {
     eprintln!("  cargo run -- check <program_name>");
     eprintln!("  cargo run -- elf-analyze <elf_path> <section_name>");
     eprintln!("  cargo run -- elf-check  <elf_path> <section_name>");
-}
-
-fn get_program(name: &str) -> Program {
-    programs::get(name).unwrap_or_else(|| {
-        eprintln!("Unknown program: {}", name);
-        eprintln!("Available programs:");
-        for n in programs::names() {
-            eprintln!("  {}", n);
-        }
-        std::process::exit(1);
-    })
 }
 
 fn make_entry_state(ctx: &ExecContext) -> Dbm {
@@ -59,14 +45,6 @@ fn main() {
 
     let cmd = &args[1];
 
-    // Existing commands on hand-written AST programs
-    if cmd == "list" {
-        for n in programs::names() {
-            println!("{}", n);
-        }
-        return;
-    }
-
     // Commands that need a second argument (program name or path)
     if args.len() < 3 {
         usage();
@@ -78,30 +56,6 @@ fn main() {
     let entry = make_entry_state(&ctx);
 
     match cmd.as_str() {
-        // old flow: programs.rs
-        "analyze" => {
-            let name = &args[2];
-            let prog = get_program(name);
-            println!("=== Analyzing program: {} ===", name);
-            let _cert = analyze_program(&ctx, &prog, entry);
-        }
-
-        // "check" => {
-        //     let name = &args[2];
-        //     let prog = get_program(name);
-
-        //     println!("=== Analyzing program: {} ===", name);
-        //     let cert = analyze_program(&ctx, &prog, entry);
-
-        //     println!("\n=== Kernel-sim checking: {} ===", name);
-        //     match check::check_certificate_against_kernel_sim(&ctx, &prog, &cert) {
-        //         Ok(()) => println!("CHECK OK"),
-        //         Err(e) => {
-        //             println!("CHECK FAILED: {}", e.format());
-        //             std::process::exit(1);
-        //         }
-        //     }
-        // }
 
         "elf-analyze" => {
             if args.len() < 4 {
@@ -140,14 +94,6 @@ fn main() {
 
             let prog = load_program_from_elf(path, section);
             println!("Program size: {} instructions", prog.instrs.len());
-
-            // // 4. CHECK FOR LOOPS (The Kernel Verifier Step)
-            // if let Err(e) = crate::loop_check::check_for_loops(&prog) {
-            //     println!("Error: {}", e);
-            //     println!("Analysis aborted because the program contains loops.");
-            //     return;
-            // }
-            // println!("Loop check passed (DAG confirmed).");
 
             let _cert = analysis::analyze_program(&cctx, &prog, entry);
 

@@ -11,6 +11,7 @@ pub mod liveness;
 pub mod cfg;
 pub mod pruning;
 pub mod loop_check;
+pub mod constants;
 
 use std::collections::VecDeque;
 use crate::ast::Program;
@@ -27,11 +28,7 @@ use self::reg_types::RegType;
 // 1: Info  (Heartbeats every 10k, Summary)
 // 2: Trace (Log every instruction execution - PC only)
 // 3: Debug (Log every instruction + Register Types)
-pub const VERBOSITY: u8 = 3; 
-
-// Safety Limits
-pub const MAX_INSTRUCTIONS: usize = 1_000_000;
-pub const LOG_HEARTBEAT_INTERVAL: usize = 10_000;
+pub const VERBOSITY: u8 = 3;
 
 // Debugging Aid: Force-enable Level 3 logging for a specific PC
 pub const DEBUG_PC: Option<usize> = None; 
@@ -76,14 +73,14 @@ pub fn analyze_program(
 
         // A. Global Complexity Limit
         env.insn_processed += 1;
-        if env.insn_processed > MAX_INSTRUCTIONS {
-            println!("[Verifier] Hit complexity limit ({} instructions). Aborting.", MAX_INSTRUCTIONS);
-            env.fail(env::VerificationError::ComplexityLimitExceeded { limit: MAX_INSTRUCTIONS });
+        if env.insn_processed > constants::MAX_INSN_PROCESSED {
+            println!("[Verifier] Hit complexity limit ({} instructions). Aborting.", constants::MAX_INSN_PROCESSED);
+            env.fail(env::VerificationError::ComplexityLimitExceeded { limit: constants::MAX_INSN_PROCESSED });
             break;
         }
 
         // B. Heartbeat Logging (Level 1+)
-        if VERBOSITY >= 1 && env.insn_processed % LOG_HEARTBEAT_INTERVAL == 0 {
+        if VERBOSITY >= 1 && env.insn_processed % constants::LOG_HEARTBEAT_INTERVAL == 0 {
             println!("[Verifier] Processed {} instructions. Worklist size: {}", env.insn_processed, worklist.len());
         }
 

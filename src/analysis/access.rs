@@ -6,6 +6,7 @@ use crate::ast::MemSize;
 use crate::zone::domain::get_bounds;
 use crate::analysis::heuristics;
 use crate::analysis::env::VerificationError;
+use crate::analysis::constants;
 use RegType::*;
 
 /// Validates memory load safety.
@@ -58,7 +59,7 @@ pub fn check_load(
                 safe = true; 
             } 
             // 2. Networking Heuristics
-            else if off >= 0 && access_end <= 64 {
+            else if off >= 0 && access_end <= constants::MAX_PACKET_HEADER_ACCESS {
                  println!("[Verifier] Heuristic: Allowing header/payload access (off {}..{}) with range {}", off, access_end, range);
                  safe = true;
             }
@@ -82,7 +83,7 @@ pub fn check_load(
         }
         RegType::PtrToMapValue { offset: map_off_opt, map_idx } => {
             let map_def = ctx.map_defs.get(map_idx);
-            let map_limit = map_def.map(|d| d.value_size as i64).unwrap_or(4096);
+            let map_limit = map_def.map(|d| d.value_size as i64).unwrap_or(constants::DEFAULT_MAP_VALUE_SIZE as i64);
 
             // Case A: Known Offset
             if let Some(map_off) = map_off_opt {
@@ -112,7 +113,7 @@ pub fn check_load(
             let access_end = final_offset + access_size;
             let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) {
                 def.value_size as i64
-            } else { 4096 };
+            } else { constants::DEFAULT_MAP_VALUE_SIZE as i64 };
 
             if !(final_offset >= 0 && access_end <= map_limit) {
                 println!("Unsafe nullable map load at pc {}: off {} limit {}", pc, final_offset, map_limit);
@@ -151,17 +152,18 @@ pub fn check_store(
 
     match base_ty {
         PtrToMapValue { offset: map_off, map_idx } => {
-             let final_offset = map_off.unwrap_or(0) + (off as i64);
-             let access_end = final_offset + access_size;
-             let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) { def.value_size as i64 } else { 4096 };
-             if !(final_offset >= 0 && access_end <= map_limit) {
-                 println!("Unsafe map store at pc {}: off {} limit {}", pc, final_offset, map_limit);
-                 env.fail(VerificationError::UnsafeMapStore { pc, 
-                    off: final_offset, 
-                    size,
-                    limit: map_limit
-                 } );
-             }
+            let final_offset = map_off.unwrap_or(0) + (off as i64);
+            let access_end = final_offset + access_size;
+            let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) { def.value_size as i64 } 
+            else { constants::DEFAULT_MAP_VALUE_SIZE as i64 };
+            if !(final_offset >= 0 && access_end <= map_limit) {
+                println!("Unsafe map store at pc {}: off {} limit {}", pc, final_offset, map_limit);
+                env.fail(VerificationError::UnsafeMapStore { pc, 
+                off: final_offset, 
+                size,
+                limit: map_limit
+                } );
+            }
         }
         PtrToStack => {
             let (lo, hi) = get_bounds(&state.dbm, base, ctx.zero);
@@ -183,7 +185,7 @@ pub fn check_store(
             // 1. Standard Range
             if off >= 0 && (access_end as u64) <= range { safe = true; } 
             // 2. Heuristic
-            else if off >= 0 && access_end <= 14 {
+            else if off >= 0 && access_end <= constants::ETH_HEADER_SIZE {
                  println!("[Verifier] Heuristic: Allowing Eth Header store (off {}..{}) with range {}", off, access_end, range);
                  safe = true;
             }
@@ -207,7 +209,7 @@ pub fn check_store(
              let access_end = final_offset + access_size;
              let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) {
                  def.value_size as i64
-             } else { 4096 };
+             } else { constants::DEFAULT_MAP_VALUE_SIZE as i64 };
              if !(final_offset >= 0 && access_end <= map_limit) {
                 println!("Unsafe nullable map store at pc {}", pc);
                     env.fail(VerificationError::UnsafeMapStore { pc, 

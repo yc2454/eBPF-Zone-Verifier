@@ -117,10 +117,17 @@ pub enum ProgramKind {
     // later: CgroupSkb, CgroupSock, Lsm, Kprobe, …
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Program {
+    pub name: String,
     pub instrs: Vec<Instr>,
+    pub section_idx: usize,
     pub pc_map: Vec<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProgramSuite {
+    pub programs: Vec<Program>,
 }
 
 impl fmt::Display for Instr {

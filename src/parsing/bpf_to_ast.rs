@@ -1,5 +1,5 @@
 // src/bpf_to_ast.rs
-use crate::ast::{AluOp, CmpOp, Instr, Operand, Program, Width, MemSize, EndianKind, ProgramKind};
+use crate::ast::{AluOp, CmpOp, Instr, Operand, Program, Width, MemSize, EndianKind};
 use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::zone::domain::Reg;
 
@@ -809,5 +809,5 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
         pc += 1;
     }
 
-    Ok(Program { instrs, pc_map })
+    Ok(Program { instrs, name: "".to_string(), pc_map, section_idx: 0 })
 }

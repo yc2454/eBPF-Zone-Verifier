@@ -1,9 +1,11 @@
 use std::fs;
 use std::path::Path;
 
-use goblin::elf::Elf;
+use goblin::elf::{Elf, sym};
 use std::collections::HashMap;
-use crate::parsing::btf; // Import the new module
+use crate::parsing::btf;
+use crate::parsing::bpf_to_ast;
+
 #[derive(Clone, Debug)]
 pub struct BpfMapDef {
     pub type_: u32,
@@ -13,6 +15,36 @@ pub struct BpfMapDef {
     pub map_flags: u32,
     pub name: String, 
     pub btf_val_type_id: Option<u32>,
+}
+
+#[derive(Debug)]
+pub enum ElfLoadError {
+    Io(std::io::Error),
+    Goblin(goblin::error::Error),
+    NotBpf { e_machine: u16 },
+    LowerError(bpf_to_ast::LowerError),
+    SectionNotFound { name: String },
+    SectionOutOfBounds { name: String, offset: usize, size: usize, file_len: usize },
+}
+
+impl From<std::io::Error> for ElfLoadError { 
+    fn from(e: std::io::Error) -> Self { ElfLoadError::Io(e) } 
+}
+impl From<goblin::error::Error> for ElfLoadError { 
+    fn from(e: goblin::error::Error) -> Self { ElfLoadError::Goblin(e) } 
+}
+impl From<bpf_to_ast::LowerError> for ElfLoadError { 
+    fn from(e: bpf_to_ast::LowerError) -> Self { ElfLoadError::LowerError(e) } 
+}
+
+/// Represents a raw BPF program extracted from the ELF symbol table.
+/// This corresponds to a single C function in the source code.
+#[derive(Debug)]
+pub struct RawBpfProgram {
+    pub name: String,
+    pub data: Vec<u8>,      // The raw bytecode slice
+    pub section_idx: usize, // Which ELF section it lives in (e.g., .text)
+    pub file_offset: u64,   // Absolute offset in the file (for debugging)
 }
 
 pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>, ElfLoadError> {
@@ -137,24 +169,6 @@ pub fn load_relocations<P: AsRef<Path>>(
     Ok(pc_to_map)
 }
 
-#[derive(Debug)]
-pub enum ElfLoadError {
-    Io(std::io::Error),
-    Parse(goblin::error::Error),
-    NotElf,
-    NotBpf { e_machine: u16 },
-    SectionNotFound { name: String },
-    SectionOutOfBounds { name: String, offset: usize, size: usize, file_len: usize },
-}
-
-impl From<std::io::Error> for ElfLoadError {
-    fn from(e: std::io::Error) -> Self { ElfLoadError::Io(e) }
-}
-
-impl From<goblin::error::Error> for ElfLoadError {
-    fn from(e: goblin::error::Error) -> Self { ElfLoadError::Parse(e) }
-}
-
 /// Return all section names in the ELF file (useful for discovery/debugging).
 pub fn list_section_names<P: AsRef<Path>>(path: P) -> Result<Vec<String>, ElfLoadError> {
     let buf = fs::read(path)?;
@@ -239,4 +253,43 @@ pub fn load_bpf_insn_stream_section<P: AsRef<Path>>(
         });
     }
     Ok(bytes)
+}
+
+/// Iterates over the ELF Symbol Table to find all BPF programs.
+pub fn load_raw_programs<P: AsRef<Path>>(path: P) -> Result<Vec<RawBpfProgram>, ElfLoadError> {
+    let bytes = fs::read(path)?;
+    let elf = Elf::parse(&bytes)?;
+    
+    let mut programs = Vec::new();
+
+    for sym in elf.syms.iter() {
+        // Strict Check: Only load symbols explicitly marked as Functions.
+        // This splits the .text section into individual programs.
+        let is_func = sym.st_type() == sym::STT_FUNC;
+        
+        if is_func && sym.st_shndx < elf.section_headers.len() {
+            let name = elf.strtab.get_at(sym.st_name)
+                .unwrap_or("<unknown>")
+                .to_string();
+
+            let shdr = &elf.section_headers[sym.st_shndx];
+            
+            // In relocatable .o files, st_value is the offset from the start of the section
+            let offset_in_section = sym.st_value as usize;
+            let file_offset = shdr.sh_offset as usize + offset_in_section;
+            let size = sym.st_size as usize;
+
+            // Bounds sanity check
+            if file_offset + size <= bytes.len() {
+                programs.push(RawBpfProgram {
+                    name,
+                    data: bytes[file_offset..file_offset + size].to_vec(),
+                    section_idx: sym.st_shndx,
+                    file_offset: file_offset as u64,
+                });
+            }
+        }
+    }
+
+    Ok(programs)
 }
