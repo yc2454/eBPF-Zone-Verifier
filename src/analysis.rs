@@ -12,7 +12,6 @@ pub mod cfg;
 pub mod pruning;
 pub mod loop_check;
 pub mod constants;
-
 use std::collections::VecDeque;
 use crate::ast::Program;
 use crate::zone::dbm::Dbm;
@@ -22,27 +21,23 @@ use self::context::ExecContext;
 use self::env::VerifierEnv;
 use self::state::State;
 use self::reg_types::RegType;
-
-// --- TUNABLE LOGGING CONFIGURATION ---
-// 0: Quiet (Critical Errors Only)
-// 1: Info  (Heartbeats every 10k, Summary)
-// 2: Trace (Log every instruction execution - PC only)
-// 3: Debug (Log every instruction + Register Types)
-pub const VERBOSITY: u8 = 1;  // Reduced from 3 for performance
-
-// Debugging Aid: Force-enable Level 3 logging for a specific PC
-pub const DEBUG_PC: Option<usize> = None; 
-// -------------------------------------
+use crate::misc::config::VerifierConfig;
 
 pub fn analyze_program(
     ctx: &ExecContext,
     prog: &Program,
     entry_dbm: Dbm,
+    config: &VerifierConfig,
 ) -> Result<Vec<Dbm>, env::VerificationError> {
     // 1. Initialize Verifier Environment
     let mut env = VerifierEnv::new(ctx, prog);
 
-    if VERBOSITY >= 1 { println!("[Analysis] Running Static Analysis Passes..."); }
+    if config.verbosity >= 1 { 
+        println!("[Analysis] Running Static Analysis Passes..."); 
+        if config.skip_dbm_check {
+            println!("[Analysis] DBM comparison disabled (--skip-dbm)");
+        }
+    }
 
     if let Err(e) = cfg::check_cfg(prog, &mut env) {
         println!("[Analysis] CFG Error: {}", e);
@@ -61,7 +56,9 @@ pub fn analyze_program(
     let mut worklist = VecDeque::new();
     worklist.push_back(initial_state);
 
-    if VERBOSITY >= 1 { println!("[Analysis] Starting Abstract Interpretation..."); }
+    if config.verbosity >= 1 { 
+        println!("[Analysis] Starting Abstract Interpretation..."); 
+    }
 
     // Track pruning statistics
     let mut prune_count: usize = 0;
@@ -75,24 +72,23 @@ pub fn analyze_program(
 
         // A. Pruning Check FIRST (before counting!)
         // This prevents counting states that we immediately discard.
-        // This is the KEY FIX - pruned states should NOT count toward complexity limit.
-        if pruning::is_state_visited(&mut env, &state) {
+        if pruning::is_state_visited(&mut env, &state, config) {
             prune_count += 1;
-            // Don't log every prune - too noisy and slow
             continue;
         }
 
         // B. Global Complexity Limit (only count non-pruned states)
         env.insn_processed += 1;
-        if env.insn_processed > constants::MAX_INSN_PROCESSED {
-            println!("[Verifier] Hit complexity limit ({} instructions). Aborting.", constants::MAX_INSN_PROCESSED);
+        if env.insn_processed > config.max_insn {
+            println!("[Verifier] Hit complexity limit ({} instructions). Aborting.", config.max_insn);
             println!("[Verifier] (Pruned {} states before limit)", prune_count);
-            env.fail(env::VerificationError::ComplexityLimitExceeded { limit: constants::MAX_INSN_PROCESSED });
+            println!("[Verifier] Tip: Try --skip-dbm or --max-insn N to increase limit");
+            env.fail(env::VerificationError::ComplexityLimitExceeded { limit: config.max_insn });
             break;
         }
 
         // C. Heartbeat Logging (Level 1+)
-        if VERBOSITY >= 1 && env.insn_processed % constants::LOG_HEARTBEAT_INTERVAL == 0 {
+        if config.verbosity >= 1 && env.insn_processed % config.log_interval == 0 {
             println!("[Verifier] Processed {} instructions (pruned {}). Worklist size: {}", 
                      env.insn_processed, prune_count, worklist.len());
         }
@@ -102,9 +98,9 @@ pub fn analyze_program(
         let instr = &prog.instrs[state.pc];
         
         // E. Logging
-        let is_target = DEBUG_PC.map(|t| t == state.pc).unwrap_or(false);
-        let show_trace = is_target || VERBOSITY >= 2 || (VERBOSITY >= 1 && env.insn_processed <= 50);
-        let show_debug = is_target || VERBOSITY >= 3;
+        let is_target = config.debug_pc.map(|t| t == state.pc).unwrap_or(false);
+        let show_trace = is_target || config.verbosity >= 2 || (config.verbosity >= 1 && env.insn_processed <= 50);
+        let show_debug = is_target || config.verbosity >= 3;
 
         if show_trace {
              let raw_pc = prog.pc_map.get(state.pc).copied().unwrap_or(0);
@@ -134,7 +130,7 @@ pub fn analyze_program(
     // --- FINAL REPORT ---
     if let Some(err) = &env.error {
         println!("\n[Verifier] FAILURE: {:?}", err);
-        if VERBOSITY >= 1 { 
+        if config.verbosity >= 1 { 
             println!("[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count); 
         }
         return Err(err.clone());
@@ -143,7 +139,7 @@ pub fn analyze_program(
     println!("\n[Verifier] Success! Verified {} instructions (pruned {} states).", 
              env.insn_processed, prune_count);
 
-    if VERBOSITY >= 1 { 
+    if config.verbosity >= 1 { 
         println!("[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count); 
     }
 
