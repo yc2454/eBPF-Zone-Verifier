@@ -10,7 +10,7 @@ pub enum RegType {
     NotInit,        
     ScalarValue,    
     PtrToCtx,       
-    PtrToStack,     
+    PtrToStack { offset: i64 },  
     PtrToPacket { id: u32, range: u64 },    
     PtrToPacketEnd, 
     PtrToMem { region: MemRegionId },           
@@ -27,7 +27,7 @@ impl RegType {
     pub fn is_pointer(self) -> bool {
         use RegType::*;
         matches!(self, 
-            PtrToCtx | PtrToStack | PtrToMapValue { .. } | 
+            PtrToCtx | PtrToStack { .. } | PtrToMapValue { .. } | 
             PtrToPacket { .. } | PtrToPacketEnd | 
             PtrToMem { .. } | PtrToMapValueOrNull { .. }
         )

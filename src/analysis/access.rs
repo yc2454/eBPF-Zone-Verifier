@@ -25,29 +25,23 @@ pub fn check_load(
     let pc = state.pc;
 
     match base_type {
-        PtrToStack => {
-            let (lo, hi) = get_bounds(&state.dbm, base, ctx.zero);
-            let eff_lo = lo.map(|x| x + off as i64);
-            let eff_hi = hi.map(|x| x + off as i64 + (access_size - 1));
-            let stack_ok = match (eff_lo, eff_hi) {
-                (Some(l), Some(h)) => {
-                    // 1. Check strict bounds
-                    let within_bounds = l >= ctx.stack_min && h <= ctx.stack_max;
-                    // 2. (Optional but recommended) Check Alignment
-                    // BPF usually enforces that a u64 load is 8-byte aligned, etc.
-                    // This prevents reading a u64 from r10-7.
-                    let aligned = if l < 0 {
-                        (l.abs() % access_size) == 0
-                    } else {
-                        (l % access_size) == 0
-                    };
-                    within_bounds && aligned
-                },
-                _ => false,
+        PtrToStack { offset } => {
+            // Use tracked offset instead of DBM bounds
+            let final_offset = offset + (off as i64);
+            let access_end = final_offset + access_size;
+            
+            // Check bounds
+            let within_bounds = final_offset >= ctx.stack_min && access_end <= ctx.stack_max;
+            
+            // Check alignment (optional but recommended)
+            let aligned = if final_offset < 0 {
+                (final_offset.abs() % access_size) == 0
+            } else {
+                (final_offset % access_size) == 0
             };
-
-            if !stack_ok {
-                println!("Unsafe stack load at pc {}: base {:?}+{}", pc, base, off);
+            
+            if !(within_bounds && aligned) {
+                println!("Unsafe stack load at pc {}: base {:?}+{} (stack offset {})", pc, base, off, final_offset);
                 env.fail(VerificationError::UnsafeStackLoad { pc, off, size });
             }
         }
@@ -153,7 +147,7 @@ pub fn check_load(
             if !safe && off >= 0 && access_end <= 256 {
                 safe = true;
             }
-            
+
             if !safe {
                 println!("Unsafe mem region store at pc {}: base {:?}+{}", pc, base, off);
                 env.fail(VerificationError::UnsafeGenericStore { pc, base, off });
@@ -200,16 +194,14 @@ pub fn check_store(
                 } );
             }
         }
-        PtrToStack => {
-            let (lo, hi) = get_bounds(&state.dbm, base, ctx.zero);
-            let eff_lo = lo.map(|x| x + off as i64);
-            let eff_hi = hi.map(|x| x + off as i64);
-            let is_stack_store = match (eff_lo, eff_hi) {
-                (Some(l), Some(h)) => { let last = h + (access_size - 1); l >= ctx.stack_min && last <= ctx.stack_max }
-                _ => false,
-            };
-            if !is_stack_store {
-                println!("Unsafe stack store at pc {}: {:?} to base {:?}+{}", pc, size, base, off);
+        PtrToStack { offset } => {
+            let final_offset = offset + (off as i64);
+            let access_end = final_offset + access_size;
+            
+            let is_safe = final_offset >= ctx.stack_min && access_end <= ctx.stack_max;
+            
+            if !is_safe {
+                println!("Unsafe stack store at pc {}: {:?} to stack offset {}", pc, size, final_offset);
                 env.fail(VerificationError::UnsafeStackStore { pc, off, size });
             }
         }

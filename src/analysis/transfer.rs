@@ -508,7 +508,15 @@ fn update_alu_types(
     match op {
         AluOp::Mov => {
              match src {
-                Operand::Reg(r) => { types.set(dst, in_types.get(*r)); }
+                Operand::Reg(r) => { 
+                    let src_ty = in_types.get(*r);
+                    // Special case: R10 (frame pointer) becomes PtrToStack { offset: 0 }
+                    if *r == env.ctx.r10 {
+                        types.set(dst, RegType::PtrToStack { offset: 0 });
+                    } else {
+                        types.set(dst, src_ty); 
+                    }
+                }
                 Operand::Imm(_) => {
                     // Check Relocations
                     let mut map_idx_opt = env.ctx.pc_to_map_idx.get(&pc);
@@ -541,11 +549,13 @@ fn update_alu_types(
                         let new_range = if *k > 0 { range.saturating_sub(*k as u64) } else { range.saturating_add(k.wrapping_neg() as u64) };
                         types.set(dst, RegType::PtrToPacket { id, range: new_range });
                     },
-                    // NEW: PtrToStack + Imm → PtrToStack
-                    (RegType::PtrToStack, Operand::Imm(_)) => {
-                        types.set(dst, RegType::PtrToStack);
+                    (RegType::PtrToStack { offset }, Operand::Imm(k)) => {
+                        types.set(dst, RegType::PtrToStack { offset: offset + k });
                     },
-                    // NEW: PtrToCtx + Imm → PtrToCtx  
+                    (RegType::PtrToStack { .. }, Operand::Reg(_)) => {
+                        // Variable offset - we lose precise tracking
+                        types.set(dst, RegType::ScalarValue);
+                    },
                     (RegType::PtrToCtx, Operand::Imm(_)) => {
                         types.set(dst, RegType::PtrToCtx);
                     },
@@ -567,11 +577,9 @@ fn update_alu_types(
                         let new_range = if *k > 0 { range.saturating_add(*k as u64) } else { range.saturating_sub(k.wrapping_neg() as u64) };
                         types.set(dst, RegType::PtrToPacket { id, range: new_range });
                     },
-                    // NEW: PtrToStack - Imm → PtrToStack
-                    RegType::PtrToStack => {
-                        types.set(dst, RegType::PtrToStack);
+                    RegType::PtrToStack { offset } => {
+                        types.set(dst, RegType::PtrToStack { offset: offset - k });
                     },
-                    // NEW: PtrToCtx - Imm → PtrToCtx
                     RegType::PtrToCtx => {
                         types.set(dst, RegType::PtrToCtx);
                     },
@@ -598,7 +606,7 @@ fn update_load_types(types: &mut TypeState, size: MemSize, dst: Reg, base: Reg, 
                 }
             } else { types.set(dst, RegType::ScalarValue); }
         }
-        RegType::PtrToStack => {
+        RegType::PtrToStack { offset: _ } => {
             if size == MemSize::U64 { types.set(dst, types.get_stack(off)); } 
             else { types.set(dst, RegType::ScalarValue); }
         }
