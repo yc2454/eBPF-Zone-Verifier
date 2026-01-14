@@ -81,6 +81,11 @@ pub fn is_tc_ctx_field_writable(off: i16, size: MemSize) -> bool {
         return true;
     }
 
+    // queue_mapping
+    if off >= constants::TC_CTX_QUEUE_MAPPING && access_end <= constants::TC_CTX_QUEUE_MAPPING_END {
+        return true;
+    }
+
     // priority
     if off >= constants::TC_CTX_PRIORITY && access_end <= constants::TC_CTX_PRIORITY_END {
         return true;

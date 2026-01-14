@@ -7,32 +7,102 @@ mod zone;
 mod misc;
 
 use crate::analysis::context::{ExecContext, default_exec_ctx};
+use crate::analysis::env::VerificationError;
 use crate::zone::dbm::Dbm;
 use crate::zone::domain::{REG_ENV, assign_zero};
 use crate::misc::utils::load_program_from_elf;
 use crate::parsing::elf_loader::{load_maps, load_relocations, load_raw_programs, list_section_names};
-use crate::parsing::elf_loader;
-use crate::parsing::btf;
-use crate::parsing::bpf_insn::decode_insns;
-use crate::parsing::bpf_to_ast::lower_raw_to_program;
+use crate::parsing::elf_loader::{self, BpfMapDef};
+use crate::parsing::btf::{self, BtfContext};
 use crate::ast::ProgramKind;
 
 fn usage() {
     eprintln!("Usage:");
-    eprintln!("  cargo run -- elf-list     <elf_path>                 # List all sections and programs");
-    eprintln!("  cargo run -- elf-analyze  <elf_path> <section_name>  # Analyze a section by name");
-    eprintln!("  cargo run -- elf-analyze-func <elf_path> <func_name> # Analyze a function by name");
-    eprintln!("");
-    eprintln!("Examples:");
-    eprintln!("  cargo run -- elf-list ./bpf_host.o");
-    eprintln!("  cargo run -- elf-analyze ./bpf_host.o tc");
-    eprintln!("  cargo run -- elf-analyze-func ./bpf_host.o cil_from_netdev");
+    eprintln!("  cargo run -- elf-list        <elf_path>                 # List all sections and programs");
+    eprintln!("  cargo run -- elf-analyze     <elf_path> <section_name>  # Analyze a section by name");
+    eprintln!("  cargo run -- elf-analyze-func <elf_path> <func_name>   # Analyze a function by name");
+    eprintln!("  cargo run -- elf-analyze-all <elf_path>                 # Analyze all sections");
 }
 
 fn make_entry_state(ctx: &ExecContext) -> Dbm {
     let mut dbm = Dbm::new(REG_ENV.len());
     assign_zero(&mut dbm, ctx.r10, ctx.zero);
     dbm
+}
+
+/// Result of analyzing a single section
+#[derive(Debug)]
+enum AnalysisResult {
+    Pass,
+    Fail(VerificationError),
+    LoadError(String),
+}
+
+/// Analyze a single section, returning the result
+fn analyze_section(
+    path: &str,
+    section: &str,
+    map_defs: &[BpfMapDef],
+    btf_ctx: &BtfContext,
+    verbose: bool,
+) -> AnalysisResult {
+    // Build context
+    let mut cctx = default_exec_ctx();
+    cctx.map_defs = map_defs.to_vec();
+    cctx.pc_to_map_idx = load_relocations(path, map_defs, section).unwrap_or_default();
+    cctx.btf = btf_ctx.clone();
+    cctx.prog_kind = match section {
+        "xdp" => ProgramKind::Xdp,
+        s if s.starts_with("xdp") => ProgramKind::Xdp,
+        _ => ProgramKind::Tc,
+    };
+
+    // Load program
+    let prog = load_program_from_elf(path, section);
+    if prog.instrs.is_empty() {
+        return AnalysisResult::LoadError("Empty program".to_string());
+    }
+
+    if verbose {
+        println!("  Program size: {} instructions", prog.instrs.len());
+    }
+
+    // Run analysis
+    let entry = make_entry_state(&cctx);
+    let result = analysis::analyze_program(&cctx, &prog, entry);
+
+    match result {
+        Ok(_) => AnalysisResult::Pass,
+        Err(e) => AnalysisResult::Fail(e),
+    }
+}
+
+/// Build a map from section index to function name
+fn build_section_to_func_map(path: &str) -> std::collections::HashMap<usize, String> {
+    let mut map = std::collections::HashMap::new();
+    if let Ok(progs) = load_raw_programs(path) {
+        for p in progs {
+            map.insert(p.section_idx, p.name);
+        }
+    }
+    map
+}
+
+/// Check if a section contains BPF code (not metadata/debug sections)
+fn is_code_section(name: &str) -> bool {
+    // Skip empty names
+    if name.is_empty() {
+        return false;
+    }
+    // Skip standard ELF metadata sections
+    if name.starts_with('.') {
+        return false;
+    }
+    // Skip license and version sections
+    if name == "license" || name == "version" || name == "maps" {
+        return false;
+    }
+    true
 }
 
 fn main() {
@@ -47,7 +117,7 @@ fn main() {
 
     match cmd.as_str() {
         // ============================================================
-        // NEW COMMAND: List all sections and programs in an ELF
+        // List all sections and programs in an ELF
         // ============================================================
         "elf-list" => {
             if args.len() < 3 {
@@ -64,12 +134,11 @@ fn main() {
             match list_section_names(path) {
                 Ok(sections) => {
                     for (i, name) in sections.iter().enumerate() {
-                        // Filter out non-code sections
-                        if !name.is_empty() && !name.starts_with('.') {
+                        if is_code_section(name) {
                             println!("  [{}] {}", i, name);
                         }
                     }
-                    println!("\n  (Showing non-dot sections. Use section name with elf-analyze)");
+                    println!("\n  (Showing code sections. Use section name with elf-analyze)");
                 }
                 Err(e) => eprintln!("  Error listing sections: {:?}", e),
             }
@@ -80,14 +149,11 @@ fn main() {
                 Ok(progs) => {
                     if progs.is_empty() {
                         println!("  No function symbols found.");
-                        println!("  Try using section names directly with elf-analyze.");
                     } else {
                         for (i, p) in progs.iter().enumerate() {
                             let insn_count = p.data.len() / 8;
-                            println!("  [{}] {} ({} instructions, {} bytes)", 
-                                     i, p.name, insn_count, p.data.len());
+                            println!("  [{}] {} ({} instructions)", i, p.name, insn_count);
                         }
-                        println!("\n  Use function name with elf-analyze-func");
                     }
                 }
                 Err(e) => eprintln!("  Error loading programs: {:?}", e),
@@ -113,7 +179,7 @@ fn main() {
         }
 
         // ============================================================
-        // EXISTING: Analyze by section name
+        // Analyze by section name
         // ============================================================
         "elf-analyze" => {
             if args.len() < 4 {
@@ -126,22 +192,10 @@ fn main() {
 
             println!("=== ELF analyze: file='{}', section='{}' ===", path, section);
             
-            let mut ctx = default_exec_ctx();
-            let entry = make_entry_state(&ctx);
-
-            // 1. Load Maps
+            // Load shared resources
             let map_defs = load_maps(path).unwrap_or_default();
             println!("Loaded {} maps", map_defs.len());
-            for (i, m) in map_defs.iter().enumerate() {
-                println!("  Map {}: '{}' (ValSize: {}, TypeID: {:?})", 
-                        i, m.name, m.value_size, m.btf_val_type_id);
-            }
 
-            // 2. Load Relocations
-            let pc_to_map_idx = load_relocations(path, &map_defs, section).unwrap_or_default();
-            println!("Loaded {} relocations", pc_to_map_idx.len());
-
-            // 3. Load BTF
             let btf_bytes = elf_loader::load_section_bytes(path, ".BTF", false).unwrap_or_default();
             let btf_ctx = if !btf_bytes.is_empty() {
                 btf::parse_btf(&btf_bytes).unwrap_or_else(|e| {
@@ -153,25 +207,17 @@ fn main() {
                 btf::BtfContext::new()
             };
 
-            ctx.map_defs = map_defs;
-            ctx.pc_to_map_idx = pc_to_map_idx;
-            ctx.btf = btf_ctx;
-            ctx.prog_kind = match section.as_str() {
-                "xdp" => ProgramKind::Xdp,
-                _ => ProgramKind::Tc,
-            };
-
-            // 4. Load and Analyze Program
-            let prog = load_program_from_elf(path, section);
-            println!("Program size: {} instructions", prog.instrs.len());
-
-            let _cert = analysis::analyze_program(&ctx, &prog, entry);
-
-            println!("=== Analysis complete ===");
+            let result = analyze_section(path, section, &map_defs, &btf_ctx, true);
+            
+            match result {
+                AnalysisResult::Pass => println!("\n=== PASS ==="),
+                AnalysisResult::Fail(e) => println!("\n=== FAIL: {:?} ===", e),
+                AnalysisResult::LoadError(e) => println!("\n=== LOAD ERROR: {} ===", e),
+            }
         }
 
         // ============================================================
-        // NEW: Analyze by function name (for multi-function ELFs)
+        // Analyze by function name
         // ============================================================
         "elf-analyze-func" => {
             if args.len() < 4 {
@@ -184,7 +230,6 @@ fn main() {
 
             println!("=== ELF analyze function: file='{}', func='{}' ===", path, func_name);
 
-            // 1. Find the function in the ELF
             let progs = match load_raw_programs(path) {
                 Ok(p) => p,
                 Err(e) => {
@@ -204,18 +249,10 @@ fn main() {
             }
             let target_prog = target_prog.unwrap();
             
-            println!("Found function '{}' ({} bytes, {} instructions)", 
-                     func_name, target_prog.data.len(), target_prog.data.len() / 8);
+            println!("Found function '{}' ({} instructions)", 
+                     func_name, target_prog.data.len() / 8);
 
-            let mut ctx = default_exec_ctx();
-            let entry = make_entry_state(&ctx);
-
-            // 2. Load Maps
-            let map_defs = load_maps(path).unwrap_or_default();
-            println!("Loaded {} maps", map_defs.len());
-
-            // 3. Find the section containing this function for relocations
-            // We need to find which section this function belongs to
+            // Get section name for this function
             let sections = list_section_names(path).unwrap_or_default();
             let section_name = if target_prog.section_idx < sections.len() {
                 &sections[target_prog.section_idx]
@@ -224,41 +261,124 @@ fn main() {
             };
             println!("Function is in section: '{}'", section_name);
 
-            // 4. Load Relocations for that section
-            let pc_to_map_idx = load_relocations(path, &map_defs, section_name).unwrap_or_default();
-            println!("Loaded {} relocations", pc_to_map_idx.len());
-
-            // 5. Load BTF
+            // Load shared resources
+            let map_defs = load_maps(path).unwrap_or_default();
             let btf_bytes = elf_loader::load_section_bytes(path, ".BTF", false).unwrap_or_default();
             let btf_ctx = if !btf_bytes.is_empty() {
-                btf::parse_btf(&btf_bytes).unwrap_or_else(|e| {
-                    println!("BTF Parse Error: {}", e);
-                    btf::BtfContext::new()
-                })
+                btf::parse_btf(&btf_bytes).unwrap_or_default()
             } else {
                 btf::BtfContext::new()
             };
 
-            ctx.map_defs = map_defs;
-            ctx.pc_to_map_idx = pc_to_map_idx;
-            ctx.btf = btf_ctx;
+            let result = analyze_section(path, section_name, &map_defs, &btf_ctx, true);
+            
+            match result {
+                AnalysisResult::Pass => println!("\n=== PASS ==="),
+                AnalysisResult::Fail(e) => println!("\n=== FAIL: {:?} ===", e),
+                AnalysisResult::LoadError(e) => println!("\n=== LOAD ERROR: {} ===", e),
+            }
+        }
 
-            // 6. Decode and Analyze
-            // Use the raw bytes from the function
-            let raw_insns = decode_insns(&target_prog.data);
-            let prog = match lower_raw_to_program(&raw_insns) {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("Error lowering to AST: {:?}", e);
-                    return;
-                }
+        // ============================================================
+        // NEW: Analyze all sections
+        // ============================================================
+        "elf-analyze-all" => {
+            if args.len() < 3 {
+                eprintln!("Error: Missing ELF path");
+                usage();
+                return;
+            }
+            let path = &args[2];
+
+            println!("=== ELF analyze all: '{}' ===\n", path);
+
+            // Load shared resources once
+            let map_defs = load_maps(path).unwrap_or_default();
+            println!("Loaded {} maps", map_defs.len());
+
+            let btf_bytes = elf_loader::load_section_bytes(path, ".BTF", false).unwrap_or_default();
+            let btf_ctx = if !btf_bytes.is_empty() {
+                btf::parse_btf(&btf_bytes).unwrap_or_default()
+            } else {
+                btf::BtfContext::new()
             };
 
-            println!("Program size: {} instructions", prog.instrs.len());
+            // Get sections and function name mapping
+            let sections = list_section_names(path).unwrap_or_default();
+            let section_to_func = build_section_to_func_map(path);
 
-            let _cert = analysis::analyze_program(&ctx, &prog, entry);
+            // Filter to code sections
+            let code_sections: Vec<(usize, &String)> = sections.iter()
+                .enumerate()
+                .filter(|(_, name)| is_code_section(name))
+                .collect();
 
-            println!("=== Analysis complete ===");
+            println!("Found {} code sections\n", code_sections.len());
+
+            // Track results
+            let mut results: Vec<(String, String, AnalysisResult)> = Vec::new();
+            let mut pass_count = 0;
+            let mut fail_count = 0;
+            let mut error_count = 0;
+
+            // Analyze each section
+            for (idx, section_name) in &code_sections {
+                let func_name = section_to_func.get(idx)
+                    .map(|s| s.as_str())
+                    .unwrap_or("-");
+                
+                print!("Analyzing section '{}' ({})... ", section_name, func_name);
+                
+                let result = analyze_section(path, section_name, &map_defs, &btf_ctx, false);
+                
+                match &result {
+                    AnalysisResult::Pass => {
+                        println!("PASS");
+                        pass_count += 1;
+                    }
+                    AnalysisResult::Fail(e) => {
+                        println!("FAIL");
+                        fail_count += 1;
+                    }
+                    AnalysisResult::LoadError(e) => {
+                        println!("ERROR ({})", e);
+                        error_count += 1;
+                    }
+                }
+                
+                results.push((section_name.to_string(), func_name.to_string(), result));
+            }
+
+            // Print summary
+            println!("\n========================================");
+            println!("                SUMMARY");
+            println!("========================================");
+            println!("Total:  {}", code_sections.len());
+            println!("Pass:   {}", pass_count);
+            println!("Fail:   {}", fail_count);
+            println!("Errors: {}", error_count);
+
+            // Print failures
+            if fail_count > 0 {
+                println!("\n--- FAILURES ---");
+                for (section, func, result) in &results {
+                    if let AnalysisResult::Fail(e) = result {
+                        println!("  {} ({}): {}", section, func, e.description());
+                    }
+                }
+            }
+
+            // Print errors
+            if error_count > 0 {
+                println!("\n--- ERRORS ---");
+                for (section, func, result) in &results {
+                    if let AnalysisResult::LoadError(e) = result {
+                        println!("  {} ({}): {}", section, func, e);
+                    }
+                }
+            }
+
+            println!("\n=== Done ===");
         }
 
         _ => {

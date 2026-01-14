@@ -19,7 +19,7 @@ use crate::zone::dbm::Dbm;
 use crate::zone::domain::{REG_ENV, Reg};
 
 use self::context::ExecContext;
-use self::env::VerifierEnv;
+use self::env::{VerifierEnv, VerificationError};
 use self::state::State;
 use self::reg_types::RegType;
 
@@ -38,7 +38,7 @@ pub fn analyze_program(
     ctx: &ExecContext,
     prog: &Program,
     entry_dbm: Dbm,
-) -> Vec<Dbm> {
+) -> Result<Vec<Dbm>, VerificationError> {
     // 1. Initialize Verifier Environment
     let mut env = VerifierEnv::new(ctx, prog);
 
@@ -46,8 +46,7 @@ pub fn analyze_program(
 
     if let Err(e) = cfg::check_cfg(prog, &mut env) {
         println!("[Analysis] CFG Error: {}", e);
-        env.fail(env::VerificationError::CfgError(e));
-        return vec![];
+        return Err(VerificationError::CfgError(e));
     }
 
     liveness::compute_liveness(prog, &mut env);
@@ -67,15 +66,17 @@ pub fn analyze_program(
     // 4. Main Analysis Loop
     while let Some(state) = worklist.pop_back() {
         if env.failed() {
-            println!("[Analysis] Aborted due to previous errors.");
+            if VERBOSITY >= 1 { println!("[Analysis] Aborted due to previous errors."); }
             break;
         }
 
         // A. Global Complexity Limit
         env.insn_processed += 1;
         if env.insn_processed > constants::MAX_INSN_PROCESSED {
-            println!("[Verifier] Hit complexity limit ({} instructions). Aborting.", constants::MAX_INSN_PROCESSED);
-            env.fail(env::VerificationError::ComplexityLimitExceeded { limit: constants::MAX_INSN_PROCESSED });
+            if VERBOSITY >= 1 {
+                println!("[Verifier] Hit complexity limit ({} instructions). Aborting.", constants::MAX_INSN_PROCESSED);
+            }
+            env.fail(VerificationError::ComplexityLimitExceeded { limit: constants::MAX_INSN_PROCESSED });
             break;
         }
 
@@ -86,7 +87,7 @@ pub fn analyze_program(
 
         // C. Pruning Check
         if pruning::is_state_visited(&mut env, &state) {
-            println!("[Verifier] Pruned state at PC {} (already visited).", state.pc);
+            if VERBOSITY >= 2 { println!("[Verifier] Pruned state at PC {} (already visited).", state.pc); }
             continue;
         }
 
@@ -114,7 +115,9 @@ pub fn analyze_program(
 
         // G. Critical Failure Check
         if env.failed() {
-            println!("[Verifier] Analysis halted due to critical error: {}", env.error.as_ref().unwrap().description());
+            if VERBOSITY >= 1 {
+                println!("[Verifier] Analysis halted due to critical error: {}", env.error.as_ref().unwrap().description());
+            }
             break;
         }
 
@@ -125,13 +128,13 @@ pub fn analyze_program(
     }
 
     // --- FINAL REPORT ---
-    if let Some(err) = &env.error {
-        println!("\n[Verifier] FAILURE: {:?}", err);
-    } else {
-        println!("\n[Verifier] Success! Verified {} instructions.", env.insn_processed);
+    if let Some(err) = env.error {
+        if VERBOSITY >= 1 { println!("\n[Verifier] FAILURE: {:?}", err); }
+        return Err(err);
     }
-
-    if VERBOSITY >= 1 { 
+    
+    if VERBOSITY >= 1 {
+        println!("\n[Verifier] Success! Verified {} instructions.", env.insn_processed);
         println!("[Analysis] Finished. Total Steps: {}", env.insn_processed); 
     }
 
@@ -151,5 +154,5 @@ pub fn analyze_program(
         }
     }
 
-    results
+    Ok(results)
 }
