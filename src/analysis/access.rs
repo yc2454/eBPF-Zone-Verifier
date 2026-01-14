@@ -7,6 +7,8 @@ use crate::zone::domain::get_bounds;
 use crate::analysis::heuristics;
 use crate::analysis::env::VerificationError;
 use crate::analysis::constants;
+use crate::parsing::ctx_model;
+use crate::ast::ProgramKind;
 use RegType::*;
 
 /// Validates memory load safety.
@@ -218,6 +220,18 @@ pub fn check_store(
                     limit: map_limit
                 } );
              }
+        }
+        PtrToCtx => {
+            // Check if this ctx field is writable
+            // TODO: Get program kind from env/ctx instead of hardcoding
+            let prog_kind = ProgramKind::Tc;  // Hardcoded for now
+            
+            if ctx_model::is_ctx_field_writable(prog_kind, off, size) {
+                // Safe write to writable ctx field
+            } else {
+                println!("Unsafe ctx store at pc {}: offset {} is not writable", pc, off);
+                env.fail(VerificationError::UnsafeCtxStore { pc, off, size });
+            }
         }
         _ => {
             println!("Unsafe store at pc {}: base {:?}+{} has non-pointer type {:?}", pc, base, off, base_ty);

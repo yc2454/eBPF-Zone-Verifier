@@ -106,6 +106,92 @@ pub const BPF_RINGBUF_SUBMIT: u32 = 132;
 pub const BPF_RINGBUF_DISCARD: u32 = 133;
 pub const BPF_RINGBUF_QUERY: u32 = 134;
 
+// ============================================================================
+// TC Context (__sk_buff) Field Offsets
+// ============================================================================
+//
+// struct __sk_buff {
+//     __u32 len;              // 0
+//     __u32 pkt_type;         // 4
+//     __u32 mark;             // 8   - WRITABLE
+//     __u32 queue_mapping;    // 12
+//     __u32 protocol;         // 16
+//     __u32 vlan_present;     // 20
+//     __u32 vlan_tci;         // 24
+//     __u32 vlan_proto;       // 28
+//     __u32 priority;         // 32  - WRITABLE
+//     __u32 ingress_ifindex;  // 36
+//     __u32 ifindex;          // 40
+//     __u32 tc_index;         // 44  - WRITABLE
+//     __u32 cb[5];            // 48-67 - WRITABLE
+//     __u32 hash;             // 68
+//     __u32 tc_classid;       // 72  - WRITABLE
+//     __u32 data;             // 76
+//     __u32 data_end;         // 80
+//     __u32 napi_id;          // 84
+//     __u32 family;           // 88
+//     ...
+//     __u32 data_meta;        // 140
+// };
+
+// Read-only fields
+pub const TC_CTX_LEN: i16 = 0;
+pub const TC_CTX_PKT_TYPE: i16 = 4;
+pub const TC_CTX_QUEUE_MAPPING: i16 = 12;
+pub const TC_CTX_PROTOCOL: i16 = 16;
+pub const TC_CTX_VLAN_PRESENT: i16 = 20;
+pub const TC_CTX_VLAN_TCI: i16 = 24;
+pub const TC_CTX_VLAN_PROTO: i16 = 28;
+pub const TC_CTX_INGRESS_IFINDEX: i16 = 36;
+pub const TC_CTX_IFINDEX: i16 = 40;
+pub const TC_CTX_HASH: i16 = 68;
+pub const TC_CTX_DATA: i16 = 76;        // 0x4c - packet start
+pub const TC_CTX_DATA_END: i16 = 80;    // 0x50 - packet end
+pub const TC_CTX_NAPI_ID: i16 = 84;
+pub const TC_CTX_FAMILY: i16 = 88;
+pub const TC_CTX_DATA_META: i16 = 140;  // 0x8c
+
+// Writable fields (offset, end)
+pub const TC_CTX_MARK: i16 = 8;
+pub const TC_CTX_MARK_END: i16 = 12;
+
+pub const TC_CTX_PRIORITY: i16 = 32;
+pub const TC_CTX_PRIORITY_END: i16 = 36;
+
+pub const TC_CTX_TC_INDEX: i16 = 44;
+pub const TC_CTX_TC_INDEX_END: i16 = 48;
+
+pub const TC_CTX_CB_START: i16 = 48;
+pub const TC_CTX_CB_END: i16 = 68;      // cb[5] = 5 * 4 = 20 bytes
+
+pub const TC_CTX_TC_CLASSID: i16 = 72;
+pub const TC_CTX_TC_CLASSID_END: i16 = 76;
+
+// ============================================================================
+// XDP Context (xdp_md) Field Offsets
+// ============================================================================
+//
+// struct xdp_md {
+//     __u32 data;             // 0
+//     __u32 data_end;         // 4
+//     __u32 data_meta;        // 8
+//     __u32 ingress_ifindex;  // 12
+//     __u32 rx_queue_index;   // 16  - WRITABLE
+//     __u32 egress_ifindex;   // 20  - WRITABLE (XDP_REDIRECT)
+// };
+
+pub const XDP_CTX_DATA: i16 = 0;
+pub const XDP_CTX_DATA_END: i16 = 4;
+pub const XDP_CTX_DATA_META: i16 = 8;
+pub const XDP_CTX_INGRESS_IFINDEX: i16 = 12;
+
+// Writable fields
+pub const XDP_CTX_RX_QUEUE_INDEX: i16 = 16;
+pub const XDP_CTX_RX_QUEUE_INDEX_END: i16 = 20;
+
+pub const XDP_CTX_EGRESS_IFINDEX: i16 = 20;
+pub const XDP_CTX_EGRESS_IFINDEX_END: i16 = 24;
+
 // --- HELPERS THAT INVALIDATE PACKET POINTERS ---
 // After calling these, all PTR_TO_PACKET / PTR_TO_PACKET_END must be reloaded
 pub const PACKET_INVALIDATING_HELPERS: &[u32] = &[
