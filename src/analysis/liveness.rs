@@ -113,6 +113,11 @@ fn get_use_def(instr: &Instr) -> (HashSet<Reg>, HashSet<Reg>) {
             uses.insert(*base);
             uses.insert(*src);
         }
+        Instr::AtomicAdd { base, src, .. } => {
+            uses.insert(*base);
+            uses.insert(*src);
+            defs.insert(*base); // base is modified
+        }
         Instr::If { left, right, .. } => {
             uses.insert(*left);
             if let Operand::Reg(r) = right {

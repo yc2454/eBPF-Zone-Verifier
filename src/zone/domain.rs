@@ -303,6 +303,93 @@ pub fn assign_mul_imm(dbm: &mut Dbm, dst: Reg, imm: i64, zero: Reg) {
     dbm.close();
 }
 
+/// Handle: dst = dst / imm
+pub fn assign_div_imm(dbm: &mut Dbm, reg: Reg, imm: i64) {
+    if imm == 0 {
+        // Technically this is a runtime crash. 
+        // We leave the state as is (or top) and let the verifier fail logic handle it.
+        return; 
+    }
+
+    // 1. Get current concrete bounds (Interval Analysis)
+    let (lo, hi) = get_bounds(dbm, reg, Reg::Zero); // r10 is not used for scalar bounds usually, checking against zero
+
+    // 2. Division breaks linear relationships. We must FORGET the register.
+    forget(dbm, reg);
+
+    // 3. Compute new bounds
+    // BPF Div is unsigned. We assume values are treated as u64.
+    // However, our DBM is i64. We treat negative numbers as "Large Positive" (Unknown).
+    if let (Some(l), Some(h)) = (lo, hi) {
+        if l >= 0 && h >= 0 {
+            // Safe positive range
+            let new_lo = l / imm;
+            let new_hi = h / imm;
+            
+            // 4. Constrain with new bounds
+            // dst >= new_lo  =>  0 - dst <= -new_lo
+            // dst <= new_hi  =>  dst - 0 <= new_hi
+            assume_ge_const(dbm, reg, Reg::Zero, new_lo);
+            assume_le_const(dbm, reg, Reg::Zero, new_hi);
+        }
+    } else {
+        // If we didn't know the bounds, or they were "negative",
+        // we know nothing about the result except that it is smaller than u64::MAX.
+        // Since we forgot the register in step 2, it is already "Unknown".
+    }
+}
+
+/// Handle: dst = dst / src
+pub fn assign_div_reg(dbm: &mut Dbm, dst: Reg, _src: Reg) {
+    // We know very little about division by a variable.
+    // dst / src results in a value smaller than dst (if src > 1).
+    
+    // 1. Conservative approach: Forget the destination
+    forget(dbm, dst);
+
+    // 2. We could add constraints if we knew bounds of src, 
+    // but for now, "Unknown" is the safest sound approximation.
+}
+
+/// Simulates `reg &= imm`.
+/// Since bitwise AND is non-linear, we forget precise relationships but 
+/// deduce that the result is in the range [0, imm].
+pub fn bit_and_const(dbm: &mut Dbm, reg: Reg, imm: i64) {
+    // 1. Bitwise operations destroy linear relationships (e.g. x < y).
+    // We must remove 'reg' from the matrix to avoid unsound conclusions.
+    forget(dbm, reg);
+
+    // 2. Apply new bounds derived from the mask.
+    // The result of (x & imm) is treated as unsigned, so it is >= 0.
+    assume_ge_const(dbm, reg, Reg::Zero, 0);
+
+    // The result cannot be larger than the mask itself (if mask is positive).
+    // e.g. (x & 0xFF) <= 255.
+    if imm >= 0 {
+        assume_le_const(dbm, reg, Reg::Zero, imm);
+    }
+}
+
+pub fn assign_neg(dbm: &mut Dbm, reg: Reg) {
+    // 1. Get current concrete bounds [lo, hi]
+    let (lo, hi) = get_bounds(dbm, reg, Reg::Zero); // r10/zero
+    
+    // 2. Forget existing relationships (destroy x - y <= c)
+    forget(dbm, reg);
+
+    // 3. Apply new bounds: [-hi, -lo]
+    // Note: checking for overflow (i64::MIN) is good practice but BPF implies wrapping.
+    if let (Some(l), Some(h)) = (lo, hi) {
+        // new_lower = -old_upper
+        // new_upper = -old_lower
+        let new_lo = h.wrapping_neg();
+        let new_hi = l.wrapping_neg();
+        
+        assume_ge_const(dbm, reg, Reg::Zero, new_lo);
+        assume_le_const(dbm, reg, Reg::Zero, new_hi);
+    }
+}
+
 pub fn proven_u32_range(dbm: &Dbm, v: Reg, zero: Reg) -> bool {
     let vi = REG_ENV.index(v);
     let zi = REG_ENV.index(zero);

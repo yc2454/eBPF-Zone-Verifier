@@ -27,14 +27,15 @@ pub enum AluOp {
     Arsh,   // arithmetic right shift
     Mul,
     Mod,
+    Div,
+    Neg,
     // later: Div, Neg, etc.
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CmpOp {
     UGe, ULe, UGt, ULt,
-    Eq, Ne,
-    // later: SGe, SLe, SGt, SLt
+    Eq, Ne, SLt, SGt, SLe, SGe,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -103,6 +104,14 @@ pub enum Instr {
         src: Reg,
     },
 
+    /// 'lock *(size *)(base + off) += src'
+    AtomicAdd {
+        size: MemSize,
+        base: Reg,
+        off: i16,
+        src: Reg,
+    },
+
     Call {
         helper: u32,
     },
@@ -150,6 +159,8 @@ impl fmt::Display for Instr {
                     AluOp::Arsh => "s>>",
                     AluOp::Mul  => "*",
                     AluOp::Mod  => "%",
+                    AluOp::Div  => "/",
+                    AluOp::Neg  => "-",
                 };
 
                 let src_str = match src {
@@ -193,6 +204,10 @@ impl fmt::Display for Instr {
                     CmpOp::ULt => "<u",
                     CmpOp::Eq  => "==",
                     CmpOp::Ne  => "!=",
+                    CmpOp::SLt => "<",
+                    CmpOp::SGt => ">",
+                    CmpOp::SLe => "<=",
+                    CmpOp::SGe => ">=",
                 };
                 let right_str = match right {
                     Operand::Reg(r) => r.name().to_string(),
@@ -226,6 +241,16 @@ impl fmt::Display for Instr {
                     MemSize::U64 => "u64",
                 };
                 write!(f, "*({} *)({} + {}) = {}", size_str, base.name(), off, src.name())
+            },
+
+            AtomicAdd { size, base, off, src } => {
+                let size_str = match size {
+                    MemSize::U8  => "u8",
+                    MemSize::U16 => "u16",
+                    MemSize::U32 => "u32",
+                    MemSize::U64 => "u64",
+                };
+                write!(f, "lock *({} *)({} + {}) += {}", size_str, base.name(), off, src.name())
             },
 
             Call { helper } =>

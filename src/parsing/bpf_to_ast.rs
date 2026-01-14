@@ -203,6 +203,39 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 src: Operand::Reg(src),
             },
 
+            // 0x37: DIV64_K  r_dst /= imm
+            0x37 => Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Div,
+                dst,
+                src: Operand::Imm(insn.imm as i64),
+            },
+
+            // 0x3f: DIV64_X  r_dst /= r_src
+            0x3f => Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Div,
+                dst,
+                src: Operand::Reg(src),
+            },
+
+            // 0x34: DIV32_K  w_dst /= imm
+            0x34 => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Div,
+                dst,
+                // Zero-extend 32-bit immediate for division
+                src: Operand::Imm((insn.imm as u32) as i64),
+            },
+
+            // 0x3c: DIV32_X  w_dst /= w_src
+            0x3c => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Div,
+                dst,
+                src: Operand::Reg(src),
+            },
+
             // 0x4f: OR64_X r_dst |= r_src
             0x4f => Instr::Alu {
                 width: Width::W64,
@@ -322,6 +355,14 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 op: AluOp::Shr,
                 dst,
                 src: Operand::Imm((insn.imm as u32) as i64),
+            },
+
+            // 0x84: NEG32 (w_dst = -w_dst)
+            0x84 => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Neg,
+                dst,
+                src: Operand::Imm(0), // Neg is unary; src is ignored/dummy
             },
 
             // 0x94: MOD32_K  w_dst %= imm
@@ -697,6 +738,80 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 }
             }
 
+            // 0xb6: JLE32_K (if (u32)dst <= (u32)imm goto target)
+            0xb6 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst,
+                    op: CmpOp::ULe,
+                    // Treat immediate as unsigned 32-bit
+                    right: Operand::Imm((insn.imm as u32) as i64),
+                    target,
+                }
+            },
+
+            // 0xbe: JLE32_X (if (u32)dst <= (u32)src goto target)
+            0xbe => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst,
+                    op: CmpOp::ULe,
+                    right: Operand::Reg(src),
+                    target,
+                }
+            },
+
+            // 0xc6: JSLT32_K (if (s32)dst < (s32)imm goto target)
+            0xc6 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst,
+                    op: CmpOp::SLt,
+                    // insn.imm is i32; casting to i64 preserves sign, which is what we want
+                    right: Operand::Imm(insn.imm as i64),
+                    target,
+                }
+            },
+
+            // 0xce: JSLT32_X (if (s32)dst < (s32)src goto target)
+            0xce => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst,
+                    op: CmpOp::SLt,
+                    right: Operand::Reg(src),
+                    target,
+                }
+            },
+
+            // 0xd6: JSLE32_K (if (s32)dst <= (s32)imm goto target)
+            0xd6 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst,
+                    op: CmpOp::SLe,
+                    right: Operand::Imm(insn.imm as i64),
+                    target,
+                }
+            },
+
+            // 0xde: JSLE32_X (if (s32)dst <= (s32)src goto target)
+            0xde => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst,
+                    op: CmpOp::SLe,
+                    right: Operand::Reg(src),
+                    target,
+                }
+            },
+
             // 0x16: JEQ32 imm  if (u32)dst == (u32)imm goto target
             0x16 => {
                 let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
@@ -787,7 +902,23 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 helper: insn.imm as u32,
             },
 
-            // Optional: guard against stray continuation opcodes outside 0x18
+            // 0xdb: ATOMIC_ADD_64 (lock *(u64 *)(dst + off) += src)
+            0xdb => Instr::AtomicAdd {
+                size: MemSize::U64,
+                base: dst,
+                off: insn.off,
+                src, 
+            },
+
+            // 0xc3: ATOMIC_ADD_32 (lock *(u32 *)(dst + off) += src)
+            0xc3 => Instr::AtomicAdd {
+                size: MemSize::U32,
+                base: dst,
+                off: insn.off,
+                src,
+            },
+
+            // Guard against stray continuation opcodes outside 0x18
             0x00 => {
                 return Err(LowerError {
                     pc,

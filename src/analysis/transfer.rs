@@ -8,7 +8,10 @@ use crate::zone::domain::{Reg, forget, get_bounds,
     assume_eq_const, assume_ge_const, assume_le_const, 
     assume_less_than, assume_ge_var, assume_le_var, 
     assume_gt_var, assume_le_var_plus_const, 
-    assign_zero, assign_mul_imm, assign_and_mask};
+    assign_zero, assign_mul_imm, assign_and_mask,
+    assign_div_imm, assign_div_reg,
+    bit_and_const, assign_neg
+};
 use crate::analysis::access;
 use crate::zone::domain::proven_u32_range;
 use crate::parsing::ctx_model::{classify_tc_ctx_field, CtxFieldKind};
@@ -43,6 +46,25 @@ pub fn transfer(
             access::check_store(env, &state, *base, *size, *off);
             let src_type = state.types.get(*src);
             update_store_types(&mut state.types, src_type, *size, *base, *off);
+            state.pc += 1;
+            vec![state]
+        },
+        Instr::AtomicAdd { size, base, off, src: _ } => {
+            // 1. Safety Check: Identical to Store
+            // (Must be valid writable memory)
+            access::check_store(env, &state, *base, *size, *off);
+            if env.failed() { return vec![]; }
+            // 2. State Update:
+            // An Atomic Add results in a number (Scalar).
+            // We treat this as "Storing a Scalar" to that location.
+            // We reuse update_store_types, passing ScalarValue as the "source type".
+            update_store_types(
+                &mut state.types, 
+                crate::analysis::reg_types::RegType::ScalarValue, 
+                *size, 
+                *base, 
+                *off
+            );
             state.pc += 1;
             vec![state]
         },
@@ -131,6 +153,20 @@ fn transfer_alu(
             }
         }
         AluOp::Or | AluOp::Xor | AluOp::Shl | AluOp::Arsh => forget(dbm, dst),
+        AluOp::Neg => {
+            // 1. Apply Negate Logic (swaps bounds)
+            assign_neg(&mut state.dbm, dst);
+
+            // 2. Handle 32-bit Truncation/Extension
+            // If this was NEG32 (w0 = -w0), the result must be zero-extended.
+            // Example: -1 becomes 0xFFFFFFFF (4294967295)
+            if width == Width::W32 {
+                bit_and_const(&mut state.dbm, dst, 0xFFFFFFFF);
+            }
+            
+            // 3. Type Update
+            state.types.set(dst, RegType::ScalarValue);
+        },
         AluOp::Shr => {
              match src {
                 Operand::Imm(k) => {
@@ -166,6 +202,45 @@ fn transfer_alu(
                 Operand::Reg(_) => forget(dbm, dst),
             }
         }
+        AluOp::Div => {
+            // 1. Check for Division by Zero
+            let is_zero = match src {
+                Operand::Imm(k) => k == 0,
+                Operand::Reg(r) => {
+                    // Check if register is strictly 0
+                    let (lo, hi) = get_bounds(&state.dbm, r, env.ctx.zero);
+                    match (lo, hi) {
+                        (Some(0), Some(0)) => true, // Definitely zero
+                        _ => false, // Could be non-zero (or unknown)
+                    }
+                }
+            };
+
+            if is_zero {
+                env.fail(VerificationError::DivideByZero { pc: state.pc });
+                return vec![];
+            }
+
+            // 2. Apply Domain Logic
+            match src {
+                Operand::Imm(imm) => {
+                    assign_div_imm(&mut state.dbm, dst, imm);
+                },
+                Operand::Reg(r_src) => {
+                    assign_div_reg(&mut state.dbm, dst, r_src);
+                }
+            }
+
+            // 3. Handle 32-bit truncation
+            // If this was a 32-bit div (w0 /= w1), the upper 32-bits are zeroed.
+            if width == Width::W32 {
+                bit_and_const(&mut state.dbm, dst, 0xFFFFFFFF);
+            }
+            
+            // 4. Update Type to Scalar
+            // Pointers cannot be divided.
+            state.types.set(dst, RegType::ScalarValue);
+        },
     }
 
     if state.dbm.is_inconsistent() {

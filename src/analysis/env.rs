@@ -18,6 +18,7 @@ pub enum VerificationError {
     DbmInconsistent { pc: usize },
     ComplexityLimitExceeded { limit: usize },
     CfgError(String),
+    DivideByZero { pc: usize },
 }
 
 impl VerificationError {
@@ -55,6 +56,9 @@ impl VerificationError {
             }
             VerificationError::CfgError(msg) => {
                 format!("CFG error: {}", msg)
+            }
+            VerificationError::DivideByZero { pc } => {
+                format!("Potential divide by zero at pc {}", pc)
             }
         }
     }
