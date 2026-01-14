@@ -15,6 +15,7 @@ use crate::parsing::elf_loader;
 use crate::parsing::btf;
 use crate::parsing::bpf_insn::decode_insns;
 use crate::parsing::bpf_to_ast::lower_raw_to_program;
+use crate::ast::ProgramKind;
 
 fn usage() {
     eprintln!("Usage:");
@@ -125,8 +126,7 @@ fn main() {
 
             println!("=== ELF analyze: file='{}', section='{}' ===", path, section);
             
-            let ctx = default_exec_ctx();
-            let mut cctx = default_exec_ctx();
+            let mut ctx = default_exec_ctx();
             let entry = make_entry_state(&ctx);
 
             // 1. Load Maps
@@ -153,15 +153,19 @@ fn main() {
                 btf::BtfContext::new()
             };
 
-            cctx.map_defs = map_defs;
-            cctx.pc_to_map_idx = pc_to_map_idx;
-            cctx.btf = btf_ctx;
+            ctx.map_defs = map_defs;
+            ctx.pc_to_map_idx = pc_to_map_idx;
+            ctx.btf = btf_ctx;
+            ctx.prog_kind = match section.as_str() {
+                "xdp" => ProgramKind::Xdp,
+                _ => ProgramKind::Tc,
+            };
 
             // 4. Load and Analyze Program
             let prog = load_program_from_elf(path, section);
             println!("Program size: {} instructions", prog.instrs.len());
 
-            let _cert = analysis::analyze_program(&cctx, &prog, entry);
+            let _cert = analysis::analyze_program(&ctx, &prog, entry);
 
             println!("=== Analysis complete ===");
         }
@@ -203,8 +207,7 @@ fn main() {
             println!("Found function '{}' ({} bytes, {} instructions)", 
                      func_name, target_prog.data.len(), target_prog.data.len() / 8);
 
-            let ctx = default_exec_ctx();
-            let mut cctx = default_exec_ctx();
+            let mut ctx = default_exec_ctx();
             let entry = make_entry_state(&ctx);
 
             // 2. Load Maps
@@ -236,9 +239,9 @@ fn main() {
                 btf::BtfContext::new()
             };
 
-            cctx.map_defs = map_defs;
-            cctx.pc_to_map_idx = pc_to_map_idx;
-            cctx.btf = btf_ctx;
+            ctx.map_defs = map_defs;
+            ctx.pc_to_map_idx = pc_to_map_idx;
+            ctx.btf = btf_ctx;
 
             // 6. Decode and Analyze
             // Use the raw bytes from the function
@@ -253,7 +256,7 @@ fn main() {
 
             println!("Program size: {} instructions", prog.instrs.len());
 
-            let _cert = analysis::analyze_program(&cctx, &prog, entry);
+            let _cert = analysis::analyze_program(&ctx, &prog, entry);
 
             println!("=== Analysis complete ===");
         }

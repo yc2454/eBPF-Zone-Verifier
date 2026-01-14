@@ -473,7 +473,14 @@ fn transfer_call(
     // 4. Forget packet pointer DBM entries if they were invalidated
     if helper_invalidates_packets(helper) {
         for r in Reg::ALL {
-            forget(&mut state.dbm, r);
+            if r != Reg::R10 {
+                match in_types.get(r) {
+                    RegType::PtrToPacket { .. } | RegType::PtrToPacketEnd => {
+                        forget(&mut state.dbm, r);
+                    }
+                    _ => {}
+                }
+            }
         }
     }
     

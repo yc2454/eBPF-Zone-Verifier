@@ -8,7 +8,6 @@ use crate::analysis::heuristics;
 use crate::analysis::env::VerificationError;
 use crate::analysis::constants;
 use crate::parsing::ctx_model;
-use crate::ast::ProgramKind;
 use RegType::*;
 
 /// Validates memory load safety.
@@ -83,7 +82,7 @@ pub fn check_load(
             // Ctx accesses are generally checked by offset/size classification in transfer.rs (classify_tc_ctx_field).
             // Here we assume safe unless OOB logic is added.
         }
-        RegType::PtrToMapValue { offset: map_off_opt, map_idx } => {
+        PtrToMapValue { offset: map_off_opt, map_idx } => {
             let map_def = ctx.map_defs.get(map_idx);
             let map_limit = map_def.map(|d| d.value_size as i64).unwrap_or(constants::DEFAULT_MAP_VALUE_SIZE as i64);
 
@@ -124,6 +123,40 @@ pub fn check_load(
                     size,
                     limit: map_limit
                  } );
+            }
+        }
+        PtrToMem { region } => {
+            // Memory region pointer (e.g., Calico metadata buffer).
+            // Find the end marker for this region and check DBM bounds.
+            let access_end = off as i64 + access_size;
+            let mut safe = false;
+            
+            // For CalicoMetaRegion, the end marker is PtrToPacket (ctx->data)
+            use crate::parsing::ctx_model::MemRegionId;
+            let end_type_matcher: fn(RegType) -> bool = match region {
+                MemRegionId::CalicoMetaRegion => |ty| matches!(ty, RegType::PtrToPacket { .. }),
+            };
+            // Find a register holding the end marker
+            let end_reg_opt = crate::zone::domain::REG_ENV.all().iter()
+                .find(|&&r| end_type_matcher(state.types.get(r)));
+            
+            if let Some(&end_reg) = end_reg_opt {
+                // Check DBM: base + off + size <= end
+                let (_, upper) = get_bounds(&state.dbm, base, end_reg);
+                if let Some(ub) = upper {
+                    if ub <= -access_end {
+                        safe = true;
+                    }
+                }
+            }
+            // Fallback heuristic if no end marker found
+            if !safe && off >= 0 && access_end <= 256 {
+                safe = true;
+            }
+            
+            if !safe {
+                println!("Unsafe mem region store at pc {}: base {:?}+{}", pc, base, off);
+                env.fail(VerificationError::UnsafeGenericStore { pc, base, off });
             }
         }
         ScalarValue | NotInit => {
@@ -223,10 +256,7 @@ pub fn check_store(
         }
         PtrToCtx => {
             // Check if this ctx field is writable
-            // TODO: Get program kind from env/ctx instead of hardcoding
-            let prog_kind = ProgramKind::Tc;  // Hardcoded for now
-            
-            if ctx_model::is_ctx_field_writable(prog_kind, off, size) {
+            if ctx_model::is_ctx_field_writable(ctx.prog_kind, off, size) {
                 // Safe write to writable ctx field
             } else {
                 println!("Unsafe ctx store at pc {}: offset {} is not writable", pc, off);
