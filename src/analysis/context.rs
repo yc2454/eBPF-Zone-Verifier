@@ -22,7 +22,7 @@ pub fn default_exec_ctx() -> ExecContext {
         zero: Reg::Zero,
         r10: Reg::R10,
         stack_min: -512,
-        stack_max: -1,
+        stack_max: 0,
         map_defs: Vec::new(),
         pc_to_map_idx: HashMap::new(),
         btf: BtfContext::new(),
