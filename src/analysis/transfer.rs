@@ -527,43 +527,59 @@ fn update_alu_types(
             }
         },
         AluOp::Add => {
-             let dst_ty = in_types.get(dst);
-             if dst_ty.is_pointer() {
-                 match (dst_ty, src) {
-                     (RegType::PtrToMapValue { offset, map_idx }, Operand::Imm(k)) => {
-                         let new_off = offset.map(|o| o + k);
-                         types.set(dst, RegType::PtrToMapValue { offset: new_off, map_idx });
-                     },
-                     (RegType::PtrToMapValue { map_idx, .. }, Operand::Reg(_)) => {
-                         types.set(dst, RegType::PtrToMapValue { offset: None, map_idx });
-                     },
-                     (RegType::PtrToPacket { id, range }, Operand::Imm(k)) => {
-                         let new_range = if *k > 0 { range.saturating_sub(*k as u64) } else { range.saturating_add(k.wrapping_neg() as u64) };
-                         types.set(dst, RegType::PtrToPacket { id, range: new_range });
-                     },
-                     _ => types.set(dst, RegType::ScalarValue),
-                 }
-             } else {
-                 types.set(dst, RegType::ScalarValue);
-             }
+            let dst_ty = in_types.get(dst);
+            if dst_ty.is_pointer() {
+                match (dst_ty, src) {
+                    (RegType::PtrToMapValue { offset, map_idx }, Operand::Imm(k)) => {
+                        let new_off = offset.map(|o| o + k);
+                        types.set(dst, RegType::PtrToMapValue { offset: new_off, map_idx });
+                    },
+                    (RegType::PtrToMapValue { map_idx, .. }, Operand::Reg(_)) => {
+                        types.set(dst, RegType::PtrToMapValue { offset: None, map_idx });
+                    },
+                    (RegType::PtrToPacket { id, range }, Operand::Imm(k)) => {
+                        let new_range = if *k > 0 { range.saturating_sub(*k as u64) } else { range.saturating_add(k.wrapping_neg() as u64) };
+                        types.set(dst, RegType::PtrToPacket { id, range: new_range });
+                    },
+                    // NEW: PtrToStack + Imm → PtrToStack
+                    (RegType::PtrToStack, Operand::Imm(_)) => {
+                        types.set(dst, RegType::PtrToStack);
+                    },
+                    // NEW: PtrToCtx + Imm → PtrToCtx  
+                    (RegType::PtrToCtx, Operand::Imm(_)) => {
+                        types.set(dst, RegType::PtrToCtx);
+                    },
+                    _ => types.set(dst, RegType::ScalarValue),
+                }
+            } else {
+                types.set(dst, RegType::ScalarValue);
+            }
         },
         AluOp::Sub => {
-             let dst_ty = in_types.get(dst);
-             if let (true, Operand::Imm(k)) = (dst_ty.is_pointer(), src) {
-                  match dst_ty {
-                      RegType::PtrToMapValue { offset, map_idx } => {
-                          let new_off = offset.map(|o| o - k);
-                          types.set(dst, RegType::PtrToMapValue { offset: new_off, map_idx });
-                      },
-                      RegType::PtrToPacket { id, range } => {
-                           let new_range = if *k > 0 { range.saturating_add(*k as u64) } else { range.saturating_sub(k.wrapping_neg() as u64) };
-                           types.set(dst, RegType::PtrToPacket { id, range: new_range });
-                      },
-                      _ => types.set(dst, RegType::ScalarValue),
-                  }
-             } else {
-                  types.set(dst, RegType::ScalarValue);
-             }
+            let dst_ty = in_types.get(dst);
+            if let (true, Operand::Imm(k)) = (dst_ty.is_pointer(), src) {
+                match dst_ty {
+                    RegType::PtrToMapValue { offset, map_idx } => {
+                        let new_off = offset.map(|o| o - k);
+                        types.set(dst, RegType::PtrToMapValue { offset: new_off, map_idx });
+                    },
+                    RegType::PtrToPacket { id, range } => {
+                        let new_range = if *k > 0 { range.saturating_add(*k as u64) } else { range.saturating_sub(k.wrapping_neg() as u64) };
+                        types.set(dst, RegType::PtrToPacket { id, range: new_range });
+                    },
+                    // NEW: PtrToStack - Imm → PtrToStack
+                    RegType::PtrToStack => {
+                        types.set(dst, RegType::PtrToStack);
+                    },
+                    // NEW: PtrToCtx - Imm → PtrToCtx
+                    RegType::PtrToCtx => {
+                        types.set(dst, RegType::PtrToCtx);
+                    },
+                    _ => types.set(dst, RegType::ScalarValue),
+                }
+            } else {
+                types.set(dst, RegType::ScalarValue);
+            }
         },
         _ => types.set(dst, RegType::ScalarValue),
     }
