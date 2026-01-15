@@ -518,15 +518,26 @@ fn update_alu_types(
                     }
                 }
                 Operand::Imm(_) => {
-                    // Check Relocations
-                    let mut map_idx_opt = env.ctx.pc_to_map_idx.get(&pc);
-                    if map_idx_opt.is_none() { map_idx_opt = env.ctx.pc_to_map_idx.get(&(pc + 1)); }
+                    let reloc = env.ctx.pc_to_reloc.get(&pc)
+                        .or_else(|| env.ctx.pc_to_reloc.get(&(pc + 1)));
                     
-                    if let Some(&map_idx) = map_idx_opt {
-                        if map_idx < env.ctx.map_defs.len() {
-                             types.set(dst, RegType::PtrToMapObject { map_idx });
+                    if let Some(info) = reloc {
+                        if info.map_idx < env.ctx.map_defs.len() {
+                            let map_name = &env.ctx.map_defs[info.map_idx].name;
+                            // Data sections become PtrToMapValue
+                            if map_name.starts_with(".rodata") || 
+                            map_name.starts_with(".data") || 
+                            map_name == ".bss" 
+                            {
+                                types.set(dst, RegType::PtrToMapValue { 
+                                    offset: Some(info.offset), 
+                                    map_idx: info.map_idx,
+                                });
+                            } else {
+                                types.set(dst, RegType::PtrToMapObject { map_idx: info.map_idx });
+                            }
                         } else {
-                             types.set(dst, RegType::ScalarValue);
+                            types.set(dst, RegType::ScalarValue);
                         }
                     } else {
                         types.set(dst, RegType::ScalarValue);

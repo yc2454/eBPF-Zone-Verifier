@@ -47,6 +47,45 @@ pub struct RawBpfProgram {
     pub file_offset: u64,   // Absolute offset in the file (for debugging)
 }
 
+#[derive(Clone, Debug)]
+pub struct RelocInfo {
+    pub map_idx: usize,
+    pub offset: i64,
+}
+
+/// Load data sections as synthetic maps
+pub fn load_data_section_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>, ElfLoadError> {
+    let buf = fs::read(path)?;
+    let elf = Elf::parse(&buf)?;
+    
+    let mut maps = vec![];
+    
+    for sh in &elf.section_headers {
+        let name = elf.shdr_strtab.get_at(sh.sh_name).unwrap_or("");
+        
+        let is_data_section = 
+            name == ".rodata" ||
+            name == ".data" ||
+            name == ".bss" ||
+            name.starts_with(".rodata.") ||
+            name.starts_with(".data.");
+        
+        if is_data_section && sh.sh_size > 0 {
+            maps.push(BpfMapDef {
+                type_: 2, // BPF_MAP_TYPE_ARRAY
+                key_size: 4,
+                value_size: sh.sh_size as u32,
+                max_entries: 1,
+                map_flags: 0,
+                name: name.to_string(),
+                btf_val_type_id: None,
+            });
+        }
+    }
+    
+    Ok(maps)
+}
+
 pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>, ElfLoadError> {
     let buf = fs::read(&path)?;
     let elf = Elf::parse(&buf)?;
@@ -107,66 +146,90 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>, ElfLoadError
     Ok(maps)
 }
 
-/// Build a map of Instruction Index -> Map ID
-/// Returns: HashMap<PC, MapIndex>
 pub fn load_relocations<P: AsRef<Path>>(
     path: P, 
     maps: &[BpfMapDef],
-    target_section_name: &str // NEW ARGUMENT
-) -> Result<HashMap<usize, usize>, ElfLoadError> {
+    target_section_name: &str,
+) -> Result<HashMap<usize, RelocInfo>, ElfLoadError> {
     let buf = fs::read(path)?;
     let elf = Elf::parse(&buf)?;
 
-    let mut pc_to_map = HashMap::new();
-    let mut sym_name_to_map_idx = HashMap::new();
+    let mut pc_to_reloc = HashMap::new();
     
-    // Build symbol map
+    // Build name -> index lookup
+    let mut map_name_to_idx: HashMap<&str, usize> = HashMap::new();
     for (i, m) in maps.iter().enumerate() {
-        sym_name_to_map_idx.insert(m.name.as_str(), i);
+        map_name_to_idx.insert(m.name.as_str(), i);
     }
-
-    // 1. Find the index of the target section (e.g., "tc")
-    let target_sec_idx = elf.section_headers.iter().enumerate()
-        .find(|(_, sh)| {
-            if let Some(name) = elf.shdr_strtab.get_at(sh.sh_name) {
-                return name == target_section_name;
-            }
-            false
-        })
-        .map(|(i, _)| i)
-        .ok_or_else(|| ElfLoadError::SectionNotFound { name: target_section_name.to_string() })?;
-
-    println!("Loading relocations for section '{}' (Index {})", target_section_name, target_sec_idx);
-
-    // 2. Iterate Relocations, but FILTER by target section
-    for (reloc_sec_idx, section_relocs) in elf.shdr_relocs.iter() {
-        let sh = &elf.section_headers[*reloc_sec_idx];
-        
-        // sh_info contains the section index these relocations apply to
-        if sh.sh_info as usize == target_sec_idx {
-            println!("Found matching relocation section index {}", reloc_sec_idx);
-            
-            for reloc in section_relocs {
-                let offset = reloc.r_offset;
-                let sym_idx = reloc.r_sym;
-                let pc = (offset / 8) as usize;
-
-                if let Some(sym) = elf.syms.get(sym_idx) {
-                    if let Some(name) = elf.strtab.get_at(sym.st_name) {
-                        // ADD THIS PRINT:
-                        println!("  [Loader] Offset {} (PC {}) -> Symbol '{}'", offset, pc, name);
-
-                        if let Some(&map_idx) = sym_name_to_map_idx.get(name) {
-                            println!("      -> Mapped to Map Index {}", map_idx); // ADD THIS
-                            pc_to_map.insert(pc, map_idx);
-                        }
-                    }
-                }
+    
+    // Build section_idx -> map_idx (for data section symbols)
+    let mut section_idx_to_map_idx: HashMap<usize, usize> = HashMap::new();
+    for (sec_idx, sh) in elf.section_headers.iter().enumerate() {
+        if let Some(name) = elf.shdr_strtab.get_at(sh.sh_name) {
+            if let Some(&map_idx) = map_name_to_idx.get(name) {
+                section_idx_to_map_idx.insert(sec_idx, map_idx);
             }
         }
     }
 
-    Ok(pc_to_map)
+    // Find target section index
+    let target_sec_idx = elf.section_headers.iter().enumerate()
+        .find(|(_, sh)| {
+            elf.shdr_strtab.get_at(sh.sh_name) == Some(target_section_name)
+        })
+        .map(|(i, _)| i)
+        .ok_or_else(|| ElfLoadError::SectionNotFound { 
+            name: target_section_name.to_string() 
+        })?;
+
+    println!("Loading relocations for section '{}' (Index {})", target_section_name, target_sec_idx);
+
+    // Iterate relocations
+    for (reloc_sec_idx, section_relocs) in elf.shdr_relocs.iter() {
+        let sh = &elf.section_headers[*reloc_sec_idx];
+        
+        if sh.sh_info as usize != target_sec_idx {
+            continue;
+        }
+        
+        println!("Found matching relocation section index {}", reloc_sec_idx);
+        
+        for reloc in section_relocs {
+            let pc = (reloc.r_offset / 8) as usize;
+            let sym_idx = reloc.r_sym;
+
+            let sym = match elf.syms.get(sym_idx) {
+                Some(s) => s,
+                None => continue,
+            };
+            
+            let name = match elf.strtab.get_at(sym.st_name) {
+                Some(n) => n,
+                None => continue,
+            };
+            
+            println!("  [Loader] Offset {} (PC {}) -> Symbol '{}'", reloc.r_offset, pc, name);
+
+            // Try 1: Direct map name match
+            if let Some(&map_idx) = map_name_to_idx.get(name) {
+                println!("      -> Direct match to Map Index {}", map_idx);
+                pc_to_reloc.insert(pc, RelocInfo { map_idx, offset: 0 });
+                continue;
+            }
+            
+            // Try 2: Symbol in a data section
+            if let Some(&map_idx) = section_idx_to_map_idx.get(&sym.st_shndx) {
+                let offset = sym.st_value as i64;
+                println!("      -> Data section symbol, Map Index {}, Offset {}", map_idx, offset);
+                pc_to_reloc.insert(pc, RelocInfo { map_idx, offset });
+                continue;
+            }
+            
+            println!("      -> No match found");
+        }
+    }
+
+    Ok(pc_to_reloc)
 }
 
 /// Return all section names in the ELF file (useful for discovery/debugging).

@@ -154,10 +154,8 @@ pub fn check_load(
             }
         }
         ScalarValue | NotInit => {
-            if !heuristics::is_safe_scalar_load(base, off) {
-                println!("Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})", pc, base, off, base_type);
-                env.fail(VerificationError::UnsafeGenericLoad { pc, base, off });
-            }
+            println!("Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})", pc, base, off, base_type);
+            env.fail(VerificationError::UnsafeGenericLoad { pc, base, off });
         }
         _ => {
             println!("Non-stack, non-ctx load at pc {} from base {:?}+{}", pc, base, off);

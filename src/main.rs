@@ -12,8 +12,10 @@ use crate::misc::config::VerifierConfig;
 use crate::zone::dbm::Dbm;
 use crate::zone::domain::{REG_ENV, assign_zero};
 use crate::misc::utils::load_program_from_elf;
-use crate::parsing::elf_loader::{load_maps, load_relocations, load_raw_programs, list_section_names};
-use crate::parsing::elf_loader::{self, BpfMapDef};
+use crate::parsing::elf_loader::{
+    load_maps, load_relocations, load_data_section_maps,
+    load_raw_programs, list_section_names};
+use crate::parsing::elf_loader::{self};
 use crate::parsing::btf::{self, BtfContext};
 use crate::ast::ProgramKind;
 
@@ -51,17 +53,25 @@ enum AnalysisResult {
 fn analyze_section(
     path: &str,
     section: &str,
-    map_defs: &[BpfMapDef],
     btf_ctx: &BtfContext,
     config: &VerifierConfig,
     verbose: bool,
 ) -> AnalysisResult {
+    // Load maps (explicit + data sections)
+    let explicit_maps = load_maps(path).unwrap_or_default();
+    let data_maps = load_data_section_maps(path).unwrap_or_default();
+    let mut all_maps = explicit_maps;
+    all_maps.extend(data_maps);
+    // Load relocations
+    let pc_to_reloc = 
+        load_relocations(path, &all_maps, section).unwrap_or_default();
+    
     // Build context
-    let mut cctx = default_exec_ctx();
-    cctx.map_defs = map_defs.to_vec();
-    cctx.pc_to_map_idx = load_relocations(path, map_defs, section).unwrap_or_default();
-    cctx.btf = btf_ctx.clone();
-    cctx.prog_kind = match section {
+    let mut ctx = default_exec_ctx();
+    ctx.map_defs = all_maps;
+    ctx.pc_to_reloc = pc_to_reloc;
+    ctx.btf = btf_ctx.clone();
+    ctx.prog_kind = match section {
         "xdp" => ProgramKind::Xdp,
         s if s.starts_with("xdp") => ProgramKind::Xdp,
         _ => ProgramKind::Tc,
@@ -78,8 +88,8 @@ fn analyze_section(
     }
 
     // Run analysis with config
-    let entry = make_entry_state(&cctx);
-    let result = analysis::analyze_program(&cctx, &prog, entry, config);
+    let entry = make_entry_state(&ctx);
+    let result = analysis::analyze_program(&ctx, &prog, entry, config);
 
     match result {
         Ok(_) => AnalysisResult::Pass,
@@ -184,9 +194,6 @@ fn main() {
             let section = &remaining[2];
 
             println!("=== Analyzing: '{}' section '{}' ===", path, section);
-            
-            let map_defs = load_maps(path).unwrap_or_default();
-            println!("Loaded {} maps", map_defs.len());
 
             let btf_bytes = elf_loader::load_section_bytes(path, ".BTF", false).unwrap_or_default();
             let btf_ctx = if !btf_bytes.is_empty() {
@@ -198,7 +205,7 @@ fn main() {
                 btf::BtfContext::new()
             };
 
-            let result = analyze_section(path, section, &map_defs, &btf_ctx, &config, true);
+            let result = analyze_section(path, section, &btf_ctx, &config, true);
             
             match result {
                 AnalysisResult::Pass => println!("\n=== PASS ==="),
@@ -240,7 +247,6 @@ fn main() {
             let sections = list_section_names(path).unwrap_or_default();
             let section_name = sections.get(target.section_idx).map(|s| s.as_str()).unwrap_or("unknown");
 
-            let map_defs = load_maps(path).unwrap_or_default();
             let btf_bytes = elf_loader::load_section_bytes(path, ".BTF", false).unwrap_or_default();
             let btf_ctx = if !btf_bytes.is_empty() {
                 btf::parse_btf(&btf_bytes).unwrap_or_default()
@@ -248,7 +254,7 @@ fn main() {
                 btf::BtfContext::new()
             };
 
-            let result = analyze_section(path, section_name, &map_defs, &btf_ctx, &config, true);
+            let result = analyze_section(path, section_name, &btf_ctx, &config, true);
             
             match result {
                 AnalysisResult::Pass => println!("\n=== PASS ==="),
@@ -271,10 +277,6 @@ fn main() {
             println!("=== Batch Analysis: '{}' ===\n", path);
             println!("Config: max_insn={}, skip_dbm={}, verbosity={}", 
                      config.max_insn, config.skip_dbm_check, config.verbosity);
-
-            // Load shared resources once
-            let map_defs = load_maps(path).unwrap_or_default();
-            println!("Loaded {} maps", map_defs.len());
 
             let btf_bytes = elf_loader::load_section_bytes(path, ".BTF", false).unwrap_or_default();
             let btf_ctx = if !btf_bytes.is_empty() {
@@ -304,7 +306,7 @@ fn main() {
                 print!("[{}/{}] '{}' ({})... ", 
                        results.len() + 1, code_sections.len(), section_name, func_name);
                 
-                let result = analyze_section(path, section_name, &map_defs, &btf_ctx, &config, false);
+                let result = analyze_section(path, section_name, &btf_ctx, &config, false);
                 
                 match &result {
                     AnalysisResult::Pass => {

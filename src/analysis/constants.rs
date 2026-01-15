@@ -133,3 +133,43 @@ pub const DEFAULT_MAP_VALUE_SIZE: i64 = 4096;
 pub const MAX_INSN_PROCESSED: usize = 1_000_000;
 pub const MAX_TAIL_CALL_DEPTH: u32 = 33;
 pub const LOG_HEARTBEAT_INTERVAL: usize = 10_000;
+
+// src/constants.rs (or wherever your constants live)
+
+// BPF Map Types (from linux/bpf.h)
+pub const BPF_MAP_TYPE_UNSPEC: u32 = 0;
+pub const BPF_MAP_TYPE_HASH: u32 = 1;
+pub const BPF_MAP_TYPE_ARRAY: u32 = 2;
+pub const BPF_MAP_TYPE_PROG_ARRAY: u32 = 3;
+pub const BPF_MAP_TYPE_PERF_EVENT_ARRAY: u32 = 4;
+pub const BPF_MAP_TYPE_PERCPU_HASH: u32 = 5;
+pub const BPF_MAP_TYPE_PERCPU_ARRAY: u32 = 6;
+pub const BPF_MAP_TYPE_STACK_TRACE: u32 = 7;
+pub const BPF_MAP_TYPE_CGROUP_ARRAY: u32 = 8;
+pub const BPF_MAP_TYPE_LRU_HASH: u32 = 9;
+pub const BPF_MAP_TYPE_LRU_PERCPU_HASH: u32 = 10;
+pub const BPF_MAP_TYPE_LPM_TRIE: u32 = 11;
+pub const BPF_MAP_TYPE_ARRAY_OF_MAPS: u32 = 12;
+pub const BPF_MAP_TYPE_HASH_OF_MAPS: u32 = 13;
+pub const BPF_MAP_TYPE_DEVMAP: u32 = 14;
+pub const BPF_MAP_TYPE_SOCKMAP: u32 = 15;
+pub const BPF_MAP_TYPE_CPUMAP: u32 = 16;
+pub const BPF_MAP_TYPE_XSKMAP: u32 = 17;
+pub const BPF_MAP_TYPE_SOCKHASH: u32 = 18;
+pub const BPF_MAP_TYPE_CGROUP_STORAGE: u32 = 19;
+pub const BPF_MAP_TYPE_REUSEPORT_SOCKARRAY: u32 = 20;
+pub const BPF_MAP_TYPE_PERCPU_CGROUP_STORAGE: u32 = 21;
+pub const BPF_MAP_TYPE_QUEUE: u32 = 22;
+pub const BPF_MAP_TYPE_STACK: u32 = 23;
+pub const BPF_MAP_TYPE_SK_STORAGE: u32 = 24;
+pub const BPF_MAP_TYPE_DEVMAP_HASH: u32 = 25;
+pub const BPF_MAP_TYPE_STRUCT_OPS: u32 = 26;
+pub const BPF_MAP_TYPE_RINGBUF: u32 = 27;
+pub const BPF_MAP_TYPE_INODE_STORAGE: u32 = 28;
+pub const BPF_MAP_TYPE_TASK_STORAGE: u32 = 29;
+pub const BPF_MAP_TYPE_BLOOM_FILTER: u32 = 30;
+
+// Data section names (for identifying synthetic maps)
+pub const DATA_SECTION_RODATA: &str = ".rodata";
+pub const DATA_SECTION_DATA: &str = ".data";
+pub const DATA_SECTION_BSS: &str = ".bss";

@@ -29,6 +29,11 @@ pub fn analyze_program(
     entry_dbm: Dbm,
     config: &VerifierConfig,
 ) -> Result<Vec<Dbm>, env::VerificationError> {
+    println!("[Debug] Relocations: {:?}", ctx.pc_to_reloc);
+    println!("[Debug] First 6 instructions raw bytes:");
+    for (i, insn) in prog.instrs.iter().take(6).enumerate() {
+        println!("  PC {}: {:?}", i, insn);
+    }
     // 1. Initialize Verifier Environment
     let mut env = VerifierEnv::new(ctx, prog);
 
