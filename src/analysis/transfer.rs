@@ -45,7 +45,8 @@ pub fn transfer(
         Instr::Store { size, base, off, src } => {
             access::check_store(env, &state, *base, *size, *off);
             let src_type = state.types.get(*src);
-            update_store_types(&mut state.types, src_type, *size, *base, *off);
+            let base_type = state.types.get(*base);
+            update_store_types(&mut state.types, src_type, *size, base_type, *off);
             state.pc += 1;
             vec![state]
         },
@@ -58,13 +59,8 @@ pub fn transfer(
             // An Atomic Add results in a number (Scalar).
             // We treat this as "Storing a Scalar" to that location.
             // We reuse update_store_types, passing ScalarValue as the "source type".
-            update_store_types(
-                &mut state.types, 
-                crate::analysis::reg_types::RegType::ScalarValue, 
-                *size, 
-                *base, 
-                *off
-            );
+            let base_type = state.types.get(*base);
+            update_store_types(&mut state.types, RegType::ScalarValue, *size, base_type, *off);
             state.pc += 1;
             vec![state]
         },
@@ -617,20 +613,29 @@ fn update_load_types(types: &mut TypeState, size: MemSize, dst: Reg, base: Reg, 
                 }
             } else { types.set(dst, RegType::ScalarValue); }
         }
-        RegType::PtrToStack { offset: _ } => {
-            if size == MemSize::U64 { types.set(dst, types.get_stack(off)); } 
-            else { types.set(dst, RegType::ScalarValue); }
+        RegType::PtrToStack { offset: base_offset } => {
+            let actual_slot = base_offset + (off as i64);
+            if size == MemSize::U64 { 
+                types.set(dst, types.get_stack(actual_slot as i16)); 
+            } else { 
+                types.set(dst, RegType::ScalarValue); 
+            }
         }
         _ => types.set(dst, RegType::ScalarValue),
     }
 }
 
-fn update_store_types(types: &mut TypeState, src_type: RegType, size: MemSize, base: Reg, off: i16) {
-    if base == Reg::R10 {
+fn update_store_types(types: &mut TypeState, src_type: RegType, size: MemSize, base_type: RegType, off: i16) {
+    let stack_slot = match base_type {
+        RegType::PtrToStack { offset } => Some(offset + (off as i64)),
+        _ => None,
+    };
+    
+    if let Some(slot) = stack_slot {
         if size == MemSize::U64 {
-            types.set_stack(off, src_type);
+            types.set_stack(slot as i16, src_type);
         } else {
-            types.stack.remove(&off);
+            types.stack.remove(&(slot as i16));
         }
     }
 }

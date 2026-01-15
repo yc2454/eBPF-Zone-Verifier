@@ -4,7 +4,6 @@ use crate::analysis::state::State;
 use crate::analysis::reg_types::RegType;
 use crate::ast::MemSize;
 use crate::zone::domain::get_bounds;
-use crate::analysis::heuristics;
 use crate::analysis::env::VerificationError;
 use crate::analysis::constants;
 use crate::parsing::ctx_model;
