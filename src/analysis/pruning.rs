@@ -97,6 +97,13 @@ fn reg_safe(old_ty: RegType, cur_ty: RegType) -> bool {
                 (Some(o1), Some(o2)) => o1 == o2,
             }
         },
+
+        (RegType::PtrToSocket { id: id1 }, RegType::PtrToSocket { id: id2 }) => id1 == id2,
+        (RegType::PtrToSocketOrNull { id: id1 }, RegType::PtrToSocketOrNull { id: id2 }) => id1 == id2,
+        (RegType::PtrToSockCommon { id: id1 }, RegType::PtrToSockCommon { id: id2 }) => id1 == id2,
+        (RegType::PtrToSockCommonOrNull { id: id1 }, RegType::PtrToSockCommonOrNull { id: id2 }) => id1 == id2,
+        (RegType::PtrToTcpSock { id: id1 }, RegType::PtrToTcpSock { id: id2 }) => id1 == id2,
+        (RegType::PtrToTcpSockOrNull { id: id1 }, RegType::PtrToTcpSockOrNull { id: id2 }) => id1 == id2,
         
         // EXACT MATCH FOR OTHERS
         _ => old_ty == cur_ty,

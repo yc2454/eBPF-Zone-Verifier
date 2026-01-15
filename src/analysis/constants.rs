@@ -173,3 +173,18 @@ pub const BPF_MAP_TYPE_BLOOM_FILTER: u32 = 30;
 pub const DATA_SECTION_RODATA: &str = ".rodata";
 pub const DATA_SECTION_DATA: &str = ".data";
 pub const DATA_SECTION_BSS: &str = ".bss";
+
+// Socket/networking helpers
+pub const BPF_SK_LOOKUP_TCP: u32 = 84;
+pub const BPF_SK_LOOKUP_UDP: u32 = 85;
+pub const BPF_SK_RELEASE: u32 = 86;
+pub const BPF_SKC_LOOKUP_TCP: u32 = 99;
+pub const BPF_SK_ASSIGN: u32 = 124;
+pub const BPF_SKC_TO_TCP6_SOCK: u32 = 125;
+pub const BPF_SKC_TO_TCP_SOCK: u32 = 126;
+pub const BPF_SKC_TO_TCP_TIMEWAIT_SOCK: u32 = 127;
+pub const BPF_SKC_TO_TCP_REQUEST_SOCK: u32 = 128;
+pub const BPF_SKC_TO_UDP6_SOCK: u32 = 129;
+pub const BPF_SKC_TO_UNIX_SOCK: u32 = 130;
+pub const BPF_SK_CGROUP_ID: u32 = 128;
+pub const BPF_SK_ANCESTOR_CGROUP_ID: u32 = 129;

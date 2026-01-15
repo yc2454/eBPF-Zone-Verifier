@@ -16,7 +16,13 @@ pub enum RegType {
     PtrToMem { region: MemRegionId },           
     PtrToMapObject { map_idx: usize }, 
     PtrToMapValueOrNull { id: u32, map_idx: usize }, 
-    PtrToMapValue { offset: Option<i64>, map_idx: usize },                                    
+    PtrToMapValue { offset: Option<i64>, map_idx: usize },
+    PtrToSocket { id: u32 },
+    PtrToSocketOrNull { id: u32 },
+    PtrToSockCommon { id: u32 },
+    PtrToSockCommonOrNull { id: u32 },
+    PtrToTcpSock { id: u32 },
+    PtrToTcpSockOrNull { id: u32 },
 }
 
 impl Default for RegType {
@@ -30,6 +36,35 @@ impl RegType {
             PtrToCtx | PtrToStack { .. } | PtrToMapValue { .. } | 
             PtrToPacket { .. } | PtrToPacketEnd | 
             PtrToMem { .. } | PtrToMapValueOrNull { .. }
+        )
+    }
+
+    /// Returns the non-null version of a nullable pointer type
+    pub fn to_non_null(&self) -> Option<RegType> {
+        match *self {
+            RegType::PtrToMapValueOrNull { id, map_idx } => {
+                Some(RegType::PtrToMapValue { offset: Some(0), map_idx })
+            }
+            RegType::PtrToSocketOrNull { id } => {
+                Some(RegType::PtrToSocket { id })
+            }
+            RegType::PtrToSockCommonOrNull { id } => {
+                Some(RegType::PtrToSockCommon { id })
+            }
+            RegType::PtrToTcpSockOrNull { id } => {
+                Some(RegType::PtrToTcpSock { id })
+            }
+            _ => None,
+        }
+    }
+    
+    /// Check if this is a nullable pointer type
+    pub fn is_nullable(&self) -> bool {
+        matches!(self, 
+            RegType::PtrToMapValueOrNull { .. } |
+            RegType::PtrToSocketOrNull { .. } |
+            RegType::PtrToSockCommonOrNull { .. } |
+            RegType::PtrToTcpSockOrNull { .. }
         )
     }
 }

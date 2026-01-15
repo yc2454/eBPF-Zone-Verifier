@@ -300,13 +300,31 @@ fn transfer_if(
             if let (Some(l), Some(h)) = (lo, hi) {
                 if l == *imm && h == *imm { assume_less_than(&mut state_then.dbm, ctx.zero, ctx.zero, 0); }
             }
+            // Null check refinement: if Rx != 0 goto target
+            // Then branch: Rx != 0, convert nullable to non-null
+            // Else branch: Rx == 0, stays nullable
+            if *imm == 0 {
+                let left_ty = state.types.get(left);
+                if let Some(non_null) = left_ty.to_non_null() {
+                    state_then.types.set(left, non_null);
+                }
+            }
         }
         (CmpOp::Eq, Operand::Imm(imm)) => {
-             assume_eq_const(&mut state_then.dbm, left, ctx.zero, *imm);
-             let (lo, hi) = get_bounds(dbm_in, left, ctx.zero);
-             if let (Some(l), Some(h)) = (lo, hi) {
+            assume_eq_const(&mut state_then.dbm, left, ctx.zero, *imm);
+            let (lo, hi) = get_bounds(dbm_in, left, ctx.zero);
+            if let (Some(l), Some(h)) = (lo, hi) {
                 if l == *imm && h == *imm { assume_less_than(&mut state_else.dbm, ctx.zero, ctx.zero, 0); }
-             }
+            }
+            // Null check refinement: if Rx == 0 goto target
+            // Then branch: Rx == 0, stays nullable
+            // Else branch: Rx != 0, convert nullable to non-null
+            if *imm == 0 {
+                let left_ty = state.types.get(left);
+                if let Some(non_null) = left_ty.to_non_null() {
+                    state_else.types.set(left, non_null);
+                }
+            }
         }
         _ => {}
     }
@@ -687,7 +705,35 @@ fn update_call_types(in_types: &TypeState, types: &mut TypeState, helper: u32) {
             types.set(Reg::R0, RegType::PtrToMapValueOrNull { id, map_idx });
         }
         
-        // tail_call: R0 is undefined on failure path (we model it as scalar)
+        // Socket lookup helpers - return PTR_TO_SOCKET_OR_NULL
+        constants::BPF_SK_LOOKUP_TCP | constants::BPF_SK_LOOKUP_UDP => {
+            let id = new_packet_id();
+            types.set(Reg::R0, RegType::PtrToSocketOrNull { id });
+        }
+        
+        // SKC lookup - returns PTR_TO_SOCK_COMMON_OR_NULL
+        constants::BPF_SKC_LOOKUP_TCP => {
+            let id = new_packet_id();
+            types.set(Reg::R0, RegType::PtrToSockCommonOrNull { id });
+        }
+        
+        // SKC to TCP sock conversion - returns PTR_TO_TCP_SOCK_OR_NULL
+        constants::BPF_SKC_TO_TCP_SOCK | 
+        constants::BPF_SKC_TO_TCP6_SOCK |
+        constants::BPF_SKC_TO_TCP_TIMEWAIT_SOCK |
+        constants::BPF_SKC_TO_TCP_REQUEST_SOCK => {
+            let id = new_packet_id();
+            types.set(Reg::R0, RegType::PtrToTcpSockOrNull { id });
+        }
+        
+        // SKC to UDP/Unix - return SOCK_COMMON for now (simplified)
+        constants::BPF_SKC_TO_UDP6_SOCK |
+        constants::BPF_SKC_TO_UNIX_SOCK => {
+            let id = new_packet_id();
+            types.set(Reg::R0, RegType::PtrToSockCommonOrNull { id });
+        }
+        
+        // tail_call: R0 is undefined on failure path
         constants::BPF_TAIL_CALL => {
             types.set(Reg::R0, RegType::ScalarValue);
         }

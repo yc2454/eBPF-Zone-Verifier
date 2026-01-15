@@ -152,6 +152,17 @@ pub fn check_load(
                 env.fail(VerificationError::UnsafeGenericStore { pc, base, off });
             }
         }
+        // Non-null socket pointers - allow loads
+        PtrToSocket { .. } | PtrToSockCommon { .. } | PtrToTcpSock { .. } => {
+            // Socket struct loads are generally safe
+            // Could add offset validation based on struct layout if needed
+        }
+        // Nullable socket pointers - must be null-checked first
+        PtrToSocketOrNull { .. } | PtrToSockCommonOrNull { .. } | PtrToTcpSockOrNull { .. } => {
+            println!("Load from nullable socket at pc {}: base {:?}+{} requires null check", 
+                     pc, base, off);
+            env.fail(VerificationError::UnsafeGenericLoad { pc, base, off });
+        }
         ScalarValue | NotInit => {
             println!("Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})", pc, base, off, base_type);
             env.fail(VerificationError::UnsafeGenericLoad { pc, base, off });
@@ -251,6 +262,16 @@ pub fn check_store(
                 println!("Unsafe ctx store at pc {}: offset {} is not writable", pc, off);
                 env.fail(VerificationError::UnsafeCtxStore { pc, off, size });
             }
+        }
+        // Socket pointers - generally read-only, disallow stores
+        PtrToSocket { .. } | PtrToSockCommon { .. } | PtrToTcpSock { .. } => {
+            println!("Cannot write to socket struct at pc {}", pc);
+            env.fail(VerificationError::UnsafeGenericStore { pc, base, off });
+        }
+        // Nullable - same as above but also not null-checked
+        PtrToSocketOrNull { .. } | PtrToSockCommonOrNull { .. } | PtrToTcpSockOrNull { .. } => {
+            println!("Cannot write to nullable socket at pc {}", pc);
+            env.fail(VerificationError::UnsafeGenericStore { pc, base, off });
         }
         _ => {
             println!("Unsafe store at pc {}: base {:?}+{} has non-pointer type {:?}", pc, base, off, base_ty);
