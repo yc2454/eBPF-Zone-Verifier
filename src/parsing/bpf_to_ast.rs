@@ -665,6 +665,20 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 }
             },
 
+            // 0xa5: JLT_K (if dst < imm goto target, unsigned 64-bit)
+            0xa5 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::ULt,
+                    // BPF immediates are sign-extended to 64-bit before comparison,
+                    // even for unsigned checks (e.g. comparing against -1 / UMAX).
+                    right: Operand::Imm(insn.imm as i64),
+                    target,
+                }
+            },
+
             // 0xa6: JLT32_K  (if (u32)dst < (u32)imm goto target)
             0xa6 => {
                 let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
