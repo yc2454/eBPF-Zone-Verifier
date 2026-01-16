@@ -1,8 +1,11 @@
-use crate::zone::dbm::{Dbm, INF};
+use crate::zone::dbm::{INF};
 use crate::parsing::bpf_to_ast;
 use crate::parsing::bpf_insn;
 use crate::ast::{Program, ProgramKind};
 use crate::elf_loader;
+use std::collections::HashMap;
+use std::path::Path;
+use std::fs;
 
 // Bounds for finite constraints inside the DBM.
 // We never store anything > POS_BOUND or < NEG_BOUND.
@@ -33,43 +36,6 @@ pub fn clamped_add(a: i64, b: i64) -> i64 {
     match a.checked_add(b) {
         Some(sum) => clamp_upper_bound(sum),
         None => INF,
-    }
-}
-
-pub fn clamped_add3(a: i64, b: i64, c: i64) -> i64 {
-    let ab = clamped_add(a, b);
-    clamped_add(ab, c)
-}
-
-pub fn dbm_equals(a: &Dbm, b: &Dbm) -> bool {
-    if a.num_vars() != b.num_vars() {
-        return false;
-    }
-    for i in 0..a.num_vars() {
-        for j in 0..a.num_vars() {
-            if a.get_idx(i, j) != b.get_idx(i, j) {
-                return false;
-            }
-        }
-    }
-    true
-}
-
-pub fn infer_program_kind(section_name: &str) -> ProgramKind {
-    let sec = section_name;
-
-    // Very simple heuristic for now, tuned to your use case:
-    if sec == "tc" || sec.starts_with("tc/") {
-        ProgramKind::Tc
-    } else if sec == "xdp" || sec.starts_with("xdp/") {
-        ProgramKind::Xdp
-    } else if sec == ".text" {
-        // Fallback for “bare” BPF objects:
-        // if you're mostly using TC with .text, feel free to default to Tc instead.
-        ProgramKind::Tc
-    } else {
-        // Reasonable default for your current project
-        ProgramKind::Tc
     }
 }
 

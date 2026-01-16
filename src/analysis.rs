@@ -103,13 +103,13 @@ pub fn analyze_program(
         let show_debug = is_target || config.verbosity >= 3;
 
         if show_trace {
-             let raw_pc = prog.pc_map.get(state.pc).copied().unwrap_or(0);
-             println!("--- Step {}: PC {} (Raw {}) ---", env.insn_processed, state.pc, raw_pc);
-             
-             if show_debug {
-                 println!("    Instr: {:?}", instr);
-                 println!("    Regs:  {:?}", state.types.regs);
-             }
+            let raw_pc = prog.pc_map.get(state.pc).copied().unwrap_or(0);
+            println!("--- Step {}: PC {} (Raw {}) ---", env.insn_processed, state.pc, raw_pc);
+            
+            if show_debug {
+                println!("    Instr: {:?}", instr);
+                state.types.print();
+            }
         }
 
         // F. Transfer Function

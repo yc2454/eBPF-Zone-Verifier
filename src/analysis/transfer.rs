@@ -37,7 +37,7 @@ pub fn transfer(
         Instr::If { width, left, op, right, target } => transfer_if(env, state, *width, *left, *op, right.clone(), *target),
         Instr::Load { size, dst, base, off } => {
             access::check_load(env, &state, *base, *size, *off);
-            update_load_types(env, &mut state.types, *size, *dst, *base, *off);
+            update_load_types(state.pc, env, &mut state.types, *size, *dst, *base, *off);
             forget(&mut state.dbm, *dst);
             state.pc += 1;
             vec![state]
@@ -623,14 +623,18 @@ fn update_alu_types(
     }
 }
 
-fn update_load_types(env: &VerifierEnv, types: &mut TypeState, size: MemSize, dst: Reg, base: Reg, off: i16) {
+fn update_load_types(pc: usize, env: &VerifierEnv, types: &mut TypeState, size: MemSize, dst: Reg, base: Reg, off: i16) {
     let base_ty = types.get(base);
     match base_ty {
         RegType::PtrToCtx => {
+            println!("[DEBUG] PC {}: Loading from ctx+{} size {:?}, prog_kind={:?}", 
+             pc, off, size, env.ctx.prog_kind);
             let kind = match env.ctx.prog_kind {
                 ProgramKind::Xdp => classify_xdp_ctx_field(off, size),
-                ProgramKind::Tc => classify_tc_ctx_field(off, size)
+                ProgramKind::Tc => classify_tc_ctx_field(off, size),
+                _ => None,
             };
+            println!("[DEBUG] Classified as {:?}", kind);
             if let Some(kind) = kind {
                 match kind {
                     CtxFieldKind::PacketStart => {

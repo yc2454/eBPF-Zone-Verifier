@@ -110,4 +110,12 @@ impl TypeState {
     pub fn set_stack(&mut self, off: i16, ty: RegType) {
         self.stack.insert(off, ty);
     }
+
+    pub fn print(&self) {
+        println!("Register Types:");
+        for (i, ty) in self.regs.iter().enumerate() {
+            print!("  R{}: {:?} ", i, ty);
+        }
+        println!();
+    }
 }
