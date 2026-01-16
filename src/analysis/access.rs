@@ -47,7 +47,6 @@ pub fn check_load(
         PtrToPacket { id: _, range } => {
             let access_end = off as i64 + access_size;
             let mut safe = false;
-            
             // 1. Standard Check
             if off >= 0 && (access_end as u64) <= range { 
                 safe = true; 
@@ -72,34 +71,67 @@ pub fn check_load(
             }
         }
         PtrToCtx => {
-            // Ctx accesses are generally checked by offset/size classification in transfer.rs (classify_tc_ctx_field).
+            // Ctx accesses are generally checked by offset/size classification in transfer.rs
             // Here we assume safe unless OOB logic is added.
         }
         PtrToMapValue { offset: map_off_opt, map_idx } => {
             let map_def = ctx.map_defs.get(map_idx);
-            let map_limit = map_def.map(|d| d.value_size as i64).unwrap_or(constants::DEFAULT_MAP_VALUE_SIZE as i64);
+            let map_limit = map_def.map(|d| d.value_size as i64)
+                                   .unwrap_or(constants::DEFAULT_MAP_VALUE_SIZE as i64);
 
-            // Case A: Known Offset
-            if let Some(map_off) = map_off_opt {
-                let final_offset = map_off + (off as i64);
-                let access_end = final_offset + access_size;
+            match map_off_opt {
+                // Case A: Constant/Known Offset (e.g., r1 = map_value; r1 += 10)
+                // We trust the type system's tracking here.
+                Some(fixed_off) => {
+                    let final_offset = fixed_off + (off as i64);
+                    let access_end = final_offset + access_size;
 
-                if final_offset >= 0 && access_end <= map_limit {
-                    // Safe Range!
-                    // BTF checks for pointers happen in transfer.rs to update types.
-                } else {
-                    println!("Unsafe map load at pc {}: off {} limit {}", pc, final_offset, map_limit);
-                    env.fail(VerificationError::UnsafeMapLoad { pc, 
-                        off: final_offset, 
-                        size,
-                        limit: map_limit
-                     } );
+                    if final_offset >= 0 && access_end <= map_limit {
+                        // Safe!
+                    } else {
+                        println!("Unsafe map load (constant) at pc {}: off {} limit {}", pc, final_offset, map_limit);
+                        env.fail(VerificationError::UnsafeMapLoad { 
+                            pc, 
+                            off: final_offset, 
+                            size,
+                            limit: map_limit
+                        });
+                    }
+                },
+                // Case B: Variable/Unknown Offset (e.g., r1 += r_random)
+                // The Type system lost track (offset is None). We MUST query the DBM.
+                None => {
+                    // Query the DBM for the absolute range of the register.
+                    let (dbm_min, dbm_max) = get_bounds(&state.dbm, base, env.ctx.zero);
+                    match (dbm_min, dbm_max) {
+                        (Some(min_val), Some(max_val)) => {
+                            // We treat the DBM value as the effective offset into the map
+                            // (assuming the abstract domain normalizes map bases to 0 for tracking).
+                            let access_start = min_val + (off as i64);
+                            let access_end = max_val + (off as i64) + (size as i64);
+
+                            if access_start >= 0 && access_end <= map_limit {
+                                // Safe!
+                            } else {
+                                println!("Unsafe variable map access at pc {}: range [{}, {}], limit {}", 
+                                    pc, access_start, access_end, map_limit);
+                                env.fail(VerificationError::UnsafeMapLoad { 
+                                    pc, 
+                                    off: access_start, 
+                                    size,
+                                    limit: map_limit 
+                                });
+                            }
+                        },
+                        _ => {
+                            // Bounds are infinite or unknown. This is a potential OOB.
+                            println!("Unbounded variable map access at pc {}", pc);
+                            env.fail(VerificationError::UnsafeMapLoad { 
+                                pc, off: -1, size, limit: map_limit 
+                            });
+                        }
+                    }
                 }
-            } 
-            // Case B: Unknown/Variable Offset
-            else {
-                println!("[Analysis] Variable Offset Load from Map {} at PC {}", map_idx, pc);
-                // Heuristic safety usually deferred or warned here.
             }
         },
         PtrToMapValueOrNull { map_idx, .. } => {

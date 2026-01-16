@@ -37,7 +37,7 @@ pub fn transfer(
         Instr::If { width, left, op, right, target } => transfer_if(env, state, *width, *left, *op, right.clone(), *target),
         Instr::Load { size, dst, base, off } => {
             access::check_load(env, &state, *base, *size, *off);
-            update_load_types(state.pc, env, &mut state.types, *size, *dst, *base, *off);
+            update_load_types(env, &mut state.types, *size, *dst, *base, *off);
             forget(&mut state.dbm, *dst);
             state.pc += 1;
             vec![state]
@@ -623,7 +623,7 @@ fn update_alu_types(
     }
 }
 
-fn update_load_types(pc: usize, env: &VerifierEnv, types: &mut TypeState, size: MemSize, dst: Reg, base: Reg, off: i16) {
+fn update_load_types(env: &VerifierEnv, types: &mut TypeState, size: MemSize, dst: Reg, base: Reg, off: i16) {
     let base_ty = types.get(base);
     match base_ty {
         RegType::PtrToCtx => {
