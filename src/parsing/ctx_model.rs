@@ -66,6 +66,16 @@ pub fn classify_tc_ctx_field(off: i16, size: MemSize) -> Option<CtxFieldKind> {
     }
 }
 
+/// XDP-specific ctx classifier for LOADS.
+pub fn classify_xdp_ctx_field(off: i16, size: MemSize) -> Option<CtxFieldKind> {
+    match (off, size) {
+        (constants::XDP_CTX_DATA, MemSize::U32) => Some(CtxFieldKind::PacketStart),
+        (constants::XDP_CTX_DATA_END, MemSize::U32) => Some(CtxFieldKind::PacketEnd),
+        (constants::XDP_CTX_DATA_META, MemSize::U32) => Some(CtxFieldKind::PacketStart), // or PtrToMem
+        _ => Some(CtxFieldKind::Scalar),
+    }
+}
+
 /// Check if a TC context field is writable.
 pub fn is_tc_ctx_field_writable(off: i16, size: MemSize) -> bool {
     let access_size: i16 = match size {
@@ -137,17 +147,5 @@ pub fn is_ctx_field_writable(prog_kind: ProgramKind, off: i16, size: MemSize) ->
     match prog_kind {
         ProgramKind::Tc => is_tc_ctx_field_writable(off, size),
         ProgramKind::Xdp => is_xdp_ctx_field_writable(off, size),
-    }
-}
-
-/// Generic dispatch for field classification (loads).
-pub fn classify_ctx_field(
-    prog_kind: ProgramKind,
-    off: i16,
-    size: MemSize,
-) -> Option<CtxFieldKind> {
-    match prog_kind {
-        ProgramKind::Tc => classify_tc_ctx_field(off, size),
-        ProgramKind::Xdp => Some(CtxFieldKind::Scalar), // TODO: Add XDP classification
     }
 }

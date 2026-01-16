@@ -2,7 +2,7 @@
 use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;
 use crate::analysis::reg_types::{RegType, TypeState, new_packet_id};
-use crate::ast::{Instr, AluOp, CmpOp, Operand, Width, EndianKind, MemSize};
+use crate::ast::{Instr, AluOp, CmpOp, Operand, Width, EndianKind, MemSize, ProgramKind};
 use crate::zone::domain::{Reg, forget, get_bounds, 
     assign_add_imm, assign_add_reg, assign_eq, 
     assume_eq_const, assume_ge_const, assume_le_const, 
@@ -14,7 +14,7 @@ use crate::zone::domain::{Reg, forget, get_bounds,
 };
 use crate::analysis::access;
 use crate::zone::domain::proven_u32_range;
-use crate::parsing::ctx_model::{classify_tc_ctx_field, CtxFieldKind};
+use crate::parsing::ctx_model::{classify_tc_ctx_field, CtxFieldKind, classify_xdp_ctx_field};
 use crate::analysis::env::VerificationError;
 use crate::zone::dbm::Dbm;
 use crate::analysis::constants;
@@ -37,7 +37,7 @@ pub fn transfer(
         Instr::If { width, left, op, right, target } => transfer_if(env, state, *width, *left, *op, right.clone(), *target),
         Instr::Load { size, dst, base, off } => {
             access::check_load(env, &state, *base, *size, *off);
-            update_load_types(&mut state.types, *size, *dst, *base, *off);
+            update_load_types(env, &mut state.types, *size, *dst, *base, *off);
             forget(&mut state.dbm, *dst);
             state.pc += 1;
             vec![state]
@@ -330,14 +330,19 @@ fn transfer_if(
     }
 
     // 2. 32-bit Logic Fallback
+    // Note: Eq/Ne with immediate 0 is safe regardless of bit width, and constraints
+    // were already applied in section 1. We must NOT early-return for these cases,
+    // otherwise we bypass the is_inconsistent() check at the end.
     if width == Width::W32 {
-         if let Operand::Imm(_c) = right {
-            if matches!(op, CmpOp::Eq | CmpOp::Ne | CmpOp::UGe | CmpOp::ULe | CmpOp::UGt | CmpOp::ULt) 
+        if let Operand::Imm(c) = &right {
+            let is_zero_check = (*c == 0) && matches!(op, CmpOp::Eq | CmpOp::Ne);
+            if !is_zero_check
+               && matches!(op, CmpOp::Eq | CmpOp::Ne | CmpOp::UGe | CmpOp::ULe | CmpOp::UGt | CmpOp::ULt) 
                && !proven_u32_range(dbm_in, left, ctx.zero) {
                 return vec![state_else, state_then];
             }
         } else {
-             return vec![state_else, state_then];
+            return vec![state_else, state_then];
         }
     }
 
@@ -618,18 +623,31 @@ fn update_alu_types(
     }
 }
 
-fn update_load_types(types: &mut TypeState, size: MemSize, dst: Reg, base: Reg, off: i16) {
+fn update_load_types(env: &VerifierEnv, types: &mut TypeState, size: MemSize, dst: Reg, base: Reg, off: i16) {
     let base_ty = types.get(base);
     match base_ty {
         RegType::PtrToCtx => {
-            if let Some(kind) = classify_tc_ctx_field(off, size) {
+            let kind = match env.ctx.prog_kind {
+                ProgramKind::Xdp => classify_xdp_ctx_field(off, size),
+                ProgramKind::Tc => classify_tc_ctx_field(off, size)
+            };
+            if let Some(kind) = kind {
                 match kind {
-                    CtxFieldKind::PacketStart => { let new_id = new_packet_id(); types.set(dst, RegType::PtrToPacket { id: new_id, range: 0 }); }
-                    CtxFieldKind::PacketEnd => { types.set(dst, RegType::PtrToPacketEnd); }
-                    CtxFieldKind::PtrToMem { region } => { types.set(dst, RegType::PtrToMem { region }); }
+                    CtxFieldKind::PacketStart => {
+                        let new_id = new_packet_id();
+                        types.set(dst, RegType::PtrToPacket { id: new_id, range: 0 });
+                    }
+                    CtxFieldKind::PacketEnd => {
+                        types.set(dst, RegType::PtrToPacketEnd);
+                    }
+                    CtxFieldKind::PtrToMem { region } => {
+                        types.set(dst, RegType::PtrToMem { region });
+                    }
                     _ => types.set(dst, RegType::ScalarValue),
                 }
-            } else { types.set(dst, RegType::ScalarValue); }
+            } else {
+                types.set(dst, RegType::ScalarValue);
+            }
         }
         RegType::PtrToStack { offset: base_offset } => {
             let actual_slot = base_offset + (off as i64);
