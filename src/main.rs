@@ -11,7 +11,7 @@ use crate::analysis::env::VerificationError;
 use crate::misc::config::VerifierConfig;
 use crate::zone::dbm::Dbm;
 use crate::zone::domain::{REG_ENV, assign_zero};
-use crate::misc::utils::load_program_from_elf;
+use crate::misc::utils::{load_program_from_elf, program_kind_for_object};
 use crate::parsing::elf_loader::{
     load_maps, load_relocations, load_data_section_maps,
     load_raw_programs, list_section_names};
@@ -71,10 +71,12 @@ fn analyze_section(
     ctx.map_defs = all_maps;
     ctx.pc_to_reloc = pc_to_reloc;
     ctx.btf = btf_ctx.clone();
-    ctx.prog_kind = match section {
-        "xdp" => ProgramKind::Xdp,
-        s if s.starts_with("xdp") => ProgramKind::Xdp,
-        _ => ProgramKind::Tc,
+    ctx.prog_kind = match program_kind_for_object(std::path::Path::new(path)) {
+        Ok(kind) => {
+            println!("  Detected program kind: {:?}", kind);
+            kind
+        },
+        Err(_) => ProgramKind::Unknown,
     };
 
     // Load program

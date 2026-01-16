@@ -145,7 +145,8 @@ pub fn is_xdp_ctx_field_writable(off: i16, size: MemSize) -> bool {
 /// Generic dispatch: is ctx field writable?
 pub fn is_ctx_field_writable(prog_kind: ProgramKind, off: i16, size: MemSize) -> bool {
     match prog_kind {
-        ProgramKind::Tc => is_tc_ctx_field_writable(off, size),
+        ProgramKind::SchedCls | ProgramKind::SocketFilter => is_tc_ctx_field_writable(off, size),
         ProgramKind::Xdp => is_xdp_ctx_field_writable(off, size),
+        _ => false,
     }
 }

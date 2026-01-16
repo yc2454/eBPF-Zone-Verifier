@@ -26,6 +26,6 @@ pub fn default_exec_ctx() -> ExecContext {
         map_defs: Vec::new(),
         pc_to_reloc: HashMap::new(),
         btf: BtfContext::new(),
-        prog_kind: ProgramKind::Tc,
+        prog_kind: ProgramKind::Unknown,
     }
 }

@@ -627,14 +627,11 @@ fn update_load_types(pc: usize, env: &VerifierEnv, types: &mut TypeState, size: 
     let base_ty = types.get(base);
     match base_ty {
         RegType::PtrToCtx => {
-            println!("[DEBUG] PC {}: Loading from ctx+{} size {:?}, prog_kind={:?}", 
-             pc, off, size, env.ctx.prog_kind);
             let kind = match env.ctx.prog_kind {
                 ProgramKind::Xdp => classify_xdp_ctx_field(off, size),
-                ProgramKind::Tc => classify_tc_ctx_field(off, size),
+                ProgramKind::SchedCls | ProgramKind::SocketFilter => classify_tc_ctx_field(off, size),
                 _ => None,
             };
-            println!("[DEBUG] Classified as {:?}", kind);
             if let Some(kind) = kind {
                 match kind {
                     CtxFieldKind::PacketStart => {

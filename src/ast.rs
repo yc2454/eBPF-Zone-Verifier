@@ -119,11 +119,109 @@ pub enum Instr {
     Exit,
 }
 
-#[derive(Clone, Copy, Debug)]
+/// BPF program type - determines context structure and available helpers
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ProgramKind {
-    Tc,
+    // Network - XDP context
     Xdp,
-    // later: CgroupSkb, CgroupSock, Lsm, Kprobe, …
+    
+    // Network - __sk_buff context
+    SchedCls,      // TC classifier (section: "classifier", "tc", "tc/ingress", etc.)
+    SocketFilter,  // Socket filter (section: "socket")
+    
+    // Socket operations - specialized contexts
+    SockOps,       // struct bpf_sock_ops (section: "sockops")
+    SkMsg,         // struct sk_msg_md (section: "sk_msg")
+    
+    // Cgroup - various contexts
+    CgroupSockAddr, // struct bpf_sock_addr (section: "cgroup/bind4", "cgroup/connect4", etc.)
+    
+    // Tracing - pt_regs context
+    Kprobe,
+    
+    // Unknown or unsupported
+    #[default]
+    Unknown,
+}
+
+/// What matters for verification: the context structure
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextKind {
+    XdpMd,          // struct xdp_md
+    SkBuff,         // struct __sk_buff
+    SockOps,        // struct bpf_sock_ops
+    SkMsgMd,        // struct sk_msg_md
+    BpfSockAddr,    // struct bpf_sock_addr
+    PtRegs,         // struct pt_regs (kprobe)
+    Unknown,
+}
+
+impl ProgramKind {
+    /// Parse from JSON/section string
+    pub fn from_section(s: &str) -> Self {
+        let s = s.to_lowercase();
+        let s = s.trim();
+        
+        // XDP
+        if s == "xdp" || s.starts_with("xdp/") {
+            return ProgramKind::Xdp;
+        }
+        
+        // TC classifier
+        if s == "classifier" || s == "tc" 
+            || s.starts_with("tc/") 
+            || s.starts_with("classifier/")
+            || s == "sched_cls" 
+        {
+            return ProgramKind::SchedCls;
+        }
+        
+        // Socket filter
+        if s == "socket" || s.starts_with("socket/") {
+            return ProgramKind::SocketFilter;
+        }
+        
+        // Sock ops
+        if s == "sockops" || s.starts_with("sockops/") {
+            return ProgramKind::SockOps;
+        }
+        
+        // SK_MSG
+        if s == "sk_msg" || s.starts_with("sk_msg/") {
+            return ProgramKind::SkMsg;
+        }
+        
+        // Cgroup sock addr
+        if s.starts_with("cgroup/bind") 
+            || s.starts_with("cgroup/connect")
+            || s.starts_with("cgroup/sendmsg")
+            || s.starts_with("cgroup/recvmsg")
+            || s.starts_with("cgroup/getpeername")
+            || s.starts_with("cgroup/getsockname")
+        {
+            return ProgramKind::CgroupSockAddr;
+        }
+        
+        // Kprobe
+        if s == "kprobe" || s.starts_with("kprobe/") || s.starts_with("kretprobe/") {
+            return ProgramKind::Kprobe;
+        }
+        
+        ProgramKind::Unknown
+    }
+    
+    /// Get the context structure type for this program
+    pub fn context_kind(&self) -> ContextKind {
+        match self {
+            ProgramKind::Xdp => ContextKind::XdpMd,
+            ProgramKind::SchedCls | ProgramKind::SocketFilter => ContextKind::SkBuff,
+            ProgramKind::SockOps => ContextKind::SockOps,
+            ProgramKind::SkMsg => ContextKind::SkMsgMd,
+            ProgramKind::CgroupSockAddr => ContextKind::BpfSockAddr,
+            ProgramKind::Kprobe => ContextKind::PtRegs,
+            ProgramKind::Unknown => ContextKind::Unknown,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

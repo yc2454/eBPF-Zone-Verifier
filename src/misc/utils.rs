@@ -6,6 +6,7 @@ use crate::elf_loader;
 use std::collections::HashMap;
 use std::path::Path;
 use std::fs;
+use anyhow::{Context, Result};
 
 // Bounds for finite constraints inside the DBM.
 // We never store anything > POS_BOUND or < NEG_BOUND.
@@ -67,4 +68,34 @@ pub fn load_program_from_elf(path: &str, section: &str) -> Program {
             std::process::exit(1);
         }
     }
+}
+
+pub const OBJ_PROG_TYPE_JSON: &str = "/Users/yalucai/Research/Zone/zone-mvp/obj_prog_type.json";
+
+type RawJsonMap = HashMap<String, Option<String>>;
+
+/// Lookup program kind for a single object file.
+/// - `obj_path` may be a full path; we try exact match, then basename.
+/// - Missing key or null => Unknown.
+pub fn program_kind_for_object(obj_path: &Path) -> Result<ProgramKind> {
+    let json_str = fs::read_to_string(OBJ_PROG_TYPE_JSON)
+        .with_context(|| format!("failed to read {}", OBJ_PROG_TYPE_JSON))?;
+
+    let raw: RawJsonMap = serde_json::from_str(&json_str)
+        .context("failed to parse obj_prog_type.json")?;
+
+    let key_exact = obj_path.to_string_lossy();
+    let key_base = obj_path
+        .file_name()
+        .map(|s| s.to_string_lossy())
+        .unwrap_or_else(|| key_exact.clone());
+
+    let opt_label = raw
+        .get(key_exact.as_ref())
+        .or_else(|| raw.get(key_base.as_ref()));
+
+    Ok(match opt_label {
+        Some(Some(label)) => ProgramKind::from_section(label),
+        _ => ProgramKind::Unknown,
+    })
 }
