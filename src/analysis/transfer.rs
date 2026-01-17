@@ -39,6 +39,23 @@ pub fn transfer(
             access::check_load(env, &state, *base, *size, *off);
             update_load_types(env, &mut state.types, *size, *dst, *base, *off);
             forget(&mut state.dbm, *dst);
+            // Apply implicit bounds based on Load Size (Zero Extension)
+            // All BPF loads (u8, u16, u32, u64) are treated as unsigned integers.
+            // Therefore, they are always >= 0.
+            assume_ge_const(&mut state.dbm, *dst, 0);
+            // Apply upper bounds for sub-64-bit loads
+            match size {
+                MemSize::U8  => assume_le_const(&mut state.dbm, *dst, 0xFF),
+                MemSize::U16 => assume_le_const(&mut state.dbm, *dst, 0xFFFF),
+                MemSize::U32 => assume_le_const(&mut state.dbm, *dst, 0xFFFFFFFF),
+                MemSize::U64 => {
+                    // For U64, we theoretically don't have an upper bound in i64 signed domain
+                    // (values > i64::MAX appear negative). 
+                    // BPF "Unsigned" loads of U64 don't guarantee they fit in positive i64.
+                    // So we only assert >= 0 if we are sure it's not a "large" u64.
+                    // Safest is to do nothing for U64 upper bound, or assume it's scalar.
+                }
+            }
             state.pc += 1;
             vec![state]
         },
@@ -149,8 +166,8 @@ fn transfer_alu(
                 Operand::Reg(r) => {
                     if width == Width::W32 {
                         forget(dbm, dst);
-                        assume_ge_const(dbm, dst, ctx.zero, 0);
-                        assume_le_const(dbm, dst, ctx.zero, 0xffff_ffff);
+                        assume_ge_const(dbm, dst, 0);
+                        assume_le_const(dbm, dst, 0xffff_ffff);
                     } else {
                         if r == ctx.r10 { assign_zero(dbm, dst, ctx.zero); } 
                         else { assign_eq(dbm, dst, r); }
@@ -159,9 +176,14 @@ fn transfer_alu(
                 Operand::Imm(c) => {
                     let c = if width == Width::W32 { (c as u32) as i64 } else { c };
                     forget(dbm, dst);
-                    assume_le_const(dbm, dst, ctx.zero, c);
-                    assume_ge_const(dbm, dst, ctx.zero, c);
+                    assume_le_const(dbm, dst, c);
+                    assume_ge_const(dbm, dst, c);
                 }
+            }
+            if width == Width::W32 {
+                // Effectively w_dst = (u32) ...
+                // This bounds the result to [0, UINT_MAX]
+                bit_and_const(dbm, dst, 0xFFFFFFFF);
             }
         }
         AluOp::And => {
@@ -173,14 +195,14 @@ fn transfer_alu(
                     assign_and_mask(dbm, dst, mask, ctx.zero);
                 } else if let (Some(l), Some(h)) = (old_lo, old_hi) {
                     if l >= 0 {
-                        assume_ge_const(dbm, dst, ctx.zero, 0);
-                        assume_le_const(dbm, dst, ctx.zero, h);
+                        assume_ge_const(dbm, dst, 0);
+                        assume_le_const(dbm, dst, h);
                     }
                 }
             } else if let (Some(l), Some(h)) = (old_lo, old_hi) {
                  if l >= 0 {
-                    assume_ge_const(dbm, dst, ctx.zero, 0);
-                    assume_le_const(dbm, dst, ctx.zero, h);
+                    assume_ge_const(dbm, dst, 0);
+                    assume_le_const(dbm, dst, h);
                  }
             }
         }
@@ -205,12 +227,12 @@ fn transfer_alu(
                     let bits = if width == Width::W32 { 32u32 } else { 64u32 };
                     let k = (k as u32).min(bits);
                     forget(dbm, dst);
-                    assume_ge_const(dbm, dst, ctx.zero, 0);
+                    assume_ge_const(dbm, dst, 0);
                     if k < bits {
                         let ub: i64 = ((1u128 << (bits - k)) - 1) as i64;
-                        assume_le_const(dbm, dst, ctx.zero, ub);
+                        assume_le_const(dbm, dst, ub);
                     } else {
-                        assume_eq_const(dbm, dst, ctx.zero, 0);
+                        assume_eq_const(dbm, dst, 0);
                     }
                 }
                 Operand::Reg(_) => forget(dbm, dst),
@@ -227,8 +249,8 @@ fn transfer_alu(
                 Operand::Imm(c) => {
                     if c > 0 {
                         forget(dbm, dst);
-                        assume_ge_const(dbm, dst, ctx.zero, 0);
-                        assume_le_const(dbm, dst, ctx.zero, c - 1);
+                        assume_ge_const(dbm, dst, 0);
+                        assume_le_const(dbm, dst, c - 1);
                     } else { forget(dbm, dst); }
                 }
                 Operand::Reg(_) => forget(dbm, dst),
@@ -286,7 +308,7 @@ fn transfer_alu(
 }
 
 fn transfer_endian(
-    env: &VerifierEnv,
+    _env: &VerifierEnv,
     mut state: State,
     dst: Reg,
     kind: EndianKind,
@@ -301,8 +323,8 @@ fn transfer_endian(
              return vec![state];
         }
     };
-    assume_ge_const(&mut state.dbm, dst, env.ctx.zero, lo);
-    assume_le_const(&mut state.dbm, dst, env.ctx.zero, hi);
+    assume_ge_const(&mut state.dbm, dst, lo);
+    assume_le_const(&mut state.dbm, dst, hi);
     state.types.set(dst, RegType::ScalarValue);
     state.pc += 1;
     vec![state]
@@ -331,10 +353,10 @@ fn transfer_if(
     // 1. DBM Literal Optimization
     match (op, &right) {
         (CmpOp::Ne, Operand::Imm(imm)) => {
-            assume_eq_const(&mut state_else.dbm, left, ctx.zero, *imm);
+            assume_eq_const(&mut state_else.dbm, left, *imm);
             let (lo, hi) = get_bounds(dbm_in, left, ctx.zero);
             if let (Some(l), Some(h)) = (lo, hi) {
-                if l == *imm && h == *imm { assume_less_than(&mut state_then.dbm, ctx.zero, ctx.zero, 0); }
+                if l == *imm && h == *imm { assume_less_than(&mut state_then.dbm, ctx.zero, 0); }
             }
             // Null check refinement: if Rx != 0 goto target
             // Then branch: Rx != 0, convert nullable to non-null
@@ -347,10 +369,10 @@ fn transfer_if(
             }
         }
         (CmpOp::Eq, Operand::Imm(imm)) => {
-            assume_eq_const(&mut state_then.dbm, left, ctx.zero, *imm);
+            assume_eq_const(&mut state_then.dbm, left, *imm);
             let (lo, hi) = get_bounds(dbm_in, left, ctx.zero);
             if let (Some(l), Some(h)) = (lo, hi) {
-                if l == *imm && h == *imm { assume_less_than(&mut state_else.dbm, ctx.zero, ctx.zero, 0); }
+                if l == *imm && h == *imm { assume_less_than(&mut state_else.dbm, ctx.zero, 0); }
             }
             // Null check refinement: if Rx == 0 goto target
             // Then branch: Rx == 0, stays nullable
@@ -385,20 +407,20 @@ fn transfer_if(
     // 3. Register Comparisons
     match (op, &right) {
         (CmpOp::UGe, Operand::Imm(c)) => {
-            assume_ge_const(&mut state_then.dbm, left, ctx.zero, *c);
-            assume_less_than(&mut state_else.dbm, left, ctx.zero, *c);
+            assume_ge_const(&mut state_then.dbm, left, *c);
+            assume_less_than(&mut state_else.dbm, left, *c);
         }
         (CmpOp::ULe, Operand::Imm(c)) => {
-            assume_le_const(&mut state_then.dbm, left, ctx.zero, *c);
-            assume_ge_const(&mut state_else.dbm, left, ctx.zero, c + 1);
+            assume_le_const(&mut state_then.dbm, left, *c);
+            assume_ge_const(&mut state_else.dbm, left, c + 1);
         }
         (CmpOp::UGt, Operand::Imm(c)) => {
-            assume_ge_const(&mut state_then.dbm, left, ctx.zero, c + 1);
-            assume_le_const(&mut state_else.dbm, left, ctx.zero, *c);
+            assume_ge_const(&mut state_then.dbm, left, c + 1);
+            assume_le_const(&mut state_else.dbm, left, *c);
         }
         (CmpOp::ULt, Operand::Imm(c)) => {
-            assume_less_than(&mut state_then.dbm, left, ctx.zero, *c);
-            assume_ge_const(&mut state_else.dbm, left, ctx.zero, *c);
+            assume_less_than(&mut state_then.dbm, left, *c);
+            assume_ge_const(&mut state_else.dbm, left, *c);
         }
         (cmp_op, Operand::Reg(r)) => {
             let right_reg = *r;
@@ -452,12 +474,11 @@ fn transfer_if(
 }
 
 fn transfer_call(
-    env: &VerifierEnv,
+    _env: &VerifierEnv,
     mut state: State,
     helper: u32,
 ) -> Vec<State> {
     let in_types = state.types.clone();
-    let ctx = env.ctx;
     let pc = state.pc;
     
     // ========================================================================
@@ -507,13 +528,13 @@ fn transfer_call(
     match helper {
         constants::BPF_REDIRECT => {
             // Returns TC_ACT_* (0-7)
-            assume_ge_const(&mut state.dbm, Reg::R0, ctx.zero, 0);
-            assume_le_const(&mut state.dbm, Reg::R0, ctx.zero, 7);
+            assume_ge_const(&mut state.dbm, Reg::R0, 0);
+            assume_le_const(&mut state.dbm, Reg::R0, 7);
         }
         constants::BPF_FIB_LOOKUP => {
             // Returns BPF_FIB_LKUP_RET_* (0-8)
-            assume_ge_const(&mut state.dbm, Reg::R0, ctx.zero, 0);
-            assume_le_const(&mut state.dbm, Reg::R0, ctx.zero, 8);
+            assume_ge_const(&mut state.dbm, Reg::R0, 0);
+            assume_le_const(&mut state.dbm, Reg::R0, 8);
         }
         constants::BPF_MAP_UPDATE_ELEM | 
         constants::BPF_MAP_DELETE_ELEM |

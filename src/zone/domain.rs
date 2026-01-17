@@ -149,10 +149,10 @@ pub fn assign_add_reg(dbm: &mut Dbm, dst: Reg, src: Reg, zero: Reg) {
     dbm.forget_var(dst);
 
     if let (Some(ld), Some(ls)) = (ld, ls) {
-        assume_ge_const(dbm, dst, zero, ld + ls); // closes
+        assume_ge_const(dbm, dst, ld + ls); // closes
     }
     if let (Some(ud), Some(us)) = (ud, us) {
-        assume_le_const(dbm, dst, zero, ud + us); // closes
+        assume_le_const(dbm, dst, ud + us); // closes
     }
 
     // If neither bound exists, dst becomes unconstrained; still close to keep invariant.
@@ -183,8 +183,8 @@ pub fn assign_sub_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
         let new_min = d_min.saturating_sub(s_max);
         let new_max = d_max.saturating_sub(s_min);
 
-        assume_ge_const(dbm, dst, zero, new_min);
-        assume_le_const(dbm, dst, zero, new_max);
+        assume_ge_const(dbm, dst, new_min);
+        assume_le_const(dbm, dst, new_max);
     }
 }
 
@@ -242,27 +242,27 @@ pub fn assign_eq(dbm: &mut Dbm, x: Reg, y: Reg) {
 }
 
 // x <= c   encoded as: x - 0 <= c
-pub fn assume_le_const(dbm: &mut Dbm, x: Reg, zero: Reg, c: i64) {
-    dbm.add_constraint(x, zero, c);
+pub fn assume_le_const(dbm: &mut Dbm, x: Reg, c: i64) {
+    dbm.add_constraint(x, Reg::Zero, c);
     dbm.close();
 }
 
 // x >= c   encoded as: 0 - x <= -c
-pub fn assume_ge_const(dbm: &mut Dbm, x: Reg, zero: Reg, c: i64) {
-    dbm.add_constraint(zero, x, -c);
+pub fn assume_ge_const(dbm: &mut Dbm, x: Reg, c: i64) {
+    dbm.add_constraint(Reg::Zero, x, -c);
     dbm.close();
 }
 
 // x == c   encoded as: x <= c AND x >= c
-pub fn assume_eq_const(dbm: &mut Dbm, x: Reg, zero: Reg, c: i64) {
-    dbm.add_constraint(x, zero, c);
-    dbm.add_constraint(zero, x, -c);
+pub fn assume_eq_const(dbm: &mut Dbm, x: Reg, c: i64) {
+    dbm.add_constraint(x, Reg::Zero, c);
+    dbm.add_constraint(Reg::Zero, x, -c);
     dbm.close();
 }
 
-pub fn assume_less_than(d: &mut Dbm, x: Reg, zero: Reg, c: i64) {
+pub fn assume_less_than(d: &mut Dbm, x: Reg, c: i64) {
     let bound = c - 1;
-    d.add_constraint(x, zero, bound);
+    d.add_constraint(x, Reg::Zero, bound);
     d.close();
 }
 
@@ -321,11 +321,11 @@ pub fn assign_mul_imm(dbm: &mut Dbm, dst: Reg, imm: i64, zero: Reg) {
 
     if let Some(ld) = ld_opt {
         let new_lb = ld.saturating_mul(imm);
-        assume_ge_const(dbm, dst, zero, new_lb);
+        assume_ge_const(dbm, dst, new_lb);
     }
     if let Some(ud) = ud_opt {
         let new_ub = ud.saturating_mul(imm);
-        assume_le_const(dbm, dst, zero, new_ub);
+        assume_le_const(dbm, dst, new_ub);
     }
 
     // If we had no bounds, dst just becomes unconstrained.
@@ -358,8 +358,8 @@ pub fn assign_div_imm(dbm: &mut Dbm, reg: Reg, imm: i64) {
             // 4. Constrain with new bounds
             // dst >= new_lo  =>  0 - dst <= -new_lo
             // dst <= new_hi  =>  dst - 0 <= new_hi
-            assume_ge_const(dbm, reg, Reg::Zero, new_lo);
-            assume_le_const(dbm, reg, Reg::Zero, new_hi);
+            assume_ge_const(dbm, reg, new_lo);
+            assume_le_const(dbm, reg, new_hi);
         }
     } else {
         // If we didn't know the bounds, or they were "negative",
@@ -390,12 +390,12 @@ pub fn bit_and_const(dbm: &mut Dbm, reg: Reg, imm: i64) {
 
     // 2. Apply new bounds derived from the mask.
     // The result of (x & imm) is treated as unsigned, so it is >= 0.
-    assume_ge_const(dbm, reg, Reg::Zero, 0);
+    assume_ge_const(dbm, reg, 0);
 
     // The result cannot be larger than the mask itself (if mask is positive).
     // e.g. (x & 0xFF) <= 255.
     if imm >= 0 {
-        assume_le_const(dbm, reg, Reg::Zero, imm);
+        assume_le_const(dbm, reg, imm);
     }
 }
 
@@ -414,8 +414,8 @@ pub fn assign_neg(dbm: &mut Dbm, reg: Reg) {
         let new_lo = h.wrapping_neg();
         let new_hi = l.wrapping_neg();
         
-        assume_ge_const(dbm, reg, Reg::Zero, new_lo);
-        assume_le_const(dbm, reg, Reg::Zero, new_hi);
+        assume_ge_const(dbm, reg, new_lo);
+        assume_le_const(dbm, reg, new_hi);
     }
 }
 
