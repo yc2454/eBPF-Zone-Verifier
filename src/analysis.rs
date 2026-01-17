@@ -12,6 +12,7 @@ pub mod cfg;
 pub mod pruning;
 pub mod loop_check;
 pub mod constants;
+pub mod history;
 
 use std::collections::VecDeque;
 use crate::ast::Program;
@@ -23,6 +24,7 @@ use self::context::ExecContext;
 use self::env::VerifierEnv;
 use self::state::State;
 use self::reg_types::RegType;
+use self::history::History;
 use crate::misc::config::VerifierConfig;
 
 pub fn analyze_program(
@@ -65,6 +67,13 @@ pub fn analyze_program(
     // Track pruning statistics
     let mut prune_count: usize = 0;
 
+    // Optional History Tracking
+    let mut history = if config.enable_path_trace {
+        Some(History::new())
+    } else {
+        None
+    };
+
     // 4. Main Analysis Loop
     while let Some(state) = worklist.pop_back() {
         if env.failed() {
@@ -99,6 +108,13 @@ pub fn analyze_program(
         // D. Instruction Fetch
         if state.pc >= prog.instrs.len() { continue; }
         let instr = &prog.instrs[state.pc];
+
+        // If history is enabled, record this step using the parent index from the state.
+        let current_step_idx = if let Some(h) = &mut history {
+            Some(h.record(state.pc, instr, state.history_idx))
+        } else {
+            None
+        };
         
         // E. Logging (Delegated to Global Logger)
         // We output the raw data following the protocol. The Logger filters it.
@@ -113,11 +129,24 @@ pub fn analyze_program(
             // This error! call triggers the RingBufferLogger to dump the last 100 steps
             error!(target: "analysis", "[Verifier] Analysis halted due to critical error: {}", 
                    env.error.as_ref().unwrap().description());
+            // Additionally, if we have history tracking, reconstruct and print the crash trace
+            if let Some(h) = &history {
+                if let Some(crash_idx) = current_step_idx {
+                    let trace = h.get_trace(crash_idx);
+                    // Print directly to stdout (or error log) so it stands out
+                    println!("\n=== CRASH PATH RECONSTRUCTION ({} Steps) ===", trace.len());
+                    for (i, step) in trace.iter().enumerate() {
+                        println!("[{:03}] PC {:<4} | {}", i, step.pc, step.instr_str);
+                    }
+                    println!("=============================================\n");
+                }
+            }
             break;
         }
 
         // H. Push Successors
-        for succ in successors {
+        for mut succ in successors {
+            succ.history_idx = current_step_idx;
             worklist.push_back(succ);
         }
     }

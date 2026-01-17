@@ -16,6 +16,9 @@ pub struct State {
     
     /// Current Program Counter
     pub pc: usize,
+
+    /// History Index (for history tracking, optional)
+    pub history_idx: Option<usize>,
 }
 
 impl State {
@@ -24,15 +27,7 @@ impl State {
             types: TypeState::new_not_init(),
             dbm,
             pc,
+            history_idx: None,
         }
-    }
-
-    /// Access to the underlying DBM
-    pub fn dbm(&self) -> &Dbm {
-        &self.dbm
-    }
-
-    pub fn dbm_mut(&mut self) -> &mut Dbm {
-        &mut self.dbm
     }
 }

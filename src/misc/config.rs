@@ -22,6 +22,9 @@ pub struct VerifierConfig {
     
     /// Debug a specific PC (force verbose logging at this PC)
     pub debug_pc: Option<usize>,
+
+    /// Enable path tracing for crash analysis
+    pub enable_path_trace: bool,
 }
 
 impl Default for VerifierConfig {
@@ -33,6 +36,7 @@ impl Default for VerifierConfig {
             max_states_per_pc: 8,
             log_interval: 100_000,
             debug_pc: None,
+            enable_path_trace: false,
         }
     }
 }
@@ -61,6 +65,9 @@ impl VerifierConfig {
                     }
                     "--skip-dbm" => {
                         config.skip_dbm_check = true;
+                    }
+                    "--enable-path-trace" => {
+                        config.enable_path_trace = true;
                     }
                     "--max-insn" => {
                         i += 1;
@@ -111,5 +118,6 @@ impl VerifierConfig {
         eprintln!("  --max-states N       Max states per PC for pruning (default: 8)");
         eprintln!("  --log-interval N     Heartbeat log interval (default: 100000)");
         eprintln!("  --debug-pc N         Force debug logging at specific PC");
+        eprintln!("  --enable-path-trace  Enable path tracing for crash analysis");
     }
 }
