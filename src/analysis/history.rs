@@ -1,4 +1,4 @@
-use crate::ast::Instr;
+use crate::{analysis::reg_types, ast::Instr};
 
 /// A lightweight record of a single step in the execution path.
 pub struct Breadcrumb {
@@ -7,6 +7,7 @@ pub struct Breadcrumb {
     pub instr_str: String,
     /// The index of the previous step in the `History` vector
     pub parent_idx: Option<usize>,
+    pub reg_types_str: String,
 }
 
 pub struct History {
@@ -22,11 +23,12 @@ impl History {
     }
 
     /// Record a step and return its index (which acts as the ID).
-    pub fn record(&mut self, pc: usize, instr: &Instr, parent_idx: Option<usize>) -> usize {
+    pub fn record(&mut self, pc: usize, instr: &Instr, reg_types_str: String, parent_idx: Option<usize>) -> usize {
         let idx = self.steps.len();
         self.steps.push(Breadcrumb {
             pc,
             instr_str: format!("{:?}", instr),
+            reg_types_str,
             parent_idx,
         });
         idx

@@ -67,6 +67,14 @@ fn analyze_section(
     // Load relocations
     let pc_to_reloc = 
         load_relocations(path, &all_maps, section).unwrap_or_default();
+        
+    // Apply map size overrides from config
+    for m in &mut all_maps {
+        if let Some(&new_size) = config.map_overrides.get(&m.name) {
+            println!("Overriding map '{}' size: {} -> {}", m.name, m.value_size, new_size);
+            m.value_size = new_size;
+        }
+    }
     
     // Build context
     let mut ctx = default_exec_ctx();

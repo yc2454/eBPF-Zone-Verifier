@@ -1,5 +1,5 @@
 // src/domain.rs
-use crate::zone::dbm::{INF, Dbm};
+use crate::zone::dbm::{self, Dbm, INF};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Reg {
@@ -136,12 +136,22 @@ pub static REG_ENV: RegEnv = RegEnv;
 // Extract bounds if finite.
 // ub from: x - 0 <= ub
 // lb from: 0 - x <= -lb  => lb = - (0 - x bound)
-pub fn get_bounds(dbm: &Dbm, x: Reg, zero: Reg) -> (Option<i64>, Option<i64>) {
-    let ub = dbm.get(x, zero);
-    let lb_neg = dbm.get(zero, x);
+pub fn get_bounds(dbm: &Dbm, x: Reg) -> (Option<i64>, Option<i64>) {
+    let ub = dbm.get(x, Reg::Zero);
+    let lb_neg = dbm.get(Reg::Zero, x);
 
     let ub_opt = if ub >= INF { None } else { Some(ub) };
     let lb_opt = if lb_neg >= INF { None } else { Some(-lb_neg) };
+
+    (lb_opt, ub_opt)
+}
+
+pub fn get_relative_bound(dbm: &Dbm, x: Reg, y: Reg) -> (Option<i64>, Option<i64>) {
+    let x_minus_y = dbm.get(x, y);
+    let y_minus_x = dbm.get(y, x);
+
+    let ub_opt = if x_minus_y >= INF { None } else { Some(x_minus_y) };
+    let lb_opt = if y_minus_x >= INF { None } else { Some(-y_minus_x) };
 
     (lb_opt, ub_opt)
 }
@@ -159,10 +169,10 @@ pub fn assign_add_imm(dbm: &mut Dbm, dst: Reg, imm: i64) {
 }
 
 // dst += src
-pub fn assign_add_reg(dbm: &mut Dbm, dst: Reg, src: Reg, zero: Reg) {
+pub fn assign_add_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
     // dst := dst + src  (sound interval-style update)
-    let (ld, ud) = get_bounds(dbm, dst, zero);
-    let (ls, us) = get_bounds(dbm, src, zero);
+    let (ld, ud) = get_bounds(dbm, dst);
+    let (ls, us) = get_bounds(dbm, src);
 
     dbm.forget_var(dst);
 
@@ -180,11 +190,9 @@ pub fn assign_add_reg(dbm: &mut Dbm, dst: Reg, src: Reg, zero: Reg) {
 /// Handle: dst = dst - src
 pub fn assign_sub_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
     // 1. Get current bounds for both registers
-    // We use a known zero register (like r10/frame pointer reference) or just absolute bounds if available
-    let zero = Reg::Zero;
     
-    let (dst_min, dst_max) = get_bounds(dbm, dst, zero);
-    let (src_min, src_max) = get_bounds(dbm, src, zero);
+    let (dst_min, dst_max) = get_bounds(dbm, dst);
+    let (src_min, src_max) = get_bounds(dbm, src);
 
     // 2. Subtraction destroys the delicate difference relationships (x - z <= c)
     // because (x - y) - z <= c requires knowing y + z relationship.
@@ -332,7 +340,7 @@ pub fn assign_mul_imm(dbm: &mut Dbm, dst: Reg, imm: i64, zero: Reg) {
     }
 
     // imm > 0: monotone scaling, so we can scale bounds.
-    let (ld_opt, ud_opt) = get_bounds(dbm, dst, zero);
+    let (ld_opt, ud_opt) = get_bounds(dbm, dst);
 
     // Kill old relational info about dst.
     dbm.forget_var(dst);
@@ -359,7 +367,7 @@ pub fn assign_div_imm(dbm: &mut Dbm, reg: Reg, imm: i64) {
     }
 
     // 1. Get current concrete bounds (Interval Analysis)
-    let (lo, hi) = get_bounds(dbm, reg, Reg::Zero); // r10 is not used for scalar bounds usually, checking against zero
+    let (lo, hi) = get_bounds(dbm, reg);
 
     // 2. Division breaks linear relationships. We must FORGET the register.
     forget(dbm, reg);
@@ -419,7 +427,7 @@ pub fn bit_and_const(dbm: &mut Dbm, reg: Reg, imm: i64) {
 
 pub fn assign_neg(dbm: &mut Dbm, reg: Reg) {
     // 1. Get current concrete bounds [lo, hi]
-    let (lo, hi) = get_bounds(dbm, reg, Reg::Zero); // r10/zero
+    let (lo, hi) = get_bounds(dbm, reg); // r10/zero
     
     // 2. Forget existing relationships (destroy x - y <= c)
     forget(dbm, reg);

@@ -25,6 +25,9 @@ pub struct VerifierConfig {
 
     /// Enable path tracing for crash analysis
     pub enable_path_trace: bool,
+
+    /// A manual override for map file descriptors to sizes
+    pub map_overrides: std::collections::HashMap<String, u32>,
 }
 
 impl Default for VerifierConfig {
@@ -37,6 +40,7 @@ impl Default for VerifierConfig {
             log_interval: 100_000,
             debug_pc: None,
             enable_path_trace: false,
+            map_overrides: std::collections::HashMap::new(),
         }
     }
 }
@@ -91,6 +95,26 @@ impl VerifierConfig {
                         i += 1;
                         if i < args.len() {
                             config.debug_pc = args[i].parse().ok();
+                        }
+                    }
+                    "--map-override" => {
+                        if i + 1 < args.len() {
+                            let val = &args[i+1];
+                            // Expected format: "map_name:1234"
+                            match val.split_once(':') {
+                                Some((name, size_str)) => {
+                                    if let Ok(size) = size_str.parse::<u32>() {
+                                        config.map_overrides.insert(name.to_string(), size);
+                                        // println!("Overriding map '{}' to size {}", name, size);
+                                    } else {
+                                        eprintln!("Warning: Invalid size in map override '{}'", val);
+                                    }
+                                }
+                                None => {
+                                    eprintln!("Warning: Invalid map override format '{}'. Expected 'name:size'", val);
+                                }
+                            }
+                            i += 1;
                         }
                     }
                     _ => {

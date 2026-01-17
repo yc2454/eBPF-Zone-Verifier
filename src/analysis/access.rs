@@ -3,10 +3,11 @@ use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;
 use crate::analysis::reg_types::RegType;
 use crate::ast::MemSize;
-use crate::zone::domain::get_bounds;
+use crate::zone::domain::{get_bounds, get_relative_bound};
 use crate::analysis::env::VerificationError;
 use crate::analysis::constants;
 use crate::parsing::ctx_model;
+use log::{warn, error};
 use RegType::*;
 
 /// Validates memory load safety.
@@ -40,7 +41,7 @@ pub fn check_load(
             };
             
             if !(within_bounds && aligned) {
-                println!("Unsafe stack load at pc {}: base {:?}+{} (stack offset {})", pc, base, off, final_offset);
+                error!("Unsafe stack load at pc {}: base {:?}+{} (stack offset {})", pc, base, off, final_offset);
                 env.fail(VerificationError::UnsafeStackLoad { pc, off, size });
             }
         }
@@ -53,20 +54,23 @@ pub fn check_load(
             } 
             // 2. Networking Heuristics
             else if off >= 0 && access_end <= constants::MAX_PACKET_HEADER_ACCESS {
-                 println!("[Verifier] Heuristic: Allowing header/payload access (off {}..{}) with range {}", off, access_end, range);
-                 safe = true;
+                warn!("[Verifier] Heuristic: Allowing header/payload access (off {}..{}) with range {}", off, access_end, range);
+                safe = true;
             }
             // 3. DBM Fallback
             else {
-                let end_reg_opt = crate::zone::domain::REG_ENV.all().iter().find(|&&r| matches!(state.types.get(r), RegType::PtrToPacketEnd));
+                let end_reg_opt = 
+                    crate::zone::domain::REG_ENV.
+                        all().iter()
+                        .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacketEnd));
                 if let Some(end_reg) = end_reg_opt {
                     let bound = -access_end;
-                    let (_, ub) = get_bounds(&state.dbm, base, *end_reg);
+                    let (_, ub) = get_relative_bound(&state.dbm, base, *end_reg);
                     if let Some(upper) = ub { if upper <= bound { safe = true; } }
                 }
             }
             if !safe {
-                println!("Unsafe packet load at pc {}: base {:?}+{} (range={})", pc, base, off, range);
+                error!("Unsafe packet load at pc {}: base {:?}+{} (range={})", pc, base, off, range);
                 env.fail(VerificationError::UnsafePacketLoad { pc, off, size, range });
             }
         }
@@ -89,7 +93,7 @@ pub fn check_load(
                     if final_offset >= 0 && access_end <= map_limit {
                         // Safe!
                     } else {
-                        println!("Unsafe map load (constant) at pc {}: off {} limit {}", pc, final_offset, map_limit);
+                        error!("Unsafe map load (constant) at pc {}: off {} limit {}", pc, final_offset, map_limit);
                         env.fail(VerificationError::UnsafeMapLoad { 
                             pc, 
                             off: final_offset, 
@@ -102,7 +106,7 @@ pub fn check_load(
                 // The Type system lost track (offset is None). We MUST query the DBM.
                 None => {
                     // Query the DBM for the absolute range of the register.
-                    let (dbm_min, dbm_max) = get_bounds(&state.dbm, base, env.ctx.zero);
+                    let (dbm_min, dbm_max) = get_bounds(&state.dbm, base);
                     match (dbm_min, dbm_max) {
                         (Some(min_val), Some(max_val)) => {
                             // We treat the DBM value as the effective offset into the map
@@ -113,7 +117,7 @@ pub fn check_load(
                             if access_start >= 0 && access_end <= map_limit {
                                 // Safe!
                             } else {
-                                println!("Unsafe variable map access at pc {}: range [{}, {}], limit {}", 
+                                error!("Unsafe variable map access at pc {}: range [{}, {}], limit {}", 
                                     pc, access_start, access_end, map_limit);
                                 env.fail(VerificationError::UnsafeMapLoad { 
                                     pc, 
@@ -125,7 +129,7 @@ pub fn check_load(
                         },
                         _ => {
                             // Bounds are infinite or unknown. This is a potential OOB.
-                            println!("Unbounded variable map access at pc {}", pc);
+                            error!("Unbounded variable map access at pc {}", pc);
                             state.dbm.pretty_print();
                             env.fail(VerificationError::UnsafeMapLoad { 
                                 pc, off: -1, size, limit: map_limit 
@@ -143,7 +147,7 @@ pub fn check_load(
             } else { constants::DEFAULT_MAP_VALUE_SIZE as i64 };
 
             if !(final_offset >= 0 && access_end <= map_limit) {
-                println!("Unsafe nullable map load at pc {}: off {} limit {}", pc, final_offset, map_limit);
+                error!("Unsafe nullable map load at pc {}: off {} limit {}", pc, final_offset, map_limit);
                 env.fail(VerificationError::UnsafeMapLoad { pc, 
                     off: final_offset, 
                     size,
@@ -168,7 +172,7 @@ pub fn check_load(
             
             if let Some(&end_reg) = end_reg_opt {
                 // Check DBM: base + off + size <= end
-                let (_, upper) = get_bounds(&state.dbm, base, end_reg);
+                let (_, upper) = get_relative_bound(&state.dbm, base, end_reg);
                 if let Some(ub) = upper {
                     if ub <= -access_end {
                         safe = true;
@@ -177,11 +181,12 @@ pub fn check_load(
             }
             // Fallback heuristic if no end marker found
             if !safe && off >= 0 && access_end <= 256 {
+                warn!("[Verifier] Heuristic: Allowing small mem region load (off {}..{})", off, access_end);
                 safe = true;
             }
 
             if !safe {
-                println!("Unsafe mem region store at pc {}: base {:?}+{}", pc, base, off);
+                error!("Unsafe mem region store at pc {}: base {:?}+{}", pc, base, off);
                 env.fail(VerificationError::UnsafeGenericStore { pc, base, off });
             }
         }
@@ -192,16 +197,16 @@ pub fn check_load(
         }
         // Nullable socket pointers - must be null-checked first
         PtrToSocketOrNull { .. } | PtrToSockCommonOrNull { .. } | PtrToTcpSockOrNull { .. } => {
-            println!("Load from nullable socket at pc {}: base {:?}+{} requires null check", 
+            error!("Load from nullable socket at pc {}: base {:?}+{} requires null check", 
                      pc, base, off);
             env.fail(VerificationError::UnsafeGenericLoad { pc, base, off });
         }
         ScalarValue | NotInit => {
-            println!("Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})", pc, base, off, base_type);
+            error!("Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})", pc, base, off, base_type);
             env.fail(VerificationError::UnsafeGenericLoad { pc, base, off });
         }
         _ => {
-            println!("Non-stack, non-ctx load at pc {} from base {:?}+{}", pc, base, off);
+            error!("Non-stack, non-ctx load at pc {} from base {:?}+{}", pc, base, off);
             env.fail(VerificationError::UnsafeGenericLoad { pc, base, off });
         }
     }
@@ -227,11 +232,12 @@ pub fn check_store(
             let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) { def.value_size as i64 } 
             else { constants::DEFAULT_MAP_VALUE_SIZE as i64 };
             if !(final_offset >= 0 && access_end <= map_limit) {
-                println!("Unsafe map store at pc {}: off {} limit {}", pc, final_offset, map_limit);
-                env.fail(VerificationError::UnsafeMapStore { pc, 
-                off: final_offset, 
-                size,
-                limit: map_limit
+                error!("Unsafe map store at pc {}: off {} limit {}", pc, final_offset, map_limit);
+                env.fail(VerificationError::UnsafeMapStore { 
+                    pc, 
+                    off: final_offset, 
+                    size,
+                    limit: map_limit
                 } );
             }
         }
@@ -242,7 +248,7 @@ pub fn check_store(
             let is_safe = final_offset >= ctx.stack_min && access_end <= ctx.stack_max;
             
             if !is_safe {
-                println!("Unsafe stack store at pc {}: {:?} to stack offset {}", pc, size, final_offset);
+                error!("Unsafe stack store at pc {}: {:?} to stack offset {}", pc, size, final_offset);
                 env.fail(VerificationError::UnsafeStackStore { pc, off, size });
             }
         }
@@ -254,21 +260,21 @@ pub fn check_store(
             if off >= 0 && (access_end as u64) <= range { safe = true; } 
             // 2. Heuristic
             else if off >= 0 && access_end <= constants::ETH_HEADER_SIZE {
-                 println!("[Verifier] Heuristic: Allowing Eth Header store (off {}..{}) with range {}", off, access_end, range);
-                 safe = true;
+                warn!("[Verifier] Heuristic: Allowing Eth Header store (off {}..{}) with range {}", off, access_end, range);
+                safe = true;
             }
             // 3. DBM Fallback
             else {
                 let end_reg_opt = crate::zone::domain::REG_ENV.all().iter().find(|&&r| matches!(state.types.get(r), PtrToPacketEnd));
                 if let Some(end_reg) = end_reg_opt {
                     let bound = -access_end;
-                    let (_, ub) = get_bounds(&state.dbm, base, *end_reg);
+                    let (_, ub) = get_relative_bound(&state.dbm, base, *end_reg);
                     if let Some(upper) = ub { if upper <= bound { safe = true; } }
                 }
             }
 
             if !safe {
-                println!("Unsafe packet store at pc {}: base {:?}+{} (range={})", pc, base, off, range);
+                error!("Unsafe packet store at pc {}: base {:?}+{} (range={})", pc, base, off, range);
                 env.fail(VerificationError::UnsafePacketStore { pc, off, size });
             }
         }
@@ -279,7 +285,7 @@ pub fn check_store(
                  def.value_size as i64
              } else { constants::DEFAULT_MAP_VALUE_SIZE as i64 };
              if !(final_offset >= 0 && access_end <= map_limit) {
-                println!("Unsafe nullable map store at pc {}", pc);
+                error!("Unsafe nullable map store at pc {}", pc);
                     env.fail(VerificationError::UnsafeMapStore { pc, 
                     off: final_offset, 
                     size,
@@ -292,22 +298,22 @@ pub fn check_store(
             if ctx_model::is_ctx_field_writable(ctx.prog_kind, off, size) {
                 // Safe write to writable ctx field
             } else {
-                println!("Unsafe ctx store at pc {}: offset {} is not writable", pc, off);
+                error!("Unsafe ctx store at pc {}: offset {} is not writable", pc, off);
                 env.fail(VerificationError::UnsafeCtxStore { pc, off, size });
             }
         }
         // Socket pointers - generally read-only, disallow stores
         PtrToSocket { .. } | PtrToSockCommon { .. } | PtrToTcpSock { .. } => {
-            println!("Cannot write to socket struct at pc {}", pc);
+            error!("Cannot write to socket struct at pc {}", pc);
             env.fail(VerificationError::UnsafeGenericStore { pc, base, off });
         }
         // Nullable - same as above but also not null-checked
         PtrToSocketOrNull { .. } | PtrToSockCommonOrNull { .. } | PtrToTcpSockOrNull { .. } => {
-            println!("Cannot write to nullable socket at pc {}", pc);
+            error!("Cannot write to nullable socket at pc {}", pc);
             env.fail(VerificationError::UnsafeGenericStore { pc, base, off });
         }
         _ => {
-            println!("Unsafe store at pc {}: base {:?}+{} has non-pointer type {:?}", pc, base, off, base_ty);
+            error!("Unsafe store at pc {}: base {:?}+{} has non-pointer type {:?}", pc, base, off, base_ty);
             env.fail(VerificationError::UnsafeGenericStore { pc, base, off });
         }
     }

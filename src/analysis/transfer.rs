@@ -1,3 +1,5 @@
+use std::env;
+
 // src/analysis/transfer.rs
 use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;
@@ -134,7 +136,7 @@ fn transfer_alu(
                     } else {
                         // Standard Case: Ptr(Offset X) += Scalar  OR  Scalar += Scalar
                         // dst = dst + r
-                        assign_add_reg(dbm, dst, r, ctx.zero);
+                        assign_add_reg(dbm, dst, r);
                     }
                 }
             }
@@ -187,7 +189,7 @@ fn transfer_alu(
             }
         }
         AluOp::And => {
-            let (old_lo, old_hi) = get_bounds(dbm, dst, ctx.zero);
+            let (old_lo, old_hi) = get_bounds(dbm, dst);
             forget(dbm, dst);
             if let Operand::Imm(mask) = src {
                 let mask = if width == Width::W32 { (mask as u32) as i64 } else { mask };
@@ -262,7 +264,7 @@ fn transfer_alu(
                 Operand::Imm(k) => k == 0,
                 Operand::Reg(r) => {
                     // Check if register is strictly 0
-                    let (lo, hi) = get_bounds(&state.dbm, r, env.ctx.zero);
+                    let (lo, hi) = get_bounds(&state.dbm, r);
                     match (lo, hi) {
                         (Some(0), Some(0)) => true, // Definitely zero
                         _ => false, // Could be non-zero (or unknown)
@@ -331,7 +333,7 @@ fn transfer_endian(
 }
 
 fn transfer_if(
-    env: &VerifierEnv,
+    _env: &VerifierEnv,
     state: State,
     width: Width,
     left: Reg,
@@ -339,135 +341,34 @@ fn transfer_if(
     right: Operand,
     target: usize,
 ) -> Vec<State> {
-    let ctx = env.ctx;
-    let mut out = Vec::new();
 
+    // --- STEP 0: Static Branch Evaluation (Interval-Based) ---
+    // If we can prove the condition is Always True or Always False based on bounds,
+    // we return ONLY that path. This is critical for pruning dead error paths.
+    if let Some(next_pcs) = eval_static_branch(&state, width, left, op, &right, target) {
+        return next_pcs;
+    }
+
+    // --- STEP 1: Abstract Interpretation (Constraint Refinement) ---
+    let mut out = Vec::new();
     let mut state_then = state.clone();
     let mut state_else = state.clone();
 
     state_then.pc = target;
     state_else.pc = state.pc + 1;
 
-    let dbm_in = &state.dbm;
-
-    // 1. DBM Literal Optimization
-    match (op, &right) {
-        (CmpOp::Ne, Operand::Imm(imm)) => {
-            assume_eq_const(&mut state_else.dbm, left, *imm);
-            let (lo, hi) = get_bounds(dbm_in, left, ctx.zero);
-            if let (Some(l), Some(h)) = (lo, hi) {
-                if l == *imm && h == *imm { assume_less_than(&mut state_then.dbm, ctx.zero, 0); }
-            }
-            // Null check refinement: if Rx != 0 goto target
-            // Then branch: Rx != 0, convert nullable to non-null
-            // Else branch: Rx == 0, stays nullable
-            if *imm == 0 {
-                let left_ty = state.types.get(left);
-                if let Some(non_null) = left_ty.to_non_null() {
-                    state_then.types.set(left, non_null);
-                }
-            }
-        }
-        (CmpOp::Eq, Operand::Imm(imm)) => {
-            assume_eq_const(&mut state_then.dbm, left, *imm);
-            let (lo, hi) = get_bounds(dbm_in, left, ctx.zero);
-            if let (Some(l), Some(h)) = (lo, hi) {
-                if l == *imm && h == *imm { assume_less_than(&mut state_else.dbm, ctx.zero, 0); }
-            }
-            // Null check refinement: if Rx == 0 goto target
-            // Then branch: Rx == 0, stays nullable
-            // Else branch: Rx != 0, convert nullable to non-null
-            if *imm == 0 {
-                let left_ty = state.types.get(left);
-                if let Some(non_null) = left_ty.to_non_null() {
-                    state_else.types.set(left, non_null);
-                }
-            }
-        }
-        _ => {}
+    // Apply constraints to refine the DBM in the destination states
+    match &right {
+        Operand::Imm(imm) => apply_imm_constraints(&mut state_then, &mut state_else, left, op, *imm),
+        Operand::Reg(r) => apply_reg_constraints(&mut state_then, &mut state_else, left, op, *r),
     }
 
-    // 2. 32-bit Logic Fallback
-    // Note: Eq/Ne with immediate 0 is safe regardless of bit width, and constraints
-    // were already applied in section 1. We must NOT early-return for these cases,
-    // otherwise we bypass the is_inconsistent() check at the end.
-    if width == Width::W32 {
-        if let Operand::Imm(c) = &right {
-            let is_zero_check = (*c == 0) && matches!(op, CmpOp::Eq | CmpOp::Ne);
-            if !is_zero_check
-               && matches!(op, CmpOp::Eq | CmpOp::Ne | CmpOp::UGe | CmpOp::ULe | CmpOp::UGt | CmpOp::ULt) 
-               && !proven_u32_range(dbm_in, left, ctx.zero) {
-                return vec![state_else, state_then];
-            }
-        } else {
-            return vec![state_else, state_then];
-        }
-    }
+    // Branch Type Refinement (Packet/Map bounds)
+    let instr = Instr::If { width, left, op, right: right.clone(), target };
+    refine_branch(&mut state_then.types, &state_then.dbm, &instr, true);
+    refine_branch(&mut state_else.types, &state_else.dbm, &instr, false);
 
-    // 3. Register Comparisons
-    match (op, &right) {
-        (CmpOp::UGe, Operand::Imm(c)) => {
-            assume_ge_const(&mut state_then.dbm, left, *c);
-            assume_less_than(&mut state_else.dbm, left, *c);
-        }
-        (CmpOp::ULe, Operand::Imm(c)) => {
-            assume_le_const(&mut state_then.dbm, left, *c);
-            assume_ge_const(&mut state_else.dbm, left, c + 1);
-        }
-        (CmpOp::UGt, Operand::Imm(c)) => {
-            assume_ge_const(&mut state_then.dbm, left, c + 1);
-            assume_le_const(&mut state_else.dbm, left, *c);
-        }
-        (CmpOp::ULt, Operand::Imm(c)) => {
-            assume_less_than(&mut state_then.dbm, left, *c);
-            assume_ge_const(&mut state_else.dbm, left, *c);
-        }
-        (cmp_op, Operand::Reg(r)) => {
-            let right_reg = *r;
-            match cmp_op {
-                CmpOp::UGe => { 
-                    assume_ge_var(&mut state_then.dbm, left, right_reg);
-                    assume_le_var_plus_const(&mut state_else.dbm, left, right_reg, -1);
-                }
-                CmpOp::ULe => { 
-                    assume_le_var(&mut state_then.dbm, left, right_reg);
-                    assume_gt_var(&mut state_else.dbm, left, right_reg);
-                }
-                CmpOp::UGt => { 
-                    assume_gt_var(&mut state_then.dbm, left, right_reg);
-                    assume_le_var(&mut state_else.dbm, left, right_reg);
-                }
-                CmpOp::ULt => { 
-                    assume_le_var_plus_const(&mut state_then.dbm, left, right_reg, -1);
-                    assume_ge_var(&mut state_else.dbm, left, right_reg);
-                }
-                _ => {}
-            }
-            // Packet Refinement
-             match cmp_op {
-                CmpOp::ULe | CmpOp::ULt => {
-                    refine_packet_ranges(&state_then.dbm, &mut state_then.types, left, right_reg);
-                    refine_packet_ranges(&state_then.dbm, &mut state_then.types, right_reg, left);
-                }
-                _ => {}
-            }
-            match cmp_op {
-                CmpOp::UGt | CmpOp::UGe => {
-                    refine_packet_ranges(&state_else.dbm, &mut state_else.types, left, right_reg);
-                }
-                CmpOp::ULt => {
-                    refine_packet_ranges(&state_else.dbm, &mut state_else.types, right_reg, left);
-                }
-                _ => {}
-            }
-        }
-        _ => {}
-    }
-
-    // 4. Branch Type Refinement
-    refine_branch(&mut state_then.types, &state_then.dbm, &Instr::If { width, left, op, right: right.clone(), target }, true);
-    refine_branch(&mut state_else.types, &state_else.dbm, &Instr::If { width, left, op, right: right.clone(), target }, false);
-
+    // Return only consistent states
     if !state_else.dbm.is_inconsistent() { out.push(state_else); }
     if !state_then.dbm.is_inconsistent() { out.push(state_then); }
     out
@@ -563,6 +464,303 @@ fn transfer_call(
     // 5. Advance PC and return
     state.pc += 1;
     vec![state]
+}
+
+// --- Helper Functions for If Branch Refinement ---
+
+// Static Branch Checking
+fn eval_static_branch(
+    state: &State,
+    width: Width,
+    left: Reg,
+    op: CmpOp,
+    right: &Operand,
+    target: usize
+) -> Option<Vec<State>> {
+    // 1. Get Left Interval
+    let (l_min, l_max) = get_bounds(&state.dbm, left);
+    // (We need both bounds to reason about ranges)
+    let l_min = l_min?; 
+    let l_max = l_max?;
+
+    // 2. Get Right Value/Interval
+    // For simplicity in static check, we mostly handle Immediate RHS or Constant Register RHS
+    // (Expanding to Reg-Reg intervals is possible but complex for Signed ops)
+    let r_val = match right {
+        Operand::Imm(i) => *i,
+        Operand::Reg(r) => {
+            let (rmin, rmax) = get_bounds(&state.dbm, *r);
+            if rmin? == rmax? { rmin? } else { return None; }
+        }
+    };
+
+    // 3. Check Condition
+    let condition_result = match width {
+        Width::W64 => check_interval_64(op, l_min, l_max, r_val),
+        Width::W32 => check_interval_32(op, l_min, l_max, r_val),
+    };
+
+    // 4. Return Pruned States
+    match condition_result {
+        Some(true) => {
+            // Condition is ALWAYS TRUE -> Taken
+            let mut s = state.clone();
+            s.pc = target;
+            Some(vec![s])
+        },
+        Some(false) => {
+            // Condition is ALWAYS FALSE -> Fall-through
+            let mut s = state.clone();
+            s.pc = state.pc + 1;
+            Some(vec![s])
+        },
+        None => None, // Cannot determine statically
+    }
+}
+
+// --- Helper: Interval Logic ---
+
+fn check_interval_64(op: CmpOp, min: i64, max: i64, r: i64) -> Option<bool> {
+    // Basic interval logic for 64-bit
+    match op {
+        // Unsigned logic (cast to u64)
+        CmpOp::UGt => if (min as u64) > (r as u64) { Some(true) } else if (max as u64) <= (r as u64) { Some(false) } else { None },
+        // ... (Implement other unsigned ops if needed for static pruning) ...
+        
+        // Signed logic (use i64 directly)
+        CmpOp::SLt => if max < r { Some(true) } else if min >= r { Some(false) } else { None },
+        CmpOp::SGt => if min > r { Some(true) } else if max <= r { Some(false) } else { None },
+        CmpOp::Eq => if min == max && min == r { Some(true) } else if min > r || max < r { Some(false) } else { None },
+        _ => None, // Todo: Implement others
+    }
+}
+
+fn check_interval_32(op: CmpOp, min: i64, max: i64, r: i64) -> Option<bool> {
+    // 1. Check for 32-bit Wrap-around
+    // If the upper 32-bits are different, the u32 range is not contiguous/monotonic
+    // relative to the u64 range, making simple min/max checks invalid.
+    if (min as u64 >> 32) != (max as u64 >> 32) {
+        return None; 
+    }
+
+    let min_u32 = min as u32;
+    let max_u32 = max as u32;
+    let r_u32 = r as u32;
+
+    match op {
+        // Signed 32-bit Less Than (Fixes the crash!)
+        CmpOp::SLt => {
+            let min_i32 = min_u32 as i32;
+            let max_i32 = max_u32 as i32;
+            let r_i32 = r_u32 as i32;
+            
+            if max_i32 < r_i32 { Some(true) }       // Entire range < R
+            else if min_i32 >= r_i32 { Some(false) } // Entire range >= R
+            else { None }
+        },
+        // Signed 32-bit Greater Than
+        CmpOp::SGt => {
+            let min_i32 = min_u32 as i32;
+            let max_i32 = max_u32 as i32;
+            let r_i32 = r_u32 as i32;
+
+            if min_i32 > r_i32 { Some(true) }
+            else if max_i32 <= r_i32 { Some(false) }
+            else { None }
+        },
+        // Unsigned checks
+        CmpOp::Eq => if min_u32 == max_u32 && min_u32 == r_u32 { Some(true) } else if min_u32 > r_u32 || max_u32 < r_u32 { Some(false) } else { None },
+        _ => None, 
+    }
+}
+
+// Helper: 64-bit Comparison
+fn check_condition_64(op: CmpOp, l: i64, r: i64) -> bool {
+    // Cast to u64 to get the raw bit pattern for Unsigned ops
+    let l_u64 = l as u64;
+    let r_u64 = r as u64;
+
+    match op {
+        CmpOp::Eq => l_u64 == r_u64,
+        CmpOp::Ne => l_u64 != r_u64,
+        
+        // Unsigned Comparisons (use u64)
+        CmpOp::UGt => l_u64 > r_u64,
+        CmpOp::ULt => l_u64 < r_u64,
+        CmpOp::UGe => l_u64 >= r_u64,
+        CmpOp::ULe => l_u64 <= r_u64,
+        
+        // Signed Comparisons (use i64)
+        // Since DBM values are already i64, we can use them directly.
+        CmpOp::SGt => l > r,
+        CmpOp::SLt => l < r,
+        CmpOp::SGe => l >= r,
+        CmpOp::SLe => l <= r,
+    }
+}
+
+// Helper: 32-bit Comparison (The specific fix for bpf_host.o)
+fn check_condition_32(op: CmpOp, l: i64, r: i64) -> bool {
+    // 1. Truncate to 32 bits (Simulating BPF_JMP32)
+    //    'as u32' discards the upper 32 bits of the i64
+    let l32 = l as u32;
+    let r32 = r as u32;
+
+    match op {
+        CmpOp::Eq => l32 == r32,
+        CmpOp::Ne => l32 != r32,
+        
+        // Unsigned 32-bit Comparisons
+        CmpOp::UGt => l32 > r32,
+        CmpOp::ULt => l32 < r32,
+        CmpOp::UGe => l32 >= r32,
+        CmpOp::ULe => l32 <= r32,
+        
+        // Signed 32-bit Comparisons
+        // We must cast the truncated u32 back to i32 to get signed behavior
+        // e.g., 0xFFFFFFFF (u32) -> -1 (i32)
+        CmpOp::SGt => (l32 as i32) > (r32 as i32),
+        CmpOp::SLt => (l32 as i32) < (r32 as i32),
+        CmpOp::SGe => (l32 as i32) >= (r32 as i32),
+        CmpOp::SLe => (l32 as i32) <= (r32 as i32),
+    }
+}
+
+fn check_static_branch(
+    state: &State, 
+    _env: &VerifierEnv,
+    width: Width, 
+    left: Reg, 
+    op: CmpOp, 
+    right: &Operand, 
+    target: usize
+) -> Option<Vec<State>> {
+    // Check if 'left' is a constant
+    let (l_min, l_max) = get_bounds(&state.dbm, left);
+    let l_val = if let (Some(l), Some(h)) = (l_min, l_max) {
+        if l == h { Some(l) } else { None }
+    } else { None }?;
+
+    // Check if 'right' is a constant
+    let r_val = match right {
+        Operand::Imm(i) => Some(*i), // i is i64
+        Operand::Reg(r) => {
+            let (rmin, rmax) = get_bounds(&state.dbm, *r);
+            if let (Some(l), Some(h)) = (rmin, rmax) {
+                if l == h { Some(l) } else { None }
+            } else { None }
+        }
+    }?;
+
+    // Evaluate Condition
+    let condition_true = match width {
+        Width::W64 => check_condition_64(op, l_val, r_val),
+        Width::W32 => check_condition_32(op, l_val, r_val),
+    };
+
+    let mut result_state = state.clone();
+    if condition_true {
+        result_state.pc = target;
+        Some(vec![result_state])
+    } else {
+        result_state.pc = state.pc + 1;
+        Some(vec![result_state])
+    }
+}
+
+fn apply_imm_constraints(
+    then_s: &mut State, 
+    else_s: &mut State, 
+    left: Reg, 
+    op: CmpOp, 
+    imm: i64,
+) {
+    match op {
+        CmpOp::Ne => {
+            assume_eq_const(&mut else_s.dbm, left, imm);
+            // Null check refinement
+            if imm == 0 {
+                if let Some(non_null) = then_s.types.get(left).to_non_null() {
+                    then_s.types.set(left, non_null);
+                }
+            }
+        }
+        CmpOp::Eq => {
+            assume_eq_const(&mut then_s.dbm, left, imm);
+            // Null check refinement
+            if imm == 0 {
+                if let Some(non_null) = else_s.types.get(left).to_non_null() {
+                    else_s.types.set(left, non_null);
+                }
+            }
+        }
+        CmpOp::UGe => {
+            assume_ge_const(&mut then_s.dbm, left, imm);
+            assume_less_than(&mut else_s.dbm, left, imm);
+        }
+        CmpOp::ULe => {
+            assume_le_const(&mut then_s.dbm, left, imm);
+            assume_ge_const(&mut else_s.dbm, left, imm + 1);
+        }
+        CmpOp::UGt => {
+            assume_ge_const(&mut then_s.dbm, left, imm + 1);
+            assume_le_const(&mut else_s.dbm, left, imm);
+        }
+        CmpOp::ULt => {
+            assume_less_than(&mut then_s.dbm, left, imm);
+            assume_ge_const(&mut else_s.dbm, left, imm);
+        }
+        _ => {} // Signed ops with Immediates are ignored here (Conservative)
+    }
+}
+
+// Check if 32-bit fallback logic is needed
+fn is_safe_32bit_imm_op(op: CmpOp, imm: i64, dbm: &Dbm, left: Reg, zero: Reg) -> bool {
+    let is_zero_check = (imm == 0) && matches!(op, CmpOp::Eq | CmpOp::Ne);
+    if is_zero_check { return true; }
+    
+    // If it's a comparison other than Eq/Ne with 0, we must ensure 
+    // the value fits in u32 to rely on the DBM constraints safely.
+    if matches!(op, CmpOp::Eq | CmpOp::Ne | CmpOp::UGe | CmpOp::ULe | CmpOp::UGt | CmpOp::ULt) {
+        return proven_u32_range(dbm, left, zero);
+    }
+    true // Signed ops fallback anyway
+}
+
+fn apply_reg_constraints(
+    then_s: &mut State, 
+    else_s: &mut State, 
+    left: Reg, 
+    op: CmpOp, 
+    right: Reg
+) {
+    match op {
+        CmpOp::UGe => { 
+            assume_ge_var(&mut then_s.dbm, left, right);
+            assume_le_var_plus_const(&mut else_s.dbm, left, right, -1);
+            refine_packet_ranges(&then_s.dbm, &mut then_s.types, left, right); // Then: left >= right
+            refine_packet_ranges(&else_s.dbm, &mut else_s.types, right, left); // Else: left < right
+        }
+        CmpOp::ULe => { 
+            assume_le_var(&mut then_s.dbm, left, right);
+            assume_gt_var(&mut else_s.dbm, left, right);
+            refine_packet_ranges(&then_s.dbm, &mut then_s.types, right, left);
+            refine_packet_ranges(&else_s.dbm, &mut else_s.types, left, right);
+        }
+        CmpOp::UGt => { 
+            assume_gt_var(&mut then_s.dbm, left, right);
+            assume_le_var(&mut else_s.dbm, left, right);
+            refine_packet_ranges(&then_s.dbm, &mut then_s.types, left, right);
+            refine_packet_ranges(&else_s.dbm, &mut else_s.types, right, left);
+        }
+        CmpOp::ULt => { 
+            assume_le_var_plus_const(&mut then_s.dbm, left, right, -1);
+            assume_ge_var(&mut else_s.dbm, left, right);
+            refine_packet_ranges(&then_s.dbm, &mut then_s.types, right, left);
+            refine_packet_ranges(&else_s.dbm, &mut else_s.types, left, right);
+        }
+        _ => {} // Signed ops ignored (Conservative)
+    }
 }
 
 // --- Helper Functions for Type Updates ---

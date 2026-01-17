@@ -118,4 +118,12 @@ impl TypeState {
         }
         println!();
     }
+
+    pub fn reg_types_str(&self) -> String {
+        let mut s = String::new();
+        for (i, ty) in self.regs.iter().enumerate() {
+            s.push_str(&format!("R{}: {:?} ", i, ty));
+        }
+        s
+    }
 }

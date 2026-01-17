@@ -111,7 +111,8 @@ pub fn analyze_program(
 
         // If history is enabled, record this step using the parent index from the state.
         let current_step_idx = if let Some(h) = &mut history {
-            Some(h.record(state.pc, instr, state.history_idx))
+            let reg_types_str = state.types.reg_types_str();
+            Some(h.record(state.pc, instr, reg_types_str, state.history_idx))
         } else {
             None
         };
@@ -136,7 +137,7 @@ pub fn analyze_program(
                     // Print directly to stdout (or error log) so it stands out
                     println!("\n=== CRASH PATH RECONSTRUCTION ({} Steps) ===", trace.len());
                     for (i, step) in trace.iter().enumerate() {
-                        println!("[{:03}] PC {:<4} | {}", i, step.pc, step.instr_str);
+                        println!("[{:03}] PC {:<4} | {}\nReg Types: {}", i, step.pc, step.instr_str, step.reg_types_str);
                     }
                     println!("=============================================\n");
                 }
