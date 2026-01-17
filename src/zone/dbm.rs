@@ -155,6 +155,28 @@ impl Dbm {
         println!();
     }
 
+    pub fn pretty_print(&self) {
+        let zero = Reg::Zero; // Assuming 11 is your Zero/R10 reference index
+        println!("  Bounds:");
+        for i in 0..self.dim() {
+            let Some(i) = Reg::idx_to_reg(i) else { continue; };
+            if i == zero { continue; } // Don't print zero vs zero
+            
+            // Get constraints relative to Zero
+            let min = self.get(i, zero);
+            let max = self.get(zero, i);
+            
+            // Convert to readable strings
+            let min_str = if min == i64::MAX { "-INF".to_string() } else { (-min).to_string() };
+            let max_str = if max == i64::MAX { "+INF".to_string() } else { max.to_string() };
+            
+            // Only print if constrained
+            if min_str != "-INF" || max_str != "+INF" {
+                println!("    R{}: [{}, {}]", i.idx(), min_str, max_str);
+            }
+        }
+    }
+
     // you still have join, etc., unchanged except using Var or idx as needed
     pub fn join(&self, other: &Dbm) -> Dbm {
         let n = self.num_vars();

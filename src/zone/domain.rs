@@ -72,6 +72,24 @@ impl Reg {
             Reg::R10  => "r10",
         }
     }
+
+    pub fn idx_to_reg(idx: usize) -> Option<Reg> {
+        match idx {
+            0  => Some(Reg::Zero),
+            1  => Some(Reg::R0),
+            2  => Some(Reg::R1),
+            3  => Some(Reg::R2),
+            4  => Some(Reg::R3),
+            5  => Some(Reg::R4),
+            6  => Some(Reg::R5),
+            7  => Some(Reg::R6),
+            8  => Some(Reg::R7),
+            9  => Some(Reg::R8),
+            10 => Some(Reg::R9),
+            11 => Some(Reg::R10),
+            _  => None,
+        }
+    }
 }
 
 pub fn reg_to_index(r: Reg) -> Option<usize> {

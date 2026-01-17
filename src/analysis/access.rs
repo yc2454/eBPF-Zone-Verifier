@@ -126,7 +126,7 @@ pub fn check_load(
                         _ => {
                             // Bounds are infinite or unknown. This is a potential OOB.
                             println!("Unbounded variable map access at pc {}", pc);
-                            state.dbm.dump_matrix();
+                            state.dbm.pretty_print();
                             env.fail(VerificationError::UnsafeMapLoad { 
                                 pc, off: -1, size, limit: map_limit 
                             });
