@@ -10,7 +10,7 @@ use crate::zone::domain::{Reg, forget, get_bounds,
     assume_gt_var, assume_le_var_plus_const, 
     assign_zero, assign_mul_imm, assign_and_mask,
     assign_div_imm, assign_div_reg,
-    bit_and_const, assign_neg
+    bit_and_const, assign_neg, assign_sub_reg
 };
 use crate::analysis::access;
 use crate::zone::domain::proven_u32_range;
@@ -96,6 +96,54 @@ fn transfer_alu(
 
     let dbm = &mut state.dbm;
     match op {
+        AluOp::Add => {
+            match src {
+                Operand::Imm(c) => assign_add_imm(dbm, dst, c),
+                Operand::Reg(r) => {
+                    // Check the INPUT type (in_types) to see if dst was a clean pointer.
+                    let is_clean_ptr = match in_types.get(dst) {
+                        RegType::PtrToMapValue { offset: Some(0), .. } |
+                        RegType::PtrToStack { offset: 0 } |
+                        RegType::PtrToPacket { range: 0, .. } => true,
+                        _ => false,
+                    };
+                    if is_clean_ptr {
+                        // Special Case: Ptr(Offset 0) += Scalar.
+                        // In the DBM, the pointer's abstract value IS the offset (0).
+                        // Therefore: NewOffset = 0 + Scalar = Scalar.
+                        // We use 'assign_reg' (Copy) to enforce tight equality: dst == r.
+                        // Standard 'assign_add_reg' often loses this precision.
+                        assign_eq(dbm, dst, r);
+                    } else {
+                        // Standard Case: Ptr(Offset X) += Scalar  OR  Scalar += Scalar
+                        // dst = dst + r
+                        assign_add_reg(dbm, dst, r, ctx.zero);
+                    }
+                }
+            }
+        }
+        AluOp::Sub => {
+            match src {
+                Operand::Imm(c) => assign_add_imm(dbm, dst, -c),
+                Operand::Reg(r) => {
+                    // 1. Special Case: Optimization for Ptr(0) - r (Offset Negation)
+                    let is_clean_ptr = match in_types.get(dst) {
+                        RegType::PtrToMapValue { offset: Some(0), .. } |
+                        RegType::PtrToStack { offset: 0 } |
+                        RegType::PtrToPacket { range: 0, .. } => true,
+                        _ => false,
+                    };
+                    if is_clean_ptr {
+                        // dst = 0 - r  =>  dst = -r
+                        assign_eq(dbm, dst, r);
+                        assign_neg(dbm, dst);
+                    } else {
+                        // 2. Standard Case: Interval Subtraction
+                        assign_sub_reg(dbm, dst, r);
+                    }
+                }
+            }
+        }
         AluOp::Mov => {
             match src {
                 Operand::Reg(r) => {
@@ -114,18 +162,6 @@ fn transfer_alu(
                     assume_le_const(dbm, dst, ctx.zero, c);
                     assume_ge_const(dbm, dst, ctx.zero, c);
                 }
-            }
-        }
-        AluOp::Add => {
-            match src {
-                Operand::Imm(c) => assign_add_imm(dbm, dst, c),
-                Operand::Reg(r) => assign_add_reg(dbm, dst, r, ctx.zero),
-            }
-        }
-        AluOp::Sub => {
-            match src {
-                Operand::Imm(c) => assign_add_imm(dbm, dst, -c),
-                Operand::Reg(_r) => forget(dbm, dst), 
             }
         }
         AluOp::And => {

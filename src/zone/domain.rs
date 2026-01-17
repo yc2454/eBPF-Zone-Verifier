@@ -159,6 +159,35 @@ pub fn assign_add_reg(dbm: &mut Dbm, dst: Reg, src: Reg, zero: Reg) {
     dbm.close();
 }
 
+/// Handle: dst = dst - src
+pub fn assign_sub_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
+    // 1. Get current bounds for both registers
+    // We use a known zero register (like r10/frame pointer reference) or just absolute bounds if available
+    let zero = Reg::Zero;
+    
+    let (dst_min, dst_max) = get_bounds(dbm, dst, zero);
+    let (src_min, src_max) = get_bounds(dbm, src, zero);
+
+    // 2. Subtraction destroys the delicate difference relationships (x - z <= c)
+    // because (x - y) - z <= c requires knowing y + z relationship.
+    // So we must forget the old 'dst'.
+    forget(dbm, dst);
+
+    // 3. Re-establish bounds based on Interval Arithmetic
+    // New Min = Old Min - Src Max
+    // New Max = Old Max - Src Min
+    if let (Some(d_min), Some(d_max), Some(s_min), Some(s_max)) = (dst_min, dst_max, src_min, src_max) {
+        // Check for underflow/overflow safety if you want, usually BPF wraps.
+        // We assume 64-bit signed math for the verification domain.
+        
+        let new_min = d_min.saturating_sub(s_max);
+        let new_max = d_max.saturating_sub(s_min);
+
+        assume_ge_const(dbm, dst, zero, new_min);
+        assume_le_const(dbm, dst, zero, new_max);
+    }
+}
+
 // dst &= mask
 pub fn assign_and_mask(dbm: &mut Dbm, dst: Reg, mask: i64, zero: Reg) {
     dbm.forget_var(dst);
