@@ -12,10 +12,12 @@ pub mod cfg;
 pub mod pruning;
 pub mod loop_check;
 pub mod constants;
+
 use std::collections::VecDeque;
 use crate::ast::Program;
 use crate::zone::dbm::Dbm;
 use crate::zone::domain::{REG_ENV, Reg};
+use log::{debug, error, info};
 
 use self::context::ExecContext;
 use self::env::VerifierEnv;
@@ -33,14 +35,14 @@ pub fn analyze_program(
     let mut env = VerifierEnv::new(ctx, prog);
 
     if config.verbosity >= 1 { 
-        println!("[Analysis] Running Static Analysis Passes..."); 
+        info!(target: "app", "[Analysis] Running Static Analysis Passes..."); 
         if config.skip_dbm_check {
-            println!("[Analysis] DBM comparison disabled (--skip-dbm)");
+            info!(target: "app", "[Analysis] DBM comparison disabled (--skip-dbm)");
         }
     }
 
     if let Err(e) = cfg::check_cfg(prog, &mut env) {
-        println!("[Analysis] CFG Error: {}", e);
+        error!(target: "app", "[Analysis] CFG Error: {}", e);
         return Err(env::VerificationError::CfgError(e));
     }
 
@@ -57,7 +59,7 @@ pub fn analyze_program(
     worklist.push_back(initial_state);
 
     if config.verbosity >= 1 { 
-        println!("[Analysis] Starting Abstract Interpretation..."); 
+        info!(target: "app", "[Analysis] Starting Abstract Interpretation..."); 
     }
 
     // Track pruning statistics
@@ -66,7 +68,7 @@ pub fn analyze_program(
     // 4. Main Analysis Loop
     while let Some(state) = worklist.pop_back() {
         if env.failed() {
-            println!("[Analysis] Aborted due to previous errors.");
+            error!(target: "app", "[Analysis] Aborted due to previous errors.");
             break;
         }
 
@@ -80,16 +82,17 @@ pub fn analyze_program(
         // B. Global Complexity Limit (only count non-pruned states)
         env.insn_processed += 1;
         if env.insn_processed > config.max_insn {
-            println!("[Verifier] Hit complexity limit ({} instructions). Aborting.", config.max_insn);
-            println!("[Verifier] (Pruned {} states before limit)", prune_count);
-            println!("[Verifier] Tip: Try --skip-dbm or --max-insn N to increase limit");
+            // We use error! with target="analysis" to auto-trigger the crash dump
+            error!(target: "analysis", "[Verifier] Hit complexity limit ({} instructions). Aborting.", config.max_insn);
+            info!(target: "app", "[Verifier] (Pruned {} states before limit)", prune_count);
+            info!(target: "app", "[Verifier] Tip: Try --skip-dbm or --max-insn N to increase limit");
             env.fail(env::VerificationError::ComplexityLimitExceeded { limit: config.max_insn });
             break;
         }
 
         // C. Heartbeat Logging (Level 1+)
         if config.verbosity >= 1 && env.insn_processed % config.log_interval == 0 {
-            println!("[Verifier] Processed {} instructions (pruned {}). Worklist size: {}", 
+            info!(target: "app", "[Verifier] Processed {} instructions (pruned {}). Worklist size: {}", 
                      env.insn_processed, prune_count, worklist.len());
         }
 
@@ -97,27 +100,19 @@ pub fn analyze_program(
         if state.pc >= prog.instrs.len() { continue; }
         let instr = &prog.instrs[state.pc];
         
-        // E. Logging
-        let is_target = config.debug_pc.map(|t| t == state.pc).unwrap_or(false);
-        let show_trace = is_target || config.verbosity >= 2 || (config.verbosity >= 1 && env.insn_processed <= 50);
-        let show_debug = is_target || config.verbosity >= 3;
-
-        if show_trace {
-            let raw_pc = prog.pc_map.get(state.pc).copied().unwrap_or(0);
-            println!("--- Step {}: PC {} (Raw {}) ---", env.insn_processed, state.pc, raw_pc);
-            
-            if show_debug {
-                println!("    Instr: {:?}", instr);
-                state.types.print();
-            }
-        }
+        // E. Logging (Delegated to Global Logger)
+        // We output the raw data following the protocol. The Logger filters it.
+        debug!(target: "analysis", "|PC:{}| Instr: {:?} | Regs: {:?}", 
+               state.pc, instr, state.types);
 
         // F. Transfer Function
         let successors = transfer::transfer(&mut env, state, instr);
 
         // G. Critical Failure Check
         if env.failed() {
-            println!("[Verifier] Analysis halted due to critical error: {}", env.error.as_ref().unwrap().description());
+            // This error! call triggers the RingBufferLogger to dump the last 100 steps
+            error!(target: "analysis", "[Verifier] Analysis halted due to critical error: {}", 
+                   env.error.as_ref().unwrap().description());
             break;
         }
 
@@ -129,18 +124,18 @@ pub fn analyze_program(
 
     // --- FINAL REPORT ---
     if let Some(err) = &env.error {
-        println!("\n[Verifier] FAILURE: {:?}", err);
+        info!(target: "app", "\n[Verifier] FAILURE: {:?}", err);
         if config.verbosity >= 1 { 
-            println!("[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count); 
+            info!(target: "app", "[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count); 
         }
         return Err(err.clone());
     }
     
-    println!("\n[Verifier] Success! Verified {} instructions (pruned {} states).", 
+    info!(target: "app", "\n[Verifier] Success! Verified {} instructions (pruned {} states).", 
              env.insn_processed, prune_count);
 
     if config.verbosity >= 1 { 
-        println!("[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count); 
+        info!(target: "app", "[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count); 
     }
 
     // 5. Return Results

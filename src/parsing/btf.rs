@@ -2,6 +2,7 @@
 use std::collections::HashMap;
 use std::convert::TryInto;
 use crate::elf_loader::BpfMapDef;
+use log::{info, debug, warn};
 
 const BTF_MAGIC: u16 = 0xeB9F;
 
@@ -278,7 +279,7 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
     }
 
     let mut map_defs = Vec::new();
-    println!("Scanning {} BTF types for Maps...", types.len());
+    info!(target: "app", "Scanning {} BTF types for Maps...", types.len());
 
     for (i, t) in types.iter().enumerate() {
         if t.kind() == BTF_KIND_VAR {
@@ -329,7 +330,7 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                     }
 
                     if is_map && value_size > 0 {
-                        println!("[BTF] Found Map: '{}' (ValSize: {}, TypeID: {:?})", name, value_size, btf_val_type_id);
+                        info!(target: "app", "[BTF] Found Map: '{}' (ValSize: {}, TypeID: {:?})", name, value_size, btf_val_type_id);
                         map_defs.push(BpfMapDef {
                             name: name.clone(),
                             type_: 0,

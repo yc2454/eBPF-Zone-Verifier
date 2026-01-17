@@ -5,6 +5,7 @@ use goblin::elf::{Elf, sym};
 use std::collections::HashMap;
 use crate::parsing::btf;
 use crate::parsing::bpf_to_ast;
+use log::{info, debug, warn};
 
 #[derive(Clone, Debug)]
 pub struct BpfMapDef {
@@ -98,7 +99,6 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>, ElfLoadError
             if name == "maps" || name == ".maps" {
                 // ... (Existing Legacy Parsing Code) ...
                 // Keep your existing code here! 
-                // But if legacy map size is 0, we might want to overwrite it later.
             } 
             else if name == ".BTF" {
                 let start = sh.sh_offset as usize;
@@ -111,19 +111,15 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>, ElfLoadError
     }
 
     // 2. BTF Fallback strategy
-    // If we found legacy maps but they have size 0, or if we found no maps, try BTF.
     let needs_btf = maps.is_empty() || maps.iter().any(|m: &BpfMapDef| m.value_size == 0);
 
     if needs_btf {
         if let Some(btf_bytes) = btf_data {
-            println!("Attempting to load maps from BTF...");
+            info!(target: "app", "Attempting to load maps from BTF section...");
+            
             if let Ok(btf_maps) = btf::parse_btf_map_defs(btf_bytes) {
-                // Merge strategy: 
-                // If we have legacy maps (names), verify sizes against BTF.
-                // If we have nothing, just use BTF.
-                
                 if maps.is_empty() {
-                    println!("Loaded {} maps from BTF", btf_maps.len());
+                    info!(target: "app", "Loaded {} maps directly from BTF", btf_maps.len());
                     maps = btf_maps;
                 } else {
                     // Update size-0 maps with data from BTF
@@ -132,13 +128,13 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>, ElfLoadError
                             if let Some(btf_m) = btf_maps.iter().find(|bm| bm.name == m.name) {
                                 m.value_size = btf_m.value_size;
                                 m.key_size = btf_m.key_size;
-                                println!("Updated Map '{}' size to {} from BTF", m.name, m.value_size);
+                                debug!(target: "app", "Updated Map '{}' size to {} from BTF", m.name, m.value_size);
                             }
                         }
                     }
                 }
             } else {
-                println!("Failed to parse BTF section");
+                warn!(target: "app", "Failed to parse BTF section, map definitions might be incomplete.");
             }
         }
     }
@@ -182,7 +178,7 @@ pub fn load_relocations<P: AsRef<Path>>(
             name: target_section_name.to_string() 
         })?;
 
-    println!("Loading relocations for section '{}' (Index {})", target_section_name, target_sec_idx);
+    info!(target: "app", "Loading relocations for section '{}' (Index {})", target_section_name, target_sec_idx);
 
     // Iterate relocations
     for (reloc_sec_idx, section_relocs) in elf.shdr_relocs.iter() {
@@ -192,7 +188,7 @@ pub fn load_relocations<P: AsRef<Path>>(
             continue;
         }
         
-        println!("Found matching relocation section index {}", reloc_sec_idx);
+        debug!(target: "app", "Found relocation section at index {}", reloc_sec_idx);
         
         for reloc in section_relocs {
             let pc = (reloc.r_offset / 8) as usize;
@@ -208,11 +204,12 @@ pub fn load_relocations<P: AsRef<Path>>(
                 None => continue,
             };
             
-            println!("  [Loader] Offset {} (PC {}) -> Symbol '{}'", reloc.r_offset, pc, name);
+            // Using debug! to prevent spamming the console on successful loads
+            debug!(target: "app", "  [Loader] Offset {} (PC {}) -> Symbol '{}'", reloc.r_offset, pc, name);
 
             // Try 1: Direct map name match
             if let Some(&map_idx) = map_name_to_idx.get(name) {
-                println!("      -> Direct match to Map Index {}", map_idx);
+                debug!(target: "app", "      -> Direct match to Map Index {}", map_idx);
                 pc_to_reloc.insert(pc, RelocInfo { map_idx, offset: 0 });
                 continue;
             }
@@ -220,12 +217,12 @@ pub fn load_relocations<P: AsRef<Path>>(
             // Try 2: Symbol in a data section
             if let Some(&map_idx) = section_idx_to_map_idx.get(&sym.st_shndx) {
                 let offset = sym.st_value as i64;
-                println!("      -> Data section symbol, Map Index {}, Offset {}", map_idx, offset);
+                debug!(target: "app", "      -> Data section symbol, Map Index {}, Offset {}", map_idx, offset);
                 pc_to_reloc.insert(pc, RelocInfo { map_idx, offset });
                 continue;
             }
             
-            println!("      -> No match found");
+            warn!(target: "app", "      -> Unresolved relocation: Symbol '{}' not found in maps.", name);
         }
     }
 

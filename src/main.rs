@@ -5,6 +5,7 @@ mod analysis;
 mod parsing;
 mod zone;
 mod misc;
+mod logging;
 
 use crate::analysis::context::{ExecContext, default_exec_ctx};
 use crate::analysis::env::VerificationError;
@@ -18,6 +19,7 @@ use crate::parsing::elf_loader::{
 use crate::parsing::elf_loader::{self};
 use crate::parsing::btf::{self, BtfContext};
 use crate::ast::ProgramKind;
+use crate::logging::{FilterConfig};
 
 fn usage() {
     eprintln!("Usage:");
@@ -128,6 +130,19 @@ fn main() {
 
     // Parse config flags and get remaining positional args
     let (config, remaining) = VerifierConfig::from_args(&args[1..]);
+
+    // Initialize logging
+    logging::VerifierLogger::init(config.verbosity);
+
+    // If debug_pc is set, configure logging filter
+    if let Some(target_pc) = config.debug_pc {
+        let filter = FilterConfig {
+            // Buffer logs in a window around the target PC
+            pc_range: Some(target_pc.saturating_sub(10)..=target_pc + 10),
+            interesting_regs: vec![], // All regs
+        };
+        logging::VerifierLogger::set_config(filter);
+    }
     
     if remaining.is_empty() {
         usage();
