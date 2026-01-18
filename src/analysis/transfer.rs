@@ -167,25 +167,29 @@ fn transfer_alu(
             match src {
                 Operand::Reg(r) => {
                     if width == Width::W32 {
+                        // 1. Reset destination
                         forget(dbm, dst);
-                        assume_ge_const(dbm, dst, 0);
-                        assume_le_const(dbm, dst, 0xffff_ffff);
+                        // If 'r' fits in u32, Mov32 is just a copy!
+                        if proven_u32_range(dbm, r, ctx.zero) {
+                            assign_eq(dbm, dst, r);
+                        } else {
+                            // Fallback: Truncation logic (conservative)
+                            assume_ge_const(dbm, dst, 0);
+                            assume_le_const(dbm, dst, 0xffff_ffff);
+                        }
                     } else {
                         if r == ctx.r10 { assign_zero(dbm, dst, ctx.zero); } 
                         else { assign_eq(dbm, dst, r); }
                     }
                 }
                 Operand::Imm(c) => {
+                    // Handle zero-extension for W32
                     let c = if width == Width::W32 { (c as u32) as i64 } else { c };
+                    
                     forget(dbm, dst);
                     assume_le_const(dbm, dst, c);
                     assume_ge_const(dbm, dst, c);
                 }
-            }
-            if width == Width::W32 {
-                // Effectively w_dst = (u32) ...
-                // This bounds the result to [0, UINT_MAX]
-                bit_and_const(dbm, dst, 0xFFFFFFFF);
             }
         }
         AluOp::And => {
