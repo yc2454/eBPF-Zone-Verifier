@@ -119,6 +119,45 @@ pub const XDP_CTX_EGRESS_IFINDEX: i16 = 20;
 pub const XDP_CTX_EGRESS_IFINDEX_END: i16 = 24;
 
 // ============================================================================
+// Cgroup Sock Addr Context (bpf_sock_addr) Field Offsets
+// ============================================================================
+//
+// struct bpf_sock_addr {
+//     __u32 user_family;      // 0   - WRITABLE
+//     __u32 user_ip4;         // 4   - WRITABLE
+//     __u32 user_ip6[4];      // 8-23 - WRITABLE
+//     __u32 user_port;        // 24  - WRITABLE
+//     __u32 family;           // 28
+//     __u32 type;             // 32
+//     __u32 protocol;         // 36
+//     __u32 msg_src_ip4;      // 40
+//     __u32 msg_src_ip6[4];   // 44-59
+//     __bpf_md_ptr(sk);       // 60
+// };
+
+// Read-only fields
+pub const SOCK_ADDR_CTX_FAMILY: i16 = 28;
+pub const SOCK_ADDR_CTX_TYPE: i16 = 32;
+pub const SOCK_ADDR_CTX_PROTOCOL: i16 = 36;
+pub const SOCK_ADDR_CTX_MSG_SRC_IP4: i16 = 40;
+pub const SOCK_ADDR_CTX_MSG_SRC_IP6_START: i16 = 44;
+pub const SOCK_ADDR_CTX_MSG_SRC_IP6_END: i16 = 60;
+pub const SOCK_ADDR_CTX_SK: i16 = 60;
+
+// Writable fields (offset, end)
+pub const SOCK_ADDR_CTX_USER_FAMILY: i16 = 0;
+pub const SOCK_ADDR_CTX_USER_FAMILY_END: i16 = 4;
+
+pub const SOCK_ADDR_CTX_USER_IP4: i16 = 4;
+pub const SOCK_ADDR_CTX_USER_IP4_END: i16 = 8;
+
+pub const SOCK_ADDR_CTX_USER_IP6_START: i16 = 8;
+pub const SOCK_ADDR_CTX_USER_IP6_END: i16 = 24;  // 4 * 4 = 16 bytes
+
+pub const SOCK_ADDR_CTX_USER_PORT: i16 = 24;
+pub const SOCK_ADDR_CTX_USER_PORT_END: i16 = 28;
+
+// ============================================================================
 // Packet Access Heuristics
 // ============================================================================
 

@@ -94,8 +94,8 @@ pub fn program_kind_for_object(obj_path: &Path) -> Result<ProgramKind> {
         .get(key_exact.as_ref())
         .or_else(|| raw.get(key_base.as_ref()));
 
-    Ok(match opt_label {
-        Some(Some(label)) => ProgramKind::from_section(label),
-        _ => ProgramKind::Unknown,
-    })
+    match opt_label {
+        Some(Some(label)) => Ok(ProgramKind::from_section(label)),
+        _ => Err(anyhow::anyhow!("program kind not found for object {:?}", obj_path)),
+    }
 }

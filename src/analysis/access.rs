@@ -184,7 +184,6 @@ pub fn check_load(
                 warn!("[Verifier] Heuristic: Allowing small mem region load (off {}..{})", off, access_end);
                 safe = true;
             }
-
             if !safe {
                 error!("Unsafe mem region store at pc {}: base {:?}+{}", pc, base, off);
                 env.fail(VerificationError::UnsafeGenericStore { pc, base, off });

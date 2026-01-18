@@ -1,4 +1,4 @@
-use crate::{analysis::reg_types, ast::Instr};
+use crate::{ast::Instr};
 
 /// A lightweight record of a single step in the execution path.
 pub struct Breadcrumb {

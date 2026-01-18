@@ -1,6 +1,6 @@
 // src/ctx_model.rs
 
-use crate::ast::{MemSize, ProgramKind};
+use crate::ast::{MemSize, ProgramKind, ContextKind};
 use crate::analysis::constants;
 
 /// Abstract identifier for a memory region described by ctx fields.
@@ -48,7 +48,7 @@ pub enum CtxFieldKind {
 /// Offsets here are *very* specific to your current Calico program pattern
 /// and can be refined later.
 /// TC-specific ctx classifier for LOADS.
-pub fn classify_tc_ctx_field(off: i16, size: MemSize) -> Option<CtxFieldKind> {
+pub fn classify_sk_buff_field(off: i16, size: MemSize) -> Option<CtxFieldKind> {
     match (off, size) {
         // data (Packet Start)
         (constants::TC_CTX_DATA, MemSize::U32) => Some(CtxFieldKind::PacketStart),
@@ -67,7 +67,7 @@ pub fn classify_tc_ctx_field(off: i16, size: MemSize) -> Option<CtxFieldKind> {
 }
 
 /// XDP-specific ctx classifier for LOADS.
-pub fn classify_xdp_ctx_field(off: i16, size: MemSize) -> Option<CtxFieldKind> {
+pub fn classify_xdp_md_field(off: i16, size: MemSize) -> Option<CtxFieldKind> {
     match (off, size) {
         (constants::XDP_CTX_DATA, MemSize::U32) => Some(CtxFieldKind::PacketStart),
         (constants::XDP_CTX_DATA_END, MemSize::U32) => Some(CtxFieldKind::PacketEnd),
@@ -77,7 +77,7 @@ pub fn classify_xdp_ctx_field(off: i16, size: MemSize) -> Option<CtxFieldKind> {
 }
 
 /// Check if a TC context field is writable.
-pub fn is_tc_ctx_field_writable(off: i16, size: MemSize) -> bool {
+pub fn is_sk_buff_field_writable(off: i16, size: MemSize) -> bool {
     let access_size: i16 = match size {
         MemSize::U8 => 1,
         MemSize::U16 => 2,
@@ -120,7 +120,7 @@ pub fn is_tc_ctx_field_writable(off: i16, size: MemSize) -> bool {
 }
 
 /// Check if an XDP context field is writable.
-pub fn is_xdp_ctx_field_writable(off: i16, size: MemSize) -> bool {
+pub fn is_xdp_md_field_writable(off: i16, size: MemSize) -> bool {
     let access_size: i16 = match size {
         MemSize::U8 => 1,
         MemSize::U16 => 2,
@@ -142,11 +142,49 @@ pub fn is_xdp_ctx_field_writable(off: i16, size: MemSize) -> bool {
     false
 }
 
+pub fn is_sock_addr_field_writable(off: i16, size: MemSize) -> bool {
+    let access_size: i16 = match size {
+        MemSize::U8 => 1,
+        MemSize::U16 => 2,
+        MemSize::U32 => 4,
+        MemSize::U64 => 8,
+    };
+    let access_end = off + access_size;
+
+    // 1. user_family (0-4)
+    if off >= constants::SOCK_ADDR_CTX_USER_FAMILY && access_end <= constants::SOCK_ADDR_CTX_USER_FAMILY_END {
+        return size == MemSize::U32;
+    }
+
+    // 2. user_ip4 (4-8)
+    if off >= constants::SOCK_ADDR_CTX_USER_IP4 && access_end <= constants::SOCK_ADDR_CTX_USER_IP4_END {
+        return size == MemSize::U32;
+    }
+
+    // 3. user_ip6 (8-24)
+    if off >= constants::SOCK_ADDR_CTX_USER_IP6_START && access_end <= constants::SOCK_ADDR_CTX_USER_IP6_END {
+        // Alignment/Size check: usually U32 or U64 is expected here
+        return match size {
+            MemSize::U32 | MemSize::U64 => true,
+            _ => false, 
+        };
+    }
+
+    // 4. user_port (24-28)
+    if off >= constants::SOCK_ADDR_CTX_USER_PORT && access_end <= constants::SOCK_ADDR_CTX_USER_PORT_END {
+        return size == MemSize::U32;
+    }
+
+    false
+}
+
 /// Generic dispatch: is ctx field writable?
 pub fn is_ctx_field_writable(prog_kind: ProgramKind, off: i16, size: MemSize) -> bool {
-    match prog_kind {
-        ProgramKind::SchedCls | ProgramKind::SocketFilter => is_tc_ctx_field_writable(off, size),
-        ProgramKind::Xdp => is_xdp_ctx_field_writable(off, size),
+    let ctx_kind = prog_kind.context_kind();
+    match ctx_kind {
+        ContextKind::SkBuff => is_sk_buff_field_writable(off, size),
+        ContextKind::XdpMd => is_xdp_md_field_writable(off, size),
+        ContextKind::BpfSockAddr => is_sock_addr_field_writable(off, size),
         _ => false,
     }
 }

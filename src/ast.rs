@@ -232,11 +232,6 @@ pub struct Program {
     pub pc_map: Vec<usize>,
 }
 
-#[derive(Debug, Clone)]
-pub struct ProgramSuite {
-    pub programs: Vec<Program>,
-}
-
 impl fmt::Display for Instr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Instr::*;

@@ -67,7 +67,7 @@ fn analyze_section(
     // Load relocations
     let pc_to_reloc = 
         load_relocations(path, &all_maps, section).unwrap_or_default();
-        
+
     // Apply map size overrides from config
     for m in &mut all_maps {
         if let Some(&new_size) = config.map_overrides.get(&m.name) {
@@ -82,12 +82,12 @@ fn analyze_section(
     ctx.pc_to_reloc = pc_to_reloc;
     ctx.btf = btf_ctx.clone();
     ctx.prog_kind = match program_kind_for_object(std::path::Path::new(path)) {
-        Ok(kind) => {
-            println!("  Detected program kind: {:?}", kind);
-            kind
-        },
-        Err(_) => ProgramKind::Unknown,
+        Ok(kind) => kind,
+        Err(_) => ProgramKind::from_section(section),
     };
+    if verbose {
+        println!("  Program kind: {:?}", ctx.prog_kind);
+    }
 
     // Load program
     let prog = load_program_from_elf(path, section);

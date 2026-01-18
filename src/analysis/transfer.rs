@@ -16,7 +16,7 @@ use crate::zone::domain::{Reg, forget, get_bounds,
 };
 use crate::analysis::access;
 use crate::zone::domain::proven_u32_range;
-use crate::parsing::ctx_model::{classify_tc_ctx_field, CtxFieldKind, classify_xdp_ctx_field};
+use crate::parsing::ctx_model::{classify_sk_buff_field, CtxFieldKind, classify_xdp_md_field};
 use crate::analysis::env::VerificationError;
 use crate::zone::dbm::Dbm;
 use crate::analysis::constants;
@@ -883,8 +883,8 @@ fn update_load_types(env: &VerifierEnv, types: &mut TypeState, size: MemSize, ds
     match base_ty {
         RegType::PtrToCtx => {
             let kind = match env.ctx.prog_kind {
-                ProgramKind::Xdp => classify_xdp_ctx_field(off, size),
-                ProgramKind::SchedCls | ProgramKind::SocketFilter => classify_tc_ctx_field(off, size),
+                ProgramKind::Xdp => classify_xdp_md_field(off, size),
+                ProgramKind::SchedCls | ProgramKind::SocketFilter => classify_sk_buff_field(off, size),
                 _ => None,
             };
             if let Some(kind) = kind {
