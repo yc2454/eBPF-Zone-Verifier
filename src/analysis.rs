@@ -4,13 +4,11 @@ pub mod context;
 pub mod transfer;
 pub mod access;
 pub mod state;
-pub mod heuristics;
 pub mod reg_types;
 pub mod env;
 pub mod liveness;
 pub mod cfg;
 pub mod pruning;
-pub mod loop_check;
 pub mod constants;
 pub mod history;
 

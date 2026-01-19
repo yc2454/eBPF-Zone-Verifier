@@ -4,9 +4,10 @@ use std::path::Path;
 use goblin::elf::{Elf, sym};
 use std::collections::HashMap;
 use crate::parsing::btf;
-use crate::parsing::bpf_to_ast;
 use log::{info, debug, warn};
 use crate::analysis::constants;
+use anyhow::Result;
+
 
 #[derive(Clone, Debug)]
 pub struct BpfMapDef {
@@ -19,26 +20,6 @@ pub struct BpfMapDef {
     pub btf_val_type_id: Option<u32>,
 
     pub initial_data: Option<Vec<u8>>,
-}
-
-#[derive(Debug)]
-pub enum ElfLoadError {
-    Io(std::io::Error),
-    Goblin(goblin::error::Error),
-    NotBpf { e_machine: u16 },
-    LowerError(bpf_to_ast::LowerError),
-    SectionNotFound { name: String },
-    SectionOutOfBounds { name: String, offset: usize, size: usize, file_len: usize },
-}
-
-impl From<std::io::Error> for ElfLoadError { 
-    fn from(e: std::io::Error) -> Self { ElfLoadError::Io(e) } 
-}
-impl From<goblin::error::Error> for ElfLoadError { 
-    fn from(e: goblin::error::Error) -> Self { ElfLoadError::Goblin(e) } 
-}
-impl From<bpf_to_ast::LowerError> for ElfLoadError { 
-    fn from(e: bpf_to_ast::LowerError) -> Self { ElfLoadError::LowerError(e) } 
 }
 
 /// Represents a raw BPF program extracted from the ELF symbol table.
@@ -58,7 +39,7 @@ pub struct RelocInfo {
 }
 
 /// Load data sections as synthetic maps
-pub fn load_data_section_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>, ElfLoadError> {
+pub fn load_data_section_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
     let buf = fs::read(path)?;
     let elf = Elf::parse(&buf)?;
     
@@ -117,7 +98,7 @@ pub fn load_data_section_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>,
     Ok(maps)
 }
 
-pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>, ElfLoadError> {
+pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
     let buf = fs::read(&path)?;
     let elf = Elf::parse(&buf)?;
     let mut maps = Vec::new();
@@ -176,7 +157,7 @@ pub fn load_relocations<P: AsRef<Path>>(
     path: P, 
     maps: &[BpfMapDef],
     target_section_name: &str,
-) -> Result<HashMap<usize, RelocInfo>, ElfLoadError> {
+) -> Result<HashMap<usize, RelocInfo>> {
     let buf = fs::read(path)?;
     let elf = Elf::parse(&buf)?;
 
@@ -204,9 +185,7 @@ pub fn load_relocations<P: AsRef<Path>>(
             elf.shdr_strtab.get_at(sh.sh_name) == Some(target_section_name)
         })
         .map(|(i, _)| i)
-        .ok_or_else(|| ElfLoadError::SectionNotFound { 
-            name: target_section_name.to_string() 
-        })?;
+        .ok_or_else(|| anyhow::anyhow!("Section '{}' not found", target_section_name))?;
 
     info!(target: "app", "Loading relocations for section '{}' (Index {})", target_section_name, target_sec_idx);
 
@@ -260,7 +239,7 @@ pub fn load_relocations<P: AsRef<Path>>(
 }
 
 /// Return all section names in the ELF file (useful for discovery/debugging).
-pub fn list_section_names<P: AsRef<Path>>(path: P) -> Result<Vec<String>, ElfLoadError> {
+pub fn list_section_names<P: AsRef<Path>>(path: P) -> Result<Vec<String>> {
     let buf = fs::read(path)?;
     let elf = Elf::parse(&buf)?;
 
@@ -281,7 +260,7 @@ pub fn load_section_bytes<P: AsRef<Path>>(
     path: P,
     section_name: &str,
     require_bpf: bool,
-) -> Result<Vec<u8>, ElfLoadError> {
+) -> Result<Vec<u8>> {
     let buf = fs::read(path)?;
     let elf = Elf::parse(&buf)?;
 
@@ -289,7 +268,7 @@ pub fn load_section_bytes<P: AsRef<Path>>(
         // EM_BPF is 247
         const EM_BPF: u16 = 247;
         if elf.header.e_machine != EM_BPF {
-            return Err(ElfLoadError::NotBpf { e_machine: elf.header.e_machine });
+            return Err(anyhow::anyhow!("Not an eBPF ELF object: e_machine = {}", elf.header.e_machine));
         }
     }
 
@@ -303,9 +282,7 @@ pub fn load_section_bytes<P: AsRef<Path>>(
             }
         }
     }
-    let sh = found.ok_or_else(|| ElfLoadError::SectionNotFound {
-        name: section_name.to_string(),
-    })?;
+    let sh = found.ok_or_else(|| anyhow::anyhow!("Section '{}' not found", section_name))?;
 
     let offset = sh.sh_offset as usize;
     let size = sh.sh_size as usize;
@@ -313,12 +290,7 @@ pub fn load_section_bytes<P: AsRef<Path>>(
     // Bounds check (ELF can be malformed).
     let file_len = buf.len();
     if offset > file_len || offset + size > file_len {
-        return Err(ElfLoadError::SectionOutOfBounds {
-            name: section_name.to_string(),
-            offset,
-            size,
-            file_len,
-        });
+        return Err(anyhow::anyhow!("Section '{}' out of bounds: offset {}, size {}, file length {}", section_name, offset, size, file_len));
     }
 
     Ok(buf[offset..offset + size].to_vec())
@@ -329,24 +301,19 @@ pub fn load_section_bytes<P: AsRef<Path>>(
 pub fn load_bpf_insn_stream_section<P: AsRef<Path>>(
     path: P,
     section_name: &str,
-) -> Result<Vec<u8>, ElfLoadError> {
+) -> Result<Vec<u8>> {
     let bytes = load_section_bytes(path, section_name, true)?;
     // Divisible-by-8 is a strong sanity check for a raw insn stream section.
     if bytes.len() % 8 != 0 {
         // Reuse SectionOutOfBounds style error to avoid adding another variant;
         // or feel free to add a dedicated error type.
-        return Err(ElfLoadError::SectionOutOfBounds {
-            name: format!("{section_name} (size not divisible by 8)"),
-            offset: 0,
-            size: bytes.len(),
-            file_len: bytes.len(),
-        });
+        return Err(anyhow::anyhow!("Section '{}' size not divisible by 8: size {}", section_name, bytes.len()));
     }
     Ok(bytes)
 }
 
 /// Iterates over the ELF Symbol Table to find all BPF programs.
-pub fn load_raw_programs<P: AsRef<Path>>(path: P) -> Result<Vec<RawBpfProgram>, ElfLoadError> {
+pub fn load_raw_programs<P: AsRef<Path>>(path: P) -> Result<Vec<RawBpfProgram>> {
     let bytes = fs::read(path)?;
     let elf = Elf::parse(&bytes)?;
     
