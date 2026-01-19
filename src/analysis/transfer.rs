@@ -39,6 +39,13 @@ pub fn transfer(
         Instr::If { width, left, op, right, target } => transfer_if(env, state, *width, *left, *op, right.clone(), *target),
         Instr::Load { size, dst, base, off } => {
             access::check_load(env, &state, *base, *size, *off);
+            // Try to resolve concrete value from .rodata
+            // If successful, this sets the register to an exact constant (e.g., 0 or 1)
+            // and we return early. This enables pruning dead configuration paths.
+            if try_load_from_rodata(env, &mut state, *dst, *base, *off, *size) {
+                state.pc += 1;
+                return vec![state];
+            }
             update_load_types(env, &mut state.types, *size, *dst, *base, *off);
             forget(&mut state.dbm, *dst);
             // Apply implicit bounds based on Load Size (Zero Extension)
@@ -765,6 +772,61 @@ fn apply_reg_constraints(
         }
         _ => {} // Signed ops ignored (Conservative)
     }
+}
+
+// --- Helper Functions for Load from .rodata ---
+fn try_load_from_rodata(
+    env: &VerifierEnv,
+    state: &mut State,
+    dst: Reg,
+    base: Reg,
+    insn_off: i16,
+    size: MemSize,
+) -> bool {
+    // 1. Check if we are loading from a Map Pointer
+    if let RegType::PtrToMapValue { map_idx, offset: base_offset } = state.types.get(base) {
+        // We can only read if the pointer offset is known (not variable)
+        if let Some(ptr_val) = base_offset {
+            let map = &env.ctx.map_defs[map_idx];
+
+            // 2. Check if this map has static content (.rodata)
+            if let Some(data) = &map.initial_data {
+                // Calculate absolute byte offset
+                // abs_off = (pointer's internal offset) + (instruction's load offset)
+                let abs_off = ptr_val + insn_off as i64;
+
+                if abs_off >= 0 {
+                    let start = abs_off as usize;
+                    let len = size.bytes();
+
+                    // 3. Bounds Check against the static data
+                    if start + len <= data.len() {
+                        // 4. Read the Bytes
+                        let bytes = &data[start .. start + len];
+
+                        // Convert bytes to u64 (Little Endian, standard for BPF)
+                        let mut val: u64 = 0;
+                        for (i, &b) in bytes.iter().enumerate() {
+                            val |= (b as u64) << (i * 8);
+                        }
+
+                        // 5. Update State
+                        // Reset the register to remove old constraints
+                        forget(&mut state.dbm, dst);
+                        
+                        // Assign the EXACT constant value
+                        assume_eq_const(&mut state.dbm, dst, val as i64);
+                        
+                        // Set type to Scalar (constants are just numbers)
+                        state.types.set(dst, RegType::ScalarValue);
+
+                        return true; // Successfully handled
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 // --- Helper Functions for Type Updates ---

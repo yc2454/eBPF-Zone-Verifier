@@ -213,6 +213,12 @@ pub const DATA_SECTION_RODATA: &str = ".rodata";
 pub const DATA_SECTION_DATA: &str = ".data";
 pub const DATA_SECTION_BSS: &str = ".bss";
 
+// ELF Section Types
+pub const SHT_NOBITS: u32 = 8;
+
+// Map Flags
+pub const BPF_F_RDONLY_PROG: u32 = 1 << 7; // 128 (0x80)
+
 // Socket/networking helpers
 pub const BPF_SK_LOOKUP_TCP: u32 = 84;
 pub const BPF_SK_LOOKUP_UDP: u32 = 85;

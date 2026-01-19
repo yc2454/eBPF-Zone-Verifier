@@ -319,13 +319,12 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                             
                             if m_name == "value" { 
                                 value_size = size; 
-                                // NEW: Save the Type ID for the analyzer!
                                 btf_val_type_id = Some(actual_type_id);
                             }
                             else { key_size = size; }
                         }
                         else if m_name == "max_entries" {
-                             // Extract max_entries if needed
+                             // Extract max_entries (maybe in the future)
                         }
                     }
 
@@ -338,7 +337,8 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                             value_size,
                             max_entries,
                             map_flags: 0,
-                            btf_val_type_id, // Populate it
+                            btf_val_type_id,
+                            initial_data: None, // No initial data here
                         });
                     }
                 }

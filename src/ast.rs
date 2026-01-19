@@ -53,6 +53,17 @@ pub enum MemSize {
     U64,
 }
 
+impl MemSize {
+    pub fn bytes(&self) -> usize {
+        match self {
+            MemSize::U8  => 1,
+            MemSize::U16 => 2,
+            MemSize::U32 => 4,
+            MemSize::U64 => 8,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum Instr {
     /// rX = arg0 (your synthetic entry source)

@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use crate::parsing::btf;
 use crate::parsing::bpf_to_ast;
 use log::{info, debug, warn};
+use crate::analysis::constants;
 
 #[derive(Clone, Debug)]
 pub struct BpfMapDef {
@@ -16,6 +17,8 @@ pub struct BpfMapDef {
     pub map_flags: u32,
     pub name: String, 
     pub btf_val_type_id: Option<u32>,
+
+    pub initial_data: Option<Vec<u8>>,
 }
 
 #[derive(Debug)]
@@ -72,14 +75,41 @@ pub fn load_data_section_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>,
             name.starts_with(".data.");
         
         if is_data_section && sh.sh_size > 0 {
+            let initial_data = 
+                if sh.sh_type == constants::SHT_NOBITS { // SHT_NOBITS (e.g. .bss)
+                    // .bss is zero-initialized memory, not stored in file.
+                    // We create a vector of zeros.
+                    Some(vec![0u8; sh.sh_size as usize])
+                } else {
+                    // .rodata / .data are stored in the file.
+                    let start = sh.sh_offset as usize;
+                    let end = start + sh.sh_size as usize;
+                    // Bounds check to be safe
+                    if end <= buf.len() {
+                        Some(buf[start..end].to_vec())
+                    } else {
+                        None // Should typically return an error, but we'll stick to 'None' to be safe
+                    }
+                };
+
+            // Set Read-Only flag for .rodata
+            // This helps the verifier know writes are illegal.
+            let extra_flags = if name.starts_with(".rodata") {
+                constants::BPF_F_RDONLY_PROG 
+            } else {
+                0
+            };
+            // ---------------------------------------------------------------
+
             maps.push(BpfMapDef {
-                type_: 2, // BPF_MAP_TYPE_ARRAY
+                type_: constants::BPF_MAP_TYPE_ARRAY,
                 key_size: 4,
                 value_size: sh.sh_size as u32,
                 max_entries: 1,
-                map_flags: 0,
+                map_flags: 0 | extra_flags, // Extend flags
                 name: name.to_string(),
                 btf_val_type_id: None,
+                initial_data,
             });
         }
     }
