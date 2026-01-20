@@ -70,7 +70,7 @@ pub fn load_program_from_elf(path: &str, section: &str) -> Program {
     }
 }
 
-pub const OBJ_PROG_TYPE_JSON: &str = "/Users/yalucai/Research/Zone/zone-mvp/obj_prog_type.json";
+pub const OBJ_PROG_TYPE_JSON: &str = "./obj_prog_type.json";
 
 type RawJsonMap = HashMap<String, Option<String>>;
 

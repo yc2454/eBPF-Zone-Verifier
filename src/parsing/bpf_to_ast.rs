@@ -581,9 +581,21 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
                 Instr::If {
                     width: Width::W64,
-                    left: dst,                 // r7 here
+                    left: dst,
                     op: CmpOp::UGe,
-                    right: Operand::Reg(src),  // r1 here
+                    right: Operand::Reg(src),
+                    target,
+                }
+            },
+
+            // 0x3e: JGE32_X (if (u32)dst >= (u32)src goto target)
+            0x3e => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst,
+                    op: CmpOp::UGe,
+                    right: Operand::Reg(src),
                     target,
                 }
             },

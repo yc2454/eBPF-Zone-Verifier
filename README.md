@@ -82,7 +82,7 @@ cargo run -- --max-insn 5000000 -v elf-analyze-section ./bpf_host.o tc
 
 ```
 
-**4. Batch analyze an entire file, skipping DBM checks for speed:**
+**4. Batch analyze an entire file, skipping DBM checks in pruning for speed:**
 
 ```bash
 cargo run -- --skip-dbm elf-analyze-prog ./bpf_host.o
