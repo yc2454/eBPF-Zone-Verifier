@@ -1,7 +1,7 @@
 // src/btf.rs
 use std::collections::HashMap;
 use std::convert::TryInto;
-use crate::elf_loader::BpfMapDef;
+use crate::parsing::elf_loader::BpfMapDef;
 use log::{info, debug, warn};
 
 const BTF_MAGIC: u16 = 0xeB9F;

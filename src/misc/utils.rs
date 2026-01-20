@@ -2,7 +2,7 @@ use crate::zone::dbm::{INF};
 use crate::parsing::bpf_to_ast;
 use crate::parsing::bpf_insn;
 use crate::ast::{Program, ProgramKind};
-use crate::elf_loader;
+use crate::parsing::elf_loader;
 use std::collections::HashMap;
 use std::path::Path;
 use std::fs;

@@ -1,8 +1,8 @@
 // src/analysis/context.rs
 use crate::zone::domain::{Reg};
-use crate::elf_loader::{BpfMapDef, RelocInfo};
+use crate::parsing::elf_loader::{BpfMapDef, RelocInfo};
 use std::collections::HashMap;
-use crate::btf::BtfContext;
+use crate::parsing::btf::BtfContext;
 use crate::ast::ProgramKind;
 
 #[derive(Clone)]
