@@ -1,5 +1,3 @@
-use std::env;
-
 // src/analysis/transfer.rs
 use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;
@@ -205,7 +203,22 @@ fn transfer_alu(
             if let Operand::Imm(mask) = src {
                 let mask = if width == Width::W32 { (mask as u32) as i64 } else { mask };
                 if mask >= 0 {
-                    assign_and_mask(dbm, dst, mask, ctx.zero);
+                    // Improved: preserve precision when we know the input bounds
+                    match (old_lo, old_hi) {
+                        (Some(l), Some(h)) if l >= 0 => {
+                            // For (x & mask) where x in [l, h] and mask >= 0:
+                            // - Result is always >= 0
+                            // - Result is always <= min(h, mask)
+                            // - If h <= mask, the AND doesn't change the upper bound
+                            let new_hi = std::cmp::min(h, mask);
+                            assume_ge_const(dbm, dst, 0);
+                            assume_le_const(dbm, dst, new_hi);
+                        }
+                        _ => {
+                            // Fallback: result is in [0, mask]
+                            assign_and_mask(dbm, dst, mask);
+                        }
+                    }
                 } else if let (Some(l), Some(h)) = (old_lo, old_hi) {
                     if l >= 0 {
                         assume_ge_const(dbm, dst, 0);
@@ -213,13 +226,37 @@ fn transfer_alu(
                     }
                 }
             } else if let (Some(l), Some(h)) = (old_lo, old_hi) {
-                 if l >= 0 {
+                // AND with register - less precise
+                if l >= 0 {
                     assume_ge_const(dbm, dst, 0);
                     assume_le_const(dbm, dst, h);
-                 }
+                }
             }
         }
-        AluOp::Or | AluOp::Xor | AluOp::Shl | AluOp::Arsh => forget(dbm, dst),
+        AluOp::Or => {
+            let (old_lo, _old_hi) = get_bounds(dbm, dst);
+            forget(dbm, dst);
+            
+            if let Operand::Imm(c) = src {
+                let c = if width == Width::W32 { (c as u32) as i64 } else { c };
+                
+                // x | c >= c when x >= 0 (all bits of c will be set)
+                if c > 0 {
+                    match old_lo {
+                        Some(l) if l >= 0 => {
+                            // Result is at least c (the OR sets all bits of c)
+                            assume_ge_const(dbm, dst, c);
+                            // Result is at most max(old_hi, c) with all bits of c set
+                        }
+                        _ => {
+                            // If old value could be negative, we can't say much
+                        }
+                    }
+                }
+            }
+            // For OR with register, we stay conservative (forget)
+        }
+        AluOp::Xor | AluOp::Shl | AluOp::Arsh => forget(dbm, dst),
         AluOp::Neg => {
             // 1. Apply Negate Logic (swaps bounds)
             assign_neg(&mut state.dbm, dst);
@@ -585,100 +622,6 @@ fn check_interval_32(op: CmpOp, min: i64, max: i64, r: i64) -> Option<bool> {
     }
 }
 
-// Helper: 64-bit Comparison
-fn check_condition_64(op: CmpOp, l: i64, r: i64) -> bool {
-    // Cast to u64 to get the raw bit pattern for Unsigned ops
-    let l_u64 = l as u64;
-    let r_u64 = r as u64;
-
-    match op {
-        CmpOp::Eq => l_u64 == r_u64,
-        CmpOp::Ne => l_u64 != r_u64,
-        
-        // Unsigned Comparisons (use u64)
-        CmpOp::UGt => l_u64 > r_u64,
-        CmpOp::ULt => l_u64 < r_u64,
-        CmpOp::UGe => l_u64 >= r_u64,
-        CmpOp::ULe => l_u64 <= r_u64,
-        
-        // Signed Comparisons (use i64)
-        // Since DBM values are already i64, we can use them directly.
-        CmpOp::SGt => l > r,
-        CmpOp::SLt => l < r,
-        CmpOp::SGe => l >= r,
-        CmpOp::SLe => l <= r,
-    }
-}
-
-// Helper: 32-bit Comparison (The specific fix for bpf_host.o)
-fn check_condition_32(op: CmpOp, l: i64, r: i64) -> bool {
-    // 1. Truncate to 32 bits (Simulating BPF_JMP32)
-    //    'as u32' discards the upper 32 bits of the i64
-    let l32 = l as u32;
-    let r32 = r as u32;
-
-    match op {
-        CmpOp::Eq => l32 == r32,
-        CmpOp::Ne => l32 != r32,
-        
-        // Unsigned 32-bit Comparisons
-        CmpOp::UGt => l32 > r32,
-        CmpOp::ULt => l32 < r32,
-        CmpOp::UGe => l32 >= r32,
-        CmpOp::ULe => l32 <= r32,
-        
-        // Signed 32-bit Comparisons
-        // We must cast the truncated u32 back to i32 to get signed behavior
-        // e.g., 0xFFFFFFFF (u32) -> -1 (i32)
-        CmpOp::SGt => (l32 as i32) > (r32 as i32),
-        CmpOp::SLt => (l32 as i32) < (r32 as i32),
-        CmpOp::SGe => (l32 as i32) >= (r32 as i32),
-        CmpOp::SLe => (l32 as i32) <= (r32 as i32),
-    }
-}
-
-fn check_static_branch(
-    state: &State, 
-    _env: &VerifierEnv,
-    width: Width, 
-    left: Reg, 
-    op: CmpOp, 
-    right: &Operand, 
-    target: usize
-) -> Option<Vec<State>> {
-    // Check if 'left' is a constant
-    let (l_min, l_max) = get_bounds(&state.dbm, left);
-    let l_val = if let (Some(l), Some(h)) = (l_min, l_max) {
-        if l == h { Some(l) } else { None }
-    } else { None }?;
-
-    // Check if 'right' is a constant
-    let r_val = match right {
-        Operand::Imm(i) => Some(*i), // i is i64
-        Operand::Reg(r) => {
-            let (rmin, rmax) = get_bounds(&state.dbm, *r);
-            if let (Some(l), Some(h)) = (rmin, rmax) {
-                if l == h { Some(l) } else { None }
-            } else { None }
-        }
-    }?;
-
-    // Evaluate Condition
-    let condition_true = match width {
-        Width::W64 => check_condition_64(op, l_val, r_val),
-        Width::W32 => check_condition_32(op, l_val, r_val),
-    };
-
-    let mut result_state = state.clone();
-    if condition_true {
-        result_state.pc = target;
-        Some(vec![result_state])
-    } else {
-        result_state.pc = state.pc + 1;
-        Some(vec![result_state])
-    }
-}
-
 fn apply_imm_constraints(
     then_s: &mut State, 
     else_s: &mut State, 
@@ -723,19 +666,6 @@ fn apply_imm_constraints(
         }
         _ => {} // Signed ops with Immediates are ignored here (Conservative)
     }
-}
-
-// Check if 32-bit fallback logic is needed
-fn is_safe_32bit_imm_op(op: CmpOp, imm: i64, dbm: &Dbm, left: Reg, zero: Reg) -> bool {
-    let is_zero_check = (imm == 0) && matches!(op, CmpOp::Eq | CmpOp::Ne);
-    if is_zero_check { return true; }
-    
-    // If it's a comparison other than Eq/Ne with 0, we must ensure 
-    // the value fits in u32 to rely on the DBM constraints safely.
-    if matches!(op, CmpOp::Eq | CmpOp::Ne | CmpOp::UGe | CmpOp::ULe | CmpOp::UGt | CmpOp::ULt) {
-        return proven_u32_range(dbm, left, zero);
-    }
-    true // Signed ops fallback anyway
 }
 
 fn apply_reg_constraints(

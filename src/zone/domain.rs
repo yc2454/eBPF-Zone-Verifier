@@ -215,12 +215,12 @@ pub fn assign_sub_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
 }
 
 // dst &= mask
-pub fn assign_and_mask(dbm: &mut Dbm, dst: Reg, mask: i64, zero: Reg) {
+pub fn assign_and_mask(dbm: &mut Dbm, dst: Reg, mask: i64) {
     dbm.forget_var(dst);
-
+    
     // 0 <= dst <= mask
-    dbm.add_constraint(dst, zero, mask);
-    dbm.add_constraint(zero, dst, 0);
+    dbm.add_constraint(dst, Reg::Zero, mask);
+    dbm.add_constraint(Reg::Zero, dst, 0);
 
     dbm.close();
 }
