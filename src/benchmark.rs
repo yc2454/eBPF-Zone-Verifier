@@ -83,8 +83,9 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
     let mut total_files_passed = 0;
     let mut total_sections_processed = 0;
     let mut total_sections_passed = 0;
+    let total_files_count = elf_files.len(); // Store total for progress
 
-    for path in elf_files {
+    for (i, path) in elf_files.iter().enumerate() {
         let filename = path.file_name().unwrap().to_str().unwrap();
         let (compiler, opt, source_prog) = parse_benchmark_filename(filename);
         
@@ -110,8 +111,9 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
 
         // Run Analysis
         let path_str = path.to_str().unwrap();
-        print!("[Project: {}] Analyzing {} ... ", project, filename);
-        use std::io::Write;
+        
+        print!("[{}/{}] [Project: {}] Analyzing {} ... ", 
+               i + 1, total_files_count, project, filename);
         std::io::stdout().flush().unwrap();
 
         let analyzer = Analyzer::new(path_str, config.clone());
@@ -153,8 +155,15 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
     if let Some(o) = &config.bench_opt { base_name.push_str(&format!("_{}", o)); }
     if let Some(s) = &config.bench_source { base_name.push_str(&format!("_{}", s)); }
 
+    // NEW: Ensure 'results' directory exists
+    let results_dir = "results";
+    if let Err(e) = fs::create_dir_all(results_dir) {
+        eprintln!("Error: Could not create 'results' directory: {}", e);
+        return;
+    }
+
     // --- Generate Text Report ---
-    let report_path = format!("{}_report.txt", base_name);
+    let report_path = format!("{}/{}_report.txt", results_dir, base_name);
     let mut report = File::create(&report_path).expect("Could not create report file");
 
     writeln!(report, "BPF Verifier Benchmark Report").unwrap();
@@ -206,7 +215,7 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
     println!("Report written to '{}'", report_path);
 
     // --- Generate JSON ---
-    let json_path = format!("{}_results.json", base_name);
+    let json_path = format!("{}/{}_results.json", results_dir, base_name);
     let mut json_file = File::create(&json_path).expect("Could not create JSON file");
     
     write!(json_file, "{{\n").unwrap();
@@ -216,7 +225,7 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
     if let Some(c) = &config.bench_compiler { write!(json_file, "      \"compiler\": \"{}\",\n", c).unwrap(); }
     if let Some(o) = &config.bench_opt { write!(json_file, "      \"opt\": \"{}\",\n", o).unwrap(); }
     if let Some(s) = &config.bench_source { write!(json_file, "      \"source\": \"{}\"\n", s).unwrap(); }
-    write!(json_file, "      \"none\": null\n").unwrap(); // trailing comma hack
+    write!(json_file, "      \"none\": null\n").unwrap(); 
     write!(json_file, "    }},\n").unwrap();
     write!(json_file, "    \"files_processed\": {},\n", total_files_processed).unwrap();
     write!(json_file, "    \"files_passed\": {},\n", total_files_passed).unwrap();
