@@ -28,6 +28,16 @@ pub struct VerifierConfig {
 
     /// A manual override for map file descriptors to sizes
     pub map_overrides: std::collections::HashMap<String, u32>,
+
+    // --- Benchmark Filters ---
+    /// Filter benchmark by project (subdirectory name)
+    pub bench_project: Option<String>,
+    /// Filter benchmark by compiler version (e.g., "clang-16")
+    pub bench_compiler: Option<String>,
+    /// Filter benchmark by optimization level (e.g., "-O1")
+    pub bench_opt: Option<String>,
+    /// Filter benchmark by source program name (e.g., "bpf_host")
+    pub bench_source: Option<String>,
 }
 
 impl Default for VerifierConfig {
@@ -41,6 +51,10 @@ impl Default for VerifierConfig {
             debug_pc: None,
             enable_path_trace: false,
             map_overrides: std::collections::HashMap::new(),
+            bench_project: None,
+            bench_compiler: None,
+            bench_opt: None,
+            bench_source: None,
         }
     }
 }
@@ -117,6 +131,23 @@ impl VerifierConfig {
                             i += 1;
                         }
                     }
+                    // --- Benchmark Filters ---
+                    "--project" => {
+                        i += 1;
+                        if i < args.len() { config.bench_project = Some(args[i].clone()); }
+                    }
+                    "--compiler" => {
+                        i += 1;
+                        if i < args.len() { config.bench_compiler = Some(args[i].clone()); }
+                    }
+                    "--opt" => {
+                        i += 1;
+                        if i < args.len() { config.bench_opt = Some(args[i].clone()); }
+                    }
+                    "--source" => {
+                        i += 1;
+                        if i < args.len() { config.bench_source = Some(args[i].clone()); }
+                    }
                     _ => {
                         eprintln!("Warning: Unknown flag '{}'", arg);
                     }
@@ -143,5 +174,10 @@ impl VerifierConfig {
         eprintln!("  --log-interval N     Heartbeat log interval (default: 100000)");
         eprintln!("  --debug-pc N         Force debug logging at specific PC");
         eprintln!("  --enable-path-trace  Enable path tracing for crash analysis");
+        eprintln!("Benchmark Filters:");
+        eprintln!("  --project NAME       Filter by project subdirectory (e.g. 'cilium')");
+        eprintln!("  --compiler NAME      Filter by compiler (e.g. 'clang-16')");
+        eprintln!("  --opt LEVEL          Filter by optimization (e.g. '-O1')");
+        eprintln!("  --source NAME        Filter by source program name (e.g. 'bpf_host')");
     }
 }
