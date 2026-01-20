@@ -209,7 +209,7 @@ fn main() {
         // ============================================================
         // Analyze by section name
         // ============================================================
-        "elf-analyze" => {
+        "elf-analyze-section" => {
             if remaining.len() < 3 {
                 eprintln!("Error: Missing arguments");
                 usage();
@@ -289,9 +289,9 @@ fn main() {
         }
 
         // ============================================================
-        // Batch analyze all sections
+        // Batch analyze all sections in an ELF
         // ============================================================
-        "analyze-batch" => {
+        "elf-analyze-prog" => {
             if remaining.len() < 2 {
                 eprintln!("Error: Missing ELF path");
                 usage();
