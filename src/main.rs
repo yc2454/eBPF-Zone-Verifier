@@ -333,9 +333,17 @@ fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
 
     let duration = start_time.elapsed();
 
+    // Construct dynamic filename based on active filters
+    // e.g. "benchmark_cilium_clang-16_results.json"
+    let mut base_name = String::from("benchmark");
+    if let Some(p) = &config.bench_project { base_name.push_str(&format!("_{}", p)); }
+    if let Some(c) = &config.bench_compiler { base_name.push_str(&format!("_{}", c)); }
+    if let Some(o) = &config.bench_opt { base_name.push_str(&format!("_{}", o)); }
+    if let Some(s) = &config.bench_source { base_name.push_str(&format!("_{}", s)); }
+
     // --- Generate Text Report ---
-    let report_path = "benchmark_report.txt";
-    let mut report = File::create(report_path).expect("Could not create report file");
+    let report_path = format!("{}_report.txt", base_name);
+    let mut report = File::create(&report_path).expect("Could not create report file");
 
     writeln!(report, "BPF Verifier Benchmark Report").unwrap();
     writeln!(report, "=============================").unwrap();
@@ -383,11 +391,11 @@ fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
     println!("\nAnalysis complete.");
     println!("Programs: {}/{} ({:.1}%)", total_files_passed, total_files_processed, prog_rate);
     println!("Sections: {}/{} ({:.1}%)", total_sections_passed, total_sections_processed, sec_rate);
-    println!("Report written to '{}'", report_path);
+    println!("Report written to '{}'", report_path.as_str());
 
     // --- Generate JSON ---
-    let json_path = "benchmark_results.json";
-    let mut json_file = File::create(json_path).expect("Could not create JSON file");
+    let json_path = format!("{}_results.json", base_name);
+    let mut json_file = File::create(&json_path).expect("Could not create JSON file");
     
     write!(json_file, "{{\n").unwrap();
     write!(json_file, "  \"summary\": {{\n").unwrap();
