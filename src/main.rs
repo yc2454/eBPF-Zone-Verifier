@@ -15,15 +15,14 @@ use crate::zone::domain::{REG_ENV, assign_zero};
 use crate::misc::utils::{load_program_from_elf, program_kind_for_object};
 use crate::parsing::elf_loader::{
     load_maps, load_relocations, load_data_section_maps,
-    load_raw_programs, list_section_names, load_section_bytes,
-    BpfMapDef // Ensure this is public in elf_loader
+    load_raw_programs, list_section_names, BpfMapDef
 };
 use crate::parsing::elf_loader::{self};
 use crate::parsing::btf::{self, BtfContext};
 use crate::ast::ProgramKind;
 use crate::logging::{FilterConfig};
 
-use std::collections::{HashMap, BTreeMap};
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -35,15 +34,14 @@ fn usage() {
     eprintln!("  cargo run -- [flags] elf-analyze     <elf_path> <section_name>");
     eprintln!("  cargo run -- [flags] elf-analyze-func <elf_path> <func_name>");
     eprintln!("  cargo run -- [flags] elf-analyze-prog <elf_path>");
-    eprintln!("  cargo run -- [flags] elf-analyze-benchmark <dir_path>");
+    eprintln!("  cargo run -- [flags] elf-analyze-benchmark <dir_path> [project_name]");
     eprintln!("");
     VerifierConfig::print_help();
     eprintln!("");
     eprintln!("Examples:");
     eprintln!("  cargo run -- elf-list ./bpf_host.o");
     eprintln!("  cargo run -- elf-analyze ./bpf_host.o tc");
-    eprintln!("  cargo run -- --skip-dbm analyze-batch ./bpf_host.o");
-    eprintln!("  cargo run -- --max-insn 2000000 -v elf-analyze ./bpf_host.o tc");
+    eprintln!("  cargo run -- elf-analyze-benchmark ./bpf-progs cilium");
 }
 
 fn make_entry_state(ctx: &ExecContext) -> Dbm {
@@ -236,14 +234,30 @@ fn visit_dirs(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
     Ok(())
 }
 
-fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
+fn analyze_benchmark(dir_path: &str, project_filter: Option<&String>, config: &VerifierConfig) {
     println!("=== Starting Benchmark Analysis ===");
-    println!("Directory: {}", dir_path);
+    println!("Root Directory: {}", dir_path);
+    if let Some(proj) = project_filter {
+        println!("Project Filter: {}", proj);
+    }
     println!("Config: max_insn={}, skip_dbm={}", config.max_insn, config.skip_dbm_check);
 
     let start_time = Instant::now();
     let mut files = Vec::new();
-    if let Err(e) = visit_dirs(Path::new(dir_path), &mut files) {
+
+    // If a project filter is provided, append it to the path
+    let search_path = if let Some(proj) = project_filter {
+        Path::new(dir_path).join(proj)
+    } else {
+        PathBuf::from(dir_path)
+    };
+
+    if !search_path.exists() || !search_path.is_dir() {
+        eprintln!("Error: Directory does not exist: {:?}", search_path);
+        return;
+    }
+
+    if let Err(e) = visit_dirs(&search_path, &mut files) {
         eprintln!("Error reading directory: {}", e);
         return;
     }
@@ -252,11 +266,15 @@ fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
         .filter(|p| p.extension().map_or(false, |ext| ext == "o"))
         .collect();
 
-    println!("Found {} ELF files to analyze.\n", elf_files.len());
+    println!("Found {} ELF files to analyze in {:?}.\n", elf_files.len(), search_path);
 
     let mut grouped_results: BTreeMap<String, Vec<FileResult>> = BTreeMap::new();
-    let mut total_processed = 0;
-    let mut total_passed = 0;
+    
+    // Statistics Counters
+    let mut total_files = 0;
+    let mut total_files_passed = 0;
+    let mut total_sections = 0;
+    let mut total_sections_passed = 0;
 
     for (idx, path) in elf_files.iter().enumerate() {
         let filename = path.file_name().unwrap().to_str().unwrap();
@@ -270,12 +288,20 @@ fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
         let analyzer = Analyzer::new(path_str, config.clone());
         let (passed, section_results) = analyzer.analyze_all();
 
+        // Update stats
+        total_files += 1;
         if passed {
+            total_files_passed += 1;
             println!("PASS");
-            total_passed += 1;
         } else {
             println!("FAIL");
         }
+
+        let file_sections = section_results.len();
+        let file_passed_sections = section_results.iter().filter(|(_, res)| res.is_pass()).count();
+        
+        total_sections += file_sections;
+        total_sections_passed += file_passed_sections;
 
         let res = FileResult {
             file_name: filename.to_string(),
@@ -287,20 +313,32 @@ fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
         };
 
         grouped_results.entry(source_prog).or_default().push(res);
-        total_processed += 1;
     }
 
     let duration = start_time.elapsed();
 
-    // --- Generate Report ---
+    // --- Generate Text Report ---
     let report_path = "benchmark_report.txt";
     let mut report = File::create(report_path).expect("Could not create report file");
 
     writeln!(report, "BPF Verifier Benchmark Report").unwrap();
     writeln!(report, "=============================").unwrap();
-    writeln!(report, "Total ELFs: {}", total_processed).unwrap();
-    writeln!(report, "Passing:    {} ({:.1}%)", total_passed, (total_passed as f64 / total_processed as f64) * 100.0).unwrap();
-    writeln!(report, "Time:       {:.2?}", duration).unwrap();
+    if let Some(proj) = project_filter {
+        writeln!(report, "Project:    {}", proj).unwrap();
+    }
+    writeln!(report, "Date:       {}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()).unwrap();
+    writeln!(report, "Duration:   {:.2?}", duration).unwrap();
+    
+    writeln!(report, "\n--- Program Statistics ---").unwrap();
+    writeln!(report, "Total ELFs: {}", total_files).unwrap();
+    let prog_rate = if total_files > 0 { (total_files_passed as f64 / total_files as f64) * 100.0 } else { 0.0 };
+    writeln!(report, "Passing:    {} ({:.1}%)", total_files_passed, prog_rate).unwrap();
+
+    writeln!(report, "\n--- Section Statistics ---").unwrap();
+    writeln!(report, "Total Sections: {}", total_sections).unwrap();
+    let sec_rate = if total_sections > 0 { (total_sections_passed as f64 / total_sections as f64) * 100.0 } else { 0.0 };
+    writeln!(report, "Passing:        {} ({:.1}%)", total_sections_passed, sec_rate).unwrap();
+
     writeln!(report, "\n--- Breakdown by Source Program ---").unwrap();
 
     for (source, runs) in &grouped_results {
@@ -328,6 +366,8 @@ fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
     }
 
     println!("\nAnalysis complete.");
+    println!("Programs: {}/{} ({:.1}%)", total_files_passed, total_files, prog_rate);
+    println!("Sections: {}/{} ({:.1}%)", total_sections_passed, total_sections, sec_rate);
     println!("Report written to '{}'", report_path);
 
     // --- Generate JSON ---
@@ -336,8 +376,13 @@ fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
     
     write!(json_file, "{{\n").unwrap();
     write!(json_file, "  \"summary\": {{\n").unwrap();
-    write!(json_file, "    \"total\": {},\n", total_processed).unwrap();
-    write!(json_file, "    \"passed\": {},\n", total_passed).unwrap();
+    if let Some(proj) = project_filter {
+        write!(json_file, "    \"project\": \"{}\",\n", proj).unwrap();
+    }
+    write!(json_file, "    \"total_files\": {},\n", total_files).unwrap();
+    write!(json_file, "    \"passed_files\": {},\n", total_files_passed).unwrap();
+    write!(json_file, "    \"total_sections\": {},\n", total_sections).unwrap();
+    write!(json_file, "    \"passed_sections\": {},\n", total_sections_passed).unwrap();
     write!(json_file, "    \"duration_secs\": {:.2}\n", duration.as_secs_f64()).unwrap();
     write!(json_file, "  }},\n").unwrap();
     write!(json_file, "  \"results_by_source\": {{\n").unwrap();
@@ -407,7 +452,6 @@ fn main() {
             let path = &remaining[1];
 
             println!("=== ELF Contents: '{}' ===\n", path);
-            // (Reused elf-list logic kept simple as it's just printing)
             println!("--- SECTIONS ---");
             match list_section_names(path) {
                 Ok(sections) => {
@@ -453,7 +497,6 @@ fn main() {
 
             println!("=== Analyzing: '{}' section '{}' ===", path, section);
             
-            // USE SHARED ANALYZER
             let analyzer = Analyzer::new(path, config);
             let result = analyzer.analyze_section(section);
             
@@ -507,7 +550,6 @@ fn main() {
             println!("Config: max_insn={}, skip_dbm={}, verbosity={}", 
                      config.max_insn, config.skip_dbm_check, config.verbosity);
 
-            // USE SHARED ANALYZER
             let analyzer = Analyzer::new(path, config);
             let (_, results) = analyzer.analyze_all();
 
@@ -564,7 +606,12 @@ fn main() {
                 return;
             }
             let dir_path = &remaining[1];
-            analyze_benchmark(dir_path, &config);
+            let project_filter = if remaining.len() > 2 {
+                Some(&remaining[2])
+            } else {
+                None
+            };
+            analyze_benchmark(dir_path, project_filter, &config);
         }
 
         _ => {
