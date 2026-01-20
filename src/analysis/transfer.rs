@@ -14,6 +14,7 @@ use crate::zone::domain::{Reg, forget, get_bounds,
 };
 use crate::analysis::access;
 use crate::zone::domain::proven_u32_range;
+use crate::zone::tnum::Tnum;
 use crate::parsing::ctx_model::{classify_sk_buff_field, CtxFieldKind, classify_xdp_md_field};
 use crate::analysis::env::VerificationError;
 use crate::zone::dbm::Dbm;
@@ -118,11 +119,11 @@ fn transfer_alu(
     
     update_alu_types(env, &in_types, &mut state.types, width, op, dst, &src, state.pc);
 
-    let dbm = &mut state.dbm;
+    // let dbm = &mut state.dbm;
     match op {
         AluOp::Add => {
             match src {
-                Operand::Imm(c) => assign_add_imm(dbm, dst, c),
+                Operand::Imm(c) => assign_add_imm(&mut state.dbm, dst, c),
                 Operand::Reg(r) => {
                     // Check the INPUT type (in_types) to see if dst was a clean pointer.
                     let is_clean_ptr = match in_types.get(dst) {
@@ -137,18 +138,18 @@ fn transfer_alu(
                         // Therefore: NewOffset = 0 + Scalar = Scalar.
                         // We use 'assign_reg' (Copy) to enforce tight equality: dst == r.
                         // Standard 'assign_add_reg' often loses this precision.
-                        assign_eq(dbm, dst, r);
+                        assign_eq(&mut state.dbm, dst, r);
                     } else {
                         // Standard Case: Ptr(Offset X) += Scalar  OR  Scalar += Scalar
                         // dst = dst + r
-                        assign_add_reg(dbm, dst, r);
+                        assign_add_reg(&mut state.dbm, dst, r);
                     }
                 }
             }
         }
         AluOp::Sub => {
             match src {
-                Operand::Imm(c) => assign_add_imm(dbm, dst, -c),
+                Operand::Imm(c) => assign_add_imm(&mut state.dbm, dst, -c),
                 Operand::Reg(r) => {
                     // 1. Special Case: Optimization for Ptr(0) - r (Offset Negation)
                     let is_clean_ptr = match in_types.get(dst) {
@@ -159,47 +160,57 @@ fn transfer_alu(
                     };
                     if is_clean_ptr {
                         // dst = 0 - r  =>  dst = -r
-                        assign_eq(dbm, dst, r);
-                        assign_neg(dbm, dst);
+                        assign_eq(&mut state.dbm, dst, r);
+                        assign_neg(&mut state.dbm, dst);
                     } else {
                         // 2. Standard Case: Interval Subtraction
-                        assign_sub_reg(dbm, dst, r);
+                        assign_sub_reg(&mut state.dbm, dst, r);
                     }
                 }
             }
         }
         AluOp::Mov => {
+            // tnum update
+            match src {
+                Operand::Imm(c) => {
+                    state.set_tnum(dst, Tnum::constant(c as u64));
+                }
+                Operand::Reg(r) => {
+                    let t = state.get_tnum(r);  // Read first
+                    state.set_tnum(dst, t);      // Then write
+                }
+            }
             match src {
                 Operand::Reg(r) => {
                     if width == Width::W32 {
                         // 1. Reset destination
-                        forget(dbm, dst);
+                        forget(&mut state.dbm, dst);
                         // If 'r' fits in u32, Mov32 is just a copy!
-                        if proven_u32_range(dbm, r, ctx.zero) {
-                            assign_eq(dbm, dst, r);
+                        if proven_u32_range(&mut state.dbm, r, ctx.zero) {
+                            assign_eq(&mut state.dbm, dst, r);
                         } else {
                             // Fallback: Truncation logic (conservative)
-                            assume_ge_const(dbm, dst, 0);
-                            assume_le_const(dbm, dst, 0xffff_ffff);
+                            assume_ge_const(&mut state.dbm, dst, 0);
+                            assume_le_const(&mut state.dbm, dst, 0xffff_ffff);
                         }
                     } else {
-                        if r == ctx.r10 { assign_zero(dbm, dst, ctx.zero); } 
-                        else { assign_eq(dbm, dst, r); }
+                        if r == ctx.r10 { assign_zero(&mut state.dbm, dst, ctx.zero); } 
+                        else { assign_eq(&mut state.dbm, dst, r); }
                     }
                 }
                 Operand::Imm(c) => {
                     // Handle zero-extension for W32
                     let c = if width == Width::W32 { (c as u32) as i64 } else { c };
                     
-                    forget(dbm, dst);
-                    assume_le_const(dbm, dst, c);
-                    assume_ge_const(dbm, dst, c);
+                    forget(&mut state.dbm, dst);
+                    assume_le_const(&mut state.dbm, dst, c);
+                    assume_ge_const(&mut state.dbm, dst, c);
                 }
             }
         }
         AluOp::And => {
-            let (old_lo, old_hi) = get_bounds(dbm, dst);
-            forget(dbm, dst);
+            let (old_lo, old_hi) = get_bounds(&mut state.dbm, dst);
+            forget(&mut state.dbm, dst);
             if let Operand::Imm(mask) = src {
                 let mask = if width == Width::W32 { (mask as u32) as i64 } else { mask };
                 if mask >= 0 {
@@ -211,52 +222,69 @@ fn transfer_alu(
                             // - Result is always <= min(h, mask)
                             // - If h <= mask, the AND doesn't change the upper bound
                             let new_hi = std::cmp::min(h, mask);
-                            assume_ge_const(dbm, dst, 0);
-                            assume_le_const(dbm, dst, new_hi);
+                            assume_ge_const(&mut state.dbm, dst, 0);
+                            assume_le_const(&mut state.dbm, dst, new_hi);
                         }
                         _ => {
                             // Fallback: result is in [0, mask]
-                            assign_and_mask(dbm, dst, mask);
+                            assign_and_mask(&mut state.dbm, dst, mask);
                         }
                     }
                 } else if let (Some(l), Some(h)) = (old_lo, old_hi) {
                     if l >= 0 {
-                        assume_ge_const(dbm, dst, 0);
-                        assume_le_const(dbm, dst, h);
+                        assume_ge_const(&mut state.dbm, dst, 0);
+                        assume_le_const(&mut state.dbm, dst, h);
                     }
                 }
             } else if let (Some(l), Some(h)) = (old_lo, old_hi) {
                 // AND with register - less precise
                 if l >= 0 {
-                    assume_ge_const(dbm, dst, 0);
-                    assume_le_const(dbm, dst, h);
+                    assume_ge_const(&mut state.dbm, dst, 0);
+                    assume_le_const(&mut state.dbm, dst, h);
                 }
+            }
+            // Tnum update
+            let t = state.get_tnum(dst);
+            let new_t = match &src {
+                Operand::Imm(mask) => {
+                    let mask = if width == Width::W32 { (*mask as u32) as u64 } else { *mask as u64 };
+                    t.and_imm(mask)
+                }
+                Operand::Reg(r) => {
+                    let r_tnum = state.get_tnum(*r);
+                    t.and(r_tnum)
+                }
+            };
+            state.set_tnum(dst, new_t);
+            
+            // Cross-validate: if tnum knows the exact value, tell DBM
+            if let Some(c) = new_t.const_value() {
+                assume_eq_const(&mut state.dbm, dst, c as i64);
             }
         }
         AluOp::Or => {
-            let (old_lo, _old_hi) = get_bounds(dbm, dst);
-            forget(dbm, dst);
+            forget(&mut state.dbm, dst);
             
-            if let Operand::Imm(c) = src {
-                let c = if width == Width::W32 { (c as u32) as i64 } else { c };
-                
-                // x | c >= c when x >= 0 (all bits of c will be set)
-                if c > 0 {
-                    match old_lo {
-                        Some(l) if l >= 0 => {
-                            // Result is at least c (the OR sets all bits of c)
-                            assume_ge_const(dbm, dst, c);
-                            // Result is at most max(old_hi, c) with all bits of c set
-                        }
-                        _ => {
-                            // If old value could be negative, we can't say much
-                        }
-                    }
+            // Tnum update
+            let t = state.get_tnum(dst);
+            let new_t = match &src {
+                Operand::Imm(c) => {
+                    let c = if width == Width::W32 { (*c as u32) as u64 } else { *c as u64 };
+                    t.or_imm(c)
                 }
+                Operand::Reg(r) => {
+                    let r_tnum = state.get_tnum(*r);
+                    t.or(r_tnum)
+                }
+            };
+            state.set_tnum(dst, new_t);
+            
+            // If tnum proves non-zero, inform DBM
+            if new_t.is_definitely_nonzero() {
+                assume_ge_const(&mut state.dbm, dst, 1);
             }
-            // For OR with register, we stay conservative (forget)
         }
-        AluOp::Xor | AluOp::Shl | AluOp::Arsh => forget(dbm, dst),
+        AluOp::Xor | AluOp::Shl | AluOp::Arsh => forget(&mut state.dbm, dst),
         AluOp::Neg => {
             // 1. Apply Negate Logic (swaps bounds)
             assign_neg(&mut state.dbm, dst);
@@ -276,34 +304,34 @@ fn transfer_alu(
                 Operand::Imm(k) => {
                     let bits = if width == Width::W32 { 32u32 } else { 64u32 };
                     let k = (k as u32).min(bits);
-                    forget(dbm, dst);
-                    assume_ge_const(dbm, dst, 0);
+                    forget(&mut state.dbm, dst);
+                    assume_ge_const(&mut state.dbm, dst, 0);
                     if k < bits {
                         let ub: i64 = ((1u128 << (bits - k)) - 1) as i64;
-                        assume_le_const(dbm, dst, ub);
+                        assume_le_const(&mut state.dbm, dst, ub);
                     } else {
-                        assume_eq_const(dbm, dst, 0);
+                        assume_eq_const(&mut state.dbm, dst, 0);
                     }
                 }
-                Operand::Reg(_) => forget(dbm, dst),
+                Operand::Reg(_) => forget(&mut state.dbm, dst),
             }
         }
         AluOp::Mul => {
              match src {
-                Operand::Imm(c) => assign_mul_imm(dbm, dst, c, ctx.zero),
-                Operand::Reg(_) => forget(dbm, dst),
+                Operand::Imm(c) => assign_mul_imm(&mut state.dbm, dst, c, ctx.zero),
+                Operand::Reg(_) => forget(&mut state.dbm, dst),
             }
         }
         AluOp::Mod => {
              match src {
                 Operand::Imm(c) => {
                     if c > 0 {
-                        forget(dbm, dst);
-                        assume_ge_const(dbm, dst, 0);
-                        assume_le_const(dbm, dst, c - 1);
-                    } else { forget(dbm, dst); }
+                        forget(&mut state.dbm, dst);
+                        assume_ge_const(&mut state.dbm, dst, 0);
+                        assume_le_const(&mut state.dbm, dst, c - 1);
+                    } else { forget(&mut state.dbm, dst); }
                 }
-                Operand::Reg(_) => forget(dbm, dst),
+                Operand::Reg(_) => forget(&mut state.dbm, dst),
             }
         }
         AluOp::Div => {
@@ -525,15 +553,57 @@ fn eval_static_branch(
     right: &Operand,
     target: usize
 ) -> Option<Vec<State>> {
-    // 1. Get Left Interval
+    // --- Check tnum first for Eq/Ne with immediate ---
+    if let Operand::Imm(imm) = right {
+        let t = state.get_tnum(left);
+        let imm_u64 = *imm as u64;
+        
+        match op {
+            CmpOp::Eq => {
+                // if left == imm
+                if t.is_const() {
+                    let is_equal = t.const_value() == Some(imm_u64);
+                    let mut s = state.clone();
+                    s.pc = if is_equal { target } else { state.pc + 1 };
+                    return Some(vec![s]);
+                }
+                if !t.could_equal(imm_u64) {
+                    // Can't be equal -> always fallthrough
+                    let mut s = state.clone();
+                    s.pc = state.pc + 1;
+                    return Some(vec![s]);
+                }
+            }
+            CmpOp::Ne => {
+                // if left != imm
+                if t.is_const() {
+                    let is_equal = t.const_value() == Some(imm_u64);
+                    let mut s = state.clone();
+                    s.pc = if is_equal { state.pc + 1 } else { target };
+                    return Some(vec![s]);
+                }
+                if !t.could_equal(imm_u64) {
+                    // Can't be equal -> always taken (not-equal is true)
+                    let mut s = state.clone();
+                    s.pc = target;
+                    return Some(vec![s]);
+                }
+                // Special case: if tnum proves definitely non-zero and imm == 0
+                if *imm == 0 && t.is_definitely_nonzero() {
+                    let mut s = state.clone();
+                    s.pc = target;
+                    return Some(vec![s]);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // --- Existing interval-based logic ---
     let (l_min, l_max) = get_bounds(&state.dbm, left);
-    // (We need both bounds to reason about ranges)
     let l_min = l_min?; 
     let l_max = l_max?;
 
-    // 2. Get Right Value/Interval
-    // For simplicity in static check, we mostly handle Immediate RHS or Constant Register RHS
-    // (Expanding to Reg-Reg intervals is possible but complex for Signed ops)
     let r_val = match right {
         Operand::Imm(i) => *i,
         Operand::Reg(r) => {
@@ -542,27 +612,23 @@ fn eval_static_branch(
         }
     };
 
-    // 3. Check Condition
     let condition_result = match width {
         Width::W64 => check_interval_64(op, l_min, l_max, r_val),
         Width::W32 => check_interval_32(op, l_min, l_max, r_val),
     };
 
-    // 4. Return Pruned States
     match condition_result {
         Some(true) => {
-            // Condition is ALWAYS TRUE -> Taken
             let mut s = state.clone();
             s.pc = target;
             Some(vec![s])
         },
         Some(false) => {
-            // Condition is ALWAYS FALSE -> Fall-through
             let mut s = state.clone();
             s.pc = state.pc + 1;
             Some(vec![s])
         },
-        None => None, // Cannot determine statically
+        None => None,
     }
 }
 
@@ -622,6 +688,8 @@ fn check_interval_32(op: CmpOp, min: i64, max: i64, r: i64) -> Option<bool> {
     }
 }
 
+// --- Helper: Constraint Application ---
+// Refine the DBM in the 'then' and 'else' states based on the comparison
 fn apply_imm_constraints(
     then_s: &mut State, 
     else_s: &mut State, 
@@ -629,9 +697,15 @@ fn apply_imm_constraints(
     op: CmpOp, 
     imm: i64,
 ) {
+    let imm_u64 = imm as u64;
+    
     match op {
         CmpOp::Ne => {
+            // Then: left != imm
+            // Else: left == imm
             assume_eq_const(&mut else_s.dbm, left, imm);
+            else_s.set_tnum(left, Tnum::constant(imm_u64));
+            
             // Null check refinement
             if imm == 0 {
                 if let Some(non_null) = then_s.types.get(left).to_non_null() {
@@ -640,7 +714,11 @@ fn apply_imm_constraints(
             }
         }
         CmpOp::Eq => {
+            // Then: left == imm
+            // Else: left != imm
             assume_eq_const(&mut then_s.dbm, left, imm);
+            then_s.set_tnum(left, Tnum::constant(imm_u64));
+            
             // Null check refinement
             if imm == 0 {
                 if let Some(non_null) = else_s.types.get(left).to_non_null() {
@@ -664,7 +742,7 @@ fn apply_imm_constraints(
             assume_less_than(&mut then_s.dbm, left, imm);
             assume_ge_const(&mut else_s.dbm, left, imm);
         }
-        _ => {} // Signed ops with Immediates are ignored here (Conservative)
+        _ => {}
     }
 }
 
