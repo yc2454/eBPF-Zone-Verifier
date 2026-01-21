@@ -15,7 +15,10 @@ use crate::zone::domain::{Reg, forget, get_bounds,
 use crate::analysis::access;
 use crate::zone::domain::proven_u32_range;
 use crate::zone::tnum::Tnum;
-use crate::parsing::ctx_model::{classify_sk_buff_field, CtxFieldKind, classify_xdp_md_field};
+use crate::parsing::ctx_model::{
+    classify_sk_buff_field, CtxFieldKind, classify_xdp_md_field,
+    MemRegionId
+};
 use crate::analysis::env::VerificationError;
 use crate::zone::dbm::Dbm;
 use crate::analysis::constants;
@@ -776,8 +779,13 @@ fn apply_reg_constraints(
     // Refine packet ranges on both states, trying both orderings.
     // The type checks inside refine_packet_ranges filter invalid calls.
     for state in [&mut *then_s, &mut *else_s] {
+        // Packet pointer refinement
         refine_packet_ranges(&state.dbm, &mut state.types, left, right);
         refine_packet_ranges(&state.dbm, &mut state.types, right, left);
+        
+        // Memory region refinement
+        refine_mem_ranges(&state.dbm, &mut state.types, left, right);
+        refine_mem_ranges(&state.dbm, &mut state.types, right, left);
     }
 }
 
@@ -919,6 +927,18 @@ fn update_alu_types(
                     (RegType::PtrToCtx, Operand::Imm(_)) => {
                         types.set(dst, RegType::PtrToCtx);
                     },
+                    (RegType::PtrToMem { region, range }, Operand::Imm(k)) => {
+                        let new_range = if *k > 0 { 
+                            range.saturating_sub(*k as u64) 
+                        } else { 
+                            range.saturating_add(k.wrapping_neg() as u64) 
+                        };
+                        types.set(dst, RegType::PtrToMem { region, range: new_range });
+                    },
+                    (RegType::PtrToMem { .. }, Operand::Reg(_)) => {
+                        // Variable offset - lose precise tracking
+                        types.set(dst, RegType::ScalarValue);
+                    },
                     _ => types.set(dst, RegType::ScalarValue),
                 }
             } else {
@@ -942,6 +962,14 @@ fn update_alu_types(
                     },
                     RegType::PtrToCtx => {
                         types.set(dst, RegType::PtrToCtx);
+                    },
+                    RegType::PtrToMem { region, range } => {
+                        let new_range = if *k > 0 { 
+                            range.saturating_add(*k as u64) 
+                        } else { 
+                            range.saturating_sub(k.wrapping_neg() as u64) 
+                        };
+                        types.set(dst, RegType::PtrToMem { region, range: new_range });
                     },
                     _ => types.set(dst, RegType::ScalarValue),
                 }
@@ -972,7 +1000,7 @@ fn update_load_types(env: &VerifierEnv, types: &mut TypeState, size: MemSize, ds
                         types.set(dst, RegType::PtrToPacketEnd);
                     }
                     CtxFieldKind::PtrToMem { region } => {
-                        types.set(dst, RegType::PtrToMem { region });
+                        types.set(dst, RegType::PtrToMem { region, range: 0 });
                     }
                     _ => types.set(dst, RegType::ScalarValue),
                 }
@@ -1155,6 +1183,59 @@ fn refine_packet_ranges(dbm: &Dbm, types: &mut TypeState, packet_reg: Reg, end_r
             if let RegType::PtrToPacket { id, range, is_base } = types.get_stack(k) {
                 if id == target_id && max_new_range > range {
                     types.set_stack(k, RegType::PtrToPacket { id, range: max_new_range, is_base });
+                }
+            }
+        }
+    }
+}
+
+/// Refines the safe access range of memory region pointers based on DBM constraints.
+/// Similar to refine_packet_ranges but for PtrToMem.
+fn refine_mem_ranges(dbm: &Dbm, types: &mut TypeState, mem_reg: Reg, end_reg: Reg) {
+    let target_region = match types.get(mem_reg) {
+        RegType::PtrToMem { region, .. } => region,
+        _ => return,
+    };
+    
+    // Validate end_reg is the correct end marker for this region
+    let is_valid_end = match target_region {
+        MemRegionId::CalicoMetaRegion => {
+            matches!(types.get(end_reg), RegType::PtrToPacket { is_base: true, .. })
+        }
+    };
+    if !is_valid_end {
+        return;
+    }
+    
+    // Update all PtrToMem registers with matching region
+    for r in crate::zone::domain::Reg::ALL {
+        if let RegType::PtrToMem { region, range } = types.get(r) {
+            if region == target_region {
+                let dist = dbm.get(r, end_reg);
+                if dist < crate::zone::dbm::INF && dist <= 0 {
+                    let safe_bytes = dist.unsigned_abs();
+                    if safe_bytes > range {
+                        types.set(r, RegType::PtrToMem { region, range: safe_bytes });
+                    }
+                }
+            }
+        }
+    }
+    
+    // Also update stack slots with matching region
+    let stack_keys: Vec<i16> = types.stack.keys().cloned().collect();
+    for k in stack_keys {
+        if let RegType::PtrToMem { region, range } = types.get_stack(k) {
+            if region == target_region {
+                let max_range = Reg::ALL.iter()
+                    .filter_map(|&r| match types.get(r) {
+                        RegType::PtrToMem { region: rg, range } if rg == target_region => Some(range),
+                        _ => None,
+                    })
+                    .max()
+                    .unwrap_or(0);
+                if max_range > range {
+                    types.set_stack(k, RegType::PtrToMem { region, range: max_range });
                 }
             }
         }

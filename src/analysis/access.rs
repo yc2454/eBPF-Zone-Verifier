@@ -162,15 +162,23 @@ pub fn check_load(
                  } );
             }
         }
-        PtrToMem { region } => {
+        PtrToMem { region, range } => {
             let access_end = off as i64 + access_size;
             let mut safe = false;
-
+            
             if off < 0 {
                 // Negative offset never allowed
-            } else {
+            } 
+            // Standard check using pre-computed range
+            else if (access_end as u64) <= range {
+                safe = true;
+            }
+            // Fallback: direct DBM query
+            else {
                 let end_type_matcher: fn(&RegType) -> bool = match region {
-                    MemRegionId::CalicoMetaRegion => |ty| matches!(ty, RegType::PtrToPacket { is_base: true, .. }),
+                    MemRegionId::CalicoMetaRegion => {
+                        |ty| matches!(ty, RegType::PtrToPacket { is_base: true, .. })
+                    }
                 };
                 
                 let end_reg_opt = crate::zone::domain::REG_ENV.all().iter()
@@ -188,7 +196,7 @@ pub fn check_load(
             }
             
             if !safe {
-                error!("Unsafe mem region load at pc {}: base {:?}+{}", pc, base, off);
+                error!("Unsafe mem region load at pc {}: base {:?}+{} (range={})", pc, base, off, range);
                 env.fail(VerificationError::UnsafeMemoryRegionLoad { pc, base, off });
             }
         }

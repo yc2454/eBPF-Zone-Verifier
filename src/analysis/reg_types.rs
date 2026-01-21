@@ -13,7 +13,7 @@ pub enum RegType {
     PtrToStack { offset: i64 },  
     PtrToPacket { id: u32, range: u64, is_base: bool },    
     PtrToPacketEnd, 
-    PtrToMem { region: MemRegionId },           
+    PtrToMem { region: MemRegionId, range: u64 },           
     PtrToMapObject { map_idx: usize }, 
     PtrToMapValueOrNull { id: u32, map_idx: usize }, 
     PtrToMapValue { offset: Option<i64>, map_idx: usize },
