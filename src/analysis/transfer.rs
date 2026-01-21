@@ -263,7 +263,7 @@ fn transfer_alu(
                 assume_ge_const(&mut state.dbm, dst, 1);
             }
         }
-        AluOp::Xor | AluOp::Shl | AluOp::Arsh => forget(&mut state.dbm, dst),
+        AluOp::Xor | AluOp::Arsh => forget(&mut state.dbm, dst),
         AluOp::Neg => {
             // 1. Apply Negate Logic (swaps bounds)
             assign_neg(&mut state.dbm, dst);
@@ -295,6 +295,55 @@ fn transfer_alu(
                 Operand::Reg(_) => forget(&mut state.dbm, dst),
             }
         }
+        AluOp::Shl => {
+            match src {
+                Operand::Imm(k) => {
+                    let k = k as u32;
+                    let bits = if width == Width::W32 { 32u32 } else { 64u32 };
+                    
+                    if k >= bits {
+                        // Shift by >= width results in 0 (for logical shift)
+                        forget(&mut state.dbm, dst);
+                        assume_eq_const(&mut state.dbm, dst, 0);
+                    } else {
+                        let (old_lo, old_hi) = get_bounds(&state.dbm, dst);
+                        forget(&mut state.dbm, dst);
+                        
+                        match (old_lo, old_hi) {
+                            (Some(lo), Some(hi)) if lo >= 0 => {
+                                // For non-negative values, SHL multiplies by 2^k
+                                // Check for overflow
+                                let max_safe = if bits == 32 { 
+                                    (u32::MAX >> k) as i64 
+                                } else { 
+                                    (u64::MAX >> k) as i64 
+                                };
+                                
+                                if hi <= max_safe {
+                                    // No overflow, result is [lo << k, hi << k]
+                                    assume_ge_const(&mut state.dbm, dst, lo << k);
+                                    assume_le_const(&mut state.dbm, dst, hi << k);
+                                } else {
+                                    // Possible overflow, just bound by width
+                                    assume_ge_const(&mut state.dbm, dst, 0);
+                                    if bits == 32 {
+                                        assume_le_const(&mut state.dbm, dst, u32::MAX as i64);
+                                    }
+                                }
+                            }
+                            _ => {
+                                // Unknown or negative input, can't say much
+                                // Result is non-negative if input was non-negative
+                            }
+                        }
+                    }
+                }
+                Operand::Reg(_) => {
+                    // Variable shift amount - very hard to track
+                    forget(&mut state.dbm, dst);
+                }
+            }
+        }
         AluOp::Mul => {
              match src {
                 Operand::Imm(c) => assign_mul_imm(&mut state.dbm, dst, c),
@@ -310,7 +359,27 @@ fn transfer_alu(
                         assume_le_const(&mut state.dbm, dst, c - 1);
                     } else { forget(&mut state.dbm, dst); }
                 }
-                Operand::Reg(_) => forget(&mut state.dbm, dst),
+                Operand::Reg(r) => {
+                    // R0 % R7: result is in [0, R7-1] if R7 > 0
+                    let (r_lo, r_hi) = get_bounds(&state.dbm, r);
+                    forget(&mut state.dbm, dst);
+                    
+                    match (r_lo, r_hi) {
+                        (Some(lo), Some(hi)) if lo > 0 => {
+                            // Divisor is strictly positive, result is in [0, hi-1]
+                            assume_ge_const(&mut state.dbm, dst, 0);
+                            assume_le_const(&mut state.dbm, dst, hi - 1);
+                        }
+                        (Some(lo), _) if lo > 0 => {
+                            // Divisor is positive but unbounded above
+                            // Result is still non-negative
+                            assume_ge_const(&mut state.dbm, dst, 0);
+                        }
+                        _ => {
+                            // Can't determine bounds
+                        }
+                    }
+                }
             }
         }
         AluOp::Div => {
