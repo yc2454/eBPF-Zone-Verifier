@@ -912,9 +912,7 @@ fn update_alu_types(
                         types.set(dst, RegType::PtrToMapValue { offset: None, map_idx });
                     },
                     (RegType::PtrToPacket { id, range, is_base: _, off }, Operand::Imm(k)) => {
-                        let new_off = 
-                            if *k > 0 { off.saturating_sub(*k as i64) } 
-                            else { off.saturating_add(k.wrapping_neg() as i64) };
+                        let new_off = off.saturating_add(*k);
                         types.set(dst, RegType::PtrToPacket { id, range, is_base: false, off: new_off });
                     },
                     (RegType::PtrToStack { offset }, Operand::Imm(k)) => {
@@ -954,9 +952,7 @@ fn update_alu_types(
                         types.set(dst, RegType::PtrToMapValue { offset: new_off, map_idx });
                     },
                     RegType::PtrToPacket { id, range, is_base: _, off } => {
-                        let new_off = 
-                            if *k > 0 { off.saturating_add(*k as i64) } 
-                            else { off.saturating_sub(k.wrapping_neg() as i64) };
+                        let new_off =  off.saturating_sub(*k as i64);
                         types.set(dst, RegType::PtrToPacket { id, range, is_base: false, off: new_off });
                     },
                     RegType::PtrToStack { offset } => {
@@ -1163,25 +1159,24 @@ fn refine_packet_ranges(dbm: &Dbm, types: &mut TypeState, packet_reg: Reg, end_r
         return;
     }
     
-    // Find the maximum base-relative range from any register with this ID
     let mut max_base_range: u64 = 0;
     
     for r in crate::zone::domain::Reg::ALL {
-        if let RegType::PtrToPacket { id, range, is_base: _, off } = types.get(r) {
+        if let RegType::PtrToPacket { id, range, off, is_base: _ } = types.get(r) {
             if id == target_id {
-                // dist = r - end_reg (upper bound)
                 let dist = dbm.get(r, end_reg);
                 if dist < crate::zone::dbm::INF && dist <= 0 {
-                    // r - end <= dist, so r + |dist| <= end
-                    // This means |dist| bytes are safe FROM r
-                    // Base-relative: off + |dist| bytes are safe from base
                     let safe_from_r = dist.unsigned_abs();
-                    let base_range = (off as u64).saturating_add(safe_from_r);
-                    if base_range > max_base_range {
-                        max_base_range = base_range;
+                    
+                    // Only compute base range for non-negative offsets
+                    if off >= 0 {
+                        let base_range = (off as u64).saturating_add(safe_from_r);
+                        if base_range > max_base_range {
+                            max_base_range = base_range;
+                        }
                     }
                 }
-                // Also consider existing range
+                // Keep existing valid range if larger
                 if range > max_base_range {
                     max_base_range = range;
                 }
@@ -1189,21 +1184,21 @@ fn refine_packet_ranges(dbm: &Dbm, types: &mut TypeState, packet_reg: Reg, end_r
         }
     }
     
-    // Propagate the base-relative range to all registers and stack slots with this ID
+    // Propagate to all pointers with this ID
     if max_base_range > 0 {
         for r in crate::zone::domain::Reg::ALL {
-            if let RegType::PtrToPacket { id, range, is_base, off } = types.get(r) {
-                if id == target_id && max_base_range > range {
-                    types.set(r, RegType::PtrToPacket { id, range: max_base_range, is_base, off });
+            if let RegType::PtrToPacket { id, off, is_base, .. } = types.get(r) {
+                if id == target_id {
+                    types.set(r, RegType::PtrToPacket { id, range: max_base_range, off, is_base });
                 }
             }
         }
         
         let stack_keys: Vec<i16> = types.stack.keys().cloned().collect();
         for k in stack_keys {
-            if let RegType::PtrToPacket { id, range, is_base, off } = types.get_stack(k) {
-                if id == target_id && max_base_range > range {
-                    types.set_stack(k, RegType::PtrToPacket { id, range: max_base_range, is_base, off });
+            if let RegType::PtrToPacket { id, off, is_base, .. } = types.get_stack(k) {
+                if id == target_id {
+                    types.set_stack(k, RegType::PtrToPacket { id, range: max_base_range, off, is_base });
                 }
             }
         }
