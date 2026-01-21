@@ -17,6 +17,7 @@ pub enum VerificationError {
     UnsafeMemoryRegionLoad { pc: usize, base: Reg, off: i16 },
     UnsafeCtxStore { pc: usize, off: i16, size: MemSize },
     UnsafeGenericStore { pc: usize, base: Reg, off: i16 },
+    UnsafeSocketAccess { pc: usize, off: i16, size: MemSize },
     DbmInconsistent { pc: usize },
     ComplexityLimitExceeded { limit: usize },
     CfgError(String),
@@ -64,6 +65,9 @@ impl VerificationError {
             }
             VerificationError::DivideByZero { pc } => {
                 format!("Potential divide by zero at pc {}", pc)
+            }
+            VerificationError::UnsafeSocketAccess { pc, off, size } => {
+                format!("Unsafe socket access at pc {}: offset {}, size {:?}", pc, off, size)
             }
             VerificationError::UnsafeMemoryRegionLoad { pc, base, off } => {
                 format!("Unsafe memory region load at pc {}: base {:?}, offset {}", pc, base, off)
