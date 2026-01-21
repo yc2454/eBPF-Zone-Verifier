@@ -213,39 +213,15 @@ fn transfer_alu(
             }
         }
         AluOp::And => {
-            let (old_lo, old_hi) = get_bounds(&mut state.dbm, dst);
             forget(&mut state.dbm, dst);
             if let Operand::Imm(mask) = src {
                 let mask = if width == Width::W32 { (mask as u32) as i64 } else { mask };
                 if mask >= 0 {
-                    // Improved: preserve precision when we know the input bounds
-                    match (old_lo, old_hi) {
-                        (Some(l), Some(h)) if l >= 0 => {
-                            // For (x & mask) where x in [l, h] and mask >= 0:
-                            // - Result is always >= 0
-                            // - Result is always <= min(h, mask)
-                            // - If h <= mask, the AND doesn't change the upper bound
-                            let new_hi = std::cmp::min(h, mask);
-                            assume_ge_const(&mut state.dbm, dst, 0);
-                            assume_le_const(&mut state.dbm, dst, new_hi);
-                        }
-                        _ => {
-                            // Fallback: result is in [0, mask]
-                            assign_and_mask(&mut state.dbm, dst, mask);
-                        }
-                    }
-                } else if let (Some(l), Some(h)) = (old_lo, old_hi) {
-                    if l >= 0 {
-                        assume_ge_const(&mut state.dbm, dst, 0);
-                        assume_le_const(&mut state.dbm, dst, h);
-                    }
+                    assign_and_mask(&mut state.dbm, dst, mask);
                 }
-            } else if let (Some(l), Some(h)) = (old_lo, old_hi) {
-                // AND with register - less precise
-                if l >= 0 {
-                    assume_ge_const(&mut state.dbm, dst, 0);
-                    assume_le_const(&mut state.dbm, dst, h);
-                }
+            } else if let Operand::Reg(_) = src {
+                // AND with register - result is non-negative if both operands are
+                assume_ge_const(&mut state.dbm, dst, 0);
             }
             // Tnum update
             let t = state.get_tnum(dst);
@@ -813,7 +789,6 @@ fn apply_imm_constraints(
             assume_less_than(&mut then_s.dbm, left, imm);
             assume_ge_const(&mut else_s.dbm, left, imm);
         }
-        _ => {}
     }
 }
 

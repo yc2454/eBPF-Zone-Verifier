@@ -648,12 +648,20 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 }
             },
 
+            // 0x65: JSGT_K (if s64(dst) > s64(imm) goto target)
+            0x65 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::SGt,
+                    // insn.imm is i32, casting to i64 sign-extends it correctly
+                    right: Operand::Imm(insn.imm as i64),
+                    target,
+                }
+            },
+
             // 0x66: JSGT32_K  (if (s32)dst > (s32)imm goto target)
-            //
-            // MVP semantics: we lower this to an unsigned-gt CmpOp, but our
-            // transfer_if currently does *no refinement* for UGt, so this only
-            // affects control flow (branches) and keeps zones unchanged on both
-            // sides. That’s sound even if dst can be negative.
             0x66 => {
                 let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
                 Instr::If {
@@ -661,6 +669,18 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     left: dst,
                     op: CmpOp::UGt,                    // “no-refinement” bucket
                     right: Operand::Imm(insn.imm as i32 as i64),
+                    target,
+                }
+            },
+
+            // 0x6d: JSGT_X (if s64(dst) > s64(src) goto target)
+            0x6d => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::SGt,
+                    right: Operand::Reg(src),
                     target,
                 }
             },
