@@ -757,28 +757,27 @@ fn apply_reg_constraints(
         CmpOp::UGe => { 
             assume_ge_var(&mut then_s.dbm, left, right);
             assume_le_var_plus_const(&mut else_s.dbm, left, right, -1);
-            refine_packet_ranges(&then_s.dbm, &mut then_s.types, left, right); // Then: left >= right
-            refine_packet_ranges(&else_s.dbm, &mut else_s.types, right, left); // Else: left < right
         }
         CmpOp::ULe => { 
             assume_le_var(&mut then_s.dbm, left, right);
             assume_gt_var(&mut else_s.dbm, left, right);
-            refine_packet_ranges(&then_s.dbm, &mut then_s.types, right, left);
-            refine_packet_ranges(&else_s.dbm, &mut else_s.types, left, right);
         }
         CmpOp::UGt => { 
             assume_gt_var(&mut then_s.dbm, left, right);
             assume_le_var(&mut else_s.dbm, left, right);
-            refine_packet_ranges(&then_s.dbm, &mut then_s.types, left, right);
-            refine_packet_ranges(&else_s.dbm, &mut else_s.types, right, left);
         }
         CmpOp::ULt => { 
             assume_le_var_plus_const(&mut then_s.dbm, left, right, -1);
             assume_ge_var(&mut else_s.dbm, left, right);
-            refine_packet_ranges(&then_s.dbm, &mut then_s.types, right, left);
-            refine_packet_ranges(&else_s.dbm, &mut else_s.types, left, right);
         }
-        _ => {} // Signed ops ignored (Conservative)
+        _ => {}
+    }
+    
+    // Refine packet ranges on both states, trying both orderings.
+    // The type checks inside refine_packet_ranges filter invalid calls.
+    for state in [&mut *then_s, &mut *else_s] {
+        refine_packet_ranges(&state.dbm, &mut state.types, left, right);
+        refine_packet_ranges(&state.dbm, &mut state.types, right, left);
     }
 }
 
@@ -905,7 +904,9 @@ fn update_alu_types(
                         types.set(dst, RegType::PtrToMapValue { offset: None, map_idx });
                     },
                     (RegType::PtrToPacket { id, range }, Operand::Imm(k)) => {
-                        let new_range = if *k > 0 { range.saturating_sub(*k as u64) } else { range.saturating_add(k.wrapping_neg() as u64) };
+                        let new_range = 
+                            if *k > 0 { range.saturating_sub(*k as u64) } 
+                            else { range.saturating_add(k.wrapping_neg() as u64) };
                         types.set(dst, RegType::PtrToPacket { id, range: new_range });
                     },
                     (RegType::PtrToStack { offset }, Operand::Imm(k)) => {
@@ -1127,6 +1128,10 @@ fn refine_packet_ranges(dbm: &Dbm, types: &mut TypeState, packet_reg: Reg, end_r
         RegType::PtrToPacket { id, .. } => id,
         _ => return, 
     };
+    // Validate: end_reg must be PtrToPacketEnd
+    if !matches!(types.get(end_reg), RegType::PtrToPacketEnd) {
+        return;
+    }
     let mut max_new_range = 0;
     for r in crate::zone::domain::Reg::ALL {
         if let RegType::PtrToPacket { id, range } = types.get(r) {

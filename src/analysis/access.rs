@@ -48,25 +48,32 @@ pub fn check_load(
         PtrToPacket { id: _, range } => {
             let access_end = off as i64 + access_size;
             let mut safe = false;
-            // 1. Standard Check
-            if off >= 0 && (access_end as u64) <= range { 
+            
+            // 1. Negative offset is never allowed (can't go before packet start)
+            if off < 0 {
+                error!("Negative packet load at pc {}: base {:?}+{}", pc, base, off);
+                env.fail(VerificationError::UnsafePacketLoad { pc, off, size, range });
+            }
+            // 2. Standard Check: within pre-computed safe range
+            else if (access_end as u64) <= range { 
                 safe = true; 
             } 
-            // 2. Networking Heuristics
-            else if off >= 0 && access_end <= constants::MAX_PACKET_HEADER_ACCESS {
-                warn!("[Verifier] Heuristic: Allowing header/payload access (off {}..{}) with range {}", off, access_end, range);
-                safe = true;
-            }
-            // 3. DBM Fallback
+            // 3. Direct DBM query (handles cases where range wasn't propagated)
             else {
                 let end_reg_opt = 
-                    crate::zone::domain::REG_ENV.
-                        all().iter()
+                    crate::zone::domain::REG_ENV
+                        .all().iter()
                         .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacketEnd));
                 if let Some(end_reg) = end_reg_opt {
-                    let bound = -access_end;
+                    // Need: base + access_end <= data_end
+                    // i.e.: base - data_end <= -access_end
+                    let required_bound = -access_end;
                     let (_, ub) = get_relative_bound(&state.dbm, base, *end_reg);
-                    if let Some(upper) = ub { if upper <= bound { safe = true; } }
+                    if let Some(upper) = ub { 
+                        if upper <= required_bound { 
+                            safe = true; 
+                        } 
+                    }
                 }
             }
             if !safe {
@@ -76,7 +83,6 @@ pub fn check_load(
         }
         PtrToCtx => {
             // Ctx accesses are generally checked by offset/size classification in transfer.rs
-            // Here we assume safe unless OOB logic is added.
         }
         PtrToMapValue { offset: map_off_opt, map_idx } => {
             let map_def = ctx.map_defs.get(map_idx);
