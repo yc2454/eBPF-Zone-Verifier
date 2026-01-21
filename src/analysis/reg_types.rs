@@ -11,7 +11,12 @@ pub enum RegType {
     ScalarValue,    
     PtrToCtx,       
     PtrToStack { offset: i64 },  
-    PtrToPacket { id: u32, range: u64, is_base: bool },    
+    PtrToPacket { 
+        id: u32, 
+        range: u64, // maximum valid access range from the pointer
+        is_base: bool,
+        off: i64, // offset from the start of the packet
+    },    
     PtrToPacketEnd, 
     PtrToMem { region: MemRegionId, range: u64 },           
     PtrToMapObject { map_idx: usize }, 

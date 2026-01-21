@@ -8,7 +8,7 @@ use crate::analysis::env::VerificationError;
 use crate::analysis::constants;
 use crate::parsing::ctx_model;
 use crate::parsing::ctx_model::MemRegionId;
-use log::{warn, error};
+use log::{error};
 use RegType::*;
 
 /// Validates memory load safety.
@@ -46,14 +46,17 @@ pub fn check_load(
                 env.fail(VerificationError::UnsafeStackLoad { pc, off, size });
             }
         }
-        PtrToPacket { id: _, range, is_base: _ } => {
-            let access_end = off as i64 + access_size;
+        PtrToPacket { id: _, range, is_base: _, off: off_from_packet } => {
+            // Total offset from base = off + instruction offset
+            let total_off = off_from_packet + off as i64;
+            let access_end = total_off + access_size;
             let mut safe = false;
             
             // 1. Negative offset is never allowed (can't go before packet start)
-            if off < 0 {
-                error!("Negative packet load at pc {}: base {:?}+{}", pc, base, off);
-                env.fail(VerificationError::UnsafePacketLoad { pc, off, size, range });
+            if total_off < 0 {
+                error!("Negative packet load at pc {}: base {:?}+{}", pc, base, total_off);
+                env.fail(VerificationError::UnsafePacketLoad { pc, off: total_off as i16, size, range });
+                return;
             }
             // 2. Standard Check: within pre-computed safe range
             else if (access_end as u64) <= range { 
@@ -266,15 +269,17 @@ pub fn check_store(
                 env.fail(VerificationError::UnsafeStackStore { pc, off, size });
             }
         }
-        PtrToPacket { id: _, range, is_base: _ } => {
-            let access_end = off as i64 + access_size;
+        PtrToPacket { id: _, range, is_base: _, off: off_from_packet } => {
+            // Total offset from base = off + instruction offset
+            let total_off = off_from_packet + off as i64;
+            let access_end = total_off + access_size;
             let mut safe = false;
             
-            // 1. Standard Range
-            if off >= 0 && (access_end as u64) <= range { safe = true; } 
-            // 2. Heuristic
-            else if off >= 0 && access_end <= constants::ETH_HEADER_SIZE {
-                warn!("[Verifier] Heuristic: Allowing Eth Header store (off {}..{}) with range {}", off, access_end, range);
+            if total_off < 0 {
+                error!("Negative packet store at pc {}: base {:?}+{}", pc, base, total_off);
+                env.fail(VerificationError::UnsafePacketStore { pc, off: total_off as i16, size });
+                return;
+            } else if (access_end as u64) <= range {
                 safe = true;
             }
             // 3. DBM Fallback

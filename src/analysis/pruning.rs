@@ -84,8 +84,9 @@ fn reg_safe(old_ty: RegType, cur_ty: RegType) -> bool {
         (_, RegType::NotInit) => false,
         
         // POINTERS TO PACKET
-        (RegType::PtrToPacket { id: id1, range: r1, is_base: _ }, RegType::PtrToPacket { id: id2, range: r2, is_base: b2 }) => {
-            id1 == id2 && r1 <= r2
+        (RegType::PtrToPacket { id: id1, range: r1, is_base: _, off: off1 }, 
+         RegType::PtrToPacket { id: id2, range: r2, is_base: _, off: off2 }) => {
+            id1 == id2 && r1 <= r2 && off1 == off2
         },
 
         // POINTERS TO MAP VALUES
