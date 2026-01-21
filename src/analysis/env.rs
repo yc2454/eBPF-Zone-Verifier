@@ -14,6 +14,7 @@ pub enum VerificationError {
     UnsafeMapLoad { pc: usize, off: i64, size: MemSize, limit: i64 },
     UnsafeMapStore { pc: usize, off: i64, size: MemSize, limit: i64 },
     UnsafeGenericLoad { pc: usize, base: Reg, off: i16 },
+    UnsafeMemoryRegionLoad { pc: usize, base: Reg, off: i16 },
     UnsafeCtxStore { pc: usize, off: i16, size: MemSize },
     UnsafeGenericStore { pc: usize, base: Reg, off: i16 },
     DbmInconsistent { pc: usize },
@@ -63,6 +64,9 @@ impl VerificationError {
             }
             VerificationError::DivideByZero { pc } => {
                 format!("Potential divide by zero at pc {}", pc)
+            }
+            VerificationError::UnsafeMemoryRegionLoad { pc, base, off } => {
+                format!("Unsafe memory region load at pc {}: base {:?}, offset {}", pc, base, off)
             }
         }
     }

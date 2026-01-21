@@ -903,11 +903,11 @@ fn update_alu_types(
                     (RegType::PtrToMapValue { map_idx, .. }, Operand::Reg(_)) => {
                         types.set(dst, RegType::PtrToMapValue { offset: None, map_idx });
                     },
-                    (RegType::PtrToPacket { id, range }, Operand::Imm(k)) => {
+                    (RegType::PtrToPacket { id, range, is_base: _ }, Operand::Imm(k)) => {
                         let new_range = 
                             if *k > 0 { range.saturating_sub(*k as u64) } 
                             else { range.saturating_add(k.wrapping_neg() as u64) };
-                        types.set(dst, RegType::PtrToPacket { id, range: new_range });
+                        types.set(dst, RegType::PtrToPacket { id, range: new_range, is_base: false });
                     },
                     (RegType::PtrToStack { offset }, Operand::Imm(k)) => {
                         types.set(dst, RegType::PtrToStack { offset: offset + k });
@@ -933,9 +933,9 @@ fn update_alu_types(
                         let new_off = offset.map(|o| o - k);
                         types.set(dst, RegType::PtrToMapValue { offset: new_off, map_idx });
                     },
-                    RegType::PtrToPacket { id, range } => {
+                    RegType::PtrToPacket { id, range, is_base: _ } => {
                         let new_range = if *k > 0 { range.saturating_add(*k as u64) } else { range.saturating_sub(k.wrapping_neg() as u64) };
-                        types.set(dst, RegType::PtrToPacket { id, range: new_range });
+                        types.set(dst, RegType::PtrToPacket { id, range: new_range, is_base: false });
                     },
                     RegType::PtrToStack { offset } => {
                         types.set(dst, RegType::PtrToStack { offset: offset - k });
@@ -966,7 +966,7 @@ fn update_load_types(env: &VerifierEnv, types: &mut TypeState, size: MemSize, ds
                 match kind {
                     CtxFieldKind::PacketStart => {
                         let new_id = new_packet_id();
-                        types.set(dst, RegType::PtrToPacket { id: new_id, range: 0 });
+                        types.set(dst, RegType::PtrToPacket { id: new_id, range: 0, is_base: true });
                     }
                     CtxFieldKind::PacketEnd => {
                         types.set(dst, RegType::PtrToPacketEnd);
@@ -1134,14 +1134,14 @@ fn refine_packet_ranges(dbm: &Dbm, types: &mut TypeState, packet_reg: Reg, end_r
     }
     let mut max_new_range = 0;
     for r in crate::zone::domain::Reg::ALL {
-        if let RegType::PtrToPacket { id, range } = types.get(r) {
+        if let RegType::PtrToPacket { id, range, is_base } = types.get(r) {
             if id == target_id {
                 let dist = dbm.get(r, end_reg);
                 if dist < crate::zone::dbm::INF {
                     if dist <= 0 {
                         let safe_bytes = dist.checked_abs().unwrap_or(0) as u64;
                         if safe_bytes > range {
-                            types.set(r, RegType::PtrToPacket { id, range: safe_bytes });
+                            types.set(r, RegType::PtrToPacket { id, range: safe_bytes, is_base });
                             if safe_bytes > max_new_range { max_new_range = safe_bytes; }
                         } else if range > max_new_range { max_new_range = range; }
                     }
@@ -1152,9 +1152,9 @@ fn refine_packet_ranges(dbm: &Dbm, types: &mut TypeState, packet_reg: Reg, end_r
     if max_new_range > 0 {
         let stack_keys: Vec<i16> = types.stack.keys().cloned().collect();
         for k in stack_keys {
-            if let RegType::PtrToPacket { id, range } = types.get_stack(k) {
+            if let RegType::PtrToPacket { id, range, is_base } = types.get_stack(k) {
                 if id == target_id && max_new_range > range {
-                    types.set_stack(k, RegType::PtrToPacket { id, range: max_new_range });
+                    types.set_stack(k, RegType::PtrToPacket { id, range: max_new_range, is_base });
                 }
             }
         }

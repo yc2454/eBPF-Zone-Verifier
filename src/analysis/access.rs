@@ -7,6 +7,7 @@ use crate::zone::domain::{get_bounds, get_relative_bound};
 use crate::analysis::env::VerificationError;
 use crate::analysis::constants;
 use crate::parsing::ctx_model;
+use crate::parsing::ctx_model::MemRegionId;
 use log::{warn, error};
 use RegType::*;
 
@@ -45,7 +46,7 @@ pub fn check_load(
                 env.fail(VerificationError::UnsafeStackLoad { pc, off, size });
             }
         }
-        PtrToPacket { id: _, range } => {
+        PtrToPacket { id: _, range, is_base: _ } => {
             let access_end = off as i64 + access_size;
             let mut safe = false;
             
@@ -162,37 +163,33 @@ pub fn check_load(
             }
         }
         PtrToMem { region } => {
-            // Memory region pointer (e.g., Calico metadata buffer).
-            // Find the end marker for this region and check DBM bounds.
             let access_end = off as i64 + access_size;
             let mut safe = false;
-            
-            // For CalicoMetaRegion, the end marker is PtrToPacket (ctx->data)
-            use crate::parsing::ctx_model::MemRegionId;
-            let end_type_matcher: fn(RegType) -> bool = match region {
-                MemRegionId::CalicoMetaRegion => |ty| matches!(ty, RegType::PtrToPacket { .. }),
-            };
-            // Find a register holding the end marker
-            let end_reg_opt = crate::zone::domain::REG_ENV.all().iter()
-                .find(|&&r| end_type_matcher(state.types.get(r)));
-            
-            if let Some(&end_reg) = end_reg_opt {
-                // Check DBM: base + off + size <= end
-                let (_, upper) = get_relative_bound(&state.dbm, base, end_reg);
-                if let Some(ub) = upper {
-                    if ub <= -access_end {
-                        safe = true;
+
+            if off < 0 {
+                // Negative offset never allowed
+            } else {
+                let end_type_matcher: fn(&RegType) -> bool = match region {
+                    MemRegionId::CalicoMetaRegion => |ty| matches!(ty, RegType::PtrToPacket { is_base: true, .. }),
+                };
+                
+                let end_reg_opt = crate::zone::domain::REG_ENV.all().iter()
+                    .find(|&&r| end_type_matcher(&state.types.get(r)));
+
+                if let Some(&end_reg) = end_reg_opt {
+                    let required_bound = -access_end;
+                    let (_, upper) = get_relative_bound(&state.dbm, base, end_reg);
+                    if let Some(ub) = upper {
+                        if ub <= required_bound {
+                            safe = true;
+                        }
                     }
                 }
             }
-            // Fallback heuristic if no end marker found
-            if !safe && off >= 0 && access_end <= 256 {
-                warn!("[Verifier] Heuristic: Allowing small mem region load (off {}..{})", off, access_end);
-                safe = true;
-            }
+            
             if !safe {
-                error!("Unsafe mem region store at pc {}: base {:?}+{}", pc, base, off);
-                env.fail(VerificationError::UnsafeGenericStore { pc, base, off });
+                error!("Unsafe mem region load at pc {}: base {:?}+{}", pc, base, off);
+                env.fail(VerificationError::UnsafeMemoryRegionLoad { pc, base, off });
             }
         }
         // Non-null socket pointers - allow loads
@@ -257,7 +254,7 @@ pub fn check_store(
                 env.fail(VerificationError::UnsafeStackStore { pc, off, size });
             }
         }
-        PtrToPacket { id: _, range } => {
+        PtrToPacket { id: _, range, is_base: _ } => {
             let access_end = off as i64 + access_size;
             let mut safe = false;
             

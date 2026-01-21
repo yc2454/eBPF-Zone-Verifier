@@ -71,7 +71,7 @@ pub fn classify_xdp_md_field(off: i16, size: MemSize) -> Option<CtxFieldKind> {
     match (off, size) {
         (constants::XDP_CTX_DATA, MemSize::U32) => Some(CtxFieldKind::PacketStart),
         (constants::XDP_CTX_DATA_END, MemSize::U32) => Some(CtxFieldKind::PacketEnd),
-        (constants::XDP_CTX_DATA_META, MemSize::U32) => Some(CtxFieldKind::PacketStart), // or PtrToMem
+        (constants::XDP_CTX_DATA_META, MemSize::U32) => Some(CtxFieldKind::PacketStart),
         _ => Some(CtxFieldKind::Scalar),
     }
 }

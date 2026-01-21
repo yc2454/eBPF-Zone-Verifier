@@ -11,7 +11,7 @@ pub enum RegType {
     ScalarValue,    
     PtrToCtx,       
     PtrToStack { offset: i64 },  
-    PtrToPacket { id: u32, range: u64 },    
+    PtrToPacket { id: u32, range: u64, is_base: bool },    
     PtrToPacketEnd, 
     PtrToMem { region: MemRegionId },           
     PtrToMapObject { map_idx: usize }, 
