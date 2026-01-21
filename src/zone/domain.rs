@@ -1,5 +1,5 @@
 // src/domain.rs
-use crate::zone::dbm::{self, Dbm, INF};
+use crate::zone::dbm::{Dbm, INF};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Reg {

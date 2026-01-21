@@ -22,6 +22,7 @@ use crate::parsing::ctx_model::{
 use crate::analysis::env::VerificationError;
 use crate::zone::dbm::Dbm;
 use crate::analysis::constants;
+use log::{error};
 
 pub fn transfer(
     env: &mut VerifierEnv,
@@ -380,7 +381,8 @@ fn transfer_alu(
 
     if state.dbm.is_inconsistent() {
         env.fail(VerificationError::DbmInconsistent { pc: state.pc });
-        println!("[Verifier] DBM became inconsistent at pc {}", state.pc);
+        error!("[Verifier] DBM became inconsistent at pc {}", state.pc);
+        state.dbm.dump_matrix();
         vec![]
     } else {
         state.pc += 1;
@@ -438,8 +440,8 @@ fn transfer_if(
 
     // Apply constraints to refine the DBM in the destination states
     match &right {
-        Operand::Imm(imm) => apply_imm_constraints(&mut state_then, &mut state_else, left, op, *imm),
-        Operand::Reg(r) => apply_reg_constraints(&mut state_then, &mut state_else, left, op, *r),
+        Operand::Imm(imm) => apply_imm_constraints(&mut state_then, &mut state_else, left, op, width, *imm),
+        Operand::Reg(r) => apply_reg_constraints(&mut state_then, &mut state_else, left, op, width, *r),
     }
 
     // Branch Type Refinement (Packet/Map bounds)
@@ -691,25 +693,95 @@ fn check_interval_32(op: CmpOp, min: i64, max: i64, r: i64) -> Option<bool> {
     }
 }
 
-// --- Helper: Constraint Application ---
-// Refine the DBM in the 'then' and 'else' states based on the comparison
+/// Check if we can safely apply signed constraints for 32-bit comparisons.
+/// This is true when the 64-bit value fits in i32 range, so 32-bit and 64-bit
+/// signed interpretations are the same.
+fn fits_in_i32_range(dbm: &Dbm, reg: Reg) -> bool {
+    let (lo, hi) = get_bounds(dbm, reg);
+    match (lo, hi) {
+        (Some(l), Some(h)) => l >= i32::MIN as i64 && h <= i32::MAX as i64,
+        _ => false,
+    }
+}
+
+/// Check if value is known to be in u32 range [0, 0xFFFFFFFF]
+fn fits_in_u32_range(dbm: &Dbm, reg: Reg) -> bool {
+    let (lo, hi) = get_bounds(dbm, reg);
+    match (lo, hi) {
+        (Some(l), Some(h)) => l >= 0 && h <= 0xFFFFFFFF,
+        _ => false,
+    }
+}
+
 fn apply_imm_constraints(
     then_s: &mut State, 
     else_s: &mut State, 
     left: Reg, 
-    op: CmpOp, 
+    op: CmpOp,
+    width: Width,
     imm: i64,
 ) {
     let imm_u64 = imm as u64;
     
+    // Handle 32-bit signed comparisons specially
+    if width == Width::W32 {
+        match op {
+            // Special case: 32-bit signed comparison against 0
+            // This is common (checking if value is negative)
+            CmpOp::SLt if imm == 0 => {
+                if fits_in_u32_range(&then_s.dbm, left) {
+                    // 32-bit signed < 0 means bit 31 is set: value in [0x80000000, 0xFFFFFFFF]
+                    assume_ge_const(&mut then_s.dbm, left, 0x80000000);
+                    // 32-bit signed >= 0 means bit 31 is clear: value in [0, 0x7FFFFFFF]
+                    assume_le_const(&mut else_s.dbm, left, 0x7FFFFFFF);
+                }
+                return;
+            }
+            CmpOp::SGe if imm == 0 => {
+                if fits_in_u32_range(&then_s.dbm, left) {
+                    // 32-bit signed >= 0 means value in [0, 0x7FFFFFFF]
+                    assume_le_const(&mut then_s.dbm, left, 0x7FFFFFFF);
+                    // 32-bit signed < 0 means value in [0x80000000, 0xFFFFFFFF]
+                    assume_ge_const(&mut else_s.dbm, left, 0x80000000);
+                }
+                return;
+            }
+            CmpOp::SLe if imm == -1 => {
+                // x <=s32 -1 is same as x <s32 0
+                if fits_in_u32_range(&then_s.dbm, left) {
+                    assume_ge_const(&mut then_s.dbm, left, 0x80000000);
+                    assume_le_const(&mut else_s.dbm, left, 0x7FFFFFFF);
+                }
+                return;
+            }
+            CmpOp::SGt if imm == -1 => {
+                // x >s32 -1 is same as x >=s32 0
+                if fits_in_u32_range(&then_s.dbm, left) {
+                    assume_le_const(&mut then_s.dbm, left, 0x7FFFFFFF);
+                    assume_ge_const(&mut else_s.dbm, left, 0x80000000);
+                }
+                return;
+            }
+            
+            // For other signed comparisons, only constrain if value fits in i32
+            CmpOp::SLt | CmpOp::SLe | CmpOp::SGt | CmpOp::SGe => {
+                if !fits_in_i32_range(&then_s.dbm, left) {
+                    return;  // Can't safely add constraints
+                }
+                // Fall through to standard constraint logic
+            }
+            
+            // Unsigned 32-bit comparisons: the immediate is zero-extended
+            // These are generally safe since we compare unsigned values
+            _ => {}
+        }
+    }
+    
+    // Standard constraint logic (64-bit or safe 32-bit cases)
     match op {
         CmpOp::Ne => {
-            // Then: left != imm
-            // Else: left == imm
             assume_eq_const(&mut else_s.dbm, left, imm);
             else_s.set_tnum(left, Tnum::constant(imm_u64));
-            
-            // Null check refinement
             if imm == 0 {
                 if let Some(non_null) = then_s.types.get(left).to_non_null() {
                     then_s.types.set(left, non_null);
@@ -717,31 +789,27 @@ fn apply_imm_constraints(
             }
         }
         CmpOp::Eq => {
-            // Then: left == imm
-            // Else: left != imm
             assume_eq_const(&mut then_s.dbm, left, imm);
             then_s.set_tnum(left, Tnum::constant(imm_u64));
-            
-            // Null check refinement
             if imm == 0 {
                 if let Some(non_null) = else_s.types.get(left).to_non_null() {
                     else_s.types.set(left, non_null);
                 }
             }
         }
-        CmpOp::UGe => {
+        CmpOp::UGe | CmpOp::SGe => {
             assume_ge_const(&mut then_s.dbm, left, imm);
             assume_less_than(&mut else_s.dbm, left, imm);
         }
-        CmpOp::ULe => {
+        CmpOp::ULe | CmpOp::SLe => {
             assume_le_const(&mut then_s.dbm, left, imm);
             assume_ge_const(&mut else_s.dbm, left, imm + 1);
         }
-        CmpOp::UGt => {
+        CmpOp::UGt | CmpOp::SGt => {
             assume_ge_const(&mut then_s.dbm, left, imm + 1);
             assume_le_const(&mut else_s.dbm, left, imm);
         }
-        CmpOp::ULt => {
+        CmpOp::ULt | CmpOp::SLt => {
             assume_less_than(&mut then_s.dbm, left, imm);
             assume_ge_const(&mut else_s.dbm, left, imm);
         }
@@ -753,37 +821,54 @@ fn apply_reg_constraints(
     then_s: &mut State, 
     else_s: &mut State, 
     left: Reg, 
-    op: CmpOp, 
+    op: CmpOp,
+    width: Width,
     right: Reg
 ) {
+    // For 32-bit signed reg-reg comparisons, only constrain if both fit in i32
+    if width == Width::W32 {
+        match op {
+            CmpOp::SLt | CmpOp::SLe | CmpOp::SGt | CmpOp::SGe => {
+                if !fits_in_i32_range(&then_s.dbm, left) || !fits_in_i32_range(&then_s.dbm, right) {
+                    // Can't safely add constraints, but still refine pointer ranges
+                    for state in [&mut *then_s, &mut *else_s] {
+                        refine_packet_ranges(&state.dbm, &mut state.types, left, right);
+                        refine_packet_ranges(&state.dbm, &mut state.types, right, left);
+                        refine_mem_ranges(&state.dbm, &mut state.types, left, right);
+                        refine_mem_ranges(&state.dbm, &mut state.types, right, left);
+                    }
+                    return;
+                }
+            }
+            _ => {}
+        }
+    }
+    
+    // Standard constraint logic
     match op {
-        CmpOp::UGe => { 
+        CmpOp::UGe | CmpOp::SGe => { 
             assume_ge_var(&mut then_s.dbm, left, right);
             assume_le_var_plus_const(&mut else_s.dbm, left, right, -1);
         }
-        CmpOp::ULe => { 
+        CmpOp::ULe | CmpOp::SLe => { 
             assume_le_var(&mut then_s.dbm, left, right);
             assume_gt_var(&mut else_s.dbm, left, right);
         }
-        CmpOp::UGt => { 
+        CmpOp::UGt | CmpOp::SGt => { 
             assume_gt_var(&mut then_s.dbm, left, right);
             assume_le_var(&mut else_s.dbm, left, right);
         }
-        CmpOp::ULt => { 
+        CmpOp::ULt | CmpOp::SLt => { 
             assume_le_var_plus_const(&mut then_s.dbm, left, right, -1);
             assume_ge_var(&mut else_s.dbm, left, right);
         }
         _ => {}
     }
     
-    // Refine packet ranges on both states, trying both orderings.
-    // The type checks inside refine_packet_ranges filter invalid calls.
+    // Refine pointer ranges on both states
     for state in [&mut *then_s, &mut *else_s] {
-        // Packet pointer refinement
         refine_packet_ranges(&state.dbm, &mut state.types, left, right);
         refine_packet_ranges(&state.dbm, &mut state.types, right, left);
-        
-        // Memory region refinement
         refine_mem_ranges(&state.dbm, &mut state.types, left, right);
         refine_mem_ranges(&state.dbm, &mut state.types, right, left);
     }
