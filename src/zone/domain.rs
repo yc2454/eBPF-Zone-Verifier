@@ -249,13 +249,13 @@ pub fn assume_le_var_plus_const(dbm: &mut Dbm, x: Reg, y: Reg, c: i64) {
     dbm.close();
 }
 
-pub fn assign_zero(dbm: &mut Dbm, x: Reg, zero: Reg) {
+pub fn assign_zero(dbm: &mut Dbm, x: Reg) {
     // Overwrite x: kill all old info about x
     dbm.forget_var(x);
 
     // Now enforce x == 0 (relative to `zero` var)
-    dbm.add_constraint(x, zero, 0);   // x - 0 ≤ 0  ⇒ x ≤ 0
-    dbm.add_constraint(zero, x, 0);   // 0 - x ≤ 0  ⇒ x ≥ 0
+    dbm.add_constraint(x, Reg::Zero, 0);   // x - 0 ≤ 0  ⇒ x ≤ 0
+    dbm.add_constraint(Reg::Zero, x, 0);   // 0 - x ≤ 0  ⇒ x ≥ 0
 
     dbm.close();
 }
@@ -318,11 +318,11 @@ pub fn add_imm(d: &mut Dbm, x: Reg, c: i64) {
 }
 
 // dst *= imm
-pub fn assign_mul_imm(dbm: &mut Dbm, dst: Reg, imm: i64, zero: Reg) {
+pub fn assign_mul_imm(dbm: &mut Dbm, dst: Reg, imm: i64) {
     // Handle easy special cases first.
     if imm == 0 {
         // dst = 0
-        assign_zero(dbm, dst, zero);
+        assign_zero(dbm, dst);
         return;
     }
 

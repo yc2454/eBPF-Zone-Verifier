@@ -7,10 +7,6 @@ use crate::ast::ProgramKind;
 
 #[derive(Clone)]
 pub struct ExecContext {
-    pub zero: Reg,
-    pub r10: Reg,
-    pub stack_min: i64,
-    pub stack_max: i64,
     pub map_defs: Vec<BpfMapDef>,
     pub pc_to_reloc: HashMap<usize, RelocInfo>,
     pub btf: BtfContext,
@@ -19,10 +15,6 @@ pub struct ExecContext {
 
 pub fn default_exec_ctx() -> ExecContext {
     ExecContext {
-        zero: Reg::Zero,
-        r10: Reg::R10,
-        stack_min: -512,
-        stack_max: 0,
         map_defs: Vec::new(),
         pc_to_reloc: HashMap::new(),
         btf: BtfContext::new(),

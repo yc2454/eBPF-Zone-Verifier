@@ -7,8 +7,7 @@ use crate::zone::domain::Reg;
 
 #[derive(Clone, Debug)]
 pub enum VerificationError {
-    UnsafeStackLoad { pc: usize, off: i16, size: MemSize },
-    UnsafeStackStore { pc: usize, off: i16, size: MemSize },
+    StackOutOfBounds { pc: usize, off: i64, size: i64 },
     UnsafePacketLoad { pc: usize, off: i16, size: MemSize, range: u64 },
     UnsafePacketStore { pc: usize, off: i16, size: MemSize },
     UnsafeMapLoad { pc: usize, off: i64, size: MemSize, limit: i64 },
@@ -27,11 +26,8 @@ pub enum VerificationError {
 impl VerificationError {
     pub fn description(&self) -> String {
         match self {
-            VerificationError::UnsafeStackLoad { pc, off, size } => {
-                format!("Unsafe stack load at pc {}: offset {}, size {:?}", pc, off, size)
-            }
-            VerificationError::UnsafeStackStore { pc, off, size } => {
-                format!("Unsafe stack store at pc {}: offset {}, size {:?}", pc, off, size)
+            VerificationError::StackOutOfBounds { pc, off, size } => {
+                format!("Stack out of bounds at pc {}: offset {}, size {}", pc, off, size)
             }
             VerificationError::UnsafePacketLoad { pc, off, size, range } => {
                 format!("Unsafe packet load at pc {}: offset {}, size {:?}, range {}", pc, off, size, range)

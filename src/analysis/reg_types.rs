@@ -10,7 +10,7 @@ pub enum RegType {
     NotInit,        
     ScalarValue,    
     PtrToCtx,       
-    PtrToStack { offset: i64 },  
+    PtrToStack { offset: Option<i64> },  
     PtrToPacket { 
         id: u32, 
         range: u64, // maximum valid access range from the pointer

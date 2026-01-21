@@ -1,7 +1,7 @@
 // src/runner.rs
 
 use crate::analysis;
-use crate::analysis::context::{ExecContext, default_exec_ctx};
+use crate::analysis::context::{default_exec_ctx};
 use crate::analysis::env::VerificationError;
 use crate::misc::config::VerifierConfig;
 use crate::zone::dbm::Dbm;
@@ -15,6 +15,7 @@ use crate::parsing::elf_loader;
 use crate::parsing::btf::{self, BtfContext};
 use crate::ast::ProgramKind;
 use std::path::Path;
+use crate::zone::domain::Reg;
 
 /// Result of analyzing a single section
 #[derive(Debug)]
@@ -30,9 +31,9 @@ impl AnalysisResult {
     }
 }
 
-fn make_entry_state(ctx: &ExecContext) -> Dbm {
+fn make_entry_state() -> Dbm {
     let mut dbm = Dbm::new(REG_ENV.len());
-    assign_zero(&mut dbm, ctx.r10, ctx.zero);
+    assign_zero(&mut dbm, Reg::R10);
     dbm
 }
 
@@ -113,7 +114,7 @@ impl Analyzer {
         }
 
         // Run analysis
-        let entry = make_entry_state(&ctx);
+        let entry = make_entry_state();
         let result = analysis::analyze_program(&ctx, &prog, entry, &self.config);
 
         match result {

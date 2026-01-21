@@ -117,7 +117,6 @@ fn transfer_alu(
     dst: Reg,
     src: Operand,
 ) -> Vec<State> {
-    let ctx = env.ctx;
     // Clone input types for logic that needs original values
     let in_types = state.types.clone();
     
@@ -132,7 +131,7 @@ fn transfer_alu(
                     // Check the INPUT type (in_types) to see if dst was a clean pointer.
                     let is_clean_ptr = match in_types.get(dst) {
                         RegType::PtrToMapValue { offset: Some(0), .. } |
-                        RegType::PtrToStack { offset: 0 } |
+                        RegType::PtrToStack { offset: Some(0) } |
                         RegType::PtrToPacket { range: 0, .. } => true,
                         _ => false,
                     };
@@ -158,7 +157,7 @@ fn transfer_alu(
                     // 1. Special Case: Optimization for Ptr(0) - r (Offset Negation)
                     let is_clean_ptr = match in_types.get(dst) {
                         RegType::PtrToMapValue { offset: Some(0), .. } |
-                        RegType::PtrToStack { offset: 0 } |
+                        RegType::PtrToStack { offset: Some(0) } |
                         RegType::PtrToPacket { range: 0, .. } => true,
                         _ => false,
                     };
@@ -190,7 +189,7 @@ fn transfer_alu(
                         // 1. Reset destination
                         forget(&mut state.dbm, dst);
                         // If 'r' fits in u32, Mov32 is just a copy!
-                        if proven_u32_range(&mut state.dbm, r, ctx.zero) {
+                        if proven_u32_range(&mut state.dbm, r, Reg::Zero) {
                             assign_eq(&mut state.dbm, dst, r);
                         } else {
                             // Fallback: Truncation logic (conservative)
@@ -198,7 +197,7 @@ fn transfer_alu(
                             assume_le_const(&mut state.dbm, dst, 0xffff_ffff);
                         }
                     } else {
-                        if r == ctx.r10 { assign_zero(&mut state.dbm, dst, ctx.zero); } 
+                        if r == Reg::R10 { assign_zero(&mut state.dbm, dst); } 
                         else { assign_eq(&mut state.dbm, dst, r); }
                     }
                 }
@@ -298,7 +297,7 @@ fn transfer_alu(
         }
         AluOp::Mul => {
              match src {
-                Operand::Imm(c) => assign_mul_imm(&mut state.dbm, dst, c, ctx.zero),
+                Operand::Imm(c) => assign_mul_imm(&mut state.dbm, dst, c),
                 Operand::Reg(_) => forget(&mut state.dbm, dst),
             }
         }
@@ -926,8 +925,8 @@ fn update_alu_types(
                 Operand::Reg(r) => { 
                     let src_ty = in_types.get(*r);
                     // Special case: R10 (frame pointer) becomes PtrToStack { offset: 0 }
-                    if *r == env.ctx.r10 {
-                        types.set(dst, RegType::PtrToStack { offset: 0 });
+                    if *r == Reg::R10 {
+                        types.set(dst, RegType::PtrToStack { offset: Some(0) });
                     } else {
                         types.set(dst, src_ty); 
                     }
@@ -976,11 +975,10 @@ fn update_alu_types(
                         types.set(dst, RegType::PtrToPacket { id, range, is_base: false, off: new_off });
                     },
                     (RegType::PtrToStack { offset }, Operand::Imm(k)) => {
-                        types.set(dst, RegType::PtrToStack { offset: offset + k });
+                        types.set(dst, RegType::PtrToStack { offset: offset.map(|o| o + k) });
                     },
-                    (RegType::PtrToStack { .. }, Operand::Reg(_)) => {
-                        // Variable offset - we lose precise tracking
-                        types.set(dst, RegType::ScalarValue);
+                    (RegType::PtrToStack { offset: _ }, Operand::Reg(_)) => {
+                        types.set(dst, RegType::PtrToStack { offset: None });
                     },
                     (RegType::PtrToCtx, Operand::Imm(_)) => {
                         types.set(dst, RegType::PtrToCtx);
@@ -1016,7 +1014,7 @@ fn update_alu_types(
                         types.set(dst, RegType::PtrToPacket { id, range, is_base: false, off: new_off });
                     },
                     RegType::PtrToStack { offset } => {
-                        types.set(dst, RegType::PtrToStack { offset: offset - k });
+                        types.set(dst, RegType::PtrToStack { offset: offset.map(|o| o - k) });
                     },
                     RegType::PtrToCtx => {
                         types.set(dst, RegType::PtrToCtx);
@@ -1067,11 +1065,20 @@ fn update_load_types(env: &VerifierEnv, types: &mut TypeState, size: MemSize, ds
             }
         }
         RegType::PtrToStack { offset: base_offset } => {
-            let actual_slot = base_offset + (off as i64);
-            if size == MemSize::U64 { 
-                types.set(dst, types.get_stack(actual_slot as i16)); 
-            } else { 
-                types.set(dst, RegType::ScalarValue); 
+            match base_offset {
+                Some(base) => {
+                    let actual_slot = base + (off as i64);
+                    if size == MemSize::U64 { 
+                        types.set(dst, types.get_stack(actual_slot as i16)); 
+                    } else { 
+                        types.set(dst, RegType::ScalarValue); 
+                    }
+                }
+                None => {
+                    // Unknown stack offset - can't determine which slot we're reading
+                    // Conservative: result is scalar (could be anything)
+                    types.set(dst, RegType::ScalarValue);
+                }
             }
         }
         _ => types.set(dst, RegType::ScalarValue),
@@ -1080,7 +1087,7 @@ fn update_load_types(env: &VerifierEnv, types: &mut TypeState, size: MemSize, ds
 
 fn update_store_types(types: &mut TypeState, src_type: RegType, size: MemSize, base_type: RegType, off: i16) {
     let stack_slot = match base_type {
-        RegType::PtrToStack { offset } => Some(offset + (off as i64)),
+        RegType::PtrToStack { offset } => offset.map(|o| o + (off as i64)),
         _ => None,
     };
     

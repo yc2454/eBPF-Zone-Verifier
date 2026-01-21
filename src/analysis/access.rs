@@ -10,6 +10,7 @@ use crate::parsing::ctx_model;
 use crate::parsing::ctx_model::MemRegionId;
 use log::{error};
 use RegType::*;
+use crate::zone::domain::Reg;
 
 /// Validates memory load safety.
 /// Does NOT update the state (types/dbm); that happens in transfer.rs.
@@ -27,24 +28,7 @@ pub fn check_load(
 
     match base_type {
         PtrToStack { offset } => {
-            // Use tracked offset instead of DBM bounds
-            let final_offset = offset + (off as i64);
-            let access_end = final_offset + access_size;
-            
-            // Check bounds
-            let within_bounds = final_offset >= ctx.stack_min && access_end <= ctx.stack_max;
-            
-            // Check alignment (optional but recommended)
-            let aligned = if final_offset < 0 {
-                (final_offset.abs() % access_size) == 0
-            } else {
-                (final_offset % access_size) == 0
-            };
-            
-            if !(within_bounds && aligned) {
-                error!("Unsafe stack load at pc {}: base {:?}+{} (stack offset {})", pc, base, off, final_offset);
-                env.fail(VerificationError::UnsafeStackLoad { pc, off, size });
-            }
+            check_stack_access(env, state, base, offset, off as i64, access_size, pc);
         }
         PtrToPacket { id: _, range, is_base: _, off: off_from_packet } => {
             // Total offset from base = off + instruction offset
@@ -259,15 +243,7 @@ pub fn check_store(
             }
         }
         PtrToStack { offset } => {
-            let final_offset = offset + (off as i64);
-            let access_end = final_offset + access_size;
-            
-            let is_safe = final_offset >= ctx.stack_min && access_end <= ctx.stack_max;
-            
-            if !is_safe {
-                error!("Unsafe stack store at pc {}: {:?} to stack offset {}", pc, size, final_offset);
-                env.fail(VerificationError::UnsafeStackStore { pc, off, size });
-            }
+            check_stack_access(env, state, base, offset, off as i64, access_size as i64, pc);
         }
         PtrToPacket { id: _, range, is_base: _, off: off_from_packet } => {
             // Total offset from base = off + instruction offset
@@ -334,6 +310,59 @@ pub fn check_store(
         _ => {
             error!("Unsafe store at pc {}: base {:?}+{} has non-pointer type {:?}", pc, base, off, base_ty);
             env.fail(VerificationError::UnsafeGenericStore { pc, base, off });
+        }
+    }
+}
+
+// ---------------------- Stack checking helper ------------------- //
+/// Check if a stack access at (base + off) of size bytes is safe.
+/// Returns Ok(()) if safe, or an error describing the violation.
+fn check_stack_access(
+    env: &mut VerifierEnv,
+    state: &State,
+    base: Reg,
+    offset: Option<i64>,
+    off: i64,           // instruction offset
+    size: i64,          // access size in bytes
+    pc: usize,
+) {
+    
+    match offset {
+        Some(base_off) => {
+            // Precise case
+            let actual_offset = base_off + off;
+            let access_end = actual_offset + size;
+            
+            if actual_offset < constants::BPF_STACK_MIN || access_end > constants::BPF_STACK_MAX {
+                error!("Unsafe stack access at pc {}: base {:?}+{} (stack offset {})", pc, base, off, actual_offset);
+                env.fail(VerificationError::StackOutOfBounds { 
+                    pc, 
+                    off,
+                    size,
+                });
+            }
+        }
+        None => {
+            // Unknown base offset - use DBM to prove safety
+            let (lo, hi) = get_relative_bound(&state.dbm, base, Reg::R10);
+            
+            let safe = match (lo, hi) {
+                (Some(lower), Some(upper)) => {
+                    let min_offset = lower + off;
+                    let max_access_end = upper + off + size;
+                    min_offset >= constants::BPF_STACK_MIN && max_access_end <= constants::BPF_STACK_MAX
+                }
+                _ => false,
+            };
+            
+            if !safe {
+                error!("Unsafe stack access at pc {}: base {:?}+{} with unknown offset", pc, base, off);
+                env.fail(VerificationError::StackOutOfBounds { 
+                    pc, 
+                    off,
+                    size,
+                });
+            }
         }
     }
 }
