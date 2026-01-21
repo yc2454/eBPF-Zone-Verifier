@@ -8,11 +8,13 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+// ... (FileResult struct and helper functions remain the same) ...
 struct FileResult {
     file_name: String,
     project: String,
     compiler: String,
     opt: String,
+    source_prog: String,
     passed: bool,
     details: Vec<(String, AnalysisResult)>,
 }
@@ -70,11 +72,40 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
         return;
     }
 
-    let elf_files: Vec<&PathBuf> = files.iter()
+    // 1. Identify all ELF files
+    let all_elf_files: Vec<&PathBuf> = files.iter()
         .filter(|p| p.extension().map_or(false, |ext| ext == "o"))
         .collect();
 
-    println!("Scanning {} ELF files...\n", elf_files.len());
+    // 2. Pre-Calculate Metadata & Apply Filters
+    // We map to a tuple (path, project, compiler, opt, source) to avoid re-parsing later
+    let mut tasks = Vec::new();
+    
+    for path in all_elf_files {
+        let filename = path.file_name().unwrap().to_str().unwrap();
+        let (compiler, opt, source_prog) = parse_benchmark_filename(filename);
+        
+        // Determine Project
+        let relative = path.strip_prefix(root_path).unwrap_or(path);
+        let project = relative.components().next()
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // Apply Filters HERE
+        if let Some(f_proj) = &config.bench_project { if &project != f_proj { continue; } }
+        if let Some(f_comp) = &config.bench_compiler { if &compiler != f_comp { continue; } }
+        if let Some(f_opt) = &config.bench_opt { if &opt != f_opt { continue; } }
+        if let Some(f_src) = &config.bench_source { if &source_prog != f_src { continue; } }
+
+        tasks.push((path, filename, project, compiler, opt, source_prog));
+    }
+
+    let total_files_count = tasks.len();
+    println!("Found {} files matching filters.\n", total_files_count);
+
+    if total_files_count == 0 {
+        return;
+    }
 
     let mut grouped_results: BTreeMap<String, Vec<FileResult>> = BTreeMap::new();
     
@@ -83,35 +114,12 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
     let mut total_files_passed = 0;
     let mut total_sections_processed = 0;
     let mut total_sections_passed = 0;
-    let total_files_count = elf_files.len(); // Store total for progress
 
-    for (i, path) in elf_files.iter().enumerate() {
-        let filename = path.file_name().unwrap().to_str().unwrap();
-        let (compiler, opt, source_prog) = parse_benchmark_filename(filename);
-        
-        // Determine Project (subdirectory name relative to root)
-        let relative = path.strip_prefix(root_path).unwrap_or(path);
-        let project = relative.components().next()
-            .map(|c| c.as_os_str().to_string_lossy().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-
-        // --- Apply Filters ---
-        if let Some(f_proj) = &config.bench_project {
-            if &project != f_proj { continue; }
-        }
-        if let Some(f_comp) = &config.bench_compiler {
-            if &compiler != f_comp { continue; }
-        }
-        if let Some(f_opt) = &config.bench_opt {
-            if &opt != f_opt { continue; }
-        }
-        if let Some(f_src) = &config.bench_source {
-            if &source_prog != f_src { continue; }
-        }
-
-        // Run Analysis
+    // 3. Main Loop over Filtered Tasks
+    for (i, (path, filename, project, compiler, opt, source_prog)) in tasks.into_iter().enumerate() {
         let path_str = path.to_str().unwrap();
         
+        // Progress Indicator
         print!("[{}/{}] [Project: {}] Analyzing {} ... ", 
                i + 1, total_files_count, project, filename);
         std::io::stdout().flush().unwrap();
@@ -139,23 +147,24 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
             project,
             compiler,
             opt,
+            source_prog,
             passed,
             details: section_results,
         };
 
-        grouped_results.entry(source_prog).or_default().push(res);
+        grouped_results.entry(res.source_prog.clone()).or_default().push(res);
     }
 
     let duration = start_time.elapsed();
 
-    // Construct dynamic filename based on active filters
+    // Construct dynamic filename
     let mut base_name = String::from("benchmark");
     if let Some(p) = &config.bench_project { base_name.push_str(&format!("_{}", p)); }
     if let Some(c) = &config.bench_compiler { base_name.push_str(&format!("_{}", c)); }
     if let Some(o) = &config.bench_opt { base_name.push_str(&format!("_{}", o)); }
     if let Some(s) = &config.bench_source { base_name.push_str(&format!("_{}", s)); }
 
-    // NEW: Ensure 'results' directory exists
+    // Ensure 'results' directory exists
     let results_dir = "results";
     if let Err(e) = fs::create_dir_all(results_dir) {
         eprintln!("Error: Could not create 'results' directory: {}", e);
