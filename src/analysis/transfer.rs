@@ -299,48 +299,43 @@ fn transfer_alu(
             match src {
                 Operand::Imm(k) => {
                     let k = k as u32;
-                    let bits = if width == Width::W32 { 32u32 } else { 64u32 };
                     
-                    if k >= bits {
-                        // Shift by >= width results in 0 (for logical shift)
-                        forget(&mut state.dbm, dst);
-                        assume_eq_const(&mut state.dbm, dst, 0);
-                    } else {
-                        let (old_lo, old_hi) = get_bounds(&state.dbm, dst);
-                        forget(&mut state.dbm, dst);
-                        
-                        match (old_lo, old_hi) {
-                            (Some(lo), Some(hi)) if lo >= 0 => {
-                                // For non-negative values, SHL multiplies by 2^k
-                                // Check for overflow
-                                let max_safe = if bits == 32 { 
-                                    (u32::MAX >> k) as i64 
-                                } else { 
-                                    (u64::MAX >> k) as i64 
-                                };
-                                
-                                if hi <= max_safe {
-                                    // No overflow, result is [lo << k, hi << k]
-                                    assume_ge_const(&mut state.dbm, dst, lo << k);
-                                    assume_le_const(&mut state.dbm, dst, hi << k);
-                                } else {
-                                    // Possible overflow, just bound by width
-                                    assume_ge_const(&mut state.dbm, dst, 0);
-                                    if bits == 32 {
-                                        assume_le_const(&mut state.dbm, dst, u32::MAX as i64);
-                                    }
-                                }
+                    // For W32, only lower 5 bits matter; for W64, lower 6 bits
+                    let shift_amount = if width == Width::W32 { k & 0x1F } else { k & 0x3F };
+                    
+                    let (old_lo, old_hi) = get_bounds(&state.dbm, dst);
+                    forget(&mut state.dbm, dst);
+                    
+                    if let (Some(lo), Some(hi)) = (old_lo, old_hi) {
+                        // Only apply bounds if:
+                        // 1. Values are non-negative
+                        // 2. Shift won't overflow i64
+                        if lo >= 0 && shift_amount < 63 {
+                            // Maximum value that won't overflow when shifted
+                            let max_safe: i64 = i64::MAX >> shift_amount;
+                            
+                            if hi <= max_safe {
+                                // Safe to compute shifted bounds
+                                assume_ge_const(&mut state.dbm, dst, lo << shift_amount);
+                                assume_le_const(&mut state.dbm, dst, hi << shift_amount);
                             }
-                            _ => {
-                                // Unknown or negative input, can't say much
-                                // Result is non-negative if input was non-negative
-                            }
+                            // If hi > max_safe, we just leave the register unconstrained
+                            // (already forgotten above)
                         }
+                    }
+                    
+                    // Handle W32 truncation
+                    if width == Width::W32 {
+                        assume_ge_const(&mut state.dbm, dst, 0);
+                        assume_le_const(&mut state.dbm, dst, u32::MAX as i64);
                     }
                 }
                 Operand::Reg(_) => {
-                    // Variable shift amount - very hard to track
                     forget(&mut state.dbm, dst);
+                    if width == Width::W32 {
+                        assume_ge_const(&mut state.dbm, dst, 0);
+                        assume_le_const(&mut state.dbm, dst, u32::MAX as i64);
+                    }
                 }
             }
         }
