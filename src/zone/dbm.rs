@@ -30,10 +30,6 @@ impl Dbm {
         self.data[i][j]
     }
 
-    pub fn set_raw(&mut self, i: usize, j: usize, v: i64) {
-        self.data[i][j] = v;
-    }
-
     // low-level idx ops if you need them
     pub fn get_idx(&self, i: usize, j: usize) -> i64 {
         self.data[i][j]
@@ -175,40 +171,5 @@ impl Dbm {
                 println!("    R{}: [{}, {}]", i.idx(), min_str, max_str);
             }
         }
-    }
-
-    // you still have join, etc., unchanged except using Var or idx as needed
-    pub fn join(&self, other: &Dbm) -> Dbm {
-        let n = self.num_vars();
-        let mut res = Dbm::new(n);
-        for i in 0..n {
-            for j in 0..n {
-                let a = self.data[i][j];
-                let b = other.data[i][j];
-                res.data[i][j] = if a > b { a } else { b };
-            }
-        }
-        res.close();
-        res
-    }
-
-    /// Returns true if `other` is a subset of `self` (self covers other).
-    /// Logic: other.matrix[i][j] <= self.matrix[i][j] for all i, j.
-    pub fn contains(&self, other: &Dbm) -> bool {
-        if self.data.len() != other.data.len() {
-            return false;
-        }
-
-        let dim = self.data.len();
-        for i in 0..dim {
-            for j in 0..dim {
-                // If other's upper bound is looser (larger) than ours, 
-                // it contains points we don't allow. Not a subset.
-                if other.data[i][j] > self.data[i][j] {
-                    return false;
-                }
-            }
-        }
-        true
     }
 }

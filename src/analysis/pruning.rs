@@ -1,158 +1,286 @@
-// src/analysis/pruning.rs
-use crate::analysis::env::VerifierEnv;
+use std::collections::{HashMap, HashSet};
 use crate::analysis::state::State;
-use crate::analysis::reg_types::RegType;
+use crate::analysis::reg_types::{RegType, TypeState};
+use crate::zone::dbm::{Dbm, INF};
+use crate::analysis::env::VerifierEnv;
 use crate::misc::config::VerifierConfig;
 use crate::zone::domain::Reg;
 
+/// Widening threshold - start widening after this many visits
+const WIDEN_THRESHOLD: u32 = 3;
+
+/// State tracking info for a single PC
+struct PcStateInfo {
+    /// The canonical state (widened over time)
+    canonical: State,
+    /// Number of times we've visited this PC
+    visit_count: u32,
+}
+
+/// Manages pruning decisions with widening support
+pub struct PruningManager {
+    /// Tracked states per PC
+    pc_states: HashMap<usize, PcStateInfo>,
+}
+
+impl PruningManager {
+    pub fn new() -> Self {
+        Self {
+            pc_states: HashMap::new(),
+        }
+    }
+}
+
 /// Returns TRUE if the current state is covered by a previously explored state.
 /// If TRUE, we can safely prune (stop analyzing this path).
-pub fn is_state_visited(env: &mut VerifierEnv, state: &State, config: &VerifierConfig) -> bool {
+pub fn is_state_visited(
+    env: &mut VerifierEnv,
+    state: &State,
+    config: &VerifierConfig,
+    pruning_mgr: &mut PruningManager,
+) -> bool {
     let pc = state.pc;
 
-    // 1. Optimization: Only check history at Pruning Points (Loop Heads / Branch Targets)
+    // 1. Only check at prune points (loop heads / branch targets)
     if pc < env.insn_aux_data.len() && !env.insn_aux_data[pc].prune_point {
         return false;
     }
 
     let live_regs = &env.insn_aux_data[pc].live_regs;
-    
-    // 2. Search History for a covering state
-    if let Some(history) = env.explored_states.get(&pc) {
-        for old_state in history {
-            if states_equal(old_state, state, live_regs, config) {
-                return true;
+
+    // 2. Check against tracked state for this PC
+    match pruning_mgr.pc_states.get_mut(&pc) {
+        Some(info) => {
+            info.visit_count += 1;
+
+            // Check if current state is subsumed by canonical state
+            if state_subsumes(&info.canonical, state, live_regs, config) {
+                return true; // Prune
             }
+
+            // Not subsumed - widen if we've visited enough times
+            if info.visit_count >= WIDEN_THRESHOLD {
+                widen_state(&mut info.canonical, state, live_regs);
+            }
+
+            false
+        }
+        None => {
+            // First visit - store state
+            pruning_mgr.pc_states.insert(pc, PcStateInfo {
+                canonical: state.clone(),
+                visit_count: 1,
+            });
+            false
         }
     }
-
-    // 3. No match found. Record this state for future pruning.
-    // LIMIT: Only keep the most recent max_states_per_pc states.
-    let history = env.explored_states.entry(pc).or_default();
-    
-    if history.len() >= config.max_states_per_pc {
-        history.remove(0);
-    }
-    
-    history.push(state.clone());
-    
-    false
 }
 
-/// Checks if `old` covers `cur` (i.e., cur ⊆ old).
-fn states_equal(
-    old: &State, 
-    cur: &State, 
-    live_regs: &std::collections::HashSet<Reg>,
+// ============================================================================
+// Subsumption Checking
+// ============================================================================
+
+/// Check if `old` state subsumes `cur` state.
+/// Returns true if every concrete state represented by `cur` is also in `old`.
+fn state_subsumes(
+    old: &State,
+    cur: &State,
+    live_regs: &HashSet<Reg>,
     config: &VerifierConfig,
 ) -> bool {
-    // 1. Check Registers (Only LIVE ones)
-    for &r in live_regs {
-        if !reg_safe(old.types.get(r), cur.types.get(r)) {
-            return false;
-        }
+    // Skip DBM check if configured (for debugging)
+    if config.skip_dbm_check {
+        return types_subsume(&old.types, &cur.types, live_regs);
     }
 
-    // 2. Check Stack
-    if !stack_safe(old, cur) {
-        return false;
-    }
-
-    // 3. Check DBM (Values) - OPTIONAL based on config
-    if !config.skip_dbm_check {
-        if !dbm_safe_relaxed(&old.dbm, &cur.dbm, live_regs) {
-            return false;
-        }
-    }
-    // If skip_dbm_check is true, we skip numeric comparison entirely.
-    // This is safe because type checking ensures pointer validity.
-
-    true
+    types_subsume(&old.types, &cur.types, live_regs)
+        && dbm_subsumes(&old.dbm, &cur.dbm, live_regs)
 }
 
-/// Checks if register types are compatible.
-/// Returns true if `cur` is covered by `old`.
-fn reg_safe(old_ty: RegType, cur_ty: RegType) -> bool {
-    match (old_ty, cur_ty) {
-        // SCALARS - always compatible
-        (RegType::ScalarValue, RegType::ScalarValue) => true,
-        
-        // NOT_INIT - covers anything
-        (RegType::NotInit, _) => true,
-        
-        // If cur is NOT_INIT but old was typed, we can't prune
-        (_, RegType::NotInit) => false,
-        
-        // POINTERS TO PACKET
-        (RegType::PtrToPacket { id: id1, range: r1, is_base: _, off: off1 }, 
-         RegType::PtrToPacket { id: id2, range: r2, is_base: _, off: off2 }) => {
-            id1 == id2 && r1 <= r2 && off1 == off2
-        },
-
-        // POINTERS TO MAP VALUES
-        (RegType::PtrToMapValue { offset: off1, map_idx: m1 }, RegType::PtrToMapValue { offset: off2, map_idx: m2 }) => {
-            if m1 != m2 { return false; }
-            match (off1, off2) {
-                (None, _) => true,
-                (Some(_), None) => false,
-                (Some(o1), Some(o2)) => o1 == o2,
-            }
-        },
-
-        (RegType::PtrToSocket { id: id1 }, RegType::PtrToSocket { id: id2 }) => id1 == id2,
-        (RegType::PtrToSocketOrNull { id: id1 }, RegType::PtrToSocketOrNull { id: id2 }) => id1 == id2,
-        (RegType::PtrToSockCommon { id: id1 }, RegType::PtrToSockCommon { id: id2 }) => id1 == id2,
-        (RegType::PtrToSockCommonOrNull { id: id1 }, RegType::PtrToSockCommonOrNull { id: id2 }) => id1 == id2,
-        (RegType::PtrToTcpSock { id: id1 }, RegType::PtrToTcpSock { id: id2 }) => id1 == id2,
-        (RegType::PtrToTcpSockOrNull { id: id1 }, RegType::PtrToTcpSockOrNull { id: id2 }) => id1 == id2,
-        
-        // EXACT MATCH FOR OTHERS
-        _ => old_ty == cur_ty,
-    }
-}
-
-/// Checks if stack slots are compatible.
-fn stack_safe(old: &State, cur: &State) -> bool {
-    for (off, old_ty) in &old.types.stack {
-         let cur_ty = cur.types.get_stack(*off);
-         if !reg_safe(*old_ty, cur_ty) {
-             return false;
-         }
-    }
-    true
-}
-
-/// RELAXED DBM comparison for pruning.
-fn dbm_safe_relaxed(
-    old_dbm: &crate::zone::dbm::Dbm, 
-    cur_dbm: &crate::zone::dbm::Dbm, 
-    live_regs: &std::collections::HashSet<Reg>
+/// Check if old types subsume current types for live registers
+fn types_subsume(
+    old: &TypeState,
+    cur: &TypeState,
+    live_regs: &HashSet<Reg>,
 ) -> bool {
+    for r in live_regs {
+        if !type_subsumes(&old.get(*r), &cur.get(*r)) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Check if old_ty subsumes cur_ty (old is at least as general)
+fn type_subsumes(old_ty: &RegType, cur_ty: &RegType) -> bool {
+    use RegType::*;
+
+    match (old_ty, cur_ty) {
+        // Identical simple types
+        (ScalarValue, ScalarValue) => true,
+        (NotInit, NotInit) => true,
+        (PtrToCtx, PtrToCtx) => true,
+        (PtrToPacketEnd, PtrToPacketEnd) => true,
+
+        // Anything subsumes NotInit (dead register)
+        (_, NotInit) => true,
+
+        // Packet pointers: old must have >= range (allows more accesses)
+        (
+            PtrToPacket { id: id1, range: r1, is_base: b1, off: o1 },
+            PtrToPacket { id: id2, range: r2, is_base: b2, off: o2 },
+        ) => id1 == id2 && b1 == b2 && o1 == o2 && r1 >= r2,
+
+        // Mem pointers: old must have >= range
+        (
+            PtrToMem { region: reg1, range: r1 },
+            PtrToMem { region: reg2, range: r2 },
+        ) => reg1 == reg2 && r1 >= r2,
+
+        // Stack pointers
+        (
+            PtrToStack { offset: o1 },
+            PtrToStack { offset: o2 },
+        ) => match (o1, o2) {
+            (None, _) => true,             // Unknown subsumes all
+            (Some(a), Some(b)) => a == b,  // Must match exactly
+            (Some(_), None) => false,      // Known doesn't subsume unknown
+        },
+
+        // Different types - no subsumption
+        _ => false,
+    }
+}
+
+/// Check if old DBM subsumes current DBM for live registers.
+/// old subsumes cur iff old is LESS constrained (allows more values).
+fn dbm_subsumes(old: &Dbm, cur: &Dbm, live_regs: &HashSet<Reg>) -> bool {
     let zero_idx = 0;
-    
+
     for r in live_regs {
         let r_idx = r.idx();
-        
-        let old_upper = old_dbm.get_idx(r_idx, zero_idx);
-        let cur_upper = cur_dbm.get_idx(r_idx, zero_idx);
-        
-        let old_lower = old_dbm.get_idx(zero_idx, r_idx);
-        let cur_lower = cur_dbm.get_idx(zero_idx, r_idx);
-        
-        const INF_THRESHOLD: i64 = 1_000_000_000;
-        const TOLERANCE: i64 = 64;
-        
-        let old_bounded = old_upper < INF_THRESHOLD && old_lower < INF_THRESHOLD;
-        let cur_bounded = cur_upper < INF_THRESHOLD && cur_lower < INF_THRESHOLD;
-        
-        if old_bounded && cur_bounded {
-            if cur_upper > old_upper + TOLERANCE || cur_lower > old_lower + TOLERANCE {
-                return false;
-            }
-        } else if old_bounded && !cur_bounded {
-            return false;
+
+        // Upper bound: r - 0 ≤ c  means  r ≤ c
+        // old subsumes cur if old_upper >= cur_upper
+        let old_upper = old.get_idx(r_idx, zero_idx);
+        let cur_upper = cur.get_idx(r_idx, zero_idx);
+        if old_upper < cur_upper {
+            return false; // old has tighter upper bound
+        }
+
+        // Lower bound: 0 - r ≤ c  means  r ≥ -c
+        // old subsumes cur if old_lower >= cur_lower
+        let old_lower = old.get_idx(zero_idx, r_idx);
+        let cur_lower = cur.get_idx(zero_idx, r_idx);
+        if old_lower < cur_lower {
+            return false; // old has tighter lower bound
         }
     }
-    
+
     true
+}
+
+// ============================================================================
+// Widening
+// ============================================================================
+
+/// Widen the stored state to cover the current state.
+/// After widening, stored will subsume both its old value and current.
+fn widen_state(stored: &mut State, current: &State, live_regs: &HashSet<Reg>) {
+    // Widen DBM
+    widen_dbm(&mut stored.dbm, &current.dbm, live_regs);
+
+    // Widen types
+    widen_types(&mut stored.types, &current.types, live_regs);
+}
+
+/// Widen DBM: if current is less constrained, go to infinity
+fn widen_dbm(stored: &mut Dbm, current: &Dbm, live_regs: &HashSet<Reg>) {
+    let zero_idx = 0;
+
+    for r in live_regs {
+        let r_idx = r.idx();
+
+        // Upper bound
+        let stored_upper = stored.get_idx(r_idx, zero_idx);
+        let current_upper = current.get_idx(r_idx, zero_idx);
+        if current_upper > stored_upper {
+            // Current allows larger values - widen to infinity
+            stored.set_idx(r_idx, zero_idx, INF);
+        }
+
+        // Lower bound
+        let stored_lower = stored.get_idx(zero_idx, r_idx);
+        let current_lower = current.get_idx(zero_idx, r_idx);
+        if current_lower > stored_lower {
+            // Current allows smaller values - widen to infinity
+            stored.set_idx(zero_idx, r_idx, INF);
+        }
+    }
+}
+
+/// Widen types: generalize to cover both states
+fn widen_types(
+    stored: &mut TypeState,
+    current: &TypeState,
+    live_regs: &HashSet<Reg>,
+) {
+    for r in live_regs {
+        let stored_ty = stored.get(*r);
+        let current_ty = current.get(*r);
+
+        if let Some(widened) = widen_type(&stored_ty, &current_ty) {
+            stored.set(*r, widened);
+        }
+    }
+}
+
+/// Widen two types, returning a type that covers both.
+/// Returns None if types are incompatible (shouldn't happen at same PC).
+fn widen_type(stored: &RegType, current: &RegType) -> Option<RegType> {
+    use RegType::*;
+
+    match (stored, current) {
+        // Already subsumed - no change needed
+        _ if type_subsumes(stored, current) => None,
+
+        // Packet pointers - take minimum range
+        (
+            PtrToPacket { id: id1, range: r1, is_base: b1, off: o1 },
+            PtrToPacket { id: id2, range: r2, is_base: b2, off: o2 },
+        ) if id1 == id2 && b1 == b2 && o1 == o2 => {
+            Some(PtrToPacket {
+                id: *id1,
+                range: (*r1).min(*r2),
+                is_base: *b1,
+                off: *o1,
+            })
+        }
+
+        // Mem pointers - take minimum range
+        (
+            PtrToMem { region: reg1, range: r1 },
+            PtrToMem { region: reg2, range: r2 },
+        ) if reg1 == reg2 => {
+            Some(PtrToMem {
+                region: *reg1,
+                range: (*r1).min(*r2),
+            })
+        }
+
+        // Stack pointers - widen to unknown offset
+        (
+            PtrToStack { offset: Some(_) },
+            PtrToStack { offset: Some(_) },
+        ) => Some(PtrToStack { offset: None }),
+
+        (
+            PtrToStack { offset: Some(_) },
+            PtrToStack { offset: None },
+        ) => Some(PtrToStack { offset: None }),
+
+        // Incompatible types - can't widen
+        // This shouldn't happen if program is well-formed
+        _ => None,
+    }
 }

@@ -72,6 +72,8 @@ pub fn analyze_program(
         None
     };
 
+    let mut pruning_mgr = pruning::PruningManager::new();
+
     // 4. Main Analysis Loop
     while let Some(state) = worklist.pop_back() {
         if env.failed() {
@@ -81,7 +83,7 @@ pub fn analyze_program(
 
         // A. Pruning Check FIRST (before counting!)
         // This prevents counting states that we immediately discard.
-        if pruning::is_state_visited(&mut env, &state, config) {
+        if pruning::is_state_visited(&mut env, &state, config, &mut pruning_mgr) {
             prune_count += 1;
             continue;
         }

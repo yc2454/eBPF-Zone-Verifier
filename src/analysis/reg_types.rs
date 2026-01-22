@@ -1,5 +1,5 @@
 // src/analysis/reg_types.rs
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap};
 use crate::zone::domain::Reg;
 use crate::parsing::ctx_model::MemRegionId;
 
