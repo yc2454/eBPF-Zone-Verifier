@@ -132,7 +132,7 @@ fn transfer_alu(
                     let is_clean_ptr = match in_types.get(dst) {
                         RegType::PtrToMapValue { offset: Some(0), .. } |
                         RegType::PtrToStack { offset: Some(0) } |
-                        RegType::PtrToPacket { range: 0, .. } => true,
+                        RegType::PtrToPacket { off: 0, .. } => true,
                         _ => false,
                     };
                     if is_clean_ptr {
@@ -158,7 +158,7 @@ fn transfer_alu(
                     let is_clean_ptr = match in_types.get(dst) {
                         RegType::PtrToMapValue { offset: Some(0), .. } |
                         RegType::PtrToStack { offset: Some(0) } |
-                        RegType::PtrToPacket { range: 0, .. } => true,
+                        RegType::PtrToPacket { off: 0, .. } => true,
                         _ => false,
                     };
                     if is_clean_ptr {
@@ -813,6 +813,32 @@ fn apply_imm_constraints(
             // Unsigned 32-bit comparisons: the immediate is zero-extended
             // These are generally safe since we compare unsigned values
             _ => {}
+        }
+    }
+
+    let is_unsigned_cmp = matches!(op, CmpOp::UGe | CmpOp::ULe | CmpOp::UGt | CmpOp::ULt);
+    
+    if is_unsigned_cmp {
+        // If imm is negative (when interpreted as signed), it represents a 
+        // large unsigned value (>= 2^63). Our signed DBM can't handle this correctly.
+        if imm < 0 {
+            // Conservative: don't apply any constraints
+            // The type refinement (packet ranges, etc.) will still happen
+            return;
+        }
+        
+        // Also check if register might have values >= 2^63
+        // If so, signed and unsigned comparisons differ
+        let (lo, hi) = get_bounds(&then_s.dbm, left);
+        if let (Some(l), Some(_h)) = (lo, hi) {
+            if l < 0 {
+                // Register might be negative (signed) = large (unsigned)
+                // Can't safely apply unsigned constraints
+                return;
+            }
+        } else {
+            // Unknown bounds, be conservative
+            return;
         }
     }
     
