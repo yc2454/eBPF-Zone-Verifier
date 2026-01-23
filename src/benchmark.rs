@@ -7,6 +7,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+use chrono::Local;
 
 // ... (FileResult struct and helper functions remain the same) ...
 struct FileResult {
@@ -22,7 +23,7 @@ struct FileResult {
 
 fn parse_benchmark_filename(name: &str) -> (String, String, String) {
     // Expected format: clang-<VER>_-<OPT>_<SOURCE>.o
-    let fallback = ("unknown".to_string(), "unknown".to_string(), name.to_string());
+    let fallback = ("[unknown compiler]".to_string(), "[unknown optimization level]".to_string(), name.to_string());
     if !name.starts_with("clang-") { return fallback; }
 
     let parts: Vec<&str> = name.splitn(3, '_').collect();
@@ -191,12 +192,15 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
     let mut base_name = String::from("benchmark");
     if config.bench_input_file.is_some() { 
         base_name.push_str("_custom_list");
-        base_name.push_str(&format!("_{:?}", start_time))
     }
     if let Some(p) = &config.bench_project { base_name.push_str(&format!("_{}", p)); }
     if let Some(c) = &config.bench_compiler { base_name.push_str(&format!("_{}", c)); }
     if let Some(o) = &config.bench_opt { base_name.push_str(&format!("_{}", o)); }
     if let Some(s) = &config.bench_source { base_name.push_str(&format!("_{}", s)); }
+
+    // Append timestamp to the filename
+    let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    base_name.push_str(&format!("_{}", timestamp));
 
     // Ensure 'results' directory exists
     let results_dir = "results";
