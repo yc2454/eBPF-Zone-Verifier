@@ -16,6 +16,7 @@ struct FileResult {
     opt: String,
     source_prog: String,
     passed: bool,
+    timeout: bool,
     details: Vec<(String, AnalysisResult)>,
 }
 
@@ -52,24 +53,35 @@ fn visit_dirs(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
 
 pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
     println!("=== Starting Benchmark Analysis ===");
-    println!("Root Directory: {}", dir_path);
-    if let Some(p) = &config.bench_project { println!("Filter [Project]:  {}", p); }
-    if let Some(c) = &config.bench_compiler { println!("Filter [Compiler]: {}", c); }
-    if let Some(o) = &config.bench_opt { println!("Filter [Opt]:      {}", o); }
-    if let Some(s) = &config.bench_source { println!("Filter [Source]:   {}", s); }
 
-    let start_time = Instant::now();
-    let root_path = Path::new(dir_path);
     let mut files = Vec::new();
+    let root_path = Path::new(dir_path);
+    let start_time = Instant::now();
 
-    if !root_path.exists() || !root_path.is_dir() {
-        eprintln!("Error: Directory does not exist: {:?}", root_path);
-        return;
-    }
+    if let Some(list_path) = &config.bench_input_file {
+        println!("Input List: {}", list_path);
+        let content = fs::read_to_string(list_path).expect("Could not read input list");
+        for line in content.lines() {
+            let p = PathBuf::from(line.trim());
+            if p.exists() { files.push(p); }
+        }
+        println!("Loaded {} files from list.", files.len());
+    } else {
+        println!("Root Directory: {}", dir_path);
+        if let Some(p) = &config.bench_project { println!("Filter [Project]:  {}", p); }
+        if let Some(c) = &config.bench_compiler { println!("Filter [Compiler]: {}", c); }
+        if let Some(o) = &config.bench_opt { println!("Filter [Opt]:      {}", o); }
+        if let Some(s) = &config.bench_source { println!("Filter [Source]:   {}", s); }
 
-    if let Err(e) = visit_dirs(root_path, &mut files) {
-        eprintln!("Error reading directory: {}", e);
-        return;
+        if !root_path.exists() || !root_path.is_dir() {
+            eprintln!("Error: Directory does not exist: {:?}", root_path);
+            return;
+        }
+
+        if let Err(e) = visit_dirs(root_path, &mut files) {
+            eprintln!("Error reading directory: {}", e);
+            return;
+        }
     }
 
     // 1. Identify all ELF files
@@ -112,8 +124,10 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
     // Statistics Counters
     let mut total_files_processed = 0;
     let mut total_files_passed = 0;
+    let mut total_files_timeout = 0;
     let mut total_sections_processed = 0;
     let mut total_sections_passed = 0;
+    let mut total_sections_timeout = 0;
 
     // 3. Main Loop over Filtered Tasks
     for (i, (path, filename, project, compiler, opt, source_prog)) in tasks.into_iter().enumerate() {
@@ -125,13 +139,28 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
         std::io::stdout().flush().unwrap();
 
         let analyzer = Analyzer::new(path_str, config.clone());
-        let (passed, section_results) = analyzer.analyze_all();
+        let (_passed, section_results) = analyzer.analyze_all();
+        
+        let mut has_failure = false;
+        let mut has_timeout = false;
+        let mut all_pass = true;
+
+        for (_, res) in &section_results {
+            match res {
+                AnalysisResult::Pass => {},
+                AnalysisResult::Timeout => { all_pass = false; has_timeout = true; total_sections_timeout += 1; },
+                _ => { all_pass = false; has_failure = true; }
+            }
+        }
 
         // Update stats
         total_files_processed += 1;
-        if passed {
+        if all_pass && !section_results.is_empty() {
             total_files_passed += 1;
             println!("PASS");
+        } else if has_timeout && !has_failure {
+            total_files_timeout += 1;
+            println!("TIMEOUT");
         } else {
             println!("FAIL");
         }
@@ -148,7 +177,8 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
             compiler,
             opt,
             source_prog,
-            passed,
+            passed: all_pass && !section_results.is_empty(),
+            timeout: has_timeout && !has_failure,
             details: section_results,
         };
 
@@ -159,6 +189,10 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
 
     // Construct dynamic filename
     let mut base_name = String::from("benchmark");
+    if config.bench_input_file.is_some() { 
+        base_name.push_str("_custom_list");
+        base_name.push_str(&format!("_{:?}", start_time))
+    }
     if let Some(p) = &config.bench_project { base_name.push_str(&format!("_{}", p)); }
     if let Some(c) = &config.bench_compiler { base_name.push_str(&format!("_{}", c)); }
     if let Some(o) = &config.bench_opt { base_name.push_str(&format!("_{}", o)); }
@@ -186,11 +220,15 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
     writeln!(report, "Total Files Found: {}", total_files_processed).unwrap();
     let prog_rate = if total_files_processed > 0 { (total_files_passed as f64 / total_files_processed as f64) * 100.0 } else { 0.0 };
     writeln!(report, "Files Passing:     {} ({:.1}%)", total_files_passed, prog_rate).unwrap();
+    let timeout_rate = if total_files_processed > 0 { (total_files_timeout as f64 / total_files_processed as f64) * 100.0 } else { 0.0 };
+    writeln!(report, "Files Timeout:     {} ({:.1}%)", total_files_timeout, timeout_rate).unwrap();
 
     writeln!(report, "\n--- Section Statistics ---").unwrap();
     writeln!(report, "Total Sections:    {}", total_sections_processed).unwrap();
     let sec_rate = if total_sections_processed > 0 { (total_sections_passed as f64 / total_sections_processed as f64) * 100.0 } else { 0.0 };
     writeln!(report, "Sections Passing:  {} ({:.1}%)", total_sections_passed, sec_rate).unwrap();
+    let sec_timeout_rate = if total_sections_processed > 0 { (total_sections_timeout as f64 / total_sections_processed as f64) * 100.0 } else { 0.0 };
+    writeln!(report, "Sections Timeout:  {} ({:.1}%)", total_sections_timeout, sec_timeout_rate).unwrap();
 
     writeln!(report, "\n--- Breakdown by Source Program ---").unwrap();
 
@@ -209,6 +247,7 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
                         let err_msg = match res {
                             AnalysisResult::Fail(e) => e.description(),
                             AnalysisResult::LoadError(s) => s.clone(),
+                            AnalysisResult::Timeout => "Analysis timed out".to_string(),
                             _ => "".to_string()
                         };
                         writeln!(report, "      - {}: {}", sec, err_msg).unwrap();
@@ -234,7 +273,6 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
     if let Some(c) = &config.bench_compiler { write!(json_file, "      \"compiler\": \"{}\",\n", c).unwrap(); }
     if let Some(o) = &config.bench_opt { write!(json_file, "      \"opt\": \"{}\",\n", o).unwrap(); }
     if let Some(s) = &config.bench_source { write!(json_file, "      \"source\": \"{}\"\n", s).unwrap(); }
-    write!(json_file, "      \"none\": null\n").unwrap(); 
     write!(json_file, "    }},\n").unwrap();
     write!(json_file, "    \"files_processed\": {},\n", total_files_processed).unwrap();
     write!(json_file, "    \"files_passed\": {},\n", total_files_passed).unwrap();
@@ -252,6 +290,7 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
             write!(json_file, "        \"compiler\": \"{}\",\n", run.compiler).unwrap();
             write!(json_file, "        \"opt\": \"{}\",\n", run.opt).unwrap();
             write!(json_file, "        \"passed\": {},\n", run.passed).unwrap();
+            write!(json_file, "        \"timeout\": {},\n", run.timeout).unwrap();
             write!(json_file, "        \"file\": \"{}\"\n", run.file_name).unwrap();
             write!(json_file, "      }}").unwrap();
             if j < runs.len() - 1 { write!(json_file, ",").unwrap(); }

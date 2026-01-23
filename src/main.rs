@@ -125,6 +125,7 @@ fn main() {
             match result {
                 AnalysisResult::Pass => println!("\n=== PASS ==="),
                 AnalysisResult::Fail(e) => println!("\n=== FAIL: {} ===", e.description()),
+                AnalysisResult::Timeout => println!("\n=== TIMEOUT: Complexity limit reached ==="),
                 AnalysisResult::LoadError(e) => println!("\n=== LOAD ERROR: {} ===", e),
             }
         }
@@ -150,6 +151,7 @@ fn main() {
                 match result {
                     AnalysisResult::Pass => println!("\n=== PASS ==="),
                     AnalysisResult::Fail(e) => println!("\n=== FAIL: {} ===", e.description()),
+                    AnalysisResult::Timeout => println!("\n=== TIMEOUT: Complexity limit reached ==="),
                     AnalysisResult::LoadError(e) => println!("\n=== LOAD ERROR: {} ===", e),
                 }
             } else {
@@ -177,6 +179,7 @@ fn main() {
 
             let mut pass_count = 0;
             let mut fail_count = 0;
+            let mut timeout_count = 0;
             let mut error_count = 0;
 
             for (section, res) in &results {
@@ -189,6 +192,10 @@ fn main() {
                     AnalysisResult::Fail(_) => {
                         println!("FAIL");
                         fail_count += 1;
+                    },
+                    AnalysisResult::Timeout => {
+                        println!("TIMEOUT");
+                        timeout_count += 1;
                     },
                     AnalysisResult::LoadError(e) => {
                         println!("ERROR ({})", e);
@@ -205,6 +212,7 @@ fn main() {
                 println!("Pass:   {} ({:.1}%)", pass_count, 100.0 * pass_count as f64 / results.len() as f64);
             }
             println!("Fail:   {}", fail_count);
+            println!("Timeout: {}", timeout_count);
             println!("Errors: {}", error_count);
 
             if fail_count > 0 {

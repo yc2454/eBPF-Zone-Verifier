@@ -38,6 +38,10 @@ pub struct VerifierConfig {
     pub bench_opt: Option<String>,
     /// Filter benchmark by source program name (e.g., "bpf_host")
     pub bench_source: Option<String>,
+
+    // --- Benchmark Input ---
+    /// Optional: Path to a file containing a list of ELF paths to analyze
+    pub bench_input_file: Option<String>,
 }
 
 impl Default for VerifierConfig {
@@ -55,6 +59,7 @@ impl Default for VerifierConfig {
             bench_compiler: None,
             bench_opt: None,
             bench_source: None,
+            bench_input_file: None,
         }
     }
 }
@@ -148,6 +153,11 @@ impl VerifierConfig {
                         i += 1;
                         if i < args.len() { config.bench_source = Some(args[i].clone()); }
                     }
+                    // --- Benchmark Input ---
+                    "--input-list" => {
+                        i += 1;
+                        if i < args.len() { config.bench_input_file = Some(args[i].clone()); }
+                    }
                     _ => {
                         eprintln!("Warning: Unknown flag '{}'", arg);
                     }
@@ -179,5 +189,7 @@ impl VerifierConfig {
         eprintln!("  --compiler NAME      Filter by compiler (e.g. 'clang-16')");
         eprintln!("  --opt LEVEL          Filter by optimization (e.g. '-O1')");
         eprintln!("  --source NAME        Filter by source program name (e.g. 'bpf_host')");
+        eprintln!("Benchmark Input:");
+        eprintln!("  --input-list PATH    Path to file with list of ELF paths to analyze");
     }
 }

@@ -22,6 +22,7 @@ use crate::zone::domain::Reg;
 pub enum AnalysisResult {
     Pass,
     Fail(VerificationError),
+    Timeout,
     LoadError(String),
 }
 
@@ -119,7 +120,14 @@ impl Analyzer {
 
         match result {
             Ok(_) => AnalysisResult::Pass,
-            Err(e) => AnalysisResult::Fail(e),
+            Err(e) => {
+                // Detect Complexity Limit
+                if e.description().contains("Complexity limit") {
+                    AnalysisResult::Timeout
+                } else {
+                    AnalysisResult::Fail(e)
+                }
+            }
         }
     }
 

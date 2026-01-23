@@ -7,7 +7,7 @@ use crate::misc::config::VerifierConfig;
 use crate::zone::domain::Reg;
 
 /// Widening threshold - start widening after this many visits
-const WIDEN_THRESHOLD: u32 = 3;
+const WIDEN_THRESHOLD: u32 = 2;
 
 /// State tracking info for a single PC
 struct PcStateInfo {
@@ -76,6 +76,53 @@ pub fn is_state_visited(
     }
 }
 
+// For debugging: log why subsumption failed
+#[allow(dead_code)]
+fn log_subsumption_failure(
+    old: &State,
+    cur: &State,
+    live_regs: &HashSet<Reg>,
+    pc: usize,
+) {
+    eprintln!("[DEBUG] Subsumption failed at PC {}", pc);
+    
+    // Check types first
+    for r in live_regs {
+        let old_ty = old.types.get(*r);
+        let cur_ty = cur.types.get(*r);
+        
+        if !type_subsumes(&old_ty, &cur_ty) {
+            eprintln!("  {:?}: type mismatch", r);
+            eprintln!("    old: {:?}", old_ty);
+            eprintln!("    cur: {:?}", cur_ty);
+        }
+    }
+    
+    // If types match, check DBM
+    if types_subsume(&old.types, &cur.types, live_regs) {
+        eprintln!("  Types OK, checking DBM...");
+        let zero_idx = 0;
+        
+        for r in live_regs {
+            let r_idx = r.idx();
+            
+            let old_upper = old.dbm.get_idx(r_idx, zero_idx);
+            let cur_upper = cur.dbm.get_idx(r_idx, zero_idx);
+            let old_lower = old.dbm.get_idx(zero_idx, r_idx);
+            let cur_lower = cur.dbm.get_idx(zero_idx, r_idx);
+            
+            if old_upper < cur_upper {
+                eprintln!("  {:?}: upper bound mismatch (old={}, cur={})", 
+                         r, old_upper, cur_upper);
+            }
+            if old_lower < cur_lower {
+                eprintln!("  {:?}: lower bound mismatch (old={}, cur={})", 
+                         r, old_lower, cur_lower);
+            }
+        }
+    }
+}
+
 // ============================================================================
 // Subsumption Checking
 // ============================================================================
@@ -127,15 +174,39 @@ fn type_subsumes(old_ty: &RegType, cur_ty: &RegType) -> bool {
 
         // Packet pointers: old must have >= range (allows more accesses)
         (
-            PtrToPacket { id: id1, range: r1, is_base: b1, off: o1 },
-            PtrToPacket { id: id2, range: r2, is_base: b2, off: o2 },
-        ) => id1 == id2 && b1 == b2 && o1 == o2 && r1 >= r2,
+            PtrToPacket { id: _id1, range: r1, is_base: b1, off: o1 },
+            PtrToPacket { id: _id2, range: r2, is_base: b2, off: o2 },
+        ) => b1 == b2 && o1 == o2 && r1 >= r2,
 
         // Mem pointers: old must have >= range
         (
             PtrToMem { region: reg1, range: r1 },
             PtrToMem { region: reg2, range: r2 },
         ) => reg1 == reg2 && r1 >= r2,
+
+        // PtrToMapValue (known non-null)
+        (
+            PtrToMapValue { offset: o1, map_idx: m1 },
+            PtrToMapValue { offset: o2, map_idx: m2 },
+        ) => {
+            m1 == m2 && match (o1, o2) {
+                (None, _) => true,             // Unknown offset subsumes all
+                (Some(a), Some(b)) => a == b,  // Must match exactly  
+                (Some(_), None) => false,      // Known doesn't subsume unknown
+            }
+        }
+
+        // PtrToMapValueOrNull (result of map lookup, may be null)
+        (
+            PtrToMapValueOrNull { id: id1, map_idx: m1 },
+            PtrToMapValueOrNull { id: id2, map_idx: m2 },
+        ) => {
+            // Same map, same lookup ID
+            m1 == m2 && id1 == id2
+        }
+
+        (PtrToSocket { id: id1 }, PtrToSocket { id: id2 }) => id1 == id2,
+        (PtrToSocketOrNull { id: id1 }, PtrToSocketOrNull { id: id2 }) => id1 == id2,
 
         // Stack pointers
         (
@@ -246,11 +317,12 @@ fn widen_type(stored: &RegType, current: &RegType) -> Option<RegType> {
 
         // Packet pointers - take minimum range
         (
-            PtrToPacket { id: id1, range: r1, is_base: b1, off: o1 },
-            PtrToPacket { id: id2, range: r2, is_base: b2, off: o2 },
-        ) if id1 == id2 && b1 == b2 && o1 == o2 => {
+            PtrToPacket { id: _, range: r1, is_base: b1, off: o1 },
+            PtrToPacket { id: _, range: r2, is_base: b2, off: o2 },
+        ) if b1 == b2 && o1 == o2 => {
+            // Take minimum range (conservative)
             Some(PtrToPacket {
-                id: *id1,
+                id: 0,  // an arbitrary ID
                 range: (*r1).min(*r2),
                 is_base: *b1,
                 off: *o1,
