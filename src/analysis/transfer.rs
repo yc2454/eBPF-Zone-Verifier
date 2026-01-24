@@ -683,7 +683,9 @@ fn check_interval_64(op: CmpOp, min: i64, max: i64, r: i64) -> Option<bool> {
     match op {
         // Unsigned logic (cast to u64)
         CmpOp::UGt => if (min as u64) > (r as u64) { Some(true) } else if (max as u64) <= (r as u64) { Some(false) } else { None },
-        // ... (Implement other unsigned ops if needed for static pruning) ...
+        CmpOp::ULt => if (max as u64) < (r as u64) { Some(true) } else if (min as u64) >= (r as u64) { Some(false) } else { None },
+        CmpOp::UGe => if (min as u64) >= (r as u64) { Some(true) } else if (max as u64) < (r as u64) { Some(false) } else { None },
+        CmpOp::ULe => if (max as u64) <= (r as u64) { Some(true) } else if (min as u64) > (r as u64) { Some(false) } else { None },
         
         // Signed logic (use i64 directly)
         CmpOp::SLt => if max < r { Some(true) } else if min >= r { Some(false) } else { None },

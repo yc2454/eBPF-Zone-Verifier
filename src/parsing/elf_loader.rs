@@ -108,8 +108,52 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
     for (_i, sh) in elf.section_headers.iter().enumerate() {
         if let Some(name) = elf.shdr_strtab.get_at(sh.sh_name) {
             if name == "maps" || name == ".maps" {
-                // ... (Existing Legacy Parsing Code) ...
-                // Keep your existing code here! 
+                // 1. Get the raw bytes for this section
+                let start = sh.sh_offset as usize;
+                let end = start + sh.sh_size as usize;
+                
+                if end > buf.len() {
+                    eprintln!("Warning: 'maps' section extends beyond file buffer");
+                    continue;
+                }
+                
+                let section_data = &buf[start..end];
+                
+                // Legacy bpf_map_def is 20 bytes (5 * u32)
+                const MAP_DEF_SIZE: usize = 20;
+
+                // 2. Iterate over symbols to find maps defined in this section
+                for sym in elf.syms.iter() {
+                    // Check if symbol belongs to this section index (_i)
+                    if sym.st_shndx == _i {
+                        if let Some(map_name) = elf.strtab.get_at(sym.st_name) {
+                            let offset = sym.st_value as usize;
+
+                            // Ensure we can read the full struct
+                            if offset + MAP_DEF_SIZE <= section_data.len() {
+                                let b = &section_data[offset..offset + MAP_DEF_SIZE];
+                                
+                                // Parse fields (Little Endian)
+                                let type_ = u32::from_le_bytes(b[0..4].try_into().unwrap());
+                                let key_size = u32::from_le_bytes(b[4..8].try_into().unwrap());
+                                let value_size = u32::from_le_bytes(b[8..12].try_into().unwrap());
+                                let max_entries = u32::from_le_bytes(b[12..16].try_into().unwrap());
+                                let map_flags = u32::from_le_bytes(b[16..20].try_into().unwrap());
+                                
+                                maps.push(BpfMapDef {
+                                    name: map_name.to_string(),
+                                    type_,           // Matches your struct field
+                                    key_size,
+                                    value_size,
+                                    max_entries,
+                                    map_flags,       // Matches your struct field
+                                    btf_val_type_id: None, // Legacy maps don't have BTF IDs here
+                                    initial_data: None,    // Legacy maps don't support initial data
+                                });
+                            }
+                        }
+                    }
+                }
             } 
             else if name == ".BTF" {
                 let start = sh.sh_offset as usize;

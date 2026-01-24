@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use chrono::Local;
 
-// ... (FileResult struct and helper functions remain the same) ...
 struct FileResult {
     file_name: String,
     project: String,

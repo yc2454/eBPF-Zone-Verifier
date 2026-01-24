@@ -54,10 +54,21 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
         let src = reg_to_var(insn.src);
 
         if insn.code == 0x18 {
-            // ... (Validation checks keep as is) ...
-            if pc + 1 >= raw.len() { /* ... error ... */ }
+            if pc + 1 >= raw.len() { 
+                return Err(LowerError {
+                    pc,
+                    code: insn.code,
+                    msg: "unexpected end of instructions after LDDW".to_string(),
+                });
+            }
             let cont = &raw[pc + 1];
-            if cont.code != 0x00 { /* ... error ... */ }
+            if cont.code != 0x00 { 
+                return Err(LowerError {
+                    pc,
+                    code: cont.code,
+                    msg: "expected continuation instruction after LDDW".to_string(),
+                });
+            }
 
             let low: u32 = insn.imm as u32;
             let high: u32 = cont.imm as u32;
