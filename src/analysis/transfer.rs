@@ -22,7 +22,7 @@ use crate::parsing::ctx_model::{
 use crate::analysis::env::VerificationError;
 use crate::zone::dbm::Dbm;
 use crate::analysis::constants;
-use log::{error};
+use log::{error, info};
 
 pub fn transfer(
     env: &mut VerifierEnv,
@@ -71,6 +71,10 @@ pub fn transfer(
                     // Safest is to do nothing for U64 upper bound, or assume it's scalar.
                 }
             }
+
+            // Update tnum
+            state.set_tnum(*dst, Tnum::unknown());
+
             state.pc += 1;
             vec![state]
         },
@@ -221,11 +225,23 @@ fn transfer_alu(
             }
         }
         AluOp::And => {
+            let (min_op, max_op) = get_bounds(&mut state.dbm, dst);
+            let input_nonnegative = min_op.map_or(false, |m| m >= 0);
+
             forget(&mut state.dbm, dst);
+
             if let Operand::Imm(mask) = src {
                 let mask = if width == Width::W32 { (mask as u32) as i64 } else { mask };
                 if mask >= 0 {
                     assign_and_mask(&mut state.dbm, dst, mask);
+                } else if input_nonnegative {
+                    // Negative mask with non-negative input:
+                    // Result is in [0, min(input_max, mask as unsigned)]
+                    // Safe approximation: [0, input_max]
+                    assume_ge_const(&mut state.dbm, dst, 0);
+                    if let Some(max) = max_op {
+                        assume_le_const(&mut state.dbm, dst, max);
+                    }
                 }
             } else if let Operand::Reg(_) = src {
                 // AND with register - result is non-negative if both operands are

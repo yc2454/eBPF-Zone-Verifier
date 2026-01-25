@@ -3,6 +3,7 @@ use crate::zone::dbm::Dbm;
 use crate::analysis::reg_types::TypeState;
 use crate::zone::tnum::Tnum;
 use crate::zone::domain::Reg;
+use std::collections::HashMap;
 
 /// Mirrors `struct bpf_verifier_state` (partially).
 /// Holds the snapshot of execution at a specific PC.
@@ -22,17 +23,24 @@ pub struct State {
     /// History Index (for history tracking, optional)
     pub history_idx: Option<usize>,
 
-    pub tnums: [Tnum; 11], // tnum info for R0-R10
+    pub tnums: HashMap<Reg, Tnum>, // tnum info for R0-R10
 }
 
 impl State {
     pub fn new(dbm: Dbm, pc: usize) -> Self {
+        let mut tnums = HashMap::new();
+        tnums.insert(Reg::Zero, Tnum::constant(0));
+        for r in Reg::ALL {
+            if r != Reg::Zero {
+                tnums.insert(r, Tnum::unknown());
+            }
+        }
         State {
             types: TypeState::new_not_init(),
             dbm,
             pc,
             history_idx: None,
-            tnums: [Tnum::unknown(); 11],
+            tnums: tnums.clone(),
         }
     }
 
@@ -40,13 +48,19 @@ impl State {
     pub fn get_tnum(&self, r: Reg) -> Tnum {
         match r {
             Reg::Zero => Tnum::constant(0),
-            _ => self.tnums[r.idx() - 1],  // R0 is idx 1, stored at [0]
+            _ => {
+                let t_op = self.tnums.get(&r);
+                match t_op {
+                    Some(t) => *t,
+                    None => Tnum::unknown()
+                }
+            }
         }
     }
     
     pub fn set_tnum(&mut self, r: Reg, t: Tnum) {
         if r != Reg::Zero {
-            self.tnums[r.idx() - 1] = t;
+            self.tnums.insert(r, t);
         }
     }
 }

@@ -139,7 +139,7 @@ impl Dbm {
             print!("{:>5} ", vi.name());
             for (col_idx, _vj) in vars.iter().enumerate() {
                 let v = self.data[row_idx][col_idx];
-                if v >= INF / 2 {
+                if v >= INF {
                     print!("{:>8} ", "INF");
                 } else {
                     print!("{:>8} ", v);
@@ -152,23 +152,20 @@ impl Dbm {
     }
 
     pub fn pretty_print(&self) {
-        let zero = Reg::Zero; // Assuming 11 is your Zero/R10 reference index
+        let zero = Reg::Zero;
         println!("  Bounds:");
         for i in 0..self.dim() {
             let Some(i) = Reg::idx_to_reg(i) else { continue; };
-            if i == zero { continue; } // Don't print zero vs zero
+            if i == zero { continue; }
             
-            // Get constraints relative to Zero
-            let min = self.get(i, zero);
-            let max = self.get(zero, i);
+            let ub = self.get(i, zero);      // x - 0 ≤ ub  →  x ≤ ub
+            let lb_neg = self.get(zero, i);  // 0 - x ≤ lb_neg  →  x ≥ -lb_neg
             
-            // Convert to readable strings
-            let min_str = if min == i64::MAX { "-INF".to_string() } else { (-min).to_string() };
-            let max_str = if max == i64::MAX { "+INF".to_string() } else { max.to_string() };
+            let min_str = if lb_neg >= INF { "-INF".to_string() } else { (-lb_neg).to_string() };
+            let max_str = if ub >= INF { "+INF".to_string() } else { ub.to_string() };
             
-            // Only print if constrained
             if min_str != "-INF" || max_str != "+INF" {
-                println!("    R{}: [{}, {}]", i.idx(), min_str, max_str);
+                println!("    {}: [{}, {}]", i.name(), min_str, max_str);
             }
         }
     }

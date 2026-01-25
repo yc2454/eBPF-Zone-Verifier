@@ -8,7 +8,7 @@ use crate::analysis::env::VerificationError;
 use crate::analysis::constants;
 use crate::parsing::ctx_model;
 use crate::parsing::ctx_model::MemRegionId;
-use log::{error};
+use log::{error, info};
 use RegType::*;
 use crate::zone::domain::Reg;
 
@@ -272,6 +272,7 @@ pub fn check_store(
             }
         }
         PtrToStack { offset } => {
+            info!("Checking stack store");
             check_stack_access(env, state, base, offset, off as i64, access_size as i64, pc);
         }
         PtrToPacket { id: _, range, is_base: _, off: off_from_packet } => {
@@ -355,9 +356,9 @@ fn check_stack_access(
     size: i64,          // access size in bytes
     pc: usize,
 ) {
-    
     match offset {
         Some(base_off) => {
+            info!("Check stack access with base {}, off {}", base_off, off);
             // Precise case
             let actual_offset = base_off + off;
             let access_end = actual_offset + size;
@@ -372,6 +373,7 @@ fn check_stack_access(
             }
         }
         None => {
+            info!("Unknown offset. Using DBM to prove safety");
             // Unknown base offset - use DBM to prove safety
             let (lo, hi) = get_relative_bound(&state.dbm, base, Reg::R10);
             

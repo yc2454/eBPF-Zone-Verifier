@@ -102,23 +102,6 @@ impl Tnum {
         // - 1 & ? = ? (unknown)
         // - ? & ? = ? (unknown)
         let value = self.value & other.value;
-        let mu = self.mask | other.mask; // Bits unknown in either input
-        let mask = mu & !value; // Unknown unless both inputs have known-1
-        
-        // Wait, let me reconsider:
-        // If self has known-0, result is known-0 regardless of other
-        // If other has known-0, result is known-0 regardless of self
-        // If both have known-1, result is known-1
-        // Otherwise unknown
-        
-        // known-0 in self: bit NOT in (self.value | self.mask)
-        // known-0 in other: bit NOT in (other.value | other.mask)
-        
-        // Actually the simple formula:
-        // value = self.value & other.value (known-1 only if both are known-1)
-        // mask = bits that COULD be 1 but aren't definitely 1
-        //      = (self could be 1) & (other could be 1) & !(definitely 1)
-        //      = (self.value | self.mask) & (other.value | other.mask) & !value
         let alpha = self.value | self.mask;  // bits that could be 1 in self
         let beta = other.value | other.mask; // bits that could be 1 in other
         let mask = (alpha & beta) & !value;
