@@ -587,6 +587,20 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 }
             },
 
+            // 0x35: JGE_K (if u64(dst) >= u64(imm) goto target)
+            0x35 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::UGe,
+                    // The immediate is sign-extended from i32 to i64, 
+                    // but the comparison treats the bits as unsigned.
+                    right: Operand::Imm(insn.imm as i64),
+                    target,
+                }
+            },
+
             // 0x3d: JGE_X (if dst >= src goto target, 64-bit)
             0x3d => {
                 let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
@@ -922,12 +936,12 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 off: insn.off as i16,
             },
 
-            // 0x6b: STXH *(u16 *)(dst + off) = src
-            0x6b => Instr::Store {
-                size: MemSize::U16,
-                base: dst,               // for stores, dst is the base register
-                off: insn.off,
-                src,                     // value comes from src register
+            // 0x62: BPF_ST | BPF_MEM | BPF_W ( *(u32 *)(dst + off) = imm )
+            0x62 => Instr::Store {
+                size: MemSize::U32,
+                base: dst,
+                off: insn.off as i16,
+                src: Operand::Imm(insn.imm as i64),
             },
 
             // 0x63: STXW *(u32 *)(dst + off) = src
@@ -935,7 +949,31 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 size: MemSize::U32,
                 base: dst,        // dst field is the base register for stores
                 off: insn.off,
-                src,              // src field is the value register
+                src: Operand::Reg(src),              // src field is the value register
+            },
+
+            // 0x6a: BPF_ST | BPF_MEM | BPF_H ( *(u16 *)(dst + off) = imm )
+            0x6a => Instr::Store {
+                size: MemSize::U16,
+                base: dst,
+                off: insn.off as i16,
+                src: Operand::Imm(insn.imm as i64),
+            },
+
+            // 0x6b: STXH *(u16 *)(dst + off) = src
+            0x6b => Instr::Store {
+                size: MemSize::U16,
+                base: dst,               // for stores, dst is the base register
+                off: insn.off,
+                src: Operand::Reg(src),                     // value comes from src register
+            },
+
+            // 0x72: BPF_ST | BPF_MEM | BPF_B ( *(u8 *)(dst + off) = imm )
+            0x72 => Instr::Store {
+                size: MemSize::U8,
+                base: dst,
+                off: insn.off as i16,
+                src: Operand::Imm(insn.imm as i64),
             },
 
             // 0x73: STXB *(u8 *)(dst + off) = src
@@ -943,7 +981,15 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 size: MemSize::U8,
                 base: dst,           // dst field is the base register for stores
                 off: insn.off as i16,
-                src,                 // src field is the value register
+                src: Operand::Reg(src),                 // src field is the value register
+            },
+
+            // 0x7a: ST_MEM_DW ( *(u64 *)(dst + off) = imm32 )
+            0x7a => Instr::Store {
+                size: MemSize::U64,
+                base: dst,                         // Base address register (e.g., r10)
+                off: insn.off as i16,                          // Offset (e.g., -8)
+                src: Operand::Imm(insn.imm as i64) // The value to write (sign-extended to 64-bit)
             },
 
             // 0x7b: STXDW *(u64 *)(dst + off) = src
@@ -951,7 +997,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 size: MemSize::U64,
                 base: dst,
                 off: insn.off,
-                src,
+                src: Operand::Reg(src),
             },
 
             // 0x85: call imm (JMP | CALL)
@@ -997,5 +1043,5 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
         pc += 1;
     }
 
-    Ok(Program { instrs, name: "".to_string(), pc_map, section_idx: 0 })
+    Ok(Program { instrs })
 }

@@ -8,12 +8,14 @@ mod misc;
 mod logging;
 mod runner;
 mod benchmark;
+mod selftest;
 
 use crate::misc::config::VerifierConfig;
 use crate::parsing::elf_loader::{load_maps, load_raw_programs, list_section_names};
 use crate::logging::{FilterConfig};
 use crate::runner::{Analyzer, AnalysisResult, find_section_for_func, is_code_section};
 use crate::benchmark::analyze_benchmark;
+use crate::selftest::{selftest_run, selftest_suite};
 
 fn usage() {
     eprintln!("Usage:");
@@ -237,6 +239,36 @@ fn main() {
             }
             let dir_path = &remaining[1];
             analyze_benchmark(dir_path, &config);
+        }
+
+        // ============================================================
+        // Selftest: Run single JSON test file
+        // ============================================================
+        "selftest-run" => {
+            if remaining.len() < 2 {
+                eprintln!("Error: Missing JSON test file path");
+                usage();
+                return;
+            }
+            let json_path = &remaining[1];
+            let output_dir = Some("./results/selftest");
+            
+            selftest_run(json_path, &config, output_dir);
+        }
+
+        // ============================================================
+        // Selftest: Run all JSON files in directory
+        // ============================================================
+        "selftest-suite" => {
+            if remaining.len() < 2 {
+                eprintln!("Error: Missing JSON test directory path");
+                usage();
+                return;
+            }
+            let json_dir = &remaining[1];
+            let output_dir = Some("./results/selftest");
+            
+            selftest_suite(json_dir, &config, output_dir);
         }
 
         _ => {

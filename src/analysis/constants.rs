@@ -179,9 +179,9 @@ pub const MAX_INSN_PROCESSED: usize = 1_000_000;
 pub const MAX_TAIL_CALL_DEPTH: u32 = 33;
 pub const LOG_HEARTBEAT_INTERVAL: usize = 10_000;
 
-// src/constants.rs (or wherever your constants live)
-
+// ============================================================================
 // BPF Map Types (from linux/bpf.h)
+// ============================================================================
 pub const BPF_MAP_TYPE_UNSPEC: u32 = 0;
 pub const BPF_MAP_TYPE_HASH: u32 = 1;
 pub const BPF_MAP_TYPE_ARRAY: u32 = 2;
@@ -239,3 +239,27 @@ pub const BPF_SKC_TO_UDP6_SOCK: u32 = 129;
 pub const BPF_SKC_TO_UNIX_SOCK: u32 = 130;
 pub const BPF_SK_CGROUP_ID: u32 = 128;
 pub const BPF_SK_ANCESTOR_CGROUP_ID: u32 = 129;
+
+// ===========================================================================
+// BPF Program Types
+// ===========================================================================
+pub const BPF_PROG_TYPE_UNSPEC: u32 = 0;
+pub const BPF_PROG_TYPE_SOCKET_FILTER: u32 = 1;
+pub const BPF_PROG_TYPE_KPROBE: u32 = 2;
+pub const BPF_PROG_TYPE_SCHED_CLS: u32 = 3;
+pub const BPF_PROG_TYPE_SCHED_ACT: u32 = 4;
+pub const BPF_PROG_TYPE_TRACEPOINT: u32 = 5;
+pub const BPF_PROG_TYPE_XDP: u32 = 6;
+pub const BPF_PROG_TYPE_PERF_EVENT: u32 = 7;
+pub const BPF_PROG_TYPE_CGROUP_SKB: u32 = 8;
+pub const BPF_PROG_TYPE_CGROUP_SOCK: u32 = 9;
+pub const BPF_PROG_TYPE_LWT_IN: u32 = 10;
+pub const BPF_PROG_TYPE_LWT_OUT: u32 = 11;
+pub const BPF_PROG_TYPE_LWT_XMIT: u32 = 12;
+pub const BPF_PROG_TYPE_SOCK_OPS: u32 = 13;
+pub const BPF_PROG_TYPE_SK_SKB: u32 = 14;
+pub const BPF_PROG_TYPE_CGROUP_DEVICE: u32 = 15;
+pub const BPF_PROG_TYPE_SK_MSG: u32 = 16;
+pub const BPF_PROG_TYPE_RAW_TRACEPOINT: u32 = 17;
+pub const BPF_PROG_TYPE_CGROUP_SOCK_ADDR: u32 = 18;
+pub const BPF_PROG_TYPE_LSM: u32 = 19;

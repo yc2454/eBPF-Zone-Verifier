@@ -73,7 +73,12 @@ pub fn transfer(
         },
         Instr::Store { size, base, off, src } => {
             access::check_store(env, &state, *base, *size, *off);
-            let src_type = state.types.get(*src);
+            let src_type = {
+                match src {
+                    Operand::Reg(r) => state.types.get(*r),
+                    Operand::Imm(_) => RegType::ScalarValue,
+                }
+            };
             let base_type = state.types.get(*base);
             update_store_types(&mut state.types, src_type, *size, base_type, *off);
             state.pc += 1;

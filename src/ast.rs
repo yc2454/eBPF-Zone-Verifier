@@ -112,7 +112,7 @@ pub enum Instr {
         size: MemSize,
         base: Reg,
         off: i16,
-        src: Reg,
+        src: Operand,
     },
 
     /// 'lock *(size *)(base + off) += src'
@@ -237,10 +237,7 @@ impl ProgramKind {
 
 #[derive(Debug, Clone)]
 pub struct Program {
-    pub name: String,
     pub instrs: Vec<Instr>,
-    pub section_idx: usize,
-    pub pc_map: Vec<usize>,
 }
 
 impl fmt::Display for Instr {
@@ -344,7 +341,11 @@ impl fmt::Display for Instr {
                     MemSize::U32 => "u32",
                     MemSize::U64 => "u64",
                 };
-                write!(f, "*({} *)({} + {}) = {}", size_str, base.name(), off, src.name())
+                let src_str = match src {
+                    Operand::Reg(r) => r.name().to_string(),
+                    Operand::Imm(i) => format!("{}", i),
+                };
+                write!(f, "*({} *)({} + {}) = {}", size_str, base.name(), off, src_str)
             },
 
             AtomicAdd { size, base, off, src } => {
