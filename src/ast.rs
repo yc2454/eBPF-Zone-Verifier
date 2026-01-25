@@ -36,6 +36,7 @@ pub enum AluOp {
 pub enum CmpOp {
     UGe, ULe, UGt, ULt,
     Eq, Ne, SLt, SGt, SLe, SGe,
+    Test, // special case for BPF_JSET
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -314,6 +315,7 @@ impl fmt::Display for Instr {
                     CmpOp::SGt => ">",
                     CmpOp::SLe => "<=",
                     CmpOp::SGe => ">=",
+                    CmpOp::Test => "&",
                 };
                 let right_str = match right {
                     Operand::Reg(r) => r.name().to_string(),

@@ -673,7 +673,7 @@ fn eval_static_branch(
                     return Some(vec![s]);
                 }
             }
-            _ => {}
+            _ => {} // Other ops handled below
         }
     }
 
@@ -724,8 +724,20 @@ fn check_interval_64(op: CmpOp, min: i64, max: i64, r: i64) -> Option<bool> {
         // Signed logic (use i64 directly)
         CmpOp::SLt => if max < r { Some(true) } else if min >= r { Some(false) } else { None },
         CmpOp::SGt => if min > r { Some(true) } else if max <= r { Some(false) } else { None },
+        CmpOp::SGe => if min >= r { Some(true) } else if max < r { Some(false) } else { None },
+        CmpOp::SLe => if max <= r { Some(true) } else if min > r { Some(false) } else { None },
+
+        // Equality
         CmpOp::Eq => if min == max && min == r { Some(true) } else if min > r || max < r { Some(false) } else { None },
-        _ => None, // Todo: Implement others
+        CmpOp::Ne => if min == max && min != r { Some(true) } else if min > r || max < r { Some(false) } else { None },
+
+        // Test
+        CmpOp::Test => {
+            // x & r != 0
+            if (min & r) != 0 && (max & r) != 0 { Some(true) }
+            else if (min & r) == 0 && (max & r) == 0 { Some(false) }
+            else { None }
+        }
     }
 }
 
@@ -762,9 +774,41 @@ fn check_interval_32(op: CmpOp, min: i64, max: i64, r: i64) -> Option<bool> {
             else if max_i32 <= r_i32 { Some(false) }
             else { None }
         },
+        // Signed 32-bit Greater or Equal
+        CmpOp::SGe => {
+            let min_i32 = min_u32 as i32;
+            let max_i32 = max_u32 as i32;
+            let r_i32 = r_u32 as i32;
+            if min_i32 >= r_i32 { Some(true) }
+            else if max_i32 < r_i32 { Some(false) }
+            else { None }
+        },
+        // Signed 32-bit Less or Equal
+        CmpOp::SLe => {
+            let min_i32 = min_u32 as i32;
+            let max_i32 = max_u32 as i32;
+            let r_i32 = r_u32 as i32;
+            if max_i32 <= r_i32 { Some(true) }
+            else if min_i32 > r_i32 { Some(false) }
+            else { None }
+        },
+        // Unsigned 32-bit checks
+        CmpOp::UGt => if max_u32 > r_u32 { Some(true) } else if min_u32 <= r_u32 { Some(false) } else { None },
+        CmpOp::ULt => if max_u32 < r_u32 { Some(true) } else if min_u32 >= r_u32 { Some(false) } else { None },
+        CmpOp::UGe => if min_u32 >= r_u32 { Some(true) } else if max_u32 < r_u32 { Some(false) } else { None },
+        CmpOp::ULe => if max_u32 <= r_u32 { Some(true) } else if min_u32 > r_u32 { Some(false) } else { None },
+        
         // Unsigned checks
         CmpOp::Eq => if min_u32 == max_u32 && min_u32 == r_u32 { Some(true) } else if min_u32 > r_u32 || max_u32 < r_u32 { Some(false) } else { None },
-        _ => None, 
+        CmpOp::Ne => if min_u32 == max_u32 && min_u32 != r_u32 { Some(true) } else if min_u32 > r_u32 || max_u32 < r_u32 { Some(false) } else { None },
+
+        // Test
+        CmpOp::Test => {
+            // x & r != 0
+            if (min_u32 & r_u32) != 0 && (max_u32 & r_u32) != 0 { Some(true) }
+            else if (min_u32 & r_u32) == 0 && (max_u32 & r_u32) == 0 { Some(false) }
+            else { None }
+        }
     }
 }
 
@@ -845,10 +889,23 @@ fn apply_imm_constraints(
                 }
                 // Fall through to standard constraint logic
             }
-            
-            // Unsigned 32-bit comparisons: the immediate is zero-extended
-            // These are generally safe since we compare unsigned values
-            _ => {}
+
+            CmpOp::UGe | CmpOp::ULe | CmpOp::UGt | CmpOp::ULt => {
+                // Unsigned comparisons can always be applied safely in 32-bit
+            }
+
+            CmpOp::Eq | CmpOp::Ne => {
+                // Equality checks can always be applied safely
+            }
+
+            CmpOp::Test => {
+                // Test against immediate in 32-bit
+                // We can only safely apply constraints if the value fits in u32
+                if !fits_in_u32_range(&then_s.dbm, left) {
+                    return; // Can't safely add constraints
+                }
+                // Fall through to standard constraint logic
+            }
         }
     }
 
@@ -914,6 +971,10 @@ fn apply_imm_constraints(
             assume_less_than(&mut then_s.dbm, left, imm);
             assume_ge_const(&mut else_s.dbm, left, imm);
         }
+        CmpOp::Test => {
+            // x & imm != 0
+            // Skip for now
+        }
     }
 }
 
@@ -940,7 +1001,7 @@ fn apply_reg_constraints(
                     return;
                 }
             }
-            _ => {}
+            | CmpOp::Eq | CmpOp::Ne | CmpOp::UGe | CmpOp::ULe | CmpOp::UGt | CmpOp::ULt | CmpOp::Test => { /* Other ops are safe */}
         }
     }
     
@@ -962,7 +1023,20 @@ fn apply_reg_constraints(
             assume_le_var_plus_const(&mut then_s.dbm, left, right, -1);
             assume_ge_var(&mut else_s.dbm, left, right);
         }
-        _ => {}
+        CmpOp::Eq => {
+            assign_eq(&mut then_s.dbm, left, right);
+            // For else branch, we can't express 'not equal' directly.
+            // So we over-approximate by not adding any constraint.
+        }
+        CmpOp::Ne => {
+            assign_eq(&mut else_s.dbm, left, right);
+            // For then branch, we can't express 'not equal' directly.
+            // So we over-approximate by not adding any constraint. 
+        }
+        CmpOp::Test => {
+            // x & y != 0
+            // No direct way to express in DBM, so skip
+        }
     }
     
     // Refine pointer ranges on both states
@@ -1488,7 +1562,21 @@ fn refine_branch(
                     // Fallthrough (False) -> reg != 0 -> SAFE
                     if !branch_taken { maybe_promote_map_val(types, *left); }
                 },
-                _ => {}
+                CmpOp::SGe | CmpOp::UGe | CmpOp::SGt | CmpOp::UGt => {
+                    // if (reg >= 0) goto Target;  or  if (reg > 0) goto Target;
+                    // Taken (True) -> reg >= 1 -> SAFE
+                    if branch_taken { maybe_promote_map_val(types, *left); }
+                },
+                CmpOp::SLe | CmpOp::ULe | CmpOp::SLt | CmpOp::ULt => {
+                    // if (reg <= 0) goto Target;  or  if (reg < 0) goto Target;
+                    // Fallthrough (False) -> reg >= 1 -> SAFE
+                    if !branch_taken { maybe_promote_map_val(types, *left); }
+                },
+                CmpOp::Test => {
+                    // if (reg & 0xFF != 0) goto Target;
+                    // Taken (True) -> reg != 0 -> SAFE
+                    if branch_taken { maybe_promote_map_val(types, *left); }
+                }
             }
         },
         _ => {}

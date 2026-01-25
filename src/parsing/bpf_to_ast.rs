@@ -595,6 +595,18 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 }
             },
 
+            // 0x36: JGE_K_32 (if (u32)dst >= imm32)
+            0x36 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst,
+                    op: CmpOp::UGe,
+                    right: Operand::Imm(insn.imm as i64),
+                    target,
+                }
+            },
+
             // 0x3d: JGE_X (if dst >= src goto target, 64-bit)
             0x3d => {
                 let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
@@ -614,6 +626,43 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     width: Width::W32,
                     left: dst,
                     op: CmpOp::UGe,
+                    right: Operand::Reg(src),
+                    target,
+                }
+            },
+
+            // 0x46: JSET_K_32 (if (u32)dst & imm32)
+            0x46 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst,
+                    op: CmpOp::Test, // You might need to add CmpOp::Test or map to BitsAnd
+                    right: Operand::Imm(insn.imm as i64),
+                    target,
+                } 
+            },
+
+            // 0x4d: JSET_X_64 (if (u64)dst & (u64)src)
+            // Class: BPF_JMP (0x05) | Op: BPF_JSET (0x40) | Src: BPF_X (0x08)
+            0x4d => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::Test, // Uses the 'Test' op we just discussed
+                    right: Operand::Reg(src),
+                    target,
+                }
+            },
+
+            // 0x4e: JSET_X_32 (if (u32)dst & (u32)src)
+            0x4e => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst,
+                    op: CmpOp::Test, 
                     right: Operand::Reg(src),
                     target,
                 }
@@ -711,6 +760,43 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     width: Width::W32,
                     left: dst,
                     op: CmpOp::UGt, // MVP: Map to unsigned bucket (no refinement)
+                    right: Operand::Reg(src),
+                    target,
+                }
+            },
+
+            // 0x75: JSGE_K_64 (if (s64)dst >= imm)
+            // Class: BPF_JMP (0x05) | Op: BPF_JSGE (0x70) | Src: BPF_K (0x00)
+            0x75 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::SGe,
+                    right: Operand::Imm(insn.imm as i64),
+                    target,
+                }
+            },
+
+            // 0x76: JSGE_K_32 (if (s32)dst >= imm32)
+            0x76 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst,
+                    op: CmpOp::SGe,
+                    right: Operand::Imm(insn.imm as i64),
+                    target,
+                }
+            },
+
+            // 0x7e: JSGE_X_32 (if (s32)dst >= (s32)src)
+            0x7e => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W32,
+                    left: dst,
+                    op: CmpOp::SGe,
                     right: Operand::Reg(src),
                     target,
                 }
@@ -828,6 +914,18 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 }
             },
 
+            // 0xc5: JSLT_K_64 (if (s64)dst < imm)
+            0xc5 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::SLt,
+                    right: Operand::Imm(insn.imm as i64),
+                    target,
+                }
+            },
+
             // 0xc6: JSLT32_K (if (s32)dst < (s32)imm goto target)
             0xc6 => {
                 let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
@@ -849,6 +947,18 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     left: dst,
                     op: CmpOp::SLt,
                     right: Operand::Reg(src),
+                    target,
+                }
+            },
+
+            // 0xd5: JSLE_K_64 (if (s64)dst <= imm)
+            0xd5 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::SLe,
+                    right: Operand::Imm(insn.imm as i64),
                     target,
                 }
             },
