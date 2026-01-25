@@ -228,18 +228,47 @@ pub fn check_store(
 
     match base_ty {
         PtrToMapValue { offset: map_off, map_idx } => {
-            let final_offset = map_off.unwrap_or(0) + (off as i64);
-            let access_end = final_offset + access_size;
-            let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) { def.value_size as i64 } 
-            else { constants::DEFAULT_MAP_VALUE_SIZE as i64 };
-            if !(final_offset >= 0 && access_end <= map_limit) {
-                error!("Unsafe map store at pc {}: off {} limit {}", pc, final_offset, map_limit);
-                env.fail(VerificationError::UnsafeMapStore { 
-                    pc, 
-                    off: final_offset, 
-                    size,
-                    limit: map_limit
-                } );
+            let map_limit = 
+                if let Some(def) = ctx.map_defs.get(map_idx) { def.value_size as i64 } 
+                else { constants::DEFAULT_MAP_VALUE_SIZE as i64 };
+            if let Some(fixed_off) = map_off {
+                let final_offset = fixed_off + (off as i64);
+                let access_end = final_offset + access_size;
+                if !(final_offset >= 0 && access_end <= map_limit) {
+                    error!("Unsafe map store (constant) at pc {}: off {} limit {}", pc, final_offset, map_limit);
+                    env.fail(VerificationError::UnsafeMapStore { 
+                        pc, 
+                        off: final_offset, 
+                        size,
+                        limit: map_limit
+                    } );
+                }
+            } else {
+                // Variable/unknown offset - use DBM to check
+                let (dbm_min, dbm_max) = get_bounds(&state.dbm, base);
+                match (dbm_min, dbm_max) {
+                    (Some(min_val), Some(max_val)) => {
+                        let access_start = min_val + (off as i64);
+                        let access_end = max_val + (off as i64) + (size as i64);
+                        if !(access_start >= 0 && access_end <= map_limit) {
+                            error!("Unsafe variable map store at pc {}: range [{}, {}], limit {}", 
+                                pc, access_start, access_end, map_limit);
+                            env.fail(VerificationError::UnsafeMapStore { 
+                                pc, 
+                                off: access_start, 
+                                size,
+                                limit: map_limit
+                            } );
+                        }
+                    },
+                    _ => {
+                        error!("Unbounded variable map store at pc {}", pc);
+                        state.dbm.pretty_print();
+                        env.fail(VerificationError::UnsafeMapStore { 
+                            pc, off: -1, size, limit: map_limit 
+                        });
+                    }
+                }
             }
         }
         PtrToStack { offset } => {

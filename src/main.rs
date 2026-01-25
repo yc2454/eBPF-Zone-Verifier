@@ -15,7 +15,7 @@ use crate::parsing::elf_loader::{load_maps, load_raw_programs, list_section_name
 use crate::logging::{FilterConfig};
 use crate::runner::{Analyzer, AnalysisResult, find_section_for_func, is_code_section};
 use crate::benchmark::analyze_benchmark;
-use crate::selftest::{selftest_run, selftest_suite};
+use crate::selftest::{selftest_run, selftest_suite, selftest_list, selftest_single};
 
 fn usage() {
     eprintln!("Usage:");
@@ -24,6 +24,10 @@ fn usage() {
     eprintln!("  cargo run -- [flags] elf-analyze-func <elf_path> <func_name>");
     eprintln!("  cargo run -- [flags] elf-analyze-prog <elf_path>");
     eprintln!("  cargo run -- [flags] elf-analyze-benchmark <dir_path>");
+    eprintln!("  cargo run -- [flags] selftest-list   <json_file>");
+    eprintln!("  cargo run -- [flags] selftest-single <json_file> <test_name>");
+    eprintln!("  cargo run -- [flags] selftest-run    <json_file>");
+    eprintln!("  cargo run -- [flags] selftest-suite  <json_dir>");
     eprintln!("");
     VerifierConfig::print_help();
     eprintln!("");
@@ -31,6 +35,10 @@ fn usage() {
     eprintln!("  cargo run -- elf-list ./bpf_host.o");
     eprintln!("  cargo run -- elf-analyze ./bpf_host.o tc");
     eprintln!("  cargo run -- elf-analyze-benchmark ./bpf-progs --project cilium");
+    eprintln!("  cargo run -- selftest-list <json_file>");
+    eprintln!("  cargo run -- selftest-single <json_file> <test_name>");
+    eprintln!("  cargo run -- selftest-run <json_file>");
+    eprintln!("  cargo run -- selftest-suite <json_dir>");
 }
 
 fn main() {
@@ -269,6 +277,35 @@ fn main() {
             let output_dir = Some("./results/selftest");
             
             selftest_suite(json_dir, &config, output_dir);
+        }
+
+        // ============================================================
+        // Selftest: List all tests in a JSON file
+        // ============================================================
+        "selftest-list" => {
+            if remaining.len() < 2 {
+                eprintln!("Error: Missing JSON test file path");
+                usage();
+                return;
+            }
+            let json_path = &remaining[1];
+            
+            selftest_list(json_path);
+        }
+
+        // ============================================================
+        // Selftest: Run a single test by name
+        // ============================================================
+        "selftest-single" => {
+            if remaining.len() < 3 {
+                eprintln!("Error: Missing arguments");
+                eprintln!("Usage: selftest-single <json_file> <test_name>");
+                return;
+            }
+            let json_path = &remaining[1];
+            let test_name = &remaining[2];
+            
+            selftest_single(json_path, test_name, &config);
         }
 
         _ => {
