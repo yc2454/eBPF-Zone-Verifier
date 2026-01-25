@@ -66,11 +66,12 @@ impl MemSize {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Instr {
-    /// rX = arg0 (your synthetic entry source)
+    /// rX = arg0
+    /// (Note: only used for entry point arg0 loading)
     MovArg0 { dst: Reg },
 
     /// dst = ALU(dst, src/imm)   (includes MOV as AluOp::Mov)
-    /// Width matters for BPF (wX vs rX). For now you can keep it and ignore in zones.
+    /// Width matters for BPF (wX vs rX).
     Alu {
         width: Width,
         op: AluOp,
@@ -99,7 +100,6 @@ pub enum Instr {
     },
 
     /// dst = *(size *)(base + off)
-    /// For now: treat as "unknown scalar into dst" unless base==r10 and you want stack checks.
     Load {
         size: MemSize,
         dst: Reg,
