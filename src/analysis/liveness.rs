@@ -142,6 +142,20 @@ fn get_use_def(instr: &Instr) -> (HashSet<Reg>, HashSet<Reg>) {
             defs.insert(Reg::R4);
             defs.insert(Reg::R5);
         }
+        Instr::CallRel { .. } => {
+            uses.insert(Reg::R1);
+            uses.insert(Reg::R2);
+            uses.insert(Reg::R3);
+            uses.insert(Reg::R4);
+            uses.insert(Reg::R5);
+            
+            defs.insert(Reg::R0);
+            defs.insert(Reg::R1);
+            defs.insert(Reg::R2);
+            defs.insert(Reg::R3);
+            defs.insert(Reg::R4);
+            defs.insert(Reg::R5);
+        }
         Instr::Exit => {
             uses.insert(Reg::R0); // Return value
         }

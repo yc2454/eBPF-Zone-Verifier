@@ -37,9 +37,12 @@ pub fn transfer(
 
     match instr {
         Instr::MovArg0 { dst } => transfer_mov_arg0(state, *dst),
-        Instr::Alu { width, op, dst, src } => transfer_alu(env, state, *width, *op, *dst, src.clone()),
-        Instr::Endian { dst, op, size, width } => transfer_endian(env, state, *dst, *op, *size, *width),
-        Instr::If { width, left, op, right, target } => transfer_if(env, state, *width, *left, *op, right.clone(), *target),
+        Instr::Alu { width, op, dst, src } => 
+            transfer_alu(env, state, *width, *op, *dst, src.clone()),
+        Instr::Endian { dst, op, size, width } => 
+            transfer_endian(env, state, *dst, *op, *size, *width),
+        Instr::If { width, left, op, right, target } => 
+            transfer_if(env, state, *width, *left, *op, right.clone(), *target),
         Instr::Load { size, dst, base, off } => {
             access::check_load(env, &state, *base, *size, *off);
             // Try to resolve concrete value from .rodata
@@ -99,6 +102,7 @@ pub fn transfer(
             vec![state]
         },
         Instr::Call { helper } => transfer_call(env, state, *helper),
+        Instr::CallRel { target } => transfer_call_rel(env, state, *target),
         Instr::Jmp { target } => {
             state.pc = *target;
             vec![state]
@@ -618,6 +622,46 @@ fn transfer_call(
     // 5. Advance PC and return
     state.pc += 1;
     vec![state]
+}
+
+pub fn transfer_call_rel(
+    _env: &mut VerifierEnv,
+    state: State,
+    target: usize,
+) -> Vec<State> {
+    // Branch 1: Enter the subprogram
+    // We pass the state exactly as-is (registers R1-R5 hold arguments).
+    // Note: Without stack frame isolation (R10 shift), this analysis conservatively 
+    // assumes the callee shares the SAME stack frame. This works but is restrictive 
+    // (callee overwriting fp[-8] will overwrite caller's fp[-8]).
+    let mut enter_state = state.clone();
+    enter_state.pc = target;
+
+    // Branch 2: The "Return" (Fallthrough) path
+    // We assume the function executes and returns.
+    // Since we don't know what happened, we must havoc caller-saved registers.
+    let mut return_state = state;
+    return_state.pc += 1;
+
+    // 1. Clobber R1-R5 (Arguments/Scratch)
+    // The callee is free to destroy these.
+    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+        forget(&mut return_state.dbm, r);
+        return_state.types.set(r, RegType::NotInit);
+    }
+
+    // 2. Define R0 (Return Value)
+    // We don't know what the function returned, so it's an Unknown Scalar.
+    forget(&mut return_state.dbm, Reg::R0);
+    return_state.types.set(Reg::R0, RegType::ScalarValue);
+
+    // 3. Stack Clobbering?
+    // Conservatively, we should strictly havoc the stack too if we passed pointers.
+    // However, standard BPF convention is that callees use their own stack frame.
+    // Since we aren't modeling frame pointers yet, leaving the stack 'as-is' 
+    // is the pragmatic choice (assuming the callee didn't corrupt it via pointers).
+
+    vec![enter_state, return_state]
 }
 
 // --- Helper Functions for If Branch Refinement ---

@@ -125,9 +125,14 @@ pub enum Instr {
         src: Reg,
     },
 
+    /// Standard helper call (src_reg = 0) 
     Call {
         helper: u32,
     },
+
+    // BPF-to-BPF Call (src_reg = 1)
+    // Target is an absolute PC index, resolved during parsing
+    CallRel { target: usize },
 
     Exit,
 }
@@ -367,6 +372,9 @@ impl fmt::Display for Instr {
 
             Call { helper } =>
                 write!(f, "call {}", helper),
+
+            CallRel { target } =>
+                write!(f, "call {}", target),
 
             Exit =>
                 write!(f, "exit"),

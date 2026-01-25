@@ -1,6 +1,7 @@
 // src/analysis/cfg.rs
 use crate::ast::{Program, Instr};
 use crate::analysis::env::VerifierEnv;
+use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum VisitState {
@@ -81,12 +82,99 @@ fn visit_insn(
 
             return Ok(succs);
         },
+        Instr::CallRel { target } => {
+            // 1. Push the Function Entry (The Call)
+            succs.push(*target);
+            init_explored_state(env, *target);
+
+            // 2. Push the Return Point (Fallthrough)
+            // We assume the function eventually returns.
+            if pc + 1 < n { 
+                succs.push(pc + 1); 
+                // The return point is a convergence point (many callers return here), 
+                // so it's a good candidate for pruning.
+                init_explored_state(env, pc + 1);
+            }
+            
+            return Ok(succs);
+        },
         _ => {
             // Should be covered by non-branch check above, but safe fallback
             if pc + 1 < n { succs.push(pc + 1); }
             Ok(succs)
         }
     }
+}
+
+pub fn check_subprogs(prog: &Program) -> Result<(), String> {
+    // 1. Identify all Function Entry Points
+    let mut func_starts = BTreeSet::new();
+    func_starts.insert(0);
+    
+    for insn in &prog.instrs {
+        if let Instr::CallRel { target } = insn {
+            func_starts.insert(*target);
+        }
+    }
+    
+    let starts: Vec<usize> = func_starts.into_iter().collect();
+
+    // 2. Iterate over each function range
+    for (i, &start) in starts.iter().enumerate() {
+        let end = starts.get(i + 1).cloned().unwrap_or(prog.instrs.len());
+
+        // A. Validate instructions within the function
+        for pc in start..end {
+            let insn = &prog.instrs[pc];
+            
+            // Helper: is target local?
+            let is_local = |t: usize| t >= start && t < end;
+
+            match insn {
+                Instr::Jmp { target } => {
+                    if !is_local(*target) {
+                        return Err(format!(
+                            "jump out of range at pc {}: target {} is outside function scope [{}, {})", 
+                            pc, target, start, end
+                        ));
+                    }
+                },
+                Instr::If { target, .. } => {
+                    if !is_local(*target) {
+                        return Err(format!(
+                            "jump out of range at pc {}: target {} is outside function scope [{}, {})", 
+                            pc, target, start, end
+                        ));
+                    }
+                },
+                Instr::CallRel { target } => {
+                     if *target >= prog.instrs.len() {
+                         return Err(format!("call out of bounds at pc {}: target {}", pc, target));
+                     }
+                },
+                _ => {}
+            }
+        }
+
+        // B. Validate the Function Terminator (The Fallthrough Check)
+        // Every function must end with JMP or EXIT. It cannot fall through to 'end'.
+        // The only exception is if 'end' is the end of the program (and even then, strict BPF requires Exit).
+        if end > 0 {
+            let last_pc = end - 1;
+            let last_insn = &prog.instrs[last_pc];
+
+            let is_terminator = match last_insn {
+                Instr::Jmp { .. } => true, // Unconditional jump
+                Instr::Exit => true,       // Exit
+                _ => false,                // Everything else falls through
+            };
+
+            if !is_terminator {
+                return Err(format!("last insn at pc {} is not an exit or jmp", last_pc));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Performs DFS to validate CFG and populate prune points via visit_insn.

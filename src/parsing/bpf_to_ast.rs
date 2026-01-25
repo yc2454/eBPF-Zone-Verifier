@@ -1105,9 +1105,32 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             },
 
             // 0x85: call imm (JMP | CALL)
-            0x85 => Instr::Call {
-                helper: insn.imm as u32,
-            },
+            0x85 => {
+                if src == Reg::R0 {
+                    // Standard Helper Call
+                    Instr::Call {
+                        helper: insn.imm as u32,
+                    }
+                } else if src == Reg::R1 {
+                    // BPF_PSEUDO_CALL (BPF-to-BPF Call)
+                    // imm is a 32-bit PC-relative offset
+                    let next_pc = pc as i64 + 1;
+                    let offset = insn.imm as i64;
+                    let target = next_pc + offset;
+
+                    // Verify bounds
+                    if target < 0 || target >= raw.len() as i64 {
+                        return Err(LowerError { 
+                            pc, 
+                            code: 0x85, 
+                            msg: "Call target out of bounds".to_string() })
+                    }
+
+                    Instr::CallRel { target: target as usize }
+                } else {
+                    return Err(LowerError { pc, code: 0x85, msg: "Invalid src register for call".to_string() })
+                }
+            }
 
             // 0xdb: ATOMIC_ADD_64 (lock *(u64 *)(dst + off) += src)
             0xdb => Instr::AtomicAdd {

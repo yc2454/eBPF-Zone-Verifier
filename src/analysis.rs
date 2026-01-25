@@ -41,6 +41,11 @@ pub fn analyze_program(
         }
     }
 
+    if let Err(e) = cfg::check_subprogs(prog) {
+        error!(target: "app", "[Analysis] CFG Error: {}", e);
+        return Err(env::VerificationError::CfgError(e));
+    }
+
     if let Err(e) = cfg::check_cfg(prog, &mut env) {
         error!(target: "app", "[Analysis] CFG Error: {}", e);
         return Err(env::VerificationError::CfgError(e));
