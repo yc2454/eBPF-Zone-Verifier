@@ -39,10 +39,9 @@ pub enum CmpOp {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum EndianKind {
-    Be16,
-    Be32,
-    Be64,
+pub enum EndianOp {
+    ToBe, // to big-endian
+    ToLe, // to little-endian
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,7 +81,9 @@ pub enum Instr {
     /// Endian conversion on a register (BPF_END)
     Endian {
         dst: Reg,
-        kind: EndianKind,
+        width: Width,
+        op: EndianOp,
+        size: u32,
     },
 
     /// if left (op) right goto target; else fallthrough
@@ -288,11 +289,15 @@ impl fmt::Display for Instr {
                 write!(f, "{} = {} {} {}", lhs, dst.name(), op_str, src_str)
             }
 
-            Endian { dst, kind } => {
-                let kind_str = match kind {
-                    EndianKind::Be16 => "be16",
-                    EndianKind::Be32 => "be32",
-                    EndianKind::Be64 => "be64",
+            Endian { dst, width: _, op, size } => {
+                let kind_str = match (op, size) {
+                    (EndianOp::ToBe, 16) => "be16",
+                    (EndianOp::ToBe, 32) => "be32",
+                    (EndianOp::ToBe, 64) => "be64",
+                    (EndianOp::ToLe, 16) => "le16",
+                    (EndianOp::ToLe, 32) => "le32",
+                    (EndianOp::ToLe, 64) => "le64",
+                    _ => "unknown",
                 };
                 write!(f, "{} = endian_{}", dst.name(), kind_str)
             },

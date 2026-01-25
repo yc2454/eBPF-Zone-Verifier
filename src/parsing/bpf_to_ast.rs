@@ -1,5 +1,5 @@
 // src/bpf_to_ast.rs
-use crate::ast::{AluOp, CmpOp, Instr, Operand, Program, Width, MemSize, EndianKind};
+use crate::ast::{AluOp, CmpOp, Instr, Operand, Program, Width, MemSize, EndianOp};
 use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::zone::domain::Reg;
 
@@ -473,27 +473,21 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
 
             // --- ENDIAN ---
             // 0xdc: BPF_END: endian conversion on dst.
-            // src (insn.src) encodes LE vs BE; imm encodes width (16/32/64).
-            // In your objdump you see: "r4 = be16 r4"  (imm == 16, BE).
-            0xdc => {
-                let bits = insn.imm as u32;
-                let kind = match bits {
-                    16 => EndianKind::Be16,
-                    32 => EndianKind::Be32,
-                    64 => EndianKind::Be64,
-                    _ => {
-                        return Err(LowerError {
-                            pc,
-                            code: insn.code,
-                            msg: format!("unsupported endian width imm={} for opcode 0xdc", bits),
-                        });
-                    }
-                };
+            0xdc => Instr::Endian { 
+                width: Width::W32,
+                dst: dst,
+                op: EndianOp::ToBe,
+                size: insn.imm as u32,
+            },
 
-                // MVP: ignore LE vs BE; we only handle BE semantics,
-                // and we approximate via range constraints in semantics.
-                Instr::Endian { dst, kind }
-            }
+            // 0xd7: END_LE_64 (dst = to_le_64(dst))
+            // Supports imm = 16, 32, 64
+            0xd7 => Instr::Endian {
+                width: Width::W64,
+                dst: dst,
+                op: EndianOp::ToLe,
+                size: insn.imm as u32,
+            },
 
             // --- JMP ---
             // 0x95: exit (JMP | EXIT)

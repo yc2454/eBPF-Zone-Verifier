@@ -2,7 +2,7 @@
 use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;
 use crate::analysis::reg_types::{RegType, TypeState, new_packet_id};
-use crate::ast::{Instr, AluOp, CmpOp, Operand, Width, EndianKind, MemSize, ProgramKind};
+use crate::ast::{Instr, AluOp, CmpOp, Operand, Width, EndianOp, MemSize, ProgramKind};
 use crate::zone::domain::{Reg, forget, get_bounds, 
     assign_add_imm, assign_add_reg, assign_eq, 
     assume_eq_const, assume_ge_const, assume_le_const, 
@@ -38,7 +38,7 @@ pub fn transfer(
     match instr {
         Instr::MovArg0 { dst } => transfer_mov_arg0(state, *dst),
         Instr::Alu { width, op, dst, src } => transfer_alu(env, state, *width, *op, *dst, src.clone()),
-        Instr::Endian { dst, kind } => transfer_endian(env, state, *dst, *kind),
+        Instr::Endian { dst, op, size, width } => transfer_endian(env, state, *dst, *op, *size, *width),
         Instr::If { width, left, op, right, target } => transfer_if(env, state, *width, *left, *op, right.clone(), *target),
         Instr::Load { size, dst, base, off } => {
             access::check_load(env, &state, *base, *size, *off);
@@ -438,21 +438,50 @@ fn transfer_endian(
     _env: &VerifierEnv,
     mut state: State,
     dst: Reg,
-    kind: EndianKind,
+    op: EndianOp,
+    size: u32,
+    width: Width
 ) -> Vec<State> {
-    forget(&mut state.dbm, dst);
-    let (lo, hi) = match kind {
-        EndianKind::Be16 => (0i64, 0x0000_ffff),
-        EndianKind::Be32 => (0i64, 0xffff_ffff),
-        EndianKind::Be64 => {
-             state.types.set(dst, RegType::ScalarValue);
-             state.pc += 1;
-             return vec![state];
-        }
-    };
-    assume_ge_const(&mut state.dbm, dst, lo);
-    assume_le_const(&mut state.dbm, dst, hi);
+    // 1. Types: Endian ops destroy pointers -> Scalar
     state.types.set(dst, RegType::ScalarValue);
+
+    match op {
+        EndianOp::ToLe => {
+            match size {
+                64 => { /* Identity for LE host; Keep constraints if Width::W64 */ },
+                32 => assign_and_mask(&mut state.dbm, dst, 0xFFFF_FFFF),
+                16 => assign_and_mask(&mut state.dbm, dst, 0xFFFF),
+                _  => forget(&mut state.dbm, dst),
+            }
+        },
+        EndianOp::ToBe => {
+            // Big Endian always swaps on LE host -> Value changes non-linearly
+            // We must forget the old value.
+            // However, we know the new max value based on the swap size.
+            match size {
+                16 => assign_and_mask(&mut state.dbm, dst, 0xFFFF),
+                32 => assign_and_mask(&mut state.dbm, dst, 0xFFFF_FFFF),
+                // 64-bit BE swap: Result is u64 (if Width::W64) or u32 (if Width::W32)
+                64 => forget(&mut state.dbm, dst),
+                _  => forget(&mut state.dbm, dst),
+            }
+        }
+    }
+
+    // 3. Handle Implicit 32-bit Zero Extension
+    // If this was 0xdc (Width::W32), the upper 32 bits are ALWAYS cleared.
+    // This provides a tighter bound [0, U32_MAX] even if the operation was "Unknown".
+    if width == Width::W32 {
+        // Safe intersection: intersect current bounds with [0, 0xFFFFFFFF]
+        // domain::assign_and_mask effectively does 'forget + bound', 
+        // but since we might have just set tighter bounds (like 0xFFFF) above,
+        // we use 'bit_and_const' or manual bounds to preserve them.
+        
+        // Simplest Sound Approach: Just enforce the mask. 
+        // If we already did mask 0xFFFF above, 0xFFFF & 0xFFFFFFFF == 0xFFFF (Safe).
+        bit_and_const(&mut state.dbm, dst, 0xFFFF_FFFF);
+    }
+
     state.pc += 1;
     vec![state]
 }
