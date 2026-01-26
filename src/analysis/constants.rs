@@ -28,6 +28,8 @@ pub const BPF_PERF_EVENT_OUTPUT: u32 = 25;
 pub const BPF_SKB_LOAD_BYTES: u32 = 26;
 pub const BPF_CSUM_DIFF: u32 = 28;
 pub const BPF_SKB_PULL_DATA: u32 = 39;
+pub const BPF_CSUM_UPDATE: u32 = 40;
+pub const BPF_GET_SOCKET_COOKIE: u32 = 46;
 pub const BPF_SKB_CHANGE_HEAD: u32 = 43;
 pub const BPF_XDP_ADJUST_HEAD: u32 = 44;
 pub const BPF_XDP_ADJUST_META: u32 = 54;
@@ -35,6 +37,7 @@ pub const BPF_SKB_CHANGE_TAIL: u32 = 38;
 pub const BPF_SKB_CHANGE_PROTO: u32 = 31;
 pub const BPF_SKB_ADJUST_ROOM: u32 = 50;
 pub const BPF_FIB_LOOKUP: u32 = 69;
+pub const BPF_SKB_ECN_SET_CE: u32 = 97;
 
 // ============================================================================
 // TC Context (__sk_buff) Field Offsets

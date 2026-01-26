@@ -156,6 +156,14 @@ pub fn get_relative_bound(dbm: &Dbm, x: Reg, y: Reg) -> (Option<i64>, Option<i64
     (lb_opt, ub_opt)
 }
 
+pub fn is_zero(dbm: &Dbm, x: Reg) -> bool {
+    if let (Some(l), Some(u)) = get_bounds(dbm, x) {
+        return l == u && l == 0;
+    } else {
+        return false;
+    }
+}
+
 // --- transfer functions ---
 // exec.rs wants a uniform name.
 pub fn forget(dbm: &mut Dbm, x: Reg) {

@@ -10,7 +10,8 @@ use crate::zone::domain::{Reg, forget, get_bounds,
     assume_gt_var, assume_le_var_plus_const, 
     assign_zero, assign_mul_imm, assign_and_mask,
     assign_div_imm, assign_div_reg,
-    bit_and_const, assign_neg, assign_sub_reg
+    bit_and_const, assign_neg, assign_sub_reg,
+    is_zero
 };
 use crate::analysis::access;
 use crate::zone::domain::proven_u32_range;
@@ -132,7 +133,7 @@ fn transfer_alu(
 ) -> Vec<State> {
     // Clone input types for logic that needs original values
     let in_types = state.types.clone();
-    
+
     update_alu_types(env, &in_types, &mut state.types, width, op, dst, &src, state.pc);
 
     // let dbm = &mut state.dbm;
@@ -573,10 +574,10 @@ fn transfer_call(
     if helper == constants::BPF_TAIL_CALL {
         // Validate arguments (optional warnings)
         if !matches!(in_types.get(Reg::R1), RegType::PtrToCtx) {
-            println!("[Verifier] Warning: tail_call R1 should be PTR_TO_CTX at pc {}", pc);
+            warn!("[Verifier] tail_call R1 should be PTR_TO_CTX at pc {}", pc);
         }
         if !matches!(in_types.get(Reg::R2), RegType::PtrToMapObject { .. }) {
-            println!("[Verifier] Warning: tail_call R2 should be PTR_TO_MAP at pc {}", pc);
+            warn!("[Verifier] tail_call R2 should be PTR_TO_MAP at pc {}", pc);
         }
         
         // Update types (clobber caller-saved, R0 = scalar)
@@ -1245,8 +1246,13 @@ fn update_alu_types(
                     (RegType::PtrToStack { offset: _ }, Operand::Reg(_)) => {
                         types.set(dst, RegType::PtrToStack { offset: None });
                     },
-                    (RegType::PtrToCtx, Operand::Imm(_)) => {
+                    (RegType::PtrToCtx, Operand::Imm(0)) => {
                         types.set(dst, RegType::PtrToCtx);
+                    },
+                    (RegType::PtrToCtx, Operand::Imm(_)) => {
+                        // PtrToCtx should not be altered. If it is, we invalidate the type
+                        // by setting it to ScalarValue
+                        types.set(dst, RegType::ScalarValue);
                     },
                     (RegType::PtrToMem { region, range }, Operand::Imm(k)) => {
                         let new_range = if *k > 0 { 
@@ -1282,7 +1288,11 @@ fn update_alu_types(
                         types.set(dst, RegType::PtrToStack { offset: offset.map(|o| o - k) });
                     },
                     RegType::PtrToCtx => {
-                        types.set(dst, RegType::PtrToCtx);
+                        if *k == 0 {
+                            types.set(dst, RegType::PtrToCtx);
+                        } else {
+                            types.set(dst, RegType::ScalarValue);
+                        }
                     },
                     RegType::PtrToMem { region, range } => {
                         let new_range = if *k > 0 { 
@@ -1298,6 +1308,18 @@ fn update_alu_types(
                 types.set(dst, RegType::ScalarValue);
             }
         },
+        AluOp::Mov => {
+            let dst_ty = in_types.get(dst);
+            if dst_ty.is_pointer() {
+                match (dst_ty, src) {
+                    (RegType::PtrToCtx, Operand::Imm(0)) => {
+                        types.set(dst, RegType::PtrToCtx); // We can set the pointer to null
+                    }
+                    // Otherwise, changing the pointer will result in invalidation
+                    _ => types.set(dst, RegType::ScalarValue),
+                }
+            }
+        }
         _ => types.set(dst, RegType::ScalarValue),
     }
 }
@@ -1725,6 +1747,18 @@ fn validate_helper_args(
             let key_size = get_map_key_size(types.get(Reg::R1), env);
             if let Some(size) = key_size {
                 check_readable_arg(env, state, types, Reg::R2, size, pc);
+            }
+        }
+        constants::BPF_GET_SOCKET_COOKIE | constants::BPF_CSUM_UPDATE  => { 
+            // R1 must be PtrToCtx
+            if !matches!(types.get(Reg::R1), RegType::PtrToCtx) {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            }
+        }
+        constants::BPF_SKB_ECN_SET_CE => {
+            // R1 can be PtrToCtx or NULL
+            if !matches!(types.get(Reg::R1), RegType::PtrToCtx) && !is_zero(&state.dbm, Reg::R1) {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
             }
         }
         _ => {

@@ -437,6 +437,11 @@ struct __sk_buff {
 #define BPF_FUNC_ringbuf_submit         132
 #define BPF_FUNC_ringbuf_discard        133
 #define BPF_FUNC_ringbuf_query          134
+#define BPF_FUNC_get_netns_cookie       97
+#define BPF_FUNC_get_current_ancestor_cgroup_id 98
+#define BPF_FUNC_check_mtu              99
+#define BPF_FUNC_for_each_map_elem      164
+#define BPF_FUNC_snprintf               165
 
 // ============================================================================
 // Program types
@@ -475,6 +480,55 @@ enum bpf_prog_type {
     BPF_PROG_TYPE_LSM,
     BPF_PROG_TYPE_SK_LOOKUP,
     BPF_PROG_TYPE_SYSCALL,
+};
+
+// Attach types
+enum bpf_attach_type {
+    BPF_CGROUP_INET_INGRESS,
+    BPF_CGROUP_INET_EGRESS,
+    BPF_CGROUP_INET_SOCK_CREATE,
+    BPF_CGROUP_SOCK_OPS,
+    BPF_SK_SKB_STREAM_PARSER,
+    BPF_SK_SKB_STREAM_VERDICT,
+    BPF_CGROUP_DEVICE,
+    BPF_SK_MSG_VERDICT,
+    BPF_CGROUP_INET4_BIND,
+    BPF_CGROUP_INET6_BIND,
+    BPF_CGROUP_INET4_CONNECT,
+    BPF_CGROUP_INET6_CONNECT,
+    BPF_CGROUP_INET4_POST_BIND,
+    BPF_CGROUP_INET6_POST_BIND,
+    BPF_CGROUP_UDP4_SENDMSG,
+    BPF_CGROUP_UDP6_SENDMSG,
+    BPF_LIRC_MODE2,
+    BPF_FLOW_DISSECTOR,
+    BPF_CGROUP_SYSCTL,
+    BPF_CGROUP_UDP4_RECVMSG,
+    BPF_CGROUP_UDP6_RECVMSG,
+    BPF_CGROUP_GETSOCKOPT,
+    BPF_CGROUP_SETSOCKOPT,
+    BPF_TRACE_RAW_TP,
+    BPF_TRACE_FENTRY,
+    BPF_TRACE_FEXIT,
+    BPF_MODIFY_RETURN,
+    BPF_LSM_MAC,
+    BPF_TRACE_ITER,
+    BPF_CGROUP_INET4_GETPEERNAME,
+    BPF_CGROUP_INET6_GETPEERNAME,
+    BPF_CGROUP_INET4_GETSOCKNAME,
+    BPF_CGROUP_INET6_GETSOCKNAME,
+    BPF_XDP_DEVMAP,
+    BPF_CGROUP_INET_SOCK_RELEASE,
+    BPF_XDP_CPUMAP,
+    BPF_SK_LOOKUP,
+    BPF_XDP,
+    BPF_SK_SKB_VERDICT,
+    BPF_SK_REUSEPORT_SELECT,
+    BPF_SK_REUSEPORT_SELECT_OR_MIGRATE,
+    BPF_PERF_EVENT,
+    BPF_TRACE_KPROBE_MULTI,
+    BPF_LSM_CGROUP,
+    __MAX_BPF_ATTACH_TYPE
 };
 
 // ============================================================================
@@ -557,6 +611,7 @@ struct bpf_test {
     int result;
     int result_unpriv;
     enum bpf_prog_type prog_type;
+    enum bpf_attach_type expected_attach_type;
     uint8_t flags;
     void (*fill_helper)(struct bpf_test *self);
     int runs;
@@ -696,6 +751,10 @@ int main() {
         
         if (t->prog_type) {
             printf(",\n    \"prog_type\": %d", t->prog_type);
+        }
+        
+        if (t->expected_attach_type) {
+            printf(",\n    \"expected_attach_type\": %d", t->expected_attach_type);
         }
         
         if (t->flags) {
