@@ -138,317 +138,29 @@ fn transfer_alu(
     dst: Reg,
     src: Operand,
 ) -> Vec<State> {
-    // Clone input types for logic that needs original values
     let in_types = state.types.clone();
+
+    // Early check for division by zero
+    if op == AluOp::Div && is_div_by_zero(&state.dbm, &src) {
+        env.fail(VerificationError::DivideByZero { pc: state.pc });
+        return vec![];
+    }
 
     update_alu_types(env, &in_types, &mut state.types, width, op, dst, &src, state.pc);
 
-    // let dbm = &mut state.dbm;
     match op {
-        AluOp::Add => {
-            match src {
-                Operand::Imm(c) => assign_add_imm(&mut state.dbm, dst, c),
-                Operand::Reg(r) => {
-                    // Check the INPUT type (in_types) to see if dst was a clean pointer.
-                    let is_clean_ptr = match in_types.get(dst) {
-                        RegType::PtrToMapValue { offset: Some(0), .. } |
-                        RegType::PtrToStack { offset: Some(0) } |
-                        RegType::PtrToPacket { off: 0, .. } => true,
-                        _ => false,
-                    };
-                    if is_clean_ptr {
-                        // Special Case: Ptr(Offset 0) += Scalar.
-                        // In the DBM, the pointer's abstract value IS the offset (0).
-                        // Therefore: NewOffset = 0 + Scalar = Scalar.
-                        // We use 'assign_reg' (Copy) to enforce tight equality: dst == r.
-                        // Standard 'assign_add_reg' often loses this precision.
-                        assign_eq(&mut state.dbm, dst, r);
-                    } else {
-                        // Standard Case: Ptr(Offset X) += Scalar  OR  Scalar += Scalar
-                        // dst = dst + r
-                        assign_add_reg(&mut state.dbm, dst, r);
-                    }
-                }
-            }
-        }
-        AluOp::Sub => {
-            match src {
-                Operand::Imm(c) => assign_add_imm(&mut state.dbm, dst, -c),
-                Operand::Reg(r) => {
-                    // 1. Special Case: Optimization for Ptr(0) - r (Offset Negation)
-                    let is_clean_ptr = match in_types.get(dst) {
-                        RegType::PtrToMapValue { offset: Some(0), .. } |
-                        RegType::PtrToStack { offset: Some(0) } |
-                        RegType::PtrToPacket { off: 0, .. } => true,
-                        _ => false,
-                    };
-                    if is_clean_ptr {
-                        // dst = 0 - r  =>  dst = -r
-                        assign_eq(&mut state.dbm, dst, r);
-                        assign_neg(&mut state.dbm, dst);
-                    } else {
-                        // 2. Standard Case: Interval Subtraction
-                        assign_sub_reg(&mut state.dbm, dst, r);
-                    }
-                }
-            }
-        }
-        AluOp::Mov => {
-            // tnum update
-            match src {
-                Operand::Imm(c) => {
-                    state.set_tnum(dst, Tnum::constant(c as u64));
-                }
-                Operand::Reg(r) => {
-                    let t = state.get_tnum(r);  // Read first
-                    state.set_tnum(dst, t);      // Then write
-                }
-            }
-            match src {
-                Operand::Reg(r) => {
-                    if width == Width::W32 {
-                        // 1. Reset destination
-                        forget(&mut state.dbm, dst);
-                        // If 'r' fits in u32, Mov32 is just a copy!
-                        if proven_u32_range(&mut state.dbm, r, Reg::Zero) {
-                            assign_eq(&mut state.dbm, dst, r);
-                        } else {
-                            // Fallback: Truncation logic (conservative)
-                            assume_ge_const(&mut state.dbm, dst, 0);
-                            assume_le_const(&mut state.dbm, dst, 0xffff_ffff);
-                        }
-                    } else {
-                        if r == Reg::R10 { assign_zero(&mut state.dbm, dst); } 
-                        else { assign_eq(&mut state.dbm, dst, r); }
-                    }
-                }
-                Operand::Imm(c) => {
-                    // Handle zero-extension for W32
-                    let c = if width == Width::W32 { (c as u32) as i64 } else { c };
-                    
-                    forget(&mut state.dbm, dst);
-                    assume_le_const(&mut state.dbm, dst, c);
-                    assume_ge_const(&mut state.dbm, dst, c);
-                }
-            }
-        }
-        AluOp::And => {
-            let (min_op, max_op) = get_bounds(&mut state.dbm, dst);
-            let input_nonnegative = min_op.map_or(false, |m| m >= 0);
-
-            forget(&mut state.dbm, dst);
-
-            if let Operand::Imm(mask) = src {
-                let mask = if width == Width::W32 { (mask as u32) as i64 } else { mask };
-                if mask >= 0 {
-                    assign_and_mask(&mut state.dbm, dst, mask);
-                } else if input_nonnegative {
-                    // Negative mask with non-negative input:
-                    // Result is in [0, min(input_max, mask as unsigned)]
-                    // Safe approximation: [0, input_max]
-                    assume_ge_const(&mut state.dbm, dst, 0);
-                    if let Some(max) = max_op {
-                        assume_le_const(&mut state.dbm, dst, max);
-                    }
-                }
-            } else if let Operand::Reg(_) = src {
-                // AND with register - result is non-negative if both operands are
-                assume_ge_const(&mut state.dbm, dst, 0);
-            }
-            // Tnum update
-            let t = state.get_tnum(dst);
-            let new_t = match &src {
-                Operand::Imm(mask) => {
-                    let mask = if width == Width::W32 { (*mask as u32) as u64 } else { *mask as u64 };
-                    t.and_imm(mask)
-                }
-                Operand::Reg(r) => {
-                    let r_tnum = state.get_tnum(*r);
-                    t.and(r_tnum)
-                }
-            };
-            state.set_tnum(dst, new_t);
-            
-            // Cross-validate: if tnum knows the exact value, tell DBM
-            if let Some(c) = new_t.const_value() {
-                assume_eq_const(&mut state.dbm, dst, c as i64);
-            }
-        }
-        AluOp::Or => {
-            forget(&mut state.dbm, dst);
-            
-            // Tnum update
-            let t = state.get_tnum(dst);
-            let new_t = match &src {
-                Operand::Imm(c) => {
-                    let c = if width == Width::W32 { (*c as u32) as u64 } else { *c as u64 };
-                    t.or_imm(c)
-                }
-                Operand::Reg(r) => {
-                    let r_tnum = state.get_tnum(*r);
-                    t.or(r_tnum)
-                }
-            };
-            state.set_tnum(dst, new_t);
-            
-            // If tnum proves non-zero, inform DBM
-            if new_t.is_definitely_nonzero() {
-                assume_ge_const(&mut state.dbm, dst, 1);
-            }
-        }
+        AluOp::Add => handle_add(env, &mut state, &in_types, width, dst, &src),
+        AluOp::Sub => handle_sub(env, &mut state, &in_types, width, dst, &src),
+        AluOp::Mov => handle_mov(&mut state, width, dst, &src),
+        AluOp::And => handle_and(&mut state, width, dst, &src),
+        AluOp::Or => handle_or(&mut state, width, dst, &src),
+        AluOp::Neg => handle_neg(&mut state, width, dst),
+        AluOp::Shr => handle_shr(&mut state, width, dst, &src),
+        AluOp::Shl => handle_shl(&mut state, width, dst, &src),
+        AluOp::Mul => handle_mul(&mut state, width, dst, &src),
+        AluOp::Mod => handle_mod(&mut state, width, dst, &src),
+        AluOp::Div => handle_div(&mut state, width, dst, &src),
         AluOp::Xor | AluOp::Arsh => forget(&mut state.dbm, dst),
-        AluOp::Neg => {
-            // 1. Apply Negate Logic (swaps bounds)
-            assign_neg(&mut state.dbm, dst);
-
-            // 2. Handle 32-bit Truncation/Extension
-            // If this was NEG32 (w0 = -w0), the result must be zero-extended.
-            // Example: -1 becomes 0xFFFFFFFF (4294967295)
-            if width == Width::W32 {
-                bit_and_const(&mut state.dbm, dst, 0xFFFFFFFF);
-            }
-            
-            // 3. Type Update
-            state.types.set(dst, RegType::ScalarValue);
-        },
-        AluOp::Shr => {
-             match src {
-                Operand::Imm(k) => {
-                    let bits = if width == Width::W32 { 32u32 } else { 64u32 };
-                    let k = (k as u32).min(bits);
-                    forget(&mut state.dbm, dst);
-                    assume_ge_const(&mut state.dbm, dst, 0);
-                    if k < bits {
-                        let ub: i64 = ((1u128 << (bits - k)) - 1) as i64;
-                        assume_le_const(&mut state.dbm, dst, ub);
-                    } else {
-                        assume_eq_const(&mut state.dbm, dst, 0);
-                    }
-                }
-                Operand::Reg(_) => forget(&mut state.dbm, dst),
-            }
-        }
-        AluOp::Shl => {
-            match src {
-                Operand::Imm(k) => {
-                    let k = k as u32;
-                    
-                    // For W32, only lower 5 bits matter; for W64, lower 6 bits
-                    let shift_amount = if width == Width::W32 { k & 0x1F } else { k & 0x3F };
-                    
-                    let (old_lo, old_hi) = get_bounds(&state.dbm, dst);
-                    forget(&mut state.dbm, dst);
-                    
-                    if let (Some(lo), Some(hi)) = (old_lo, old_hi) {
-                        // Only apply bounds if:
-                        // 1. Values are non-negative
-                        // 2. Shift won't overflow i64
-                        if lo >= 0 && shift_amount < 63 {
-                            // Maximum value that won't overflow when shifted
-                            let max_safe: i64 = i64::MAX >> shift_amount;
-                            
-                            if hi <= max_safe {
-                                // Safe to compute shifted bounds
-                                assume_ge_const(&mut state.dbm, dst, lo << shift_amount);
-                                assume_le_const(&mut state.dbm, dst, hi << shift_amount);
-                            }
-                            // If hi > max_safe, we just leave the register unconstrained
-                            // (already forgotten above)
-                        }
-                    }
-                    
-                    // Handle W32 truncation
-                    if width == Width::W32 {
-                        assume_ge_const(&mut state.dbm, dst, 0);
-                        assume_le_const(&mut state.dbm, dst, u32::MAX as i64);
-                    }
-                }
-                Operand::Reg(_) => {
-                    forget(&mut state.dbm, dst);
-                    if width == Width::W32 {
-                        assume_ge_const(&mut state.dbm, dst, 0);
-                        assume_le_const(&mut state.dbm, dst, u32::MAX as i64);
-                    }
-                }
-            }
-        }
-        AluOp::Mul => {
-             match src {
-                Operand::Imm(c) => assign_mul_imm(&mut state.dbm, dst, c),
-                Operand::Reg(_) => forget(&mut state.dbm, dst),
-            }
-        }
-        AluOp::Mod => {
-             match src {
-                Operand::Imm(c) => {
-                    if c > 0 {
-                        forget(&mut state.dbm, dst);
-                        assume_ge_const(&mut state.dbm, dst, 0);
-                        assume_le_const(&mut state.dbm, dst, c - 1);
-                    } else { forget(&mut state.dbm, dst); }
-                }
-                Operand::Reg(r) => {
-                    // R0 % R7: result is in [0, R7-1] if R7 > 0
-                    let (r_lo, r_hi) = get_bounds(&state.dbm, r);
-                    forget(&mut state.dbm, dst);
-                    
-                    match (r_lo, r_hi) {
-                        (Some(lo), Some(hi)) if lo > 0 => {
-                            // Divisor is strictly positive, result is in [0, hi-1]
-                            assume_ge_const(&mut state.dbm, dst, 0);
-                            assume_le_const(&mut state.dbm, dst, hi - 1);
-                        }
-                        (Some(lo), _) if lo > 0 => {
-                            // Divisor is positive but unbounded above
-                            // Result is still non-negative
-                            assume_ge_const(&mut state.dbm, dst, 0);
-                        }
-                        _ => {
-                            // Can't determine bounds
-                        }
-                    }
-                }
-            }
-        }
-        AluOp::Div => {
-            // 1. Check for Division by Zero
-            let is_zero = match src {
-                Operand::Imm(k) => k == 0,
-                Operand::Reg(r) => {
-                    // Check if register is strictly 0
-                    let (lo, hi) = get_bounds(&state.dbm, r);
-                    match (lo, hi) {
-                        (Some(0), Some(0)) => true, // Definitely zero
-                        _ => false, // Could be non-zero (or unknown)
-                    }
-                }
-            };
-
-            if is_zero {
-                env.fail(VerificationError::DivideByZero { pc: state.pc });
-                return vec![];
-            }
-
-            // 2. Apply Domain Logic
-            match src {
-                Operand::Imm(imm) => {
-                    assign_div_imm(&mut state.dbm, dst, imm);
-                },
-                Operand::Reg(r_src) => {
-                    assign_div_reg(&mut state.dbm, dst, r_src);
-                }
-            }
-
-            // 3. Handle 32-bit truncation
-            // If this was a 32-bit div (w0 /= w1), the upper 32-bits are zeroed.
-            if width == Width::W32 {
-                bit_and_const(&mut state.dbm, dst, 0xFFFFFFFF);
-            }
-            
-            // 4. Update Type to Scalar
-            // Pointers cannot be divided.
-            state.types.set(dst, RegType::ScalarValue);
-        },
     }
 
     if state.dbm.is_inconsistent() {
@@ -547,8 +259,8 @@ fn transfer_if(
 
     // Branch Type Refinement (Packet/Map bounds)
     let instr = Instr::If { width, left, op, right: right.clone(), target };
-    refine_branch(&mut state_then.types, &state_then.dbm, &instr, true);
-    refine_branch(&mut state_else.types, &state_else.dbm, &instr, false);
+    refine_branch(&mut state_then, &instr, true);
+    refine_branch(&mut state_else, &instr, false);
 
     // Return only consistent states
     if !state_else.dbm.is_inconsistent() { out.push(state_else); }
@@ -1016,6 +728,9 @@ fn apply_imm_constraints(
             if imm == 0 {
                 if let Some(non_null) = then_s.types.get(left).to_non_null() {
                     then_s.types.set(left, non_null);
+                    if let Some(offset) = non_null.get_offset() {
+                        assume_eq_const(&mut then_s.dbm, left, offset);
+                    }
                 }
             }
         }
@@ -1025,6 +740,9 @@ fn apply_imm_constraints(
             if imm == 0 {
                 if let Some(non_null) = else_s.types.get(left).to_non_null() {
                     else_s.types.set(left, non_null);
+                    if let Some(offset) = non_null.get_offset() {
+                        assume_eq_const(&mut else_s.dbm, left, offset);
+                    }
                 }
             }
         }
@@ -1315,18 +1033,6 @@ fn update_alu_types(
                 types.set(dst, RegType::ScalarValue);
             }
         },
-        AluOp::Mov => {
-            let dst_ty = in_types.get(dst);
-            if dst_ty.is_pointer() {
-                match (dst_ty, src) {
-                    (RegType::PtrToCtx, Operand::Imm(0)) => {
-                        types.set(dst, RegType::PtrToCtx); // We can set the pointer to null
-                    }
-                    // Otherwise, changing the pointer will result in invalidation
-                    _ => types.set(dst, RegType::ScalarValue),
-                }
-            }
-        }
         _ => types.set(dst, RegType::ScalarValue),
     }
 }
@@ -1504,6 +1210,396 @@ fn update_call_types(in_types: &TypeState, types: &mut TypeState, helper: u32) {
     }
 }
 
+// ===============================================
+// ALU Handlers
+// ===============================================
+
+fn handle_add(
+    env: &mut VerifierEnv,
+    state: &mut State,
+    in_types: &TypeState,
+    width: Width,
+    dst: Reg,
+    src: &Operand,
+) {
+    match src {
+        Operand::Imm(c) => {
+            assign_add_imm(&mut state.dbm, dst, *c);
+        }
+        Operand::Reg(r) => {
+            if is_clean_ptr(in_types, dst) {
+                // Special Case: Ptr(Offset 0) += Scalar.
+                // NewOffset = 0 + Scalar = Scalar.
+                assign_eq(&mut state.dbm, dst, *r);
+            } else {
+                // Standard Case: Ptr(Offset X) += Scalar OR Scalar += Scalar
+                assign_add_reg(&mut state.dbm, dst, *r);
+            }
+        }
+    }
+    
+    if width == Width::W32 {
+        apply_w32_truncation(&mut state.dbm, dst);
+    }
+
+    check_ptr_bounds(env, state, dst);
+}
+
+fn handle_sub(
+    env: &mut VerifierEnv,
+    state: &mut State,
+    in_types: &TypeState,
+    width: Width,
+    dst: Reg,
+    src: &Operand,
+) {
+    match src {
+        Operand::Imm(c) => {
+            assign_add_imm(&mut state.dbm, dst, -c);
+        }
+        Operand::Reg(r) => {
+            if is_clean_ptr(in_types, dst) {
+                // dst = 0 - r => dst = -r
+                assign_eq(&mut state.dbm, dst, *r);
+                assign_neg(&mut state.dbm, dst);
+            } else {
+                // Standard Case: Interval Subtraction
+                assign_sub_reg(&mut state.dbm, dst, *r);
+            }
+        }
+    }
+    
+    if width == Width::W32 {
+        apply_w32_truncation(&mut state.dbm, dst);
+    }
+
+    check_ptr_bounds(env, state, dst);
+}
+
+fn handle_mov(
+    state: &mut State,
+    width: Width,
+    dst: Reg,
+    src: &Operand,
+) {
+    // Tnum update
+    match src {
+        Operand::Imm(c) => {
+            state.set_tnum(dst, Tnum::constant(*c as u64));
+        }
+        Operand::Reg(r) => {
+            let t = state.get_tnum(*r);
+            state.set_tnum(dst, t);
+        }
+    }
+    
+    // DBM update
+    match src {
+        Operand::Reg(r) => {
+            if width == Width::W32 {
+                forget(&mut state.dbm, dst);
+                if proven_u32_range(&mut state.dbm, *r, Reg::Zero) {
+                    assign_eq(&mut state.dbm, dst, *r);
+                } else {
+                    assume_ge_const(&mut state.dbm, dst, 0);
+                    assume_le_const(&mut state.dbm, dst, 0xFFFFFFFF);
+                }
+            } else {
+                if *r == Reg::R10 {
+                    assign_zero(&mut state.dbm, dst);
+                } else {
+                    assign_eq(&mut state.dbm, dst, *r);
+                }
+            }
+        }
+        Operand::Imm(c) => {
+            // Handle zero-extension for W32
+            let c = if width == Width::W32 { (*c as u32) as i64 } else { *c };
+            
+            forget(&mut state.dbm, dst);
+            assume_le_const(&mut state.dbm, dst, c);
+            assume_ge_const(&mut state.dbm, dst, c);
+        }
+    }
+}
+
+fn handle_and(
+    state: &mut State,
+    width: Width,
+    dst: Reg,
+    src: &Operand,
+) {
+    let (min_op, max_op) = get_bounds(&state.dbm, dst);
+    let input_nonnegative = min_op.map_or(false, |m| m >= 0);
+
+    forget(&mut state.dbm, dst);
+
+    if let Operand::Imm(mask) = src {
+        let mask = if width == Width::W32 { (*mask as u32) as i64 } else { *mask };
+        if mask >= 0 {
+            assign_and_mask(&mut state.dbm, dst, mask);
+        } else if input_nonnegative {
+            // Negative mask with non-negative input:
+            // Safe approximation: [0, input_max]
+            assume_ge_const(&mut state.dbm, dst, 0);
+            if let Some(max) = max_op {
+                assume_le_const(&mut state.dbm, dst, max);
+            }
+        }
+    } else if let Operand::Reg(_) = src {
+        // AND with register - result is non-negative if both operands are
+        assume_ge_const(&mut state.dbm, dst, 0);
+    }
+    
+    // Tnum update
+    let t = state.get_tnum(dst);
+    let new_t = match src {
+        Operand::Imm(mask) => {
+            let mask = if width == Width::W32 { (*mask as u32) as u64 } else { *mask as u64 };
+            t.and_imm(mask)
+        }
+        Operand::Reg(r) => {
+            let r_tnum = state.get_tnum(*r);
+            t.and(r_tnum)
+        }
+    };
+    state.set_tnum(dst, new_t);
+    
+    // Cross-validate: if tnum knows the exact value, tell DBM
+    if let Some(c) = new_t.const_value() {
+        assume_eq_const(&mut state.dbm, dst, c as i64);
+    }
+}
+
+fn handle_or(
+    state: &mut State,
+    width: Width,
+    dst: Reg,
+    src: &Operand,
+) {
+    forget(&mut state.dbm, dst);
+    
+    // Tnum update
+    let t = state.get_tnum(dst);
+    let new_t = match src {
+        Operand::Imm(c) => {
+            let c = if width == Width::W32 { (*c as u32) as u64 } else { *c as u64 };
+            t.or_imm(c)
+        }
+        Operand::Reg(r) => {
+            let r_tnum = state.get_tnum(*r);
+            t.or(r_tnum)
+        }
+    };
+    state.set_tnum(dst, new_t);
+    
+    // If tnum proves non-zero, inform DBM
+    if new_t.is_definitely_nonzero() {
+        assume_ge_const(&mut state.dbm, dst, 1);
+    }
+}
+
+fn handle_neg(
+    state: &mut State,
+    width: Width,
+    dst: Reg,
+) {
+    // Apply Negate Logic (swaps bounds)
+    assign_neg(&mut state.dbm, dst);
+
+    // Handle 32-bit Truncation/Extension
+    if width == Width::W32 {
+        bit_and_const(&mut state.dbm, dst, 0xFFFFFFFF);
+    }
+    
+    // Type Update
+    state.types.set(dst, RegType::ScalarValue);
+}
+
+fn handle_shr(
+    state: &mut State,
+    width: Width,
+    dst: Reg,
+    src: &Operand,
+) {
+    match src {
+        Operand::Imm(k) => {
+            let bits = if width == Width::W32 { 32u32 } else { 64u32 };
+            let k = (*k as u32).min(bits);
+            forget(&mut state.dbm, dst);
+            assume_ge_const(&mut state.dbm, dst, 0);
+            if k < bits {
+                let ub: i64 = ((1u128 << (bits - k)) - 1) as i64;
+                assume_le_const(&mut state.dbm, dst, ub);
+            } else {
+                assume_eq_const(&mut state.dbm, dst, 0);
+            }
+        }
+        Operand::Reg(_) => {
+            forget(&mut state.dbm, dst);
+        }
+    }
+}
+
+fn handle_shl(
+    state: &mut State,
+    width: Width,
+    dst: Reg,
+    src: &Operand,
+) {
+    match src {
+        Operand::Imm(k) => {
+            let k = *k as u32;
+            
+            // For W32, only lower 5 bits matter; for W64, lower 6 bits
+            let shift_amount = if width == Width::W32 { k & 0x1F } else { k & 0x3F };
+            
+            let (old_lo, old_hi) = get_bounds(&state.dbm, dst);
+            forget(&mut state.dbm, dst);
+            
+            if let (Some(lo), Some(hi)) = (old_lo, old_hi) {
+                // Only apply bounds if values are non-negative and shift won't overflow
+                if lo >= 0 && shift_amount < 63 {
+                    let max_safe: i64 = i64::MAX >> shift_amount;
+                    
+                    if hi <= max_safe {
+                        assume_ge_const(&mut state.dbm, dst, lo << shift_amount);
+                        assume_le_const(&mut state.dbm, dst, hi << shift_amount);
+                    }
+                }
+            }
+            
+            // Handle W32 truncation
+            if width == Width::W32 {
+                apply_w32_truncation(&mut state.dbm, dst);
+            }
+        }
+        Operand::Reg(_) => {
+            forget(&mut state.dbm, dst);
+            if width == Width::W32 {
+                assume_ge_const(&mut state.dbm, dst, 0);
+                assume_le_const(&mut state.dbm, dst, u32::MAX as i64);
+            }
+        }
+    }
+}
+
+fn handle_mul(
+    state: &mut State,
+    width: Width,
+    dst: Reg,
+    src: &Operand,
+) {
+    match src {
+        Operand::Imm(c) => {
+            assign_mul_imm(&mut state.dbm, dst, *c);
+        }
+        Operand::Reg(_) => {
+            forget(&mut state.dbm, dst);
+        }
+    }
+    
+    if width == Width::W32 {
+        apply_w32_truncation(&mut state.dbm, dst);
+    }
+}
+
+fn handle_mod(
+    state: &mut State,
+    width: Width,
+    dst: Reg,
+    src: &Operand,
+) {
+    match src {
+        Operand::Imm(c) => {
+            if *c > 0 {
+                forget(&mut state.dbm, dst);
+                assume_ge_const(&mut state.dbm, dst, 0);
+                assume_le_const(&mut state.dbm, dst, c - 1);
+            } else {
+                forget(&mut state.dbm, dst);
+            }
+        }
+        Operand::Reg(r) => {
+            let (r_lo, r_hi) = get_bounds(&state.dbm, *r);
+            forget(&mut state.dbm, dst);
+            
+            match (r_lo, r_hi) {
+                (Some(lo), Some(hi)) if lo > 0 => {
+                    // Divisor is strictly positive, result is in [0, hi-1]
+                    assume_ge_const(&mut state.dbm, dst, 0);
+                    assume_le_const(&mut state.dbm, dst, hi - 1);
+                }
+                (Some(lo), _) if lo > 0 => {
+                    // Divisor is positive but unbounded above
+                    assume_ge_const(&mut state.dbm, dst, 0);
+                }
+                _ => {}
+            }
+        }
+    }
+    
+    if width == Width::W32 {
+        apply_w32_truncation(&mut state.dbm, dst);
+    }
+}
+
+fn handle_div(
+    state: &mut State,
+    width: Width,
+    dst: Reg,
+    src: &Operand,
+) {
+    // Division by zero already checked
+    match src {
+        Operand::Imm(imm) => assign_div_imm(&mut state.dbm, dst, *imm),
+        Operand::Reg(r_src) => assign_div_reg(&mut state.dbm, dst, *r_src),
+    }
+
+    if width == Width::W32 {
+        bit_and_const(&mut state.dbm, dst, 0xFFFFFFFF);
+    }
+    
+    state.types.set(dst, RegType::ScalarValue);
+}
+
+/// Apply W32 truncation to a register's bounds.
+/// If the current bounds exceed [0, 0xFFFFFFFF], widen to that range.
+fn apply_w32_truncation(dbm: &mut Dbm, dst: Reg) {
+    let (lo, hi) = get_bounds(dbm, dst);
+    
+    let safe = match (lo, hi) {
+        (Some(l), Some(h)) => l >= 0 && h <= 0xFFFFFFFF,
+        _ => false,
+    };
+    
+    if !safe {
+        forget(dbm, dst);
+        assume_ge_const(dbm, dst, 0);
+        assume_le_const(dbm, dst, 0xFFFFFFFF);
+    }
+}
+
+/// Check if a register holds a "clean" pointer (offset == 0)
+fn is_clean_ptr(types: &TypeState, reg: Reg) -> bool {
+    match types.get(reg) {
+        RegType::PtrToMapValue { offset: Some(0), .. } |
+        RegType::PtrToStack { offset: Some(0) } |
+        RegType::PtrToPacket { off: 0, .. } => true,
+        _ => false,
+    }
+}
+
+fn is_div_by_zero(dbm: &Dbm, src: &Operand) -> bool {
+    match src {
+        Operand::Imm(k) => *k == 0,
+        Operand::Reg(r) => {
+            let (lo, hi) = get_bounds(dbm, *r);
+            matches!((lo, hi), (Some(0), Some(0)))
+        }
+    }
+}
+
 // --- Type Refinement Logic ---
 
 /// Refines the safe access range of packet pointers based on numerical constraints.
@@ -1649,8 +1745,7 @@ fn refine_mem_ranges(dbm: &Dbm, types: &mut TypeState, mem_reg: Reg, end_reg: Re
 /// * `instr` - The `If` instruction causing the branch.
 /// * `branch_taken` - `true` if analyzing the path where the jump occurs; `false` if analyzing the fallthrough.
 fn refine_branch(
-    types: &mut TypeState, 
-    _dbm: &Dbm, 
+    state: &mut State,
     instr: &Instr, 
     branch_taken: bool // True if we are analyzing the branch-taken path, False if fallthrough
 ) {
@@ -1660,27 +1755,27 @@ fn refine_branch(
                 CmpOp::Ne => {
                     // if (reg != 0) goto Target;
                     // Taken (True) -> reg != 0 -> SAFE
-                    if branch_taken { maybe_promote_map_val(types, *left); }
+                    if branch_taken { maybe_promote_map_val(state, *left); }
                 },
                 CmpOp::Eq => {
                     // if (reg == 0) goto Target;
                     // Fallthrough (False) -> reg != 0 -> SAFE
-                    if !branch_taken { maybe_promote_map_val(types, *left); }
+                    if !branch_taken { maybe_promote_map_val(state, *left); }
                 },
                 CmpOp::SGe | CmpOp::UGe | CmpOp::SGt | CmpOp::UGt => {
                     // if (reg >= 0) goto Target;  or  if (reg > 0) goto Target;
                     // Taken (True) -> reg >= 1 -> SAFE
-                    if branch_taken { maybe_promote_map_val(types, *left); }
+                    if branch_taken { maybe_promote_map_val(state, *left); }
                 },
                 CmpOp::SLe | CmpOp::ULe | CmpOp::SLt | CmpOp::ULt => {
                     // if (reg <= 0) goto Target;  or  if (reg < 0) goto Target;
                     // Fallthrough (False) -> reg >= 1 -> SAFE
-                    if !branch_taken { maybe_promote_map_val(types, *left); }
+                    if !branch_taken { maybe_promote_map_val(state, *left); }
                 },
                 CmpOp::Test => {
                     // if (reg & 0xFF != 0) goto Target;
                     // Taken (True) -> reg != 0 -> SAFE
-                    if branch_taken { maybe_promote_map_val(types, *left); }
+                    if branch_taken { maybe_promote_map_val(state, *left); }
                 }
             }
         },
@@ -1702,23 +1797,24 @@ fn refine_branch(
 ///
 /// * `types` - The mutable type state to update.
 /// * `reg` - The register that was validated as non-null.
-fn maybe_promote_map_val(types: &mut TypeState, reg: Reg) {
-    let (target_id, _target_map_idx) = match types.get(reg) {
+fn maybe_promote_map_val(state: &mut State, reg: Reg) {
+    let (target_id, _target_map_idx) = match state.types.get(reg) {
         RegType::PtrToMapValueOrNull { id, map_idx } => (id, map_idx),
         _ => return,
     };
-    for r in crate::zone::domain::Reg::ALL {
-        if let RegType::PtrToMapValueOrNull { id, map_idx } = types.get(r) {
+    for r in Reg::ALL {
+        if let RegType::PtrToMapValueOrNull { id, map_idx } = state.types.get(r) {
             if id == target_id {
-                types.set(r, RegType::PtrToMapValue { offset: Some(0), map_idx });
+                state.types.set(r, RegType::PtrToMapValue { offset: Some(0), map_idx });
+                assign_zero(&mut state.dbm, r);
             }
         }
     }
-    let stack_keys: Vec<i16> = types.stack.keys().cloned().collect();
+    let stack_keys: Vec<i16> = state.types.stack.keys().cloned().collect();
     for k in stack_keys {
-        if let RegType::PtrToMapValueOrNull { id, map_idx } = types.get_stack(k) {
+        if let RegType::PtrToMapValueOrNull { id, map_idx } = state.types.get_stack(k) {
             if id == target_id {
-                types.set_stack(k, RegType::PtrToMapValue { offset: Some(0), map_idx });
+                state.types.set_stack(k, RegType::PtrToMapValue { offset: Some(0), map_idx });
             }
         }
     }
@@ -1823,5 +1919,39 @@ fn get_map_key_value_size(map_type: RegType, env: &VerifierEnv) -> (Option<u32>,
             }
         }
         _ => (None, None),
+    }
+}
+
+fn check_ptr_bounds(
+    env: &mut VerifierEnv,
+    state: &State,
+    reg: Reg,
+) {
+    let (lo, hi) = get_bounds(&state.dbm, reg);
+    
+    match state.types.get(reg) {
+        RegType::PtrToMapValue { map_idx, .. } => {
+            if let Some(map_def) = env.ctx.map_defs.get(map_idx) {
+                let in_bounds = match (lo, hi) {
+                    (Some(l), Some(h)) => l >= 0 && h < map_def.value_size as i64,
+                    _ => false,
+                };
+                if !in_bounds {
+                    env.fail(VerificationError::PointerOutOfBounds { pc: state.pc });
+                }
+            } else {
+                warn!("This should be unreachable")
+            }
+        }
+        RegType::PtrToStack { .. } => {
+            let in_bounds = match (lo, hi) {
+                (Some(l), Some(h)) => l >= constants::BPF_STACK_MIN && h <= 0,
+                _ => false,
+            };
+            if !in_bounds {
+                env.fail(VerificationError::PointerOutOfBounds { pc: state.pc });
+            }
+        }
+        _ => {}
     }
 }

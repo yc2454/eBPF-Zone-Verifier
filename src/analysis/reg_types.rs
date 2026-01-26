@@ -72,6 +72,14 @@ impl RegType {
             RegType::PtrToTcpSockOrNull { .. }
         )
     }
+
+    pub fn get_offset(&self) -> Option<i64> {
+        match *self {
+            RegType::PtrToMapValue { offset, map_idx: _ } => offset,
+            RegType::PtrToPacket { id: _, range: _, is_base: _, off } => Some(off),
+            _ => None
+        }
+    }
 }
 
 pub fn new_packet_id() -> u32 {
