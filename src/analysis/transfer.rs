@@ -93,6 +93,13 @@ pub fn transfer(
             vec![state]
         },
         Instr::AtomicAdd { size, base, off, src: _ } => {
+            let base_ty = state.types.get(*base);
+            // Atomic add to ctx pointer is not allowed
+            if matches!(base_ty, RegType::PtrToCtx) {
+                env.fail(VerificationError::InvalidArgType { pc: state.pc, reg: *base });
+                state.pc += 1;
+                return vec![]
+            }
             // 1. Safety Check: Identical to Store
             // (Must be valid writable memory)
             access::check_store(env, &state, *base, *size, *off);
