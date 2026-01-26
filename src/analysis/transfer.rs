@@ -22,7 +22,7 @@ use crate::parsing::ctx_model::{
 use crate::analysis::env::VerificationError;
 use crate::zone::dbm::Dbm;
 use crate::analysis::constants;
-use log::{error, info};
+use log::{error, warn};
 
 pub fn transfer(
     env: &mut VerifierEnv,
@@ -549,12 +549,17 @@ fn transfer_if(
 }
 
 fn transfer_call(
-    _env: &VerifierEnv,
+    env: &mut VerifierEnv,
     mut state: State,
     helper: u32,
 ) -> Vec<State> {
     let in_types = state.types.clone();
     let pc = state.pc;
+
+    // ========================================================================
+    // Validate helper arguments BEFORE executing
+    // ========================================================================
+    validate_helper_args(env, &state, helper, &in_types, pc);
     
     // ========================================================================
     // SPECIAL CASE: bpf_tail_call
@@ -1352,10 +1357,21 @@ fn update_store_types(types: &mut TypeState, src_type: RegType, size: MemSize, b
     };
     
     if let Some(slot) = stack_slot {
+        let slot = slot as i16;
+        let byte_count = size.bytes() as i16;  // U8=1, U16=2, U32=4, U64=8
+        
         if size == MemSize::U64 {
-            types.set_stack(slot as i16, src_type);
+            // Full 8-byte store preserves type info at the base slot
+            types.set_stack(slot, src_type);
+            // Mark remaining bytes as initialized (but no type info)
+            for i in 1..byte_count {
+                types.set_stack(slot + i, RegType::ScalarValue);
+            }
         } else {
-            types.stack.remove(&(slot as i16));
+            // Partial store: mark all bytes as initialized, but poison type info
+            for i in 0..byte_count {
+                types.set_stack(slot + i, RegType::ScalarValue);
+            }
         }
     }
 }
@@ -1676,5 +1692,95 @@ fn maybe_promote_map_val(types: &mut TypeState, reg: Reg) {
                 types.set_stack(k, RegType::PtrToMapValue { offset: Some(0), map_idx });
             }
         }
+    }
+}
+
+fn validate_helper_args(
+    env: &mut VerifierEnv,
+    state: &State,
+    helper: u32,
+    types: &TypeState,
+    pc: usize,
+) {
+    match helper {
+        constants::BPF_MAP_LOOKUP_ELEM => {
+            // R1 = map, R2 = key pointer
+            let key_size = get_map_key_size(types.get(Reg::R1), env);
+            if let Some(size) = key_size {
+                check_readable_arg(env, state, types, Reg::R2, size, pc);
+            }
+        }
+        constants::BPF_MAP_UPDATE_ELEM => {
+            // R1 = map, R2 = key pointer, R3 = value pointer, R4 = flags
+            let (key_size, val_size) = get_map_key_value_size(types.get(Reg::R1), env);
+            if let Some(size) = key_size {
+                check_readable_arg(env, state, types, Reg::R2, size, pc);
+            }
+            if let Some(size) = val_size {
+                check_readable_arg(env, state, types, Reg::R3, size, pc);
+            }
+        }
+        constants::BPF_MAP_DELETE_ELEM => {
+            // R1 = map, R2 = key pointer
+            let key_size = get_map_key_size(types.get(Reg::R1), env);
+            if let Some(size) = key_size {
+                check_readable_arg(env, state, types, Reg::R2, size, pc);
+            }
+        }
+        _ => {
+            warn!("Helper arg not checked.");
+        }
+    }
+}
+
+fn check_readable_arg(
+    env: &mut VerifierEnv,
+    state: &State,
+    types: &TypeState,
+    reg: Reg,
+    size: u32,
+    pc: usize,
+) {
+    match types.get(reg) {
+        RegType::PtrToStack { offset: Some(off) } => {
+            access::check_stack_arg_readable(env, state, off, size as i64, pc);
+        }
+        RegType::PtrToStack { offset: None } => {
+            // Unknown stack offset - need to use DBM bounds
+            // For now, reject conservatively
+            env.fail(VerificationError::UninitializedStackRead { pc, offset: 0 });
+        }
+        RegType::PtrToMapValue { .. } => {
+            // Map values are always considered initialized
+        }
+        RegType::PtrToPacket { .. } => {
+            // Packet data is initialized (bounds checked elsewhere)
+        }
+        _ => {
+            // Not a valid pointer type for this argument
+            env.fail(VerificationError::InvalidArgType { pc, reg });
+            error!("Not a valid pointer type for argument")
+        }
+    }
+}
+
+fn get_map_key_size(map_type: RegType, env: &VerifierEnv) -> Option<u32> {
+    match map_type {
+        RegType::PtrToMapObject { map_idx } => 
+            env.ctx.map_defs.get(map_idx).map(|md| md.key_size),
+        _ => None,
+    }
+}
+
+fn get_map_key_value_size(map_type: RegType, env: &VerifierEnv) -> (Option<u32>, Option<u32>) {
+    match map_type {
+        RegType::PtrToMapObject { map_idx } => {
+            if let Some(map_def) = env.ctx.map_defs.get(map_idx) {
+                (Some(map_def.key_size), Some(map_def.value_size))
+            } else {
+                (None, None)
+            }
+        }
+        _ => (None, None),
     }
 }

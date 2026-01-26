@@ -28,7 +28,7 @@ pub fn check_load(
 
     match base_type {
         PtrToStack { offset } => {
-            check_stack_access(env, state, base, offset, off as i64, access_size, pc);
+            check_stack_access(env, state, base, offset, off as i64, access_size, pc, AccessKind::Read);
         }
         PtrToPacket { id: _, range, is_base: _, off: off_from_packet } => {
             // Total offset from base = off + instruction offset
@@ -273,7 +273,7 @@ pub fn check_store(
         }
         PtrToStack { offset } => {
             info!("Checking stack store");
-            check_stack_access(env, state, base, offset, off as i64, access_size as i64, pc);
+            check_stack_access(env, state, base, offset, off as i64, access_size as i64, pc, AccessKind::Write);
         }
         PtrToPacket { id: _, range, is_base: _, off: off_from_packet } => {
             // Total offset from base = off + instruction offset
@@ -345,57 +345,105 @@ pub fn check_store(
 }
 
 // ---------------------- Stack checking helper ------------------- //
+pub enum AccessKind {
+    Read,
+    Write,
+}
+
 /// Check if a stack access at (base + off) of size bytes is safe.
-/// Returns Ok(()) if safe, or an error describing the violation.
+/// For reads, also checks that the memory is initialized.
 fn check_stack_access(
     env: &mut VerifierEnv,
     state: &State,
     base: Reg,
-    offset: Option<i64>,
-    off: i64,           // instruction offset
-    size: i64,          // access size in bytes
+    ptr_type_offset: Option<i64>,
+    instruction_offset: i64,
+    size: i64,
     pc: usize,
+    kind: AccessKind,
 ) {
-    match offset {
+    match ptr_type_offset {
         Some(base_off) => {
-            info!("Check stack access with base {}, off {}", base_off, off);
-            // Precise case
-            let actual_offset = base_off + off;
+            let actual_offset = base_off + instruction_offset;
             let access_end = actual_offset + size;
             
+            // Bounds check
             if actual_offset < constants::BPF_STACK_MIN || access_end > constants::BPF_STACK_MAX {
-                error!("Unsafe stack access at pc {}: base {:?}+{} (stack offset {})", pc, base, off, actual_offset);
-                env.fail(VerificationError::StackOutOfBounds { 
-                    pc, 
-                    off,
-                    size,
-                });
+                env.fail(VerificationError::StackOutOfBounds { pc, off: instruction_offset, size });
+                return;
+            }
+            
+            // Initialization check (reads only)
+            if matches!(kind, AccessKind::Read) {
+                // For the access range
+                for i in 0..size {
+                    let slot = (actual_offset + i) as i16;
+                    if !state.types.stack.contains_key(&slot) {
+                        env.fail(VerificationError::UninitializedStackRead { pc, offset: actual_offset });
+                        return;
+                    }
+                }
             }
         }
         None => {
-            info!("Unknown offset. Using DBM to prove safety");
-            // Unknown base offset - use DBM to prove safety
+            // Unknown offset case - bounds check via DBM
             let (lo, hi) = get_relative_bound(&state.dbm, base, Reg::R10);
             
             let safe = match (lo, hi) {
                 (Some(lower), Some(upper)) => {
-                    let min_offset = lower + off;
-                    let max_access_end = upper + off + size;
+                    let min_offset = lower + instruction_offset;
+                    let max_access_end = upper + instruction_offset + size;
                     min_offset >= constants::BPF_STACK_MIN && max_access_end <= constants::BPF_STACK_MAX
                 }
                 _ => false,
             };
             
             if !safe {
-                error!("Unsafe stack access at pc {}: base {:?}+{} with unknown offset", pc, base, off);
-                env.fail(VerificationError::StackOutOfBounds { 
-                    pc, 
-                    off,
-                    size,
-                });
+                env.fail(VerificationError::StackOutOfBounds { pc, off: instruction_offset, size });
+                return;
+            }
+            
+            // Initialization check with unknown offset - must be conservative
+            if matches!(kind, AccessKind::Read) {
+                // Need ALL possible slots to be initialized
+                match (lo, hi) {
+                    (Some(lower), Some(upper)) => {
+                        for off_candidate in lower..=upper {
+                            for i in 0..size {
+                                let slot = (off_candidate + instruction_offset + i) as i16;
+                                if !state.types.stack.contains_key(&slot) {
+                                    env.fail(VerificationError::UninitializedStackRead { pc, offset: instruction_offset });
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        env.fail(VerificationError::UninitializedStackRead { pc, offset: 0 });
+                    }
+                }
             }
         }
     }
+}
+
+/// Check that a stack region is readable (for helper arguments)
+pub fn check_stack_arg_readable(
+    env: &mut VerifierEnv,
+    state: &State,
+    stack_offset: i64,  // already resolved offset from R10
+    size: i64,
+    pc: usize,
+) {
+    // For helper args, offset is already known (R10 + some constant)
+    check_stack_access(
+        env, state, Reg::R10,
+        Some(stack_offset),
+        0,  // no additional instruction offset
+        size,
+        pc,
+        AccessKind::Read,
+    )
 }
 
 // ---------------------- Socket checking helper ------------------ //

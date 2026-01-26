@@ -8,6 +8,7 @@ use crate::zone::domain::Reg;
 #[derive(Clone, Debug)]
 pub enum VerificationError {
     StackOutOfBounds { pc: usize, off: i64, size: i64 },
+    UninitializedStackRead { pc: usize, offset: i64 },
     UnsafePacketLoad { pc: usize, off: i16, size: MemSize, range: u64 },
     UnsafePacketStore { pc: usize, off: i16, size: MemSize },
     UnsafeMapLoad { pc: usize, off: i64, size: MemSize, limit: i64 },
@@ -21,6 +22,7 @@ pub enum VerificationError {
     ComplexityLimitExceeded { limit: usize },
     CfgError(String),
     DivideByZero { pc: usize },
+    InvalidArgType { pc: usize, reg: Reg }
 }
 
 impl VerificationError {
@@ -28,6 +30,9 @@ impl VerificationError {
         match self {
             VerificationError::StackOutOfBounds { pc, off, size } => {
                 format!("Stack out of bounds at pc {}: offset {}, size {}", pc, off, size)
+            }
+            VerificationError::UninitializedStackRead { pc, offset} => {
+                format!("Reading uninitialized stack slot at pc {}: offset {}", pc, offset)
             }
             VerificationError::UnsafePacketLoad { pc, off, size, range } => {
                 format!("Unsafe packet load at pc {}: offset {}, size {:?}, range {}", pc, off, size, range)
@@ -67,6 +72,9 @@ impl VerificationError {
             }
             VerificationError::UnsafeMemoryRegionLoad { pc, base, off } => {
                 format!("Unsafe memory region load at pc {}: base {:?}, offset {}", pc, base, off)
+            }
+            VerificationError::InvalidArgType { pc, reg } => {
+                format!("Invalid argument type at pc {}: register: {}", pc, reg.name())
             }
         }
     }

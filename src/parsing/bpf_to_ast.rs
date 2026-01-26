@@ -174,6 +174,14 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 src: Operand::Imm(insn.imm as i64),
             },
 
+            // 0x17: SUB_X_64 (dst = dst - src)
+            0x17 => Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Sub,
+                dst: dst,
+                src: Operand::Reg(src),
+            },
+
             // 0x1c: SUB32_X  w_dst -= w_src   ← new
             0x1c => Instr::Alu {
                 width: Width::W32,
