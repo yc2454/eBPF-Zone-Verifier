@@ -1,0 +1,68 @@
+[
+  {
+    "name": "stack out of bounds",
+    "result": "REJECT",
+    "errstr": "invalid write to stack",
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": 8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "uninitialized stack1",
+    "result": "REJECT",
+    "errstr": "invalid indirect read from stack",
+    "fixups": {
+    "fixup_map_hash_8b": [2]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "uninitialized stack2",
+    "result": "REJECT",
+    "errstr": "invalid read from stack",
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 121, "dst": 0, "src": 2, "off": -8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid fp arithmetic",
+    "result": "REJECT",
+    "errstr": "R1 subtraction from stack pointer",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 23, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 123, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "non-invalid fp arithmetic",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "misaligned read from stack",
+    "result": "REJECT",
+    "errstr": "misaligned stack access",
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 121, "dst": 0, "src": 2, "off": -4, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

@@ -1,0 +1,424 @@
+[
+  {
+    "name": "valid map access into an array with a constant",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 leaks addr",
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "valid map access into an array with a register",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 leaks addr",
+    "flags": 1,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 103, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "valid map access into an array with a variable",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 leaks addr",
+    "flags": 1,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 5, "imm": 0},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 53, "dst": 1, "src": 0, "off": 3, "imm": 11},
+      {"code": 103, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "valid map access into an array with a signed variable",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 leaks addr",
+    "flags": 1,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 9, "imm": 0},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 102, "dst": 1, "src": 0, "off": 1, "imm": -1},
+      {"code": 180, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 180, "dst": 2, "src": 0, "off": 0, "imm": 11},
+      {"code": 109, "dst": 2, "src": 1, "off": 1, "imm": 0},
+      {"code": 180, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 100, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid map access into an array with a constant",
+    "result": "REJECT",
+    "errstr": "invalid access to map value, value_size=48 off=48 size=8",
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 48, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid map access into an array with a register",
+    "result": "REJECT",
+    "errstr": "R0 min value is outside of the allowed memory range",
+    "flags": 1,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 12},
+      {"code": 103, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid map access into an array with a variable",
+    "result": "REJECT",
+    "errstr": "R0 unbounded memory access, make sure to bounds check any such access",
+    "flags": 1,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 103, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid map access into an array with no floor check",
+    "result": "REJECT",
+    "result_unpriv": "REJECT",
+    "errstr": "R0 unbounded memory access",
+    "errstr_unpriv": "R0 leaks addr",
+    "flags": 1,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 7, "imm": 0},
+      {"code": 121, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 180, "dst": 2, "src": 0, "off": 0, "imm": 11},
+      {"code": 109, "dst": 2, "src": 1, "off": 1, "imm": 0},
+      {"code": 180, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 100, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid map access into an array with a invalid max check",
+    "result": "REJECT",
+    "result_unpriv": "REJECT",
+    "errstr": "invalid access to map value, value_size=48 off=44 size=8",
+    "errstr_unpriv": "R0 leaks addr",
+    "flags": 1,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 7, "imm": 0},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 180, "dst": 2, "src": 0, "off": 0, "imm": 12},
+      {"code": 45, "dst": 2, "src": 1, "off": 1, "imm": 0},
+      {"code": 180, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 100, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid map access into an array with a invalid max check",
+    "result": "REJECT",
+    "errstr": "R0 pointer += pointer",
+    "flags": 1,
+    "fixups": {
+    "fixup_map_hash_48b": [3, 11]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 10, "imm": 0},
+      {"code": 191, "dst": 8, "src": 0, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 15, "dst": 0, "src": 8, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "valid read map access into a read-only array 1",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_array_ro": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 97, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "valid read map access into a read-only array 2",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_array_ro": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 28},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 65535},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid write map access into a read-only array 1",
+    "result": "REJECT",
+    "errstr": "write into map forbidden",
+    "fixups": {
+    "fixup_map_array_ro": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 42},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid write map access into a read-only array 2",
+    "result": "REJECT",
+    "errstr": "write into map forbidden",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_array_ro": [4]
+    },
+    "insns": [
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 5, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 26},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "valid write map access into a write-only array 1",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_array_wo": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 42},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "valid write map access into a write-only array 2",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_array_wo": [4]
+    },
+    "insns": [
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 5, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 26},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid read map access into a write-only array 1",
+    "result": "REJECT",
+    "errstr": "read from map forbidden",
+    "fixups": {
+    "fixup_map_array_wo": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid read map access into a write-only array 2",
+    "result": "REJECT",
+    "errstr": "read from map forbidden",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_array_wo": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 28},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

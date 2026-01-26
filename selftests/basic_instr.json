@@ -1,0 +1,218 @@
+[
+  {
+    "name": "add+sub+mul",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 3},
+      {"code": 31, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -1},
+      {"code": 39, "dst": 1, "src": 0, "off": 0, "imm": 3},
+      {"code": 191, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "xor32 zero extend check",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 180, "dst": 2, "src": 0, "off": 0, "imm": -1},
+      {"code": 103, "dst": 2, "src": 0, "off": 0, "imm": 32},
+      {"code": 71, "dst": 2, "src": 0, "off": 0, "imm": 65535},
+      {"code": 172, "dst": 2, "src": 2, "off": 0, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 85, "dst": 2, "src": 0, "off": 1, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "arsh32 on imm",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 196, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "arsh32 on imm 2",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": -2056882296},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 287454020},
+      {"code": 196, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "arsh32 on reg",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 5},
+      {"code": 204, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "arsh32 on reg 2",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 1432778632},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 65535},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 15},
+      {"code": 204, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "arsh64 on imm",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 199, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "arsh64 on reg",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 5},
+      {"code": 207, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "lsh64 by 0 imm",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 103, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 1, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "rsh64 by 0 imm",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 119, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 29, "dst": 1, "src": 2, "off": 1, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "arsh64 by 0 imm",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 199, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 29, "dst": 1, "src": 2, "off": 1, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "lsh64 by 0 reg",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 111, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 1, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "rsh64 by 0 reg",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 24, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 127, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 29, "dst": 1, "src": 2, "off": 1, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "arsh64 by 0 reg",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 24, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 207, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 29, "dst": 1, "src": 2, "off": 1, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid 64-bit BPF_END",
+    "result": "REJECT",
+    "errstr": "unknown opcode d7",
+    "insns": [
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 215, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "mov64 src == dst",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 2, "off": 0, "imm": 0},
+      {"code": 15, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "mov64 src != dst",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 3, "off": 0, "imm": 0},
+      {"code": 15, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

@@ -1,0 +1,348 @@
+[
+  {
+    "name": "PTR_TO_STACK store/load",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -10},
+      {"code": 122, "dst": 1, "src": 0, "off": 2, "imm": -87117812},
+      {"code": 121, "dst": 0, "src": 1, "off": 2, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK store/load - bad alignment on off",
+    "result": "REJECT",
+    "errstr": "misaligned stack access off (0x0; 0x0)+-8+2 size 8",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 1, "src": 0, "off": 2, "imm": -87117812},
+      {"code": 121, "dst": 0, "src": 1, "off": 2, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK store/load - bad alignment on reg",
+    "result": "REJECT",
+    "errstr": "misaligned stack access off (0x0; 0x0)+-10+8 size 8",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -10},
+      {"code": 122, "dst": 1, "src": 0, "off": 8, "imm": -87117812},
+      {"code": 121, "dst": 0, "src": 1, "off": 8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK store/load - out of bounds low",
+    "result": "REJECT",
+    "errstr": "invalid write to stack R1 off=-79992 size=8",
+    "errstr_unpriv": "R1 stack pointer arithmetic goes out of range",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -80000},
+      {"code": 122, "dst": 1, "src": 0, "off": 8, "imm": -87117812},
+      {"code": 121, "dst": 0, "src": 1, "off": 8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK store/load - out of bounds high",
+    "result": "REJECT",
+    "errstr": "invalid write to stack R1 off=0 size=8",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 1, "src": 0, "off": 8, "imm": -87117812},
+      {"code": 121, "dst": 0, "src": 1, "off": 8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK check high 1",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -1},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 42},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK check high 2",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 114, "dst": 1, "src": 0, "off": -1, "imm": 42},
+      {"code": 113, "dst": 0, "src": 1, "off": -1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK check high 3",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R1 stack pointer arithmetic goes out of range",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 114, "dst": 1, "src": 0, "off": -1, "imm": 42},
+      {"code": 113, "dst": 0, "src": 1, "off": -1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK check high 4",
+    "result": "REJECT",
+    "errstr": "invalid write to stack R1 off=0 size=1",
+    "errstr_unpriv": "R1 stack pointer arithmetic goes out of range",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 42},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK check high 5",
+    "result": "REJECT",
+    "errstr": "invalid write to stack R1",
+    "errstr_unpriv": "R1 stack pointer arithmetic goes out of range",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 536870911},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 42},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK check high 6",
+    "result": "REJECT",
+    "errstr": "invalid write to stack",
+    "errstr_unpriv": "R1 stack pointer arithmetic goes out of range",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 536870911},
+      {"code": 114, "dst": 1, "src": 0, "off": 32767, "imm": 42},
+      {"code": 113, "dst": 0, "src": 1, "off": 32767, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK check high 7",
+    "result": "REJECT",
+    "errstr": "fp pointer offset",
+    "errstr_unpriv": "R1 stack pointer arithmetic goes out of range",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 536870911},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 536870911},
+      {"code": 114, "dst": 1, "src": 0, "off": 32767, "imm": 42},
+      {"code": 113, "dst": 0, "src": 1, "off": 32767, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK check low 1",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -512},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 42},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK check low 2",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R1 stack pointer arithmetic goes out of range",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -513},
+      {"code": 114, "dst": 1, "src": 0, "off": 1, "imm": 42},
+      {"code": 113, "dst": 0, "src": 1, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK check low 3",
+    "result": "REJECT",
+    "errstr": "invalid write to stack R1 off=-513 size=1",
+    "errstr_unpriv": "R1 stack pointer arithmetic goes out of range",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -513},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 42},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK check low 4",
+    "result": "REJECT",
+    "errstr": "math between fp pointer",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -2147483648},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 42},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK check low 5",
+    "result": "REJECT",
+    "errstr": "invalid write to stack",
+    "errstr_unpriv": "R1 stack pointer arithmetic goes out of range",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -536870911},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 42},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK check low 6",
+    "result": "REJECT",
+    "errstr": "invalid write to stack",
+    "errstr_unpriv": "R1 stack pointer arithmetic goes out of range",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -536870911},
+      {"code": 114, "dst": 1, "src": 0, "off": -32768, "imm": 42},
+      {"code": 113, "dst": 0, "src": 1, "off": -32768, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK check low 7",
+    "result": "REJECT",
+    "errstr": "fp pointer offset",
+    "errstr_unpriv": "R1 stack pointer arithmetic goes out of range",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -536870911},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -536870911},
+      {"code": 114, "dst": 1, "src": 0, "off": -32768, "imm": 42},
+      {"code": 113, "dst": 0, "src": 1, "off": -32768, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK mixed reg/k, 1",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -3},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -3},
+      {"code": 15, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 42},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK mixed reg/k, 2",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -3},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -3},
+      {"code": 15, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 42},
+      {"code": 191, "dst": 5, "src": 10, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 5, "off": -6, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK mixed reg/k, 3",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -3},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -3},
+      {"code": 15, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 42},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "PTR_TO_STACK reg",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -3},
+      {"code": 15, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 42},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "stack pointer arithmetic",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 5, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 7, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 7, "src": 0, "off": 0, "imm": -10},
+      {"code": 7, "dst": 7, "src": 0, "off": 0, "imm": -10},
+      {"code": 191, "dst": 2, "src": 7, "off": 0, "imm": 0},
+      {"code": 15, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 98, "dst": 2, "src": 0, "off": 4, "imm": 0},
+      {"code": 191, "dst": 2, "src": 7, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": 8},
+      {"code": 98, "dst": 2, "src": 0, "off": 4, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "store PTR_TO_STACK in R10 to array map using BPF_B",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 9, "src": 10, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -1},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": -1},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": -1},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": -1},
+      {"code": 183, "dst": 6, "src": 0, "off": 0, "imm": -1},
+      {"code": 183, "dst": 7, "src": 0, "off": 0, "imm": -1},
+      {"code": 183, "dst": 8, "src": 0, "off": 0, "imm": -1},
+      {"code": 115, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 113, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 115, "dst": 1, "src": 9, "off": 0, "imm": 0},
+      {"code": 113, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 29, "dst": 2, "src": 3, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 42},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

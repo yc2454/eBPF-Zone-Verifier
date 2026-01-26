@@ -1,0 +1,47 @@
+[
+  {
+    "name": "invalid src register in STX",
+    "result": "REJECT",
+    "errstr": "R15 is invalid",
+    "insns": [
+      {"code": 115, "dst": 10, "src": 15, "off": -1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid dst register in STX",
+    "result": "REJECT",
+    "errstr": "R14 is invalid",
+    "insns": [
+      {"code": 115, "dst": 14, "src": 10, "off": -1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid dst register in ST",
+    "result": "REJECT",
+    "errstr": "R14 is invalid",
+    "insns": [
+      {"code": 114, "dst": 14, "src": 0, "off": -1, "imm": -1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid src register in LDX",
+    "result": "REJECT",
+    "errstr": "R12 is invalid",
+    "insns": [
+      {"code": 113, "dst": 0, "src": 12, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid dst register in LDX",
+    "result": "REJECT",
+    "errstr": "R11 is invalid",
+    "insns": [
+      {"code": 113, "dst": 11, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

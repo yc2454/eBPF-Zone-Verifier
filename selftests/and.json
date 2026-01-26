@@ -1,0 +1,74 @@
+[
+  {
+    "name": "invalid and of negative number",
+    "result": "REJECT",
+    "errstr": "R0 max value is outside of the allowed memory range",
+    "flags": 1,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": -4},
+      {"code": 103, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid range check",
+    "result": "REJECT",
+    "errstr": "R0 max value is outside of the allowed memory range",
+    "flags": 1,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 12, "imm": 0},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 9, "src": 0, "off": 0, "imm": 1},
+      {"code": 148, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 4, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 92, "dst": 9, "src": 1, "off": 0, "imm": 0},
+      {"code": 4, "dst": 9, "src": 0, "off": 0, "imm": 1},
+      {"code": 116, "dst": 9, "src": 0, "off": 0, "imm": 1},
+      {"code": 180, "dst": 3, "src": 0, "off": 0, "imm": 1},
+      {"code": 28, "dst": 3, "src": 9, "off": 0, "imm": 0},
+      {"code": 36, "dst": 3, "src": 0, "off": 0, "imm": 268435456},
+      {"code": 15, "dst": 0, "src": 3, "off": 0, "imm": 0},
+      {"code": 99, "dst": 0, "src": 3, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check known subreg with unknown reg",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R1 !read_ok",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 103, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": -60876},
+      {"code": 166, "dst": 0, "src": 0, "off": 1, "imm": 1},
+      {"code": 97, "dst": 1, "src": 1, "off": 512, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]
