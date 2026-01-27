@@ -140,6 +140,17 @@ fn transfer_alu(
 ) -> Vec<State> {
     let in_types = state.types.clone();
 
+    // Check pointer arithmetics first
+    let src_type = match src {
+        Operand::Imm(_) => RegType::ScalarValue,
+        Operand::Reg(r) => state.types.get(r).clone()
+    };
+    let dst_type = state.types.get(dst);
+    
+    if !check_ptr_arithmetic(env, &state, op, &dst_type, &src_type) {
+        return vec![];
+    }
+
     // Early check for division by zero
     if op == AluOp::Div && is_div_by_zero(&state.dbm, &src) {
         env.fail(VerificationError::DivideByZero { pc: state.pc });
@@ -1964,5 +1975,86 @@ fn check_ptr_bounds(
             }
         }
         _ => {}
+    }
+}
+
+/// Pure validation of pointer arithmetic rules.
+/// Returns Ok(()) if the operation is legal (even if it changes the result type).
+/// Returns Err(String) if the operation is strictly forbidden.
+fn check_ptr_arithmetic(
+    env: &mut VerifierEnv,
+    state: &State,
+    op: AluOp,
+    dst_type: &RegType,
+    src_type: &RegType,
+) -> bool {
+    let dst_is_ptr = dst_type.is_pointer();
+    let src_is_ptr = src_type.is_pointer();
+
+    // 1. Scalar <op> Scalar
+    // Always allowed.
+    if !dst_is_ptr && !src_is_ptr {
+        return true;
+    }
+
+    // 2. Pointer <op> Pointer
+    if dst_is_ptr && src_is_ptr {
+        match op {
+            // Ptr - Ptr is allowed ONLY if types match.
+            // (Result is Scalar, handled by caller)
+            AluOp::Sub => {
+                if RegType::is_same_pointer_type(dst_type, src_type) {
+                    true
+                } else {
+                    env.fail(VerificationError::InvalidPointerArithmetic { pc: state.pc });
+                    false
+                }
+            },
+            // Ptr + Ptr, Ptr * Ptr, etc. are invalid
+            _ => {
+                env.fail(VerificationError::InvalidPointerArithmetic { pc: state.pc });
+                false
+            }
+        }
+    }
+    // 3. Pointer <op> Scalar (dst=Ptr, src=Scalar)
+    else if dst_is_ptr {
+        match op {
+            // Ptr + Scalar, Ptr - Scalar are allowed.
+            // (Result is Ptr or Scalar depending on rigidity, handled by caller)
+            AluOp::Add | AluOp::Sub => true,
+            
+            // Mov is allowed (overwrite).
+            AluOp::Mov => true,
+            
+            // All other ops (Mul, Div, And, Or, etc.) on pointers are forbidden.
+            _ => {
+                env.fail(VerificationError::InvalidPointerArithmetic { pc: state.pc });
+                false
+            }
+        }
+    }
+    // 4. Scalar <op> Pointer (dst=Scalar, src=Ptr)
+    else {
+        match op {
+            // Scalar + Ptr is allowed (Commutative).
+            // (Result is Ptr, handled by caller)
+            AluOp::Add => true,
+            
+            // Scalar - Ptr is FORBIDDEN.
+            AluOp::Sub => {
+                env.fail(VerificationError::InvalidPointerArithmetic { pc: state.pc });
+                false
+            }
+
+            // Mov Scalar, Ptr is allowed (dst becomes Ptr).
+            AluOp::Mov => true,
+            
+            // Scalar * Ptr, etc. forbidden.
+            _ => {
+                env.fail(VerificationError::InvalidPointerArithmetic { pc: state.pc });
+                false
+            }
+        }
     }
 }

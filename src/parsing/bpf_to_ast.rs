@@ -384,6 +384,14 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 src: Operand::Imm(0), // Neg is unary; src is ignored/dummy
             },
 
+            // 0x87: NEG64 (dst = -dst)
+            0x87 => Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Neg,
+                dst: dst,
+                src: Operand::Imm(0), // Unary op, src is ignored
+            },
+
             // 0x94: MOD32_K  w_dst %= imm
             0x94 => Instr::Alu {
                 width: Width::W32,

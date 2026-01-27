@@ -23,7 +23,8 @@ pub enum VerificationError {
     ComplexityLimitExceeded { limit: usize },
     CfgError(String),
     DivideByZero { pc: usize },
-    InvalidArgType { pc: usize, reg: Reg }
+    InvalidArgType { pc: usize, reg: Reg },
+    InvalidPointerArithmetic { pc: usize }
 }
 
 impl VerificationError {
@@ -79,6 +80,9 @@ impl VerificationError {
             }
             VerificationError::InvalidArgType { pc, reg } => {
                 format!("Invalid argument type at pc {}: register: {}", pc, reg.name())
+            }
+            VerificationError::InvalidPointerArithmetic { pc } => {
+                format!("Invalid pointer arithmetic at pc {}", pc)
             }
         }
     }
