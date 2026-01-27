@@ -8,6 +8,7 @@ use crate::zone::domain::Reg;
 #[derive(Clone, Debug)]
 pub enum VerificationError {
     StackOutOfBounds { pc: usize, off: i64, size: i64 },
+    PointerOutOfBounds { pc: usize },
     UninitializedStackRead { pc: usize, offset: i64 },
     UnsafePacketLoad { pc: usize, off: i16, size: MemSize, range: u64 },
     UnsafePacketStore { pc: usize, off: i16, size: MemSize },
@@ -22,7 +23,8 @@ pub enum VerificationError {
     ComplexityLimitExceeded { limit: usize },
     CfgError(String),
     DivideByZero { pc: usize },
-    InvalidArgType { pc: usize, reg: Reg }
+    InvalidArgType { pc: usize, reg: Reg },
+    InvalidPointerArithmetic { pc: usize }
 }
 
 impl VerificationError {
@@ -30,6 +32,9 @@ impl VerificationError {
         match self {
             VerificationError::StackOutOfBounds { pc, off, size } => {
                 format!("Stack out of bounds at pc {}: offset {}, size {}", pc, off, size)
+            }
+            VerificationError::PointerOutOfBounds { pc,  } => {
+                format!("Stack out of bounds at pc {}", pc)
             }
             VerificationError::UninitializedStackRead { pc, offset} => {
                 format!("Reading uninitialized stack slot at pc {}: offset {}", pc, offset)
@@ -75,6 +80,9 @@ impl VerificationError {
             }
             VerificationError::InvalidArgType { pc, reg } => {
                 format!("Invalid argument type at pc {}: register: {}", pc, reg.name())
+            }
+            VerificationError::InvalidPointerArithmetic { pc } => {
+                format!("Invalid pointer arithmetic at pc {}", pc)
             }
         }
     }

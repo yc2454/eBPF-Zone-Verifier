@@ -18,14 +18,9 @@ use crate::analysis;
 use crate::analysis::context::{default_exec_ctx};
 use crate::ast::ProgramKind;
 use crate::parsing::bpf_to_ast::lower_raw_to_program;
-use crate::parsing::elf_loader::{RelocInfo};
 use crate::misc::config::VerifierConfig;
 use crate::parsing::bpf_insn::RawBpfInsn;
-use crate::parsing::elf_loader::BpfMapDef;
-use crate::analysis::constants::{
-    BPF_MAP_TYPE_HASH, BPF_MAP_TYPE_ARRAY, BPF_MAP_TYPE_PROG_ARRAY,
-    BPF_PROG_TYPE_SCHED_CLS, BPF_PROG_TYPE_XDP
-};
+use crate::parsing::elf_loader::{BpfMapDef, RelocInfo};
 use crate::zone::dbm::Dbm;
 use crate::zone::domain::{Reg, REG_ENV, assign_zero};
 
@@ -75,11 +70,10 @@ impl From<&JsonInsn> for RawBpfInsn {
 pub enum TestOutcome {
     /// Our result matches expected
     Pass,
-    /// We got a different result than expected
-    Mismatch {
-        expected: String,
-        actual: String,
-    },
+    /// Expected ACCEPT but we REJECT - precision issue (too conservative)
+    FalsePositive,
+    /// Expected REJECT but we ACCEPT - SOUNDNESS issue (too permissive - BAD!)
+    FalseNegative,
     /// Test couldn't be run (parse error, unsupported feature, etc.)
     Skipped {
         reason: String,
@@ -95,8 +89,12 @@ impl TestOutcome {
         matches!(self, TestOutcome::Pass)
     }
 
-    pub fn is_mismatch(&self) -> bool {
-        matches!(self, TestOutcome::Mismatch { .. })
+    pub fn is_false_positive(&self) -> bool {
+        matches!(self, TestOutcome::FalsePositive)
+    }
+
+    pub fn is_false_negative(&self) -> bool {
+        matches!(self, TestOutcome::FalseNegative)
     }
 }
 
@@ -114,7 +112,8 @@ pub struct FileResult {
     pub file: String,
     pub total: usize,
     pub passed: usize,
-    pub mismatched: usize,
+    pub false_positives: usize,  // Expected ACCEPT, got REJECT (precision)
+    pub false_negatives: usize,  // Expected REJECT, got ACCEPT (SOUNDNESS!)
     pub skipped: usize,
     pub errors: usize,
     pub time_ms: u64,
@@ -126,12 +125,22 @@ pub struct SuiteResult {
     pub total_files: usize,
     pub total_tests: usize,
     pub passed: usize,
-    pub mismatched: usize,
+    pub false_positives: usize,  // Precision issues
+    pub false_negatives: usize,  // SOUNDNESS issues
     pub skipped: usize,
     pub errors: usize,
     pub time_ms: u64,
     pub files: Vec<FileResult>,
 }
+
+// ============================================================================
+// Map Type Constants (from linux/bpf.h)
+// ============================================================================
+
+const BPF_MAP_TYPE_HASH: u32 = 1;
+const BPF_MAP_TYPE_ARRAY: u32 = 2;
+const BPF_MAP_TYPE_PROG_ARRAY: u32 = 3;
+// Add more as needed
 
 // ============================================================================
 // Fixup → Map Definition
@@ -242,6 +251,7 @@ fn build_exec_context(test: &JsonTestCase) -> (crate::analysis::context::ExecCon
                 ctx.map_defs.push(map_def);
 
                 // Record relocations for each PC
+                // offset is 0 for direct map references (like in kernel selftests)
                 for &pc in pcs {
                     ctx.pc_to_reloc.insert(
                         pc,
@@ -259,8 +269,8 @@ fn build_exec_context(test: &JsonTestCase) -> (crate::analysis::context::ExecCon
     }
 
     ctx.prog_kind = match test.prog_type {
-        Some(BPF_PROG_TYPE_SCHED_CLS) => ProgramKind::SchedCls, // BPF_PROG_TYPE_SCHED_CLS
-        Some(BPF_PROG_TYPE_XDP) => ProgramKind::Xdp,      // BPF_PROG_TYPE_XDP
+        Some(3) => ProgramKind::SchedCls, // BPF_PROG_TYPE_SCHED_CLS
+        Some(6) => ProgramKind::Xdp,      // BPF_PROG_TYPE_XDP
         _ => ProgramKind::SocketFilter,   // Default
     };
 
@@ -278,7 +288,7 @@ fn make_entry_state() -> Dbm {
 }
 
 // ============================================================================
-// Run Single Test json File
+// Run Single Test
 // ============================================================================
 
 pub fn run_test(test: &JsonTestCase, config: &VerifierConfig) -> TestResult {
@@ -334,11 +344,12 @@ pub fn run_test(test: &JsonTestCase, config: &VerifierConfig) -> TestResult {
 
     let outcome = if actual == expected {
         TestOutcome::Pass
+    } else if expected == "ACCEPT" && actual == "REJECT" {
+        // We rejected something that should be accepted - precision issue
+        TestOutcome::FalsePositive
     } else {
-        TestOutcome::Mismatch {
-            expected: expected.clone(),
-            actual: actual.to_string(),
-        }
+        // We accepted something that should be rejected - SOUNDNESS issue!
+        TestOutcome::FalseNegative
     };
 
     TestResult {
@@ -347,6 +358,310 @@ pub fn run_test(test: &JsonTestCase, config: &VerifierConfig) -> TestResult {
         expected: expected.clone(),
         actual: actual.to_string(),
         time_ms: start.elapsed().as_millis() as u64,
+    }
+}
+
+// ============================================================================
+// Run Test File
+// ============================================================================
+
+pub fn run_test_file(path: &str, config: &VerifierConfig) -> Result<FileResult, String> {
+    let start = Instant::now();
+
+    // Load JSON
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read {}: {}", path, e))?;
+
+    let tests: Vec<JsonTestCase> = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse {}: {}", path, e))?;
+
+    let mut results = Vec::new();
+    let mut passed = 0;
+    let mut false_positives = 0;
+    let mut false_negatives = 0;
+    let mut skipped = 0;
+    let mut errors = 0;
+
+    for test in &tests {
+        let result = run_test(test, config);
+
+        match &result.outcome {
+            TestOutcome::Pass => passed += 1,
+            TestOutcome::FalsePositive => false_positives += 1,
+            TestOutcome::FalseNegative => false_negatives += 1,
+            TestOutcome::Skipped { .. } => skipped += 1,
+            TestOutcome::Error { .. } => errors += 1,
+        }
+
+        results.push(result);
+    }
+
+    Ok(FileResult {
+        file: path.to_string(),
+        total: tests.len(),
+        passed,
+        false_positives,
+        false_negatives,
+        skipped,
+        errors,
+        time_ms: start.elapsed().as_millis() as u64,
+        tests: results,
+    })
+}
+
+// ============================================================================
+// Run Test Suite (Directory)
+// ============================================================================
+
+pub fn run_test_suite(dir: &str, config: &VerifierConfig) -> Result<SuiteResult, String> {
+    let start = Instant::now();
+
+    let mut files = Vec::new();
+
+    // Find all .json files
+    let entries = fs::read_dir(dir)
+        .map_err(|e| format!("Failed to read directory {}: {}", dir, e))?;
+
+    let mut json_files: Vec<_> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map(|ext| ext == "json")
+                .unwrap_or(false)
+        })
+        .collect();
+
+    json_files.sort_by_key(|e| e.path());
+
+    for entry in json_files {
+        let path = entry.path();
+        let path_str = path.to_string_lossy().to_string();
+
+        match run_test_file(&path_str, config) {
+            Ok(result) => files.push(result),
+            Err(e) => {
+                eprintln!("Warning: Skipping {}: {}", path_str, e);
+            }
+        }
+    }
+
+    // Aggregate stats
+    let total_tests: usize = files.iter().map(|f| f.total).sum();
+    let passed: usize = files.iter().map(|f| f.passed).sum();
+    let false_positives: usize = files.iter().map(|f| f.false_positives).sum();
+    let false_negatives: usize = files.iter().map(|f| f.false_negatives).sum();
+    let skipped: usize = files.iter().map(|f| f.skipped).sum();
+    let errors: usize = files.iter().map(|f| f.errors).sum();
+
+    Ok(SuiteResult {
+        total_files: files.len(),
+        total_tests,
+        passed,
+        false_positives,
+        false_negatives,
+        skipped,
+        errors,
+        time_ms: start.elapsed().as_millis() as u64,
+        files,
+    })
+}
+
+// ============================================================================
+// Report Generation
+// ============================================================================
+
+pub fn write_txt_report(result: &SuiteResult, path: &str) -> Result<(), String> {
+    let mut f = fs::File::create(path)
+        .map_err(|e| format!("Failed to create {}: {}", path, e))?;
+
+    writeln!(f, "BPF Verifier Selftest Report").unwrap();
+    writeln!(f, "============================\n").unwrap();
+
+    writeln!(f, "Summary:").unwrap();
+    writeln!(f, "  Files:            {}", result.total_files).unwrap();
+    writeln!(f, "  Tests:            {}", result.total_tests).unwrap();
+    writeln!(f, "  Passed:           {} ({:.1}%)", 
+             result.passed, 
+             100.0 * result.passed as f64 / result.total_tests.max(1) as f64).unwrap();
+    writeln!(f, "  SOUNDNESS ISSUES: {} (expected REJECT, got ACCEPT) <<<", result.false_negatives).unwrap();
+    writeln!(f, "  Precision issues: {} (expected ACCEPT, got REJECT)", result.false_positives).unwrap();
+    writeln!(f, "  Skipped:          {}", result.skipped).unwrap();
+    writeln!(f, "  Errors:           {}", result.errors).unwrap();
+    writeln!(f, "  Time:             {} ms\n", result.time_ms).unwrap();
+
+    // Per-file summary
+    writeln!(f, "Per-File Results:").unwrap();
+    writeln!(f, "-----------------").unwrap();
+    for file in &result.files {
+        let status = if file.false_negatives > 0 {
+            "UNSOUND"
+        } else if file.false_positives == 0 && file.errors == 0 {
+            "OK"
+        } else {
+            "IMPRECISE"
+        };
+        writeln!(f, "  {:8} {} ({}/{} passed, {} soundness, {} precision) [{}ms]",
+                 status,
+                 Path::new(&file.file).file_name().unwrap().to_string_lossy(),
+                 file.passed,
+                 file.total,
+                 file.false_negatives,
+                 file.false_positives,
+                 file.time_ms).unwrap();
+    }
+
+    // SOUNDNESS ISSUES (most important - show first!)
+    let has_soundness = result.files.iter().any(|f| f.false_negatives > 0);
+    if has_soundness {
+        writeln!(f, "\n").unwrap();
+        writeln!(f, "!!! SOUNDNESS ISSUES !!! (expected REJECT, we ACCEPT - DANGEROUS)").unwrap();
+        writeln!(f, "================================================================").unwrap();
+        for file in &result.files {
+            for test in &file.tests {
+                if test.outcome.is_false_negative() {
+                    writeln!(f, "  [{}] {}", 
+                             Path::new(&file.file).file_name().unwrap().to_string_lossy(),
+                             test.name).unwrap();
+                    writeln!(f, "    Expected: REJECT, Got: ACCEPT").unwrap();
+                }
+            }
+        }
+    }
+
+    // Precision issues (less critical)
+    let has_precision = result.files.iter().any(|f| f.false_positives > 0);
+    if has_precision {
+        writeln!(f, "\nPrecision Issues (expected ACCEPT, we REJECT - too conservative):").unwrap();
+        writeln!(f, "----------------------------------------------------------------").unwrap();
+        for file in &result.files {
+            for test in &file.tests {
+                if test.outcome.is_false_positive() {
+                    writeln!(f, "  [{}] {}", 
+                             Path::new(&file.file).file_name().unwrap().to_string_lossy(),
+                             test.name).unwrap();
+                    writeln!(f, "    Expected: ACCEPT, Got: REJECT").unwrap();
+                }
+            }
+        }
+    }
+
+    // Errors detail
+    let has_errors = result.files.iter().any(|f| f.errors > 0);
+    if has_errors {
+        writeln!(f, "\nErrors:").unwrap();
+        writeln!(f, "-------").unwrap();
+        for file in &result.files {
+            for test in &file.tests {
+                if let TestOutcome::Error { message } = &test.outcome {
+                    writeln!(f, "  [{}] {}", 
+                             Path::new(&file.file).file_name().unwrap().to_string_lossy(),
+                             test.name).unwrap();
+                    writeln!(f, "    {}", message).unwrap();
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub fn write_json_report(result: &SuiteResult, path: &str) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(result)
+        .map_err(|e| format!("Failed to serialize: {}", e))?;
+
+    fs::write(path, json)
+        .map_err(|e| format!("Failed to write {}: {}", path, e))?;
+
+    Ok(())
+}
+
+// ============================================================================
+// CLI Entry Points
+// ============================================================================
+
+/// Run a single test file and print results
+pub fn selftest_run(json_path: &str, config: &VerifierConfig, output_dir: Option<&str>) {
+    println!("Running selftest: {}\n", json_path);
+
+    match run_test_file(json_path, config) {
+        Ok(result) => {
+            // Print summary
+            println!("Results: {}/{} passed ({} soundness, {} precision, {} skipped, {} errors) in {}ms",
+                     result.passed, result.total, 
+                     result.false_negatives, result.false_positives,
+                     result.skipped, result.errors, result.time_ms);
+
+            // Print soundness issues first (most important!)
+            for test in &result.tests {
+                if test.outcome.is_false_negative() {
+                    println!("  !!! SOUNDNESS: {} (expected REJECT, got ACCEPT)", test.name);
+                }
+            }
+
+            // Print precision issues
+            for test in &result.tests {
+                if test.outcome.is_false_positive() {
+                    println!("  PRECISION: {} (expected ACCEPT, got REJECT)", test.name);
+                }
+            }
+
+            // Print other outcomes
+            for test in &result.tests {
+                match &test.outcome {
+                    TestOutcome::Pass => {
+                        if config.verbosity > 0 {
+                            println!("  PASS: {}", test.name);
+                        }
+                    }
+                    TestOutcome::Skipped { reason } => {
+                        if config.verbosity > 0 {
+                            println!("  SKIP: {} ({})", test.name, reason);
+                        }
+                    }
+                    TestOutcome::Error { message } => {
+                        println!("  ERROR: {} ({})", test.name, message);
+                    }
+                    _ => {} // Already printed above
+                }
+            }
+
+            // Write reports if output_dir specified
+            if let Some(dir) = output_dir {
+                let base = Path::new(json_path)
+                    .file_stem()
+                    .unwrap()
+                    .to_string_lossy();
+
+                let suite = SuiteResult {
+                    total_files: 1,
+                    total_tests: result.total,
+                    passed: result.passed,
+                    false_positives: result.false_positives,
+                    false_negatives: result.false_negatives,
+                    skipped: result.skipped,
+                    errors: result.errors,
+                    time_ms: result.time_ms,
+                    files: vec![result],
+                };
+
+                let txt_path = format!("{}/{}_report.txt", dir, base);
+                let json_path = format!("{}/{}_report.json", dir, base);
+
+                if let Err(e) = write_txt_report(&suite, &txt_path) {
+                    eprintln!("Warning: {}", e);
+                } else {
+                    println!("\nReport written to: {}", txt_path);
+                }
+
+                if let Err(e) = write_json_report(&suite, &json_path) {
+                    eprintln!("Warning: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+        }
     }
 }
 
@@ -408,10 +723,17 @@ pub fn selftest_single(json_path: &str, test_name: &str, config: &VerifierConfig
             TestOutcome::Pass => {
                 println!("=== PASS === ({}ms)", result.time_ms);
             }
-            TestOutcome::Mismatch { expected, actual } => {
-                println!("=== MISMATCH === ({}ms)", result.time_ms);
-                println!("  Expected: {}", expected);
-                println!("  Actual:   {}", actual);
+            TestOutcome::FalseNegative => {
+                println!("=== !!! SOUNDNESS ISSUE !!! === ({}ms)", result.time_ms);
+                println!("  Expected: REJECT");
+                println!("  Actual:   ACCEPT");
+                println!("  This is DANGEROUS - we accepted an unsafe program!");
+            }
+            TestOutcome::FalsePositive => {
+                println!("=== PRECISION ISSUE === ({}ms)", result.time_ms);
+                println!("  Expected: ACCEPT");
+                println!("  Actual:   REJECT");
+                println!("  Too conservative - rejected a safe program.");
             }
             TestOutcome::Skipped { reason } => {
                 println!("=== SKIPPED === ({}ms)", result.time_ms);
@@ -458,267 +780,6 @@ pub fn selftest_list(json_path: &str) {
     println!("\nTotal: {} tests", tests.len());
 }
 
-// ============================================================================
-// Run Test File
-// ============================================================================
-
-pub fn run_test_file(path: &str, config: &VerifierConfig) -> Result<FileResult, String> {
-    let start = Instant::now();
-
-    // Load JSON
-    let content = fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read {}: {}", path, e))?;
-
-    let tests: Vec<JsonTestCase> = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse {}: {}", path, e))?;
-
-    let mut results = Vec::new();
-    let mut passed = 0;
-    let mut mismatched = 0;
-    let mut skipped = 0;
-    let mut errors = 0;
-
-    for test in &tests {
-        let result = run_test(test, config);
-
-        match &result.outcome {
-            TestOutcome::Pass => passed += 1,
-            TestOutcome::Mismatch { .. } => mismatched += 1,
-            TestOutcome::Skipped { .. } => skipped += 1,
-            TestOutcome::Error { .. } => errors += 1,
-        }
-
-        results.push(result);
-    }
-
-    Ok(FileResult {
-        file: path.to_string(),
-        total: tests.len(),
-        passed,
-        mismatched,
-        skipped,
-        errors,
-        time_ms: start.elapsed().as_millis() as u64,
-        tests: results,
-    })
-}
-
-// ============================================================================
-// Run Test Suite (Directory)
-// ============================================================================
-
-pub fn run_test_suite(dir: &str, config: &VerifierConfig) -> Result<SuiteResult, String> {
-    let start = Instant::now();
-
-    let mut files = Vec::new();
-
-    // Find all .json files
-    let entries = fs::read_dir(dir)
-        .map_err(|e| format!("Failed to read directory {}: {}", dir, e))?;
-
-    let mut json_files: Vec<_> = entries
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .map(|ext| ext == "json")
-                .unwrap_or(false)
-        })
-        .collect();
-
-    json_files.sort_by_key(|e| e.path());
-
-    for entry in json_files {
-        let path = entry.path();
-        let path_str = path.to_string_lossy().to_string();
-
-        match run_test_file(&path_str, config) {
-            Ok(result) => files.push(result),
-            Err(e) => {
-                eprintln!("Warning: Skipping {}: {}", path_str, e);
-            }
-        }
-    }
-
-    // Aggregate stats
-    let total_tests: usize = files.iter().map(|f| f.total).sum();
-    let passed: usize = files.iter().map(|f| f.passed).sum();
-    let mismatched: usize = files.iter().map(|f| f.mismatched).sum();
-    let skipped: usize = files.iter().map(|f| f.skipped).sum();
-    let errors: usize = files.iter().map(|f| f.errors).sum();
-
-    Ok(SuiteResult {
-        total_files: files.len(),
-        total_tests,
-        passed,
-        mismatched,
-        skipped,
-        errors,
-        time_ms: start.elapsed().as_millis() as u64,
-        files,
-    })
-}
-
-// ============================================================================
-// Report Generation
-// ============================================================================
-
-pub fn write_txt_report(result: &SuiteResult, path: &str) -> Result<(), String> {
-    let mut f = fs::File::create(path)
-        .map_err(|e| format!("Failed to create {}: {}", path, e))?;
-
-    writeln!(f, "BPF Verifier Selftest Report").unwrap();
-    writeln!(f, "============================\n").unwrap();
-
-    writeln!(f, "Summary:").unwrap();
-    writeln!(f, "  Files:      {}", result.total_files).unwrap();
-    writeln!(f, "  Tests:      {}", result.total_tests).unwrap();
-    writeln!(f, "  Passed:     {} ({:.1}%)", 
-             result.passed, 
-             100.0 * result.passed as f64 / result.total_tests.max(1) as f64).unwrap();
-    writeln!(f, "  Mismatched: {}", result.mismatched).unwrap();
-    writeln!(f, "  Skipped:    {}", result.skipped).unwrap();
-    writeln!(f, "  Errors:     {}", result.errors).unwrap();
-    writeln!(f, "  Time:       {} ms\n", result.time_ms).unwrap();
-
-    // Per-file summary
-    writeln!(f, "Per-File Results:").unwrap();
-    writeln!(f, "-----------------").unwrap();
-    for file in &result.files {
-        let status = if file.mismatched == 0 && file.errors == 0 {
-            "OK"
-        } else {
-            "ISSUES"
-        };
-        writeln!(f, "  {} - {} ({}/{} passed) [{}ms]",
-                 status,
-                 Path::new(&file.file).file_name().unwrap().to_string_lossy(),
-                 file.passed,
-                 file.total,
-                 file.time_ms).unwrap();
-    }
-
-    // Mismatches detail
-    let has_mismatches = result.files.iter().any(|f| f.mismatched > 0);
-    if has_mismatches {
-        writeln!(f, "\nMismatches:").unwrap();
-        writeln!(f, "-----------").unwrap();
-        for file in &result.files {
-            for test in &file.tests {
-                if let TestOutcome::Mismatch { expected, actual } = &test.outcome {
-                    writeln!(f, "  [{}] {}", 
-                             Path::new(&file.file).file_name().unwrap().to_string_lossy(),
-                             test.name).unwrap();
-                    writeln!(f, "    Expected: {}, Got: {}", expected, actual).unwrap();
-                }
-            }
-        }
-    }
-
-    // Errors detail
-    let has_errors = result.files.iter().any(|f| f.errors > 0);
-    if has_errors {
-        writeln!(f, "\nErrors:").unwrap();
-        writeln!(f, "-------").unwrap();
-        for file in &result.files {
-            for test in &file.tests {
-                if let TestOutcome::Error { message } = &test.outcome {
-                    writeln!(f, "  [{}] {}", 
-                             Path::new(&file.file).file_name().unwrap().to_string_lossy(),
-                             test.name).unwrap();
-                    writeln!(f, "    {}", message).unwrap();
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-pub fn write_json_report(result: &SuiteResult, path: &str) -> Result<(), String> {
-    let json = serde_json::to_string_pretty(result)
-        .map_err(|e| format!("Failed to serialize: {}", e))?;
-
-    fs::write(path, json)
-        .map_err(|e| format!("Failed to write {}: {}", path, e))?;
-
-    Ok(())
-}
-
-// ============================================================================
-// CLI Entry Points
-// ============================================================================
-
-/// Run a single test file and print results
-pub fn selftest_run(json_path: &str, config: &VerifierConfig, output_dir: Option<&str>) {
-    println!("Running selftest: {}\n", json_path);
-
-    match run_test_file(json_path, config) {
-        Ok(result) => {
-            // Print summary
-            println!("Results: {}/{} passed ({} skipped, {} errors) in {}ms",
-                     result.passed, result.total, result.skipped, result.errors, result.time_ms);
-
-            // Print failures
-            for test in &result.tests {
-                match &test.outcome {
-                    TestOutcome::Pass => {
-                        if config.verbosity > 0 {
-                            println!("  PASS: {}", test.name);
-                        }
-                    }
-                    TestOutcome::Mismatch { expected, actual } => {
-                        println!("  MISMATCH: {} (expected {}, got {})", test.name, expected, actual);
-                    }
-                    TestOutcome::Skipped { reason } => {
-                        if config.verbosity > 0 {
-                            println!("  SKIP: {} ({})", test.name, reason);
-                        }
-                    }
-                    TestOutcome::Error { message } => {
-                        println!("  ERROR: {} ({})", test.name, message);
-                    }
-                }
-            }
-
-            // Write reports if output_dir specified
-            if let Some(dir) = output_dir {
-                let base = Path::new(json_path)
-                    .file_stem()
-                    .unwrap()
-                    .to_string_lossy();
-
-                let suite = SuiteResult {
-                    total_files: 1,
-                    total_tests: result.total,
-                    passed: result.passed,
-                    mismatched: result.mismatched,
-                    skipped: result.skipped,
-                    errors: result.errors,
-                    time_ms: result.time_ms,
-                    files: vec![result],
-                };
-
-                let txt_path = format!("{}/{}_report.txt", dir, base);
-                let json_path = format!("{}/{}_report.json", dir, base);
-
-                if let Err(e) = write_txt_report(&suite, &txt_path) {
-                    eprintln!("Warning: {}", e);
-                } else {
-                    println!("\nReport written to: {}", txt_path);
-                }
-
-                if let Err(e) = write_json_report(&suite, &json_path) {
-                    eprintln!("Warning: {}", e);
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("Error: {}", e);
-        }
-    }
-}
-
 /// Run all test files in a directory
 pub fn selftest_suite(dir: &str, config: &VerifierConfig, output_dir: Option<&str>) {
     println!("Running selftest suite: {}\n", dir);
@@ -729,30 +790,39 @@ pub fn selftest_suite(dir: &str, config: &VerifierConfig, output_dir: Option<&st
             println!("========================================");
             println!("            SUITE SUMMARY");
             println!("========================================");
-            println!("Files:      {}", result.total_files);
-            println!("Tests:      {}", result.total_tests);
-            println!("Passed:     {} ({:.1}%)",
+            println!("Files:            {}", result.total_files);
+            println!("Tests:            {}", result.total_tests);
+            println!("Passed:           {} ({:.1}%)",
                      result.passed,
                      100.0 * result.passed as f64 / result.total_tests.max(1) as f64);
-            println!("Mismatched: {}", result.mismatched);
-            println!("Skipped:    {}", result.skipped);
-            println!("Errors:     {}", result.errors);
-            println!("Time:       {} ms", result.time_ms);
+            if result.false_negatives > 0 {
+                println!("SOUNDNESS ISSUES: {} <<<", result.false_negatives);
+            } else {
+                println!("Soundness issues: 0 (good!)");
+            }
+            println!("Precision issues: {}", result.false_positives);
+            println!("Skipped:          {}", result.skipped);
+            println!("Errors:           {}", result.errors);
+            println!("Time:             {} ms", result.time_ms);
             println!("========================================\n");
 
             // Per-file summary
             println!("Per-file results:");
             for file in &result.files {
-                let status = if file.mismatched == 0 && file.errors == 0 {
+                let status = if file.false_negatives > 0 {
+                    "⚠"  // Warning for soundness issues
+                } else if file.false_positives == 0 && file.errors == 0 {
                     "✓"
                 } else {
-                    "✗"
+                    "○"  // Circle for precision-only issues
                 };
-                println!("  {} {} ({}/{} passed)",
+                println!("  {} {} ({}/{} passed, {} soundness, {} precision)",
                          status,
                          Path::new(&file.file).file_name().unwrap().to_string_lossy(),
                          file.passed,
-                         file.total);
+                         file.total,
+                         file.false_negatives,
+                         file.false_positives);
             }
 
             // Write reports

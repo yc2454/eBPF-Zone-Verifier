@@ -164,6 +164,11 @@ pub fn is_zero(dbm: &Dbm, x: Reg) -> bool {
     }
 }
 
+pub fn nonneg(dbm: &Dbm, x: Reg) -> bool {
+    let (lo, _) = get_bounds(dbm, x);
+    lo.map_or(false, |l| l >= 0)
+}
+
 // --- transfer functions ---
 // exec.rs wants a uniform name.
 pub fn forget(dbm: &mut Dbm, x: Reg) {
@@ -283,6 +288,12 @@ pub fn assume_le_const(dbm: &mut Dbm, x: Reg, c: i64) {
 
 // x >= c   encoded as: 0 - x <= -c
 pub fn assume_ge_const(dbm: &mut Dbm, x: Reg, c: i64) {
+    // Since x is an i64, x >= i64::MIN is always true (tautology).
+    // Attempting -c would panic, so we simply skip adding the constraint.
+    if c == i64::MIN {
+        return; 
+    }
+
     dbm.add_constraint(Reg::Zero, x, -c);
     dbm.close();
 }
@@ -290,11 +301,21 @@ pub fn assume_ge_const(dbm: &mut Dbm, x: Reg, c: i64) {
 // x == c   encoded as: x <= c AND x >= c
 pub fn assume_eq_const(dbm: &mut Dbm, x: Reg, c: i64) {
     dbm.add_constraint(x, Reg::Zero, c);
-    dbm.add_constraint(Reg::Zero, x, -c);
+    if c > i64::MIN {
+        dbm.add_constraint(Reg::Zero, x, -c);
+    }
     dbm.close();
 }
 
 pub fn assume_less_than(d: &mut Dbm, x: Reg, c: i64) {
+    // Handle edge case where c is i64::MIN.
+    // x < i64::MIN is impossible (contradiction).
+    // In a DBM, we represent "impossible" by setting the matrix to an inconsistent state.
+    if c == i64::MIN {
+        // Mark DBM as inconsistent (0 - 0 <= -1 is false)
+        d.set(Reg::R0, Reg::R0, -1);
+        return;
+    }
     let bound = c - 1;
     d.add_constraint(x, Reg::Zero, bound);
     d.close();

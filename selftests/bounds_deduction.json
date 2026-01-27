@@ -1,0 +1,134 @@
+[
+  {
+    "name": "check deducing bounds from const, 1",
+    "result": "REJECT",
+    "errstr": "R0 tried to subtract pointer from scalar",
+    "errstr_unpriv": "R1 has pointer with unsupported alu operation",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 117, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 31, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check deducing bounds from const, 2",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R1 has pointer with unsupported alu operation",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 117, "dst": 0, "src": 0, "off": 1, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 213, "dst": 0, "src": 0, "off": 1, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 31, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check deducing bounds from const, 3",
+    "result": "REJECT",
+    "errstr": "R0 tried to subtract pointer from scalar",
+    "errstr_unpriv": "R1 has pointer with unsupported alu operation",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 213, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 31, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check deducing bounds from const, 4",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R6 has pointer with unsupported alu operation",
+    "insns": [
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 213, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 117, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 31, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check deducing bounds from const, 5",
+    "result": "REJECT",
+    "errstr": "R0 tried to subtract pointer from scalar",
+    "errstr_unpriv": "R1 has pointer with unsupported alu operation",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 117, "dst": 0, "src": 0, "off": 1, "imm": 1},
+      {"code": 31, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check deducing bounds from const, 6",
+    "result": "REJECT",
+    "errstr": "R0 tried to subtract pointer from scalar",
+    "errstr_unpriv": "R1 has pointer with unsupported alu operation",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 117, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 31, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check deducing bounds from const, 7",
+    "result": "REJECT",
+    "errstr": "dereference of modified ctx ptr",
+    "errstr_unpriv": "R1 has pointer with unsupported alu operation",
+    "flags": 1,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": -1},
+      {"code": 117, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 31, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check deducing bounds from const, 8",
+    "result": "REJECT",
+    "errstr": "dereference of modified ctx ptr",
+    "errstr_unpriv": "R1 has pointer with unsupported alu operation",
+    "flags": 1,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": -1},
+      {"code": 117, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 15, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check deducing bounds from const, 9",
+    "result": "REJECT",
+    "errstr": "R0 tried to subtract pointer from scalar",
+    "errstr_unpriv": "R1 has pointer with unsupported alu operation",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 117, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 31, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check deducing bounds from const, 10",
+    "result": "REJECT",
+    "errstr": "math between ctx pointer and register with unbounded min value is not allowed",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 213, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 135, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 31, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

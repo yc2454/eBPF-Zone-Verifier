@@ -44,10 +44,15 @@ impl RegType {
         )
     }
 
+    pub fn is_scalar(self) -> bool {
+        use RegType::*;
+        matches!(self, ScalarValue | NotInit)
+    }
+
     /// Returns the non-null version of a nullable pointer type
     pub fn to_non_null(&self) -> Option<RegType> {
         match *self {
-            RegType::PtrToMapValueOrNull { id, map_idx } => {
+            RegType::PtrToMapValueOrNull { id: _, map_idx } => {
                 Some(RegType::PtrToMapValue { offset: Some(0), map_idx })
             }
             RegType::PtrToSocketOrNull { id } => {
@@ -71,6 +76,27 @@ impl RegType {
             RegType::PtrToSockCommonOrNull { .. } |
             RegType::PtrToTcpSockOrNull { .. }
         )
+    }
+
+    pub fn get_offset(&self) -> Option<i64> {
+        match *self {
+            RegType::PtrToMapValue { offset, map_idx: _ } => offset,
+            RegType::PtrToPacket { id: _, range: _, is_base: _, off } => Some(off),
+            _ => None
+        }
+    }
+
+    /// Helper to check strict type compatibility
+    pub fn is_same_pointer_type(t1: &RegType, t2: &RegType) -> bool {
+        // Discriminant check ensures we don't mix PtrToMap with PtrToStack.
+        // For PtrToMap*, we also check if they point to the SAME map_idx.
+        match (t1, t2) {
+            (RegType::PtrToMapObject { map_idx: id1, .. }, RegType::PtrToMapObject { map_idx: id2, .. }) => 
+                id1 == id2,
+            (RegType::PtrToMapValue { map_idx: id1, .. }, RegType::PtrToMapValue { map_idx: id2, .. }) => 
+                id1 == id2,
+            _ => std::mem::discriminant(t1) == std::mem::discriminant(t2),
+        }
     }
 }
 

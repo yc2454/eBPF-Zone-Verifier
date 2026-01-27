@@ -1,0 +1,759 @@
+[
+  {
+    "name": "subtraction bounds (map value) variant 1",
+    "result": "REJECT",
+    "errstr": "R0 max value is outside of the allowed memory range",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 9, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 37, "dst": 1, "src": 0, "off": 7, "imm": 255},
+      {"code": 113, "dst": 3, "src": 0, "off": 1, "imm": 0},
+      {"code": 37, "dst": 3, "src": 0, "off": 5, "imm": 255},
+      {"code": 31, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 119, "dst": 1, "src": 0, "off": 0, "imm": 56},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "subtraction bounds (map value) variant 2",
+    "result": "REJECT",
+    "errstr": "R0 min value is negative, either use unsigned index or do a if (index >=0) check.",
+    "errstr_unpriv": "R1 has unknown scalar with mixed signed bounds",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 37, "dst": 1, "src": 0, "off": 6, "imm": 255},
+      {"code": 113, "dst": 3, "src": 0, "off": 1, "imm": 0},
+      {"code": 37, "dst": 3, "src": 0, "off": 4, "imm": 255},
+      {"code": 31, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check subtraction on pointers for unpriv",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R9 pointer -= pointer prohibited",
+    "fixups": {
+    "fixup_map_hash_8b": [1, 9]
+    },
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 9},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 9, "src": 10, "off": 0, "imm": 0},
+      {"code": 31, "dst": 9, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 0, "src": 9, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check based on zero-extended MOV",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 180, "dst": 2, "src": 0, "off": 0, "imm": -1},
+      {"code": 119, "dst": 2, "src": 0, "off": 0, "imm": 32},
+      {"code": 15, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check based on sign-extended MOV. test1",
+    "result": "REJECT",
+    "errstr": "map_value pointer and 4294967295",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -1},
+      {"code": 119, "dst": 2, "src": 0, "off": 0, "imm": 32},
+      {"code": 15, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check based on sign-extended MOV. test2",
+    "result": "REJECT",
+    "errstr": "R0 min value is outside of the allowed memory range",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -1},
+      {"code": 119, "dst": 2, "src": 0, "off": 0, "imm": 36},
+      {"code": 15, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check based on reg_off + var_off + insn_off. test1",
+    "result": "REJECT",
+    "errstr": "value_size=8 off=1073741825",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_hash_8b": [4]
+    },
+    "insns": [
+      {"code": 97, "dst": 6, "src": 1, "off": 8, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 87, "dst": 6, "src": 0, "off": 0, "imm": 1},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": 536870911},
+      {"code": 15, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 536870911},
+      {"code": 113, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check based on reg_off + var_off + insn_off. test2",
+    "result": "REJECT",
+    "errstr": "value 1073741823",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_hash_8b": [4]
+    },
+    "insns": [
+      {"code": 97, "dst": 6, "src": 1, "off": 8, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 87, "dst": 6, "src": 0, "off": 0, "imm": 1},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": 1073741823},
+      {"code": 15, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 536870911},
+      {"code": 113, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check after truncation of non-boundary-crossing range",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 9, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 1},
+      {"code": 103, "dst": 2, "src": 0, "off": 0, "imm": 36},
+      {"code": 15, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 2147483647},
+      {"code": 20, "dst": 1, "src": 0, "off": 0, "imm": 2147483647},
+      {"code": 119, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check after truncation of boundary-crossing range (1)",
+    "result": "REJECT",
+    "errstr": "value -4294967168 makes map_value pointer be out of bounds",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 2147483584},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 2147483584},
+      {"code": 4, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 23, "dst": 1, "src": 0, "off": 0, "imm": 2147483584},
+      {"code": 23, "dst": 1, "src": 0, "off": 0, "imm": 2147483584},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check after truncation of boundary-crossing range (2)",
+    "result": "REJECT",
+    "errstr": "value -4294967168 makes map_value pointer be out of bounds",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 2147483584},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 2147483584},
+      {"code": 188, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 23, "dst": 1, "src": 0, "off": 0, "imm": 2147483584},
+      {"code": 23, "dst": 1, "src": 0, "off": 0, "imm": 2147483584},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check after wrapping 32-bit addition",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 5, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 2147483647},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 2147483647},
+      {"code": 4, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check after shift with oversized count operand",
+    "result": "REJECT",
+    "errstr": "R0 max value is outside of the allowed memory range",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 32},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 108, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 65535},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check after right shift of maybe-negative number",
+    "result": "REJECT",
+    "errstr": "R0 unbounded memory access",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 23, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 119, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 119, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check after 32-bit right shift with 64-bit input",
+    "result": "REJECT",
+    "errstr": "math between map_value pointer and 4294967294 is not allowed",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 103, "dst": 1, "src": 0, "off": 0, "imm": 31},
+      {"code": 116, "dst": 1, "src": 0, "off": 0, "imm": 31},
+      {"code": 20, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check map access with off+size signed 32bit overflow. test1",
+    "result": "REJECT",
+    "errstr": "map_value pointer and 2147483646",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 2147483646},
+      {"code": 121, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check map access with off+size signed 32bit overflow. test2",
+    "result": "REJECT",
+    "errstr": "pointer offset 1073741822",
+    "errstr_unpriv": "R0 pointer arithmetic of map value goes out of range",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 536870911},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 536870911},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 536870911},
+      {"code": 121, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check map access with off+size signed 32bit overflow. test3",
+    "result": "REJECT",
+    "errstr": "pointer offset -1073741822",
+    "errstr_unpriv": "R0 pointer arithmetic of map value goes out of range",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 23, "dst": 0, "src": 0, "off": 0, "imm": 536870911},
+      {"code": 23, "dst": 0, "src": 0, "off": 0, "imm": 536870911},
+      {"code": 121, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check map access with off+size signed 32bit overflow. test4",
+    "result": "REJECT",
+    "errstr": "map_value pointer and 1000000000000",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 1000000},
+      {"code": 39, "dst": 1, "src": 0, "off": 0, "imm": 1000000},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 121, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check mixed 32bit and 64bit arithmetic. test1",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 invalid mem access 'inv'",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": -1},
+      {"code": 103, "dst": 1, "src": 0, "off": 0, "imm": 32},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 38, "dst": 1, "src": 0, "off": 3, "imm": 1},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 38, "dst": 1, "src": 0, "off": 1, "imm": 2},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 0, "off": -1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check mixed 32bit and 64bit arithmetic. test2",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 invalid mem access 'inv'",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": -1},
+      {"code": 103, "dst": 1, "src": 0, "off": 0, "imm": 32},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 3},
+      {"code": 4, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 45, "dst": 1, "src": 2, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 0, "off": -1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "assigning 32bit bounds to 64bit for wA = 0, wB = wA",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 8, "src": 1, "off": 80, "imm": 0},
+      {"code": 97, "dst": 7, "src": 1, "off": 76, "imm": 0},
+      {"code": 180, "dst": 9, "src": 0, "off": 0, "imm": 0},
+      {"code": 188, "dst": 2, "src": 9, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 7, "off": 0, "imm": 0},
+      {"code": 15, "dst": 6, "src": 2, "off": 0, "imm": 0},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 7, "dst": 3, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 3, "src": 8, "off": 1, "imm": 0},
+      {"code": 97, "dst": 5, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check for reg = 0, reg xor 1",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 min value is outside of the allowed memory range",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 167, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check for reg32 = 0, reg32 xor 1",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 min value is outside of the allowed memory range",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 180, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 164, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 86, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check for reg = 2, reg xor 3",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 min value is outside of the allowed memory range",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 167, "dst": 1, "src": 0, "off": 0, "imm": 3},
+      {"code": 37, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check for reg = any, reg xor 3",
+    "result": "REJECT",
+    "errstr": "invalid access to map value",
+    "errstr_unpriv": "invalid access to map value",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 167, "dst": 1, "src": 0, "off": 0, "imm": 3},
+      {"code": 85, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check for reg32 = any, reg32 xor 3",
+    "result": "REJECT",
+    "errstr": "invalid access to map value",
+    "errstr_unpriv": "invalid access to map value",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 164, "dst": 1, "src": 0, "off": 0, "imm": 3},
+      {"code": 86, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check for reg > 0, reg xor 3",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 min value is outside of the allowed memory range",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 181, "dst": 1, "src": 0, "off": 3, "imm": 0},
+      {"code": 167, "dst": 1, "src": 0, "off": 0, "imm": 3},
+      {"code": 53, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds check for reg32 > 0, reg32 xor 3",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 min value is outside of the allowed memory range",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 182, "dst": 1, "src": 0, "off": 3, "imm": 0},
+      {"code": 164, "dst": 1, "src": 0, "off": 0, "imm": 3},
+      {"code": 54, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds checks after 32-bit truncation. test 1",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 leaks addr",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 37, "dst": 1, "src": 0, "off": 1, "imm": 2147483647},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds checks after 32-bit truncation. test 2",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 leaks addr",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 197, "dst": 1, "src": 0, "off": 1, "imm": 1},
+      {"code": 198, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]
