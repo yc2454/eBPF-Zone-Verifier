@@ -11,7 +11,7 @@ use crate::zone::domain::{Reg, forget, get_bounds,
     assign_zero, assign_mul_imm, assign_and_mask,
     assign_div_imm, assign_div_reg,
     bit_and_const, assign_neg, assign_sub_reg,
-    is_zero
+    is_zero, nonneg
 };
 use crate::analysis::access;
 use crate::zone::domain::proven_u32_range;
@@ -55,21 +55,25 @@ pub fn transfer(
             }
             update_load_types(env, &mut state.types, *size, *dst, *base, *off);
             forget(&mut state.dbm, *dst);
-            // Apply implicit bounds based on Load Size (Zero Extension)
-            // All BPF loads (u8, u16, u32, u64) are treated as unsigned integers.
-            // Therefore, they are always >= 0.
-            assume_ge_const(&mut state.dbm, *dst, 0);
+            
             // Apply upper bounds for sub-64-bit loads
             match size {
-                MemSize::U8  => assume_le_const(&mut state.dbm, *dst, 0xFF),
-                MemSize::U16 => assume_le_const(&mut state.dbm, *dst, 0xFFFF),
-                MemSize::U32 => assume_le_const(&mut state.dbm, *dst, 0xFFFFFFFF),
+                MemSize::U8 => {
+                    assume_ge_const(&mut state.dbm, *dst, 0);
+                    assume_le_const(&mut state.dbm, *dst, 0xFF);
+                }
+                MemSize::U16 => {
+                    assume_ge_const(&mut state.dbm, *dst, 0);
+                    assume_le_const(&mut state.dbm, *dst, 0xFFFF);
+                }
+                MemSize::U32 => {
+                    assume_ge_const(&mut state.dbm, *dst, 0);
+                    assume_le_const(&mut state.dbm, *dst, 0xFFFFFFFF);
+                }
                 MemSize::U64 => {
-                    // For U64, we theoretically don't have an upper bound in i64 signed domain
-                    // (values > i64::MAX appear negative). 
-                    // BPF "Unsigned" loads of U64 don't guarantee they fit in positive i64.
-                    // So we only assert >= 0 if we are sure it's not a "large" u64.
-                    // Safest is to do nothing for U64 upper bound, or assume it's scalar.
+                    // U64 loads can produce any 64-bit value.
+                    // Values >= 0x8000000000000000 are negative in signed i64.
+                    // No constraints can be safely added.
                 }
             }
 
@@ -146,7 +150,7 @@ fn transfer_alu(
         Operand::Reg(r) => state.types.get(r).clone()
     };
     let dst_type = state.types.get(dst);
-    
+
     if !check_ptr_arithmetic(env, &state, op, &dst_type, &src_type) {
         return vec![];
     }
@@ -793,7 +797,6 @@ fn apply_reg_constraints(
         match op {
             CmpOp::SLt | CmpOp::SLe | CmpOp::SGt | CmpOp::SGe => {
                 if !fits_in_i32_range(&then_s.dbm, left) || !fits_in_i32_range(&then_s.dbm, right) {
-                    // Can't safely add constraints, but still refine pointer ranges
                     for state in [&mut *then_s, &mut *else_s] {
                         refine_packet_ranges(&state.dbm, &mut state.types, left, right);
                         refine_packet_ranges(&state.dbm, &mut state.types, right, left);
@@ -803,11 +806,29 @@ fn apply_reg_constraints(
                     return;
                 }
             }
-            | CmpOp::Eq | CmpOp::Ne | CmpOp::UGe | CmpOp::ULe | CmpOp::UGt | CmpOp::ULt | CmpOp::Test => { /* Other ops are safe */}
+            _ => {}
         }
     }
     
-    // Standard constraint logic
+    // For unsigned reg-reg comparisons, we can only safely apply signed DBM
+    // constraints if BOTH registers are KNOWN to be non-negative
+    let is_unsigned_cmp = matches!(op, CmpOp::UGe | CmpOp::ULe | CmpOp::UGt | CmpOp::ULt);
+    
+    if is_unsigned_cmp {
+        if !nonneg(&then_s.dbm, left) || !nonneg(&then_s.dbm, right) {
+            // One or both could be negative (signed) = large (unsigned)
+            // Cannot safely convert unsigned constraints to signed DBM constraints
+            for state in [&mut *then_s, &mut *else_s] {
+                refine_packet_ranges(&state.dbm, &mut state.types, left, right);
+                refine_packet_ranges(&state.dbm, &mut state.types, right, left);
+                refine_mem_ranges(&state.dbm, &mut state.types, left, right);
+                refine_mem_ranges(&state.dbm, &mut state.types, right, left);
+            }
+            return;
+        }
+    }
+    
+    // Standard constraint logic (only reached if safe)
     match op {
         CmpOp::UGe | CmpOp::SGe => { 
             assume_ge_var(&mut then_s.dbm, left, right);
@@ -827,17 +848,12 @@ fn apply_reg_constraints(
         }
         CmpOp::Eq => {
             assign_eq(&mut then_s.dbm, left, right);
-            // For else branch, we can't express 'not equal' directly.
-            // So we over-approximate by not adding any constraint.
         }
         CmpOp::Ne => {
             assign_eq(&mut else_s.dbm, left, right);
-            // For then branch, we can't express 'not equal' directly.
-            // So we over-approximate by not adding any constraint. 
         }
         CmpOp::Test => {
-            // x & y != 0
-            // No direct way to express in DBM, so skip
+            // No direct way to express in DBM
         }
     }
     
@@ -1884,6 +1900,16 @@ fn validate_helper_args(
             // R1 can be PtrToCtx or NULL
             if !matches!(types.get(Reg::R1), RegType::PtrToCtx) && !is_zero(&state.dbm, Reg::R1) {
                 env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            }
+        }
+        constants::BPF_SKB_LOAD_BYTES => {
+            if !matches!(types.get(Reg::R1), RegType::PtrToCtx) {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            } else {
+                // R4 cannot be negative because it's ARG_CONST_SIZE type
+                if !nonneg(&state.dbm, Reg::R4) {
+                    env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R4 });
+                }
             }
         }
         _ => {

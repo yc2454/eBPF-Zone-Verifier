@@ -1,0 +1,457 @@
+[
+  {
+    "name": "bounds checks mixing signed and unsigned, positive bounds",
+    "result": "REJECT",
+    "errstr": "unbounded min value",
+    "fixups": {
+    "fixup_map_hash_8b": [5]
+    },
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 121, "dst": 1, "src": 10, "off": -16, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 2},
+      {"code": 61, "dst": 2, "src": 1, "off": 3, "imm": 0},
+      {"code": 101, "dst": 1, "src": 0, "off": 2, "imm": 4},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 114, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds checks mixing signed and unsigned",
+    "result": "REJECT",
+    "errstr": "unbounded min value",
+    "fixups": {
+    "fixup_map_hash_8b": [5]
+    },
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 121, "dst": 1, "src": 10, "off": -16, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -1},
+      {"code": 45, "dst": 1, "src": 2, "off": 3, "imm": 0},
+      {"code": 101, "dst": 1, "src": 0, "off": 2, "imm": 1},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 114, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds checks mixing signed and unsigned, variant 2",
+    "result": "REJECT",
+    "errstr": "unbounded min value",
+    "fixups": {
+    "fixup_map_hash_8b": [5]
+    },
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 121, "dst": 1, "src": 10, "off": -16, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -1},
+      {"code": 45, "dst": 1, "src": 2, "off": 5, "imm": 0},
+      {"code": 183, "dst": 8, "src": 0, "off": 0, "imm": 0},
+      {"code": 15, "dst": 8, "src": 1, "off": 0, "imm": 0},
+      {"code": 101, "dst": 8, "src": 0, "off": 2, "imm": 1},
+      {"code": 15, "dst": 0, "src": 8, "off": 0, "imm": 0},
+      {"code": 114, "dst": 8, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds checks mixing signed and unsigned, variant 3",
+    "result": "REJECT",
+    "errstr": "unbounded min value",
+    "fixups": {
+    "fixup_map_hash_8b": [5]
+    },
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 7, "imm": 0},
+      {"code": 121, "dst": 1, "src": 10, "off": -16, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -1},
+      {"code": 45, "dst": 1, "src": 2, "off": 4, "imm": 0},
+      {"code": 191, "dst": 8, "src": 1, "off": 0, "imm": 0},
+      {"code": 101, "dst": 8, "src": 0, "off": 2, "imm": 1},
+      {"code": 15, "dst": 0, "src": 8, "off": 0, "imm": 0},
+      {"code": 114, "dst": 8, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds checks mixing signed and unsigned, variant 4",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_hash_8b": [5]
+    },
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 121, "dst": 1, "src": 10, "off": -16, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 1},
+      {"code": 95, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 101, "dst": 1, "src": 0, "off": 2, "imm": 1},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 114, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds checks mixing signed and unsigned, variant 5",
+    "result": "REJECT",
+    "errstr": "unbounded min value",
+    "fixups": {
+    "fixup_map_hash_8b": [5]
+    },
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 121, "dst": 1, "src": 10, "off": -16, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -1},
+      {"code": 45, "dst": 1, "src": 2, "off": 5, "imm": 0},
+      {"code": 101, "dst": 1, "src": 0, "off": 4, "imm": 1},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 4},
+      {"code": 31, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 114, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds checks mixing signed and unsigned, variant 6",
+    "result": "REJECT",
+    "errstr": "R4 min value is negative, either use unsigned",
+    "insns": [
+      {"code": 191, "dst": 9, "src": 1, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 191, "dst": 1, "src": 9, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 3, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 3, "src": 0, "off": 0, "imm": -512},
+      {"code": 121, "dst": 4, "src": 10, "off": -16, "imm": 0},
+      {"code": 183, "dst": 6, "src": 0, "off": 0, "imm": -1},
+      {"code": 45, "dst": 4, "src": 6, "off": 5, "imm": 0},
+      {"code": 101, "dst": 4, "src": 0, "off": 4, "imm": 1},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 106, "dst": 10, "src": 0, "off": -512, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 26},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds checks mixing signed and unsigned, variant 7",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_hash_8b": [5]
+    },
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 121, "dst": 1, "src": 10, "off": -16, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 1073741824},
+      {"code": 45, "dst": 1, "src": 2, "off": 3, "imm": 0},
+      {"code": 101, "dst": 1, "src": 0, "off": 2, "imm": 1},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 114, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds checks mixing signed and unsigned, variant 8",
+    "result": "REJECT",
+    "errstr": "unbounded min value",
+    "fixups": {
+    "fixup_map_hash_8b": [5]
+    },
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 121, "dst": 1, "src": 10, "off": -16, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -1},
+      {"code": 45, "dst": 2, "src": 1, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 101, "dst": 1, "src": 0, "off": 2, "imm": 1},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 114, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds checks mixing signed and unsigned, variant 9",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_hash_8b": [5]
+    },
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 9, "imm": 0},
+      {"code": 121, "dst": 1, "src": 10, "off": -16, "imm": 0},
+      {"code": 24, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": -2147483648},
+      {"code": 45, "dst": 2, "src": 1, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 101, "dst": 1, "src": 0, "off": 2, "imm": 1},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 114, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds checks mixing signed and unsigned, variant 10",
+    "result": "REJECT",
+    "errstr": "unbounded min value",
+    "fixups": {
+    "fixup_map_hash_8b": [5]
+    },
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 121, "dst": 1, "src": 10, "off": -16, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 45, "dst": 2, "src": 1, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 101, "dst": 1, "src": 0, "off": 2, "imm": 1},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 114, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds checks mixing signed and unsigned, variant 11",
+    "result": "REJECT",
+    "errstr": "unbounded min value",
+    "fixups": {
+    "fixup_map_hash_8b": [5]
+    },
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 121, "dst": 1, "src": 10, "off": -16, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -1},
+      {"code": 61, "dst": 2, "src": 1, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 101, "dst": 1, "src": 0, "off": 2, "imm": 1},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 114, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds checks mixing signed and unsigned, variant 12",
+    "result": "REJECT",
+    "errstr": "unbounded min value",
+    "fixups": {
+    "fixup_map_hash_8b": [5]
+    },
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 121, "dst": 1, "src": 10, "off": -16, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -6},
+      {"code": 61, "dst": 2, "src": 1, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 101, "dst": 1, "src": 0, "off": 2, "imm": 1},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 114, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds checks mixing signed and unsigned, variant 13",
+    "result": "REJECT",
+    "errstr": "unbounded min value",
+    "fixups": {
+    "fixup_map_hash_8b": [5]
+    },
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 5, "imm": 0},
+      {"code": 121, "dst": 1, "src": 10, "off": -16, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 2},
+      {"code": 61, "dst": 2, "src": 1, "off": 2, "imm": 0},
+      {"code": 183, "dst": 7, "src": 0, "off": 0, "imm": 1},
+      {"code": 101, "dst": 7, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 15, "dst": 7, "src": 1, "off": 0, "imm": 0},
+      {"code": 101, "dst": 7, "src": 0, "off": 2, "imm": 4},
+      {"code": 15, "dst": 0, "src": 7, "off": 0, "imm": 0},
+      {"code": 114, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds checks mixing signed and unsigned, variant 14",
+    "result": "REJECT",
+    "errstr": "unbounded min value",
+    "fixups": {
+    "fixup_map_hash_8b": [6]
+    },
+    "insns": [
+      {"code": 97, "dst": 9, "src": 1, "off": 8, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 7, "imm": 0},
+      {"code": 121, "dst": 1, "src": 10, "off": -16, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -1},
+      {"code": 183, "dst": 8, "src": 0, "off": 0, "imm": 2},
+      {"code": 21, "dst": 9, "src": 0, "off": 6, "imm": 42},
+      {"code": 109, "dst": 8, "src": 1, "off": 3, "imm": 0},
+      {"code": 101, "dst": 1, "src": 0, "off": 2, "imm": 1},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 114, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 45, "dst": 1, "src": 2, "off": -3, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": -7, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounds checks mixing signed and unsigned, variant 15",
+    "result": "REJECT",
+    "errstr": "unbounded min value",
+    "fixups": {
+    "fixup_map_hash_8b": [5]
+    },
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 121, "dst": 1, "src": 10, "off": -16, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -6},
+      {"code": 61, "dst": 2, "src": 1, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 37, "dst": 0, "src": 0, "off": 2, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 114, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

@@ -126,6 +126,9 @@ pub fn analyze_program(
         // We output the raw data following the protocol. The Logger filters it.
         debug!(target: "app", "|PC:{}| Instr: {:?} | Regs: {:?}", 
                state.pc, instr, state.types);
+        if config.verbosity >= 2 {
+            state.dbm.pretty_print();
+        }
 
         // F. Transfer Function
         let successors = transfer::transfer(&mut env, state, instr);
