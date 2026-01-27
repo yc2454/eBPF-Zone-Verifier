@@ -1458,7 +1458,6 @@ fn handle_shl(
             forget(&mut state.dbm, dst);
             
             if let (Some(lo), Some(hi)) = (old_lo, old_hi) {
-                // Only apply bounds if values are non-negative and shift won't overflow
                 if lo >= 0 && shift_amount < 63 {
                     let max_safe: i64 = i64::MAX >> shift_amount;
                     
@@ -1469,17 +1468,29 @@ fn handle_shl(
                 }
             }
             
-            // Handle W32 truncation
             if width == Width::W32 {
                 apply_w32_truncation(&mut state.dbm, dst);
             }
+            
+            // Tnum update for immediate shift
+            let t = state.get_tnum(dst);
+            let new_t = t.shl_imm(shift_amount as u64);
+            state.set_tnum(dst, new_t);
         }
         Operand::Reg(_) => {
             forget(&mut state.dbm, dst);
-            if width == Width::W32 {
+            
+            // Tnum: shift by register = result is unknown
+            // For W32: result is in [0, 0xFFFFFFFF]
+            // For W64: result is in [0, u64::MAX]
+            let new_t = if width == Width::W32 {
                 assume_ge_const(&mut state.dbm, dst, 0);
                 assume_le_const(&mut state.dbm, dst, u32::MAX as i64);
-            }
+                Tnum::u32_unknown()
+            } else {
+                Tnum::unknown()
+            };
+            state.set_tnum(dst, new_t);
         }
     }
 }

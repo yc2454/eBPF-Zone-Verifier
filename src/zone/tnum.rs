@@ -200,6 +200,22 @@ impl Tnum {
         }
     }
 
+    /// Shift left by immediate
+    pub fn shl_imm(self, shift: u64) -> Tnum {
+        Tnum {
+            value: self.value << shift,
+            mask: self.mask << shift,
+        }
+    }
+    
+    /// Fully unknown 32-bit value
+    pub fn u32_unknown() -> Tnum {
+        Tnum {
+            value: 0,
+            mask: 0xFFFFFFFF,
+        }
+    }
+
     /// Truncate to 32 bits (zero-extend)
     #[inline]
     pub fn trunc32(self) -> Tnum {
