@@ -83,6 +83,8 @@ typedef int64_t  __s64;
 #define BPF_X           0x08
 
 #define BPF_FETCH       0x01
+#define BPF_XCHG    (0xe0 | BPF_FETCH)  /* 0xe1 */
+#define BPF_CMPXCHG (0xf0 | BPF_FETCH)  /* 0xf1 */
 
 #define BPF_OP(code)    ((code) & 0xf0)
 #define BPF_SIZE(code)  ((code) & 0x18)

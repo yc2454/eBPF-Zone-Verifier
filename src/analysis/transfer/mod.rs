@@ -55,8 +55,8 @@ pub fn transfer(
         Instr::LoadMap { dst, kind, map_fd, off } => 
             map_load::transfer_map_load(env, state, *dst, *kind, *map_fd),
         
-        Instr::AtomicAdd { size, base, off, src } => 
-            memory::transfer_atomic_add(env, state, *size, *base, *off, *src),
+        Instr::Atomic { op, size, fetch, base, off, src } => 
+            memory::transfer_atomic(env, state, *op, *fetch, *size, *base, *off, *src),
         
         Instr::Call { helper } => 
             call::transfer_call(env, state, *helper),

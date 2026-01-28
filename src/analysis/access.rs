@@ -373,7 +373,7 @@ fn check_stack_access(
                 return;
             }
             
-            // Initialization check (reads only)
+            // Initialization and read size check (reads only)
             if matches!(kind, AccessKind::Read) {
                 // For the access range
                 for i in 0..size {
@@ -381,6 +381,13 @@ fn check_stack_access(
                     if !state.types.stack.contains_key(&slot) {
                         env.fail(VerificationError::UninitializedStackRead { pc, offset: actual_offset });
                         return;
+                    }
+                    // The read size for a pointer must be 64-bit
+                    let slot_type = state.types.get_stack(actual_offset as i16);
+                    if slot_type.is_pointer() {
+                        if size != 8 {
+                            env.fail(VerificationError::InvalidStackRead { pc, offset: actual_offset });
+                        }
                     }
                 }
             }

@@ -10,6 +10,7 @@ pub enum VerificationError {
     StackOutOfBounds { pc: usize, off: i64, size: i64 },
     PointerOutOfBounds { pc: usize },
     UninitializedStackRead { pc: usize, offset: i64 },
+    InvalidStackRead { pc: usize, offset: i64 },
     UnsafePacketLoad { pc: usize, off: i16, size: MemSize, range: u64 },
     UnsafePacketStore { pc: usize, off: i16, size: MemSize },
     UnsafeMapLoad { pc: usize, off: i64, size: MemSize, limit: i64 },
@@ -86,6 +87,9 @@ impl VerificationError {
             }
             VerificationError::InvalidPointerArithmetic { pc } => {
                 format!("Invalid pointer arithmetic at pc {}", pc)
+            }
+            VerificationError::InvalidStackRead { pc, offset } => {
+                format!("Invalid stack read at pc {} offset {}", pc, offset)
             }
             VerificationError::RegisterNotReadable { pc, reg } => {
                 format!("pc {}: {:?} !read_ok", pc, reg)

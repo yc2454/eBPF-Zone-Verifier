@@ -115,7 +115,7 @@ fn get_use_def(instr: &Instr) -> (HashSet<Reg>, HashSet<Reg>) {
                 uses.insert(*r);
             }
         }
-        Instr::AtomicAdd { base, src, .. } => {
+        Instr::Atomic { base, src, .. } => {
             uses.insert(*base);
             uses.insert(*src);
             defs.insert(*base); // base is modified

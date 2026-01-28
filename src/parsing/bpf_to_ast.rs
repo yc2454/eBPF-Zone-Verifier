@@ -1,5 +1,6 @@
 // src/bpf_to_ast.rs
-use crate::ast::{AluOp, CmpOp, Instr, Operand, Program, Width, MemSize, EndianOp, PacketLoadMode};
+use crate::ast::{AluOp, CmpOp, EndianOp, Instr, MapLoadKind, 
+    MemSize, Operand, PacketLoadMode, Program, Width, AtomicOp};
 use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::zone::domain::Reg;
 use std::collections::HashSet;
@@ -10,7 +11,8 @@ pub enum LowerErrorKind {
     InvalidLDIMM64,
     BranchTargetOutOfRange,
     CallTargetOutOfBounds,
-    InvalidSrcReg
+    InvalidSrcReg,
+    UnknownAtomicOp
 }
 
 #[derive(Debug)]
@@ -104,13 +106,39 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             let imm_i64: i64 = imm_u64 as i64;
 
             // AST 1: The Load
-            instrs.push(Instr::Alu {
-                width: Width::W64,
-                op: AluOp::Mov,
-                dst,
-                src: Operand::Imm(imm_i64),
-            });
-
+            match src {
+                Reg::R0 => {
+                    instrs.push(Instr::Alu {
+                        width: Width::W64,
+                        op: AluOp::Mov,
+                        dst,
+                        src: Operand::Imm(imm_i64),
+                    });
+                },
+                Reg::R1 => {
+                    instrs.push(Instr::LoadMap { 
+                        dst, 
+                        kind: MapLoadKind::MapPtr, 
+                        map_fd: imm_i64 as i32, 
+                        off: 0 
+                    });
+                },
+                Reg::R2 => {
+                    instrs.push(Instr::LoadMap { 
+                        dst, 
+                        kind: MapLoadKind::MapValue, 
+                        map_fd: imm_i64 as i32, 
+                        off: 0 
+                    });
+                },
+                _ => return Err(LowerError {
+                    pc,
+                    code: cont.code,
+                    msg: "invalid BPF_LD_IMM insn: invalid source reg".to_string(),
+                    kind: LowerErrorKind::InvalidLDIMM64
+                })
+            }
+            
             // AST 2: The No-Op (Maps to 'pc + 1')
             // We record this PC. If we reach here later, it's an error
             invalid_pc_set.insert(pc + 1);
@@ -1183,21 +1211,54 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 }
             }
 
-            // 0xdb: ATOMIC_ADD_64 (lock *(u64 *)(dst + off) += src)
-            0xdb => Instr::AtomicAdd {
-                size: MemSize::U64,
-                base: dst,
-                off: insn.off,
-                src, 
-            },
+            // 0xDB (64-bit) and 0xC3 (32-bit)
+            0xDB | 0xC3 => {
+                let size = if insn.code == 0xDB { MemSize::U64 } else { MemSize::U32 };
+                
+                // 1. Check for Complex Ops (XCHG, CMPXCHG)
+                // These specific values are hardcoded in the kernel spec.
+                let (op, fetch) = match insn.imm {
+                    // BPF_ADD (0x00) with/without Fetch (0x01)
+                    0x00 => (AtomicOp::Add, false),
+                    0x01 => (AtomicOp::Add, true),
+                    
+                    // BPF_OR (0x40)
+                    0x40 => (AtomicOp::Or, false),
+                    0x41 => (AtomicOp::Or, true),
 
-            // 0xc3: ATOMIC_ADD_32 (lock *(u32 *)(dst + off) += src)
-            0xc3 => Instr::AtomicAdd {
-                size: MemSize::U32,
-                base: dst,
-                off: insn.off,
-                src,
-            },
+                    // BPF_AND (0x50)
+                    0x50 => (AtomicOp::And, false),
+                    0x51 => (AtomicOp::And, true),
+
+                    // BPF_XOR (0xA0)
+                    0xA0 => (AtomicOp::Xor, false),
+                    0xA1 => (AtomicOp::Xor, true),
+
+                    // BPF_XCHG (0xE1) - Always implies Fetch
+                    0xE1 => (AtomicOp::Xchg, true),
+
+                    // BPF_CMPXCHG (0xF1) - Always implies Fetch
+                    0xF1 => (AtomicOp::CmpXchg, true),
+
+                    _ => return Err(
+                        LowerError { 
+                            pc, 
+                            code: insn.code, 
+                            msg: format!("unknown atomic opcode imm: 0x{:x}", insn.imm), 
+                            kind: LowerErrorKind::UnknownAtomicOp
+                        }
+                    ),
+                };
+
+                Instr::Atomic {
+                    op,
+                    size,
+                    fetch,
+                    base: dst,     // In BPF STX, 'dst' is the memory pointer
+                    off: insn.off,
+                    src,           // In BPF STX, 'src' is the value
+                }
+            }
 
             // --- LEGACY PACKET LOADS (LD_ABS) ---
             0x20 => Instr::LoadPacket { 

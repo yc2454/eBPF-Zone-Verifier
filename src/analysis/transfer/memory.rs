@@ -5,7 +5,7 @@
 use crate::analysis::env::{VerifierEnv, VerificationError};
 use crate::analysis::state::State;
 use crate::analysis::reg_types::RegType;
-use crate::ast::{Operand, MemSize};
+use crate::ast::{Operand, MemSize, AtomicOp};
 use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, assume_eq_const};
 use crate::zone::tnum::Tnum;
 use crate::analysis::access;
@@ -100,44 +100,64 @@ pub(crate) fn transfer_store(
     vec![state]
 }
 
-/// Transfer function for AtomicAdd instructions.
-pub(crate) fn transfer_atomic_add(
+pub(crate) fn transfer_atomic(
     env: &mut VerifierEnv,
     mut state: State,
+    op: AtomicOp,
+    fetch: bool,
     size: MemSize,
     base: Reg,
     off: i16,
     src: Reg,
 ) -> Vec<State> {
-    // Check base and src registers are readable
-    if !check_reg_readable(env, &state, base) {
-        return vec![];
-    }
-    if !check_reg_readable(env, &state, src) {
-        return vec![];
+    // 1. Check Standard Operands (base + src)
+    if !check_reg_readable(env, &state, base) { return vec![]; }
+    if !check_reg_readable(env, &state, src) { return vec![]; }
+
+    // 2. Special Check for CmpXchg
+    // CmpXchg implicitly reads R0 as the "expected value".
+    if op == AtomicOp::CmpXchg {
+        if !check_reg_readable(env, &state, Reg::R0) { return vec![]; }
     }
 
     let base_ty = state.types.get(base);
-    
-    // Atomic add to ctx pointer is not allowed
+
+    // 3. Context Pointer Check
+    // Atomic ops on Context (sk_buff, etc.) are generally forbidden.
     if matches!(base_ty, RegType::PtrToCtx) {
         env.fail(VerificationError::InvalidArgType { pc: state.pc, reg: base });
-        state.pc += 1;
-        return vec![]
+        return vec![];
     }
-    
-    // 1. Safety Check: Identical to Store
-    // (Must be valid writable memory)
+
+    // 4. Memory Safety Check
+    // Atomic ops (Add, Xchg, CmpXchg) read the value from memory first.
+    // We must ensure the memory at [base + off] is readable (initialized).
+    access::check_load(env, &state, base, size, off);
     access::check_store(env, &state, base, size, off);
     if env.failed() { return vec![]; }
-    
-    // 2. State Update:
-    // An Atomic Add results in a number (Scalar).
-    // We treat this as "Storing a Scalar" to that location.
-    // We reuse update_store_types, passing ScalarValue as the "source type".
-    let base_type = state.types.get(base);
-    update_store_types(&mut state.types, RegType::ScalarValue, size, base_type, off);
-    
+
+    // 5. Update Memory State
+    // The value in memory is being modified (added to, xor'd, swapped, etc.).
+    // We treat the result in memory as a Scalar (number).
+    update_store_types(&mut state.types, RegType::ScalarValue, size, base_ty, off);
+
+    // 6. Update Register State (The "Fetch" part)
+    // If BPF_FETCH is set, the instruction loads the *old* value from memory
+    // into a register.
+    if op == AtomicOp::CmpXchg {
+        // CmpXchg: If match, memory updated. If mismatch, old value loaded into R0.
+        // In both cases, R0 is overwritten with the value from memory.
+        state.types.set(Reg::R0, RegType::ScalarValue);
+        
+        // We don't know what that value is (it came from memory), so forget constraints.
+        forget(&mut state.dbm, Reg::R0);
+    } else if fetch {
+        // Add, And, Or, Xor, Xchg with Fetch:
+        // The 'src' register is overwritten with the OLD value from memory.
+        state.types.set(src, RegType::ScalarValue);
+        forget(&mut state.dbm, src);
+    }
+
     state.pc += 1;
     vec![state]
 }

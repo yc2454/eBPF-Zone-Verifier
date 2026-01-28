@@ -77,6 +77,16 @@ pub enum MapLoadKind {
     MapValue,    // src=2: Returns PTR_TO_MAP_VALUE
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AtomicOp {
+    Add,     // BPF_ADD
+    Or,      // BPF_OR
+    And,     // BPF_AND
+    Xor,     // BPF_XOR
+    Xchg,    // BPF_XCHG (Atomic Exchange)
+    CmpXchg, // BPF_CMPXCHG (Atomic Compare-and-Exchange)
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum Instr {
     /// rX = arg0
@@ -130,12 +140,13 @@ pub enum Instr {
         src: Operand,
     },
 
-    /// 'lock *(size *)(base + off) += src'
-    AtomicAdd {
-        size: MemSize,
-        base: Reg,
-        off: i16,
-        src: Reg,
+    Atomic {
+        op: AtomicOp,
+        size: MemSize,  // U32 or U64
+        fetch: bool,    // BPF_FETCH flag (Result stored back in src register)
+        base: Reg,      // Pointer to memory (dst in bytecode)
+        off: i16,       // Offset from base
+        src: Reg,       // Value to apply (src in bytecode)
     },
 
     /// Standard helper call (src_reg = 0) 
@@ -390,14 +401,22 @@ impl fmt::Display for Instr {
                 write!(f, "*({} *)({} + {}) = {}", size_str, base.name(), off, src_str)
             },
 
-            AtomicAdd { size, base, off, src } => {
+            Atomic { op, size, base, off, src, fetch } => {
                 let size_str = match size {
                     MemSize::U8  => "u8",
                     MemSize::U16 => "u16",
                     MemSize::U32 => "u32",
                     MemSize::U64 => "u64",
                 };
-                write!(f, "lock *({} *)({} + {}) += {}", size_str, base.name(), off, src.name())
+                let op_str = match op {
+                    AtomicOp::Add => "+",
+                    AtomicOp::Or => "||",
+                    AtomicOp::And => "&&",
+                    AtomicOp::CmpXchg => "cmpxchg",
+                    AtomicOp::Xor => "^",
+                    AtomicOp::Xchg => "xchg"
+                };
+                write!(f, "lock *({} *)({} {} {}) += {}", size_str, base.name(), op_str, off, src.name())
             },
 
             Call { helper } =>
