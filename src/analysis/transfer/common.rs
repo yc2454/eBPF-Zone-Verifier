@@ -61,3 +61,15 @@ pub(crate) fn check_regs_readable(
     }
     all_ok
 }
+
+pub(crate) fn check_reg_writable(
+    env: &mut VerifierEnv,
+    state: &State,
+    reg: Reg,
+) -> bool {
+    if reg == Reg::R10 {
+        env.fail(VerificationError::RegisterNotWritable { pc: state.pc, reg });
+        return false
+    }
+    true
+}

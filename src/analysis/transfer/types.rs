@@ -4,7 +4,7 @@
 
 use crate::analysis::env::VerifierEnv;
 use crate::analysis::reg_types::{RegType, TypeState, new_packet_id};
-use crate::ast::{AluOp, Operand, Width, MemSize, ProgramKind, MapLoadKind};
+use crate::ast::{AluOp, AtomicOp, MapLoadKind, MemSize, Operand, ProgramKind, Width};
 use crate::zone::domain::Reg;
 use crate::parsing::ctx_model::{
     classify_sk_buff_field, CtxFieldKind, classify_xdp_md_field
@@ -361,4 +361,21 @@ pub(crate) fn update_map_load_types(types: &mut TypeState, kind: MapLoadKind, ma
     };
 
     types.set(dst, new_type);
+}
+
+pub(crate) fn update_atomic_op_types(
+    types: &mut TypeState,
+    op: AtomicOp,
+    src: Reg,
+    fetch: bool
+) {
+    if op == AtomicOp::CmpXchg {
+        // CmpXchg: If match, memory updated. If mismatch, old value loaded into R0.
+        // In both cases, R0 is overwritten with the value from memory.
+        types.set(Reg::R0, RegType::ScalarValue);
+    } else if fetch {
+        // Add, And, Or, Xor, Xchg with Fetch:
+        // The 'src' register is overwritten with the OLD value from memory.
+        types.set(src, RegType::ScalarValue);
+    }
 }

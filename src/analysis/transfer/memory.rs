@@ -5,13 +5,14 @@
 use crate::analysis::env::{VerifierEnv, VerificationError};
 use crate::analysis::state::State;
 use crate::analysis::reg_types::RegType;
+use crate::analysis::transfer::types::update_atomic_op_types;
 use crate::ast::{Operand, MemSize, AtomicOp};
 use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, assume_eq_const};
 use crate::zone::tnum::Tnum;
 use crate::analysis::access;
 
 use super::types::{update_load_types, update_store_types};
-use super::common::{check_reg_readable, check_operand_readable};
+use super::common::{check_reg_readable, check_operand_readable, check_reg_writable};
 
 /// Transfer function for Load instructions.
 pub(crate) fn transfer_load(
@@ -24,6 +25,11 @@ pub(crate) fn transfer_load(
 ) -> Vec<State> {
     // Check base register is readable
     if !check_reg_readable(env, &state, base) {
+        return vec![];
+    }
+
+    // Check dst is writable
+    if !check_reg_writable(env, &state, dst) {
         return vec![];
     }
 
@@ -110,14 +116,20 @@ pub(crate) fn transfer_atomic(
     off: i16,
     src: Reg,
 ) -> Vec<State> {
-    // 1. Check Standard Operands (base + src)
+    // 1. Check readability
     if !check_reg_readable(env, &state, base) { return vec![]; }
     if !check_reg_readable(env, &state, src) { return vec![]; }
-
-    // 2. Special Check for CmpXchg
-    // CmpXchg implicitly reads R0 as the "expected value".
     if op == AtomicOp::CmpXchg {
         if !check_reg_readable(env, &state, Reg::R0) { return vec![]; }
+    }
+
+    // 2. Check writability
+    if op == AtomicOp::CmpXchg {
+        // CmpXchg always writes to R0
+        if !check_reg_writable(env, &state, Reg::R0) { return vec![]; }
+    } else if fetch {
+        // Fetch operations write to 'src'
+        if !check_reg_writable(env, &state, src) { return vec![]; }
     }
 
     let base_ty = state.types.get(base);
@@ -144,17 +156,13 @@ pub(crate) fn transfer_atomic(
     // 6. Update Register State (The "Fetch" part)
     // If BPF_FETCH is set, the instruction loads the *old* value from memory
     // into a register.
+    update_atomic_op_types(&mut state.types, op, src, fetch);
     if op == AtomicOp::CmpXchg {
-        // CmpXchg: If match, memory updated. If mismatch, old value loaded into R0.
-        // In both cases, R0 is overwritten with the value from memory.
-        state.types.set(Reg::R0, RegType::ScalarValue);
-        
         // We don't know what that value is (it came from memory), so forget constraints.
         forget(&mut state.dbm, Reg::R0);
     } else if fetch {
         // Add, And, Or, Xor, Xchg with Fetch:
         // The 'src' register is overwritten with the OLD value from memory.
-        state.types.set(src, RegType::ScalarValue);
         forget(&mut state.dbm, src);
     }
 

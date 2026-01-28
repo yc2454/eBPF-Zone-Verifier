@@ -18,7 +18,7 @@ use crate::analysis::constants;
 use log::error;
 
 use super::types::update_alu_types;
-use super::common::{check_reg_readable, check_operand_readable};
+use super::common::{check_reg_readable, check_operand_readable, check_reg_writable};
 
 /// Transfer function for ALU instructions.
 pub(crate) fn transfer_alu(
@@ -38,6 +38,11 @@ pub(crate) fn transfer_alu(
         }
     }
     if !check_operand_readable(env, &state, &src) {
+        return vec![];
+    }
+
+    // Check destination writability
+    if !check_reg_writable(env, &state, dst) {
         return vec![];
     }
 

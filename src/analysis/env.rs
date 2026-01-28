@@ -23,6 +23,7 @@ pub enum VerificationError {
     DbmInconsistent { pc: usize },
     ComplexityLimitExceeded { limit: usize },
     RegisterNotReadable { pc: usize, reg: Reg },
+    RegisterNotWritable { pc: usize, reg: Reg },
     CfgError(String),
     DivideByZero { pc: usize },
     InvalidArgType { pc: usize, reg: Reg },
@@ -93,6 +94,9 @@ impl VerificationError {
             }
             VerificationError::RegisterNotReadable { pc, reg } => {
                 format!("pc {}: {:?} !read_ok", pc, reg)
+            }
+            VerificationError::RegisterNotWritable { pc, reg } => {
+                format!("pc {}: {:?} !write_ok", pc, reg)
             }
             VerificationError::InvalidBPFLoadImmInsn { pc } => {
                 format!("Invalid BPF_LD_IMM instruction at pc {}", pc)

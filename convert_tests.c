@@ -676,6 +676,7 @@ struct bpf_test {
     struct kfunc_btf_id_pair fixup_kfunc_btf_id[MAX_FIXUPS];
     const char *errstr;
     const char *errstr_unpriv;
+    const char *kfunc;
     uint32_t insn_processed;
     int prog_len;
     int result;
@@ -1150,6 +1151,11 @@ int main() {
         
         if (t->expected_attach_type) {
             printf(",\n    \"expected_attach_type\": %d", t->expected_attach_type);
+        }
+
+        if (t->kfunc) {
+            printf(",\n    \"kfunc\": ");
+            print_json_string(t->kfunc);
         }
         
         if (t->flags) {
