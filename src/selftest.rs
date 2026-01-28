@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::analysis;
 use crate::analysis::context::{default_exec_ctx};
 use crate::ast::ProgramKind;
-use crate::parsing::bpf_to_ast::lower_raw_to_program;
+use crate::parsing::bpf_to_ast::{lower_raw_to_program, LowerErrorKind};
 use crate::misc::config::VerifierConfig;
 use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::parsing::elf_loader::{BpfMapDef, RelocInfo};
@@ -309,7 +309,13 @@ pub fn run_test(test: &JsonTestCase, config: &VerifierConfig) -> TestResult {
             match errstr {
                 Some(s) => {
                     // In this case, the lowering is meant to fail, so PASS
-                    if s.contains("unknown op") {
+                    if s.contains("unknown op") && matches!(e.kind, LowerErrorKind::UnknownOpcode) {
+                        outcome = TestOutcome::Pass
+                    } else if (s.contains("invalid bpf_ld_imm64 insn") || 
+                                s.contains("expected continuation instruction after LDDW") || 
+                                s.contains("uses reserved fields") ||
+                                s.contains("unrecognized bpf_ld_imm64 insn")) && 
+                                matches!(e.kind, LowerErrorKind::InvalidLDIMM64) {
                         outcome = TestOutcome::Pass
                     }
                 }

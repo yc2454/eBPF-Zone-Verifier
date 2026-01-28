@@ -4,7 +4,7 @@
 
 use crate::analysis::env::VerifierEnv;
 use crate::analysis::reg_types::{RegType, TypeState, new_packet_id};
-use crate::ast::{AluOp, Operand, Width, MemSize, ProgramKind};
+use crate::ast::{AluOp, Operand, Width, MemSize, ProgramKind, MapLoadKind};
 use crate::zone::domain::Reg;
 use crate::parsing::ctx_model::{
     classify_sk_buff_field, CtxFieldKind, classify_xdp_md_field
@@ -347,4 +347,18 @@ pub(crate) fn update_packet_load_types(types: &mut TypeState) {
     // Set Result (R0)
     // The loaded data is placed in R0.
     types.set(Reg::R0, RegType::ScalarValue);
+}
+
+pub(crate) fn update_map_load_types(types: &mut TypeState, kind: MapLoadKind, map_fd: usize, dst: Reg) {
+    let new_type = match kind {
+        MapLoadKind::MapPtr => RegType::PtrToMapObject { 
+            map_idx: map_fd as usize
+        },
+        MapLoadKind::MapValue => RegType::PtrToMapValue { 
+            map_idx: map_fd as usize, 
+            offset: Some(0) 
+        },
+    };
+
+    types.set(dst, new_type);
 }

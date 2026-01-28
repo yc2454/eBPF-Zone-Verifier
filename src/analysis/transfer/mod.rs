@@ -11,6 +11,7 @@ mod refinement;
 mod types;
 mod common;
 mod packet_load;
+mod map_load;
 
 use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;
@@ -48,8 +49,11 @@ pub fn transfer(
         Instr::Store { size, base, off, src } => 
             memory::transfer_store(env, state, *size, *base, *off, src),
 
-        Instr::PacketLoad { size, mode, offset_imm, src } => 
+        Instr::LoadPacket { size, mode, offset_imm, src } => 
             packet_load::transfer_packet_load(env, state, *size, *mode, *offset_imm, *src),
+
+        Instr::LoadMap { dst, kind, map_fd, off } => 
+            map_load::transfer_map_load(env, state, *dst, *kind, *map_fd),
         
         Instr::AtomicAdd { size, base, off, src } => 
             memory::transfer_atomic_add(env, state, *size, *base, *off, *src),

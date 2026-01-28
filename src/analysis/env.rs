@@ -25,7 +25,9 @@ pub enum VerificationError {
     CfgError(String),
     DivideByZero { pc: usize },
     InvalidArgType { pc: usize, reg: Reg },
-    InvalidPointerArithmetic { pc: usize }
+    InvalidPointerArithmetic { pc: usize },
+    InvalidBPFLoadImmInsn { pc: usize },
+    MapNotFound { pc: usize, map_idx: usize }
 }
 
 impl VerificationError {
@@ -87,6 +89,12 @@ impl VerificationError {
             }
             VerificationError::RegisterNotReadable { pc, reg } => {
                 format!("pc {}: {:?} !read_ok", pc, reg)
+            }
+            VerificationError::InvalidBPFLoadImmInsn { pc } => {
+                format!("Invalid BPF_LD_IMM instruction at pc {}", pc)
+            }
+            VerificationError::MapNotFound { pc, map_idx } => {
+                format!("Map with ID {} not found at pc {}", map_idx, pc)
             }
         }
     }

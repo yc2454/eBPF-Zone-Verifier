@@ -86,8 +86,13 @@ pub fn analyze_program(
             break;
         }
 
-        // A. Pruning Check FIRST (before counting!)
-        // This prevents counting states that we immediately discard.
+        // Fail immediately if we somehow reach the second half of LD_IMM64
+        if prog.invalid_pc_set.contains(&state.pc) {
+            env.fail(env::VerificationError::InvalidBPFLoadImmInsn { pc: state.pc });
+            break;
+        }
+
+        // A. Pruning Check
         if pruning::is_state_visited(&mut env, &state, config, &mut pruning_mgr) {
             prune_count += 1;
             continue;

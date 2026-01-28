@@ -2,12 +2,23 @@
 use crate::ast::{AluOp, CmpOp, Instr, Operand, Program, Width, MemSize, EndianOp, PacketLoadMode};
 use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::zone::domain::Reg;
+use std::collections::HashSet;
+
+#[derive(Debug)]
+pub enum LowerErrorKind {
+    UnknownOpcode,
+    InvalidLDIMM64,
+    BranchTargetOutOfRange,
+    CallTargetOutOfBounds,
+    InvalidSrcReg
+}
 
 #[derive(Debug)]
 pub struct LowerError {
     pub pc: usize,
     pub code: u8,
     pub msg: String,
+    pub kind: LowerErrorKind
 }
 
 fn reg_to_var(r: u8) -> Reg {
@@ -35,6 +46,7 @@ fn branch_target(pc: usize, off: i16, len: usize, code: u8) -> Result<usize, Low
             pc,
             code,
             msg: format!("branch target out of range: {}", t),
+            kind: LowerErrorKind::BranchTargetOutOfRange
         });
     }
     Ok(t as usize)
@@ -42,23 +54,30 @@ fn branch_target(pc: usize, off: i16, len: usize, code: u8) -> Result<usize, Low
 
 pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
     let mut instrs = Vec::with_capacity(raw.len());
-    let mut pc_map = Vec::new();
+    let mut invalid_pc_set = HashSet::new();
     let mut pc: usize = 0;
 
     while pc < raw.len() {
-        // 1. Push Raw PC for the PRIMARY instruction
-        pc_map.push(pc);
-
         let insn = &raw[pc];
         let dst = reg_to_var(insn.dst);
         let src = reg_to_var(insn.src);
 
         if insn.code == 0x18 {
+            if (src != Reg::R0 && src != Reg::R1) || insn.off != 0 {
+                return Err(
+                    LowerError { 
+                        pc, 
+                        code: insn.code, 
+                        msg: "invalid BPF_LD_IMM insn: src_reg or off must be 0".to_string(), 
+                        kind: LowerErrorKind::InvalidLDIMM64 
+                    });
+            }
             if pc + 1 >= raw.len() { 
                 return Err(LowerError {
                     pc,
                     code: insn.code,
                     msg: "unexpected end of instructions after LDDW".to_string(),
+                    kind: LowerErrorKind::InvalidLDIMM64
                 });
             }
             let cont = &raw[pc + 1];
@@ -67,6 +86,15 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     pc,
                     code: cont.code,
                     msg: "expected continuation instruction after LDDW".to_string(),
+                    kind: LowerErrorKind::InvalidLDIMM64
+                });
+            }
+            if cont.code != 0 || cont.dst != 0 || cont.src != 0 || cont.off != 0 { 
+                return Err(LowerError {
+                    pc,
+                    code: cont.code,
+                    msg: "invalid BPF_LD_IMM insn: next insn fields must be 0".to_string(),
+                    kind: LowerErrorKind::InvalidLDIMM64
                 });
             }
 
@@ -75,7 +103,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             let imm_u64: u64 = (low as u64) | ((high as u64) << 32);
             let imm_i64: i64 = imm_u64 as i64;
 
-            // AST 1: The Load (Maps to 'pc')
+            // AST 1: The Load
             instrs.push(Instr::Alu {
                 width: Width::W64,
                 op: AluOp::Mov,
@@ -84,8 +112,8 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             });
 
             // AST 2: The No-Op (Maps to 'pc + 1')
-            // CRITICAL FIX: We must record the PC for this second instruction!
-            pc_map.push(pc + 1); 
+            // We record this PC. If we reach here later, it's an error
+            invalid_pc_set.insert(pc + 1);
 
             instrs.push(Instr::Alu {
                 width: Width::W64,
@@ -1139,12 +1167,19 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                         return Err(LowerError { 
                             pc, 
                             code: 0x85, 
-                            msg: "Call target out of bounds".to_string() })
+                            msg: "Call target out of bounds".to_string() ,
+                            kind: LowerErrorKind::CallTargetOutOfBounds
+                        })
                     }
 
                     Instr::CallRel { target: target as usize }
                 } else {
-                    return Err(LowerError { pc, code: 0x85, msg: "Invalid src register for call".to_string() })
+                    return Err(LowerError { 
+                        pc, 
+                        code: 0x85, 
+                        msg: "Invalid src register for call".to_string(),
+                        kind: LowerErrorKind::InvalidSrcReg
+                    })
                 }
             }
 
@@ -1165,19 +1200,19 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             },
 
             // --- LEGACY PACKET LOADS (LD_ABS) ---
-            0x20 => Instr::PacketLoad { 
+            0x20 => Instr::LoadPacket { 
                 size: MemSize::U32, mode: PacketLoadMode::Abs, offset_imm: insn.imm, src: None },
-            0x28 => Instr::PacketLoad { 
+            0x28 => Instr::LoadPacket { 
                 size: MemSize::U16, mode: PacketLoadMode::Abs, offset_imm: insn.imm, src: None },
-            0x30 => Instr::PacketLoad { 
+            0x30 => Instr::LoadPacket { 
                 size: MemSize::U8,  mode: PacketLoadMode::Abs, offset_imm: insn.imm, src: None },
 
             // --- LEGACY PACKET LOADS (LD_IND) ---
-            0x40 => Instr::PacketLoad { 
+            0x40 => Instr::LoadPacket { 
                 size: MemSize::U32, mode: PacketLoadMode::Ind, offset_imm: insn.imm, src: Some(src) },
-            0x48 => Instr::PacketLoad { 
+            0x48 => Instr::LoadPacket { 
                 size: MemSize::U16, mode: PacketLoadMode::Ind, offset_imm: insn.imm, src: Some(src) },
-            0x50 => Instr::PacketLoad { 
+            0x50 => Instr::LoadPacket { 
                 size: MemSize::U8,  mode: PacketLoadMode::Ind, offset_imm: insn.imm, src: Some(src) },
 
             // Guard against stray continuation opcodes outside 0x18
@@ -1186,6 +1221,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     pc,
                     code: insn.code,
                     msg: "unexpected opcode 0x00 (LDIMM64 continuation without prefix?)".to_string(),
+                    kind: LowerErrorKind::InvalidLDIMM64
                 });
             }
 
@@ -1194,6 +1230,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     pc,
                     code: other,
                     msg: format!("unsupported opcode 0x{:02x} at pc {}", other, pc),
+                    kind: LowerErrorKind::UnknownOpcode
                 });
             }
         };
@@ -1202,5 +1239,5 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
         pc += 1;
     }
 
-    Ok(Program { instrs })
+    Ok(Program { instrs, invalid_pc_set })
 }

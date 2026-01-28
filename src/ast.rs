@@ -1,5 +1,6 @@
 // src/ast.rs
 use std::fmt;
+use std::collections::HashSet;
 
 use crate::zone::domain::Reg;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,6 +69,12 @@ impl MemSize {
 pub enum PacketLoadMode {
     Abs, // Absolute: data[imm]
     Ind, // Indirect: data[src + imm]
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapLoadKind {
+    MapPtr,      // src=1: Returns PTR_TO_MAP
+    MapValue,    // src=2: Returns PTR_TO_MAP_VALUE
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -140,11 +147,20 @@ pub enum Instr {
     // Target is an absolute PC index, resolved during parsing
     CallRel { target: usize },
 
-    PacketLoad {
+    LoadPacket {
         size: MemSize,
         mode: PacketLoadMode,
         offset_imm: i32,
         src: Option<Reg>, // Some(src) for IND, None for ABS
+    },
+
+    /// A consolidated instruction for all "Special" 64-bit loads
+    /// (Everything from LD_IMM64 that isn't a simple scalar)
+    LoadMap {
+        dst: Reg,
+        kind: MapLoadKind,
+        map_fd: i32,
+        off: i32, // Only used for MapValue (src=2)
     },
 
     Exit,
@@ -258,6 +274,7 @@ impl ProgramKind {
 #[derive(Debug, Clone)]
 pub struct Program {
     pub instrs: Vec<Instr>,
+    pub invalid_pc_set: HashSet<usize> // The PCs of the second half of LD_IMM64
 }
 
 impl fmt::Display for Instr {
@@ -389,8 +406,12 @@ impl fmt::Display for Instr {
             CallRel { target } =>
                 write!(f, "call {}", target),
 
-            PacketLoad { size, mode, offset_imm, src } => {
+            LoadPacket { size, mode, offset_imm, src } => {
                 write!(f, "ld_abs or ld_ind")
+            }
+
+            LoadMap { map_fd, .. } => {
+                write!(f, "load map {}", map_fd)
             }
 
             Exit =>
