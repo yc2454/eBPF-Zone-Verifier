@@ -159,6 +159,11 @@ fn get_use_def(instr: &Instr) -> (HashSet<Reg>, HashSet<Reg>) {
         Instr::Exit => {
             uses.insert(Reg::R0); // Return value
         }
+        Instr::PacketLoad { src, .. } => {
+            if let Some(r) = src {
+                uses.insert(*r);
+            }
+        }
         Instr::Jmp { .. } => {} // Unconditional jump uses nothing
         Instr::Endian { dst, .. } => {
             uses.insert(*dst);

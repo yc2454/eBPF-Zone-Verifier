@@ -64,6 +64,12 @@ impl MemSize {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PacketLoadMode {
+    Abs, // Absolute: data[imm]
+    Ind, // Indirect: data[src + imm]
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum Instr {
     /// rX = arg0
@@ -133,6 +139,13 @@ pub enum Instr {
     // BPF-to-BPF Call (src_reg = 1)
     // Target is an absolute PC index, resolved during parsing
     CallRel { target: usize },
+
+    PacketLoad {
+        size: MemSize,
+        mode: PacketLoadMode,
+        offset_imm: i32,
+        src: Option<Reg>, // Some(src) for IND, None for ABS
+    },
 
     Exit,
 }
@@ -375,6 +388,10 @@ impl fmt::Display for Instr {
 
             CallRel { target } =>
                 write!(f, "call {}", target),
+
+            PacketLoad { size, mode, offset_imm, src } => {
+                write!(f, "ld_abs or ld_ind")
+            }
 
             Exit =>
                 write!(f, "exit"),

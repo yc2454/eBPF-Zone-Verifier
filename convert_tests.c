@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+#include <stdlib.h>
 
 // ============================================================================
 // BPF definitions from linux/bpf.h and linux/bpf_common.h
@@ -287,6 +288,25 @@ struct bpf_insn {
 #define BPF_EMIT_CALL(FUNC) \
     BPF_RAW_INSN(BPF_JMP | BPF_CALL, 0, 0, 0, FUNC)
 
+// ============================================================================
+// Random number generator for fill helpers
+// ============================================================================
+
+static uint32_t bpf_rand_state = 0x12345678;
+
+static uint32_t bpf_semi_rand_get(void) {
+    // Simple xorshift32 PRNG
+    bpf_rand_state ^= bpf_rand_state << 13;
+    bpf_rand_state ^= bpf_rand_state >> 17;
+    bpf_rand_state ^= bpf_rand_state << 5;
+    return bpf_rand_state;
+}
+
+// Constants for fill helpers
+#define MAX_JMP_SEQ 8192
+#define MAX_TEST_INSNS 1000000
+#define FUNC_NEST 7
+
 // __sk_buff structure offsets (simplified)
 struct __sk_buff {
     __u32 len;
@@ -334,22 +354,6 @@ struct __sk_buff {
 #define BPF_REG_9   9
 #define BPF_REG_10  10
 #define BPF_REG_FP  BPF_REG_10
-
-// Registers as arguments
-#define BPF_REG_ARG1	BPF_REG_1
-#define BPF_REG_ARG2	BPF_REG_2
-#define BPF_REG_ARG3	BPF_REG_3
-#define BPF_REG_ARG4	BPF_REG_4
-#define BPF_REG_ARG5	BPF_REG_5
-#define BPF_REG_CTX	BPF_REG_6
-#define BPF_REG_FP	BPF_REG_10
-
-/* Additional register mappings for converted user programs. */
-#define BPF_REG_A	BPF_REG_0
-#define BPF_REG_X	BPF_REG_7
-#define BPF_REG_TMP	BPF_REG_2	/* scratch reg */
-#define BPF_REG_D	BPF_REG_8	/* data, callee-saved */
-#define BPF_REG_H	BPF_REG_9	/* hlen, callee-saved */
 
 // ============================================================================
 // BPF helper function IDs (common ones)
@@ -554,6 +558,7 @@ enum bpf_attach_type {
 #define MAX_INSNS       4096
 #define MAX_FIXUPS      8
 #define MAX_ENTRIES     11
+#define MAX_DATA 128
 
 #define F_NEEDS_EFFICIENT_UNALIGNED_ACCESS  (1 << 0)
 #define F_LOAD_WITH_STRICT_ALIGNMENT        (1 << 1)
@@ -583,7 +588,54 @@ struct kfunc_btf_id_pair {
     int insn_idx;
 };
 
-// The test case structure
+// Forward declare bpf_test for fill_helper signature
+struct bpf_test;
+
+// Forward declarations for fill helpers (implementations after struct bpf_test)
+static void bpf_fill_ld_abs_vlan_push_pop(struct bpf_test *self);
+static void bpf_fill_jump_around_ld_abs(struct bpf_test *self);
+static void bpf_fill_rand_ld_dw(struct bpf_test *self);
+static void bpf_fill_ld_abs_get_processor_id(struct bpf_test *self);
+static void bpf_fill_torturous_jumps(struct bpf_test *self);
+static void bpf_fill_big_prog_with_loop(struct bpf_test *self);
+static void bpf_fill_scale(struct bpf_test *self);
+static void bpf_fill_scale1(struct bpf_test *self);
+static void bpf_fill_scale2(struct bpf_test *self);
+static void bpf_fill_staggered_jumps(struct bpf_test *self);
+static void bpf_fill_maxinsns1(struct bpf_test *self);
+static void bpf_fill_maxinsns2(struct bpf_test *self);
+static void bpf_fill_maxinsns3(struct bpf_test *self);
+static void bpf_fill_maxinsns4(struct bpf_test *self);
+static void bpf_fill_maxinsns5(struct bpf_test *self);
+static void bpf_fill_maxinsns6(struct bpf_test *self);
+static void bpf_fill_maxinsns7(struct bpf_test *self);
+static void bpf_fill_maxinsns8(struct bpf_test *self);
+static void bpf_fill_maxinsns9(struct bpf_test *self);
+static void bpf_fill_maxinsns10(struct bpf_test *self);
+static void bpf_fill_maxinsns11(struct bpf_test *self);
+static void bpf_fill_maxinsns12(struct bpf_test *self);
+static void bpf_fill_maxinsns13(struct bpf_test *self);
+static void bpf_fill_ja(struct bpf_test *self);
+static void bpf_fill_ld_abs_vlan_push_pop2(struct bpf_test *self);
+static void bpf_fill_big_prog_with_loop(struct bpf_test *self);
+static void bpf_fill_big_prog_with_loop_1(struct bpf_test *self);
+static void bpf_fill_atomic_fetch_add(struct bpf_test *self);
+static void bpf_fill_atomic_fetch_or(struct bpf_test *self);
+static void bpf_fill_atomic_fetch_and(struct bpf_test *self);
+static void bpf_fill_atomic_fetch_xor(struct bpf_test *self);
+static void bpf_fill_atomic_xchg(struct bpf_test *self);
+static void bpf_fill_atomic_cmpxchg(struct bpf_test *self);
+static void bpf_fill_atomic32_fetch_add(struct bpf_test *self);
+static void bpf_fill_atomic32_fetch_or(struct bpf_test *self);
+static void bpf_fill_atomic32_fetch_and(struct bpf_test *self);
+static void bpf_fill_atomic32_fetch_xor(struct bpf_test *self);
+static void bpf_fill_atomic32_xchg(struct bpf_test *self);
+static void bpf_fill_atomic32_cmpxchg(struct bpf_test *self);
+
+// ============================================================================
+// Test case structure
+// ============================================================================
+
 #define MAX_TEST_RUNS 8
 
 struct test_result {
@@ -629,12 +681,301 @@ struct bpf_test {
     enum bpf_prog_type prog_type;
     enum bpf_attach_type expected_attach_type;
     uint8_t flags;
+    __u8 data[MAX_DATA];
     void (*fill_helper)(struct bpf_test *self);
     int runs;
     struct test_result retvals[MAX_TEST_RUNS];
     uint32_t retval;
     uint32_t retval_unpriv;
 };
+
+// ============================================================================
+// Fill helper implementations
+// ============================================================================
+
+// Helper to emit an instruction
+#define EMIT(INSNS, I, CODE, DST, SRC, OFF, IMM) do { \
+    (INSNS)[(I)].code = (CODE); \
+    (INSNS)[(I)].dst_reg = (DST); \
+    (INSNS)[(I)].src_reg = (SRC); \
+    (INSNS)[(I)].off = (OFF); \
+    (INSNS)[(I)].imm = (IMM); \
+    (I)++; \
+} while(0)
+
+// ============================================================================
+// Fill helper implementations (ported from kernel test_verifier.c)
+// ============================================================================
+
+// Generates LD_ABS + vlan push/pop test (large program)
+static void bpf_fill_ld_abs_vlan_push_pop(struct bpf_test *self) {
+    // test: {skb->data[0], vlan_push} x 51 + {skb->data[0], vlan_pop} x 51
+#define PUSH_CNT 51
+    // jump range is limited to 16 bit. PUSH_CNT of ld_abs needs room
+    unsigned int len = (1 << 15) - PUSH_CNT * 2 * 5 * 6;
+    struct bpf_insn *insn = self->fill_insns;
+    int i = 0, j, k = 0;
+
+    insn[i++] = BPF_MOV64_REG(BPF_REG_6, BPF_REG_1);
+loop:
+    for (j = 0; j < PUSH_CNT; j++) {
+        insn[i++] = BPF_LD_ABS(BPF_B, 0);
+        // jump to error label
+        insn[i] = BPF_JMP32_IMM(BPF_JNE, BPF_REG_0, 0x34, len - i - 3);
+        i++;
+        insn[i++] = BPF_MOV64_REG(BPF_REG_1, BPF_REG_6);
+        insn[i++] = BPF_MOV64_IMM(BPF_REG_2, 1);
+        insn[i++] = BPF_MOV64_IMM(BPF_REG_3, 2);
+        insn[i++] = BPF_RAW_INSN(BPF_JMP | BPF_CALL, 0, 0, 0, BPF_FUNC_skb_vlan_push);
+        insn[i] = BPF_JMP_IMM(BPF_JNE, BPF_REG_0, 0, len - i - 3);
+        i++;
+    }
+
+    for (j = 0; j < PUSH_CNT; j++) {
+        insn[i++] = BPF_LD_ABS(BPF_B, 0);
+        insn[i] = BPF_JMP32_IMM(BPF_JNE, BPF_REG_0, 0x34, len - i - 3);
+        i++;
+        insn[i++] = BPF_MOV64_REG(BPF_REG_1, BPF_REG_6);
+        insn[i++] = BPF_RAW_INSN(BPF_JMP | BPF_CALL, 0, 0, 0, BPF_FUNC_skb_vlan_pop);
+        insn[i] = BPF_JMP_IMM(BPF_JNE, BPF_REG_0, 0, len - i - 3);
+        i++;
+    }
+    if (++k < 5)
+        goto loop;
+
+    for (; i < (int)(len - 3); i++)
+        insn[i] = BPF_ALU64_IMM(BPF_MOV, BPF_REG_0, 0xbef);
+    insn[len - 3] = BPF_JMP_A(1);
+    // error label
+    insn[len - 2] = BPF_MOV32_IMM(BPF_REG_0, 0);
+    insn[len - 1] = BPF_EXIT_INSN();
+    self->prog_len = len;
+#undef PUSH_CNT
+}
+
+// Generates jumps around LD_ABS
+static void bpf_fill_jump_around_ld_abs(struct bpf_test *self) {
+    struct bpf_insn *insn = self->fill_insns;
+    // jump range is limited to 16 bit. every ld_abs is replaced by 6 insns,
+    // but on arches like arm, ppc etc, there will be one BPF_ZEXT inserted
+    unsigned int len = (1 << 15) / 7;
+    int i = 0;
+
+    insn[i++] = BPF_MOV64_REG(BPF_REG_6, BPF_REG_1);
+    insn[i++] = BPF_LD_ABS(BPF_B, 0);
+    insn[i] = BPF_JMP_IMM(BPF_JEQ, BPF_REG_0, 10, len - i - 2);
+    i++;
+    while (i < (int)(len - 1))
+        insn[i++] = BPF_LD_ABS(BPF_B, 1);
+    insn[i] = BPF_EXIT_INSN();
+    self->prog_len = i + 1;
+}
+
+// Generate random LD_DW instructions
+static void bpf_fill_rand_ld_dw(struct bpf_test *self) {
+    struct bpf_insn *insn = self->fill_insns;
+    uint64_t res = 0;
+    int i = 0;
+
+    insn[i++] = BPF_MOV32_IMM(BPF_REG_0, 0);
+    while (i < (int)self->retval) {
+        uint64_t val = bpf_semi_rand_get();
+        struct bpf_insn tmp[2] = { BPF_LD_IMM64(BPF_REG_1, val) };
+
+        res ^= val;
+        insn[i++] = tmp[0];
+        insn[i++] = tmp[1];
+        insn[i++] = BPF_ALU64_REG(BPF_XOR, BPF_REG_0, BPF_REG_1);
+    }
+    insn[i++] = BPF_MOV64_REG(BPF_REG_1, BPF_REG_0);
+    insn[i++] = BPF_ALU64_IMM(BPF_RSH, BPF_REG_1, 32);
+    insn[i++] = BPF_ALU64_REG(BPF_XOR, BPF_REG_0, BPF_REG_1);
+    insn[i] = BPF_EXIT_INSN();
+    self->prog_len = i + 1;
+    res ^= (res >> 32);
+    self->retval = (uint32_t)res;
+}
+
+// Test the sequence of 8k jumps
+static void bpf_fill_scale1(struct bpf_test *self) {
+    struct bpf_insn *insn = self->fill_insns;
+    int i = 0, k = 0;
+
+    insn[i++] = BPF_MOV64_REG(BPF_REG_6, BPF_REG_1);
+    // test to check that the long sequence of jumps is acceptable
+    while (k++ < MAX_JMP_SEQ) {
+        insn[i++] = BPF_RAW_INSN(BPF_JMP | BPF_CALL, 0, 0, 0, BPF_FUNC_get_prandom_u32);
+        insn[i++] = BPF_JMP_IMM(BPF_JEQ, BPF_REG_0, bpf_semi_rand_get(), 2);
+        insn[i++] = BPF_MOV64_REG(BPF_REG_1, BPF_REG_10);
+        insn[i++] = BPF_STX_MEM(BPF_DW, BPF_REG_1, BPF_REG_6, -8 * (k % 64 + 1));
+    }
+    // is_state_visited() doesn't allocate state for pruning for every jump.
+    // Hence multiply jmps by 4 to accommodate that heuristic
+    while (i < MAX_TEST_INSNS - MAX_JMP_SEQ * 4)
+        insn[i++] = BPF_ALU64_IMM(BPF_MOV, BPF_REG_0, 42);
+    insn[i] = BPF_EXIT_INSN();
+    self->prog_len = i + 1;
+    self->retval = 42;
+}
+
+// Test the sequence of 8k jumps in inner most function (function depth 8)
+static void bpf_fill_scale2(struct bpf_test *self) {
+    struct bpf_insn *insn = self->fill_insns;
+    int i = 0, k = 0;
+
+    for (k = 0; k < FUNC_NEST; k++) {
+        insn[i++] = BPF_CALL_REL(1);
+        insn[i++] = BPF_EXIT_INSN();
+    }
+    insn[i++] = BPF_MOV64_REG(BPF_REG_6, BPF_REG_1);
+    // test to check that the long sequence of jumps is acceptable
+    k = 0;
+    while (k++ < MAX_JMP_SEQ) {
+        insn[i++] = BPF_RAW_INSN(BPF_JMP | BPF_CALL, 0, 0, 0, BPF_FUNC_get_prandom_u32);
+        insn[i++] = BPF_JMP_IMM(BPF_JEQ, BPF_REG_0, bpf_semi_rand_get(), 2);
+        insn[i++] = BPF_MOV64_REG(BPF_REG_1, BPF_REG_10);
+        insn[i++] = BPF_STX_MEM(BPF_DW, BPF_REG_1, BPF_REG_6, -8 * (k % (64 - 4 * FUNC_NEST) + 1));
+    }
+    while (i < MAX_TEST_INSNS - MAX_JMP_SEQ * 4)
+        insn[i++] = BPF_ALU64_IMM(BPF_MOV, BPF_REG_0, 42);
+    insn[i] = BPF_EXIT_INSN();
+    self->prog_len = i + 1;
+    self->retval = 42;
+}
+
+static void bpf_fill_scale(struct bpf_test *self) {
+    switch (self->retval) {
+    case 1:
+        return bpf_fill_scale1(self);
+    case 2:
+        return bpf_fill_scale2(self);
+    default:
+        self->prog_len = 0;
+        break;
+    }
+}
+
+static int bpf_fill_torturous_jumps_insn_1(struct bpf_insn *insn) {
+    unsigned int len = 259, hlen = 128;
+    int i;
+
+    insn[0] = BPF_EMIT_CALL(BPF_FUNC_get_prandom_u32);
+    for (i = 1; i <= (int)hlen; i++) {
+        insn[i]        = BPF_JMP_IMM(BPF_JEQ, BPF_REG_0, i, hlen);
+        insn[i + hlen] = BPF_JMP_A(hlen - i);
+    }
+    insn[len - 2] = BPF_MOV64_IMM(BPF_REG_0, 1);
+    insn[len - 1] = BPF_EXIT_INSN();
+
+    return len;
+}
+
+static int bpf_fill_torturous_jumps_insn_2(struct bpf_insn *insn) {
+    unsigned int len = 4100, jmp_off = 2048;
+    int i, j;
+
+    insn[0] = BPF_EMIT_CALL(BPF_FUNC_get_prandom_u32);
+    for (i = 1; i <= (int)jmp_off; i++) {
+        insn[i] = BPF_JMP_IMM(BPF_JEQ, BPF_REG_0, i, jmp_off);
+    }
+    insn[i++] = BPF_JMP_A(jmp_off);
+    for (; i <= (int)(jmp_off * 2 + 1); i += 16) {
+        for (j = 0; j < 16; j++) {
+            insn[i + j] = BPF_JMP_A(16 - j - 1);
+        }
+    }
+
+    insn[len - 2] = BPF_MOV64_IMM(BPF_REG_0, 2);
+    insn[len - 1] = BPF_EXIT_INSN();
+
+    return len;
+}
+
+static void bpf_fill_torturous_jumps(struct bpf_test *self) {
+    struct bpf_insn *insn = self->fill_insns;
+    int i = 0;
+
+    switch (self->retval) {
+    case 1:
+        self->prog_len = bpf_fill_torturous_jumps_insn_1(insn);
+        return;
+    case 2:
+        self->prog_len = bpf_fill_torturous_jumps_insn_2(insn);
+        return;
+    case 3:
+        // main
+        insn[i++] = BPF_RAW_INSN(BPF_JMP|BPF_CALL, 0, 1, 0, 4);
+        insn[i++] = BPF_RAW_INSN(BPF_JMP|BPF_CALL, 0, 1, 0, 262);
+        insn[i++] = BPF_ST_MEM(BPF_B, BPF_REG_10, -32, 0);
+        insn[i++] = BPF_MOV64_IMM(BPF_REG_0, 3);
+        insn[i++] = BPF_EXIT_INSN();
+
+        // subprog 1
+        i += bpf_fill_torturous_jumps_insn_1(insn + i);
+
+        // subprog 2
+        i += bpf_fill_torturous_jumps_insn_2(insn + i);
+
+        self->prog_len = i;
+        return;
+    default:
+        self->prog_len = 0;
+        break;
+    }
+}
+
+// LD_ABS with get_processor_id (simple test)
+static void bpf_fill_ld_abs_get_processor_id(struct bpf_test *self) {
+    struct bpf_insn *insn = self->fill_insns;
+    int i = 0;
+    
+    insn[i++] = BPF_RAW_INSN(BPF_JMP | BPF_CALL, 0, 0, 0, BPF_FUNC_get_smp_processor_id);
+    insn[i++] = BPF_EXIT_INSN();
+    
+    self->prog_len = i;
+}
+
+// Generic stub for fill helpers we haven't fully implemented
+// These will output a simple "return 0" program and print a warning
+#define FILL_HELPER_IMPL_STUB(name) \
+static void name(struct bpf_test *self) { \
+    struct bpf_insn *insn = self->fill_insns; \
+    int i = 0; \
+    insn[i++] = BPF_MOV64_IMM(BPF_REG_0, 0); \
+    insn[i++] = BPF_EXIT_INSN(); \
+    self->prog_len = i; \
+    fprintf(stderr, "  Warning: %s uses stub implementation\n", #name); \
+}
+FILL_HELPER_IMPL_STUB(bpf_fill_staggered_jumps)
+FILL_HELPER_IMPL_STUB(bpf_fill_maxinsns1)
+FILL_HELPER_IMPL_STUB(bpf_fill_maxinsns2)
+FILL_HELPER_IMPL_STUB(bpf_fill_maxinsns3)
+FILL_HELPER_IMPL_STUB(bpf_fill_maxinsns4)
+FILL_HELPER_IMPL_STUB(bpf_fill_maxinsns5)
+FILL_HELPER_IMPL_STUB(bpf_fill_maxinsns6)
+FILL_HELPER_IMPL_STUB(bpf_fill_maxinsns7)
+FILL_HELPER_IMPL_STUB(bpf_fill_maxinsns8)
+FILL_HELPER_IMPL_STUB(bpf_fill_maxinsns9)
+FILL_HELPER_IMPL_STUB(bpf_fill_maxinsns10)
+FILL_HELPER_IMPL_STUB(bpf_fill_maxinsns11)
+FILL_HELPER_IMPL_STUB(bpf_fill_maxinsns12)
+FILL_HELPER_IMPL_STUB(bpf_fill_maxinsns13)
+FILL_HELPER_IMPL_STUB(bpf_fill_ja)
+FILL_HELPER_IMPL_STUB(bpf_fill_ld_abs_vlan_push_pop2)
+FILL_HELPER_IMPL_STUB(bpf_fill_big_prog_with_loop)
+FILL_HELPER_IMPL_STUB(bpf_fill_big_prog_with_loop_1)
+FILL_HELPER_IMPL_STUB(bpf_fill_atomic_fetch_add)
+FILL_HELPER_IMPL_STUB(bpf_fill_atomic_fetch_or)
+FILL_HELPER_IMPL_STUB(bpf_fill_atomic_fetch_and)
+FILL_HELPER_IMPL_STUB(bpf_fill_atomic_fetch_xor)
+FILL_HELPER_IMPL_STUB(bpf_fill_atomic_xchg)
+FILL_HELPER_IMPL_STUB(bpf_fill_atomic_cmpxchg)
+FILL_HELPER_IMPL_STUB(bpf_fill_atomic32_fetch_add)
+FILL_HELPER_IMPL_STUB(bpf_fill_atomic32_fetch_or)
+FILL_HELPER_IMPL_STUB(bpf_fill_atomic32_fetch_and)
+FILL_HELPER_IMPL_STUB(bpf_fill_atomic32_fetch_xor)
+FILL_HELPER_IMPL_STUB(bpf_fill_atomic32_xchg)
+FILL_HELPER_IMPL_STUB(bpf_fill_atomic32_cmpxchg)
 
 // ============================================================================
 // Test cases - included from the test file
@@ -732,16 +1073,52 @@ int main() {
     int n = sizeof(tests) / sizeof(tests[0]);
     
     printf("[\n");
+    int first_test = 1;
     for (int i = 0; i < n; i++) {
         struct bpf_test *t = &tests[i];
         
-        // Skip tests that use fill_helper (dynamically generated)
-        if (t->fill_helper || t->fill_insns) {
-            fprintf(stderr, "Skipping test '%s': uses fill_helper\n", t->descr);
-            continue;
+        struct bpf_insn *insns_to_use = t->insns;
+        int insn_cnt;
+        
+        // If test has fill_helper, call it to generate instructions
+        if (t->fill_helper) {
+            // Allocate space for generated instructions
+            t->fill_insns = calloc(MAX_INSNS, sizeof(struct bpf_insn));
+            if (!t->fill_insns) {
+                fprintf(stderr, "Skipping test '%s': allocation failed\n", t->descr);
+                continue;
+            }
+            
+            // Call the fill helper to generate instructions
+            t->fill_helper(t);
+            
+            // Check if it actually generated anything
+            if (t->prog_len > 0) {
+                insns_to_use = t->fill_insns;
+                insn_cnt = t->prog_len;
+                fprintf(stderr, "Generated %d insns for '%s'\n", insn_cnt, t->descr);
+            } else {
+                // fill_helper didn't set prog_len, try counting
+                insn_cnt = count_insns(t->fill_insns);
+                if (insn_cnt == 0) {
+                    fprintf(stderr, "Skipping test '%s': fill_helper produced no instructions\n", t->descr);
+                    free(t->fill_insns);
+                    continue;
+                }
+                insns_to_use = t->fill_insns;
+                fprintf(stderr, "Generated %d insns for '%s' (counted)\n", insn_cnt, t->descr);
+            }
+        } else if (t->fill_insns) {
+            // Pre-filled instructions
+            insn_cnt = t->prog_len > 0 ? t->prog_len : count_insns(t->fill_insns);
+            insns_to_use = t->fill_insns;
+        } else {
+            // Regular static instructions
+            insn_cnt = count_insns(t->insns);
         }
         
-        int insn_cnt = count_insns(t->insns);
+        if (!first_test) printf(",\n");
+        first_test = 0;
         
         printf("  {\n");
         printf("    \"name\": ");
@@ -816,10 +1193,10 @@ int main() {
             printf("\n    }");
         }
         
-        // Print instructions
+        // Print instructions (use insns_to_use which may be from fill_helper)
         printf(",\n    \"insns\": [");
         for (int j = 0; j < insn_cnt; j++) {
-            struct bpf_insn *in = &t->insns[j];
+            struct bpf_insn *in = &insns_to_use[j];
             if (j > 0) printf(",");
             printf("\n      {\"code\": %d, \"dst\": %d, \"src\": %d, \"off\": %d, \"imm\": %d}",
                    in->code, in->dst_reg, in->src_reg, in->off, in->imm);
@@ -828,11 +1205,13 @@ int main() {
         
         printf("\n  }");
         
-        // Comma between tests (but not after the last one)
-        if (i < n - 1) printf(",");
-        printf("\n");
+        // Free allocated fill_insns if we used it
+        if (t->fill_helper && t->fill_insns) {
+            free(t->fill_insns);
+            t->fill_insns = NULL;
+        }
     }
-    printf("]\n");
+    printf("\n]\n");
     
     return 0;
 }

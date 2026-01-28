@@ -1,5 +1,5 @@
 // src/bpf_to_ast.rs
-use crate::ast::{AluOp, CmpOp, Instr, Operand, Program, Width, MemSize, EndianOp};
+use crate::ast::{AluOp, CmpOp, Instr, Operand, Program, Width, MemSize, EndianOp, PacketLoadMode};
 use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::zone::domain::Reg;
 
@@ -1163,6 +1163,22 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 off: insn.off,
                 src,
             },
+
+            // --- LEGACY PACKET LOADS (LD_ABS) ---
+            0x20 => Instr::PacketLoad { 
+                size: MemSize::U32, mode: PacketLoadMode::Abs, offset_imm: insn.imm, src: None },
+            0x28 => Instr::PacketLoad { 
+                size: MemSize::U16, mode: PacketLoadMode::Abs, offset_imm: insn.imm, src: None },
+            0x30 => Instr::PacketLoad { 
+                size: MemSize::U8,  mode: PacketLoadMode::Abs, offset_imm: insn.imm, src: None },
+
+            // --- LEGACY PACKET LOADS (LD_IND) ---
+            0x40 => Instr::PacketLoad { 
+                size: MemSize::U32, mode: PacketLoadMode::Ind, offset_imm: insn.imm, src: Some(src) },
+            0x48 => Instr::PacketLoad { 
+                size: MemSize::U16, mode: PacketLoadMode::Ind, offset_imm: insn.imm, src: Some(src) },
+            0x50 => Instr::PacketLoad { 
+                size: MemSize::U8,  mode: PacketLoadMode::Ind, offset_imm: insn.imm, src: Some(src) },
 
             // Guard against stray continuation opcodes outside 0x18
             0x00 => {

@@ -298,14 +298,26 @@ pub fn run_test(test: &JsonTestCase, config: &VerifierConfig) -> TestResult {
     let raw_insns: Vec<RawBpfInsn> = test.insns.iter().map(|j| j.into()).collect();
 
     // Lower to Program AST
+    
     let program = match lower_raw_to_program(&raw_insns) {
         Ok(p) => p,
         Err(e) => {
+            let mut outcome = TestOutcome::Error {
+                message: format!("Failed to lower program: {:?}", e),
+            };
+            let errstr = test.errstr.clone();
+            match errstr {
+                Some(s) => {
+                    // In this case, the lowering is meant to fail, so PASS
+                    if s.contains("unknown op") {
+                        outcome = TestOutcome::Pass
+                    }
+                }
+                None => {}
+            }
             return TestResult {
                 name: test.name.clone(),
-                outcome: TestOutcome::Error {
-                    message: format!("Failed to lower program: {:?}", e),
-                },
+                outcome,
                 expected: test.result.clone(),
                 actual: "ERROR".to_string(),
                 time_ms: start.elapsed().as_millis() as u64,

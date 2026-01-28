@@ -337,3 +337,14 @@ pub(crate) fn update_call_types(in_types: &TypeState, types: &mut TypeState, hel
         invalidate_stack_packet_pointers(types);
     }
 }
+
+pub(crate) fn update_packet_load_types(types: &mut TypeState) {
+    // Clobber R1 - R5
+    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+        types.set(r, RegType::NotInit);
+    }
+
+    // Set Result (R0)
+    // The loaded data is placed in R0.
+    types.set(Reg::R0, RegType::ScalarValue);
+}

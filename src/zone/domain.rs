@@ -298,6 +298,12 @@ pub fn assume_ge_const(dbm: &mut Dbm, x: Reg, c: i64) {
     dbm.close();
 }
 
+// lo <= x <= hi
+pub fn assume_range(dbm: &mut Dbm, x: Reg, lo: i64, hi: i64) {
+    assume_ge_const(dbm, x, lo);
+    assume_le_const(dbm, x, hi);
+}
+
 // x == c   encoded as: x <= c AND x >= c
 pub fn assume_eq_const(dbm: &mut Dbm, x: Reg, c: i64) {
     dbm.add_constraint(x, Reg::Zero, c);
