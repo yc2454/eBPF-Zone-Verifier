@@ -122,10 +122,16 @@ pub(crate) fn transfer_call(
 
 /// Transfer function for relative Call (BPF-to-BPF function call) instructions.
 pub(crate) fn transfer_call_rel(
-    _env: &mut VerifierEnv,
+    env: &mut VerifierEnv,
     state: State,
     target: usize,
 ) -> Vec<State> {
+    // Target cannot be a back edge
+    if target <= state.pc {
+        env.fail(VerificationError::BackEdge { pc: state.pc, target });
+        return vec![]
+    }
+
     // Branch 1: Enter the subprogram
     // We pass the state exactly as-is (registers R1-R5 hold arguments).
     // Note: Without stack frame isolation (R10 shift), this analysis conservatively 

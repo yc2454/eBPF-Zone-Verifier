@@ -29,7 +29,8 @@ pub enum VerificationError {
     InvalidArgType { pc: usize, reg: Reg },
     InvalidPointerArithmetic { pc: usize },
     InvalidBPFLoadImmInsn { pc: usize },
-    MapNotFound { pc: usize, map_idx: usize }
+    MapNotFound { pc: usize, map_idx: usize },
+    BackEdge { pc: usize, target: usize }
 }
 
 impl VerificationError {
@@ -103,6 +104,9 @@ impl VerificationError {
             }
             VerificationError::MapNotFound { pc, map_idx } => {
                 format!("Map with ID {} not found at pc {}", map_idx, pc)
+            }
+            VerificationError::BackEdge { pc, target } => {
+                format!("Attempting to jump back to {} at pc {}", target, pc)
             }
         }
     }

@@ -340,6 +340,16 @@ struct __sk_buff {
     // ... more fields
 };
 
+struct xdp_md {
+    __u32 data;
+    __u32 data_end;
+    __u32 data_meta;
+    __u32 ingress_ifindex;
+    __u32 rx_queue_index;
+    __u32 egress_ifindex;
+};
+
+
 // ============================================================================
 // Register names
 // ============================================================================
@@ -454,11 +464,13 @@ struct __sk_buff {
 #define BPF_FUNC_msg_push_data          90
 #define BPF_FUNC_msg_pop_data           91
 #define BPF_FUNC_rc_pointer_rel         92
+#define BPF_FUNC_seq_write              127
 #define BPF_FUNC_ringbuf_output         130
 #define BPF_FUNC_ringbuf_reserve        131
 #define BPF_FUNC_ringbuf_submit         132
 #define BPF_FUNC_ringbuf_discard        133
 #define BPF_FUNC_ringbuf_query          134
+#define BPF_FUNC_get_task_stack         141
 #define BPF_FUNC_get_netns_cookie       97
 #define BPF_FUNC_get_current_ancestor_cgroup_id 98
 #define BPF_FUNC_check_mtu              99
@@ -561,9 +573,14 @@ enum bpf_attach_type {
 #define MAX_FIXUPS      8
 #define MAX_ENTRIES     11
 #define MAX_DATA 128
+#define TEST_DATA_LEN           64
+#define POINTER_VALUE           0xcafe4all
+#define ETH_HLEN                14
 
 #define F_NEEDS_EFFICIENT_UNALIGNED_ACCESS  (1 << 0)
 #define F_LOAD_WITH_STRICT_ALIGNMENT        (1 << 1)
+
+#define BPF_PSEUDO_KFUNC_CALL   2
 
 // Result codes
 enum {

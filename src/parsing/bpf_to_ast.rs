@@ -12,7 +12,8 @@ pub enum LowerErrorKind {
     BranchTargetOutOfRange,
     CallTargetOutOfBounds,
     InvalidSrcReg,
-    UnknownAtomicOp
+    UnknownAtomicOp,
+    CallUsedReservedFields
 }
 
 #[derive(Debug)]
@@ -1178,6 +1179,15 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
 
             // 0x85: call imm (JMP | CALL)
             0x85 => {
+                if insn.off != 0 || insn.dst != 0 {
+                    return Err(LowerError {
+                        pc,
+                        code: insn.code,
+                        // "BPF_CALL uses reserved fields" is the exact kernel error
+                        msg: "BPF_CALL uses reserved fields".to_string(), 
+                        kind: LowerErrorKind::CallUsedReservedFields
+                    });
+                }
                 if src == Reg::R0 {
                     // Standard Helper Call
                     Instr::Call {
