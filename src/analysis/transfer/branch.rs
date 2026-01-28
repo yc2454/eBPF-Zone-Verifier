@@ -14,10 +14,11 @@ use crate::zone::dbm::Dbm;
 use crate::zone::tnum::Tnum;
 
 use super::refinement::{refine_packet_ranges, refine_mem_ranges, refine_branch};
+use super::common::{check_reg_readable, check_operand_readable};
 
 /// Transfer function for conditional branch instructions.
 pub(crate) fn transfer_if(
-    _env: &VerifierEnv,
+    env: &mut VerifierEnv,
     state: State,
     width: Width,
     left: Reg,
@@ -25,6 +26,13 @@ pub(crate) fn transfer_if(
     right: Operand,
     target: usize,
 ) -> Vec<State> {
+    // Check operand readability
+    if !check_reg_readable(env, &state, left) {
+        return vec![];
+    }
+    if !check_operand_readable(env, &state, &right) {
+        return vec![];
+    }
 
     // --- STEP 0: Static Branch Evaluation (Interval-Based) ---
     // If we can prove the condition is Always True or Always False based on bounds,

@@ -21,6 +21,7 @@ pub enum VerificationError {
     UnsafeSocketAccess { pc: usize, off: i16, size: MemSize },
     DbmInconsistent { pc: usize },
     ComplexityLimitExceeded { limit: usize },
+    RegisterNotReadable { pc: usize, reg: Reg },
     CfgError(String),
     DivideByZero { pc: usize },
     InvalidArgType { pc: usize, reg: Reg },
@@ -83,6 +84,9 @@ impl VerificationError {
             }
             VerificationError::InvalidPointerArithmetic { pc } => {
                 format!("Invalid pointer arithmetic at pc {}", pc)
+            }
+            VerificationError::RegisterNotReadable { pc, reg } => {
+                format!("pc {}: {:?} !read_ok", pc, reg)
             }
         }
     }

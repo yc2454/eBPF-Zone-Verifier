@@ -11,6 +11,7 @@ use crate::zone::tnum::Tnum;
 use crate::analysis::access;
 
 use super::types::{update_load_types, update_store_types};
+use super::common::{check_reg_readable, check_operand_readable};
 
 /// Transfer function for Load instructions.
 pub(crate) fn transfer_load(
@@ -21,6 +22,11 @@ pub(crate) fn transfer_load(
     base: Reg,
     off: i16,
 ) -> Vec<State> {
+    // Check base register is readable
+    if !check_reg_readable(env, &state, base) {
+        return vec![];
+    }
+
     access::check_load(env, &state, base, size, off);
     
     // Try to resolve concrete value from .rodata
@@ -71,6 +77,14 @@ pub(crate) fn transfer_store(
     off: i16,
     src: &Operand,
 ) -> Vec<State> {
+    // Check base register and src operand are readable
+    if !check_reg_readable(env, &state, base) {
+        return vec![];
+    }
+    if !check_operand_readable(env, &state, src) {
+        return vec![];
+    }
+
     access::check_store(env, &state, base, size, off);
     
     let src_type = {
@@ -93,8 +107,16 @@ pub(crate) fn transfer_atomic_add(
     size: MemSize,
     base: Reg,
     off: i16,
-    _src: Reg,
+    src: Reg,
 ) -> Vec<State> {
+    // Check base and src registers are readable
+    if !check_reg_readable(env, &state, base) {
+        return vec![];
+    }
+    if !check_reg_readable(env, &state, src) {
+        return vec![];
+    }
+
     let base_ty = state.types.get(base);
     
     // Atomic add to ctx pointer is not allowed

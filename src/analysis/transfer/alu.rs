@@ -18,6 +18,7 @@ use crate::analysis::constants;
 use log::error;
 
 use super::types::update_alu_types;
+use super::common::{check_reg_readable, check_operand_readable};
 
 /// Transfer function for ALU instructions.
 pub(crate) fn transfer_alu(
@@ -28,6 +29,18 @@ pub(crate) fn transfer_alu(
     dst: Reg,
     src: Operand,
 ) -> Vec<State> {
+    // Check operand readability first
+    // For Mov: only src needs to be readable
+    // For other ops: dst is read-modify-write, so both need to be readable
+    if op != AluOp::Mov {
+        if !check_reg_readable(env, &state, dst) {
+            return vec![];
+        }
+    }
+    if !check_operand_readable(env, &state, &src) {
+        return vec![];
+    }
+
     let in_types = state.types.clone();
 
     // Check pointer arithmetics first
@@ -591,5 +604,3 @@ fn is_div_by_zero(dbm: &Dbm, src: &Operand) -> bool {
         }
     }
 }
-
-

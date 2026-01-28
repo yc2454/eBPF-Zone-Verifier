@@ -9,6 +9,7 @@ mod call;
 mod memory;
 mod refinement;
 mod types;
+mod common;
 
 use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;

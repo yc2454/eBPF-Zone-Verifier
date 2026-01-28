@@ -11,6 +11,7 @@ use crate::analysis::constants;
 use log::{error, warn};
 
 use super::types::{update_call_types, helper_invalidates_packets};
+use super::common::check_regs_readable;
 
 /// Transfer function for helper Call instructions.
 pub(crate) fn transfer_call(
@@ -20,6 +21,15 @@ pub(crate) fn transfer_call(
 ) -> Vec<State> {
     let in_types = state.types.clone();
     let pc = state.pc;
+
+    // ========================================================================
+    // Check argument registers are readable before the call
+    // Most helpers use R1-R5 as arguments
+    // ========================================================================
+    let arg_regs = get_helper_arg_regs(helper);
+    if !check_regs_readable(env, &state, &arg_regs) {
+        return vec![];
+    }
 
     // ========================================================================
     // Validate helper arguments BEFORE executing
@@ -261,5 +271,49 @@ fn get_map_key_value_size(map_type: RegType, env: &VerifierEnv) -> (Option<u32>,
             }
         }
         _ => (None, None),
+    }
+}
+
+/// Returns the argument registers that must be readable for a given helper.
+fn get_helper_arg_regs(helper: u32) -> Vec<Reg> {
+    match helper {
+        // 1 arg: R1
+        constants::BPF_GET_SOCKET_COOKIE |
+        constants::BPF_CSUM_UPDATE |
+        constants::BPF_SKB_ECN_SET_CE => {
+            vec![Reg::R1]
+        }
+        
+        // 2 args: R1, R2
+        constants::BPF_MAP_LOOKUP_ELEM |
+        constants::BPF_MAP_DELETE_ELEM |
+        constants::BPF_REDIRECT => {
+            vec![Reg::R1, Reg::R2]
+        }
+        
+        // 3 args: R1, R2, R3
+        constants::BPF_TAIL_CALL |
+        constants::BPF_SKC_LOOKUP_TCP => {
+            vec![Reg::R1, Reg::R2, Reg::R3]
+        }
+        
+        // 4 args: R1, R2, R3, R4
+        constants::BPF_MAP_UPDATE_ELEM |
+        constants::BPF_SKB_LOAD_BYTES |
+        constants::BPF_SKB_STORE_BYTES => {
+            vec![Reg::R1, Reg::R2, Reg::R3, Reg::R4]
+        }
+        
+        // 5 args: R1, R2, R3, R4, R5
+        constants::BPF_SK_LOOKUP_TCP |
+        constants::BPF_SK_LOOKUP_UDP |
+        constants::BPF_FIB_LOOKUP => {
+            vec![Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5]
+        }
+        
+        // Default: conservatively check R1 (most helpers need at least one arg)
+        _ => {
+            vec![Reg::R1]
+        }
     }
 }

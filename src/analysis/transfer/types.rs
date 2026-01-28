@@ -270,9 +270,9 @@ pub(crate) fn invalidate_stack_packet_pointers(types: &mut TypeState) {
 
 /// Updates register types after a helper Call.
 pub(crate) fn update_call_types(in_types: &TypeState, types: &mut TypeState, helper: u32) {
-    // 1. Clobber caller-saved registers
+    // 1. Clobber caller-saved registers - they are NOT readable after the call
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-        types.set(r, RegType::ScalarValue);
+        types.set(r, RegType::NotInit);
     }
     
     // 2. Set R0 based on helper return type
