@@ -30,7 +30,8 @@ pub enum VerificationError {
     InvalidPointerArithmetic { pc: usize },
     InvalidBPFLoadImmInsn { pc: usize },
     MapNotFound { pc: usize, map_idx: usize },
-    BackEdge { pc: usize, target: usize }
+    BackEdge { pc: usize, target: usize },
+    MaxCallDepthExceeded { pc: usize },
 }
 
 impl VerificationError {
@@ -107,6 +108,9 @@ impl VerificationError {
             }
             VerificationError::BackEdge { pc, target } => {
                 format!("Attempting to jump back to {} at pc {}", target, pc)
+            }
+            VerificationError::MaxCallDepthExceeded { pc } => {
+                format!("Max call depth exceeded at pc {}", pc)
             }
         }
     }

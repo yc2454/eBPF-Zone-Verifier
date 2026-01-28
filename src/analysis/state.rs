@@ -24,6 +24,11 @@ pub struct State {
     pub history_idx: Option<usize>,
 
     pub tnums: HashMap<Reg, Tnum>, // tnum info for R0-R10
+
+    /// Call stack for BPF-to-BPF function calls.
+    /// Stores return addresses (PC + 1 of CallRel instructions).
+    /// Empty for main function; populated when entering subfunctions.
+    pub call_stack: Vec<usize>,
 }
 
 impl State {
@@ -41,6 +46,7 @@ impl State {
             pc,
             history_idx: None,
             tnums: tnums.clone(),
+            call_stack: Vec::new()
         }
     }
 

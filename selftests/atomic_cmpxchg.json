@@ -1,0 +1,164 @@
+[
+  {
+    "name": "atomic compare-and-exchange smoketest - 64bit",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 3},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 219, "dst": 10, "src": 1, "off": -8, "imm": 241},
+      {"code": 21, "dst": 0, "src": 0, "off": 2, "imm": 3},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 0, "src": 10, "off": -8, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 2, "imm": 3},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 3},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 3},
+      {"code": 219, "dst": 10, "src": 1, "off": -8, "imm": 241},
+      {"code": 21, "dst": 0, "src": 0, "off": 2, "imm": 3},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 0, "src": 10, "off": -8, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 2, "imm": 4},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "atomic compare-and-exchange smoketest - 32bit",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 leaks addr into mem",
+    "insns": [
+      {"code": 98, "dst": 10, "src": 0, "off": -4, "imm": 3},
+      {"code": 180, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 195, "dst": 10, "src": 1, "off": -4, "imm": 241},
+      {"code": 22, "dst": 0, "src": 0, "off": 2, "imm": 3},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 10, "off": -4, "imm": 0},
+      {"code": 22, "dst": 0, "src": 0, "off": 2, "imm": 3},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 3},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 180, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 3},
+      {"code": 195, "dst": 10, "src": 1, "off": -4, "imm": 241},
+      {"code": 22, "dst": 0, "src": 0, "off": 2, "imm": 3},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 10, "off": -4, "imm": 0},
+      {"code": 22, "dst": 0, "src": 0, "off": 2, "imm": 4},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "Can't use cmpxchg on uninit src reg",
+    "result": "REJECT",
+    "errstr": "!read_ok",
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 3},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 3},
+      {"code": 219, "dst": 10, "src": 2, "off": -8, "imm": 241},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "Can't use cmpxchg on uninit memory",
+    "result": "REJECT",
+    "errstr": "invalid read from stack",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 3},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 219, "dst": 10, "src": 2, "off": -8, "imm": 241},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "BPF_W cmpxchg should zero top 32 bits",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 leaks addr into mem",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 23, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 123, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 180, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 195, "dst": 10, "src": 1, "off": -8, "imm": 241},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 103, "dst": 1, "src": 0, "off": 0, "imm": 32},
+      {"code": 23, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 29, "dst": 0, "src": 1, "off": 2, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "Dest pointer in r0 - succeed, check 2",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 leaks addr into mem",
+    "insns": [
+      {"code": 191, "dst": 0, "src": 10, "off": 0, "imm": 0},
+      {"code": 123, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 5, "src": 10, "off": 0, "imm": 0},
+      {"code": 219, "dst": 10, "src": 5, "off": -8, "imm": 241},
+      {"code": 121, "dst": 1, "src": 0, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "Dest pointer in r0 - succeed, check 3",
+    "result": "REJECT",
+    "errstr": "invalid size of register fill",
+    "errstr_unpriv": "R0 leaks addr into mem",
+    "insns": [
+      {"code": 191, "dst": 0, "src": 10, "off": 0, "imm": 0},
+      {"code": 123, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 5, "src": 10, "off": 0, "imm": 0},
+      {"code": 195, "dst": 10, "src": 5, "off": -8, "imm": 241},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "Dest pointer in r0 - succeed, check 4",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R10 partial copy of pointer",
+    "insns": [
+      {"code": 188, "dst": 0, "src": 10, "off": 0, "imm": 0},
+      {"code": 99, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 188, "dst": 5, "src": 10, "off": 0, "imm": 0},
+      {"code": 195, "dst": 10, "src": 5, "off": -8, "imm": 241},
+      {"code": 97, "dst": 1, "src": 10, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "Dest pointer in r0 - succeed, check 5",
+    "result": "REJECT",
+    "errstr": "R0 invalid mem access",
+    "errstr_unpriv": "R10 partial copy of pointer",
+    "insns": [
+      {"code": 188, "dst": 0, "src": 10, "off": 0, "imm": 0},
+      {"code": 99, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 188, "dst": 5, "src": 10, "off": 0, "imm": 0},
+      {"code": 195, "dst": 10, "src": 5, "off": -8, "imm": 241},
+      {"code": 97, "dst": 1, "src": 0, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

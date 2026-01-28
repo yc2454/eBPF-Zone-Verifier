@@ -1,0 +1,38 @@
+[
+  {
+    "name": "atomic exchange smoketest - 64bit",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 3},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 219, "dst": 10, "src": 1, "off": -8, "imm": 225},
+      {"code": 21, "dst": 1, "src": 0, "off": 2, "imm": 3},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 0, "src": 10, "off": -8, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 2, "imm": 4},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "atomic exchange smoketest - 32bit",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 98, "dst": 10, "src": 0, "off": -4, "imm": 3},
+      {"code": 180, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 195, "dst": 10, "src": 1, "off": -4, "imm": 225},
+      {"code": 22, "dst": 1, "src": 0, "off": 2, "imm": 3},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 10, "off": -4, "imm": 0},
+      {"code": 22, "dst": 0, "src": 0, "off": 2, "imm": 4},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

@@ -1,0 +1,80 @@
+[
+  {
+    "name": "BPF_ATOMIC OR without fetch",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 272},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 17},
+      {"code": 219, "dst": 10, "src": 1, "off": -8, "imm": 64},
+      {"code": 121, "dst": 0, "src": 10, "off": -8, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 2, "imm": 273},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 1, "imm": 17},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "BPF_ATOMIC OR with fetch",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 123},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 272},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 17},
+      {"code": 219, "dst": 10, "src": 1, "off": -8, "imm": 65},
+      {"code": 21, "dst": 1, "src": 0, "off": 2, "imm": 272},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 3},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 1, "src": 10, "off": -8, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 2, "imm": 273},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 2, "imm": 123},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "BPF_ATOMIC OR with fetch 32bit",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 23, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 98, "dst": 10, "src": 0, "off": -4, "imm": 272},
+      {"code": 180, "dst": 1, "src": 0, "off": 0, "imm": 17},
+      {"code": 195, "dst": 10, "src": 1, "off": -4, "imm": 65},
+      {"code": 22, "dst": 1, "src": 0, "off": 2, "imm": 272},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 3},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 1, "src": 10, "off": -4, "imm": 0},
+      {"code": 22, "dst": 1, "src": 0, "off": 2, "imm": 273},
+      {"code": 180, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "BPF_W atomic_fetch_or should zero top 32 bits",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 23, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 123, "dst": 10, "src": 1, "off": -8, "imm": 0},
+      {"code": 180, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 195, "dst": 10, "src": 1, "off": -8, "imm": 65},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 1},
+      {"code": 103, "dst": 2, "src": 0, "off": 0, "imm": 32},
+      {"code": 23, "dst": 2, "src": 0, "off": 0, "imm": 1},
+      {"code": 29, "dst": 2, "src": 1, "off": 2, "imm": 0},
+      {"code": 191, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

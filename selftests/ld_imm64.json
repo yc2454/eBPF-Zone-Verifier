@@ -1,0 +1,160 @@
+[
+  {
+    "name": "test1 ld_imm64",
+    "result": "REJECT",
+    "errstr": "invalid BPF_LD_IMM insn",
+    "errstr_unpriv": "R1 pointer comparison",
+    "insns": [
+      {"code": 21, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "test2 ld_imm64",
+    "result": "REJECT",
+    "errstr": "invalid BPF_LD_IMM insn",
+    "errstr_unpriv": "R1 pointer comparison",
+    "insns": [
+      {"code": 21, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "test3 ld_imm64",
+    "result": "REJECT",
+    "errstr": "invalid bpf_ld_imm64 insn",
+    "insns": [
+      {"code": 21, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "test4 ld_imm64",
+    "result": "REJECT",
+    "errstr": "invalid bpf_ld_imm64 insn",
+    "insns": [
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "test6 ld_imm64",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "test7 ld_imm64",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "test8 ld_imm64",
+    "result": "REJECT",
+    "errstr": "uses reserved fields",
+    "insns": [
+      {"code": 24, "dst": 0, "src": 0, "off": 1, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "test9 ld_imm64",
+    "result": "REJECT",
+    "errstr": "invalid bpf_ld_imm64 insn",
+    "insns": [
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 1, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "test10 ld_imm64",
+    "result": "REJECT",
+    "errstr": "invalid bpf_ld_imm64 insn",
+    "insns": [
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "test11 ld_imm64",
+    "result": "REJECT",
+    "errstr": "invalid bpf_ld_imm64 insn",
+    "insns": [
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "test12 ld_imm64",
+    "result": "REJECT",
+    "errstr": "not pointing to valid bpf_map",
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "test13 ld_imm64",
+    "result": "REJECT",
+    "errstr": "invalid bpf_ld_imm64 insn",
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "test14 ld_imm64: reject 2nd imm != 0",
+    "result": "REJECT",
+    "errstr": "unrecognized bpf_ld_imm64 insn",
+    "fixups": {
+    "fixup_map_hash_48b": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16711422},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

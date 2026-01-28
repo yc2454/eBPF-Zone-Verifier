@@ -1,0 +1,524 @@
+[
+  {
+    "name": "add32 reg zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 12, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "add32 imm zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 4, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 4, "dst": 0, "src": 0, "off": 0, "imm": -2},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 79, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sub32 reg zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": -1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 28, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sub32 imm zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 20, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 20, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 79, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "mul32 reg zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 44, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "mul32 imm zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 36, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 36, "dst": 0, "src": 0, "off": 0, "imm": -1},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 79, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "div32 reg zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": -1},
+      {"code": 60, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "div32 imm zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 52, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 52, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 79, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "or32 reg zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 76, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "or32 imm zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 68, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 68, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 79, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "and32 reg zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 79, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": -1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 92, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "and32 imm zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 84, "dst": 0, "src": 0, "off": 0, "imm": -1},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 84, "dst": 0, "src": 0, "off": 0, "imm": -2},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 79, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "lsh32 reg zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 108, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "lsh32 imm zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 100, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 100, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 79, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "rsh32 reg zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 124, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "rsh32 imm zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 116, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 116, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 79, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "neg32 reg zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 132, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "mod32 reg zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": -1},
+      {"code": 156, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "mod32 imm zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 148, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 148, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 79, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "xor32 reg zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 172, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "xor32 imm zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 164, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "mov32 reg zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 79, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 188, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "mov32 imm zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 79, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "arsh32 reg zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 204, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "arsh32 imm zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 196, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 196, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 79, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "end16 (to_le) reg zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 103, "dst": 6, "src": 0, "off": 0, "imm": 32},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 79, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 212, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "end32 (to_le) reg zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 103, "dst": 6, "src": 0, "off": 0, "imm": 32},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 79, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 212, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "end16 (to_be) reg zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 103, "dst": 6, "src": 0, "off": 0, "imm": 32},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 79, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 220, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "end32 (to_be) reg zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 103, "dst": 6, "src": 0, "off": 0, "imm": 32},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 79, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 220, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "ldx_b zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -4},
+      {"code": 98, "dst": 6, "src": 0, "off": 0, "imm": -87117812},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "ldx_h zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -4},
+      {"code": 98, "dst": 6, "src": 0, "off": 0, "imm": -87117812},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 105, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "ldx_w zero extend check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -4},
+      {"code": 98, "dst": 6, "src": 0, "off": 0, "imm": -87117812},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 16},
+      {"code": 79, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 32},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

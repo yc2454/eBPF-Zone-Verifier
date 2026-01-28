@@ -18,6 +18,8 @@ use crate::analysis::state::State;
 use crate::analysis::reg_types::RegType;
 use crate::ast::{Instr, EndianOp, Width};
 use crate::zone::domain::{Reg, forget, assign_and_mask, bit_and_const};
+use crate::analysis::transfer::common::check_reg_readable;
+use crate::analysis::env::VerificationError;
 
 /// Main transfer function - dispatches to appropriate handler based on instruction type.
 pub fn transfer(
@@ -52,7 +54,7 @@ pub fn transfer(
         Instr::LoadPacket { size, mode, offset_imm, src } => 
             packet_load::transfer_packet_load(env, state, *size, *mode, *offset_imm, *src),
 
-        Instr::LoadMap { dst, kind, map_fd, off } => 
+        Instr::LoadMap { dst, kind, map_fd, off: _ } => 
             map_load::transfer_map_load(env, state, *dst, *kind, *map_fd),
         
         Instr::Atomic { op, size, fetch, base, off, src } => 
@@ -69,7 +71,7 @@ pub fn transfer(
             vec![state]
         },
         
-        Instr::Exit => vec![],
+        Instr::Exit => transfer_exit(env, state)
     }
 }
 
@@ -132,4 +134,29 @@ fn transfer_endian(
 
     state.pc += 1;
     vec![state]
+}
+
+/// Transfer function for Exit instruction.
+fn transfer_exit(
+    env: &mut VerifierEnv,
+    mut state: State,
+) -> Vec<State> {
+    let pc = state.pc;
+
+    // R0 must be readable (it's the return value)
+    if !check_reg_readable(env, &state, Reg::R0) {
+        env.fail(VerificationError::RegisterNotReadable { pc, reg: Reg::R0 });
+        return vec![];
+    }
+
+    if let Some(return_pc) = state.call_stack.pop() {
+        // Returning from subfunction — continue at caller's return site
+        // R0 retains its current type (the actual return value)
+        state.pc = return_pc;
+        vec![state]
+    } else {
+        // Main function exit — path terminates
+        // (R0 already validated above)
+        vec![]
+    }
 }

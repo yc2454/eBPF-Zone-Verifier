@@ -49,6 +49,10 @@ impl RegType {
         matches!(self, ScalarValue | NotInit)
     }
 
+    pub fn is_init(self) -> bool {
+        !matches!(self, RegType::NotInit)
+    }
+
     /// Returns the non-null version of a nullable pointer type
     pub fn to_non_null(&self) -> Option<RegType> {
         match *self {

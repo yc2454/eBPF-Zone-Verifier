@@ -1,0 +1,16 @@
+[
+  {
+    "name": "BPF_ATOMIC bounds propagation, mem->reg",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "back-edge",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 219, "dst": 10, "src": 1, "off": -8, "imm": 1},
+      {"code": 85, "dst": 1, "src": 0, "off": -1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

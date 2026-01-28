@@ -1,0 +1,1739 @@
+[
+  {
+    "name": "calls: basic sanity",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: not on unpriviledged",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "loading/calling other bpf or kernel functions are allowed for",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: div by 0 in subprog",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 8},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 97, "dst": 1, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 2, "src": 1, "off": 1, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 180, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 180, "dst": 3, "src": 0, "off": 0, "imm": 1},
+      {"code": 60, "dst": 3, "src": 2, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 76, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: multiple ret types in subprog 1",
+    "result": "REJECT",
+    "errstr": "R0 invalid mem access 'inv'",
+    "prog_type": 3,
+    "insns": [
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 8},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 97, "dst": 1, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 2, "src": 1, "off": 1, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 76, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 42},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: multiple ret types in subprog 2",
+    "result": "REJECT",
+    "errstr": "R0 min value is outside of the allowed memory range",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_hash_8b": [16]
+    },
+    "insns": [
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 8},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 97, "dst": 1, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 2, "src": 1, "off": 1, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 76, "imm": 0},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 9, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 97, "dst": 0, "src": 6, "off": 76, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 64},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: trigger reg2btf_ids[reg->type] for reg->type > __BPF_REG_TYPE_MAX",
+    "result": "REJECT",
+    "errstr": "arg#0 pointer type STRUCT prog_test_ref_kfunc must point",
+    "prog_type": 3,
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: overlapping caller/callee",
+    "result": "REJECT",
+    "errstr": "last insn is not an exit or jmp",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: wrong recursive calls",
+    "result": "REJECT",
+    "errstr": "jump out of range",
+    "prog_type": 5,
+    "insns": [
+      {"code": 5, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": -2},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": -2},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": -2},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: wrong src reg",
+    "result": "REJECT",
+    "errstr": "BPF_CALL uses reserved fields",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 3, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: wrong off value",
+    "result": "REJECT",
+    "errstr": "BPF_CALL uses reserved fields",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": -1, "imm": 2},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: jump back loop",
+    "result": "REJECT",
+    "errstr": "back-edge from insn 0 to 0",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": -1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: conditional call",
+    "result": "REJECT",
+    "errstr": "jump out of range",
+    "prog_type": 5,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 8, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: conditional call 2",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 8, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 4},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 3},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: conditional call 3",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "back-edge from insn",
+    "prog_type": 1,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 8, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 5, "dst": 0, "src": 0, "off": -6, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 3},
+      {"code": 5, "dst": 0, "src": 0, "off": -6, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: conditional call 4",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 8, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 4},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 5, "dst": 0, "src": 0, "off": -5, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 3},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: conditional call 5",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 8, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 4},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 5, "dst": 0, "src": 0, "off": -6, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 3},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: conditional call 6",
+    "result": "REJECT",
+    "errstr": "infinite loop detected",
+    "prog_type": 3,
+    "insns": [
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2},
+      {"code": 21, "dst": 0, "src": 0, "off": -3, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: using r0 returned by callee",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: using uninit r0 from callee",
+    "result": "REJECT",
+    "errstr": "!read_ok",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: callee is using r1",
+    "result": "ACCEPT",
+    "prog_type": 4,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: callee using args1",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "allowed for",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: callee using wrong args2",
+    "result": "REJECT",
+    "errstr": "R2 !read_ok",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: callee using two args",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "allowed for",
+    "insns": [
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 97, "dst": 2, "src": 6, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 15, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: callee changing pkt pointers",
+    "result": "REJECT",
+    "errstr": "R6 invalid mem access 'inv'",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 7, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 8, "src": 6, "off": 0, "imm": 0},
+      {"code": 7, "dst": 8, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 8, "src": 7, "off": 2, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 3},
+      {"code": 121, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 44},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: ptr null check in subprog",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "loading/calling other bpf or kernel functions are allowed for",
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 3},
+      {"code": 21, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 113, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: two calls with args",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 6},
+      {"code": 191, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 3},
+      {"code": 15, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 7, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: calls with stack arith",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -64},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -64},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -64},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 42},
+      {"code": 123, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: calls with misaligned stack access",
+    "result": "REJECT",
+    "errstr": "misaligned stack access",
+    "prog_type": 3,
+    "flags": 2,
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -63},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -61},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -63},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 42},
+      {"code": 123, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: calls control flow, jump test",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 42},
+      {"code": 5, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 43},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": -3, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: calls control flow, jump test 2",
+    "result": "REJECT",
+    "errstr": "jump out of range from insn 1 to 4",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 42},
+      {"code": 5, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 43},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": -3},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: two calls with bad jump",
+    "result": "REJECT",
+    "errstr": "jump out of range from insn 11 to 9",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 6},
+      {"code": 191, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 3},
+      {"code": 15, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 7, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": -3, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: recursive call. test1",
+    "result": "REJECT",
+    "errstr": "back-edge",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": -1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: recursive call. test2",
+    "result": "REJECT",
+    "errstr": "back-edge",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": -3},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: unreachable code",
+    "result": "REJECT",
+    "errstr": "unreachable insn 6",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: invalid call",
+    "result": "REJECT",
+    "errstr": "invalid destination",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": -4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: invalid call 2",
+    "result": "REJECT",
+    "errstr": "invalid destination",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2147483647},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: jumping across function bodies. test1",
+    "result": "REJECT",
+    "errstr": "jump out of range",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": -3, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: jumping across function bodies. test2",
+    "result": "REJECT",
+    "errstr": "jump out of range",
+    "prog_type": 5,
+    "insns": [
+      {"code": 21, "dst": 1, "src": 0, "off": 3, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: call without exit",
+    "result": "REJECT",
+    "errstr": "not an exit",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": -2, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: call into middle of ld_imm64",
+    "result": "REJECT",
+    "errstr": "last insn",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 3},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 3},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: call into middle of other call",
+    "result": "REJECT",
+    "errstr": "last insn",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 3},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 3},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: subprog call with ld_abs in main prog",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 48, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 40, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 32, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 7, "src": 6, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 5},
+      {"code": 191, "dst": 6, "src": 7, "off": 0, "imm": 0},
+      {"code": 48, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 40, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 32, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 2},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 18},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: two calls with bad fallthrough",
+    "result": "REJECT",
+    "errstr": "not an exit",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 6},
+      {"code": 191, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 3},
+      {"code": 15, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 7, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: two calls with stack read",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -8},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 6},
+      {"code": 191, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 3},
+      {"code": 15, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 7, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: two calls with stack write",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -16},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2},
+      {"code": 121, "dst": 0, "src": 10, "off": -16, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 7, "src": 2, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 7},
+      {"code": 191, "dst": 8, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 4},
+      {"code": 15, "dst": 8, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 8, "off": 0, "imm": 0},
+      {"code": 123, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: stack overflow using two frames (pre-call access)",
+    "result": "REJECT",
+    "errstr": "combined stack size",
+    "prog_type": 6,
+    "insns": [
+      {"code": 114, "dst": 10, "src": 0, "off": -300, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 114, "dst": 10, "src": 0, "off": -300, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: stack overflow using two frames (post-call access)",
+    "result": "REJECT",
+    "errstr": "combined stack size",
+    "prog_type": 6,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2},
+      {"code": 114, "dst": 10, "src": 0, "off": -300, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 114, "dst": 10, "src": 0, "off": -300, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: stack depth check using three frames. test1",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 4},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 5},
+      {"code": 114, "dst": 10, "src": 0, "off": -32, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 114, "dst": 10, "src": 0, "off": -256, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": -3},
+      {"code": 114, "dst": 10, "src": 0, "off": -64, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: stack depth check using three frames. test2",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 4},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 5},
+      {"code": 114, "dst": 10, "src": 0, "off": -32, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 114, "dst": 10, "src": 0, "off": -64, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": -3},
+      {"code": 114, "dst": 10, "src": 0, "off": -256, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: stack depth check using three frames. test3",
+    "result": "REJECT",
+    "errstr": "combined stack",
+    "prog_type": 6,
+    "insns": [
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 6},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 8},
+      {"code": 53, "dst": 6, "src": 0, "off": 1, "imm": 0},
+      {"code": 114, "dst": 10, "src": 0, "off": -64, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 165, "dst": 1, "src": 0, "off": 1, "imm": 10},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 114, "dst": 10, "src": 0, "off": -224, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": -3, "imm": 0},
+      {"code": 37, "dst": 1, "src": 0, "off": 1, "imm": 2},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": -6},
+      {"code": 114, "dst": 10, "src": 0, "off": -256, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: stack depth check using three frames. test4",
+    "result": "REJECT",
+    "errstr": "combined stack",
+    "prog_type": 6,
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 6},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 4},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 7},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 114, "dst": 10, "src": 0, "off": -300, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 114, "dst": 10, "src": 0, "off": -300, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: stack depth check using three frames. test5",
+    "result": "REJECT",
+    "errstr": "call stack",
+    "prog_type": 6,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: stack depth check in dead code",
+    "result": "REJECT",
+    "errstr": "call stack",
+    "prog_type": 6,
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: spill into caller stack frame",
+    "result": "REJECT",
+    "errstr": "cannot spill",
+    "prog_type": 6,
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -8},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: write into caller stack frame",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2},
+      {"code": 121, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 122, "dst": 1, "src": 0, "off": 0, "imm": 42},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: write into callee stack frame",
+    "result": "REJECT",
+    "errstr": "cannot return stack pointer",
+    "prog_type": 6,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 42},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": -8},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: two calls with stack write and void return",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -16},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2},
+      {"code": 121, "dst": 0, "src": 10, "off": -16, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 7, "src": 2, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 3},
+      {"code": 191, "dst": 1, "src": 7, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 122, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: ambiguous return value",
+    "result": "REJECT",
+    "result_unpriv": "REJECT",
+    "errstr": "R0 !read_ok",
+    "errstr_unpriv": "allowed for",
+    "insns": [
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 5},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: two calls that return map_value",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "fixups": {
+    "fixup_map_hash_8b": [23]
+    },
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -16},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 8},
+      {"code": 121, "dst": 0, "src": 10, "off": -8, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 0, "src": 10, "off": -16, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 7, "src": 2, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 3},
+      {"code": 191, "dst": 1, "src": 7, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 123, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: two calls that return map_value with bool condition",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "fixups": {
+    "fixup_map_hash_8b": [23]
+    },
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -16},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 7, "src": 2, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 9},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 1},
+      {"code": 121, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 7, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 4},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 1},
+      {"code": 121, "dst": 0, "src": 7, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: two calls that return map_value with incorrect bool check",
+    "result": "REJECT",
+    "errstr": "invalid read from stack R7 off=-16 size=8",
+    "prog_type": 6,
+    "fixups": {
+    "fixup_map_hash_8b": [23]
+    },
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -16},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 7, "src": 2, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 9},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 1},
+      {"code": 121, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 7, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 4},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 121, "dst": 0, "src": 7, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: two calls that receive map_value via arg=ptr_stack_of_caller. test1",
+    "result": "REJECT",
+    "errstr": "invalid access to map value, value_size=8 off=2 size=8",
+    "prog_type": 3,
+    "flags": 1,
+    "fixups": {
+    "fixup_map_hash_8b": [12, 22]
+    },
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -16},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 7, "src": 2, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 8, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 123, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 8, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 9, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 123, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 9, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 8, "off": 0, "imm": 0},
+      {"code": 191, "dst": 3, "src": 7, "off": 0, "imm": 0},
+      {"code": 191, "dst": 4, "src": 9, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 2, "src": 0, "off": 2, "imm": 1},
+      {"code": 121, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 4, "src": 0, "off": 2, "imm": 1},
+      {"code": 121, "dst": 0, "src": 3, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: two calls that receive map_value via arg=ptr_stack_of_caller. test2",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_hash_8b": [12, 22]
+    },
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -16},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 7, "src": 2, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 8, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 123, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 8, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 9, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 123, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 9, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 8, "off": 0, "imm": 0},
+      {"code": 191, "dst": 3, "src": 7, "off": 0, "imm": 0},
+      {"code": 191, "dst": 4, "src": 9, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 2, "src": 0, "off": 2, "imm": 1},
+      {"code": 121, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 4, "src": 0, "off": 2, "imm": 1},
+      {"code": 121, "dst": 0, "src": 3, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: two jumps that receive map_value via arg=ptr_stack_of_jumper. test3",
+    "result": "REJECT",
+    "errstr": "invalid access to map value, value_size=8 off=2 size=8",
+    "prog_type": 3,
+    "flags": 1,
+    "fixups": {
+    "fixup_map_hash_8b": [12, 22]
+    },
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -16},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 7, "src": 2, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -24, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -24},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 8, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 123, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 8, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -24},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 9, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 123, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 9, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 8, "off": 0, "imm": 0},
+      {"code": 191, "dst": 3, "src": 7, "off": 0, "imm": 0},
+      {"code": 191, "dst": 4, "src": 9, "off": 0, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": -30, "imm": 0},
+      {"code": 85, "dst": 2, "src": 0, "off": 2, "imm": 1},
+      {"code": 121, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 4, "src": 0, "off": 2, "imm": 1},
+      {"code": 121, "dst": 0, "src": 3, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": -8, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: two calls that receive map_value_ptr_or_null via arg. test1",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_hash_8b": [12, 22]
+    },
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -16},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 7, "src": 2, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 123, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 8, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 183, "dst": 8, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 123, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 9, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 183, "dst": 9, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 8, "off": 0, "imm": 0},
+      {"code": 191, "dst": 3, "src": 7, "off": 0, "imm": 0},
+      {"code": 191, "dst": 4, "src": 9, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 2, "src": 0, "off": 2, "imm": 1},
+      {"code": 121, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 4, "src": 0, "off": 2, "imm": 1},
+      {"code": 121, "dst": 0, "src": 3, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: two calls that receive map_value_ptr_or_null via arg. test2",
+    "result": "REJECT",
+    "errstr": "R0 invalid mem access 'inv'",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_hash_8b": [12, 22]
+    },
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -16},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 7, "src": 2, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 123, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 8, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 183, "dst": 8, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 123, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 9, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 183, "dst": 9, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 8, "off": 0, "imm": 0},
+      {"code": 191, "dst": 3, "src": 7, "off": 0, "imm": 0},
+      {"code": 191, "dst": 4, "src": 9, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 2, "src": 0, "off": 2, "imm": 1},
+      {"code": 121, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 4, "src": 0, "off": 2, "imm": 0},
+      {"code": 121, "dst": 0, "src": 3, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: pkt_ptr spill into caller stack",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 191, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 123, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 45, "dst": 0, "src": 3, "off": 2, "imm": 0},
+      {"code": 121, "dst": 2, "src": 4, "off": 0, "imm": 0},
+      {"code": 98, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: pkt_ptr spill into caller stack 2",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 191, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 3},
+      {"code": 121, "dst": 4, "src": 10, "off": -8, "imm": 0},
+      {"code": 98, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 123, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 45, "dst": 0, "src": 3, "off": 2, "imm": 0},
+      {"code": 121, "dst": 2, "src": 4, "off": 0, "imm": 0},
+      {"code": 98, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: pkt_ptr spill into caller stack 3",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 191, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 4},
+      {"code": 21, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 121, "dst": 4, "src": 10, "off": -8, "imm": 0},
+      {"code": 98, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 123, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 45, "dst": 0, "src": 3, "off": 3, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 1},
+      {"code": 121, "dst": 2, "src": 4, "off": 0, "imm": 0},
+      {"code": 98, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 5, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: pkt_ptr spill into caller stack 4",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 191, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 4},
+      {"code": 21, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 121, "dst": 4, "src": 10, "off": -8, "imm": 0},
+      {"code": 98, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 123, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 45, "dst": 0, "src": 3, "off": 2, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 1},
+      {"code": 98, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 5, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: pkt_ptr spill into caller stack 5",
+    "result": "REJECT",
+    "errstr": "same insn cannot be used with different",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 191, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 123, "dst": 4, "src": 1, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 3},
+      {"code": 121, "dst": 4, "src": 10, "off": -8, "imm": 0},
+      {"code": 97, "dst": 0, "src": 4, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 45, "dst": 0, "src": 3, "off": 3, "imm": 0},
+      {"code": 123, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 1},
+      {"code": 98, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 5, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: pkt_ptr spill into caller stack 6",
+    "result": "REJECT",
+    "errstr": "R4 invalid mem access",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 123, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 3},
+      {"code": 121, "dst": 4, "src": 10, "off": -8, "imm": 0},
+      {"code": 97, "dst": 0, "src": 4, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 45, "dst": 0, "src": 3, "off": 3, "imm": 0},
+      {"code": 123, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 1},
+      {"code": 98, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 5, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: pkt_ptr spill into caller stack 7",
+    "result": "REJECT",
+    "errstr": "R4 invalid mem access",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 123, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 3},
+      {"code": 121, "dst": 4, "src": 10, "off": -8, "imm": 0},
+      {"code": 97, "dst": 0, "src": 4, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 45, "dst": 0, "src": 3, "off": 3, "imm": 0},
+      {"code": 123, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 1},
+      {"code": 98, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 5, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: pkt_ptr spill into caller stack 8",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 189, "dst": 0, "src": 3, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 123, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 3},
+      {"code": 121, "dst": 4, "src": 10, "off": -8, "imm": 0},
+      {"code": 97, "dst": 0, "src": 4, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 45, "dst": 0, "src": 3, "off": 3, "imm": 0},
+      {"code": 123, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 1},
+      {"code": 98, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 5, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: pkt_ptr spill into caller stack 9",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 189, "dst": 0, "src": 3, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 123, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 3},
+      {"code": 121, "dst": 4, "src": 10, "off": -8, "imm": 0},
+      {"code": 97, "dst": 0, "src": 4, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 45, "dst": 0, "src": 3, "off": 2, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 1},
+      {"code": 98, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 5, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: caller stack init to zero or map_value_or_null",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "fixups": {
+    "fixup_map_hash_8b": [13]
+    },
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 4},
+      {"code": 121, "dst": 0, "src": 10, "off": -8, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 98, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 8, "imm": 0},
+      {"code": 191, "dst": 6, "src": 2, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 123, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: stack init to zero and pruning",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "invalid indirect read from stack R2 off -8+0 size 8",
+    "fixups": {
+    "fixup_map_hash_48b": [7]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 37, "dst": 0, "src": 0, "off": 2, "imm": 2},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: ctx read at start of subprog",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "loading/calling other bpf or kernel functions are allowed for",
+    "prog_type": 1,
+    "insns": [
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 5},
+      {"code": 109, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 2},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 9, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: cross frame pruning",
+    "result": "REJECT",
+    "errstr": "!read_ok",
+    "errstr_unpriv": "loading/calling other bpf or kernel functions are allowed for",
+    "prog_type": 1,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 183, "dst": 8, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 183, "dst": 8, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 1, "src": 8, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 4},
+      {"code": 21, "dst": 8, "src": 0, "off": 1, "imm": 1},
+      {"code": 113, "dst": 9, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "calls: cross frame pruning - liveness propagation",
+    "result": "REJECT",
+    "errstr": "!read_ok",
+    "errstr_unpriv": "loading/calling other bpf or kernel functions are allowed for",
+    "prog_type": 1,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 183, "dst": 8, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 183, "dst": 8, "src": 0, "off": 0, "imm": 1},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 183, "dst": 9, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 183, "dst": 9, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 4},
+      {"code": 21, "dst": 8, "src": 0, "off": 1, "imm": 1},
+      {"code": 113, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

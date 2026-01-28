@@ -1,0 +1,118 @@
+[
+  {
+    "name": "bpf_map_ptr: read with negative offset rejected",
+    "result": "REJECT",
+    "result_unpriv": "REJECT",
+    "errstr": "R1 is bpf_array invalid negative access: off=-8",
+    "errstr_unpriv": "bpf_array access is allowed only to CAP_PERFMON and CAP_SYS_ADMIN",
+    "fixups": {
+    "fixup_map_array_48b": [1]
+    },
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 6, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_map_ptr: write rejected",
+    "result": "REJECT",
+    "result_unpriv": "REJECT",
+    "errstr": "only read from bpf_array is supported",
+    "errstr_unpriv": "bpf_array access is allowed only to CAP_PERFMON and CAP_SYS_ADMIN",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_map_ptr: read non-existent field rejected",
+    "result": "REJECT",
+    "result_unpriv": "REJECT",
+    "errstr": "cannot access ptr member ops with moff 0 in struct bpf_map with off 1 size 4",
+    "errstr_unpriv": "bpf_array access is allowed only to CAP_PERFMON and CAP_SYS_ADMIN",
+    "flags": 1,
+    "fixups": {
+    "fixup_map_array_48b": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 6, "src": 1, "off": 1, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_map_ptr: read ops field accepted",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "bpf_array access is allowed only to CAP_PERFMON and CAP_SYS_ADMIN",
+    "fixups": {
+    "fixup_map_array_48b": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_map_ptr: r = 0, map_ptr = map_ptr + r",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R1 has pointer with unsupported alu operation",
+    "fixups": {
+    "fixup_map_hash_16b": [4]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 15, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_map_ptr: r = 0, r = r + map_ptr",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 has pointer with unsupported alu operation",
+    "fixups": {
+    "fixup_map_hash_16b": [4]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 15, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]
