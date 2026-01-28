@@ -1,0 +1,265 @@
+// src/analysis/transfer/call.rs
+//
+// Call and CallRel instruction handling, helper validation
+
+use crate::analysis::env::{VerifierEnv, VerificationError};
+use crate::analysis::state::State;
+use crate::analysis::reg_types::{RegType, TypeState};
+use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, is_zero, nonneg};
+use crate::analysis::access;
+use crate::analysis::constants;
+use log::{error, warn};
+
+use super::types::{update_call_types, helper_invalidates_packets};
+
+/// Transfer function for helper Call instructions.
+pub(crate) fn transfer_call(
+    env: &mut VerifierEnv,
+    mut state: State,
+    helper: u32,
+) -> Vec<State> {
+    let in_types = state.types.clone();
+    let pc = state.pc;
+
+    // ========================================================================
+    // Validate helper arguments BEFORE executing
+    // ========================================================================
+    validate_helper_args(env, &state, helper, &in_types, pc);
+    
+    // ========================================================================
+    // SPECIAL CASE: bpf_tail_call
+    // 
+    // Semantics:
+    //   - SUCCESS: Jump to target program, NEVER RETURNS (like exit)
+    //   - FAILURE: Falls through to next instruction
+    //
+    // We only model the FAILURE path. Success means execution went elsewhere.
+    // ========================================================================
+    if helper == constants::BPF_TAIL_CALL {
+        // Validate arguments (optional warnings)
+        if !matches!(in_types.get(Reg::R1), RegType::PtrToCtx) {
+            warn!("[Verifier] tail_call R1 should be PTR_TO_CTX at pc {}", pc);
+        }
+        if !matches!(in_types.get(Reg::R2), RegType::PtrToMapObject { .. }) {
+            warn!("[Verifier] tail_call R2 should be PTR_TO_MAP at pc {}", pc);
+        }
+        
+        // Update types (clobber caller-saved, R0 = scalar)
+        update_call_types(&in_types, &mut state.types, helper);
+        
+        // Forget caller-saved in DBM
+        for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+            forget(&mut state.dbm, r);
+        }
+        
+        // Return only the failure path (fall through)
+        state.pc += 1;
+        return vec![state];
+    }
+    
+    // ========================================================================
+    // Normal helper handling
+    // ========================================================================
+
+    // 1. Update types
+    update_call_types(&in_types, &mut state.types, helper);
+    
+    // 2. Update DBM - forget caller-saved registers
+    for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+        forget(&mut state.dbm, r);
+    }
+    
+    // 3. Apply return value bounds for specific helpers
+    match helper {
+        constants::BPF_REDIRECT => {
+            // Returns TC_ACT_* (0-7)
+            assume_ge_const(&mut state.dbm, Reg::R0, 0);
+            assume_le_const(&mut state.dbm, Reg::R0, 7);
+        }
+        constants::BPF_FIB_LOOKUP => {
+            // Returns BPF_FIB_LKUP_RET_* (0-8)
+            assume_ge_const(&mut state.dbm, Reg::R0, 0);
+            assume_le_const(&mut state.dbm, Reg::R0, 8);
+        }
+        constants::BPF_MAP_UPDATE_ELEM | 
+        constants::BPF_MAP_DELETE_ELEM |
+        constants::BPF_SKB_STORE_BYTES |
+        constants::BPF_XDP_ADJUST_HEAD => {
+            // Returns 0 on success, negative on error
+            // Could add bounds but being conservative for now
+        }
+        _ => {}
+    }
+    
+    // 4. Forget packet pointer DBM entries if they were invalidated
+    if helper_invalidates_packets(helper) {
+        for r in Reg::ALL {
+            if r != Reg::R10 {
+                match in_types.get(r) {
+                    RegType::PtrToPacket { .. } | RegType::PtrToPacketEnd => {
+                        forget(&mut state.dbm, r);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    
+    // 5. Advance PC and return
+    state.pc += 1;
+    vec![state]
+}
+
+/// Transfer function for relative Call (BPF-to-BPF function call) instructions.
+pub(crate) fn transfer_call_rel(
+    _env: &mut VerifierEnv,
+    state: State,
+    target: usize,
+) -> Vec<State> {
+    // Branch 1: Enter the subprogram
+    // We pass the state exactly as-is (registers R1-R5 hold arguments).
+    // Note: Without stack frame isolation (R10 shift), this analysis conservatively 
+    // assumes the callee shares the SAME stack frame. This works but is restrictive 
+    // (callee overwriting fp[-8] will overwrite caller's fp[-8]).
+    let mut enter_state = state.clone();
+    enter_state.pc = target;
+
+    // Branch 2: The "Return" (Fallthrough) path
+    // We assume the function executes and returns.
+    // Since we don't know what happened, we must havoc caller-saved registers.
+    let mut return_state = state;
+    return_state.pc += 1;
+
+    // 1. Clobber R1-R5 (Arguments/Scratch)
+    // The callee is free to destroy these.
+    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+        forget(&mut return_state.dbm, r);
+        return_state.types.set(r, RegType::NotInit);
+    }
+
+    // 2. Define R0 (Return Value)
+    // We don't know what the function returned, so it's an Unknown Scalar.
+    forget(&mut return_state.dbm, Reg::R0);
+    return_state.types.set(Reg::R0, RegType::ScalarValue);
+
+    // 3. Stack Clobbering?
+    // Conservatively, we should strictly havoc the stack too if we passed pointers.
+    // However, standard BPF convention is that callees use their own stack frame.
+    // Since we aren't modeling frame pointers yet, leaving the stack 'as-is' 
+    // is the pragmatic choice (assuming the callee didn't corrupt it via pointers).
+
+    vec![enter_state, return_state]
+}
+
+/// Validates helper function arguments.
+fn validate_helper_args(
+    env: &mut VerifierEnv,
+    state: &State,
+    helper: u32,
+    types: &TypeState,
+    pc: usize,
+) {
+    match helper {
+        constants::BPF_MAP_LOOKUP_ELEM => {
+            // R1 = map, R2 = key pointer
+            let key_size = get_map_key_size(types.get(Reg::R1), env);
+            if let Some(size) = key_size {
+                check_readable_arg(env, state, types, Reg::R2, size, pc);
+            }
+        }
+        constants::BPF_MAP_UPDATE_ELEM => {
+            // R1 = map, R2 = key pointer, R3 = value pointer, R4 = flags
+            let (key_size, val_size) = get_map_key_value_size(types.get(Reg::R1), env);
+            if let Some(size) = key_size {
+                check_readable_arg(env, state, types, Reg::R2, size, pc);
+            }
+            if let Some(size) = val_size {
+                check_readable_arg(env, state, types, Reg::R3, size, pc);
+            }
+        }
+        constants::BPF_MAP_DELETE_ELEM => {
+            // R1 = map, R2 = key pointer
+            let key_size = get_map_key_size(types.get(Reg::R1), env);
+            if let Some(size) = key_size {
+                check_readable_arg(env, state, types, Reg::R2, size, pc);
+            }
+        }
+        constants::BPF_GET_SOCKET_COOKIE | constants::BPF_CSUM_UPDATE  => { 
+            // R1 must be PtrToCtx
+            if !matches!(types.get(Reg::R1), RegType::PtrToCtx) {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            }
+        }
+        constants::BPF_SKB_ECN_SET_CE => {
+            // R1 can be PtrToCtx or NULL
+            if !matches!(types.get(Reg::R1), RegType::PtrToCtx) && !is_zero(&state.dbm, Reg::R1) {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            }
+        }
+        constants::BPF_SKB_LOAD_BYTES => {
+            if !matches!(types.get(Reg::R1), RegType::PtrToCtx) {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            } else {
+                // R4 cannot be negative because it's ARG_CONST_SIZE type
+                if !nonneg(&state.dbm, Reg::R4) {
+                    env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R4 });
+                }
+            }
+        }
+        _ => {
+            warn!("Helper arg not checked.");
+        }
+    }
+}
+
+fn check_readable_arg(
+    env: &mut VerifierEnv,
+    state: &State,
+    types: &TypeState,
+    reg: Reg,
+    size: u32,
+    pc: usize,
+) {
+    match types.get(reg) {
+        RegType::PtrToStack { offset: Some(off) } => {
+            access::check_stack_arg_readable(env, state, off, size as i64, pc);
+        }
+        RegType::PtrToStack { offset: None } => {
+            // Unknown stack offset - need to use DBM bounds
+            // For now, reject conservatively
+            env.fail(VerificationError::UninitializedStackRead { pc, offset: 0 });
+        }
+        RegType::PtrToMapValue { .. } => {
+            // Map values are always considered initialized
+        }
+        RegType::PtrToPacket { .. } => {
+            // Packet data is initialized (bounds checked elsewhere)
+        }
+        _ => {
+            // Not a valid pointer type for this argument
+            env.fail(VerificationError::InvalidArgType { pc, reg });
+            error!("Not a valid pointer type for argument")
+        }
+    }
+}
+
+fn get_map_key_size(map_type: RegType, env: &VerifierEnv) -> Option<u32> {
+    match map_type {
+        RegType::PtrToMapObject { map_idx } => 
+            env.ctx.map_defs.get(map_idx).map(|md| md.key_size),
+        _ => None,
+    }
+}
+
+fn get_map_key_value_size(map_type: RegType, env: &VerifierEnv) -> (Option<u32>, Option<u32>) {
+    match map_type {
+        RegType::PtrToMapObject { map_idx } => {
+            if let Some(map_def) = env.ctx.map_defs.get(map_idx) {
+                (Some(map_def.key_size), Some(map_def.value_size))
+            } else {
+                (None, None)
+            }
+        }
+        _ => (None, None),
+    }
+}
