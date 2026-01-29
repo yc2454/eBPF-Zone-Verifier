@@ -180,26 +180,28 @@ pub enum Instr {
 /// BPF program type - determines context structure and available helpers
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ProgramKind {
-    // Network - XDP context
-    Xdp,
-    
-    // Network - __sk_buff context
-    SchedCls,      // TC classifier (section: "classifier", "tc", "tc/ingress", etc.)
-    SocketFilter,  // Socket filter (section: "socket")
-    
-    // Socket operations - specialized contexts
-    SockOps,       // struct bpf_sock_ops (section: "sockops")
-    SkMsg,         // struct sk_msg_md (section: "sk_msg")
-    
-    // Cgroup - various contexts
-    CgroupSockAddr, // struct bpf_sock_addr (section: "cgroup/bind4", "cgroup/connect4", etc.)
-    
-    // Tracing - pt_regs context
+    Unspec,
+    SocketFilter,
     Kprobe,
-    
-    // Unknown or unsupported
+    SchedCls,
+    SchedAct,
+    Tracepoint,
+    Xdp,
+    PerfEvent,
+    CgroupSkb,
+    CgroupSock,
+    LwtIn,
+    LwtOut,
+    LwtXmit,
+    SockOps,
+    SkSkb,
+    CgroupDevice,
+    SkMsg,
+    RawTracepoint,
+    CgroupSockAddr,
+    Lsm,
     #[default]
-    Unknown,
+    Unknown
 }
 
 /// What matters for verification: the context structure
@@ -277,7 +279,7 @@ impl ProgramKind {
             ProgramKind::SkMsg => ContextKind::SkMsgMd,
             ProgramKind::CgroupSockAddr => ContextKind::BpfSockAddr,
             ProgramKind::Kprobe => ContextKind::PtRegs,
-            ProgramKind::Unknown => ContextKind::Unknown,
+            _ => ContextKind::Unknown,
         }
     }
 }

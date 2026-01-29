@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::analysis;
 use crate::analysis::context::{default_exec_ctx};
+use crate::analysis::constants;
 use crate::ast::ProgramKind;
 use crate::parsing::bpf_to_ast::{lower_raw_to_program, LowerErrorKind};
 use crate::misc::config::VerifierConfig;
@@ -269,9 +270,28 @@ fn build_exec_context(test: &JsonTestCase) -> (crate::analysis::context::ExecCon
     }
 
     ctx.prog_kind = match test.prog_type {
-        Some(3) => ProgramKind::SchedCls, // BPF_PROG_TYPE_SCHED_CLS
-        Some(6) => ProgramKind::Xdp,      // BPF_PROG_TYPE_XDP
-        _ => ProgramKind::SocketFilter,   // Default
+        Some(constants::BPF_PROG_TYPE_UNSPEC) => ProgramKind::Unspec,
+        Some(constants::BPF_PROG_TYPE_SOCKET_FILTER) => ProgramKind::SocketFilter,
+        Some(constants::BPF_PROG_TYPE_KPROBE) => ProgramKind::Kprobe,
+        Some(constants::BPF_PROG_TYPE_SCHED_CLS) => ProgramKind::SchedCls,
+        Some(constants::BPF_PROG_TYPE_SCHED_ACT) => ProgramKind::SchedAct,
+        Some(constants::BPF_PROG_TYPE_TRACEPOINT) => ProgramKind::Tracepoint,
+        Some(constants::BPF_PROG_TYPE_XDP) => ProgramKind::Xdp,
+        Some(constants::BPF_PROG_TYPE_PERF_EVENT) => ProgramKind::PerfEvent,
+        Some(constants::BPF_PROG_TYPE_CGROUP_SKB) => ProgramKind::CgroupSkb,
+        Some(constants::BPF_PROG_TYPE_CGROUP_SOCK) => ProgramKind::CgroupSock,
+        Some(constants::BPF_PROG_TYPE_LWT_IN) => ProgramKind::LwtIn,
+        Some(constants::BPF_PROG_TYPE_LWT_OUT) => ProgramKind::LwtOut,
+        Some(constants::BPF_PROG_TYPE_LWT_XMIT) => ProgramKind::LwtXmit,
+        Some(constants::BPF_PROG_TYPE_SOCK_OPS) => ProgramKind::SockOps,
+        Some(constants::BPF_PROG_TYPE_SK_SKB) => ProgramKind::SkSkb,
+        Some(constants::BPF_PROG_TYPE_CGROUP_DEVICE) => ProgramKind::CgroupDevice,
+        Some(constants::BPF_PROG_TYPE_SK_MSG) => ProgramKind::SkMsg,
+        Some(constants::BPF_PROG_TYPE_RAW_TRACEPOINT) => ProgramKind::RawTracepoint,
+        Some(constants::BPF_PROG_TYPE_CGROUP_SOCK_ADDR) => ProgramKind::CgroupSockAddr,
+        Some(constants::BPF_PROG_TYPE_LSM) => ProgramKind::Lsm,
+        // Default fallback (usually SocketFilter is the safe default for tests)
+        _ => ProgramKind::SocketFilter, 
     };
 
     (ctx, has_unsupported_fixup)
