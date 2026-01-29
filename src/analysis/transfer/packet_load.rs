@@ -19,7 +19,6 @@ pub(crate) fn transfer_packet_load(
     let r6_type = state.types.get(Reg::R6);
     if !matches!(r6_type, RegType::PtrToCtx) {
         // Fail: Legacy load requires R6 to be the context
-        // (You can fail here or return empty vec)
         return vec![];
     }
 

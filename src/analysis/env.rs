@@ -32,7 +32,8 @@ pub enum VerificationError {
     MapNotFound { pc: usize, map_idx: usize },
     BackEdge { pc: usize, target: usize },
     MaxCallDepthExceeded { pc: usize },
-    MisalignedAccess { pc: usize, off: i64 }
+    MisalignedAccess { pc: usize, off: i64 },
+    InvalidReturnCode { pc: usize }
 }
 
 impl VerificationError {
@@ -115,6 +116,9 @@ impl VerificationError {
             }
             VerificationError::MisalignedAccess { pc, off } => {
                 format!("Misaligned offset with offset {} at pc {}", off, pc)
+            }
+            VerificationError::InvalidReturnCode { pc } => {
+                format!("Invalid return code at pc {}", pc)
             }
         }
     }

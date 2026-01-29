@@ -16,8 +16,8 @@ mod map_load;
 use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;
 use crate::analysis::reg_types::RegType;
-use crate::ast::{Instr, EndianOp, Width};
-use crate::zone::domain::{Reg, forget, assign_and_mask, bit_and_const};
+use crate::ast::{EndianOp, Instr, ProgramKind, Width};
+use crate::zone::domain::{Reg, forget, assign_and_mask, bit_and_const, get_bounds};
 use crate::analysis::transfer::common::check_reg_readable;
 use crate::analysis::env::VerificationError;
 
@@ -142,6 +142,20 @@ fn transfer_exit(
     mut state: State,
 ) -> Vec<State> {
     let pc = state.pc;
+
+    let (min, max) = get_bounds(&state.dbm, Reg::R0);
+    let r0_min = min.unwrap_or(i64::MIN);
+    let r0_max = max.unwrap_or(i64::MAX);
+
+    // Use the helper method on the ProgramKind stored in env
+    if env.ctx.prog_kind.requires_strict_return_code() {
+        if r0_min < 0 || r0_max > 1 {
+            env.fail(VerificationError::InvalidReturnCode {
+                pc: state.pc,
+            });
+            return vec![];
+        }
+    }
 
     // R0 must be readable (it's the return value)
     if !check_reg_readable(env, &state, Reg::R0) {

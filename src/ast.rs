@@ -282,6 +282,15 @@ impl ProgramKind {
             _ => ContextKind::Unknown,
         }
     }
+
+    /// Returns true if this program type requires the return code to be 0 or 1.
+    pub fn requires_strict_return_code(&self) -> bool {
+        matches!(self, 
+            ProgramKind::CgroupSkb | 
+            ProgramKind::CgroupSock | 
+            ProgramKind::CgroupSockAddr
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
