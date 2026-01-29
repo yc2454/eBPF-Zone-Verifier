@@ -228,5 +228,13 @@ pub fn check_cfg(prog: &Program, env: &mut VerifierEnv) -> Result<(), String> {
         }
     }
 
+    // Check for unreachable instructions
+    // Kernel: "unreachable insn %d" error
+    for (pc, &s) in state.iter().enumerate() {
+        if s == VisitState::Unvisited {
+            return Err(format!("unreachable insn at pc {}", pc));
+        }
+    }
+
     Ok(())
 }

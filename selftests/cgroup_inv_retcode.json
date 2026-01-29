@@ -1,0 +1,74 @@
+[
+  {
+    "name": "bpf_exit with invalid return code. test1",
+    "result": "REJECT",
+    "errstr": "R0 has value (0x0; 0xffffffff)",
+    "prog_type": 9,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_exit with invalid return code. test2",
+    "result": "ACCEPT",
+    "prog_type": 9,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_exit with invalid return code. test3",
+    "result": "REJECT",
+    "errstr": "R0 has value (0x0; 0x3)",
+    "prog_type": 9,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 3},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_exit with invalid return code. test4",
+    "result": "ACCEPT",
+    "prog_type": 9,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_exit with invalid return code. test5",
+    "result": "REJECT",
+    "errstr": "R0 has value (0x2; 0x0)",
+    "prog_type": 9,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_exit with invalid return code. test6",
+    "result": "REJECT",
+    "errstr": "R0 is not a known value (ctx)",
+    "prog_type": 9,
+    "insns": [
+      {"code": 191, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_exit with invalid return code. test7",
+    "result": "REJECT",
+    "errstr": "R0 has unknown scalar value",
+    "prog_type": 9,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 4, "imm": 0},
+      {"code": 47, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

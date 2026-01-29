@@ -32,6 +32,7 @@ pub enum VerificationError {
     MapNotFound { pc: usize, map_idx: usize },
     BackEdge { pc: usize, target: usize },
     MaxCallDepthExceeded { pc: usize },
+    MisalignedAccess { pc: usize, off: i64 }
 }
 
 impl VerificationError {
@@ -111,6 +112,9 @@ impl VerificationError {
             }
             VerificationError::MaxCallDepthExceeded { pc } => {
                 format!("Max call depth exceeded at pc {}", pc)
+            }
+            VerificationError::MisalignedAccess { pc, off } => {
+                format!("Misaligned offset with offset {} at pc {}", off, pc)
             }
         }
     }

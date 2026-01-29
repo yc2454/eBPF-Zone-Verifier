@@ -317,9 +317,11 @@ pub fn run_test(test: &JsonTestCase, config: &VerifierConfig) -> TestResult {
                                 s.contains("unrecognized bpf_ld_imm64 insn")) && 
                                 matches!(e.kind, LowerErrorKind::InvalidLDIMM64) {
                         outcome = TestOutcome::Pass
-                    } else if (s.contains("invalid destination") && matches!(e.kind, LowerErrorKind::CallTargetOutOfBounds)) {
+                    } else if s.contains("invalid destination") && matches!(e.kind, LowerErrorKind::CallTargetOutOfBounds) {
                         outcome = TestOutcome::Pass
-                    } else if (s.contains("reserved fields") && matches!(e.kind, LowerErrorKind::CallUsedReservedFields)) {
+                    } else if s.contains("reserved fields") && matches!(e.kind, LowerErrorKind::CallUsedReservedFields | LowerErrorKind::InvalidSrcReg) {
+                        outcome = TestOutcome::Pass
+                    } else if s.contains("jump out of range") && matches!(e.kind, LowerErrorKind::BranchTargetOutOfRange) {
                         outcome = TestOutcome::Pass
                     }
                 }

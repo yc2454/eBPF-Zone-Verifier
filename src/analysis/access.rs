@@ -366,6 +366,12 @@ fn check_stack_access(
         Some(base_off) => {
             let actual_offset = base_off + instruction_offset;
             let access_end = actual_offset + size;
+
+            // Alignment check
+            if actual_offset % size != 0 {
+                env.fail(VerificationError::MisalignedAccess { pc, off: actual_offset });
+                return;
+            }
             
             // Bounds check
             if actual_offset < constants::BPF_STACK_MIN || access_end > constants::BPF_STACK_MAX {
