@@ -17,6 +17,7 @@ pub enum VerificationError {
     UnsafeMapStore { pc: usize, off: i64, size: MemSize, limit: i64 },
     UnsafeGenericLoad { pc: usize, base: Reg, off: i16 },
     UnsafeMemoryRegionLoad { pc: usize, base: Reg, off: i16 },
+    UnsafeCtxAccess { pc: usize, off: i16, size: MemSize },
     UnsafeCtxStore { pc: usize, off: i16, size: MemSize },
     UnsafeGenericStore { pc: usize, base: Reg, off: i16 },
     UnsafeSocketAccess { pc: usize, off: i16, size: MemSize },
@@ -65,6 +66,9 @@ impl VerificationError {
             }
             VerificationError::UnsafeCtxStore { pc, off, size } => {
                 format!("Unsafe ctx store at pc {}: offset {}, size {:?}", pc, off, size)
+            }
+            VerificationError::UnsafeCtxAccess { pc, off, size } => {
+                format!("Unsafe ctx access at pc {}: offset {}, size {:?}", pc, off, size)
             }
             VerificationError::UnsafeGenericStore { pc, base, off } => {
                 format!("Unsafe generic store at pc {}: base {:?}, offset {}", pc, base, off)

@@ -278,6 +278,7 @@ impl ProgramKind {
             ProgramKind::Xdp => ContextKind::XdpMd,
             ProgramKind::SchedCls | ProgramKind::SocketFilter => ContextKind::SkBuff,
             ProgramKind::SockOps => ContextKind::SockOps,
+            ProgramKind::SkLookup => ContextKind::SkLookup,
             ProgramKind::SkMsg => ContextKind::SkMsgMd,
             ProgramKind::CgroupSockAddr => ContextKind::BpfSockAddr,
             ProgramKind::Kprobe => ContextKind::PtRegs,

@@ -7,7 +7,7 @@ use crate::analysis::reg_types::{RegType, TypeState, new_packet_id};
 use crate::ast::{AluOp, AtomicOp, MapLoadKind, MemSize, Operand, Width};
 use crate::zone::domain::Reg;
 use crate::analysis::ctx_model::{
-    classify_ctx_field, CtxFieldKind
+    CtxFieldKind, validate_ctx_access
 };
 use crate::common::constants;
 
@@ -165,9 +165,9 @@ pub(crate) fn update_load_types(
     let base_ty = types.get(base);
     match base_ty {
         RegType::PtrToCtx => {
-            let kind = classify_ctx_field(env.ctx.prog_kind, off, size);
-            if let Some(kind) = kind {
-                match kind {
+            let kind = validate_ctx_access(env.ctx.prog_kind, off, size);
+            if let Some(info) = kind {
+                match info.kind {
                     CtxFieldKind::PacketStart => {
                         let new_id = new_packet_id();
                         types.set(dst, RegType::PtrToPacket { id: new_id, range: 0, is_base: true, off: 0 });

@@ -7,7 +7,6 @@ use crate::zone::domain::{get_bounds, get_relative_bound};
 use crate::analysis::env::VerificationError;
 use crate::common::constants;
 use crate::analysis::ctx_model;
-use crate::analysis::ctx_model::MemRegionId;
 use log::{error, info};
 use RegType::*;
 use crate::zone::domain::Reg;
@@ -70,7 +69,10 @@ pub fn check_load(
             }
         }
         PtrToCtx => {
-            // Ctx accesses are generally checked by offset/size classification in transfer.rs
+            if !ctx_model::is_valid_ctx_read(ctx.prog_kind, off, size) {
+                error!("Unsafe ctx load at pc {}: offset {} is not readable", pc, off);
+                env.fail(VerificationError::UnsafeCtxAccess { pc, off, size });
+            }
         }
         PtrToMapValue { offset: map_off_opt, map_idx } => {
             let map_def = ctx.map_defs.get(map_idx);
@@ -163,7 +165,7 @@ pub fn check_load(
             // Fallback: direct DBM query
             else {
                 let end_type_matcher: fn(&RegType) -> bool = match region {
-                    MemRegionId::CalicoMetaRegion => {
+                    ctx_model::MemRegionId::CalicoMetaRegion => {
                         |ty| matches!(ty, RegType::PtrToPacket { is_base: true, .. })
                     }
                 };
@@ -319,12 +321,9 @@ pub fn check_store(
              }
         }
         PtrToCtx => {
-            // Check if this ctx field is writable
-            if ctx_model::is_ctx_field_writable(ctx.prog_kind, off, size) {
-                // Safe write to writable ctx field
-            } else {
+            if !ctx_model::is_valid_ctx_write(ctx.prog_kind, off, size) {
                 error!("Unsafe ctx store at pc {}: offset {} is not writable", pc, off);
-                env.fail(VerificationError::UnsafeCtxStore { pc, off, size });
+                env.fail(VerificationError::UnsafeCtxAccess { pc, off, size });
             }
         }
         // Socket pointers - generally read-only, disallow stores
