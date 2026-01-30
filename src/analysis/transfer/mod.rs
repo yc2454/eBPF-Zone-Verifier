@@ -12,6 +12,7 @@ mod types;
 mod common;
 mod packet_load;
 mod map_load;
+mod access;
 
 use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;

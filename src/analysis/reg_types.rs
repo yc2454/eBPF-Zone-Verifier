@@ -1,7 +1,7 @@
 // src/analysis/reg_types.rs
 use std::collections::{BTreeMap};
 use crate::zone::domain::Reg;
-use crate::parsing::ctx_model::MemRegionId;
+use crate::analysis::ctx_model::MemRegionId;
 
 pub const NUM_REGS: usize = 11; 
 

@@ -5,7 +5,7 @@ use goblin::elf::{Elf, sym};
 use std::collections::HashMap;
 use crate::parsing::btf;
 use log::{info, debug, warn};
-use crate::analysis::constants;
+use crate::common::constants;
 use anyhow::Result;
 
 

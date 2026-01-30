@@ -14,7 +14,7 @@ use crate::zone::domain::{
 };
 use crate::zone::dbm::Dbm;
 use crate::zone::tnum::Tnum;
-use crate::analysis::constants;
+use crate::common::constants;
 use log::error;
 
 use super::types::update_alu_types;

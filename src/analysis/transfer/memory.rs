@@ -9,7 +9,7 @@ use crate::analysis::transfer::types::update_atomic_op_types;
 use crate::ast::{Operand, MemSize, AtomicOp};
 use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, assume_eq_const};
 use crate::zone::tnum::Tnum;
-use crate::analysis::access;
+use crate::analysis::transfer::access;
 
 use super::types::{update_load_types, update_store_types};
 use super::common::{check_reg_readable, check_operand_readable, check_reg_writable};

@@ -8,7 +8,7 @@ use crate::ast::{Instr, CmpOp, Operand};
 use crate::zone::domain::Reg;
 use crate::zone::dbm::{Dbm, INF};
 use crate::zone::domain::assign_zero;
-use crate::parsing::ctx_model::MemRegionId;
+use crate::analysis::ctx_model::MemRegionId;
 
 /// Refines the safe access range of packet pointers based on numerical constraints.
 ///

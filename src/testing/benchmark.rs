@@ -1,7 +1,7 @@
 // src/benchmark.rs
 
-use crate::misc::config::VerifierConfig;
-use crate::runner::{Analyzer, AnalysisResult};
+use crate::common::config::VerifierConfig;
+use crate::testing::runner::{Analyzer, AnalysisResult};
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::Write;

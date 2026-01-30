@@ -1,6 +1,6 @@
 // src/dbm.rs
 use crate::zone::domain::{Reg, REG_ENV};
-use crate::misc::utils::{clamp_upper_bound, clamped_add};
+use crate::common::utils::{clamp_upper_bound, clamped_add};
 
 pub const INF: i64 = i64::MAX / 4;
 

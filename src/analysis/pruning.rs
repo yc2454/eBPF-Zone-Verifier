@@ -3,7 +3,7 @@ use crate::analysis::state::State;
 use crate::analysis::reg_types::{RegType, TypeState};
 use crate::zone::dbm::{Dbm, INF};
 use crate::analysis::env::VerifierEnv;
-use crate::misc::config::VerifierConfig;
+use crate::common::config::VerifierConfig;
 use crate::zone::domain::Reg;
 
 /// Widening threshold - start widening after this many visits

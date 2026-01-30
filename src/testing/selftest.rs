@@ -16,10 +16,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::analysis;
 use crate::analysis::context::{default_exec_ctx};
-use crate::analysis::constants;
+use crate::common::constants;
 use crate::ast::ProgramKind;
 use crate::parsing::bpf_to_ast::{lower_raw_to_program, LowerErrorKind};
-use crate::misc::config::VerifierConfig;
+use crate::common::config::VerifierConfig;
 use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::parsing::elf_loader::{BpfMapDef, RelocInfo};
 use crate::zone::dbm::Dbm;
@@ -312,6 +312,7 @@ fn build_exec_context(test: &JsonTestCase) -> (crate::analysis::context::ExecCon
         Some(constants::BPF_PROG_TYPE_RAW_TRACEPOINT) => ProgramKind::RawTracepoint,
         Some(constants::BPF_PROG_TYPE_CGROUP_SOCK_ADDR) => ProgramKind::CgroupSockAddr,
         Some(constants::BPF_PROG_TYPE_LSM) => ProgramKind::Lsm,
+        Some(constants::BPF_PROG_TYPE_SK_LOOKUP) => ProgramKind::SkLookup,
         // Default fallback (usually SocketFilter is the safe default for tests)
         _ => ProgramKind::SocketFilter, 
     };

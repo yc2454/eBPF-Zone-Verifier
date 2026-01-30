@@ -2,15 +2,14 @@
 
 pub mod context;
 pub mod transfer;
-pub mod access;
 pub mod state;
 pub mod reg_types;
 pub mod env;
 pub mod liveness;
 pub mod cfg;
 pub mod pruning;
-pub mod constants;
 pub mod history;
+pub mod ctx_model;
 
 use std::collections::VecDeque;
 use crate::ast::Program;
@@ -23,7 +22,7 @@ use self::env::VerifierEnv;
 use self::state::State;
 use self::reg_types::RegType;
 use self::history::History;
-use crate::misc::config::VerifierConfig;
+use crate::common::config::VerifierConfig;
 
 pub fn analyze_program(
     ctx: &ExecContext,

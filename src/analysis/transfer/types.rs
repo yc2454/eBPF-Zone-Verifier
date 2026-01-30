@@ -4,12 +4,12 @@
 
 use crate::analysis::env::VerifierEnv;
 use crate::analysis::reg_types::{RegType, TypeState, new_packet_id};
-use crate::ast::{AluOp, AtomicOp, MapLoadKind, MemSize, Operand, ProgramKind, Width};
+use crate::ast::{AluOp, AtomicOp, MapLoadKind, MemSize, Operand, Width};
 use crate::zone::domain::Reg;
-use crate::parsing::ctx_model::{
-    classify_sk_buff_field, CtxFieldKind, classify_xdp_md_field
+use crate::analysis::ctx_model::{
+    classify_ctx_field, CtxFieldKind
 };
-use crate::analysis::constants;
+use crate::common::constants;
 
 /// Updates register types after an ALU operation.
 pub(crate) fn update_alu_types(
@@ -165,11 +165,7 @@ pub(crate) fn update_load_types(
     let base_ty = types.get(base);
     match base_ty {
         RegType::PtrToCtx => {
-            let kind = match env.ctx.prog_kind {
-                ProgramKind::Xdp => classify_xdp_md_field(off, size),
-                ProgramKind::SchedCls | ProgramKind::SocketFilter => classify_sk_buff_field(off, size),
-                _ => None,
-            };
+            let kind = classify_ctx_field(env.ctx.prog_kind, off, size);
             if let Some(kind) = kind {
                 match kind {
                     CtxFieldKind::PacketStart => {

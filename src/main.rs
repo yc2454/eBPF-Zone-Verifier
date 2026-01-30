@@ -4,18 +4,15 @@ mod ast;
 mod analysis;
 mod parsing;
 mod zone;
-mod misc;
-mod logging;
-mod runner;
-mod benchmark;
-mod selftest;
+mod common;
+mod testing;
 
-use crate::misc::config::VerifierConfig;
+use crate::common::config::VerifierConfig;
 use crate::parsing::elf_loader::{load_maps, load_raw_programs, list_section_names};
-use crate::logging::{FilterConfig};
-use crate::runner::{Analyzer, AnalysisResult, find_section_for_func, is_code_section};
-use crate::benchmark::analyze_benchmark;
-use crate::selftest::{selftest_run, selftest_suite, selftest_list, selftest_single};
+use crate::testing::logging;
+use crate::testing::runner::{Analyzer, AnalysisResult, find_section_for_func, is_code_section};
+use crate::testing::benchmark::analyze_benchmark;
+use crate::testing::selftest::{selftest_run, selftest_suite, selftest_list, selftest_single};
 
 fn usage() {
     eprintln!("Usage:");
@@ -57,7 +54,7 @@ fn main() {
 
     // If debug_pc is set, configure logging filter
     if let Some(target_pc) = config.debug_pc {
-        let filter = FilterConfig {
+        let filter = logging::FilterConfig {
             pc_range: Some(target_pc.saturating_sub(10)..=target_pc + 10),
             interesting_regs: vec![],
         };

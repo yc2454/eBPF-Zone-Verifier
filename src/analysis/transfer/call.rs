@@ -6,8 +6,8 @@ use crate::analysis::env::{VerifierEnv, VerificationError};
 use crate::analysis::state::State;
 use crate::analysis::reg_types::{RegType, TypeState};
 use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, is_zero, nonneg};
-use crate::analysis::access;
-use crate::analysis::constants;
+use crate::analysis::transfer::access;
+use crate::common::constants;
 use log::{error, warn};
 
 use super::types::{update_call_types, helper_invalidates_packets};

@@ -195,6 +195,7 @@ pub enum ProgramKind {
     LwtXmit,
     SockOps,
     SkSkb,
+    SkLookup,
     CgroupDevice,
     SkMsg,
     RawTracepoint,
@@ -209,6 +210,7 @@ pub enum ProgramKind {
 pub enum ContextKind {
     XdpMd,          // struct xdp_md
     SkBuff,         // struct __sk_buff
+    SkLookup,       // struct bpf_sk_lookup
     SockOps,        // struct bpf_sock_ops
     SkMsgMd,        // struct sk_msg_md
     BpfSockAddr,    // struct bpf_sock_addr

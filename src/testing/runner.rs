@@ -3,10 +3,10 @@
 use crate::analysis;
 use crate::analysis::context::{default_exec_ctx};
 use crate::analysis::env::VerificationError;
-use crate::misc::config::VerifierConfig;
+use crate::common::config::VerifierConfig;
 use crate::zone::dbm::Dbm;
 use crate::zone::domain::{REG_ENV, assign_zero};
-use crate::misc::utils::{load_program_from_elf, program_kind_for_object};
+use crate::common::utils::{load_program_from_elf, program_kind_for_object};
 use crate::parsing::elf_loader::{
     load_maps, load_relocations, load_data_section_maps,
     load_raw_programs, list_section_names, BpfMapDef

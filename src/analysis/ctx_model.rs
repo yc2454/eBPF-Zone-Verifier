@@ -1,7 +1,7 @@
 // src/ctx_model.rs
 
 use crate::ast::{MemSize, ProgramKind, ContextKind};
-use crate::analysis::constants;
+use crate::common::constants;
 
 /// Abstract identifier for a memory region described by ctx fields.
 /// This lets us say: "r6 points into region X, r1 is the end of region X".
@@ -23,15 +23,6 @@ pub enum CtxFieldKind {
 
     /// A pointer into some memory region.
     PtrToMem {
-        region: MemRegionId,
-    },
-
-    /// An "end" pointer or bound for a memory region.
-    /// Typically used in patterns like:
-    ///   base = PtrToMem
-    ///   end  = MemEnd
-    ///   if base + width <= end -> safe deref
-    MemEnd {
         region: MemRegionId,
     },
 
@@ -178,6 +169,52 @@ pub fn is_sock_addr_field_writable(off: i16, size: MemSize) -> bool {
     false
 }
 
+/// SK_LOOKUP-specific ctx classifier for LOADS.
+///
+/// struct bpf_sk_lookup layout:
+///   0-8:   sk/cookie (union)
+///   8-12:  family
+///   12-16: protocol
+///   16-20: remote_ip4
+///   20-36: remote_ip6[4]
+///   36-38: remote_port
+///   38-40: padding
+///   40-44: local_ip4
+///   44-60: local_ip6[4]
+///   60-64: local_port
+pub fn classify_sk_lookup_field(off: i16, size: MemSize) -> Option<CtxFieldKind> {
+    // All fields in sk_lookup are scalars from the verifier's perspective.
+    // The sk field is handled specially via bpf_sk_assign helper, not as a
+    // dereferenceable pointer from the BPF program's point of view.
+    match (off, size) {
+        // Validate that access is within struct bounds (0-64)
+        (o, _) if o < 0 || o >= 64 => None,
+        _ => Some(CtxFieldKind::Scalar),
+    }
+}
+
+/// Check if an SK_LOOKUP context field is writable.
+///
+/// In sk_lookup programs, all context fields are read-only.
+/// The `sk` field is modified via the bpf_sk_assign() helper, not direct stores.
+pub fn is_sk_lookup_field_writable(off: i16, size: MemSize) -> bool {
+    let access_size: i16 = match size {
+        MemSize::U8 => 1,
+        MemSize::U16 => 2,
+        MemSize::U32 => 4,
+        MemSize::U64 => 8,
+    };
+    let access_end = off + access_size;
+
+    // Bounds check
+    if off < 0 || access_end > 64 {
+        return false;
+    }
+
+    // All sk_lookup fields are read-only
+    false
+}
+
 /// Generic dispatch: is ctx field writable?
 pub fn is_ctx_field_writable(prog_kind: ProgramKind, off: i16, size: MemSize) -> bool {
     let ctx_kind = prog_kind.context_kind();
@@ -185,6 +222,17 @@ pub fn is_ctx_field_writable(prog_kind: ProgramKind, off: i16, size: MemSize) ->
         ContextKind::SkBuff => is_sk_buff_field_writable(off, size),
         ContextKind::XdpMd => is_xdp_md_field_writable(off, size),
         ContextKind::BpfSockAddr => is_sock_addr_field_writable(off, size),
+        ContextKind::SkLookup => is_sk_lookup_field_writable(off, size),
         _ => false,
+    }
+}
+
+pub fn classify_ctx_field(prog_kind: ProgramKind, off: i16, size: MemSize) -> Option<CtxFieldKind> {
+    let ctx_kind = prog_kind.context_kind();
+    match ctx_kind {
+        ContextKind::SkBuff => classify_sk_buff_field(off, size),
+        ContextKind::XdpMd => classify_xdp_md_field(off, size),
+        ContextKind::SkLookup => classify_sk_lookup_field(off, size),
+        _ => None,
     }
 }
