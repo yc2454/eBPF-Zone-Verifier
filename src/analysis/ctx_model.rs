@@ -235,6 +235,57 @@ const SK_LOOKUP_FIELDS: &[CtxField] = &[
     CtxField { offset: 60, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
 ];
 
+/// struct sk_msg_md (SK_MSG context)
+///
+/// Reference: linux/include/uapi/linux/bpf.h
+///
+/// struct sk_msg_md {
+///     __bpf_md_ptr(void *, data);           // 0-8
+///     __bpf_md_ptr(void *, data_end);       // 8-16
+///     __u32 family;                          // 16-20
+///     __u32 remote_ip4;                      // 20-24
+///     __u32 local_ip4;                       // 24-28
+///     __u32 remote_ip6[4];                   // 28-44
+///     __u32 local_ip6[4];                    // 44-60
+///     __u32 remote_port;                     // 60-64
+///     __u32 local_port;                      // 64-68
+///     __u32 size;                            // 68-72
+///     __bpf_md_ptr(struct bpf_sock *, sk);   // 72-80
+/// };
+///
+/// Note: __bpf_md_ptr creates 8-byte aligned unions. All sk_msg_md fields
+/// are read-only; data modifications happen via helpers like bpf_msg_push_data.
+const SK_MSG_MD_FIELDS: &[CtxField] = &[
+    // __bpf_md_ptr(void *, data) - start of message data
+    CtxField { offset: 0, size: MemSize::U64, kind: CtxFieldKind::PacketStart, writable: false },
+    // __bpf_md_ptr(void *, data_end) - end of message data
+    CtxField { offset: 8, size: MemSize::U64, kind: CtxFieldKind::PacketEnd, writable: false },
+    // __u32 family
+    CtxField { offset: 16, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    // __u32 remote_ip4
+    CtxField { offset: 20, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    // __u32 local_ip4
+    CtxField { offset: 24, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    // __u32 remote_ip6[4]
+    CtxField { offset: 28, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 32, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 36, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 40, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    // __u32 local_ip6[4]
+    CtxField { offset: 44, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 48, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 52, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 56, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    // __u32 remote_port
+    CtxField { offset: 60, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    // __u32 local_port
+    CtxField { offset: 64, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    // __u32 size
+    CtxField { offset: 68, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    // __bpf_md_ptr(struct bpf_sock *, sk) - current socket
+    CtxField { offset: 72, size: MemSize::U64, kind: CtxFieldKind::Scalar, writable: false },
+];
+
 // ===========================================================================
 // Field Lookup
 // ===========================================================================
@@ -258,6 +309,7 @@ fn get_field_table(ctx_kind: ContextKind) -> Option<&'static [CtxField]> {
         ContextKind::XdpMd => Some(XDP_MD_FIELDS),
         ContextKind::BpfSockAddr => Some(SOCK_ADDR_FIELDS),
         ContextKind::SkLookup => Some(SK_LOOKUP_FIELDS),
+        ContextKind::SkMsgMd => Some(SK_MSG_MD_FIELDS),
         // Unknown context types - return None to indicate we can't validate
         _ => None,
     }
