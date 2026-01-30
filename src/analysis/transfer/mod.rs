@@ -16,7 +16,7 @@ mod map_load;
 use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;
 use crate::analysis::reg_types::RegType;
-use crate::ast::{EndianOp, Instr, ProgramKind, Width};
+use crate::ast::{EndianOp, Instr, Width};
 use crate::zone::domain::{Reg, forget, assign_and_mask, bit_and_const, get_bounds};
 use crate::analysis::transfer::common::check_reg_readable;
 use crate::analysis::env::VerificationError;

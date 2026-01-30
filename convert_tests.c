@@ -25,6 +25,14 @@ typedef int16_t  __s16;
 typedef int32_t  __s32;
 typedef int64_t  __s64;
 
+#define __bitwise
+typedef __u16 __bitwise __le16;
+typedef __u16 __bitwise __be16;
+typedef __u32 __bitwise __le32;
+typedef __u32 __bitwise __be32;
+typedef __u64 __bitwise __le64;
+typedef __u64 __bitwise __be64;
+
 // Instruction classes
 #define BPF_LD          0x00
 #define BPF_LDX         0x01
@@ -309,35 +317,45 @@ static uint32_t bpf_semi_rand_get(void) {
 #define MAX_TEST_INSNS 1000000
 #define FUNC_NEST 7
 
-// __sk_buff structure offsets (simplified)
+#define __bpf_md_ptr(type, name) type name
+// __sk_buff structure offsets
 struct __sk_buff {
-    __u32 len;
-    __u32 pkt_type;
-    __u32 mark;
-    __u32 queue_mapping;
-    __u32 protocol;
-    __u32 vlan_present;
-    __u32 vlan_tci;
-    __u32 vlan_proto;
-    __u32 priority;
-    __u32 ingress_ifindex;
-    __u32 ifindex;
-    __u32 tc_index;
-    __u32 cb[5];
-    __u32 hash;
-    __u32 tc_classid;
-    __u32 data;           // offset 76
-    __u32 data_end;       // offset 80
-    __u32 napi_id;
-    __u32 family;
-    __u32 remote_ip4;
-    __u32 local_ip4;
-    __u32 remote_ip6[4];
-    __u32 local_ip6[4];
-    __u32 remote_port;
-    __u32 local_port;
-    __u32 data_meta;
-    // ... more fields
+	__u32 len;
+	__u32 pkt_type;
+	__u32 mark;
+	__u32 queue_mapping;
+	__u32 protocol;
+	__u32 vlan_present;
+	__u32 vlan_tci;
+	__u32 vlan_proto;
+	__u32 priority;
+	__u32 ingress_ifindex;
+	__u32 ifindex;
+	__u32 tc_index;
+	__u32 cb[5];
+	__u32 hash;
+	__u32 tc_classid;
+	__u32 data;
+	__u32 data_end;
+	__u32 napi_id;
+
+	/* Accessed by BPF_PROG_TYPE_sk_skb types from here to ... */
+	__u32 family;
+	__u32 remote_ip4;	/* Stored in network byte order */
+	__u32 local_ip4;	/* Stored in network byte order */
+	__u32 remote_ip6[4];	/* Stored in network byte order */
+	__u32 local_ip6[4];	/* Stored in network byte order */
+	__u32 remote_port;	/* Stored in network byte order */
+	__u32 local_port;	/* stored in host byte order */
+	/* ... here. */
+
+	__u32 data_meta;
+	__bpf_md_ptr(struct bpf_flow_keys *, flow_keys);
+	__u64 tstamp;
+	__u32 wire_len;
+	__u32 gso_segs;
+	__bpf_md_ptr(struct bpf_sock *, sk);
+	__u32 gso_size;
 };
 
 struct xdp_md {
@@ -349,6 +367,25 @@ struct xdp_md {
     __u32 egress_ifindex;
 };
 
+struct bpf_sk_lookup {
+	union {
+		__bpf_md_ptr(struct bpf_sock *, sk); /* Selected socket */
+		__u64 cookie; /* Non-zero if socket was selected in PROG_TEST_RUN */
+	};
+
+	__u32 family;		/* Protocol family (AF_INET, AF_INET6) */
+	__u32 protocol;		/* IP protocol (IPPROTO_TCP, IPPROTO_UDP) */
+	__u32 remote_ip4;	/* Network byte order */
+	__u32 remote_ip6[4];	/* Network byte order */
+	__be16 remote_port;	/* Network byte order */
+	__u16 :16;		/* Zero padding */
+	__u32 local_ip4;	/* Network byte order */
+	__u32 local_ip6[4];	/* Network byte order */
+	__u32 local_port;	/* Host byte order */
+};
+
+struct bpf_flow_keys;
+struct bpf_sock;
 
 // ============================================================================
 // Register names
@@ -464,6 +501,7 @@ struct xdp_md {
 #define BPF_FUNC_msg_push_data          90
 #define BPF_FUNC_msg_pop_data           91
 #define BPF_FUNC_rc_pointer_rel         92
+#define BPF_FUNC_probe_read_kernel      113
 #define BPF_FUNC_seq_write              127
 #define BPF_FUNC_ringbuf_output         130
 #define BPF_FUNC_ringbuf_reserve        131
