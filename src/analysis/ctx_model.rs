@@ -5,6 +5,8 @@
 // This module defines the layout of BPF context structures (sk_buff, xdp_md, etc.)
 // as data tables, enabling unified validation of both reads and writes.
 
+use std::default;
+
 use log::warn;
 
 use crate::ast::{MemSize, ProgramKind, ContextKind};
@@ -52,6 +54,8 @@ pub struct CtxField {
     pub kind: CtxFieldKind,
     /// Whether this field can be written by BPF programs
     pub writable: bool,
+    /// Whether this field can be read by BPF programs
+    pub readable: bool,
 }
 
 /// Result of validating a context access.
@@ -61,6 +65,8 @@ pub struct CtxAccessInfo {
     pub kind: CtxFieldKind,
     /// Whether this field can be written
     pub writable: bool,
+    /// Whether this field can be read
+    pub readable: bool,
 }
 
 // ===========================================================================
@@ -75,67 +81,67 @@ pub struct CtxAccessInfo {
 /// rewrites accesses for. Field offsets here match the BPF-visible layout.
 const SK_BUFF_FIELDS: &[CtxField] = &[
     // __u32 len
-    CtxField { offset: 0, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 0, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 pkt_type
-    CtxField { offset: 4, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 4, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 mark
-    CtxField { offset: 8, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true },
+    CtxField { offset: 8, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true, readable: true },
     // __u32 queue_mapping
-    CtxField { offset: 12, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true },
+    CtxField { offset: 12, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true, readable: true },
     // __u32 protocol
-    CtxField { offset: 16, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 16, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 vlan_present
-    CtxField { offset: 20, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 20, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 vlan_tci
-    CtxField { offset: 24, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 24, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 vlan_proto
-    CtxField { offset: 28, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 28, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 priority
-    CtxField { offset: 32, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true },
+    CtxField { offset: 32, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true, readable: true },
     // __u32 ingress_ifindex
-    CtxField { offset: 36, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 36, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 ifindex
-    CtxField { offset: 40, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 40, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 tc_index
-    CtxField { offset: 44, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true },
+    CtxField { offset: 44, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true, readable: true },
     // __u32 cb[5] (offsets 48-67, 20 bytes) - control buffer, writable
-    CtxField { offset: 48, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true },
-    CtxField { offset: 52, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true },
-    CtxField { offset: 56, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true },
-    CtxField { offset: 60, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true },
-    CtxField { offset: 64, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true },
+    CtxField { offset: 48, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true, readable: true },
+    CtxField { offset: 52, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true, readable: true },
+    CtxField { offset: 56, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true, readable: true },
+    CtxField { offset: 60, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true, readable: true },
+    CtxField { offset: 64, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true, readable: true },
     // __u32 hash
-    CtxField { offset: 68, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 68, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 tc_classid
-    CtxField { offset: 72, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true },
+    CtxField { offset: 72, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true, readable: false },
     // __u32 data
-    CtxField { offset: 76, size: MemSize::U32, kind: CtxFieldKind::PacketStart, writable: false },
+    CtxField { offset: 76, size: MemSize::U32, kind: CtxFieldKind::PacketStart, writable: false, readable: false },
     // __u32 data_end
-    CtxField { offset: 80, size: MemSize::U32, kind: CtxFieldKind::PacketEnd, writable: false },
+    CtxField { offset: 80, size: MemSize::U32, kind: CtxFieldKind::PacketEnd, writable: false, readable: false },
     // __u32 napi_id
-    CtxField { offset: 84, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 84, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 family
-    CtxField { offset: 88, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 88, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 remote_ip4
-    CtxField { offset: 92, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 92, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 local_ip4
-    CtxField { offset: 96, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 96, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 remote_ip6[4]
-    CtxField { offset: 100, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 104, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 108, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 112, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 100, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 104, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 108, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 112, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 local_ip6[4]
-    CtxField { offset: 116, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 120, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 124, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 128, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 116, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 120, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 124, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 128, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 remote_port
-    CtxField { offset: 132, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 132, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 local_port
-    CtxField { offset: 136, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 136, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 data_meta
-    CtxField { offset: 140, size: MemSize::U32, kind: CtxFieldKind::PtrToMem { region: MemRegionId::CalicoMetaRegion }, writable: false },
+    CtxField { offset: 140, size: MemSize::U32, kind: CtxFieldKind::PtrToMem { region: MemRegionId::CalicoMetaRegion }, writable: false, readable: false },
     // Additional fields can be added as needed...
 ];
 
@@ -144,17 +150,17 @@ const SK_BUFF_FIELDS: &[CtxField] = &[
 /// Reference: linux/include/uapi/linux/bpf.h
 const XDP_MD_FIELDS: &[CtxField] = &[
     // __u32 data
-    CtxField { offset: 0, size: MemSize::U32, kind: CtxFieldKind::PacketStart, writable: false },
+    CtxField { offset: 0, size: MemSize::U32, kind: CtxFieldKind::PacketStart, writable: false, readable: true },
     // __u32 data_end
-    CtxField { offset: 4, size: MemSize::U32, kind: CtxFieldKind::PacketEnd, writable: false },
+    CtxField { offset: 4, size: MemSize::U32, kind: CtxFieldKind::PacketEnd, writable: false, readable: true },
     // __u32 data_meta
-    CtxField { offset: 8, size: MemSize::U32, kind: CtxFieldKind::PacketStart, writable: false },
+    CtxField { offset: 8, size: MemSize::U32, kind: CtxFieldKind::PacketStart, writable: false, readable: true },
     // __u32 ingress_ifindex
-    CtxField { offset: 12, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 12, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 rx_queue_index
-    CtxField { offset: 16, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true },
+    CtxField { offset: 16, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true, readable: true },
     // __u32 egress_ifindex
-    CtxField { offset: 20, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true },
+    CtxField { offset: 20, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true, readable: true },
 ];
 
 /// struct bpf_sock_addr (cgroup sock_addr context)
@@ -162,31 +168,31 @@ const XDP_MD_FIELDS: &[CtxField] = &[
 /// Reference: linux/include/uapi/linux/bpf.h
 const SOCK_ADDR_FIELDS: &[CtxField] = &[
     // __u32 user_family
-    CtxField { offset: 0, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true },
+    CtxField { offset: 0, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true, readable: true },
     // __u32 user_ip4
-    CtxField { offset: 4, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true },
+    CtxField { offset: 4, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true, readable: true },
     // __u32 user_ip6[4] (offsets 8-23)
-    CtxField { offset: 8, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true },
-    CtxField { offset: 12, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true },
-    CtxField { offset: 16, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true },
-    CtxField { offset: 20, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true },
+    CtxField { offset: 8, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true, readable: true },
+    CtxField { offset: 12, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true, readable: true },
+    CtxField { offset: 16, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true, readable: true },
+    CtxField { offset: 20, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true, readable: true },
     // __u32 user_port
-    CtxField { offset: 24, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true },
+    CtxField { offset: 24, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true, readable: true },
     // __u32 family
-    CtxField { offset: 28, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 28, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 type
-    CtxField { offset: 32, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 32, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 protocol
-    CtxField { offset: 36, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 36, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 msg_src_ip4
-    CtxField { offset: 40, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 40, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 msg_src_ip6[4]
-    CtxField { offset: 44, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 48, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 52, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 56, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 44, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 48, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 52, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 56, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __bpf_md_ptr(struct bpf_sock *, sk)
-    CtxField { offset: 60, size: MemSize::U64, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 60, size: MemSize::U64, kind: CtxFieldKind::Scalar, writable: false, readable: true },
 ];
 
 /// struct bpf_sk_lookup (SK_LOOKUP context)
@@ -210,29 +216,29 @@ const SOCK_ADDR_FIELDS: &[CtxField] = &[
 /// };
 const SK_LOOKUP_FIELDS: &[CtxField] = &[
     // sk/cookie union (0-8): 8-byte read only
-    CtxField { offset: 0, size: MemSize::U64, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 0, size: MemSize::U64, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // family (8-12)
-    CtxField { offset: 8, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 8, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // protocol (12-16)
-    CtxField { offset: 12, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 12, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // remote_ip4 (16-20)
-    CtxField { offset: 16, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 16, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // remote_ip6[4] (20-36)
-    CtxField { offset: 20, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 24, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 28, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 32, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 20, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 24, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 28, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 32, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // remote_port (36-40, includes padding - accessed as u32)
-    CtxField { offset: 36, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 36, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // local_ip4 (40-44)
-    CtxField { offset: 40, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 40, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // local_ip6[4] (44-60)
-    CtxField { offset: 44, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 48, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 52, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 56, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 44, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 48, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 52, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 56, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // local_port (60-64)
-    CtxField { offset: 60, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 60, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
 ];
 
 /// struct sk_msg_md (SK_MSG context)
@@ -257,33 +263,33 @@ const SK_LOOKUP_FIELDS: &[CtxField] = &[
 /// are read-only; data modifications happen via helpers like bpf_msg_push_data.
 const SK_MSG_MD_FIELDS: &[CtxField] = &[
     // __bpf_md_ptr(void *, data) - start of message data
-    CtxField { offset: 0, size: MemSize::U64, kind: CtxFieldKind::PacketStart, writable: false },
+    CtxField { offset: 0, size: MemSize::U64, kind: CtxFieldKind::PacketStart, writable: false, readable: true },
     // __bpf_md_ptr(void *, data_end) - end of message data
-    CtxField { offset: 8, size: MemSize::U64, kind: CtxFieldKind::PacketEnd, writable: false },
+    CtxField { offset: 8, size: MemSize::U64, kind: CtxFieldKind::PacketEnd, writable: false, readable: true },
     // __u32 family
-    CtxField { offset: 16, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 16, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 remote_ip4
-    CtxField { offset: 20, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 20, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 local_ip4
-    CtxField { offset: 24, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 24, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 remote_ip6[4]
-    CtxField { offset: 28, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 32, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 36, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 40, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 28, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 32, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 36, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 40, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 local_ip6[4]
-    CtxField { offset: 44, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 48, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 52, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
-    CtxField { offset: 56, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 44, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 48, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 52, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
+    CtxField { offset: 56, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 remote_port
-    CtxField { offset: 60, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 60, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 local_port
-    CtxField { offset: 64, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 64, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __u32 size
-    CtxField { offset: 68, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 68, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true },
     // __bpf_md_ptr(struct bpf_sock *, sk) - current socket
-    CtxField { offset: 72, size: MemSize::U64, kind: CtxFieldKind::Scalar, writable: false },
+    CtxField { offset: 72, size: MemSize::U64, kind: CtxFieldKind::Scalar, writable: false, readable: true },
 ];
 
 // ===========================================================================
@@ -299,6 +305,7 @@ fn lookup_field(fields: &[CtxField], off: i16, size: MemSize) -> Option<CtxAcces
         .map(|f| CtxAccessInfo {
             kind: f.kind,
             writable: f.writable,
+            readable: f.readable,
         })
 }
 
@@ -349,7 +356,7 @@ pub fn validate_ctx_access(prog_kind: ProgramKind, off: i16, size: MemSize) -> O
             // This allows forward compatibility with new context types
             return Some(CtxAccessInfo {
                 kind: CtxFieldKind::Scalar,
-                writable: false,
+                writable: false, readable: true,
             });
         }
     };
@@ -362,7 +369,9 @@ pub fn validate_ctx_access(prog_kind: ProgramKind, off: i16, size: MemSize) -> O
 /// This is a convenience wrapper around `validate_ctx_access` for cases
 /// where you only need to check validity without the field info.
 pub fn is_valid_ctx_read(prog_kind: ProgramKind, off: i16, size: MemSize) -> bool {
-    validate_ctx_access(prog_kind, off, size).is_some()
+    validate_ctx_access(prog_kind, off, size)
+        .map(|info| info.readable)
+        .unwrap_or(false)
 }
 
 /// Check if a context field is writable at the given offset and size.

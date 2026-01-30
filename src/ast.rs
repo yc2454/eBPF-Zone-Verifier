@@ -282,6 +282,8 @@ impl ProgramKind {
             ProgramKind::SkMsg => ContextKind::SkMsgMd,
             ProgramKind::CgroupSockAddr => ContextKind::BpfSockAddr,
             ProgramKind::Kprobe => ContextKind::PtRegs,
+            ProgramKind::CgroupSkb => ContextKind::SkBuff,
+            ProgramKind::CgroupSock => ContextKind::SockOps,
             _ => ContextKind::Unknown,
         }
     }
