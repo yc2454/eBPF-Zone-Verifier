@@ -13,6 +13,553 @@ use log::{error, warn};
 use super::types::{update_call_types, helper_invalidates_packets};
 use super::common::check_regs_readable;
 
+// ============================================================================
+// BPF Argument Types
+// ============================================================================
+
+/// BPF helper function argument type constraints.
+/// Based on Linux kernel's `enum bpf_arg_type` from include/linux/bpf.h
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BpfArgType {
+    /// Unused argument in helper function
+    DontCare,
+
+    // ---- Map-related argument types ----
+    /// const argument used as pointer to bpf_map
+    ConstMapPtr,
+    /// pointer to stack used as map key
+    PtrToMapKey,
+    /// pointer to stack used as map value
+    PtrToMapValue,
+    /// pointer to valid memory used to store a map value (output)
+    PtrToUninitMapValue,
+
+    // ---- Memory access argument types ----
+    /// pointer to valid memory (stack, packet, map value)
+    PtrToMem,
+    /// pointer to memory that doesn't need to be initialized (helper fills it)
+    PtrToUninitMem,
+
+    // ---- Size argument types ----
+    /// number of bytes accessed from memory
+    ConstSize,
+    /// number of bytes accessed from memory or 0
+    ConstSizeOrZero,
+
+    // ---- Context and general types ----
+    /// pointer to context (sk_buff, xdp_md, etc.)
+    PtrToCtx,
+    /// any (initialized) argument is ok
+    Anything,
+
+    // ---- Socket types ----
+    /// pointer to sock_common
+    PtrToSockCommon,
+    /// pointer to bpf_sock (fullsock)
+    PtrToSocket,
+
+    // ---- Stack types ----
+    /// pointer to stack
+    PtrToStack,
+
+    // ---- Nullable variants ----
+    /// PTR_TO_CTX | PTR_MAYBE_NULL
+    PtrToCtxOrNull,
+    /// PTR_TO_MEM | PTR_MAYBE_NULL
+    PtrToMemOrNull,
+    /// PTR_TO_STACK | PTR_MAYBE_NULL
+    PtrToStackOrNull,
+}
+
+// ============================================================================
+// Helper Function Signatures
+// ============================================================================
+
+/// Maximum number of arguments for a BPF helper function.
+pub const MAX_BPF_FUNC_ARGS: usize = 5;
+
+/// Signature of a BPF helper function.
+#[derive(Debug, Clone, Copy)]
+pub struct HelperSignature {
+    /// Argument types for R1-R5 (use DontCare for unused args)
+    pub args: [BpfArgType; MAX_BPF_FUNC_ARGS],
+}
+
+impl HelperSignature {
+    const fn new(args: [BpfArgType; MAX_BPF_FUNC_ARGS]) -> Self {
+        Self { args }
+    }
+
+    /// Returns the number of actual arguments (non-DontCare)
+    pub fn arg_count(&self) -> usize {
+        self.args.iter()
+            .take_while(|&&arg| arg != BpfArgType::DontCare)
+            .count()
+    }
+}
+
+// Convenience aliases
+use BpfArgType::*;
+
+/// Helper function signatures indexed by helper ID.
+/// Returns None for unknown helpers.
+pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
+    Some(match helper {
+        // ---- Map operations ----
+        constants::BPF_MAP_LOOKUP_ELEM => HelperSignature::new([
+            ConstMapPtr,    // R1: map
+            PtrToMapKey,    // R2: key
+            DontCare,
+            DontCare,
+            DontCare,
+        ]),
+
+        constants::BPF_MAP_UPDATE_ELEM => HelperSignature::new([
+            ConstMapPtr,    // R1: map
+            PtrToMapKey,    // R2: key
+            PtrToMapValue,  // R3: value
+            Anything,       // R4: flags
+            DontCare,
+        ]),
+
+        constants::BPF_MAP_DELETE_ELEM => HelperSignature::new([
+            ConstMapPtr,    // R1: map
+            PtrToMapKey,    // R2: key
+            DontCare,
+            DontCare,
+            DontCare,
+        ]),
+
+        // ---- Tail call ----
+        constants::BPF_TAIL_CALL => HelperSignature::new([
+            PtrToCtx,       // R1: ctx
+            ConstMapPtr,    // R2: prog_array_map
+            Anything,       // R3: index
+            DontCare,
+            DontCare,
+        ]),
+
+        // ---- Socket/context helpers ----
+        constants::BPF_GET_SOCKET_COOKIE => HelperSignature::new([
+            PtrToCtx,       // R1: ctx
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ]),
+
+        constants::BPF_CSUM_UPDATE => HelperSignature::new([
+            PtrToCtx,       // R1: skb
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ]),
+
+        constants::BPF_SKB_ECN_SET_CE => HelperSignature::new([
+            PtrToCtxOrNull, // R1: skb (can be NULL)
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ]),
+
+        // ---- SKB data access ----
+        constants::BPF_SKB_LOAD_BYTES => HelperSignature::new([
+            PtrToCtx,       // R1: skb
+            Anything,       // R2: offset
+            PtrToUninitMem, // R3: to (destination buffer)
+            ConstSize,      // R4: len
+            DontCare,
+        ]),
+
+        constants::BPF_SKB_STORE_BYTES => HelperSignature::new([
+            PtrToCtx,       // R1: skb
+            Anything,       // R2: offset
+            PtrToMem,       // R3: from (source buffer)
+            ConstSize,      // R4: len
+            DontCare,
+        ]),
+
+        // ---- Redirect ----
+        constants::BPF_REDIRECT => HelperSignature::new([
+            Anything,       // R1: ifindex
+            Anything,       // R2: flags
+            DontCare,
+            DontCare,
+            DontCare,
+        ]),
+
+        // ---- XDP helpers ----
+        constants::BPF_XDP_ADJUST_HEAD => HelperSignature::new([
+            PtrToCtx,       // R1: xdp_md
+            Anything,       // R2: delta
+            DontCare,
+            DontCare,
+            DontCare,
+        ]),
+
+        // ---- Socket lookup ----
+        constants::BPF_SKC_LOOKUP_TCP => HelperSignature::new([
+            PtrToCtx,       // R1: ctx
+            PtrToMem,       // R2: tuple
+            Anything,       // R3: tuple_size
+            DontCare,
+            DontCare,
+        ]),
+
+        constants::BPF_SK_LOOKUP_TCP => HelperSignature::new([
+            PtrToCtx,       // R1: ctx
+            PtrToMem,       // R2: tuple
+            Anything,       // R3: tuple_size
+            Anything,       // R4: netns
+            Anything,       // R5: flags
+        ]),
+
+        constants::BPF_SK_LOOKUP_UDP => HelperSignature::new([
+            PtrToCtx,       // R1: ctx
+            PtrToMem,       // R2: tuple
+            Anything,       // R3: tuple_size
+            Anything,       // R4: netns
+            Anything,       // R5: flags
+        ]),
+
+        // ---- FIB lookup ----
+        constants::BPF_FIB_LOOKUP => HelperSignature::new([
+            PtrToCtx,       // R1: ctx
+            PtrToMem,       // R2: params (bpf_fib_lookup struct)
+            Anything,       // R3: plen
+            Anything,       // R4: flags
+            DontCare,
+        ]),
+
+        _ => return None,
+    })
+}
+
+/// Returns true if the helper rejects packet pointers for the given argument index.
+fn helper_rejects_packet_for_arg(helper: u32, arg_index: usize) -> bool {
+    match helper {
+        // bpf_skb_store_bytes: R3 (from buffer) cannot be packet pointer
+        // because the helper modifies packet data, causing pointer invalidation
+        constants::BPF_SKB_STORE_BYTES => arg_index == 2,
+        
+        // Add other helpers with similar restrictions here
+        _ => false,
+    }
+}
+
+// ============================================================================
+// Argument Validation
+// ============================================================================
+
+/// Validates all arguments for a helper function based on its signature.
+fn validate_helper_args(
+    env: &mut VerifierEnv,
+    state: &State,
+    helper: u32,
+    types: &TypeState,
+    pc: usize,
+) {
+    let Some(sig) = get_helper_signature(helper) else {
+        warn!("[Verifier] Unknown helper {} at pc {}, skipping arg validation", helper, pc);
+        return;
+    };
+
+    // Get map info if first arg is a map (needed for key/value size validation)
+    let map_info = if sig.args[0] == ConstMapPtr {
+        get_map_info(types.get(Reg::R1), env)
+    } else {
+        None
+    };
+
+    // Validate each argument
+    let arg_regs = [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
+    
+    for (i, (&arg_type, &reg)) in sig.args.iter().zip(arg_regs.iter()).enumerate() {
+        if arg_type == DontCare {
+            break; // No more arguments
+        }
+
+        let reg_type = types.get(reg);
+        
+        if !validate_single_arg(env, state, types, helper, pc, reg, arg_type, reg_type, &map_info, i) {
+            // Validation failed, error already reported
+            return;
+        }
+    }
+}
+
+/// Validates a single argument against its expected type.
+/// Returns true if valid, false if invalid (error already reported).
+fn validate_single_arg(
+    env: &mut VerifierEnv,
+    state: &State,
+    types: &TypeState,
+    helper: u32,
+    pc: usize,
+    reg: Reg,
+    expected: BpfArgType,
+    actual: RegType,
+    map_info: &Option<MapInfo>,
+    arg_index: usize,
+) -> bool {
+    match expected {
+        DontCare => true,
+
+        // ---- Map pointer ----
+        ConstMapPtr => {
+            if !matches!(actual, RegType::PtrToMapObject { .. }) {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!("[Verifier] pc {}: R{} expected PTR_TO_MAP, got {:?}", 
+                       pc, arg_index + 1, actual);
+                return false;
+            }
+            true
+        }
+
+        // ---- Map key pointer ----
+        PtrToMapKey => {
+            let Some(info) = map_info else {
+                // Can't validate without map info
+                return true;
+            };
+            validate_readable_mem(env, state, types, pc, reg, actual, Some(info.key_size))
+        }
+
+        // ---- Map value pointer ----
+        PtrToMapValue => {
+            let Some(info) = map_info else {
+                return true;
+            };
+            validate_readable_mem(env, state, types, pc, reg, actual, Some(info.value_size))
+        }
+
+        // ---- Uninitialized map value (output buffer) ----
+        PtrToUninitMapValue => {
+            let Some(info) = map_info else {
+                return true;
+            };
+            validate_writable_mem(env, state, types, pc, reg, actual, Some(info.value_size))
+        }
+
+        // ---- Generic memory pointer ----
+        PtrToMem => {
+            // Some helpers reject packet pointers for specific args
+            if matches!(actual, RegType::PtrToPacket { .. }) 
+                && helper_rejects_packet_for_arg(helper, arg_index) 
+            {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!("[Verifier] pc {}: helper {} does not accept packet pointer for R{}", 
+                       pc, helper, arg_index + 1);
+                return false;
+            }
+            validate_readable_mem(env, state, types, pc, reg, actual, None)
+        }
+
+        // ---- Uninitialized memory (output buffer) ----
+        PtrToUninitMem => {
+            validate_writable_mem(env, state, types, pc, reg, actual, None)
+        }
+
+        // ---- Size arguments ----
+        ConstSize => {
+            // Must be a non-negative scalar
+            if !nonneg(&state.dbm, reg) {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!("[Verifier] pc {}: R{} (ConstSize) must be non-negative", 
+                       pc, arg_index + 1);
+                return false;
+            }
+            true
+        }
+
+        ConstSizeOrZero => {
+            // Can be zero or positive
+            if !nonneg(&state.dbm, reg) {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!("[Verifier] pc {}: R{} (ConstSizeOrZero) must be non-negative", 
+                       pc, arg_index + 1);
+                return false;
+            }
+            true
+        }
+
+        // ---- Context pointer ----
+        PtrToCtx => {
+            if !matches!(actual, RegType::PtrToCtx) {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!("[Verifier] pc {}: R{} expected PTR_TO_CTX, got {:?}", 
+                       pc, arg_index + 1, actual);
+                return false;
+            }
+            true
+        }
+
+        // ---- Context pointer or NULL ----
+        PtrToCtxOrNull => {
+            if !matches!(actual, RegType::PtrToCtx) && !is_zero(&state.dbm, reg) {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!("[Verifier] pc {}: R{} expected PTR_TO_CTX or NULL, got {:?}", 
+                       pc, arg_index + 1, actual);
+                return false;
+            }
+            true
+        }
+
+        // ---- Any initialized value ----
+        Anything => {
+            // Just needs to be readable (not uninitialized)
+            // The check_regs_readable at the start of transfer_call handles this
+            true
+        }
+
+        // ---- Socket types ----
+        PtrToSockCommon | PtrToSocket => {
+            // TODO: Add socket pointer types to RegType
+            warn!("[Verifier] Socket pointer validation not yet implemented");
+            true
+        }
+
+        // ---- Stack pointer ----
+        PtrToStack => {
+            if !matches!(actual, RegType::PtrToStack { .. }) {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!("[Verifier] pc {}: R{} expected PTR_TO_STACK, got {:?}", 
+                       pc, arg_index + 1, actual);
+                return false;
+            }
+            true
+        }
+
+        PtrToStackOrNull => {
+            if !matches!(actual, RegType::PtrToStack { .. }) && !is_zero(&state.dbm, reg) {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!("[Verifier] pc {}: R{} expected PTR_TO_STACK or NULL, got {:?}", 
+                       pc, arg_index + 1, actual);
+                return false;
+            }
+            true
+        }
+
+        PtrToMemOrNull => {
+            if is_zero(&state.dbm, reg) {
+                return true; // NULL is allowed
+            }
+            validate_readable_mem(env, state, types, pc, reg, actual, None)
+        }
+    }
+}
+
+/// Validates that a register points to readable memory.
+fn validate_readable_mem(
+    env: &mut VerifierEnv,
+    state: &State,
+    _types: &TypeState,
+    pc: usize,
+    reg: Reg,
+    reg_type: RegType,
+    size: Option<u32>,
+) -> bool {
+    match reg_type {
+        RegType::PtrToStack { offset: Some(off) } => {
+            if let Some(sz) = size {
+                access::check_stack_arg_readable(env, state, off, sz as i64, pc);
+            }
+            true
+        }
+        RegType::PtrToStack { offset: None } => {
+            // Unknown stack offset - reject conservatively
+            env.fail(VerificationError::UninitializedStackRead { pc, offset: 0 });
+            false
+        }
+        RegType::PtrToMapValue { .. } => {
+            // Map values are always considered initialized
+            true
+        }
+        RegType::PtrToPacket { .. } => {
+            // Packet data is initialized (bounds checked elsewhere)
+            // But not valid for helpers that write to the buffer
+            true
+        }
+        RegType::PtrToCtx => {
+            // Context can be read
+            true
+        }
+        _ => {
+            env.fail(VerificationError::InvalidArgType { pc, reg });
+            error!("[Verifier] pc {}: {:?} not a valid memory pointer", pc, reg);
+            false
+        }
+    }
+}
+
+/// Validates that a register points to writable memory.
+fn validate_writable_mem(
+    env: &mut VerifierEnv,
+    _state: &State,
+    _types: &TypeState,
+    pc: usize,
+    reg: Reg,
+    reg_type: RegType,
+    _size: Option<u32>,
+) -> bool {
+    match reg_type {
+        RegType::PtrToStack { offset: Some(_) } => {
+            // Stack is writable
+            true
+        }
+        RegType::PtrToStack { offset: None } => {
+            // Unknown stack offset
+            env.fail(VerificationError::UninitializedStackRead { pc, offset: 0 });
+            false
+        }
+        RegType::PtrToMapValue { .. } => {
+            // Map values can be written
+            true
+        }
+        RegType::PtrToPacket { .. } => {
+            // Packet pointers are NOT valid for uninit_mem arguments
+            // (helper would write to packet, which is not allowed this way)
+            env.fail(VerificationError::InvalidArgType { pc, reg });
+            error!("[Verifier] pc {}: packet pointer not valid for output buffer", pc);
+            false
+        }
+        _ => {
+            env.fail(VerificationError::InvalidArgType { pc, reg });
+            error!("[Verifier] pc {}: {:?} not a valid writable memory pointer", pc, reg);
+            false
+        }
+    }
+}
+
+// ============================================================================
+// Map Info Helpers
+// ============================================================================
+
+/// Information about a BPF map needed for validation.
+#[derive(Debug, Clone, Copy)]
+struct MapInfo {
+    key_size: u32,
+    value_size: u32,
+}
+
+fn get_map_info(map_type: RegType, env: &VerifierEnv) -> Option<MapInfo> {
+    match map_type {
+        RegType::PtrToMapObject { map_idx } => {
+            env.ctx.map_defs.get(map_idx).map(|md| MapInfo {
+                key_size: md.key_size,
+                value_size: md.value_size,
+            })
+        }
+        _ => None,
+    }
+}
+
+// ============================================================================
+// Transfer Functions
+// ============================================================================
+
 /// Transfer function for helper Call instructions.
 pub(crate) fn transfer_call(
     env: &mut VerifierEnv,
@@ -24,9 +571,8 @@ pub(crate) fn transfer_call(
 
     // ========================================================================
     // Check argument registers are readable before the call
-    // Most helpers use R1-R5 as arguments
     // ========================================================================
-    let arg_regs = get_helper_arg_regs(helper);
+    let arg_regs = get_arg_regs_from_signature(helper);
     if !check_regs_readable(env, &state, &arg_regs) {
         return vec![];
     }
@@ -46,14 +592,6 @@ pub(crate) fn transfer_call(
     // We only model the FAILURE path. Success means execution went elsewhere.
     // ========================================================================
     if helper == constants::BPF_TAIL_CALL {
-        // Validate arguments (optional warnings)
-        if !matches!(in_types.get(Reg::R1), RegType::PtrToCtx) {
-            warn!("[Verifier] tail_call R1 should be PTR_TO_CTX at pc {}", pc);
-        }
-        if !matches!(in_types.get(Reg::R2), RegType::PtrToMapObject { .. }) {
-            warn!("[Verifier] tail_call R2 should be PTR_TO_MAP at pc {}", pc);
-        }
-        
         // Update types (clobber caller-saved, R0 = scalar)
         update_call_types(&in_types, &mut state.types, helper);
         
@@ -80,6 +618,29 @@ pub(crate) fn transfer_call(
     }
     
     // 3. Apply return value bounds for specific helpers
+    apply_return_bounds(&mut state, helper);
+    
+    // 4. Forget packet pointer DBM entries if they were invalidated
+    if helper_invalidates_packets(helper) {
+        for r in Reg::ALL {
+            if r != Reg::R10 {
+                match in_types.get(r) {
+                    RegType::PtrToPacket { .. } | RegType::PtrToPacketEnd => {
+                        forget(&mut state.dbm, r);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    
+    // 5. Advance PC and return
+    state.pc += 1;
+    vec![state]
+}
+
+/// Apply return value bounds based on helper semantics.
+fn apply_return_bounds(state: &mut State, helper: u32) {
     match helper {
         constants::BPF_REDIRECT => {
             // Returns TC_ACT_* (0-7)
@@ -100,24 +661,18 @@ pub(crate) fn transfer_call(
         }
         _ => {}
     }
+}
+
+/// Get argument registers based on helper signature.
+fn get_arg_regs_from_signature(helper: u32) -> Vec<Reg> {
+    let arg_regs = [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
     
-    // 4. Forget packet pointer DBM entries if they were invalidated
-    if helper_invalidates_packets(helper) {
-        for r in Reg::ALL {
-            if r != Reg::R10 {
-                match in_types.get(r) {
-                    RegType::PtrToPacket { .. } | RegType::PtrToPacketEnd => {
-                        forget(&mut state.dbm, r);
-                    }
-                    _ => {}
-                }
-            }
-        }
+    if let Some(sig) = get_helper_signature(helper) {
+        arg_regs[..sig.arg_count()].to_vec()
+    } else {
+        // Unknown helper - conservatively check R1
+        vec![Reg::R1]
     }
-    
-    // 5. Advance PC and return
-    state.pc += 1;
-    vec![state]
 }
 
 /// Transfer function for relative Call (BPF-to-BPF function call) instructions.
@@ -144,161 +699,4 @@ pub(crate) fn transfer_call_rel(
 
     // Only the "enter callee" path — return path comes from callee's Exit
     vec![state]
-}
-
-/// Validates helper function arguments.
-fn validate_helper_args(
-    env: &mut VerifierEnv,
-    state: &State,
-    helper: u32,
-    types: &TypeState,
-    pc: usize,
-) {
-    match helper {
-        constants::BPF_MAP_LOOKUP_ELEM => {
-            // R1 = map, R2 = key pointer
-            let key_size = get_map_key_size(types.get(Reg::R1), env);
-            if let Some(size) = key_size {
-                check_readable_arg(env, state, types, Reg::R2, size, pc);
-            }
-        }
-        constants::BPF_MAP_UPDATE_ELEM => {
-            // R1 = map, R2 = key pointer, R3 = value pointer, R4 = flags
-            let (key_size, val_size) = get_map_key_value_size(types.get(Reg::R1), env);
-            if let Some(size) = key_size {
-                check_readable_arg(env, state, types, Reg::R2, size, pc);
-            }
-            if let Some(size) = val_size {
-                check_readable_arg(env, state, types, Reg::R3, size, pc);
-            }
-        }
-        constants::BPF_MAP_DELETE_ELEM => {
-            // R1 = map, R2 = key pointer
-            let key_size = get_map_key_size(types.get(Reg::R1), env);
-            if let Some(size) = key_size {
-                check_readable_arg(env, state, types, Reg::R2, size, pc);
-            }
-        }
-        constants::BPF_GET_SOCKET_COOKIE | constants::BPF_CSUM_UPDATE  => { 
-            // R1 must be PtrToCtx
-            if !matches!(types.get(Reg::R1), RegType::PtrToCtx) {
-                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
-            }
-        }
-        constants::BPF_SKB_ECN_SET_CE => {
-            // R1 can be PtrToCtx or NULL
-            if !matches!(types.get(Reg::R1), RegType::PtrToCtx) && !is_zero(&state.dbm, Reg::R1) {
-                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
-            }
-        }
-        constants::BPF_SKB_LOAD_BYTES => {
-            if !matches!(types.get(Reg::R1), RegType::PtrToCtx) {
-                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
-            } else {
-                // R4 cannot be negative because it's ARG_CONST_SIZE type
-                if !nonneg(&state.dbm, Reg::R4) {
-                    env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R4 });
-                }
-            }
-        }
-        _ => {
-            warn!("Helper arg not checked.");
-        }
-    }
-}
-
-fn check_readable_arg(
-    env: &mut VerifierEnv,
-    state: &State,
-    types: &TypeState,
-    reg: Reg,
-    size: u32,
-    pc: usize,
-) {
-    match types.get(reg) {
-        RegType::PtrToStack { offset: Some(off) } => {
-            access::check_stack_arg_readable(env, state, off, size as i64, pc);
-        }
-        RegType::PtrToStack { offset: None } => {
-            // Unknown stack offset - need to use DBM bounds
-            // For now, reject conservatively
-            env.fail(VerificationError::UninitializedStackRead { pc, offset: 0 });
-        }
-        RegType::PtrToMapValue { .. } => {
-            // Map values are always considered initialized
-        }
-        RegType::PtrToPacket { .. } => {
-            // Packet data is initialized (bounds checked elsewhere)
-        }
-        _ => {
-            // Not a valid pointer type for this argument
-            env.fail(VerificationError::InvalidArgType { pc, reg });
-            error!("Not a valid pointer type for argument")
-        }
-    }
-}
-
-fn get_map_key_size(map_type: RegType, env: &VerifierEnv) -> Option<u32> {
-    match map_type {
-        RegType::PtrToMapObject { map_idx } => 
-            env.ctx.map_defs.get(map_idx).map(|md| md.key_size),
-        _ => None,
-    }
-}
-
-fn get_map_key_value_size(map_type: RegType, env: &VerifierEnv) -> (Option<u32>, Option<u32>) {
-    match map_type {
-        RegType::PtrToMapObject { map_idx } => {
-            if let Some(map_def) = env.ctx.map_defs.get(map_idx) {
-                (Some(map_def.key_size), Some(map_def.value_size))
-            } else {
-                (None, None)
-            }
-        }
-        _ => (None, None),
-    }
-}
-
-/// Returns the argument registers that must be readable for a given helper.
-fn get_helper_arg_regs(helper: u32) -> Vec<Reg> {
-    match helper {
-        // 1 arg: R1
-        constants::BPF_GET_SOCKET_COOKIE |
-        constants::BPF_CSUM_UPDATE |
-        constants::BPF_SKB_ECN_SET_CE => {
-            vec![Reg::R1]
-        }
-        
-        // 2 args: R1, R2
-        constants::BPF_MAP_LOOKUP_ELEM |
-        constants::BPF_MAP_DELETE_ELEM |
-        constants::BPF_REDIRECT => {
-            vec![Reg::R1, Reg::R2]
-        }
-        
-        // 3 args: R1, R2, R3
-        constants::BPF_TAIL_CALL |
-        constants::BPF_SKC_LOOKUP_TCP => {
-            vec![Reg::R1, Reg::R2, Reg::R3]
-        }
-        
-        // 4 args: R1, R2, R3, R4
-        constants::BPF_MAP_UPDATE_ELEM |
-        constants::BPF_SKB_LOAD_BYTES |
-        constants::BPF_SKB_STORE_BYTES => {
-            vec![Reg::R1, Reg::R2, Reg::R3, Reg::R4]
-        }
-        
-        // 5 args: R1, R2, R3, R4, R5
-        constants::BPF_SK_LOOKUP_TCP |
-        constants::BPF_SK_LOOKUP_UDP |
-        constants::BPF_FIB_LOOKUP => {
-            vec![Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5]
-        }
-        
-        // Default: conservatively check R1 (most helpers need at least one arg)
-        _ => {
-            vec![Reg::R1]
-        }
-    }
 }

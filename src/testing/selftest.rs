@@ -141,8 +141,10 @@ pub struct SuiteResult {
 const BPF_MAP_TYPE_HASH: u32 = 1;
 const BPF_MAP_TYPE_ARRAY: u32 = 2;
 const BPF_MAP_TYPE_PROG_ARRAY: u32 = 3;
+const BPF_MAP_TYPE_PERF_EVENT_ARRAY: u32 = 4;
 const BPF_MAP_TYPE_CGROUP_STORAGE: u32 = 19;
 const BPF_MAP_TYPE_PERCPU_CGROUP_STORAGE: u32 = 21;
+const BPF_MAP_TYPE_RINGBUF: u32 = 16;
 // Add more as needed
 
 // ============================================================================
@@ -251,6 +253,26 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             max_entries: 0,
             map_flags: 0,
             name: "test_percpu_cgroup_storage".to_string(),
+            btf_val_type_id: None,
+            initial_data: None,
+        }),
+        "fixup_map_event_output" => Some(BpfMapDef {
+            type_: BPF_MAP_TYPE_PERF_EVENT_ARRAY,  // 4
+            key_size: 4,
+            value_size: 4,
+            max_entries: 1,
+            map_flags: 0,
+            name: "test_event_output".to_string(),
+            btf_val_type_id: None,
+            initial_data: None,
+        }),
+        "fixup_map_ringbuf" => Some(BpfMapDef {
+            type_: BPF_MAP_TYPE_RINGBUF,  // 16
+            key_size: 4,
+            value_size: 4,
+            max_entries: 1,
+            map_flags: 0,
+            name: "test_ringbuf".to_string(),
             btf_val_type_id: None,
             initial_data: None,
         }),
