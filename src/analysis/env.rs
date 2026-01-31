@@ -14,6 +14,7 @@ pub enum VerificationError {
     InvalidStackRead { pc: usize, offset: i64 },
     UnsafePacketLoad { pc: usize, off: i16, size: MemSize, range: u64 },
     UnsafePacketStore { pc: usize, off: i16, size: MemSize },
+    IllegalPacketStore { pc: usize, off: i16, size: MemSize },
     UnsafeMapLoad { pc: usize, off: i64, size: MemSize, limit: i64 },
     UnsafeMapStore { pc: usize, off: i64, size: MemSize, limit: i64 },
     UnsafeGenericLoad { pc: usize, base: Reg, off: i16 },
@@ -55,6 +56,9 @@ impl VerificationError {
             }
             VerificationError::UnsafePacketStore { pc, off, size } => {
                 format!("Unsafe packet store at pc {}: offset {}, size {:?}", pc, off, size)
+            }
+            VerificationError::IllegalPacketStore { pc, off, size } => {
+                format!("Illegal packet store at pc {}: offset {}, size {:?}", pc, off, size)
             }
             VerificationError::UnsafeMapLoad { pc, off, size, limit } => {
                 format!("Unsafe map load at pc {}: offset {}, size {:?}, limit {}", pc, off, size, limit)

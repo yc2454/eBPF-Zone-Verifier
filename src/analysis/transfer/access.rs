@@ -2,7 +2,7 @@
 use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;
 use crate::analysis::reg_types::RegType;
-use crate::ast::MemSize;
+use crate::ast::{MemSize, ProgramKind};
 use crate::zone::domain::{get_bounds, get_relative_bound};
 use crate::analysis::env::VerificationError;
 use crate::common::constants;
@@ -284,6 +284,12 @@ pub fn check_store(
             check_stack_access(env, state, base, offset, off as i64, access_size as i64, pc, AccessKind::Write);
         }
         PtrToPacket { id: _, range, is_base: _, off: off_from_packet } => {
+            // Check if the program type allows direct packet writes
+            if !prog_kind_support_direct_packet_write(ctx.prog_kind) {
+                error!("Direct packet store at pc {} is not supported for {:?} program", pc, ctx.prog_kind);
+                env.fail(VerificationError::IllegalPacketStore { pc, off, size });
+                return;
+            }
             // Total offset from base = off + instruction offset
             let total_off = off_from_packet + off as i64;
             let access_end = total_off + access_size;
@@ -650,5 +656,12 @@ fn get_packet_offset_range(
                 (None, None)
             }
         }
+    }
+}
+
+fn prog_kind_support_direct_packet_write(prog_kind: ProgramKind) -> bool {
+    match prog_kind {
+        ProgramKind::LwtIn | ProgramKind::LwtOut => false,
+        _ => true,
     }
 }

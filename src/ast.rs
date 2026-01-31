@@ -278,7 +278,8 @@ impl ProgramKind {
             ProgramKind::Xdp => ContextKind::XdpMd,
             ProgramKind::SchedCls | ProgramKind::SocketFilter 
             | ProgramKind::SchedAct | ProgramKind::SkSkb | ProgramKind::CgroupSkb 
-                => ContextKind::SkBuff,
+            | ProgramKind::LwtIn | ProgramKind::LwtOut | ProgramKind::LwtXmit
+            | ProgramKind::Lsm | ProgramKind::RawTracepoint => ContextKind::SkBuff,
             ProgramKind::SockOps => ContextKind::SockOps,
             ProgramKind::SkLookup => ContextKind::SkLookup,
             ProgramKind::SkMsg => ContextKind::SkMsgMd,
