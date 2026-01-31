@@ -28,9 +28,15 @@ pub(crate) fn transfer_if(
     target: usize,
 ) -> Vec<State> {
     // Target cannot be a back edge
-    if target <= state.pc {
-        env.fail(VerificationError::BackEdge { pc: state.pc, target });
-        return vec![];
+    if target < state.pc {
+        let on_path = state.history_idx
+            .map(|idx| env.history.path_contains_pc(idx, target))
+            .unwrap_or(false);
+        
+        if !on_path {
+            env.fail(VerificationError::BackEdge { pc: state.pc, target });
+            return vec![];
+        }
     }
 
     // Check operand readability

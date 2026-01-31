@@ -52,4 +52,20 @@ impl History {
         trace.reverse();
         trace
     }
+
+    /// Check if `target_pc` was visited on the path leading to `from_idx`
+    pub fn path_contains_pc(&self, from_idx: usize, target_pc: usize) -> bool {
+        let mut current = Some(from_idx);
+        while let Some(idx) = current {
+            if let Some(step) = self.steps.get(idx) {
+                if step.pc == target_pc {
+                    return true;
+                }
+                current = step.parent_idx;
+            } else {
+                break;
+            }
+        }
+        false
+    }
 }

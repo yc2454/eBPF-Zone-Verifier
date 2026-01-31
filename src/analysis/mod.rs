@@ -21,7 +21,6 @@ use self::context::ExecContext;
 use self::env::VerifierEnv;
 use self::state::State;
 use self::reg_types::RegType;
-use self::history::History;
 use crate::common::config::VerifierConfig;
 
 pub fn analyze_program(
@@ -67,14 +66,6 @@ pub fn analyze_program(
 
     // Track pruning statistics
     let mut prune_count: usize = 0;
-
-    // Optional History Tracking
-    let mut history = if config.enable_path_trace {
-        Some(History::new())
-    } else {
-        None
-    };
-
     let mut pruning_mgr = pruning::PruningManager::new();
 
     // 4. Main Analysis Loop
@@ -118,12 +109,10 @@ pub fn analyze_program(
         let instr = &prog.instrs[state.pc];
 
         // If history is enabled, record this step using the parent index from the state.
-        let current_step_idx = if let Some(h) = &mut history {
-            let reg_types_str = state.types.reg_types_str();
-            Some(h.record(state.pc, instr, reg_types_str, state.history_idx))
-        } else {
-            None
-        };
+        let reg_types_str = state.types.reg_types_str();
+        let current_step_idx = Some(
+            env.history.record(state.pc, instr, reg_types_str, state.history_idx)
+        );
         
         // E. Logging (Delegated to Global Logger)
         // We output the raw data following the protocol. The Logger filters it.
@@ -142,9 +131,9 @@ pub fn analyze_program(
             error!(target: "analysis", "[Verifier] Analysis halted due to critical error: {}", 
                    env.error.as_ref().unwrap().description());
             // Additionally, if we have history tracking, reconstruct and print the crash trace
-            if let Some(h) = &history {
+            if config.enable_path_trace {
                 if let Some(crash_idx) = current_step_idx {
-                    let trace = h.get_trace(crash_idx);
+                    let trace = env.history.get_trace(crash_idx);
                     // Print directly to stdout (or error log) so it stands out
                     println!("\n=== CRASH PATH RECONSTRUCTION ({} Steps) ===", trace.len());
                     for (i, step) in trace.iter().enumerate() {

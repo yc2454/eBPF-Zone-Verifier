@@ -1,3 +1,4 @@
+use crate::analysis::history::History;
 // src/analysis/env.rs
 use crate::ast::{Program, MemSize};
 use crate::analysis::state::State;
@@ -136,8 +137,7 @@ pub struct InsnAuxData {
 }
 
 pub struct VerifierEnv<'a> {
-    pub ctx: &'a ExecContext, 
-    pub prog: &'a Program,
+    pub ctx: &'a ExecContext,
     pub explored_states: HashMap<usize, Vec<State>>,
     pub insn_aux_data: Vec<InsnAuxData>,
 
@@ -146,17 +146,19 @@ pub struct VerifierEnv<'a> {
     /// Holds the FIRST critical failure encountered. 
     /// If this is Some, the analysis should halt immediately.
     pub error: Option<VerificationError>, 
+    // Path execution history
+    pub history: History
 }
 
 impl<'a> VerifierEnv<'a> {
     pub fn new(ctx: &'a ExecContext, prog: &'a Program) -> Self {
         VerifierEnv {
             ctx,
-            prog,
             explored_states: HashMap::new(),
             insn_aux_data: vec![InsnAuxData::default(); prog.instrs.len()],
             insn_processed: 0,
             error: None,
+            history: History::new()
         }
     }
 
