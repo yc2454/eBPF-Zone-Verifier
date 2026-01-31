@@ -4,6 +4,8 @@
     "result": "REJECT",
     "errstr": "unknown opcode 00",
     "insns": [
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
     ]
   },
   {

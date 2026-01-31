@@ -12,6 +12,7 @@ use crate::zone::domain::{
 };
 use crate::zone::dbm::Dbm;
 use crate::zone::tnum::Tnum;
+use crate::analysis::env::VerificationError;
 
 use super::refinement::{refine_packet_ranges, refine_mem_ranges, refine_branch};
 use super::common::{check_reg_readable, check_operand_readable};
@@ -26,6 +27,12 @@ pub(crate) fn transfer_if(
     right: Operand,
     target: usize,
 ) -> Vec<State> {
+    // Target cannot be a back edge
+    if target <= state.pc {
+        env.fail(VerificationError::BackEdge { pc: state.pc, target });
+        return vec![];
+    }
+
     // Check operand readability
     if !check_reg_readable(env, &state, left) {
         return vec![];

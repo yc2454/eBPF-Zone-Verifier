@@ -13,6 +13,9 @@ pub struct VerifierConfig {
     
     /// Skip DBM (numeric) comparison in pruning - faster but less precise
     pub skip_dbm_check: bool,
+
+    /// Use widening in pruning - might cause unsoundness but guarantees loop termination
+    pub use_widening: bool, 
     
     /// Maximum states to keep per PC for pruning
     pub max_states_per_pc: usize,
@@ -50,6 +53,7 @@ impl Default for VerifierConfig {
             verbosity: 1,
             max_insn: 1_000_000,
             skip_dbm_check: false,
+            use_widening: false,
             max_states_per_pc: 8,
             log_interval: 100_000,
             debug_pc: None,
@@ -88,6 +92,9 @@ impl VerifierConfig {
                     }
                     "--skip-dbm" => {
                         config.skip_dbm_check = true;
+                    }
+                    "--use-widening" => {
+                        config.use_widening = true;
                     }
                     "--enable-path-trace" => {
                         config.enable_path_trace = true;
@@ -179,6 +186,7 @@ impl VerifierConfig {
         eprintln!("  -v, --verbose        Verbosity 2: trace execution");
         eprintln!("  -vv, --very-verbose  Verbosity 3: full debug output");
         eprintln!("  --skip-dbm           Skip DBM comparison in pruning (faster)");
+        eprintln!("  --use-widening       Use widening in pruning (DANGEROUS: might cause unsoundness)");
         eprintln!("  --max-insn N         Max instructions to process (default: 1000000)");
         eprintln!("  --max-states N       Max states per PC for pruning (default: 8)");
         eprintln!("  --log-interval N     Heartbeat log interval (default: 100000)");

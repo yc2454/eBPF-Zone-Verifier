@@ -1,4 +1,6 @@
 use std::collections::{HashMap, HashSet};
+use log::info;
+
 use crate::analysis::state::State;
 use crate::analysis::reg_types::{RegType, TypeState};
 use crate::zone::dbm::{Dbm, INF};
@@ -60,11 +62,12 @@ pub fn is_state_visited(
 
             // Check if current state is subsumed by canonical state
             if state_subsumes(&info.canonical, state, live_regs, config) {
+                info!("Pruning happened at pc {}.\nOld state: {:?}\nNew state: {:?}", pc, info.canonical.types, state.types);
                 return true; // Prune
             }
 
             // Not subsumed - widen if we've visited enough times
-            if info.visit_count >= WIDEN_THRESHOLD {
+            if config.use_widening && info.visit_count >= WIDEN_THRESHOLD {
                 widen_state(&mut info.canonical, state, live_regs);
             }
 

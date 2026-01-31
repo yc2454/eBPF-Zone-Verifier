@@ -1,0 +1,201 @@
+[
+  {
+    "name": "bounded loop, count to 4",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 165, "dst": 0, "src": 0, "off": -2, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounded loop, count to 20",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 3},
+      {"code": 165, "dst": 0, "src": 0, "off": -2, "imm": 20},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounded loop, count from positive unknown to 4",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 197, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 165, "dst": 0, "src": 0, "off": -2, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounded loop, count from totally unknown to 4",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 165, "dst": 0, "src": 0, "off": -2, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounded loop, count to 4 with equality",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": -2, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounded loop, start in the middle",
+    "result": "REJECT",
+    "errstr": "back-edge",
+    "prog_type": 5,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 165, "dst": 0, "src": 0, "off": -2, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounded loop containing a forward jump",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 29, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 165, "dst": 0, "src": 0, "off": -3, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounded loop that jumps out rather than in",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "insns": [
+      {"code": 183, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": 1},
+      {"code": 37, "dst": 6, "src": 0, "off": 2, "imm": 10000},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 5, "dst": 0, "src": 0, "off": -4, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "infinite loop after a conditional jump",
+    "result": "REJECT",
+    "errstr": "program is too large",
+    "prog_type": 5,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 165, "dst": 0, "src": 0, "off": 2, "imm": 4},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 5, "dst": 0, "src": 0, "off": -2, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bounded recursion",
+    "result": "REJECT",
+    "errstr": "back-edge",
+    "prog_type": 5,
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 165, "dst": 1, "src": 0, "off": 1, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": -5},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "infinite loop in two jumps",
+    "result": "REJECT",
+    "errstr": "loop detected",
+    "prog_type": 5,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 165, "dst": 0, "src": 0, "off": -2, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "infinite loop: three-jump trick",
+    "result": "REJECT",
+    "errstr": "loop detected",
+    "prog_type": 5,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 165, "dst": 0, "src": 0, "off": 1, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 165, "dst": 0, "src": 0, "off": 1, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 165, "dst": 0, "src": 0, "off": -11, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "not-taken loop with back jump to 1st insn",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 123},
+      {"code": 21, "dst": 0, "src": 0, "off": -2, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "taken loop with back jump to 1st insn",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 10},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 15, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 23, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 1, "src": 0, "off": -3, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "taken loop with back jump to 1st insn, 2",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 10},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 15, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 23, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 86, "dst": 1, "src": 0, "off": -3, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]
