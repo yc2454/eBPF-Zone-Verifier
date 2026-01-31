@@ -1,7 +1,7 @@
 [
   {
     "name": "raw_tracepoint_writable: reject variable offset",
-    "result": "UNDEF",
+    "result": "REJECT",
     "errstr": "R6 invalid variable buffer offset: off=0, var_off=(0x0; 0xffffffff)",
     "prog_type": 24,
     "flags": 1,

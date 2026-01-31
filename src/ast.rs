@@ -199,6 +199,7 @@ pub enum ProgramKind {
     CgroupDevice,
     SkMsg,
     RawTracepoint,
+    RawTracepointWritable,
     CgroupSockAddr,
     Lsm,
     #[default]
@@ -284,8 +285,9 @@ impl ProgramKind {
             ProgramKind::SkLookup => ContextKind::SkLookup,
             ProgramKind::SkMsg => ContextKind::SkMsgMd,
             ProgramKind::CgroupSockAddr => ContextKind::BpfSockAddr,
-            ProgramKind::Kprobe => ContextKind::PtRegs,
             ProgramKind::CgroupSock => ContextKind::SockOps,
+            // ProgramKind::RawTracepointWritable
+            // | ProgramKind::Kprobe | ProgramKind::PerfEvent => ContextKind::PtRegs,
             _ => ContextKind::Unknown,
         }
     }

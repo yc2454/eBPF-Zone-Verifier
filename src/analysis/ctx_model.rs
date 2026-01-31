@@ -5,7 +5,7 @@
 // This module defines the layout of BPF context structures (sk_buff, xdp_md, etc.)
 // as data tables, enabling unified validation of both reads and writes.
 
-use crate::{ast::{ContextKind, MemSize, ProgramKind}, zone::domain::Reg};
+use crate::{ast::{ContextKind, MemSize, ProgramKind}};
 
 // ===========================================================================
 // Core Types
@@ -293,6 +293,35 @@ const SK_MSG_MD_FIELDS: &[CtxField] = &[
     CtxField { offset: 72, size: MemSize::U64, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
 ];
 
+/// struct pt_regs (x86_64) - kprobe/tracepoint/perf_event context
+///
+/// Reference: arch/x86/include/asm/ptrace.h
+///
+/// All fields are unsigned long (8 bytes), read-only for BPF.
+const PT_REGS_FIELDS: &[CtxField] = &[
+    CtxField { offset: 0,   size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // r15
+    CtxField { offset: 8,   size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // r14
+    CtxField { offset: 16,  size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // r13
+    CtxField { offset: 24,  size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // r12
+    CtxField { offset: 32,  size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // rbp
+    CtxField { offset: 40,  size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // rbx
+    CtxField { offset: 48,  size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // r11
+    CtxField { offset: 56,  size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // r10
+    CtxField { offset: 64,  size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // r9
+    CtxField { offset: 72,  size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // r8
+    CtxField { offset: 80,  size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // rax
+    CtxField { offset: 88,  size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // rcx
+    CtxField { offset: 96,  size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // rdx
+    CtxField { offset: 104, size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // rsi
+    CtxField { offset: 112, size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // rdi
+    CtxField { offset: 120, size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // orig_rax
+    CtxField { offset: 128, size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // rip
+    CtxField { offset: 136, size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // cs
+    CtxField { offset: 144, size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // eflags
+    CtxField { offset: 152, size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // rsp
+    CtxField { offset: 160, size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // ss
+];
+
 // ===========================================================================
 // Field Lookup
 // ===========================================================================
@@ -341,6 +370,7 @@ fn get_field_table(ctx_kind: ContextKind) -> Option<&'static [CtxField]> {
         ContextKind::BpfSockAddr => Some(SOCK_ADDR_FIELDS),
         ContextKind::SkLookup => Some(SK_LOOKUP_FIELDS),
         ContextKind::SkMsgMd => Some(SK_MSG_MD_FIELDS),
+        ContextKind::PtRegs => Some(PT_REGS_FIELDS),
         // Unknown context types - return None to indicate we can't validate
         _ => None,
     }

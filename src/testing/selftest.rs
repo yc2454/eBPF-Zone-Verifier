@@ -357,6 +357,7 @@ fn build_exec_context(test: &JsonTestCase) -> (crate::analysis::context::ExecCon
         Some(constants::BPF_PROG_TYPE_CGROUP_SOCK_ADDR) => ProgramKind::CgroupSockAddr,
         Some(constants::BPF_PROG_TYPE_LSM) => ProgramKind::Lsm,
         Some(constants::BPF_PROG_TYPE_SK_LOOKUP) => ProgramKind::SkLookup,
+        Some(constants::BPF_PROG_TYPE_RAW_TRACEPOINT_WRITABLE) => ProgramKind::RawTracepointWritable,
         // Default fallback (usually SocketFilter is the safe default for tests)
         _ => ProgramKind::SocketFilter, 
     };

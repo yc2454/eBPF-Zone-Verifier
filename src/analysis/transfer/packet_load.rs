@@ -46,6 +46,6 @@ pub(crate) fn transfer_packet_load(
         MemSize::U64 => {}, // Full range
     }
 
-    state.pc += 1;
+    state.pc += 2;
     vec![state]
 }

@@ -15,7 +15,7 @@ pub(crate) fn transfer_map_load(
     if let Some(_map_def) = env.ctx.map_defs.get(map_fd as usize) {
         update_map_load_types(&mut state.types, kind, map_fd as usize, dst);
         forget(&mut state.dbm, dst);
-        state.pc += 1;
+        state.pc += 2;
         vec![state]
     } else {
         env.fail(VerificationError::MapNotFound { pc: state.pc, map_idx: map_fd as usize });

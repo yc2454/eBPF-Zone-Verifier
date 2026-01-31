@@ -219,7 +219,7 @@
     ]
   },
   {
-    "name": "invalid map access into an array with a invalid max check",
+    "name": "invalid map access into an array with a invalid max check 1",
     "result": "REJECT",
     "errstr": "R0 pointer += pointer",
     "flags": 1,
