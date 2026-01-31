@@ -403,11 +403,9 @@ pub fn run_test(test: &JsonTestCase, config: &VerifierConfig) -> TestResult {
         }
     };
 
-    if config.verbosity >= 2 {
-        println!("Test '{}': Lowered Program AST:", test.name);
-        for (instr, idx) in program.instrs.iter().zip(0..) {
-            println!("  {:04}: {:?}", idx, instr);
-        }
+    println!("Test '{}': Lowered Program AST:", test.name);
+    for (instr, idx) in program.instrs.iter().zip(0..) {
+        println!("  {:04}: {:?}", idx, instr);
     }
 
     // Build execution context

@@ -60,6 +60,16 @@ pub fn is_state_visited(
         Some(info) => {
             info.visit_count += 1;
 
+            // Check if we're in a loop iteration (PC already on current path)
+            let in_loop = state.history_idx
+                .map(|idx| env.history.path_contains_pc(idx, pc))
+                .unwrap_or(false);
+
+            if in_loop {
+                // Don't prune loop iterations - let instruction limit catch infinite loops
+                return false;
+            }
+
             // Check if current state is subsumed by canonical state
             if state_subsumes(&info.canonical, state, live_regs, config) {
                 info!("Pruning happened at pc {}.\nOld state: {:?}\nNew state: {:?}", pc, info.canonical.types, state.types);
