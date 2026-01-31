@@ -316,6 +316,7 @@ fn build_exec_context(test: &JsonTestCase) -> (crate::analysis::context::ExecCon
         // Default fallback (usually SocketFilter is the safe default for tests)
         _ => ProgramKind::SocketFilter, 
     };
+    println!("Program Type: {:?}", ctx.prog_kind);
 
     (ctx, has_unsupported_fixup)
 }

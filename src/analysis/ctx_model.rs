@@ -385,10 +385,23 @@ fn apply_prog_type_overrides(prog_kind: ProgramKind, off: i16, info: &mut CtxAcc
                         }
                     }
                 }
+                // data and data_end
+                76..=80 => {
+                    if !matches!(prog_kind, ProgramKind::SchedCls | ProgramKind::SchedAct | ProgramKind::SkSkb
+                        | ProgramKind::LwtIn | ProgramKind::LwtOut | ProgramKind::LwtXmit) {
+                        info.readable = false;
+                    }
+                }
                 // family, remote_ip4, local_ip4, remote_ip6, local_ip6, remote_port, local_port
                 // Only readable for cgroup_skb and sock_ops programs
                 88 | 92 | 96 | 100..=128 | 132 | 136 => {
                     if !matches!(prog_kind, ProgramKind::CgroupSkb | ProgramKind::SockOps | ProgramKind::SkSkb) {
+                        info.readable = false;
+                    }
+                }
+                // data_meta
+                140 => {
+                    if matches!(prog_kind, ProgramKind::CgroupSkb | ProgramKind::SockOps) {
                         info.readable = false;
                     }
                 }

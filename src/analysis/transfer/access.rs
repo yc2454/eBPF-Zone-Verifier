@@ -67,6 +67,12 @@ pub fn check_load(
                 error!("Unsafe packet load at pc {}: base {:?}+{} (range={})", pc, base, off, range);
                 env.fail(VerificationError::UnsafePacketLoad { pc, off, size, range });
             }
+
+            // Alignment check
+            if !check_packet_alignment(state, base, off, size) {
+                env.fail(VerificationError::MisalignedPacketAccess { pc, off, size });
+                return;
+            }
         }
         PtrToCtx => {
             if !ctx_model::is_valid_ctx_read(ctx.prog_kind, off, size) {
@@ -303,6 +309,12 @@ pub fn check_store(
             if !safe {
                 error!("Unsafe packet store at pc {}: base {:?}+{} (range={})", pc, base, off, range);
                 env.fail(VerificationError::UnsafePacketStore { pc, off, size });
+            }
+
+            // Alignment check
+            if !check_packet_alignment(state, base, off, size) {
+                env.fail(VerificationError::MisalignedPacketAccess { pc, off, size });
+                return;
             }
         }
         PtrToMapValueOrNull { map_idx, .. } => {
@@ -560,5 +572,83 @@ pub fn is_valid_socket_access(ty: &RegType, off: i64, size: i64) -> bool {
         RegType::PtrToSocket {..} => access_within_fields(BPF_SOCK_FIELDS, off, size),
         RegType::PtrToTcpSock {..} => access_within_fields(BPF_TCP_SOCK_FIELDS, off, size),
         _ => false,
+    }
+}
+
+// ------------------- Packet Checking Helpers -------------------
+
+/// Check if a packet access is properly aligned.
+/// 
+/// Packet data starts at 2-byte alignment (NET_IP_ALIGN).
+/// Returns true if ALL possible offsets are properly aligned for the access size.
+pub fn check_packet_alignment(
+    state: &State,
+    base: Reg,
+    off: i16,
+    size: MemSize,
+) -> bool {
+    let access_size = size.bytes() as i64;
+    
+    // U8 is always aligned
+    if access_size == 1 {
+        return true;
+    }
+    
+    // Get offset bounds relative to packet start
+    let (min_off, max_off) = get_packet_offset_range(state, base, off);
+    
+    match (min_off, max_off) {
+        (Some(lo), Some(hi)) => {
+            // Packet base is 2-byte aligned
+            const NET_IP_ALIGN: i64 = 2;
+            
+            // Check if all offsets in range have same alignment class
+            // AND that alignment is correct for access size
+            let lo_aligned = (NET_IP_ALIGN + lo) % access_size == 0;
+            let hi_aligned = (NET_IP_ALIGN + hi) % access_size == 0;
+            
+            // If range spans different alignment classes, reject
+            if lo % access_size != hi % access_size {
+                return false;
+            }
+            
+            lo_aligned && hi_aligned
+        }
+        _ => false, // Unbounded offset, can't verify alignment
+    }
+}
+
+/// Get the range of possible offsets from packet start.
+fn get_packet_offset_range(
+    state: &State,
+    base: Reg,
+    insn_off: i16,
+) -> (Option<i64>, Option<i64>) {
+    let base_type = state.types.get(base);
+    
+    match base_type {
+        RegType::PtrToPacket { off: type_off, .. } => {
+            // Fixed offset tracked in type
+            let total = type_off + insn_off as i64;
+            (Some(total), Some(total))
+        }
+        _ => {
+            // Variable offset - query DBM for bounds relative to packet start
+            // Find packet start register
+            let pkt_start_reg = crate::zone::domain::REG_ENV
+                .all()
+                .iter()
+                .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket { is_base: true, .. }));
+            
+            if let Some(&start_reg) = pkt_start_reg {
+                let (lo, hi) = get_relative_bound(&state.dbm, base, start_reg);
+                (
+                    lo.map(|l| l + insn_off as i64),
+                    hi.map(|h| h + insn_off as i64),
+                )
+            } else {
+                (None, None)
+            }
+        }
     }
 }

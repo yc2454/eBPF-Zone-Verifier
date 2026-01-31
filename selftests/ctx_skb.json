@@ -1,0 +1,936 @@
+[
+  {
+    "name": "access skb fields ok",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 53, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 8, "imm": 0},
+      {"code": 53, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 4, "imm": 0},
+      {"code": 53, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 12, "imm": 0},
+      {"code": 53, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 16, "imm": 0},
+      {"code": 53, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 20, "imm": 0},
+      {"code": 53, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 24, "imm": 0},
+      {"code": 53, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 84, "imm": 0},
+      {"code": 53, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "access skb fields bad1",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": -4, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "access skb fields bad2",
+    "result": "REJECT",
+    "errstr": "different pointers",
+    "errstr_unpriv": "R1 pointer comparison",
+    "fixups": {
+    "fixup_map_hash_8b": [4]
+    },
+    "insns": [
+      {"code": 53, "dst": 1, "src": 0, "off": 9, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 4, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "access skb fields bad3",
+    "result": "REJECT",
+    "errstr": "different pointers",
+    "errstr_unpriv": "R1 pointer comparison",
+    "fixups": {
+    "fixup_map_hash_8b": [6]
+    },
+    "insns": [
+      {"code": 53, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 4, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": -12, "imm": 0}
+    ]
+  },
+  {
+    "name": "access skb fields bad4",
+    "result": "REJECT",
+    "errstr": "different pointers",
+    "errstr_unpriv": "R1 pointer comparison",
+    "fixups": {
+    "fixup_map_hash_8b": [7]
+    },
+    "insns": [
+      {"code": 53, "dst": 1, "src": 0, "off": 3, "imm": 0},
+      {"code": 97, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": -13, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid access __sk_buff family",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 88, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid access __sk_buff remote_ip4",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 92, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid access __sk_buff local_ip4",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 96, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid access __sk_buff remote_ip6",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 100, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid access __sk_buff local_ip6",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 116, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid access __sk_buff remote_port",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 132, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid access __sk_buff remote_port",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 136, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "valid access __sk_buff family",
+    "result": "ACCEPT",
+    "prog_type": 14,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 88, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "valid access __sk_buff remote_ip4",
+    "result": "ACCEPT",
+    "prog_type": 14,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 92, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "valid access __sk_buff local_ip4",
+    "result": "ACCEPT",
+    "prog_type": 14,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 96, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "valid access __sk_buff remote_ip6",
+    "result": "ACCEPT",
+    "prog_type": 14,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 100, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 104, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 108, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 112, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "valid access __sk_buff local_ip6",
+    "result": "ACCEPT",
+    "prog_type": 14,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 116, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 120, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 124, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 128, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "valid access __sk_buff remote_port",
+    "result": "ACCEPT",
+    "prog_type": 14,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 132, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "valid access __sk_buff remote_port",
+    "result": "ACCEPT",
+    "prog_type": 14,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 136, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid access of tc_classid for SK_SKB",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 14,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 72, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid access of skb->mark for SK_SKB",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 14,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check skb->mark is not writeable by SK_SKB",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 14,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 99, "dst": 1, "src": 0, "off": 8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check skb->tc_index is writeable by SK_SKB",
+    "result": "ACCEPT",
+    "prog_type": 14,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 99, "dst": 1, "src": 0, "off": 44, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check skb->priority is writeable by SK_SKB",
+    "result": "ACCEPT",
+    "prog_type": 14,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 99, "dst": 1, "src": 0, "off": 32, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet read for SK_SKB",
+    "result": "ACCEPT",
+    "prog_type": 14,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 0, "src": 3, "off": 1, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet write for SK_SKB",
+    "result": "ACCEPT",
+    "prog_type": 14,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 0, "src": 3, "off": 1, "imm": 0},
+      {"code": 115, "dst": 2, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "overlapping checks for direct packet access SK_SKB",
+    "result": "ACCEPT",
+    "prog_type": 14,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 0, "src": 3, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 6},
+      {"code": 45, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 105, "dst": 0, "src": 2, "off": 6, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check skb->mark is not writeable by sockets",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "errstr_unpriv": "R1 leaks addr",
+    "insns": [
+      {"code": 99, "dst": 1, "src": 1, "off": 8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check skb->tc_index is not writeable by sockets",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "errstr_unpriv": "R1 leaks addr",
+    "insns": [
+      {"code": 99, "dst": 1, "src": 1, "off": 44, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check cb access: byte",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 48, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 49, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 50, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 51, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 52, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 53, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 54, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 55, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 56, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 57, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 58, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 59, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 60, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 61, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 62, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 63, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 64, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 65, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 66, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 67, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 48, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 49, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 50, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 51, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 52, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 53, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 54, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 55, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 56, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 57, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 58, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 59, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 60, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 61, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 62, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 63, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 64, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 65, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 66, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 67, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "__sk_buff->hash, offset 0, byte store not permitted",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 68, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "__sk_buff->tc_index, offset 3, byte store not permitted",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 47, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check skb->hash byte load permitted",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 68, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check skb->hash byte load permitted 1",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 69, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check skb->hash byte load permitted 2",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 70, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check skb->hash byte load permitted 3",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 71, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check cb access: byte, wrong type",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 9,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 48, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check cb access: half",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 107, "dst": 1, "src": 0, "off": 48, "imm": 0},
+      {"code": 107, "dst": 1, "src": 0, "off": 50, "imm": 0},
+      {"code": 107, "dst": 1, "src": 0, "off": 52, "imm": 0},
+      {"code": 107, "dst": 1, "src": 0, "off": 54, "imm": 0},
+      {"code": 107, "dst": 1, "src": 0, "off": 56, "imm": 0},
+      {"code": 107, "dst": 1, "src": 0, "off": 58, "imm": 0},
+      {"code": 107, "dst": 1, "src": 0, "off": 60, "imm": 0},
+      {"code": 107, "dst": 1, "src": 0, "off": 62, "imm": 0},
+      {"code": 107, "dst": 1, "src": 0, "off": 64, "imm": 0},
+      {"code": 107, "dst": 1, "src": 0, "off": 66, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 48, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 50, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 52, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 54, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 56, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 58, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 60, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 62, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 64, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 66, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check cb access: half, unaligned",
+    "result": "REJECT",
+    "errstr": "misaligned context access",
+    "flags": 2,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 107, "dst": 1, "src": 0, "off": 49, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check __sk_buff->hash, offset 0, half store not permitted",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 107, "dst": 1, "src": 0, "off": 68, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check __sk_buff->tc_index, offset 2, half store not permitted",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 107, "dst": 1, "src": 0, "off": 46, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check skb->hash half load permitted",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 68, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check skb->hash half load permitted 2",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 70, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check skb->hash half load not permitted, unaligned 1",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "flags": 1,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 69, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check skb->hash half load not permitted, unaligned 3",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "flags": 1,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 71, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check cb access: half, wrong type",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 9,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 107, "dst": 1, "src": 0, "off": 48, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check cb access: word",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 99, "dst": 1, "src": 0, "off": 48, "imm": 0},
+      {"code": 99, "dst": 1, "src": 0, "off": 52, "imm": 0},
+      {"code": 99, "dst": 1, "src": 0, "off": 56, "imm": 0},
+      {"code": 99, "dst": 1, "src": 0, "off": 60, "imm": 0},
+      {"code": 99, "dst": 1, "src": 0, "off": 64, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 48, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 52, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 56, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 60, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 64, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check cb access: word, unaligned 1",
+    "result": "REJECT",
+    "errstr": "misaligned context access",
+    "flags": 2,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 99, "dst": 1, "src": 0, "off": 50, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check cb access: word, unaligned 2",
+    "result": "REJECT",
+    "errstr": "misaligned context access",
+    "flags": 2,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 99, "dst": 1, "src": 0, "off": 65, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check cb access: word, unaligned 3",
+    "result": "REJECT",
+    "errstr": "misaligned context access",
+    "flags": 2,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 99, "dst": 1, "src": 0, "off": 66, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check cb access: word, unaligned 4",
+    "result": "REJECT",
+    "errstr": "misaligned context access",
+    "flags": 2,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 99, "dst": 1, "src": 0, "off": 67, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check cb access: double",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 1, "src": 0, "off": 48, "imm": 0},
+      {"code": 123, "dst": 1, "src": 0, "off": 56, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": 48, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": 56, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check cb access: double, unaligned 1",
+    "result": "REJECT",
+    "errstr": "misaligned context access",
+    "flags": 2,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 1, "src": 0, "off": 52, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check cb access: double, unaligned 2",
+    "result": "REJECT",
+    "errstr": "misaligned context access",
+    "flags": 2,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 1, "src": 0, "off": 60, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check cb access: double, oob 1",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 1, "src": 0, "off": 64, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check cb access: double, oob 2",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": 64, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check __sk_buff->ifindex dw store not permitted",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 1, "src": 0, "off": 40, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check __sk_buff->ifindex dw load not permitted",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": 40, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check cb access: double, wrong type",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 9,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 1, "src": 0, "off": 48, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check out of range skb->cb access",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "errstr_unpriv": "",
+    "prog_type": 4,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 304, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "write skb fields from socket prog",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R1 leaks addr",
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 64, "imm": 0},
+      {"code": 53, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 44, "imm": 0},
+      {"code": 53, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 99, "dst": 1, "src": 1, "off": 48, "imm": 0},
+      {"code": 99, "dst": 1, "src": 1, "off": 56, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "write skb fields from tc_cls_act prog",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 48, "imm": 0},
+      {"code": 99, "dst": 1, "src": 0, "off": 8, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 44, "imm": 0},
+      {"code": 99, "dst": 1, "src": 0, "off": 44, "imm": 0},
+      {"code": 99, "dst": 1, "src": 0, "off": 60, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": 152, "imm": 0},
+      {"code": 123, "dst": 1, "src": 0, "off": 152, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check skb->data half load not permitted",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 76, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "read gso_segs from CGROUP_SKB",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 164, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "read gso_segs from CGROUP_SKB",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 97, "dst": 1, "src": 1, "off": 164, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "write gso_segs from CGROUP_SKB",
+    "result": "REJECT",
+    "result_unpriv": "REJECT",
+    "errstr": "invalid bpf_context access off=164 size=4",
+    "prog_type": 8,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 99, "dst": 1, "src": 0, "off": 164, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "read gso_segs from CLS",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 164, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "read gso_size from CGROUP_SKB",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 176, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "read gso_size from CGROUP_SKB",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 97, "dst": 1, "src": 1, "off": 176, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "write gso_size from CGROUP_SKB",
+    "result": "REJECT",
+    "result_unpriv": "REJECT",
+    "errstr": "invalid bpf_context access off=176 size=4",
+    "prog_type": 8,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 99, "dst": 1, "src": 0, "off": 176, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "read gso_size from CLS",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 176, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check wire_len is not readable by sockets",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 160, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check wire_len is readable by tc classifier",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 160, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check wire_len is not writable by tc classifier",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "errstr_unpriv": "R1 leaks addr",
+    "prog_type": 3,
+    "insns": [
+      {"code": 99, "dst": 1, "src": 1, "off": 160, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "pkt > pkt_end taken check",
+    "result": "ACCEPT",
+    "prog_type": 14,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 80, "imm": 0},
+      {"code": 97, "dst": 4, "src": 1, "off": 76, "imm": 0},
+      {"code": 191, "dst": 3, "src": 4, "off": 0, "imm": 0},
+      {"code": 7, "dst": 3, "src": 0, "off": 0, "imm": 42},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 45, "dst": 3, "src": 2, "off": 2, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": 14},
+      {"code": 191, "dst": 1, "src": 4, "off": 0, "imm": 0},
+      {"code": 45, "dst": 3, "src": 2, "off": 1, "imm": 0},
+      {"code": 105, "dst": 2, "src": 1, "off": 9, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "pkt_end < pkt taken check",
+    "result": "ACCEPT",
+    "prog_type": 14,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 80, "imm": 0},
+      {"code": 97, "dst": 4, "src": 1, "off": 76, "imm": 0},
+      {"code": 191, "dst": 3, "src": 4, "off": 0, "imm": 0},
+      {"code": 7, "dst": 3, "src": 0, "off": 0, "imm": 42},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 45, "dst": 3, "src": 2, "off": 2, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": 14},
+      {"code": 191, "dst": 1, "src": 4, "off": 0, "imm": 0},
+      {"code": 173, "dst": 2, "src": 3, "off": 1, "imm": 0},
+      {"code": 105, "dst": 2, "src": 1, "off": 9, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

@@ -1,0 +1,104 @@
+[
+  {
+    "name": "DIV32 overflow, check 1",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 180, "dst": 1, "src": 0, "off": 0, "imm": -1},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": -2147483648},
+      {"code": 60, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "DIV32 overflow, check 2",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": -2147483648},
+      {"code": 52, "dst": 0, "src": 0, "off": 0, "imm": -1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "DIV64 overflow, check 1",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": -1},
+      {"code": 24, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": -2147483648},
+      {"code": 63, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 29, "dst": 0, "src": 2, "off": 1, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "DIV64 overflow, check 2",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": -2147483648},
+      {"code": 55, "dst": 1, "src": 0, "off": 0, "imm": -1},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 29, "dst": 0, "src": 1, "off": 1, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "MOD32 overflow, check 1",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 180, "dst": 1, "src": 0, "off": 0, "imm": -1},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": -2147483648},
+      {"code": 156, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "MOD32 overflow, check 2",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": -2147483648},
+      {"code": 148, "dst": 0, "src": 0, "off": 0, "imm": -1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "MOD64 overflow, check 1",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": -1},
+      {"code": 24, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": -2147483648},
+      {"code": 191, "dst": 3, "src": 2, "off": 0, "imm": 0},
+      {"code": 159, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 93, "dst": 3, "src": 2, "off": 1, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "MOD64 overflow, check 2",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 24, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": -2147483648},
+      {"code": 191, "dst": 3, "src": 2, "off": 0, "imm": 0},
+      {"code": 151, "dst": 2, "src": 0, "off": 0, "imm": -1},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 93, "dst": 3, "src": 2, "off": 1, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

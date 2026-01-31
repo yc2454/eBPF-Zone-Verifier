@@ -1,0 +1,351 @@
+[
+  {
+    "name": "valid 1,2,4,8-byte reads from bpf_sk_lookup",
+    "result": "ACCEPT",
+    "prog_type": 30,
+    "expected_attach_type": 36,
+    "insns": [
+      {"code": 113, "dst": 0, "src": 1, "off": 8, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 9, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 10, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 11, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 8, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 10, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 8, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 12, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 13, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 14, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 15, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 12, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 14, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 12, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 16, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 17, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 18, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 19, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 16, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 18, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 16, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 20, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 21, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 22, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 23, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 24, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 25, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 26, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 27, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 28, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 29, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 30, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 31, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 32, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 33, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 34, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 35, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 20, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 22, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 24, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 26, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 28, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 30, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 32, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 34, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 20, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 24, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 28, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 32, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 36, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 37, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 38, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 39, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 36, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 38, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 36, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 40, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 41, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 42, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 43, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 40, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 42, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 40, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 44, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 45, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 46, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 47, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 48, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 49, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 50, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 51, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 52, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 53, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 54, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 55, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 56, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 57, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 58, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 59, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 44, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 46, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 48, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 50, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 52, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 54, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 56, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 58, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 44, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 48, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 52, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 56, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 60, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 61, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 62, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 63, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 60, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 62, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 60, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid 8-byte read from bpf_sk_lookup family field",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 30,
+    "expected_attach_type": 36,
+    "insns": [
+      {"code": 121, "dst": 0, "src": 1, "off": 8, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid 8-byte read from bpf_sk_lookup protocol field",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 30,
+    "expected_attach_type": 36,
+    "flags": 1,
+    "insns": [
+      {"code": 121, "dst": 0, "src": 1, "off": 12, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid 8-byte read from bpf_sk_lookup remote_ip4 field",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 30,
+    "expected_attach_type": 36,
+    "insns": [
+      {"code": 121, "dst": 0, "src": 1, "off": 16, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid 8-byte read from bpf_sk_lookup remote_ip6 field",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 30,
+    "expected_attach_type": 36,
+    "flags": 1,
+    "insns": [
+      {"code": 121, "dst": 0, "src": 1, "off": 20, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid 8-byte read from bpf_sk_lookup remote_port field",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 30,
+    "expected_attach_type": 36,
+    "flags": 1,
+    "insns": [
+      {"code": 121, "dst": 0, "src": 1, "off": 36, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid 8-byte read from bpf_sk_lookup local_ip4 field",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 30,
+    "expected_attach_type": 36,
+    "insns": [
+      {"code": 121, "dst": 0, "src": 1, "off": 40, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid 8-byte read from bpf_sk_lookup local_ip6 field",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 30,
+    "expected_attach_type": 36,
+    "flags": 1,
+    "insns": [
+      {"code": 121, "dst": 0, "src": 1, "off": 44, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid 8-byte read from bpf_sk_lookup local_port field",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 30,
+    "expected_attach_type": 36,
+    "flags": 1,
+    "insns": [
+      {"code": 121, "dst": 0, "src": 1, "off": 60, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid 4-byte read from bpf_sk_lookup sk field",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 30,
+    "expected_attach_type": 36,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid 2-byte read from bpf_sk_lookup sk field",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 30,
+    "expected_attach_type": 36,
+    "insns": [
+      {"code": 105, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid 1-byte read from bpf_sk_lookup sk field",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 30,
+    "expected_attach_type": 36,
+    "insns": [
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid 4-byte read past end of bpf_sk_lookup",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 30,
+    "expected_attach_type": 36,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 64, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid 4-byte unaligned read from bpf_sk_lookup at odd offset",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 30,
+    "expected_attach_type": 36,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 1, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid 4-byte unaligned read from bpf_sk_lookup at even offset",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 30,
+    "expected_attach_type": 36,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 2, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid 8-byte write to bpf_sk_lookup",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 30,
+    "expected_attach_type": 36,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": -889304559},
+      {"code": 123, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid 4-byte write to bpf_sk_lookup",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 30,
+    "expected_attach_type": 36,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": -889304559},
+      {"code": 99, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid 2-byte write to bpf_sk_lookup",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 30,
+    "expected_attach_type": 36,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": -889304559},
+      {"code": 107, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid 1-byte write to bpf_sk_lookup",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 30,
+    "expected_attach_type": 36,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": -889304559},
+      {"code": 115, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid 4-byte write past end of bpf_sk_lookup",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 30,
+    "expected_attach_type": 36,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": -889304559},
+      {"code": 99, "dst": 1, "src": 0, "off": 64, "imm": 0},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

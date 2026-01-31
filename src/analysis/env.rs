@@ -18,7 +18,6 @@ pub enum VerificationError {
     UnsafeGenericLoad { pc: usize, base: Reg, off: i16 },
     UnsafeMemoryRegionLoad { pc: usize, base: Reg, off: i16 },
     UnsafeCtxAccess { pc: usize, off: i16, size: MemSize },
-    UnsafeCtxStore { pc: usize, off: i16, size: MemSize },
     UnsafeGenericStore { pc: usize, base: Reg, off: i16 },
     UnsafeSocketAccess { pc: usize, off: i16, size: MemSize },
     DbmInconsistent { pc: usize },
@@ -34,7 +33,8 @@ pub enum VerificationError {
     BackEdge { pc: usize, target: usize },
     MaxCallDepthExceeded { pc: usize },
     MisalignedAccess { pc: usize, off: i64 },
-    InvalidReturnCode { pc: usize }
+    InvalidReturnCode { pc: usize },
+    MisalignedPacketAccess { pc: usize, off: i16, size: MemSize },
 }
 
 impl VerificationError {
@@ -63,9 +63,6 @@ impl VerificationError {
             }
             VerificationError::UnsafeGenericLoad { pc, base, off } => {
                 format!("Unsafe generic load at pc {}: base {:?}, offset {}", pc, base, off)
-            }
-            VerificationError::UnsafeCtxStore { pc, off, size } => {
-                format!("Unsafe ctx store at pc {}: offset {}, size {:?}", pc, off, size)
             }
             VerificationError::UnsafeCtxAccess { pc, off, size } => {
                 format!("Unsafe ctx access at pc {}: offset {}, size {:?}", pc, off, size)
@@ -123,6 +120,9 @@ impl VerificationError {
             }
             VerificationError::InvalidReturnCode { pc } => {
                 format!("Invalid return code at pc {}", pc)
+            }
+            VerificationError::MisalignedPacketAccess { pc, off, size } => {
+                format!("Misaligned packet access at pc {}: offset {}, size {:?}", pc, off, size)
             }
         }
     }

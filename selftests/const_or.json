@@ -1,0 +1,62 @@
+[
+  {
+    "name": "constant register |= constant should keep constant type",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -48},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 34},
+      {"code": 71, "dst": 2, "src": 0, "off": 0, "imm": 13},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "constant register |= constant should not bypass stack boundary checks",
+    "result": "REJECT",
+    "errstr": "invalid indirect access to stack R1 off=-48 size=58",
+    "prog_type": 5,
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -48},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 34},
+      {"code": 71, "dst": 2, "src": 0, "off": 0, "imm": 24},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "constant register |= constant register should keep constant type",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -48},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 34},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 13},
+      {"code": 79, "dst": 2, "src": 4, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "constant register |= constant register should not bypass stack boundary checks",
+    "result": "REJECT",
+    "errstr": "invalid indirect access to stack R1 off=-48 size=58",
+    "prog_type": 5,
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -48},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 34},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 24},
+      {"code": 79, "dst": 2, "src": 4, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

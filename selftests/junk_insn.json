@@ -1,0 +1,45 @@
+[
+  {
+    "name": "junk insn",
+    "result": "REJECT",
+    "errstr": "unknown opcode 00",
+    "insns": [
+    ]
+  },
+  {
+    "name": "junk insn2",
+    "result": "REJECT",
+    "errstr": "BPF_LDX uses reserved fields",
+    "insns": [
+      {"code": 1, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "junk insn3",
+    "result": "REJECT",
+    "errstr": "unknown opcode ff",
+    "insns": [
+      {"code": 255, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "junk insn4",
+    "result": "REJECT",
+    "errstr": "unknown opcode ff",
+    "insns": [
+      {"code": 255, "dst": 15, "src": 15, "off": -1, "imm": -1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "junk insn5",
+    "result": "REJECT",
+    "errstr": "BPF_ALU uses reserved fields",
+    "insns": [
+      {"code": 127, "dst": 15, "src": 15, "off": -1, "imm": -1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

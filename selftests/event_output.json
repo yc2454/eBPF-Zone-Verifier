@@ -1,0 +1,213 @@
+[
+  {
+    "name": "perfevent for sockops",
+    "result": "ACCEPT",
+    "prog_type": 13,
+    "fixups": {
+    "fixup_map_event_output": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 2, "off": -8, "imm": 0},
+      {"code": 191, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 25},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "perfevent for tc",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_event_output": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 2, "off": -8, "imm": 0},
+      {"code": 191, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 25},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "perfevent for lwt out",
+    "result": "ACCEPT",
+    "prog_type": 11,
+    "fixups": {
+    "fixup_map_event_output": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 2, "off": -8, "imm": 0},
+      {"code": 191, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 25},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "perfevent for xdp",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "fixups": {
+    "fixup_map_event_output": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 2, "off": -8, "imm": 0},
+      {"code": 191, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 25},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "perfevent for socket filter",
+    "result": "ACCEPT",
+    "prog_type": 1,
+    "fixups": {
+    "fixup_map_event_output": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 2, "off": -8, "imm": 0},
+      {"code": 191, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 25},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "perfevent for sk_skb",
+    "result": "ACCEPT",
+    "prog_type": 14,
+    "fixups": {
+    "fixup_map_event_output": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 2, "off": -8, "imm": 0},
+      {"code": 191, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 25},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "perfevent for cgroup skb",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "fixups": {
+    "fixup_map_event_output": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 2, "off": -8, "imm": 0},
+      {"code": 191, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 25},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "perfevent for cgroup dev",
+    "result": "ACCEPT",
+    "prog_type": 15,
+    "fixups": {
+    "fixup_map_event_output": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 2, "off": -8, "imm": 0},
+      {"code": 191, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 25},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "perfevent for cgroup sysctl",
+    "result": "ACCEPT",
+    "prog_type": 23,
+    "fixups": {
+    "fixup_map_event_output": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 2, "off": -8, "imm": 0},
+      {"code": 191, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 25},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "perfevent for cgroup sockopt",
+    "result": "ACCEPT",
+    "prog_type": 25,
+    "expected_attach_type": 22,
+    "fixups": {
+    "fixup_map_event_output": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 5},
+      {"code": 123, "dst": 10, "src": 2, "off": -8, "imm": 0},
+      {"code": 191, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 25},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

@@ -1,0 +1,41 @@
+[
+  {
+    "name": "d_path accept",
+    "result": "ACCEPT",
+    "prog_type": 26,
+    "expected_attach_type": 24,
+    "kfunc": "dentry_open",
+    "insns": [
+      {"code": 97, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 183, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 2, "src": 6, "off": 0, "imm": 0},
+      {"code": 24, "dst": 3, "src": 0, "off": 0, "imm": 8},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 147},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "d_path reject",
+    "result": "REJECT",
+    "errstr": "helper call is not allowed in probe",
+    "prog_type": 26,
+    "expected_attach_type": 24,
+    "kfunc": "d_path",
+    "insns": [
+      {"code": 97, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 183, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 2, "src": 6, "off": 0, "imm": 0},
+      {"code": 24, "dst": 3, "src": 0, "off": 0, "imm": 8},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 147},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

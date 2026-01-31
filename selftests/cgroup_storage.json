@@ -1,0 +1,260 @@
+[
+  {
+    "name": "valid cgroup storage access",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "fixups": {
+    "fixup_cgroup_storage": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 81},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid cgroup storage access 1",
+    "result": "REJECT",
+    "errstr": "cannot pass map_type 1 into func bpf_get_local_storage",
+    "prog_type": 8,
+    "fixups": {
+    "fixup_map_hash_8b": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 81},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid cgroup storage access 2",
+    "result": "REJECT",
+    "errstr": "fd 1 is not pointing to valid bpf_map",
+    "prog_type": 8,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 81},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid cgroup storage access 3",
+    "result": "REJECT",
+    "errstr": "invalid access to map value, value_size=64 off=256 size=4",
+    "prog_type": 8,
+    "fixups": {
+    "fixup_cgroup_storage": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 81},
+      {"code": 97, "dst": 1, "src": 0, "off": 256, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid cgroup storage access 4",
+    "result": "REJECT",
+    "errstr": "invalid access to map value, value_size=64 off=-2 size=4",
+    "prog_type": 8,
+    "flags": 1,
+    "fixups": {
+    "fixup_cgroup_storage": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 81},
+      {"code": 97, "dst": 1, "src": 0, "off": -2, "imm": 0},
+      {"code": 191, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid cgroup storage access 5",
+    "result": "REJECT",
+    "errstr": "get_local_storage() doesn't support non-zero flags",
+    "prog_type": 8,
+    "fixups": {
+    "fixup_cgroup_storage": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 81},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid cgroup storage access 6",
+    "result": "REJECT",
+    "errstr": "get_local_storage() doesn't support non-zero flags",
+    "errstr_unpriv": "R2 leaks addr into helper function",
+    "prog_type": 8,
+    "fixups": {
+    "fixup_cgroup_storage": [1]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 81},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "valid per-cpu cgroup storage access",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "fixups": {
+    "fixup_percpu_cgroup_storage": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 81},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid per-cpu cgroup storage access 1",
+    "result": "REJECT",
+    "errstr": "cannot pass map_type 1 into func bpf_get_local_storage",
+    "prog_type": 8,
+    "fixups": {
+    "fixup_map_hash_8b": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 81},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid per-cpu cgroup storage access 2",
+    "result": "REJECT",
+    "errstr": "fd 1 is not pointing to valid bpf_map",
+    "prog_type": 8,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 81},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid per-cpu cgroup storage access 3",
+    "result": "REJECT",
+    "errstr": "invalid access to map value, value_size=64 off=256 size=4",
+    "prog_type": 8,
+    "fixups": {
+    "fixup_percpu_cgroup_storage": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 81},
+      {"code": 97, "dst": 1, "src": 0, "off": 256, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid per-cpu cgroup storage access 4",
+    "result": "REJECT",
+    "errstr": "invalid access to map value, value_size=64 off=-2 size=4",
+    "prog_type": 8,
+    "flags": 1,
+    "fixups": {
+    "fixup_cgroup_storage": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 81},
+      {"code": 97, "dst": 1, "src": 0, "off": -2, "imm": 0},
+      {"code": 191, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid per-cpu cgroup storage access 5",
+    "result": "REJECT",
+    "errstr": "get_local_storage() doesn't support non-zero flags",
+    "prog_type": 8,
+    "fixups": {
+    "fixup_percpu_cgroup_storage": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 7},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 81},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid per-cpu cgroup storage access 6",
+    "result": "REJECT",
+    "errstr": "get_local_storage() doesn't support non-zero flags",
+    "errstr_unpriv": "R2 leaks addr into helper function",
+    "prog_type": 8,
+    "fixups": {
+    "fixup_percpu_cgroup_storage": [1]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 81},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

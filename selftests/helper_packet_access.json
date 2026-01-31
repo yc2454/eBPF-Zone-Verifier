@@ -1,0 +1,457 @@
+[
+  {
+    "name": "helper access to packet: test1, valid packet_ptr range",
+    "result": "ACCEPT",
+    "result_unpriv": "ACCEPT",
+    "prog_type": 6,
+    "fixups": {
+    "fixup_map_hash_8b": [5]
+    },
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 1, "src": 3, "off": 5, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 3, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to packet: test2, unchecked packet_ptr",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 6,
+    "fixups": {
+    "fixup_map_hash_8b": [1]
+    },
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to packet: test3, variable add",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "fixups": {
+    "fixup_map_hash_8b": [11]
+    },
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 4, "src": 3, "off": 10, "imm": 0},
+      {"code": 113, "dst": 5, "src": 2, "off": 0, "imm": 0},
+      {"code": 191, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 15, "dst": 4, "src": 5, "off": 0, "imm": 0},
+      {"code": 191, "dst": 5, "src": 4, "off": 0, "imm": 0},
+      {"code": 7, "dst": 5, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 5, "src": 3, "off": 4, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 4, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to packet: test4, packet_ptr with bad range",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 6,
+    "fixups": {
+    "fixup_map_hash_8b": [7]
+    },
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": 4},
+      {"code": 45, "dst": 4, "src": 3, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to packet: test5, packet_ptr with too short range",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 6,
+    "fixups": {
+    "fixup_map_hash_8b": [6]
+    },
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": 7},
+      {"code": 45, "dst": 4, "src": 3, "off": 3, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to packet: test6, cls valid packet_ptr range",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_hash_8b": [5]
+    },
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 1, "src": 3, "off": 5, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 3, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to packet: test7, cls unchecked packet_ptr",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_hash_8b": [1]
+    },
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to packet: test8, cls variable add",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_hash_8b": [11]
+    },
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 4, "src": 3, "off": 10, "imm": 0},
+      {"code": 113, "dst": 5, "src": 2, "off": 0, "imm": 0},
+      {"code": 191, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 15, "dst": 4, "src": 5, "off": 0, "imm": 0},
+      {"code": 191, "dst": 5, "src": 4, "off": 0, "imm": 0},
+      {"code": 7, "dst": 5, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 5, "src": 3, "off": 4, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 4, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to packet: test9, cls packet_ptr with bad range",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_hash_8b": [7]
+    },
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": 4},
+      {"code": 45, "dst": 4, "src": 3, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to packet: test10, cls packet_ptr with too short range",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_hash_8b": [6]
+    },
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": 7},
+      {"code": 45, "dst": 4, "src": 3, "off": 3, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to packet: test11, cls unsuitable helper 1",
+    "result": "REJECT",
+    "errstr": "helper access to the packet",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 6, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 7, "src": 1, "off": 80, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 7, "dst": 3, "src": 0, "off": 0, "imm": 7},
+      {"code": 45, "dst": 3, "src": 7, "off": 4, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 42},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 9},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to packet: test12, cls unsuitable helper 2",
+    "result": "REJECT",
+    "errstr": "helper access to the packet",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 6, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 7, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 6, "src": 7, "off": 3, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 4},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 26},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to packet: test13, cls helper ok",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 6, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 7, "src": 1, "off": 80, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 45, "dst": 1, "src": 7, "off": 6, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 28},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to packet: test14, cls helper ok sub",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 6, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 7, "src": 1, "off": 80, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 45, "dst": 1, "src": 7, "off": 6, "imm": 0},
+      {"code": 23, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 28},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to packet: test15, cls helper fail sub",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 6, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 7, "src": 1, "off": 80, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 45, "dst": 1, "src": 7, "off": 6, "imm": 0},
+      {"code": 23, "dst": 1, "src": 0, "off": 0, "imm": 12},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 28},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to packet: test16, cls helper fail range 1",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 6, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 7, "src": 1, "off": 80, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 45, "dst": 1, "src": 7, "off": 6, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 8},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 28},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to packet: test17, cls helper fail range 2",
+    "result": "REJECT",
+    "errstr": "R2 min value is negative",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 6, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 7, "src": 1, "off": 80, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 45, "dst": 1, "src": 7, "off": 6, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -9},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 28},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to packet: test18, cls helper fail range 3",
+    "result": "REJECT",
+    "errstr": "R2 min value is negative",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 6, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 7, "src": 1, "off": 80, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 45, "dst": 1, "src": 7, "off": 6, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -1},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 28},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to packet: test19, cls helper range zero",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 6, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 7, "src": 1, "off": 80, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 45, "dst": 1, "src": 7, "off": 6, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 28},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to packet: test20, pkt end as input",
+    "result": "REJECT",
+    "errstr": "R1 type=pkt_end expected=fp",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 6, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 7, "src": 1, "off": 80, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 45, "dst": 1, "src": 7, "off": 6, "imm": 0},
+      {"code": 191, "dst": 1, "src": 7, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 28},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to packet: test21, wrong reg",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 6, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 7, "src": 1, "off": 80, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 45, "dst": 1, "src": 7, "off": 6, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 28},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

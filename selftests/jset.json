@@ -1,0 +1,136 @@
+[
+  {
+    "name": "jset: functional",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 121, "dst": 7, "src": 2, "off": 0, "imm": 0},
+      {"code": 24, "dst": 8, "src": 0, "off": 0, "imm": 1},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": -2147483648},
+      {"code": 77, "dst": 7, "src": 8, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 8, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 1073741824},
+      {"code": 77, "dst": 7, "src": 8, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 69, "dst": 7, "src": 0, "off": 1, "imm": -1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 69, "dst": 7, "src": 0, "off": 1, "imm": -2147483648},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "jset: sign-extend",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 121, "dst": 7, "src": 2, "off": 0, "imm": 0},
+      {"code": 69, "dst": 7, "src": 0, "off": 1, "imm": -2147483648},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "jset: known const compare",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R9 !read_ok",
+    "prog_type": 1,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 69, "dst": 0, "src": 0, "off": 1, "imm": 1},
+      {"code": 113, "dst": 8, "src": 9, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "jset: known const compare bad",
+    "result": "REJECT",
+    "result_unpriv": "REJECT",
+    "errstr": "!read_ok",
+    "errstr_unpriv": "!read_ok",
+    "prog_type": 1,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 69, "dst": 0, "src": 0, "off": 1, "imm": 1},
+      {"code": 113, "dst": 8, "src": 9, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "jset: unknown const compare taken",
+    "result": "REJECT",
+    "result_unpriv": "REJECT",
+    "errstr": "!read_ok",
+    "errstr_unpriv": "!read_ok",
+    "prog_type": 1,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 69, "dst": 0, "src": 0, "off": 1, "imm": 1},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 113, "dst": 8, "src": 9, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "jset: unknown const compare not taken",
+    "result": "REJECT",
+    "result_unpriv": "REJECT",
+    "errstr": "!read_ok",
+    "errstr_unpriv": "!read_ok",
+    "prog_type": 1,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 69, "dst": 0, "src": 0, "off": 1, "imm": 1},
+      {"code": 113, "dst": 8, "src": 9, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "jset: half-known const compare",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R9 !read_ok",
+    "prog_type": 1,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 71, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 69, "dst": 0, "src": 0, "off": 1, "imm": 3},
+      {"code": 113, "dst": 8, "src": 9, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "jset: range",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R9 !read_ok",
+    "prog_type": 1,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 255},
+      {"code": 69, "dst": 1, "src": 0, "off": 3, "imm": 240},
+      {"code": 165, "dst": 1, "src": 0, "off": 1, "imm": 16},
+      {"code": 113, "dst": 8, "src": 9, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 69, "dst": 1, "src": 0, "off": 1, "imm": 16},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 53, "dst": 1, "src": 0, "off": 1, "imm": 16},
+      {"code": 113, "dst": 8, "src": 9, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

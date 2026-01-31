@@ -1,0 +1,107 @@
+[
+  {
+    "name": "ARG_PTR_TO_LONG uninitialized",
+    "result": "REJECT",
+    "errstr": "invalid indirect read from stack R4 off -16+0 size 8",
+    "prog_type": 23,
+    "insns": [
+      {"code": 191, "dst": 7, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 7, "src": 0, "off": 0, "imm": -8},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 3158070},
+      {"code": 123, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 7, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 7, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 4, "src": 7, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 106},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "ARG_PTR_TO_LONG half-uninitialized",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "invalid indirect read from stack R4 off -16+4 size 8",
+    "insns": [
+      {"code": 191, "dst": 7, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 7, "src": 0, "off": 0, "imm": -8},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 3158070},
+      {"code": 123, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 7, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 7, "src": 0, "off": 0, "imm": -8},
+      {"code": 99, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 4, "src": 7, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 106},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "ARG_PTR_TO_LONG misaligned",
+    "result": "REJECT",
+    "errstr": "misaligned stack access off (0x0; 0x0)+-20+0 size 8",
+    "prog_type": 23,
+    "insns": [
+      {"code": 191, "dst": 7, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 7, "src": 0, "off": 0, "imm": -8},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 3158070},
+      {"code": 123, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 7, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 7, "src": 0, "off": 0, "imm": -12},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 99, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 7, "src": 0, "off": 4, "imm": 0},
+      {"code": 191, "dst": 4, "src": 7, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 106},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "ARG_PTR_TO_LONG size < sizeof(long)",
+    "result": "REJECT",
+    "errstr": "invalid indirect access to stack R4 off=-4 size=8",
+    "prog_type": 23,
+    "insns": [
+      {"code": 191, "dst": 7, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 7, "src": 0, "off": 0, "imm": -16},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 3158070},
+      {"code": 123, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 7, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 7, "src": 0, "off": 0, "imm": 12},
+      {"code": 99, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 4, "src": 7, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 106},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "ARG_PTR_TO_LONG initialized",
+    "result": "ACCEPT",
+    "prog_type": 23,
+    "insns": [
+      {"code": 191, "dst": 7, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 7, "src": 0, "off": 0, "imm": -8},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 3158070},
+      {"code": 123, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 7, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 7, "src": 0, "off": 0, "imm": -8},
+      {"code": 123, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 4, "src": 7, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 106},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

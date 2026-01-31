@@ -50,6 +50,7 @@ pub fn is_state_visited(
     if aux_data.is_none() {
         return false;
     }
+
     let live_regs = &env.insn_aux_data[pc].live_regs;
 
     // 2. Check against tracked state for this PC

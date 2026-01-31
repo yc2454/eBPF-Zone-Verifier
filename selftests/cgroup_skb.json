@@ -1,0 +1,152 @@
+[
+  {
+    "name": "direct packet read test#1 for CGROUP_SKB",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "invalid bpf_context access off=76 size=4",
+    "prog_type": 8,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 97, "dst": 4, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 5, "src": 1, "off": 4, "imm": 0},
+      {"code": 97, "dst": 6, "src": 1, "off": 8, "imm": 0},
+      {"code": 99, "dst": 1, "src": 6, "off": 8, "imm": 0},
+      {"code": 97, "dst": 7, "src": 1, "off": 12, "imm": 0},
+      {"code": 97, "dst": 8, "src": 1, "off": 16, "imm": 0},
+      {"code": 97, "dst": 9, "src": 1, "off": 20, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 0, "src": 3, "off": 1, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet read test#2 for CGROUP_SKB",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 97, "dst": 4, "src": 1, "off": 24, "imm": 0},
+      {"code": 97, "dst": 5, "src": 1, "off": 28, "imm": 0},
+      {"code": 97, "dst": 6, "src": 1, "off": 32, "imm": 0},
+      {"code": 99, "dst": 1, "src": 6, "off": 32, "imm": 0},
+      {"code": 97, "dst": 7, "src": 1, "off": 36, "imm": 0},
+      {"code": 97, "dst": 8, "src": 1, "off": 44, "imm": 0},
+      {"code": 97, "dst": 9, "src": 1, "off": 68, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet read test#3 for CGROUP_SKB",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 97, "dst": 4, "src": 1, "off": 48, "imm": 0},
+      {"code": 97, "dst": 5, "src": 1, "off": 52, "imm": 0},
+      {"code": 97, "dst": 6, "src": 1, "off": 56, "imm": 0},
+      {"code": 97, "dst": 7, "src": 1, "off": 60, "imm": 0},
+      {"code": 97, "dst": 8, "src": 1, "off": 64, "imm": 0},
+      {"code": 97, "dst": 9, "src": 1, "off": 84, "imm": 0},
+      {"code": 99, "dst": 1, "src": 4, "off": 48, "imm": 0},
+      {"code": 99, "dst": 1, "src": 5, "off": 52, "imm": 0},
+      {"code": 99, "dst": 1, "src": 6, "off": 56, "imm": 0},
+      {"code": 99, "dst": 1, "src": 7, "off": 60, "imm": 0},
+      {"code": 99, "dst": 1, "src": 8, "off": 64, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet read test#4 for CGROUP_SKB",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 88, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 92, "imm": 0},
+      {"code": 97, "dst": 4, "src": 1, "off": 96, "imm": 0},
+      {"code": 97, "dst": 5, "src": 1, "off": 100, "imm": 0},
+      {"code": 97, "dst": 5, "src": 1, "off": 104, "imm": 0},
+      {"code": 97, "dst": 5, "src": 1, "off": 108, "imm": 0},
+      {"code": 97, "dst": 5, "src": 1, "off": 112, "imm": 0},
+      {"code": 97, "dst": 6, "src": 1, "off": 116, "imm": 0},
+      {"code": 97, "dst": 6, "src": 1, "off": 120, "imm": 0},
+      {"code": 97, "dst": 6, "src": 1, "off": 124, "imm": 0},
+      {"code": 97, "dst": 6, "src": 1, "off": 128, "imm": 0},
+      {"code": 97, "dst": 7, "src": 1, "off": 132, "imm": 0},
+      {"code": 97, "dst": 8, "src": 1, "off": 136, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid access of tc_classid for CGROUP_SKB",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 8,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 72, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid access of data_meta for CGROUP_SKB",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 8,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 140, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid access of flow_keys for CGROUP_SKB",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 8,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 144, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid write access to napi_id for CGROUP_SKB",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 8,
+    "insns": [
+      {"code": 97, "dst": 9, "src": 1, "off": 84, "imm": 0},
+      {"code": 99, "dst": 1, "src": 9, "off": 84, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "write tstamp from CGROUP_SKB",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "invalid bpf_context access off=152 size=8",
+    "prog_type": 8,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 1, "src": 0, "off": 152, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "read tstamp from CGROUP_SKB",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 0, "src": 1, "off": 152, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

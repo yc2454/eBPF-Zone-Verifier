@@ -1,0 +1,587 @@
+[
+  {
+    "name": "pkt_end - pkt_start is allowed",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 80, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 31, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test1",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 0, "src": 3, "off": 1, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test2",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 97, "dst": 4, "src": 1, "off": 80, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 76, "imm": 0},
+      {"code": 191, "dst": 5, "src": 3, "off": 0, "imm": 0},
+      {"code": 7, "dst": 5, "src": 0, "off": 0, "imm": 14},
+      {"code": 45, "dst": 5, "src": 4, "off": 15, "imm": 0},
+      {"code": 113, "dst": 0, "src": 3, "off": 7, "imm": 0},
+      {"code": 113, "dst": 4, "src": 3, "off": 12, "imm": 0},
+      {"code": 39, "dst": 4, "src": 0, "off": 0, "imm": 14},
+      {"code": 97, "dst": 3, "src": 1, "off": 76, "imm": 0},
+      {"code": 15, "dst": 3, "src": 4, "off": 0, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 103, "dst": 2, "src": 0, "off": 0, "imm": 49},
+      {"code": 119, "dst": 2, "src": 0, "off": 0, "imm": 49},
+      {"code": 15, "dst": 3, "src": 2, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 3, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": 8},
+      {"code": 97, "dst": 1, "src": 1, "off": 80, "imm": 0},
+      {"code": 45, "dst": 2, "src": 1, "off": 1, "imm": 0},
+      {"code": 113, "dst": 1, "src": 3, "off": 4, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test3",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access off=76",
+    "prog_type": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test4 (write)",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 0, "src": 3, "off": 1, "imm": 0},
+      {"code": 115, "dst": 2, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test5 (pkt_end >= reg, good access)",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 61, "dst": 3, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test6 (pkt_end >= reg, bad access)",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 61, "dst": 3, "src": 0, "off": 3, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test7 (pkt_end >= reg, both accesses)",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 61, "dst": 3, "src": 0, "off": 3, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test8 (double test, variant 1)",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 61, "dst": 3, "src": 0, "off": 4, "imm": 0},
+      {"code": 45, "dst": 0, "src": 3, "off": 1, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test9 (double test, variant 2)",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 61, "dst": 3, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 45, "dst": 0, "src": 3, "off": 1, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test10 (write invalid)",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 0, "src": 3, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 115, "dst": 2, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test11 (shift, good access)",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 22},
+      {"code": 45, "dst": 0, "src": 3, "off": 8, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 144},
+      {"code": 191, "dst": 5, "src": 3, "off": 0, "imm": 0},
+      {"code": 7, "dst": 5, "src": 0, "off": 0, "imm": 23},
+      {"code": 119, "dst": 5, "src": 0, "off": 0, "imm": 3},
+      {"code": 191, "dst": 6, "src": 2, "off": 0, "imm": 0},
+      {"code": 15, "dst": 6, "src": 5, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test12 (and, good access)",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 22},
+      {"code": 45, "dst": 0, "src": 3, "off": 8, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 144},
+      {"code": 191, "dst": 5, "src": 3, "off": 0, "imm": 0},
+      {"code": 7, "dst": 5, "src": 0, "off": 0, "imm": 23},
+      {"code": 87, "dst": 5, "src": 0, "off": 0, "imm": 15},
+      {"code": 191, "dst": 6, "src": 2, "off": 0, "imm": 0},
+      {"code": 15, "dst": 6, "src": 5, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test13 (branches, good access)",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 22},
+      {"code": 45, "dst": 0, "src": 3, "off": 13, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 8, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 1},
+      {"code": 45, "dst": 3, "src": 4, "off": 2, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 14},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 24},
+      {"code": 191, "dst": 5, "src": 3, "off": 0, "imm": 0},
+      {"code": 7, "dst": 5, "src": 0, "off": 0, "imm": 23},
+      {"code": 87, "dst": 5, "src": 0, "off": 0, "imm": 15},
+      {"code": 191, "dst": 6, "src": 2, "off": 0, "imm": 0},
+      {"code": 15, "dst": 6, "src": 5, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test14 (pkt_ptr += 0, CONST_IMM, good access)",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 22},
+      {"code": 45, "dst": 0, "src": 3, "off": 7, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 12},
+      {"code": 119, "dst": 5, "src": 0, "off": 0, "imm": 4},
+      {"code": 191, "dst": 6, "src": 2, "off": 0, "imm": 0},
+      {"code": 15, "dst": 6, "src": 5, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test15 (spill with xadd)",
+    "result": "REJECT",
+    "errstr": "R2 invalid mem access 'inv'",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 0, "src": 3, "off": 8, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 4096},
+      {"code": 191, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 123, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 219, "dst": 4, "src": 5, "off": 0, "imm": 0},
+      {"code": 121, "dst": 2, "src": 4, "off": 0, "imm": 0},
+      {"code": 99, "dst": 2, "src": 5, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test16 (arith on data_end)",
+    "result": "REJECT",
+    "errstr": "R3 pointer arithmetic on pkt_end",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 7, "dst": 3, "src": 0, "off": 0, "imm": 16},
+      {"code": 45, "dst": 0, "src": 3, "off": 1, "imm": 0},
+      {"code": 115, "dst": 2, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test17 (pruning, alignment)",
+    "result": "REJECT",
+    "errstr": "misaligned packet access off 2+(0x0; 0x0)+15+-4 size 4",
+    "prog_type": 3,
+    "flags": 2,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 97, "dst": 7, "src": 1, "off": 8, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 14},
+      {"code": 37, "dst": 7, "src": 0, "off": 4, "imm": 1},
+      {"code": 45, "dst": 0, "src": 3, "off": 1, "imm": 0},
+      {"code": 99, "dst": 0, "src": 0, "off": -4, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 5, "dst": 0, "src": 0, "off": -6, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test18 (imm += pkt_ptr, 1)",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 15, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 45, "dst": 0, "src": 3, "off": 1, "imm": 0},
+      {"code": 115, "dst": 2, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test19 (imm += pkt_ptr, 2)",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 0, "src": 3, "off": 3, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 4},
+      {"code": 15, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 115, "dst": 4, "src": 4, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test20 (x += pkt_ptr, 1)",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": -1},
+      {"code": 123, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 121, "dst": 0, "src": 10, "off": -8, "imm": 0},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 32767},
+      {"code": 191, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 15, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 191, "dst": 5, "src": 4, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": 32766},
+      {"code": 45, "dst": 4, "src": 3, "off": 1, "imm": 0},
+      {"code": 123, "dst": 5, "src": 4, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test21 (x += pkt_ptr, 2)",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 0, "src": 3, "off": 9, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": -1},
+      {"code": 123, "dst": 10, "src": 4, "off": -8, "imm": 0},
+      {"code": 121, "dst": 4, "src": 10, "off": -8, "imm": 0},
+      {"code": 87, "dst": 4, "src": 0, "off": 0, "imm": 32767},
+      {"code": 15, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 191, "dst": 5, "src": 4, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": 32766},
+      {"code": 45, "dst": 4, "src": 3, "off": 1, "imm": 0},
+      {"code": 123, "dst": 5, "src": 4, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test22 (x += pkt_ptr, 3)",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 123, "dst": 10, "src": 2, "off": -8, "imm": 0},
+      {"code": 123, "dst": 10, "src": 3, "off": -16, "imm": 0},
+      {"code": 121, "dst": 3, "src": 10, "off": -16, "imm": 0},
+      {"code": 45, "dst": 0, "src": 3, "off": 11, "imm": 0},
+      {"code": 121, "dst": 2, "src": 10, "off": -8, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": -1},
+      {"code": 219, "dst": 10, "src": 4, "off": -8, "imm": 0},
+      {"code": 121, "dst": 4, "src": 10, "off": -8, "imm": 0},
+      {"code": 119, "dst": 4, "src": 0, "off": 0, "imm": 49},
+      {"code": 15, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 4, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 45, "dst": 0, "src": 3, "off": 2, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 1},
+      {"code": 107, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test23 (x += pkt_ptr, 4)",
+    "result": "REJECT",
+    "errstr": "invalid access to packet, off=0 size=8, R5(id=2,off=0,r=0)",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 8, "imm": 0},
+      {"code": 123, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 121, "dst": 0, "src": 10, "off": -8, "imm": 0},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 65535},
+      {"code": 191, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 31},
+      {"code": 15, "dst": 0, "src": 4, "off": 0, "imm": 0},
+      {"code": 15, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 191, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 65534},
+      {"code": 45, "dst": 0, "src": 3, "off": 1, "imm": 0},
+      {"code": 123, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test24 (x += pkt_ptr, 5)",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": -1},
+      {"code": 123, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 121, "dst": 0, "src": 10, "off": -8, "imm": 0},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 255},
+      {"code": 191, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 64},
+      {"code": 15, "dst": 0, "src": 4, "off": 0, "imm": 0},
+      {"code": 15, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 191, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 32766},
+      {"code": 45, "dst": 0, "src": 3, "off": 1, "imm": 0},
+      {"code": 123, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test25 (marking on <, good access)",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 173, "dst": 0, "src": 3, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": -4, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test26 (marking on <, bad access)",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 173, "dst": 0, "src": 3, "off": 3, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": -3, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test27 (marking on <=, good access)",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 189, "dst": 3, "src": 0, "off": 1, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test28 (marking on <=, bad access)",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 189, "dst": 3, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": -4, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct packet access: test29 (reg > pkt_end in subprog)",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 97, "dst": 6, "src": 1, "off": 76, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 80, "imm": 0},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 7, "dst": 3, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 4},
+      {"code": 21, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 113, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 45, "dst": 3, "src": 2, "off": 1, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

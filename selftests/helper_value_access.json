@@ -1,0 +1,1091 @@
+[
+  {
+    "name": "helper access to map: full range",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 48},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to map: partial range",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 8},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to map: empty range",
+    "result": "REJECT",
+    "errstr": "invalid access to map value, value_size=48 off=0 size=0",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 6},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to map: out-of-bound range",
+    "result": "REJECT",
+    "errstr": "invalid access to map value, value_size=48 off=0 size=56",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 56},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to map: negative range",
+    "result": "REJECT",
+    "errstr": "R2 min value is negative",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to adjusted map (via const imm): full range",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 5, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 44},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to adjusted map (via const imm): partial range",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 5, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 8},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to adjusted map (via const imm): empty range",
+    "result": "REJECT",
+    "errstr": "invalid access to map value, value_size=48 off=4 size=0",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 6},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to adjusted map (via const imm): out-of-bound range",
+    "result": "REJECT",
+    "errstr": "invalid access to map value, value_size=48 off=4 size=52",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 5, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 52},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to adjusted map (via const imm): negative range (> adjustment)",
+    "result": "REJECT",
+    "errstr": "R2 min value is negative",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 5, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to adjusted map (via const imm): negative range (< adjustment)",
+    "result": "REJECT",
+    "errstr": "R2 min value is negative",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 5, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -1},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to adjusted map (via const reg): full range",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 4},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 44},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to adjusted map (via const reg): partial range",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 4},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 8},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to adjusted map (via const reg): empty range",
+    "result": "REJECT",
+    "errstr": "R1 min value is outside of the allowed memory range",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 5, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 6},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to adjusted map (via const reg): out-of-bound range",
+    "result": "REJECT",
+    "errstr": "invalid access to map value, value_size=48 off=4 size=52",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 4},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 52},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to adjusted map (via const reg): negative range (> adjustment)",
+    "result": "REJECT",
+    "errstr": "R2 min value is negative",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 4},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to adjusted map (via const reg): negative range (< adjustment)",
+    "result": "REJECT",
+    "errstr": "R2 min value is negative",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 4},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -1},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to adjusted map (via variable): full range",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 7, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 37, "dst": 3, "src": 0, "off": 4, "imm": 4},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 44},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to adjusted map (via variable): partial range",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 7, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 37, "dst": 3, "src": 0, "off": 4, "imm": 4},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 8},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to adjusted map (via variable): empty range",
+    "result": "REJECT",
+    "errstr": "R1 min value is outside of the allowed memory range",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 37, "dst": 3, "src": 0, "off": 3, "imm": 4},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 6},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to adjusted map (via variable): no max check",
+    "result": "REJECT",
+    "errstr": "R1 unbounded memory access",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to adjusted map (via variable): wrong max check",
+    "result": "REJECT",
+    "errstr": "invalid access to map value, value_size=48 off=4 size=45",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 7, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 37, "dst": 3, "src": 0, "off": 4, "imm": 4},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 45},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to map: bounds check using <, good access",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 165, "dst": 3, "src": 0, "off": 2, "imm": 32},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to map: bounds check using <, bad access",
+    "result": "REJECT",
+    "errstr": "R1 unbounded memory access",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 165, "dst": 3, "src": 0, "off": 4, "imm": 32},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to map: bounds check using <=, good access",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 181, "dst": 3, "src": 0, "off": 2, "imm": 32},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to map: bounds check using <=, bad access",
+    "result": "REJECT",
+    "errstr": "R1 unbounded memory access",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 181, "dst": 3, "src": 0, "off": 4, "imm": 32},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to map: bounds check using s<, good access",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 197, "dst": 3, "src": 0, "off": 2, "imm": 32},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 197, "dst": 3, "src": 0, "off": -3, "imm": 0},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to map: bounds check using s<, good access 2",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 197, "dst": 3, "src": 0, "off": 2, "imm": 32},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 197, "dst": 3, "src": 0, "off": -3, "imm": -3},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to map: bounds check using s<, bad access",
+    "result": "REJECT",
+    "errstr": "R1 min value is negative",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 197, "dst": 3, "src": 0, "off": 2, "imm": 32},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 197, "dst": 3, "src": 0, "off": -3, "imm": -3},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to map: bounds check using s<=, good access",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 213, "dst": 3, "src": 0, "off": 2, "imm": 32},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 213, "dst": 3, "src": 0, "off": -3, "imm": 0},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to map: bounds check using s<=, good access 2",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 213, "dst": 3, "src": 0, "off": 2, "imm": 32},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 213, "dst": 3, "src": 0, "off": -3, "imm": -3},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "helper access to map: bounds check using s<=, bad access",
+    "result": "REJECT",
+    "errstr": "R1 min value is negative",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 213, "dst": 3, "src": 0, "off": 2, "imm": 32},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 213, "dst": 3, "src": 0, "off": -3, "imm": -3},
+      {"code": 15, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 114, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map lookup helper access to map",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_16b": [3, 8]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map update helper access to map",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_16b": [3, 10]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map update helper access to map: wrong size",
+    "result": "REJECT",
+    "errstr": "invalid access to map value, value_size=8 off=0 size=16",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_8b": [3],
+    "fixup_map_hash_16b": [10]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map helper access to adjusted map (via const imm)",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_16b": [3, 9]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 5, "imm": 0},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": 8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map helper access to adjusted map (via const imm): out-of-bound 1",
+    "result": "REJECT",
+    "errstr": "invalid access to map value, value_size=16 off=12 size=8",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_16b": [3, 9]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 5, "imm": 0},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": 12},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map helper access to adjusted map (via const imm): out-of-bound 2",
+    "result": "REJECT",
+    "errstr": "invalid access to map value, value_size=16 off=-4 size=8",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_16b": [3, 9]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 5, "imm": 0},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -4},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map helper access to adjusted map (via const reg)",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_16b": [3, 10]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 8},
+      {"code": 15, "dst": 2, "src": 3, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map helper access to adjusted map (via const reg): out-of-bound 1",
+    "result": "REJECT",
+    "errstr": "invalid access to map value, value_size=16 off=12 size=8",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_16b": [3, 10]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 12},
+      {"code": 15, "dst": 2, "src": 3, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map helper access to adjusted map (via const reg): out-of-bound 2",
+    "result": "REJECT",
+    "errstr": "invalid access to map value, value_size=16 off=-4 size=8",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_16b": [3, 10]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": -4},
+      {"code": 15, "dst": 2, "src": 3, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map helper access to adjusted map (via variable)",
+    "result": "ACCEPT",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_16b": [3, 11]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 7, "imm": 0},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 37, "dst": 3, "src": 0, "off": 4, "imm": 8},
+      {"code": 15, "dst": 2, "src": 3, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map helper access to adjusted map (via variable): no max check",
+    "result": "REJECT",
+    "errstr": "R2 unbounded memory access, make sure to bounds check any such access",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_16b": [3, 10]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 15, "dst": 2, "src": 3, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map helper access to adjusted map (via variable): wrong max check",
+    "result": "REJECT",
+    "errstr": "invalid access to map value, value_size=16 off=9 size=8",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_16b": [3, 11]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 7, "imm": 0},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 37, "dst": 3, "src": 0, "off": 4, "imm": 9},
+      {"code": 15, "dst": 2, "src": 3, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

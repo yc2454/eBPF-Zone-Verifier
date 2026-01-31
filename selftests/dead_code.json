@@ -1,0 +1,163 @@
+[
+  {
+    "name": "dead code: start",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R9 !read_ok",
+    "insns": [
+      {"code": 5, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 113, "dst": 8, "src": 9, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 53, "dst": 0, "src": 0, "off": -4, "imm": 10},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "dead code: mid 1",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 53, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 53, "dst": 0, "src": 0, "off": 0, "imm": 10},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "dead code: mid 2",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 69, "dst": 0, "src": 0, "off": 4, "imm": 1},
+      {"code": 69, "dst": 0, "src": 0, "off": 1, "imm": 1},
+      {"code": 5, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "dead code: end 1",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 53, "dst": 0, "src": 0, "off": 1, "imm": 10},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "dead code: end 2",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 53, "dst": 0, "src": 0, "off": 1, "imm": 10},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 12},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "dead code: end 3",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 53, "dst": 0, "src": 0, "off": 1, "imm": 8},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 53, "dst": 0, "src": 0, "off": 1, "imm": 10},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 12},
+      {"code": 5, "dst": 0, "src": 0, "off": -5, "imm": 0}
+    ]
+  },
+  {
+    "name": "dead code: tail of main + func",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "loading/calling other bpf or kernel functions are allowed for",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 53, "dst": 0, "src": 0, "off": 1, "imm": 8},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 12},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "dead code: tail of main + two functions",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "loading/calling other bpf or kernel functions are allowed for",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 53, "dst": 0, "src": 0, "off": 1, "imm": 8},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 12},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "dead code: function in the middle and mid of another func",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "loading/calling other bpf or kernel functions are allowed for",
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 3},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 12},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 53, "dst": 1, "src": 0, "off": 1, "imm": 7},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": -5},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "dead code: middle of main before call",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "loading/calling other bpf or kernel functions are allowed for",
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 53, "dst": 1, "src": 0, "off": 1, "imm": 2},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 5},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "dead code: start of a function",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "loading/calling other bpf or kernel functions are allowed for",
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "dead code: zero extension",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 99, "dst": 10, "src": 0, "off": -4, "imm": 0},
+      {"code": 53, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 97, "dst": 0, "src": 10, "off": -4, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

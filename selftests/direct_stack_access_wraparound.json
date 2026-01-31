@@ -1,0 +1,42 @@
+[
+  {
+    "name": "direct stack access with 32-bit wraparound. test1",
+    "result": "REJECT",
+    "errstr": "fp pointer and 2147483647",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 2147483647},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 2147483647},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct stack access with 32-bit wraparound. test2",
+    "result": "REJECT",
+    "errstr": "fp pointer and 1073741823",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 1073741823},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 1073741823},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "direct stack access with 32-bit wraparound. test3",
+    "result": "REJECT",
+    "errstr": "fp pointer offset 1073741822",
+    "errstr_unpriv": "R1 stack pointer arithmetic goes out of range",
+    "insns": [
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 536870911},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 536870911},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 115, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]
