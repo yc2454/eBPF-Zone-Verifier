@@ -756,7 +756,8 @@ pub fn selftest_single(json_path: &str, test_name: &str, config: &VerifierConfig
     // Find the test by name (case-insensitive substring match)
     let matching: Vec<_> = tests
         .iter()
-        .filter(|t| t.name.to_lowercase().contains(&test_name.to_lowercase()))
+        .filter(|t| t.name.to_lowercase().contains(&test_name.to_lowercase()) 
+            && t.name.len() == test_name.len() )
         .collect();
 
     if matching.is_empty() {
