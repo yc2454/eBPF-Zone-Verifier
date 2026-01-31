@@ -156,6 +156,14 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
+        constants::BPF_CSUM_DIFF => HelperSignature::new([
+            PtrToMemOrNull,     // R1: from
+            ConstSizeOrZero,    // R2: from_size
+            PtrToMemOrNull,     // R3: to
+            ConstSizeOrZero,    // R4: to_size
+            Anything,           // R5: seed
+        ]),
+
         constants::BPF_SKB_ECN_SET_CE => HelperSignature::new([
             PtrToCtxOrNull, // R1: skb (can be NULL)
             DontCare,
@@ -233,6 +241,22 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
+        constants::BPF_PROBE_READ_USER => HelperSignature::new([
+            PtrToUninitMem,     // R1: dst
+            ConstSizeOrZero,    // R2: size
+            Anything,           // R3: unsafe_ptr (user address)
+            DontCare,
+            DontCare,
+        ]),
+
+        constants::BPF_PROBE_READ_KERNEL => HelperSignature::new([
+            PtrToUninitMem,     // R1: dst (output buffer)
+            ConstSizeOrZero,    // R2: size
+            Anything,           // R3: unsafe_ptr (kernel address, not validated)
+            DontCare,
+            DontCare,
+        ]),
+
         _ => return None,
     })
 }
@@ -246,6 +270,21 @@ fn helper_rejects_packet_for_arg(helper: u32, arg_index: usize) -> bool {
         
         // Add other helpers with similar restrictions here
         _ => false,
+    }
+}
+
+/// For helpers with PTR_OR_NULL args, returns the index of the paired size argument.
+fn get_nullable_ptr_size_pair(helper: u32, ptr_arg_index: usize) -> Option<usize> {
+    match helper {
+        // bpf_csum_diff: R1=from (PTR_OR_NULL) paired with R2=from_size,
+        //                R3=to (PTR_OR_NULL) paired with R4=to_size
+        constants::BPF_CSUM_DIFF => match ptr_arg_index {
+            0 => Some(1),  // R1's size is R2
+            2 => Some(3),  // R3's size is R4
+            _ => None,
+        },
+        // Add other helpers with PTR_OR_NULL + SIZE_OR_ZERO pairs
+        _ => None,
     }
 }
 
@@ -444,7 +483,17 @@ fn validate_single_arg(
 
         PtrToMemOrNull => {
             if is_zero(&state.dbm, reg) {
-                return true; // NULL is allowed
+                // Pointer is NULL - check that paired size arg is also 0
+                if let Some(size_arg_idx) = get_nullable_ptr_size_pair(helper, arg_index) {
+                    let size_reg = [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5][size_arg_idx];
+                    if !is_zero(&state.dbm, size_reg) {
+                        env.fail(VerificationError::InvalidArgType { pc, reg: size_reg });
+                        error!("[Verifier] pc {}: R{} must be 0 when R{} is NULL", 
+                               pc, size_arg_idx + 1, arg_index + 1);
+                        return false;
+                    }
+                }
+                return true;
             }
             validate_readable_mem(env, state, types, pc, reg, actual, None)
         }

@@ -38,10 +38,10 @@ pub const BPF_SKB_CHANGE_PROTO: u32 = 31;
 pub const BPF_SKB_ADJUST_ROOM: u32 = 50;
 pub const BPF_FIB_LOOKUP: u32 = 69;
 pub const BPF_SKB_ECN_SET_CE: u32 = 97;
-pub const BPF_FUNC_STRTOUL: u32 = 106;
-pub const BPF_FUNC_PROBE_READ_USER: u32 = 112;
-pub const BPF_FUNC_PROBE_READ_KERNEL: u32 = 113;
-pub const BPF_FUNC_D_PATH: u32 = 147;
+pub const BPF_STRTOUL: u32 = 106;
+pub const BPF_PROBE_READ_USER: u32 = 112;
+pub const BPF_PROBE_READ_KERNEL: u32 = 113;
+pub const BPF_D_PATH: u32 = 147;
 
 // ============================================================================
 // TC Context (__sk_buff) Field Offsets
