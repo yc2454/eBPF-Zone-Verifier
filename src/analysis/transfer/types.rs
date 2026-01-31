@@ -331,6 +331,17 @@ pub(crate) fn update_call_types(in_types: &TypeState, types: &mut TypeState, hel
         constants::BPF_TAIL_CALL => {
             types.set(Reg::R0, RegType::ScalarValue);
         }
+
+        constants::BPF_SKB_LOAD_BYTES => {
+            let mem_ptr_ty = in_types.get(Reg::R3);
+            match mem_ptr_ty {
+                RegType::PtrToStack { offset: Some(off) } => {
+                    let slot = off as i16;
+                    types.set_stack(slot, RegType::ScalarValue);
+                }
+                _ => {} // Do nothing for the other cases for now
+            }
+        }
         
         _ => {
             types.set(Reg::R0, RegType::ScalarValue);

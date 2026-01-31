@@ -33,6 +33,16 @@ typedef __u32 __bitwise __be32;
 typedef __u64 __bitwise __le64;
 typedef __u64 __bitwise __be64;
 
+#ifndef __LITTLE_ENDIAN
+#define __LITTLE_ENDIAN 1234
+#endif
+#ifndef __BIG_ENDIAN
+#define __BIG_ENDIAN 4321
+#endif
+#ifndef __BYTE_ORDER
+#define __BYTE_ORDER __LITTLE_ENDIAN  // assuming x86_64
+#endif
+
 // Instruction classes
 #define BPF_LD          0x00
 #define BPF_LDX         0x01
@@ -134,6 +144,8 @@ struct bpf_insn {
 #ifndef ENOTSUPP
 #define ENOTSUPP        524
 #endif
+
+#define BPF_F_TEST_STATE_FREQ	(1U << 3)
 
 // ============================================================================
 // BPF instruction macros (from bpf_insn.h)
@@ -398,6 +410,12 @@ struct sk_msg_md {
 	__u32 size;		/* Total size of sk_msg */
 
 	__bpf_md_ptr(struct bpf_sock *, sk); /* current socket */
+};
+
+struct bpf_perf_event_data {
+    __u64 regs[21];      // bpf_user_pt_regs_t on x86_64 (168 bytes)
+    __u64 sample_period; // offset 168
+    __u64 addr;
 };
 
 struct bpf_flow_keys;

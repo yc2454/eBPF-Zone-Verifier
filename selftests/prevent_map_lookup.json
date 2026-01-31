@@ -1,0 +1,37 @@
+[
+  {
+    "name": "prevent map lookup in stack trace",
+    "result": "REJECT",
+    "errstr": "cannot pass map_type 7 into func bpf_map_lookup_elem",
+    "prog_type": 7,
+    "fixups": {
+    "fixup_map_stacktrace": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "prevent map lookup in prog array",
+    "result": "REJECT",
+    "errstr": "cannot pass map_type 3 into func bpf_map_lookup_elem",
+    "fixups": {
+    "fixup_prog2": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

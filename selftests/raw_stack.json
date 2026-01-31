@@ -1,0 +1,298 @@
+[
+  {
+    "name": "raw_stack: no skb_load_bytes",
+    "result": "REJECT",
+    "errstr": "invalid read from stack R6 off=-8 size=8",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 8},
+      {"code": 121, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "raw_stack: skb_load_bytes, negative len",
+    "result": "REJECT",
+    "errstr": "R4 min value is negative",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": -8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 26},
+      {"code": 121, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "raw_stack: skb_load_bytes, negative len 2",
+    "result": "REJECT",
+    "errstr": "R4 min value is negative",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": -1},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 26},
+      {"code": 121, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "raw_stack: skb_load_bytes, zero len",
+    "result": "REJECT",
+    "errstr": "invalid zero-sized read",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 26},
+      {"code": 121, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "raw_stack: skb_load_bytes, no init",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 26},
+      {"code": 121, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "raw_stack: skb_load_bytes, init",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 6, "src": 0, "off": 0, "imm": 51966},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 26},
+      {"code": 121, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "raw_stack: skb_load_bytes, spilled regs around bounds",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -16},
+      {"code": 123, "dst": 6, "src": 1, "off": -8, "imm": 0},
+      {"code": 123, "dst": 6, "src": 1, "off": 8, "imm": 0},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 26},
+      {"code": 121, "dst": 0, "src": 6, "off": -8, "imm": 0},
+      {"code": 121, "dst": 2, "src": 6, "off": 8, "imm": 0},
+      {"code": 97, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 97, "dst": 2, "src": 2, "off": 32, "imm": 0},
+      {"code": 15, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "raw_stack: skb_load_bytes, spilled regs corruption",
+    "result": "REJECT",
+    "errstr": "R0 invalid mem access 'inv'",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -8},
+      {"code": 123, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 26},
+      {"code": 121, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "raw_stack: skb_load_bytes, spilled regs corruption 2",
+    "result": "REJECT",
+    "errstr": "R3 invalid mem access 'inv'",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -16},
+      {"code": 123, "dst": 6, "src": 1, "off": -8, "imm": 0},
+      {"code": 123, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 123, "dst": 6, "src": 1, "off": 8, "imm": 0},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 26},
+      {"code": 121, "dst": 0, "src": 6, "off": -8, "imm": 0},
+      {"code": 121, "dst": 2, "src": 6, "off": 8, "imm": 0},
+      {"code": 121, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 97, "dst": 2, "src": 2, "off": 32, "imm": 0},
+      {"code": 15, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 3, "off": 4, "imm": 0},
+      {"code": 15, "dst": 0, "src": 3, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "raw_stack: skb_load_bytes, spilled regs + data",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -16},
+      {"code": 123, "dst": 6, "src": 1, "off": -8, "imm": 0},
+      {"code": 123, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 123, "dst": 6, "src": 1, "off": 8, "imm": 0},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 26},
+      {"code": 121, "dst": 0, "src": 6, "off": -8, "imm": 0},
+      {"code": 121, "dst": 2, "src": 6, "off": 8, "imm": 0},
+      {"code": 121, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 97, "dst": 2, "src": 2, "off": 32, "imm": 0},
+      {"code": 15, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 15, "dst": 0, "src": 3, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "raw_stack: skb_load_bytes, invalid access 1",
+    "result": "REJECT",
+    "errstr": "invalid indirect access to stack R3 off=-513 size=8",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -513},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 26},
+      {"code": 121, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "raw_stack: skb_load_bytes, invalid access 2",
+    "result": "REJECT",
+    "errstr": "invalid indirect access to stack R3 off=-1 size=8",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -1},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 26},
+      {"code": 121, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "raw_stack: skb_load_bytes, invalid access 3",
+    "result": "REJECT",
+    "errstr": "R4 min value is negative",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -1},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": -1},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 26},
+      {"code": 121, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "raw_stack: skb_load_bytes, invalid access 4",
+    "result": "REJECT",
+    "errstr": "R4 unbounded memory access, use 'var &= const' or 'if (var < const)'",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -1},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 2147483647},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 26},
+      {"code": 121, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "raw_stack: skb_load_bytes, invalid access 5",
+    "result": "REJECT",
+    "errstr": "R4 unbounded memory access, use 'var &= const' or 'if (var < const)'",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -512},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 2147483647},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 26},
+      {"code": 121, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "raw_stack: skb_load_bytes, invalid access 6",
+    "result": "REJECT",
+    "errstr": "invalid zero-sized read",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -512},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 26},
+      {"code": 121, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "raw_stack: skb_load_bytes, large access",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -512},
+      {"code": 191, "dst": 3, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 512},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 26},
+      {"code": 121, "dst": 0, "src": 6, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

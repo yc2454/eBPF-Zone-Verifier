@@ -1,0 +1,42 @@
+[
+  {
+    "name": "check bpf_perf_event_data->sample_period byte load permitted",
+    "result": "ACCEPT",
+    "prog_type": 7,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 168, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check bpf_perf_event_data->sample_period half load permitted",
+    "result": "ACCEPT",
+    "prog_type": 7,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 105, "dst": 0, "src": 1, "off": 168, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check bpf_perf_event_data->sample_period word load permitted",
+    "result": "ACCEPT",
+    "prog_type": 7,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 168, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "check bpf_perf_event_data->sample_period dword load permitted",
+    "result": "ACCEPT",
+    "prog_type": 7,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": 168, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

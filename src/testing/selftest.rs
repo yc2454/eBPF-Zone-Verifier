@@ -146,6 +146,7 @@ const BPF_MAP_TYPE_CGROUP_STORAGE: u32 = 19;
 const BPF_MAP_TYPE_PERCPU_CGROUP_STORAGE: u32 = 21;
 const BPF_MAP_TYPE_RINGBUF: u32 = 16;
 const BPF_MAP_TYPE_ARRAY_OF_MAPS: u32 = 12;
+const BPF_MAP_TYPE_STACK_TRACE: u32 = 7;
 // Add more as needed
 
 // ============================================================================
@@ -284,6 +285,16 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             max_entries: 1,
             map_flags: 0,
             name: "test_map_in_map".to_string(),
+            btf_val_type_id: None,
+            initial_data: None,
+        }),
+        "fixup_map_stacktrace" => Some(BpfMapDef {
+            type_: BPF_MAP_TYPE_STACK_TRACE,  // 7
+            key_size: 4,
+            value_size: 1016,  // sizeof(__u64) * 127 (PERF_MAX_STACK_DEPTH)
+            max_entries: 1,
+            map_flags: 0,
+            name: "test_stacktrace".to_string(),
             btf_val_type_id: None,
             initial_data: None,
         }),
@@ -439,7 +450,7 @@ pub fn run_test(test: &JsonTestCase, config: &VerifierConfig) -> TestResult {
     let result = analysis::analyze_program(&ctx, &program, entry, config);
 
     let actual = if result.is_ok() { "ACCEPT" } else { "REJECT" };
-    let expected = &test.result;
+    let expected = if test.result == "VERBOSE_ACCEPT" { "ACCEPT" } else {&test.result};
 
     let outcome = if actual == expected {
         TestOutcome::Pass
@@ -454,7 +465,7 @@ pub fn run_test(test: &JsonTestCase, config: &VerifierConfig) -> TestResult {
     TestResult {
         name: test.name.clone(),
         outcome,
-        expected: expected.clone(),
+        expected: expected.to_string(),
         actual: actual.to_string(),
         time_ms: start.elapsed().as_millis() as u64,
     }

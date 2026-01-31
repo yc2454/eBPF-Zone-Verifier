@@ -1,0 +1,139 @@
+[
+  {
+    "name": "precise: test 1",
+    "result": "VERBOSE_ACCEPT",
+    "errstr": "26: (85) call bpf_probe_read_kernel#113\tlast_idx 26 first_idx 20\tregs=4 stack=0 before 25\tregs=4 stack=0 before 24\tregs=4 stack=0 before 23\tregs=4 stack=0 before 22\tregs=4 stack=0 before 20\tparent didn't have regs=4 stack=0 marks\tlast_idx 19 first_idx 10\tregs=4 stack=0 before 19\tregs=200 stack=0 before 18\tregs=300 stack=0 before 17\tregs=201 stack=0 before 15\tregs=201 stack=0 before 14\tregs=200 stack=0 before 13\tregs=200 stack=0 before 12\tregs=200 stack=0 before 11\tregs=200 stack=0 before 10\tparent already had regs=0 stack=0 marks",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_array_48b": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 24, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 9, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 8, "src": 0, "off": 0, "imm": 0},
+      {"code": 31, "dst": 9, "src": 8, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 9, "off": 0, "imm": 0},
+      {"code": 165, "dst": 2, "src": 0, "off": 1, "imm": 8},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -8},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "precise: test 2",
+    "result": "VERBOSE_ACCEPT",
+    "errstr": "26: (85) call bpf_probe_read_kernel#113\tlast_idx 26 first_idx 22\tregs=4 stack=0 before 25\tregs=4 stack=0 before 24\tregs=4 stack=0 before 23\tregs=4 stack=0 before 22\tparent didn't have regs=4 stack=0 marks\tlast_idx 20 first_idx 20\tregs=4 stack=0 before 20\tparent didn't have regs=4 stack=0 marks\tlast_idx 19 first_idx 17\tregs=4 stack=0 before 19\tregs=200 stack=0 before 18\tregs=300 stack=0 before 17\tparent already had regs=0 stack=0 marks",
+    "prog_type": 5,
+    "flags": 8,
+    "fixups": {
+    "fixup_map_array_48b": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 24, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 9, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 8, "src": 0, "off": 0, "imm": 0},
+      {"code": 31, "dst": 9, "src": 8, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 9, "off": 0, "imm": 0},
+      {"code": 165, "dst": 2, "src": 0, "off": 1, "imm": 8},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -8},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 113},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "precise: cross frame pruning",
+    "result": "REJECT",
+    "errstr": "!read_ok",
+    "prog_type": 6,
+    "flags": 8,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 183, "dst": 8, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 183, "dst": 8, "src": 0, "off": 0, "imm": 1},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 183, "dst": 9, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 183, "dst": 9, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 1, "off": 0, "imm": 4},
+      {"code": 21, "dst": 8, "src": 0, "off": 1, "imm": 1},
+      {"code": 113, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "precise: ST insn causing spi > allocated_stack",
+    "result": "VERBOSE_ACCEPT",
+    "errstr": "5: (2d) if r4 > r0 goto pc+0\tlast_idx 5 first_idx 5\tparent didn't have regs=10 stack=0 marks\tlast_idx 4 first_idx 2\tregs=10 stack=0 before 4\tregs=10 stack=0 before 3\tregs=0 stack=1 before 2\tlast_idx 5 first_idx 5\tparent didn't have regs=1 stack=0 marks",
+    "prog_type": 6,
+    "flags": 8,
+    "insns": [
+      {"code": 191, "dst": 3, "src": 10, "off": 0, "imm": 0},
+      {"code": 85, "dst": 3, "src": 0, "off": 0, "imm": 123},
+      {"code": 122, "dst": 3, "src": 0, "off": -8, "imm": 0},
+      {"code": 121, "dst": 4, "src": 10, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": -1},
+      {"code": 45, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "precise: STX insn causing spi > allocated_stack",
+    "result": "VERBOSE_ACCEPT",
+    "errstr": "last_idx 6 first_idx 6\tparent didn't have regs=10 stack=0 marks\tlast_idx 5 first_idx 3\tregs=10 stack=0 before 5\tregs=10 stack=0 before 4\tregs=0 stack=1 before 3\tlast_idx 6 first_idx 6\tparent didn't have regs=1 stack=0 marks\tlast_idx 5 first_idx 3\tregs=1 stack=0 before 5",
+    "prog_type": 6,
+    "flags": 8,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 191, "dst": 3, "src": 10, "off": 0, "imm": 0},
+      {"code": 85, "dst": 3, "src": 0, "off": 0, "imm": 123},
+      {"code": 123, "dst": 3, "src": 0, "off": -8, "imm": 0},
+      {"code": 121, "dst": 4, "src": 10, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": -1},
+      {"code": 45, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]
