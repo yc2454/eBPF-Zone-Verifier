@@ -167,6 +167,17 @@ impl Dbm {
             if min_str != "-INF" || max_str != "+INF" {
                 println!("    {}: [{}, {}]", i.name(), min_str, max_str);
             }
+
+            for j in 1..self.dim() {
+                let Some(j) = Reg::idx_to_reg(j) else { continue; };
+                if j == zero || j == i { continue; }
+                
+                let val = self.get(i, j);
+                let diff_str = if val >= INF || val <= -INF { "INF".to_string() } else { val.to_string() };
+                if diff_str != "INF" {
+                    println!("    {} - {} = {}", i.name(), j.name(), diff_str);
+                }
+            }
         }
     }
 }

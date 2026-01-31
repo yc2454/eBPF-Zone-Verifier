@@ -1,0 +1,221 @@
+[
+  {
+    "name": "meta access, test1",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 0, "src": 3, "off": 1, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "meta access, test2",
+    "result": "REJECT",
+    "errstr": "invalid access to packet, off=-8",
+    "prog_type": 6,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 23, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 191, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 4, "src": 3, "off": 1, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "meta access, test3",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 6,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 0, "src": 3, "off": 1, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "meta access, test4",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 6,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 97, "dst": 4, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 4, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 0, "src": 3, "off": 1, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "meta access, test5",
+    "result": "REJECT",
+    "errstr": "R3 !read_ok",
+    "prog_type": 6,
+    "insns": [
+      {"code": 97, "dst": 3, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 4, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 3, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 0, "src": 4, "off": 3, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 54},
+      {"code": 113, "dst": 0, "src": 3, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "meta access, test6",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 6,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 3, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 191, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 4, "src": 0, "off": 1, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "meta access, test7",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 3, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 191, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 4, "src": 3, "off": 1, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "meta access, test8",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": 65535},
+      {"code": 45, "dst": 4, "src": 3, "off": 1, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "meta access, test9",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 6,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": 65535},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": 1},
+      {"code": 45, "dst": 4, "src": 3, "off": 1, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "meta access, test10",
+    "result": "REJECT",
+    "errstr": "invalid access to packet",
+    "prog_type": 6,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 4, "src": 1, "off": 4, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 42},
+      {"code": 183, "dst": 6, "src": 0, "off": 0, "imm": 24},
+      {"code": 123, "dst": 10, "src": 5, "off": -8, "imm": 0},
+      {"code": 219, "dst": 10, "src": 6, "off": -8, "imm": 0},
+      {"code": 121, "dst": 5, "src": 10, "off": -8, "imm": 0},
+      {"code": 37, "dst": 5, "src": 0, "off": 6, "imm": 100},
+      {"code": 15, "dst": 3, "src": 5, "off": 0, "imm": 0},
+      {"code": 191, "dst": 5, "src": 3, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 6, "src": 5, "off": 1, "imm": 0},
+      {"code": 113, "dst": 2, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "meta access, test11",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 42},
+      {"code": 183, "dst": 6, "src": 0, "off": 0, "imm": 24},
+      {"code": 123, "dst": 10, "src": 5, "off": -8, "imm": 0},
+      {"code": 219, "dst": 10, "src": 6, "off": -8, "imm": 0},
+      {"code": 121, "dst": 5, "src": 10, "off": -8, "imm": 0},
+      {"code": 37, "dst": 5, "src": 0, "off": 6, "imm": 100},
+      {"code": 15, "dst": 2, "src": 5, "off": 0, "imm": 0},
+      {"code": 191, "dst": 5, "src": 2, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 6, "src": 3, "off": 1, "imm": 0},
+      {"code": 113, "dst": 5, "src": 5, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "meta access, test12",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 4, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 5, "src": 3, "off": 0, "imm": 0},
+      {"code": 7, "dst": 5, "src": 0, "off": 0, "imm": 16},
+      {"code": 45, "dst": 5, "src": 4, "off": 5, "imm": 0},
+      {"code": 113, "dst": 0, "src": 3, "off": 0, "imm": 0},
+      {"code": 191, "dst": 5, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 5, "src": 0, "off": 0, "imm": 16},
+      {"code": 45, "dst": 5, "src": 3, "off": 1, "imm": 0},
+      {"code": 113, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

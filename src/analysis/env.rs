@@ -37,6 +37,7 @@ pub enum VerificationError {
     MisalignedAccess { pc: usize, off: i64 },
     InvalidReturnCode { pc: usize },
     MisalignedPacketAccess { pc: usize, off: i16, size: MemSize },
+    InvalidRegisterTypeState { pc: usize },
 }
 
 impl VerificationError {
@@ -128,6 +129,9 @@ impl VerificationError {
             }
             VerificationError::MisalignedPacketAccess { pc, off, size } => {
                 format!("Misaligned packet access at pc {}: offset {}, size {:?}", pc, off, size)
+            }
+            VerificationError::InvalidRegisterTypeState { pc } => {
+                format!("Invalid register type state at pc {}", pc)
             }
         }
     }

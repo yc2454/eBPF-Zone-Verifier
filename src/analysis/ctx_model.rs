@@ -5,7 +5,7 @@
 // This module defines the layout of BPF context structures (sk_buff, xdp_md, etc.)
 // as data tables, enabling unified validation of both reads and writes.
 
-use crate::ast::{MemSize, ProgramKind, ContextKind};
+use crate::{ast::{ContextKind, MemSize, ProgramKind}, zone::domain::Reg};
 
 // ===========================================================================
 // Core Types
@@ -37,6 +37,9 @@ pub enum CtxFieldKind {
 
     /// Pointer to the end of the packet data.
     PacketEnd,
+
+    /// Pointer to packet metadata
+    PacketMeta
 }
 
 /// A field in a BPF context struct.
@@ -152,7 +155,7 @@ const XDP_MD_FIELDS: &[CtxField] = &[
     // __u32 data_end
     CtxField { offset: 4, size: MemSize::U32, kind: CtxFieldKind::PacketEnd, writable: false, readable: true, narrow_access: false },
     // __u32 data_meta
-    CtxField { offset: 8, size: MemSize::U32, kind: CtxFieldKind::PacketStart, writable: false, readable: true, narrow_access: false },
+    CtxField { offset: 8, size: MemSize::U32, kind: CtxFieldKind::PacketMeta, writable: false, readable: true, narrow_access: false },
     // __u32 ingress_ifindex
     CtxField { offset: 12, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
     // __u32 rx_queue_index

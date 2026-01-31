@@ -78,8 +78,22 @@ pub(crate) fn update_alu_types(
                         types.set(dst, RegType::PtrToMapValue { offset: None, map_idx });
                     },
                     (RegType::PtrToPacket { id, range, is_base: _, off }, Operand::Imm(k)) => {
-                        let new_off = off.saturating_add(*k);
-                        types.set(dst, RegType::PtrToPacket { id, range, is_base: false, off: new_off });
+                        let new_off = off + k;
+                        if new_off > constants::MAX_PACKET_OFF as i64 || new_off < 0 {
+                            types.set(dst, RegType::ScalarValue);
+                        } else {
+                            types.set(dst, RegType::PtrToPacket {
+                                id,
+                                range,
+                                is_base: false,
+                                off: new_off,
+                            });
+                        }
+                    },
+                    (RegType::PtrToPacketMeta, Operand::Imm(k)) => {
+                        if *k > constants::MAX_PACKET_OFF as i64 || *k < 0 {
+                            types.set(dst, RegType::ScalarValue);
+                        }
                     },
                     (RegType::PtrToStack { offset }, Operand::Imm(k)) => {
                         types.set(dst, RegType::PtrToStack { offset: offset.map(|o| o + k) });
@@ -177,6 +191,9 @@ pub(crate) fn update_load_types(
                     }
                     CtxFieldKind::PtrToMem { region } => {
                         types.set(dst, RegType::PtrToMem { region, range: 0 });
+                    }
+                    CtxFieldKind::PacketMeta => {
+                        types.set(dst, RegType::PtrToPacketMeta);
                     }
                     _ => types.set(dst, RegType::ScalarValue),
                 }

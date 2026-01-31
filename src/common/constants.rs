@@ -185,6 +185,7 @@ pub const DEFAULT_MAP_VALUE_SIZE: i64 = 4096;
 pub const MAX_INSN_PROCESSED: usize = 1_000_000;
 pub const MAX_TAIL_CALL_DEPTH: u32 = 33;
 pub const LOG_HEARTBEAT_INTERVAL: usize = 10_000;
+pub const MAX_PACKET_OFF: usize = 0xFFFF;
 
 // ============================================================================
 // BPF Map Types (from linux/bpf.h)

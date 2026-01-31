@@ -210,6 +210,39 @@ pub fn check_load(
                      pc, base, off);
             env.fail(VerificationError::UnsafeGenericLoad { pc, base, off });
         }
+        PtrToPacketMeta => {
+            // Find a register pointing to packet data (data pointer)
+            let reg_pointing_to_packet_data = crate::zone::domain::REG_ENV
+                .all()
+                .iter()
+                .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket { is_base: true, off: 0, .. }));
+            
+            if let Some(&data_reg) = reg_pointing_to_packet_data {
+                // We need to prove: data_meta + off + size <= data
+                // Equivalently: (data_meta - data) <= -(off + size)
+                // So check: upper_bound(base - data_reg) + off + size <= 0
+                
+                let (_, ub_opt) = get_relative_bound(&state.dbm, base, data_reg);
+                let access_end = off as i64 + size.bytes() as i64;
+                
+                match ub_opt {
+                    Some(ub) if ub + access_end <= 0 => {
+                        // Safe: proven that access is within metadata region
+                    }
+                    Some(ub) => {
+                        error!("Metadata access exceeds proven bounds (need {}, have {})", access_end, -ub);
+                        env.fail(VerificationError::UnsafePacketLoad { pc, off, size, range: (-ub) as u64 });
+                    }
+                    None => {
+                        error!("No bounds check performed between data_meta and data");
+                        env.fail(VerificationError::UnsafePacketLoad { pc, off, size, range: 0 });
+                    }
+                }
+            } else {
+                error!("Packet data pointer not found");
+                env.fail(VerificationError::InvalidRegisterTypeState { pc });
+            }
+        }
         ScalarValue | NotInit => {
             error!("Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})", pc, base, off, base_type);
             env.fail(VerificationError::UnsafeGenericLoad { pc, base, off });

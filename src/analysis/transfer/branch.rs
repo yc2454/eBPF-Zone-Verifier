@@ -13,6 +13,7 @@ use crate::zone::domain::{
 use crate::zone::dbm::Dbm;
 use crate::zone::tnum::Tnum;
 use crate::analysis::env::VerificationError;
+use crate::analysis::reg_types::RegType;
 
 use super::refinement::{refine_packet_ranges, refine_mem_ranges, refine_branch};
 use super::common::{check_reg_readable, check_operand_readable};
@@ -68,7 +69,7 @@ pub(crate) fn transfer_if(
         Operand::Reg(r) => apply_reg_constraints(&mut state_then, &mut state_else, left, op, width, *r),
     }
 
-    // Branch Type Refinement (Packet/Map bounds)
+    // Branch Type Refinement (For map pointers)
     let instr = Instr::If { width, left, op, right: right.clone(), target };
     refine_branch(&mut state_then, &instr, true);
     refine_branch(&mut state_else, &instr, false);
@@ -452,6 +453,25 @@ fn apply_reg_constraints(
     width: Width,
     right: Reg
 ) {
+    // Check if operands are packet-related pointers
+    let is_packet_related = |t: &RegType| matches!(
+        t,
+        RegType::PtrToPacket { .. } | 
+        RegType::PtrToPacketMeta | 
+        RegType::PtrToPacketEnd
+    );
+    
+    let left_is_packet = is_packet_related(&then_s.types.get(left));
+    let right_is_packet = is_packet_related(&then_s.types.get(right));
+    
+    // If one side is packet-related and the other is scalar, 
+    // don't add DBM constraints - they could create unsound packet bounds
+    // via transitive closure (e.g., scalar derived from packet ptr that exceeded MAX_PACKET_OFF)
+    if left_is_packet != right_is_packet {
+        // Skip DBM constraints, skip packet range refinement
+        return;
+    }
+    
     // For 32-bit signed reg-reg comparisons, only constrain if both fit in i32
     if width == Width::W32 {
         match op {

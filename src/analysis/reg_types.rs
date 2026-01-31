@@ -18,6 +18,7 @@ pub enum RegType {
         off: i64, // offset from the start of the packet
     },    
     PtrToPacketEnd, 
+    PtrToPacketMeta,
     PtrToMem { region: MemRegionId, range: u64 },           
     PtrToMapObject { map_idx: usize }, 
     PtrToMapValueOrNull { id: u32, map_idx: usize }, 
