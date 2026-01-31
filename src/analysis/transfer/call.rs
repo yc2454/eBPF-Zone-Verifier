@@ -563,9 +563,16 @@ fn validate_writable_mem(
             env.fail(VerificationError::UninitializedStackRead { pc, offset: 0 });
             false
         }
-        RegType::PtrToMapValue { .. } => {
-            // Map values can be written
-            true
+        RegType::PtrToMapValue { map_idx, .. } => {
+            let writable = env.ctx.map_defs.get(map_idx)
+                .map(|md| md.map_flags != constants::BPF_F_RDONLY_PROG)
+                .unwrap_or(false);
+            if writable {
+                true
+            } else {
+                env.fail(VerificationError::MapStoreForbidden { pc, map_idx });
+                false
+            }
         }
         RegType::PtrToPacket { .. } => {
             // Packet pointers are NOT valid for uninit_mem arguments

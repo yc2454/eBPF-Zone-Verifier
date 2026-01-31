@@ -4,6 +4,7 @@ use crate::ast::{Program, MemSize};
 use crate::analysis::state::State;
 use crate::analysis::context::ExecContext;
 use std::collections::{HashMap, HashSet};
+use std::fmt::format;
 use crate::zone::domain::Reg;
 
 #[derive(Clone, Debug)]
@@ -17,6 +18,8 @@ pub enum VerificationError {
     IllegalPacketStore { pc: usize, off: i16, size: MemSize },
     UnsafeMapLoad { pc: usize, off: i64, size: MemSize, limit: i64 },
     UnsafeMapStore { pc: usize, off: i64, size: MemSize, limit: i64 },
+    MapStoreForbidden { pc: usize, map_idx: usize },
+    MapLoadForbidden { pc: usize, map_idx: usize },
     UnsafeGenericLoad { pc: usize, base: Reg, off: i16 },
     UnsafeMemoryRegionLoad { pc: usize, base: Reg, off: i16 },
     UnsafeCtxAccess { pc: usize, off: i16, size: MemSize },
@@ -132,6 +135,12 @@ impl VerificationError {
             }
             VerificationError::InvalidRegisterTypeState { pc } => {
                 format!("Invalid register type state at pc {}", pc)
+            }
+            VerificationError::MapStoreForbidden { pc, map_idx } => {
+                format!("Attemp to write to read-only map {} at pc {}", map_idx, pc)
+            }
+            VerificationError::MapLoadForbidden { pc, map_idx } => {
+                format!("Attemp to read from write-only map {} at pc {}", map_idx, pc)
             }
         }
     }

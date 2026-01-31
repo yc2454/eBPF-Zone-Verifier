@@ -231,7 +231,10 @@ pub const DATA_SECTION_BSS: &str = ".bss";
 pub const SHT_NOBITS: u32 = 8;
 
 // Map Flags
-pub const BPF_F_RDONLY_PROG: u32 = 1 << 7; // 128 (0x80)
+// Program access permissions
+pub const BPF_F_RDONLY_PROG: u32      = 1 << 7;  // 0x0080
+pub const BPF_F_WRONLY_PROG: u32      = 1 << 8;  // 0x0100
+pub const BPF_F_RDWR_PROG: u32        = 1 << 9;  // 0x0200
 
 // Socket/networking helpers
 pub const BPF_SK_LOOKUP_TCP: u32 = 84;

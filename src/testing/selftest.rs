@@ -203,7 +203,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             key_size: 4,
             value_size: 8,
             max_entries: 1,
-            map_flags: 0x80, // BPF_F_RDONLY_PROG
+            map_flags: constants::BPF_F_RDONLY_PROG,
             name: "test_map_ro".to_string(),
             btf_val_type_id: None,
             initial_data: None,
@@ -213,7 +213,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             key_size: 4,
             value_size: 8,
             max_entries: 1,
-            map_flags: 0x100, // BPF_F_WRONLY_PROG
+            map_flags: constants::BPF_F_WRONLY_PROG,
             name: "test_map_wo".to_string(),
             btf_val_type_id: None,
             initial_data: None,
