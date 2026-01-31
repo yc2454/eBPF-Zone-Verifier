@@ -517,6 +517,7 @@ struct bpf_sock;
 #define BPF_FUNC_msg_push_data          90
 #define BPF_FUNC_msg_pop_data           91
 #define BPF_FUNC_rc_pointer_rel         92
+#define BPF_FUNC_strtoul                106
 #define BPF_FUNC_probe_read_kernel      113
 #define BPF_FUNC_seq_write              127
 #define BPF_FUNC_ringbuf_output         130
@@ -525,6 +526,7 @@ struct bpf_sock;
 #define BPF_FUNC_ringbuf_discard        133
 #define BPF_FUNC_ringbuf_query          134
 #define BPF_FUNC_get_task_stack         141
+#define BPF_FUNC_d_path                 147
 #define BPF_FUNC_get_netns_cookie       97
 #define BPF_FUNC_get_current_ancestor_cgroup_id 98
 #define BPF_FUNC_check_mtu              99

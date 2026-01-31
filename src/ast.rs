@@ -276,13 +276,14 @@ impl ProgramKind {
     pub fn context_kind(&self) -> ContextKind {
         match self {
             ProgramKind::Xdp => ContextKind::XdpMd,
-            ProgramKind::SchedCls | ProgramKind::SocketFilter => ContextKind::SkBuff,
+            ProgramKind::SchedCls | ProgramKind::SocketFilter 
+            | ProgramKind::SchedAct | ProgramKind::SkSkb | ProgramKind::CgroupSkb 
+                => ContextKind::SkBuff,
             ProgramKind::SockOps => ContextKind::SockOps,
             ProgramKind::SkLookup => ContextKind::SkLookup,
             ProgramKind::SkMsg => ContextKind::SkMsgMd,
             ProgramKind::CgroupSockAddr => ContextKind::BpfSockAddr,
             ProgramKind::Kprobe => ContextKind::PtRegs,
-            ProgramKind::CgroupSkb => ContextKind::SkBuff,
             ProgramKind::CgroupSock => ContextKind::SockOps,
             _ => ContextKind::Unknown,
         }

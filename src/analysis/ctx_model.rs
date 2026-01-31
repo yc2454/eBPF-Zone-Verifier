@@ -5,8 +5,6 @@
 // This module defines the layout of BPF context structures (sk_buff, xdp_md, etc.)
 // as data tables, enabling unified validation of both reads and writes.
 
-use std::default;
-
 use log::warn;
 
 use crate::ast::{MemSize, ProgramKind, ContextKind};
@@ -322,6 +320,62 @@ fn get_field_table(ctx_kind: ContextKind) -> Option<&'static [CtxField]> {
     }
 }
 
+/// Apply program-type-specific access overrides.
+/// Called after base field lookup to adjust readable/writable based on program type.
+fn apply_prog_type_overrides(prog_kind: ProgramKind, off: i16, info: &mut CtxAccessInfo) {
+    let ctx_kind = prog_kind.context_kind();
+    
+    match ctx_kind {
+        ContextKind::SkBuff => {
+            match off {
+                // mark (offset 8)
+                8 => {
+                    match prog_kind {
+                        ProgramKind::SkSkb => {
+                            info.readable = false;
+                            info.writable = false;
+                        }
+                        _ => {
+                            info.readable = true;
+                            info.writable = true;
+                        }
+                    }
+                }
+                // tc_classid (offset 72)
+                // - TC ingress: write-only
+                // - TC egress: read-write  
+                // - SK_SKB: not accessible
+                72 => {
+                    match prog_kind {
+                        ProgramKind::SkSkb => {
+                            info.readable = false;
+                            info.writable = false;
+                        }
+                        ProgramKind::SchedCls | ProgramKind::SchedAct => {
+                            // TODO: ideally check attach type for ingress vs egress
+                            // Conservative: mark as write-only
+                            info.readable = false;
+                        }
+                        _ => {
+                            info.readable = false;
+                            info.writable = false;
+                        }
+                    }
+                }
+                // family, remote_ip4, local_ip4, remote_ip6, local_ip6, remote_port, local_port
+                // Only readable for cgroup_skb and sock_ops programs
+                88 | 92 | 96 | 100..=128 | 132 | 136 => {
+                    if !matches!(prog_kind, ProgramKind::CgroupSkb | ProgramKind::SockOps) {
+                        info.readable = false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+}
+
 // ===========================================================================
 // Public API
 // ===========================================================================
@@ -347,21 +401,23 @@ fn get_field_table(ctx_kind: ContextKind) -> Option<&'static [CtxField]> {
 pub fn validate_ctx_access(prog_kind: ProgramKind, off: i16, size: MemSize) -> Option<CtxAccessInfo> {
     let ctx_kind = prog_kind.context_kind();
 
-    // Get the field table for this context type
     let fields = match get_field_table(ctx_kind) {
         Some(f) => f,
         None => {
-            warn!("Unknown context type: {:?}", ctx_kind);
-            // Unknown context type - be permissive for now
-            // This allows forward compatibility with new context types
             return Some(CtxAccessInfo {
                 kind: CtxFieldKind::Scalar,
-                writable: false, readable: true,
+                readable: true,
+                writable: false,
             });
         }
     };
 
-    lookup_field(fields, off, size)
+    let mut info = lookup_field(fields, off, size)?;
+    
+    // Apply program-type-specific overrides
+    apply_prog_type_overrides(prog_kind, off, &mut info);
+    
+    Some(info)
 }
 
 /// Check if a context field is readable at the given offset and size.

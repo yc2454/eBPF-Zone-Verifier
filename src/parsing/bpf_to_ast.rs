@@ -13,7 +13,8 @@ pub enum LowerErrorKind {
     CallTargetOutOfBounds,
     InvalidSrcReg,
     UnknownAtomicOp,
-    CallUsedReservedFields
+    CallUsedReservedFields,
+    InvalidRegister
 }
 
 #[derive(Debug)]
@@ -24,20 +25,20 @@ pub struct LowerError {
     pub kind: LowerErrorKind
 }
 
-fn reg_to_var(r: u8) -> Reg {
+fn reg_to_var(insn: &RawBpfInsn, r: u8, pc: usize) -> Result<Reg, LowerError> {
     match r {
-        0 => Reg::R0,
-        1 => Reg::R1,
-        2 => Reg::R2,
-        3 => Reg::R3,
-        4 => Reg::R4,
-        5 => Reg::R5,
-        6 => Reg::R6,
-        7 => Reg::R7,
-        8 => Reg::R8,
-        9 => Reg::R9,
-        10 => Reg::R10,
-        _ => panic!("invalid BPF register {}", r),
+        0 => Ok(Reg::R0),
+        1 => Ok(Reg::R1),
+        2 => Ok(Reg::R2),
+        3 => Ok(Reg::R3),
+        4 => Ok(Reg::R4),
+        5 => Ok(Reg::R5),
+        6 => Ok(Reg::R6),
+        7 => Ok(Reg::R7),
+        8 => Ok(Reg::R8),
+        9 => Ok(Reg::R9),
+        10 => Ok(Reg::R10),
+        _ => Err(LowerError { pc, code: insn.code, msg: "invalid register".to_string(), kind: LowerErrorKind::InvalidRegister })
     }
 }
 
@@ -62,8 +63,8 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
 
     while pc < raw.len() {
         let insn = &raw[pc];
-        let dst = reg_to_var(insn.dst);
-        let src = reg_to_var(insn.src);
+        let dst = reg_to_var(insn, insn.dst, pc)?;
+        let src = reg_to_var(insn, insn.src, pc)?;
 
         if insn.code == 0x18 {
             if (src != Reg::R0 && src != Reg::R1) || insn.off != 0 {
@@ -704,13 +705,25 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 }
             },
 
+            // 0x45: JSET_K (if (u64)dst & imm)
+            0x45 => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::Test,
+                    right: Operand::Imm(insn.imm as i64),
+                    target,
+                }
+            },
+
             // 0x46: JSET_K_32 (if (u32)dst & imm32)
             0x46 => {
                 let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
                 Instr::If {
                     width: Width::W32,
                     left: dst,
-                    op: CmpOp::Test, // You might need to add CmpOp::Test or map to BitsAnd
+                    op: CmpOp::Test,
                     right: Operand::Imm(insn.imm as i64),
                     target,
                 } 
@@ -723,7 +736,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 Instr::If {
                     width: Width::W64,
                     left: dst,
-                    op: CmpOp::Test, // Uses the 'Test' op we just discussed
+                    op: CmpOp::Test,
                     right: Operand::Reg(src),
                     target,
                 }
@@ -859,6 +872,18 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     left: dst,
                     op: CmpOp::SGe,
                     right: Operand::Imm(insn.imm as i64),
+                    target,
+                }
+            },
+
+            // 0x7d: JSGE_X_64 (if (s64)dst >= (s64)src)
+            0x7d => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::SGe,
+                    right: Operand::Reg(src),
                     target,
                 }
             },
@@ -1008,6 +1033,18 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     op: CmpOp::SLt,
                     // insn.imm is i32; casting to i64 preserves sign, which is what we want
                     right: Operand::Imm(insn.imm as i64),
+                    target,
+                }
+            },
+
+            // 0xcd: JSLT_X_64 (if (s64)dst < (s64)src goto target)
+            0xcd => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::SLt,
+                    right: Operand::Reg(src),
                     target,
                 }
             },
