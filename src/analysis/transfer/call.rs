@@ -522,13 +522,8 @@ fn validate_readable_mem(
             env.fail(VerificationError::UninitializedStackRead { pc, offset: 0 });
             false
         }
-        RegType::PtrToMapValue { .. } => {
-            // Map values are always considered initialized
-            true
-        }
-        RegType::PtrToPacket { .. } => {
-            // Packet data is initialized (bounds checked elsewhere)
-            // But not valid for helpers that write to the buffer
+        // Delegate the checking for these to access.rs
+        RegType::PtrToMapValue { .. } | RegType::PtrToPacket { .. } => {
             if let Some(size) = size {
                 access::check_load(env, state, reg, size as i64, 0);
                 if env.failed() {

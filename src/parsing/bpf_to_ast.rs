@@ -118,6 +118,14 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     });
                 },
                 Reg::R1 => {
+                    if cont.imm != 0 {
+                        return Err(LowerError {
+                            pc,
+                            code: insn.code,
+                            msg: "invalid BPF_LD_IMM insn: imm must be 0".to_string(),
+                            kind: LowerErrorKind::InvalidLDIMM64
+                        });
+                    }
                     instrs.push(Instr::LoadMap { 
                         dst, 
                         kind: MapLoadKind::MapPtr, 

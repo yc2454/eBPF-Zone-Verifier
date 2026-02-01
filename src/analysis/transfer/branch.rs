@@ -55,7 +55,6 @@ pub(crate) fn transfer_if(
     // we return ONLY that path. This is critical for pruning dead error paths.
     if let Some(next_pcs) = eval_static_branch(&state, width, left, op, &right, target) {
         info!("We can prove that the condition is Always True or Always False based on bounds, returning only that path.");
-        info!("Path: {:?}", next_pcs);
         return next_pcs;
     }
 
