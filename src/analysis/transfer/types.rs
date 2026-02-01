@@ -77,16 +77,13 @@ pub(crate) fn update_alu_types(
                     (RegType::PtrToMapValue { map_idx, .. }, Operand::Reg(_)) => {
                         types.set(dst, RegType::PtrToMapValue { offset: None, map_idx });
                     },
-                    (RegType::PtrToPacket { id, range, is_base: _, off }, Operand::Imm(k)) => {
-                        let new_off = off + k;
-                        if new_off > constants::MAX_PACKET_OFF as i64 || new_off < 0 {
+                    (RegType::PtrToPacket { id, is_base: _ }, Operand::Imm(k)) => {
+                        if *k > constants::MAX_PACKET_OFF as i64 || *k < 0 {
                             types.set(dst, RegType::ScalarValue);
                         } else {
                             types.set(dst, RegType::PtrToPacket {
                                 id,
-                                range,
                                 is_base: false,
-                                off: new_off,
                             });
                         }
                     },
@@ -135,9 +132,8 @@ pub(crate) fn update_alu_types(
                         let new_off = offset.map(|o| o - k);
                         types.set(dst, RegType::PtrToMapValue { offset: new_off, map_idx });
                     },
-                    RegType::PtrToPacket { id, range, is_base: _, off } => {
-                        let new_off =  off.saturating_sub(*k as i64);
-                        types.set(dst, RegType::PtrToPacket { id, range, is_base: false, off: new_off });
+                    RegType::PtrToPacket { id, is_base: _ } => {
+                        types.set(dst, RegType::PtrToPacket { id, is_base: false });
                     },
                     RegType::PtrToStack { offset } => {
                         types.set(dst, RegType::PtrToStack { offset: offset.map(|o| o - k) });
@@ -184,7 +180,7 @@ pub(crate) fn update_load_types(
                 match info.kind {
                     CtxFieldKind::PacketStart => {
                         let new_id = new_packet_id();
-                        types.set(dst, RegType::PtrToPacket { id: new_id, range: 0, is_base: true, off: 0 });
+                        types.set(dst, RegType::PtrToPacket { id: new_id, is_base: true });
                     }
                     CtxFieldKind::PacketEnd => {
                         types.set(dst, RegType::PtrToPacketEnd);

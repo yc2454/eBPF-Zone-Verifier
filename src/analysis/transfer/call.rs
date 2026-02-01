@@ -529,7 +529,15 @@ fn validate_readable_mem(
         RegType::PtrToPacket { .. } => {
             // Packet data is initialized (bounds checked elsewhere)
             // But not valid for helpers that write to the buffer
-            true
+            if let Some(size) = size {
+                access::check_load(env, state, reg, size as i64, 0);
+                if env.failed() {
+                    return false;
+                }
+                true
+            } else {
+                false
+            }
         }
         RegType::PtrToCtx => {
             // Context can be read

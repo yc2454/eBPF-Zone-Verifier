@@ -12,7 +12,7 @@ pub enum VerificationError {
     PointerOutOfBounds { pc: usize },
     UninitializedStackRead { pc: usize, offset: i64 },
     InvalidStackRead { pc: usize, offset: i64 },
-    UnsafePacketLoad { pc: usize, off: i16, size: i64, range: u64 },
+    UnsafePacketLoad { pc: usize, off: i16, size: i64 },
     UnsafePacketStore { pc: usize, off: i16, size: i64 },
     IllegalPacketStore { pc: usize, off: i16, size: i64 },
     UnsafeMapLoad { pc: usize, off: i64, size: i64, limit: i64 },
@@ -55,8 +55,8 @@ impl VerificationError {
             VerificationError::UninitializedStackRead { pc, offset} => {
                 format!("Reading uninitialized stack slot at pc {}: offset {}", pc, offset)
             }
-            VerificationError::UnsafePacketLoad { pc, off, size, range } => {
-                format!("Unsafe packet load at pc {}: offset {}, size {:?}, range {}", pc, off, size, range)
+            VerificationError::UnsafePacketLoad { pc, off, size } => {
+                format!("Unsafe packet load at pc {}: offset {}, size {:?}", pc, off, size)
             }
             VerificationError::UnsafePacketStore { pc, off, size } => {
                 format!("Unsafe packet store at pc {}: offset {}, size {:?}", pc, off, size)

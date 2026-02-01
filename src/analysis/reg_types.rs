@@ -12,10 +12,8 @@ pub enum RegType {
     PtrToCtx,       
     PtrToStack { offset: Option<i64> },  
     PtrToPacket { 
-        id: u32, 
-        range: u64, // maximum valid access range from the pointer
+        id: u32,
         is_base: bool,
-        off: i64, // offset from the start of the packet
     },    
     PtrToPacketEnd, 
     PtrToPacketMeta,
@@ -86,7 +84,6 @@ impl RegType {
     pub fn get_offset(&self) -> Option<i64> {
         match *self {
             RegType::PtrToMapValue { offset, map_idx: _ } => offset,
-            RegType::PtrToPacket { id: _, range: _, is_base: _, off } => Some(off),
             _ => None
         }
     }

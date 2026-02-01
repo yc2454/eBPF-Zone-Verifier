@@ -94,9 +94,9 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
 
         // Packet pointers: old must have >= range
         (
-            PtrToPacket { range: r1, is_base: b1, off: o1, .. },
-            PtrToPacket { range: r2, is_base: b2, off: o2, .. },
-        ) => b1 == b2 && o1 == o2 && r1 >= r2,
+            PtrToPacket { is_base: b1, .. },
+            PtrToPacket { is_base: b2, .. },
+        ) => b1 == b2,
 
         // Mem pointers: old must have >= range
         (

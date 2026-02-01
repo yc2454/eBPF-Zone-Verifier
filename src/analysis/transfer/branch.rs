@@ -17,7 +17,7 @@ use crate::zone::tnum::Tnum;
 use crate::analysis::env::VerificationError;
 use crate::analysis::reg_types::RegType;
 
-use super::refinement::{refine_packet_ranges, refine_mem_ranges, refine_branch};
+use super::refinement::{refine_mem_ranges, refine_branch};
 use super::common::{check_reg_readable, check_operand_readable};
 
 /// Transfer function for conditional branch instructions.
@@ -482,8 +482,6 @@ fn apply_reg_constraints(
             CmpOp::SLt | CmpOp::SLe | CmpOp::SGt | CmpOp::SGe => {
                 if !fits_in_i32_range(&then_s.dbm, left) || !fits_in_i32_range(&then_s.dbm, right) {
                     for state in [&mut *then_s, &mut *else_s] {
-                        refine_packet_ranges(&state.dbm, &mut state.types, left, right);
-                        refine_packet_ranges(&state.dbm, &mut state.types, right, left);
                         refine_mem_ranges(&state.dbm, &mut state.types, left, right);
                         refine_mem_ranges(&state.dbm, &mut state.types, right, left);
                     }
@@ -503,8 +501,6 @@ fn apply_reg_constraints(
             // One or both could be negative (signed) = large (unsigned)
             // Cannot safely convert unsigned constraints to signed DBM constraints
             for state in [&mut *then_s, &mut *else_s] {
-                refine_packet_ranges(&state.dbm, &mut state.types, left, right);
-                refine_packet_ranges(&state.dbm, &mut state.types, right, left);
                 refine_mem_ranges(&state.dbm, &mut state.types, left, right);
                 refine_mem_ranges(&state.dbm, &mut state.types, right, left);
             }
@@ -543,8 +539,6 @@ fn apply_reg_constraints(
     
     // Refine pointer ranges on both states
     for state in [&mut *then_s, &mut *else_s] {
-        refine_packet_ranges(&state.dbm, &mut state.types, left, right);
-        refine_packet_ranges(&state.dbm, &mut state.types, right, left);
         refine_mem_ranges(&state.dbm, &mut state.types, left, right);
         refine_mem_ranges(&state.dbm, &mut state.types, right, left);
     }

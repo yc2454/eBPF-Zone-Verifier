@@ -595,7 +595,7 @@ fn is_clean_ptr(types: &TypeState, reg: Reg) -> bool {
     match types.get(reg) {
         RegType::PtrToMapValue { offset: Some(0), .. } |
         RegType::PtrToStack { offset: Some(0) } |
-        RegType::PtrToPacket { off: 0, .. } => true,
+        RegType::PtrToPacket { .. } => true,
         _ => false,
     }
 }

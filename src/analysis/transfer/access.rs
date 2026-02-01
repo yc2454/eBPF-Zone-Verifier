@@ -28,24 +28,16 @@ pub fn check_load(
         PtrToStack { offset } => {
             check_stack_access(env, state, base, offset, off as i64, size, pc, AccessKind::Read);
         }
-        PtrToPacket { id: _, range, is_base: _, off: off_from_packet } => {
-            // Total offset from base = off + instruction offset
-            let total_off = off_from_packet + off as i64;
-            let access_end = total_off + size;
+        PtrToPacket { id: _, is_base: _ } => {
+            let access_end = off as i64 + size;
             let mut safe = false;
             
             // 1. Negative offset is never allowed (can't go before packet start)
-            if total_off < 0 {
-                error!("Negative packet load at pc {}: base {:?}+{}", pc, base, total_off);
-                env.fail(VerificationError::UnsafePacketLoad { pc, off: total_off as i16, size, range });
+            if off < 0 {
+                error!("Negative packet load at pc {}: base {:?}+{}", pc, base, off);
+                env.fail(VerificationError::UnsafePacketLoad { pc, off: off as i16, size });
                 return;
-            }
-            // 2. Standard Check: within pre-computed safe range
-            else if (access_end as u64) <= range { 
-                safe = true; 
-            } 
-            // 3. Direct DBM query (handles cases where range wasn't propagated)
-            else {
+            } else {
                 let end_reg_opt = 
                     crate::zone::domain::REG_ENV
                         .all().iter()
@@ -63,8 +55,8 @@ pub fn check_load(
                 }
             }
             if !safe {
-                error!("Unsafe packet load at pc {}: base {:?}+{} (range={})", pc, base, off, range);
-                env.fail(VerificationError::UnsafePacketLoad { pc, off, size, range });
+                error!("Unsafe packet load at pc {}: base {:?}", pc, base);
+                env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
             }
 
             // Alignment check
@@ -221,7 +213,7 @@ pub fn check_load(
             let reg_pointing_to_packet_data = crate::zone::domain::REG_ENV
                 .all()
                 .iter()
-                .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket { is_base: true, off: 0, .. }));
+                .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket { is_base: true, .. }));
             
             if let Some(&data_reg) = reg_pointing_to_packet_data {
                 // We need to prove: data_meta + off + size <= data
@@ -237,11 +229,11 @@ pub fn check_load(
                     }
                     Some(ub) => {
                         error!("Metadata access exceeds proven bounds (need {}, have {})", access_end, -ub);
-                        env.fail(VerificationError::UnsafePacketLoad { pc, off, size, range: (-ub) as u64 });
+                        env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
                     }
                     None => {
                         error!("No bounds check performed between data_meta and data");
-                        env.fail(VerificationError::UnsafePacketLoad { pc, off, size, range: 0 });
+                        env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
                     }
                 }
             } else {
@@ -331,7 +323,7 @@ pub fn check_store(
             info!("Checking stack store");
             check_stack_access(env, state, base, offset, off as i64, size as i64, pc, AccessKind::Write);
         }
-        PtrToPacket { id: _, range, is_base: _, off: off_from_packet } => {
+        PtrToPacket { id: _, is_base: _ } => {
             // Check if the program type allows direct packet writes
             if !prog_kind_support_direct_packet_write(ctx.prog_kind) {
                 error!("Direct packet store at pc {} is not supported for {:?} program", pc, ctx.prog_kind);
@@ -339,19 +331,14 @@ pub fn check_store(
                 return;
             }
             // Total offset from base = off + instruction offset
-            let total_off = off_from_packet + off as i64;
-            let access_end = total_off + size;
+            let access_end = off as i64 + size;
             let mut safe = false;
             
-            if total_off < 0 {
-                error!("Negative packet store at pc {}: base {:?}+{}", pc, base, total_off);
-                env.fail(VerificationError::UnsafePacketStore { pc, off: total_off as i16, size });
+            if off < 0 {
+                error!("Negative packet store at pc {}: base {:?}+{}", pc, base, off);
+                env.fail(VerificationError::UnsafePacketStore { pc, off: off as i16, size });
                 return;
-            } else if (access_end as u64) <= range {
-                safe = true;
-            }
-            // 3. DBM Fallback
-            else {
+            } else {
                 let end_reg_opt = crate::zone::domain::REG_ENV.all().iter().find(|&&r| matches!(state.types.get(r), PtrToPacketEnd));
                 if let Some(end_reg) = end_reg_opt {
                     let bound = -access_end;
@@ -361,7 +348,7 @@ pub fn check_store(
             }
 
             if !safe {
-                error!("Unsafe packet store at pc {}: base {:?}+{} (range={})", pc, base, off, range);
+                error!("Unsafe packet store at pc {}: base {:?}+{}", pc, base, off);
                 env.fail(VerificationError::UnsafePacketStore { pc, off, size });
             }
 
@@ -679,10 +666,10 @@ fn get_packet_offset_range(
     let base_type = state.types.get(base);
     
     match base_type {
-        RegType::PtrToPacket { off: type_off, .. } => {
+        RegType::PtrToPacket { .. } => {
             // Fixed offset tracked in type
-            let total = type_off + insn_off as i64;
-            (Some(total), Some(total))
+            let insn_off = insn_off as i64;
+            (Some(insn_off), Some(insn_off))
         }
         _ => {
             // Variable offset - query DBM for bounds relative to packet start
