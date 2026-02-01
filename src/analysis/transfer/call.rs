@@ -672,7 +672,7 @@ pub(crate) fn transfer_call(
     // ========================================================================
     if helper == constants::BPF_TAIL_CALL {
         // Update types (clobber caller-saved, R0 = scalar)
-        update_call_types(&in_types, &mut state.types, helper);
+        update_call_types(&in_types, &mut state, helper);
         
         // Forget caller-saved in DBM
         for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
@@ -688,8 +688,16 @@ pub(crate) fn transfer_call(
     // Normal helper handling
     // ========================================================================
 
+    // 0. Special check for sk_release: R1 must be have a reference
+    if helper == constants::BPF_SK_RELEASE {
+        if state.types.get(Reg::R1).get_ref_id().is_none() {
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            return vec![];
+        }
+    }
+
     // 1. Update types
-    update_call_types(&in_types, &mut state.types, helper);
+    update_call_types(&in_types, &mut state, helper);
     
     // 2. Update DBM - forget caller-saved registers
     for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {

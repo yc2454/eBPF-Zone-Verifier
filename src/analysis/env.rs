@@ -41,6 +41,7 @@ pub enum VerificationError {
     MisalignedPacketAccess { pc: usize, off: i16, size: i64 },
     InvalidRegisterTypeState { pc: usize },
     RegisterTypeConflict { pc: usize },
+    UnreleasedReference,
 }
 
 impl VerificationError {
@@ -144,6 +145,9 @@ impl VerificationError {
             }
             VerificationError::RegisterTypeConflict { pc } => {
                 format!("Register type conflict at pc {}", pc)
+            }
+            VerificationError::UnreleasedReference  => {
+                format!("Unreleased reference in program")
             }
         }
     }

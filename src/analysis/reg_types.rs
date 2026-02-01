@@ -100,12 +100,31 @@ impl RegType {
             _ => std::mem::discriminant(t1) == std::mem::discriminant(t2),
         }
     }
+
+    /// Returns the ref_id if this type holds a reference
+    pub fn get_ref_id(&self) -> Option<u32> {
+        match *self {
+            RegType::PtrToSocket { id } |
+            RegType::PtrToSocketOrNull { id } |
+            RegType::PtrToSockCommon { id } |
+            RegType::PtrToSockCommonOrNull { id } |
+            RegType::PtrToTcpSock { id } |
+            RegType::PtrToTcpSockOrNull { id } => Some(id),
+            _ => None,
+        }
+    }
 }
 
 pub fn new_packet_id() -> u32 {
     use std::sync::atomic::{AtomicU32, Ordering};
     static PACKET_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
     PACKET_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
+}
+
+pub fn new_ref_id() -> u32 {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static REF_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
+    REF_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

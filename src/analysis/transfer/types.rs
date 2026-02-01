@@ -4,6 +4,7 @@
 
 use crate::analysis::env::VerifierEnv;
 use crate::analysis::reg_types::{RegType, TypeState, new_packet_id};
+use crate::analysis::state::State;
 use crate::ast::{AluOp, AtomicOp, MapLoadKind, MemSize, Operand, Width};
 use crate::zone::domain::Reg;
 use crate::analysis::ctx_model::{
@@ -278,10 +279,10 @@ pub(crate) fn invalidate_stack_packet_pointers(types: &mut TypeState) {
 }
 
 /// Updates register types after a helper Call.
-pub(crate) fn update_call_types(in_types: &TypeState, types: &mut TypeState, helper: u32) {
+pub(crate) fn update_call_types(in_types: &TypeState, state: &mut State, helper: u32) {
     // 1. Clobber caller-saved registers - they are NOT readable after the call
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-        types.set(r, RegType::NotInit);
+        state.types.set(r, RegType::NotInit);
     }
     
     // 2. Set R0 based on helper return type
@@ -292,19 +293,19 @@ pub(crate) fn update_call_types(in_types: &TypeState, types: &mut TypeState, hel
                 _ => 0,
             };
             let id = new_packet_id();
-            types.set(Reg::R0, RegType::PtrToMapValueOrNull { id, map_idx });
+            state.types.set(Reg::R0, RegType::PtrToMapValueOrNull { id, map_idx });
         }
         
         // Socket lookup helpers - return PTR_TO_SOCKET_OR_NULL
         constants::BPF_SK_LOOKUP_TCP | constants::BPF_SK_LOOKUP_UDP => {
-            let id = new_packet_id();
-            types.set(Reg::R0, RegType::PtrToSocketOrNull { id });
+            let id = state.acquire_ref();
+            state.types.set(Reg::R0, RegType::PtrToSocketOrNull { id });
         }
         
         // SKC lookup - returns PTR_TO_SOCK_COMMON_OR_NULL
         constants::BPF_SKC_LOOKUP_TCP => {
-            let id = new_packet_id();
-            types.set(Reg::R0, RegType::PtrToSockCommonOrNull { id });
+            let id = state.acquire_ref();
+            state.types.set(Reg::R0, RegType::PtrToSockCommonOrNull { id });
         }
         
         // SKC to TCP sock conversion - returns PTR_TO_TCP_SOCK_OR_NULL
@@ -312,20 +313,28 @@ pub(crate) fn update_call_types(in_types: &TypeState, types: &mut TypeState, hel
         constants::BPF_SKC_TO_TCP6_SOCK |
         constants::BPF_SKC_TO_TCP_TIMEWAIT_SOCK |
         constants::BPF_SKC_TO_TCP_REQUEST_SOCK => {
-            let id = new_packet_id();
-            types.set(Reg::R0, RegType::PtrToTcpSockOrNull { id });
+            let id = state.acquire_ref();
+            state.types.set(Reg::R0, RegType::PtrToTcpSockOrNull { id });
         }
         
         // SKC to UDP/Unix - return SOCK_COMMON for now (simplified)
         constants::BPF_SKC_TO_UDP6_SOCK |
         constants::BPF_SKC_TO_UNIX_SOCK => {
-            let id = new_packet_id();
-            types.set(Reg::R0, RegType::PtrToSockCommonOrNull { id });
+            let id = state.acquire_ref();
+            state.types.set(Reg::R0, RegType::PtrToSockCommonOrNull { id });
+        }
+
+        // Release socket reference
+        constants::BPF_SK_RELEASE => {
+            if let Some(ref_id) = state.types.get(Reg::R1).get_ref_id() {
+                state.release_ref(ref_id);
+                state.invalidate_ref(ref_id);
+            }
         }
         
         // tail_call: R0 is undefined on failure path
         constants::BPF_TAIL_CALL => {
-            types.set(Reg::R0, RegType::ScalarValue);
+            state.types.set(Reg::R0, RegType::ScalarValue);
         }
 
         constants::BPF_SKB_LOAD_BYTES => {
@@ -333,28 +342,28 @@ pub(crate) fn update_call_types(in_types: &TypeState, types: &mut TypeState, hel
             match mem_ptr_ty {
                 RegType::PtrToStack { offset: Some(off) } => {
                     let slot = off as i16;
-                    types.set_stack(slot, RegType::ScalarValue);
+                    state.types.set_stack(slot, RegType::ScalarValue);
                 }
                 _ => {} // Do nothing for the other cases for now
             }
         }
         
         _ => {
-            types.set(Reg::R0, RegType::ScalarValue);
+            state.types.set(Reg::R0, RegType::ScalarValue);
         }
     }
     
     // 3. Invalidate packet pointers if needed
     if helper_invalidates_packets(helper) {
         for r in Reg::ALL {
-            match types.get(r) {
+            match state.types.get(r) {
                 RegType::PtrToPacket { .. } | RegType::PtrToPacketEnd => {
-                    types.set(r, RegType::ScalarValue);
+                    state.types.set(r, RegType::ScalarValue);
                 }
                 _ => {}
             }
         }
-        invalidate_stack_packet_pointers(types);
+        invalidate_stack_packet_pointers(&mut state.types);
     }
 }
 

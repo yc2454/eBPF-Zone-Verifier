@@ -3,7 +3,7 @@ use crate::zone::dbm::Dbm;
 use crate::analysis::reg_types::TypeState;
 use crate::zone::tnum::Tnum;
 use crate::zone::domain::Reg;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Mirrors `struct bpf_verifier_state` (partially).
 /// Holds the snapshot of execution at a specific PC.
@@ -29,6 +29,9 @@ pub struct State {
     /// Stores return addresses (PC + 1 of CallRel instructions).
     /// Empty for main function; populated when entering subfunctions.
     pub call_stack: Vec<usize>,
+
+    /// Active references that must be released before exit
+    pub active_refs: HashSet<u32>,
 }
 
 impl State {
@@ -46,7 +49,8 @@ impl State {
             pc,
             history_idx: None,
             tnums: tnums.clone(),
-            call_stack: Vec::new()
+            call_stack: Vec::new(),
+            active_refs: HashSet::new(),
         }
     }
 
@@ -67,6 +71,42 @@ impl State {
     pub fn set_tnum(&mut self, r: Reg, t: Tnum) {
         if r != Reg::Zero {
             self.tnums.insert(r, t);
+        }
+    }
+
+    /// Acquire a new reference, returns the ref_id
+    pub fn acquire_ref(&mut self) -> u32 {
+        let id = crate::analysis::reg_types::new_ref_id();
+        self.active_refs.insert(id);
+        id
+    }
+
+    /// Release a reference by id
+    pub fn release_ref(&mut self, id: u32) -> bool {
+        self.active_refs.remove(&id)
+    }
+
+    /// Check if all references have been released
+    pub fn has_unreleased_refs(&self) -> bool {
+        !self.active_refs.is_empty()
+    }
+
+    /// Invalidate all registers (and stack slots) holding a given ref_id
+    pub fn invalidate_ref(&mut self, id: u32) {
+        use crate::analysis::reg_types::RegType;
+        
+        // Invalidate registers
+        for i in 0..self.types.regs.len() {
+            if self.types.regs[i].get_ref_id() == Some(id) {
+                self.types.regs[i] = RegType::ScalarValue;
+            }
+        }
+        
+        // Invalidate stack slots
+        for (_, ty) in self.types.stack.iter_mut() {
+            if ty.get_ref_id() == Some(id) {
+                *ty = RegType::ScalarValue;
+            }
         }
     }
 }
