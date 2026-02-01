@@ -10,7 +10,7 @@ pub(crate) fn transfer_packet_load(
     env: &mut VerifierEnv,
     mut state: State,
     size: MemSize,
-    _mode: PacketLoadMode,
+    mode: PacketLoadMode,
     _offset_imm: i32,
     src: Option<Reg>,
 ) -> Vec<State> {
@@ -27,6 +27,12 @@ pub(crate) fn transfer_packet_load(
         if !check_reg_readable(env, &state, reg) {
             return vec![];
         }
+    }
+
+    // 3. Abs mode is forbidden under a lock
+    if state.has_active_lock() && mode == PacketLoadMode::Abs {
+        env.fail(crate::analysis::env::VerificationError::LoadAbsUnderLock { pc: state.pc });
+        return vec![];
     }
 
     update_packet_load_types(&mut state.types);

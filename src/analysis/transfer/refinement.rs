@@ -141,7 +141,7 @@ fn maybe_promote_map_val(state: &mut State, reg: Reg) {
     for r in Reg::ALL {
         if let RegType::PtrToMapValueOrNull { id, map_idx } = state.types.get(r) {
             if id == target_id {
-                state.types.set(r, RegType::PtrToMapValue { offset: Some(0), map_idx });
+                state.types.set(r, RegType::PtrToMapValue { id, offset: Some(0), map_idx });
                 assign_zero(&mut state.dbm, r);
             }
         }
@@ -150,7 +150,7 @@ fn maybe_promote_map_val(state: &mut State, reg: Reg) {
     for k in stack_keys {
         if let RegType::PtrToMapValueOrNull { id, map_idx } = state.types.get_stack(k) {
             if id == target_id {
-                state.types.set_stack(k, RegType::PtrToMapValue { offset: Some(0), map_idx });
+                state.types.set_stack(k, RegType::PtrToMapValue { id, offset: Some(0), map_idx });
             }
         }
     }

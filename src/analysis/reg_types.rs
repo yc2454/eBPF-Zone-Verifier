@@ -20,7 +20,7 @@ pub enum RegType {
     PtrToMem { region: MemRegionId, range: u64 },           
     PtrToMapObject { map_idx: usize }, 
     PtrToMapValueOrNull { id: u32, map_idx: usize }, 
-    PtrToMapValue { offset: Option<i64>, map_idx: usize },
+    PtrToMapValue { id: u32, offset: Option<i64>, map_idx: usize },
     PtrToSocket { id: u32 },
     PtrToSocketOrNull { id: u32 },
     PtrToSockCommon { id: u32 },
@@ -55,8 +55,8 @@ impl RegType {
     /// Returns the non-null version of a nullable pointer type
     pub fn to_non_null(&self) -> Option<RegType> {
         match *self {
-            RegType::PtrToMapValueOrNull { id: _, map_idx } => {
-                Some(RegType::PtrToMapValue { offset: Some(0), map_idx })
+            RegType::PtrToMapValueOrNull { id, map_idx } => {
+                Some(RegType::PtrToMapValue { offset: Some(0), map_idx, id })
             }
             RegType::PtrToSocketOrNull { id } => {
                 Some(RegType::PtrToSocket { id })
@@ -83,7 +83,7 @@ impl RegType {
 
     pub fn get_offset(&self) -> Option<i64> {
         match *self {
-            RegType::PtrToMapValue { offset, map_idx: _ } => offset,
+            RegType::PtrToMapValue { offset, map_idx: _, .. } => offset,
             _ => None
         }
     }
@@ -115,12 +115,14 @@ impl RegType {
     }
 }
 
-pub fn new_packet_id() -> u32 {
+// For general pointers
+pub fn new_ptr_id() -> u32 {
     use std::sync::atomic::{AtomicU32, Ordering};
     static PACKET_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
     PACKET_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
+// For references (return values of special helper functions)
 pub fn new_ref_id() -> u32 {
     use std::sync::atomic::{AtomicU32, Ordering};
     static REF_ID_COUNTER: AtomicU32 = AtomicU32::new(1);

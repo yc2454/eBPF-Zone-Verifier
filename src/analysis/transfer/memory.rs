@@ -125,7 +125,7 @@ pub(crate) fn transfer_atomic(
         env.fail(VerificationError::MisalignedAccess { pc: state.pc, off: off.into() });
         return vec![];
     }
-    
+
     // 1. Check readability
     if !check_reg_readable(env, &state, base) { return vec![]; }
     if !check_reg_readable(env, &state, src) { return vec![]; }
@@ -192,7 +192,7 @@ fn try_load_from_rodata(
     size: MemSize,
 ) -> bool {
     // 1. Check if we are loading from a Map Pointer
-    if let RegType::PtrToMapValue { map_idx, offset: base_offset } = state.types.get(base) {
+    if let RegType::PtrToMapValue { id: _, map_idx, offset: base_offset } = state.types.get(base) {
         // We can only read if the pointer offset is known (not variable)
         if let Some(ptr_val) = base_offset {
             let map = &env.ctx.map_defs[map_idx];

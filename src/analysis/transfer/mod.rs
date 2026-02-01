@@ -170,6 +170,12 @@ fn transfer_exit(
         return vec![];
     }
 
+    // Check if there is any unreleased locks
+    if state.has_active_lock() {
+        env.fail(VerificationError::UnreleasedLock);
+        return vec![];
+    }
+
     if let Some(return_pc) = state.call_stack.pop() {
         // Returning from subfunction — continue at caller's return site
         // R0 retains its current type (the actual return value)

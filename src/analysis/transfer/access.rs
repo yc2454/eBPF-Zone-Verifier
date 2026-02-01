@@ -3,9 +3,7 @@ use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;
 use crate::analysis::reg_types::RegType;
 use crate::ast::{ProgramKind};
-use crate::parsing::elf_loader::BpfMapDef;
 use crate::zone::domain::{get_bounds, get_relative_bound};
-use crate::parsing::btf::{self, BtfContext};
 use crate::analysis::env::VerificationError;
 use crate::common::constants;
 use crate::analysis::ctx_model;
@@ -73,7 +71,7 @@ pub fn check_load(
                 env.fail(VerificationError::UnsafeCtxAccess { pc, off, size });
             }
         }
-        PtrToMapValue { offset: map_off_opt, map_idx } => {
+        PtrToMapValue { id: _, offset: map_off_opt, map_idx } => {
             if let Some(map_def) = ctx.map_defs.get(map_idx) {
                 // If the map is write-only
                 if map_def.map_flags == constants::BPF_F_WRONLY_PROG {
@@ -277,7 +275,7 @@ pub fn check_store(
     let pc = state.pc;
 
     match base_ty {
-        PtrToMapValue { offset: map_off, map_idx } => {
+        PtrToMapValue { id: _, offset: map_off, map_idx } => {
             if let Some(map_def) = ctx.map_defs.get(map_idx) {
                 // If the map is read-only
                 if map_def.map_flags == constants::BPF_F_RDONLY_PROG {
@@ -317,7 +315,7 @@ pub fn check_store(
                                 check_btf_fields_access(env, pc, off.into(), access_end, size, map_limit, btf_id);
                                 return;
                             }
-                            
+
                             if !(access_start >= 0 && access_end <= map_limit) {
                                 error!("Unsafe variable map store at pc {}: range [{}, {}], limit {}", 
                                     pc, access_start, access_end, map_limit);

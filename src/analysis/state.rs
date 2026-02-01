@@ -5,6 +5,12 @@ use crate::zone::tnum::Tnum;
 use crate::zone::domain::Reg;
 use std::collections::{HashMap, HashSet};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LockState {
+    pub ptr_id: u32,      // which pointer instance
+    pub lock_offset: u32,   // offset of spin_lock within value (e.g., 4)
+}
+
 /// Mirrors `struct bpf_verifier_state` (partially).
 /// Holds the snapshot of execution at a specific PC.
 #[derive(Clone, Debug)]
@@ -32,6 +38,9 @@ pub struct State {
 
     /// Active references that must be released before exit
     pub active_refs: HashSet<u32>,
+
+    // Active lock that is being held
+    pub active_lock: Option<LockState>,
 }
 
 impl State {
@@ -51,6 +60,7 @@ impl State {
             tnums: tnums.clone(),
             call_stack: Vec::new(),
             active_refs: HashSet::new(),
+            active_lock: None,
         }
     }
 
@@ -109,4 +119,25 @@ impl State {
             }
         }
     }
+
+    /// Acquire a spin lock
+    pub fn acquire_lock(&mut self, ptr_id: u32, lock_offset: u32) {
+        self.active_lock = Some(LockState { ptr_id, lock_offset });
+    }
+
+    /// Release the spin lock
+    pub fn release_lock(&mut self) {
+        self.active_lock = None;
+    }
+
+    /// Check if currently holding a lock
+    pub fn has_active_lock(&self) -> bool {
+        self.active_lock.is_some()
+    }
+
+    /// Get the currently held lock, if any
+    pub fn get_active_lock(&self) -> Option<&LockState> {
+        self.active_lock.as_ref()
+    }
+     
 }

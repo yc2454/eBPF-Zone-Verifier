@@ -7,6 +7,7 @@ use crate::analysis::state::State;
 use crate::analysis::reg_types::{RegType, TypeState};
 use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, is_zero, nonneg};
 use crate::analysis::transfer::access;
+use crate::parsing::btf::SpecialFieldKind;
 use crate::common::constants;
 use log::{error, warn};
 
@@ -261,6 +262,23 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             PtrToUninitMem,     // R1: dst (output buffer)
             ConstSizeOrZero,    // R2: size
             Anything,           // R3: unsafe_ptr (kernel address, not validated)
+            DontCare,
+            DontCare,
+        ]),
+
+        // ---- Spin lock related ---- 
+        constants::BPF_SPIN_LOCK => HelperSignature::new([
+            Anything,
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ]),
+
+        constants::BPF_SPIN_UNLOCK => HelperSignature::new([
+            Anything,
+            DontCare,
+            DontCare,
             DontCare,
             DontCare,
         ]),
@@ -671,14 +689,16 @@ pub(crate) fn transfer_call(
     validate_helper_args(env, &state, helper, &in_types, pc);
     
     // ========================================================================
-    // SPECIAL CASE: bpf_tail_call
+    // SPECIAL CASES
+    // ========================================================================
+
+    // bpf_tail_call
     // 
     // Semantics:
     //   - SUCCESS: Jump to target program, NEVER RETURNS (like exit)
     //   - FAILURE: Falls through to next instruction
     //
     // We only model the FAILURE path. Success means execution went elsewhere.
-    // ========================================================================
     if helper == constants::BPF_TAIL_CALL {
         // Update types (clobber caller-saved, R0 = scalar)
         update_call_types(env, &in_types, &mut state, helper);
@@ -692,18 +712,73 @@ pub(crate) fn transfer_call(
         state.pc += 1;
         return vec![state];
     }
-    
-    // ========================================================================
-    // Normal helper handling
-    // ========================================================================
 
-    // 0. Special check for sk_release: R1 must be have a reference
+    // Special check for sk_release: R1 must have a reference
     if helper == constants::BPF_SK_RELEASE {
         if state.types.get(Reg::R1).get_ref_id().is_none() {
             env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
             return vec![];
         }
     }
+
+    // bpf_spin_lock and bpf_spin_unlock
+    if helper == constants::BPF_SPIN_LOCK || helper == constants::BPF_SPIN_UNLOCK {
+        match state.types.get(Reg::R1) {
+            RegType::PtrToMapValue { offset: _, map_idx, id } => {
+                match env.ctx.map_defs.get(map_idx) {
+                    Some(map_def) => {
+                        if let Some(val_type_id) = map_def.btf_val_type_id {
+                            if helper == constants::BPF_SPIN_LOCK {
+                                if state.has_active_lock() {
+                                    env.fail(VerificationError::LockAlreadyHeld { pc });
+                                    return vec![];
+                                }
+                                let special_fields = env.ctx.btf.find_special_fields(val_type_id);
+                                let lock_offset_op = 
+                                    special_fields.iter().find(
+                                        |f| f.kind == SpecialFieldKind::SpinLock)
+                                        .map(|f| f.offset);
+                                if lock_offset_op.is_none() {
+                                    env.fail(VerificationError::InvalidBtfType);
+                                    return vec![];
+                                } else {
+                                    let lock_offset = lock_offset_op.unwrap();
+                                    state.acquire_lock(id, lock_offset);
+                                }
+                            } else {
+                                if !state.has_active_lock() {
+                                    env.fail(VerificationError::LockNotHeld { pc });
+                                    return vec![];
+                                } else {
+                                    let lock = state.get_active_lock().unwrap();
+                                    if lock.ptr_id != id {
+                                        env.fail(VerificationError::LockNotHeld { pc });
+                                        return vec![];
+                                    }
+                                }
+                                state.release_lock();
+                            }
+                        } else {
+                            env.fail(VerificationError::InvalidBtfType);
+                            return vec![];
+                        }
+                    }
+                    _ => {
+                        env.fail(VerificationError::MapNotFound { pc, map_idx });
+                        return vec![];
+                    }
+                }
+            }
+            _ => {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+                return vec![];
+            }
+        }
+    }
+    
+    // ========================================================================
+    // Normal helper handling
+    // ========================================================================
 
     // 1. Update types
     update_call_types(env, &in_types, &mut state, helper);

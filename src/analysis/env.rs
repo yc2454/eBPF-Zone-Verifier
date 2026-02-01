@@ -43,6 +43,11 @@ pub enum VerificationError {
     InvalidRegisterTypeState { pc: usize },
     RegisterTypeConflict { pc: usize, reg: Reg, old: RegType, new: RegType },
     UnreleasedReference,
+    InvalidBtfType,
+    LockAlreadyHeld { pc: usize },
+    LockNotHeld { pc: usize },
+    UnreleasedLock,
+    LoadAbsUnderLock { pc: usize}
 }
 
 impl VerificationError {
@@ -149,6 +154,21 @@ impl VerificationError {
             }
             VerificationError::UnreleasedReference  => {
                 format!("Unreleased reference in program")
+            }
+            VerificationError::UnreleasedLock => {
+                format!("Unreleased lock in program")
+            }
+            VerificationError::InvalidBtfType => {
+                format!("Invalid BTF type")
+            }
+            VerificationError::LockAlreadyHeld { pc } => {
+                format!("Lock already held at pc {}, cannot acquire again", pc)
+            }
+            VerificationError::LockNotHeld { pc } => {
+                format!("Lock not held at pc {}, cannot release", pc)
+            }
+            VerificationError::LoadAbsUnderLock { pc } => {
+                format!("ld_abs with an active lock at pc {}", pc)
             }
         }
     }

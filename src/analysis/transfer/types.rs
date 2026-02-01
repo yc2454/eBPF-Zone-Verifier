@@ -3,7 +3,7 @@
 // Type update logic for all instruction types
 
 use crate::analysis::env::VerifierEnv;
-use crate::analysis::reg_types::{RegType, TypeState, new_packet_id};
+use crate::analysis::reg_types::{RegType, TypeState, new_ptr_id};
 use crate::analysis::state::State;
 use crate::ast::{AluOp, AtomicOp, MapLoadKind, MemSize, Operand, Width};
 use crate::zone::domain::Reg;
@@ -52,6 +52,7 @@ pub(crate) fn update_alu_types(
                             map_name == ".bss" 
                             {
                                 types.set(dst, RegType::PtrToMapValue { 
+                                    id: new_ptr_id(),
                                     offset: Some(info.offset), 
                                     map_idx: info.map_idx,
                                 });
@@ -71,12 +72,12 @@ pub(crate) fn update_alu_types(
             let dst_ty = in_types.get(dst);
             if dst_ty.is_pointer() {
                 match (dst_ty, src) {
-                    (RegType::PtrToMapValue { offset, map_idx }, Operand::Imm(k)) => {
+                    (RegType::PtrToMapValue { id, offset, map_idx }, Operand::Imm(k)) => {
                         let new_off = offset.map(|o| o + k);
-                        types.set(dst, RegType::PtrToMapValue { offset: new_off, map_idx });
+                        types.set(dst, RegType::PtrToMapValue { id, offset: new_off, map_idx });
                     },
-                    (RegType::PtrToMapValue { map_idx, .. }, Operand::Reg(_)) => {
-                        types.set(dst, RegType::PtrToMapValue { offset: None, map_idx });
+                    (RegType::PtrToMapValue { id, map_idx, .. }, Operand::Reg(_)) => {
+                        types.set(dst, RegType::PtrToMapValue { offset: None, map_idx, id });
                     },
                     (RegType::PtrToPacket { id, is_base: _ }, Operand::Imm(k)) => {
                         if *k > constants::MAX_PACKET_OFF as i64 || *k < 0 {
@@ -129,9 +130,9 @@ pub(crate) fn update_alu_types(
             let dst_ty = in_types.get(dst);
             if let (true, Operand::Imm(k)) = (dst_ty.is_pointer(), src) {
                 match dst_ty {
-                    RegType::PtrToMapValue { offset, map_idx } => {
+                    RegType::PtrToMapValue { id, offset, map_idx } => {
                         let new_off = offset.map(|o| o - k);
-                        types.set(dst, RegType::PtrToMapValue { offset: new_off, map_idx });
+                        types.set(dst, RegType::PtrToMapValue { id, offset: new_off, map_idx });
                     },
                     RegType::PtrToPacket { id, is_base: _ } => {
                         types.set(dst, RegType::PtrToPacket { id, is_base: false });
@@ -180,7 +181,7 @@ pub(crate) fn update_load_types(
             if let Some(info) = kind {
                 match info.kind {
                     CtxFieldKind::PacketStart => {
-                        let new_id = new_packet_id();
+                        let new_id = new_ptr_id();
                         types.set(dst, RegType::PtrToPacket { id: new_id, is_base: true });
                     }
                     CtxFieldKind::PacketEnd => {
@@ -303,7 +304,7 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
                         state.types.set(Reg::R0, RegType::PtrToSocketOrNull { id });
                     }
                     _ => {
-                        let id = new_packet_id();
+                        let id = new_ptr_id();
                         state.types.set(Reg::R0, RegType::PtrToMapValueOrNull { id, map_idx });
                     }
                 }
@@ -398,6 +399,7 @@ pub(crate) fn update_map_load_types(types: &mut TypeState, kind: MapLoadKind, ma
             map_idx: map_fd as usize
         },
         MapLoadKind::MapValue => RegType::PtrToMapValue { 
+            id: new_ptr_id(),
             map_idx: map_fd as usize, 
             offset: Some(0) 
         },

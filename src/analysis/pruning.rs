@@ -106,8 +106,8 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
 
         // Map value pointers
         (
-            PtrToMapValue { offset: o1, map_idx: m1 },
-            PtrToMapValue { offset: o2, map_idx: m2 },
+            PtrToMapValue { offset: o1, map_idx: m1, .. },
+            PtrToMapValue { offset: o2, map_idx: m2, .. },
         ) => {
             m1 == m2 && match (o1, o2) {
                 (None, _) => true,
