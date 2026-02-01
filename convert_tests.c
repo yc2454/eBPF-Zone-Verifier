@@ -347,6 +347,10 @@ static uint32_t bpf_semi_rand_get(void) {
 #define FUNC_NEST 7
 
 #define __bpf_md_ptr(type, name) type name
+
+#define offsetofend(TYPE, MEMBER) \
+    (offsetof(TYPE, MEMBER) + sizeof(((TYPE *)0)->MEMBER))
+
 // __sk_buff structure offsets
 struct __sk_buff {
 	__u32 len;
@@ -464,7 +468,11 @@ struct bpf_sock {
     __u32 src_ip4;
     __u32 src_ip6[4];
     __u32 src_port;
-    // ... more fields as needed
+    __u32 dst_port;
+    __u32 dst_ip4;
+    __u32 dst_ip6[4];
+    __u32 state;
+    __s32 rx_queue_mapping;
 };
 
 struct bpf_tcp_sock {
@@ -476,7 +484,24 @@ struct bpf_tcp_sock {
     __u32 snd_nxt;
     __u32 snd_una;
     __u32 mss_cache;
-    // ... more fields as needed
+    __u32 ecn_flags;
+    __u32 rate_delivered;
+    __u32 rate_interval_us;
+    __u32 packets_out;
+    __u32 retrans_out;
+    __u32 total_retrans;
+    __u32 segs_in;
+    __u32 data_segs_in;
+    __u32 segs_out;
+    __u32 data_segs_out;
+    __u32 lost_out;
+    __u32 sacked_out;
+    __u64 bytes_received;
+    __u64 bytes_acked;
+};
+
+struct bpf_xdp_sock {
+    __u32 queue_id;
 };
 
 // ============================================================================
@@ -593,7 +618,10 @@ struct bpf_tcp_sock {
 #define BPF_FUNC_msg_push_data          90
 #define BPF_FUNC_msg_pop_data           91
 #define BPF_FUNC_rc_pointer_rel         92
+#define BPF_FUNC_spin_lock              93
+#define BPF_FUNC_spin_unlock            94
 #define BPF_FUNC_strtoul                106
+#define BPF_FUNC_sk_storage_get         107
 #define BPF_FUNC_probe_read_kernel      113
 #define BPF_FUNC_seq_write              127
 #define BPF_FUNC_ringbuf_output         130
@@ -601,6 +629,7 @@ struct bpf_tcp_sock {
 #define BPF_FUNC_ringbuf_submit         132
 #define BPF_FUNC_ringbuf_discard        133
 #define BPF_FUNC_ringbuf_query          134
+#define BPF_FUNC_skc_to_tcp_request_sock    139
 #define BPF_FUNC_get_task_stack         141
 #define BPF_FUNC_d_path                 147
 #define BPF_FUNC_get_netns_cookie       97

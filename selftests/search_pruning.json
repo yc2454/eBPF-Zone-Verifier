@@ -1,0 +1,187 @@
+[
+  {
+    "name": "pointer/scalar confusion in state equality check (way 1)",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 leaks addr as return value",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 121, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 191, "dst": 0, "src": 10, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "pointer/scalar confusion in state equality check (way 2)",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 leaks addr as return value",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 191, "dst": 0, "src": 10, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "liveness pruning and write screening",
+    "result": "REJECT",
+    "errstr": "R0 !read_ok",
+    "prog_type": 10,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 53, "dst": 2, "src": 0, "off": 1, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 53, "dst": 2, "src": 0, "off": 1, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "varlen_map_value_access pruning",
+    "result": "REJECT",
+    "result_unpriv": "REJECT",
+    "errstr": "R0 unbounded memory access",
+    "errstr_unpriv": "R0 leaks addr",
+    "flags": 1,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 121, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 180, "dst": 2, "src": 0, "off": 0, "imm": 11},
+      {"code": 109, "dst": 2, "src": 1, "off": 1, "imm": 0},
+      {"code": 180, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 100, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "search pruning: all branches should be verified (nop operation)",
+    "result": "REJECT",
+    "errstr": "R6 invalid mem access 'inv'",
+    "prog_type": 5,
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 11, "imm": 0},
+      {"code": 121, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 3, "src": 0, "off": 2, "imm": 48879},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 1},
+      {"code": 123, "dst": 10, "src": 4, "off": -16, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 121, "dst": 5, "src": 10, "off": -16, "imm": 0},
+      {"code": 21, "dst": 5, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 122, "dst": 6, "src": 0, "off": 0, "imm": 57005},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "search pruning: all branches should be verified (invalid stack access)",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "invalid read from stack off -16+0 size 8",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 121, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 3, "src": 0, "off": 2, "imm": 48879},
+      {"code": 123, "dst": 10, "src": 4, "off": -16, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 123, "dst": 10, "src": 4, "off": -24, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 121, "dst": 5, "src": 10, "off": -16, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "allocated_stack",
+    "result": "ACCEPT",
+    "result_unpriv": "ACCEPT",
+    "insns": [
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 191, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 5, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 10, "src": 6, "off": -8, "imm": 0},
+      {"code": 121, "dst": 6, "src": 10, "off": -8, "imm": 0},
+      {"code": 115, "dst": 10, "src": 7, "off": -9, "imm": 0},
+      {"code": 113, "dst": 7, "src": 10, "off": -9, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "write tracking and register parent chain bug",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "invalid read from stack off -8+1 size 8",
+    "flags": 8,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 45, "dst": 0, "src": 6, "off": 1, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": -559038737},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 42},
+      {"code": 115, "dst": 10, "src": 1, "off": -8, "imm": 0},
+      {"code": 121, "dst": 2, "src": 10, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

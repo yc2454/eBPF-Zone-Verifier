@@ -147,6 +147,11 @@ const BPF_MAP_TYPE_PERCPU_CGROUP_STORAGE: u32 = 21;
 const BPF_MAP_TYPE_RINGBUF: u32 = 16;
 const BPF_MAP_TYPE_ARRAY_OF_MAPS: u32 = 12;
 const BPF_MAP_TYPE_STACK_TRACE: u32 = 7;
+const BPF_MAP_TYPE_SK_STORAGE: u32 = 24;
+const BPF_MAP_TYPE_SOCKMAP: u32 = 15;
+const BPF_MAP_TYPE_SOCKHASH: u32 = 18;
+const BPF_MAP_TYPE_XSKMAP: u32 = 17;
+const BPF_MAP_TYPE_REUSEPORT_SOCKARRAY: u32 = 22;
 // Add more as needed
 
 // ============================================================================
@@ -295,6 +300,66 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             max_entries: 1,
             map_flags: 0,
             name: "test_stacktrace".to_string(),
+            btf_val_type_id: None,
+            initial_data: None,
+        }),
+        "fixup_sk_storage_map" => Some(BpfMapDef {
+            type_: BPF_MAP_TYPE_SK_STORAGE,  // 24
+            key_size: 4,
+            value_size: 8,
+            max_entries: 0,
+            map_flags: 0x400,  // BPF_F_NO_PREALLOC (required for sk_storage)
+            name: "test_sk_storage".to_string(),
+            btf_val_type_id: None,
+            initial_data: None,
+        }),
+        "fixup_map_sockmap" => Some(BpfMapDef {
+            type_: BPF_MAP_TYPE_SOCKMAP,  // 15
+            key_size: 4,
+            value_size: 4,
+            max_entries: 1,
+            map_flags: 0,
+            name: "test_sockmap".to_string(),
+            btf_val_type_id: None,
+            initial_data: None,
+        }),
+        "fixup_map_sockhash" => Some(BpfMapDef {
+            type_: BPF_MAP_TYPE_SOCKHASH,  // 18
+            key_size: 4,
+            value_size: 4,
+            max_entries: 1,
+            map_flags: 0,
+            name: "test_sockhash".to_string(),
+            btf_val_type_id: None,
+            initial_data: None,
+        }),
+        "fixup_map_xskmap" => Some(BpfMapDef {
+            type_: BPF_MAP_TYPE_XSKMAP,  // 17
+            key_size: 4,
+            value_size: 4,
+            max_entries: 1,
+            map_flags: 0,
+            name: "test_xskmap".to_string(),
+            btf_val_type_id: None,
+            initial_data: None,
+        }),
+        "fixup_map_reuseport_array" => Some(BpfMapDef {
+            type_: BPF_MAP_TYPE_REUSEPORT_SOCKARRAY,  // 22
+            key_size: 4,
+            value_size: 8,
+            max_entries: 1,
+            map_flags: 0,
+            name: "test_reuseport_array".to_string(),
+            btf_val_type_id: None,
+            initial_data: None,
+        }),
+        "fixup_map_spin_lock" => Some(BpfMapDef {
+            type_: BPF_MAP_TYPE_ARRAY,  // 2
+            key_size: 4,
+            value_size: 8,  // includes struct bpf_spin_lock (4 bytes) + data
+            max_entries: 1,
+            map_flags: 0,
+            name: "test_spin_lock".to_string(),
             btf_val_type_id: None,
             initial_data: None,
         }),

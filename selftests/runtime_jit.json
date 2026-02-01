@@ -1,0 +1,252 @@
+[
+  {
+    "name": "runtime/jit: tail_call within bounds, prog once",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_prog1": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 12},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "runtime/jit: tail_call within bounds, prog loop",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_prog1": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 1},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 12},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "runtime/jit: tail_call within bounds, no prog",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_prog1": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 3},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 12},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "runtime/jit: tail_call within bounds, key 2",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_prog1": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 2},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 12},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "runtime/jit: tail_call within bounds, key 2 / key 2, first branch",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_prog1": [5, 9]
+    },
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 13},
+      {"code": 115, "dst": 1, "src": 0, "off": 48, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 48, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 13},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 2},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 2},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 12},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "runtime/jit: tail_call within bounds, key 2 / key 2, second branch",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_prog1": [5, 9]
+    },
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 14},
+      {"code": 115, "dst": 1, "src": 0, "off": 48, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 48, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 13},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 2},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 2},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 12},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "runtime/jit: tail_call within bounds, key 0 / key 2, first branch",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_prog1": [5, 9]
+    },
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 13},
+      {"code": 115, "dst": 1, "src": 0, "off": 48, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 48, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 13},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 2},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 12},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "runtime/jit: tail_call within bounds, key 0 / key 2, second branch",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_prog1": [5, 9]
+    },
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 14},
+      {"code": 115, "dst": 1, "src": 0, "off": 48, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 48, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 13},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 2},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 12},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "runtime/jit: tail_call within bounds, different maps, first branch",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "tail_call abusing map_ptr",
+    "fixups": {
+    "fixup_prog1": [5],
+    "fixup_prog2": [9]
+    },
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 13},
+      {"code": 115, "dst": 1, "src": 0, "off": 48, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 48, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 13},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 12},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "runtime/jit: tail_call within bounds, different maps, second branch",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "tail_call abusing map_ptr",
+    "fixups": {
+    "fixup_prog1": [5],
+    "fixup_prog2": [9]
+    },
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 14},
+      {"code": 115, "dst": 1, "src": 0, "off": 48, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 48, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 13},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 12},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "runtime/jit: tail_call out of bounds",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_prog1": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 256},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 12},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "runtime/jit: pass negative index to tail_call",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_prog1": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": -1},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 12},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "runtime/jit: pass > 32bit index to tail_call",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_prog1": [2]
+    },
+    "insns": [
+      {"code": 24, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 12},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

@@ -1,0 +1,744 @@
+[
+  {
+    "name": "skb->sk: no NULL check",
+    "result": "REJECT",
+    "errstr": "invalid mem access 'sock_common_or_null'",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "skb->sk: sk->family [non fullsock field]",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 4, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "skb->sk: sk->type [fullsock field]",
+    "result": "REJECT",
+    "errstr": "invalid sock_common access",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_sk_fullsock(skb->sk): no !skb->sk check",
+    "result": "REJECT",
+    "errstr": "type=sock_common_or_null expected=sock_common",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 95},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sk_fullsock(skb->sk): no NULL check on ret",
+    "result": "REJECT",
+    "errstr": "invalid mem access 'sock_or_null'",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 95},
+      {"code": 97, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sk_fullsock(skb->sk): sk->type [fullsock field]",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 95},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sk_fullsock(skb->sk): sk->family [non fullsock field]",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 95},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sk_fullsock(skb->sk): sk->state [narrow load]",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 95},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 72, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sk_fullsock(skb->sk): sk->dst_port [word load] (backward compatibility)",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 95},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 0, "off": 48, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sk_fullsock(skb->sk): sk->dst_port [half load]",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 95},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 105, "dst": 0, "src": 0, "off": 48, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sk_fullsock(skb->sk): sk->dst_port [half load] (invalid)",
+    "result": "REJECT",
+    "errstr": "invalid sock access",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 95},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 105, "dst": 0, "src": 0, "off": 50, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sk_fullsock(skb->sk): sk->dst_port [byte load]",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 95},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 2, "src": 0, "off": 48, "imm": 0},
+      {"code": 113, "dst": 2, "src": 0, "off": 49, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sk_fullsock(skb->sk): sk->dst_port [byte load] (invalid)",
+    "result": "REJECT",
+    "errstr": "invalid sock access",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 95},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 50, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sk_fullsock(skb->sk): past sk->dst_port [half load] (invalid)",
+    "result": "REJECT",
+    "errstr": "invalid sock access",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 95},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 105, "dst": 0, "src": 0, "off": 52, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sk_fullsock(skb->sk): sk->dst_ip6 [load 2nd byte]",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 95},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 57, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sk_fullsock(skb->sk): sk->type [narrow load]",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 95},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sk_fullsock(skb->sk): sk->protocol [narrow load]",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 95},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 12, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sk_fullsock(skb->sk): beyond last field",
+    "result": "REJECT",
+    "errstr": "invalid sock access",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 95},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 0, "off": 80, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_tcp_sock(skb->sk): no !skb->sk check",
+    "result": "REJECT",
+    "errstr": "type=sock_common_or_null expected=sock_common",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 96},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_tcp_sock(skb->sk): no NULL check on ret",
+    "result": "REJECT",
+    "errstr": "invalid mem access 'tcp_sock_or_null'",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 96},
+      {"code": 97, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_tcp_sock(skb->sk): tp->snd_cwnd",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 96},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_tcp_sock(skb->sk): tp->bytes_acked",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 96},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 0, "src": 0, "off": 88, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_tcp_sock(skb->sk): beyond last field",
+    "result": "REJECT",
+    "errstr": "invalid tcp_sock access",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 96},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 0, "src": 0, "off": 96, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_tcp_sock(bpf_sk_fullsock(skb->sk)): tp->snd_cwnd",
+    "result": "ACCEPT",
+    "prog_type": 8,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 95},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 96},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_sk_release(skb->sk)",
+    "result": "REJECT",
+    "errstr": "reference has not been acquired before",
+    "prog_type": 3,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 86},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_sk_release(bpf_sk_fullsock(skb->sk))",
+    "result": "REJECT",
+    "errstr": "reference has not been acquired before",
+    "prog_type": 3,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 95},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 86},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_sk_release(bpf_tcp_sock(skb->sk))",
+    "result": "REJECT",
+    "errstr": "reference has not been acquired before",
+    "prog_type": 3,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 96},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 86},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sk_storage_get(map, skb->sk, NULL, 0): value == NULL",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_sk_storage_map": [11]
+    },
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 95},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 107},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sk_storage_get(map, skb->sk, 1, 1): value == 1",
+    "result": "REJECT",
+    "errstr": "R3 type=inv expected=fp",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_sk_storage_map": [11]
+    },
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 95},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 107},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sk_storage_get(map, skb->sk, &stack_value, 1): stack_value",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_sk_storage_map": [14]
+    },
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -8, "imm": 0},
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 95},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 3, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 3, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 107},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_map_lookup_elem(smap, &key)",
+    "result": "REJECT",
+    "errstr": "cannot pass map_type 24 into func bpf_map_lookup_elem",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_sk_storage_map": [3]
+    },
+    "insns": [
+      {"code": 98, "dst": 10, "src": 0, "off": -4, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -4},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_map_lookup_elem(xskmap, &key); xs->queue_id",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "fixups": {
+    "fixup_map_xskmap": [3]
+    },
+    "insns": [
+      {"code": 98, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_map_lookup_elem(sockmap, &key)",
+    "result": "REJECT",
+    "errstr": "Unreleased reference id=2 alloc_insn=5",
+    "prog_type": 14,
+    "fixups": {
+    "fixup_map_sockmap": [3]
+    },
+    "insns": [
+      {"code": 98, "dst": 10, "src": 0, "off": -4, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -4},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_map_lookup_elem(sockhash, &key)",
+    "result": "REJECT",
+    "errstr": "Unreleased reference id=2 alloc_insn=5",
+    "prog_type": 14,
+    "fixups": {
+    "fixup_map_sockhash": [3]
+    },
+    "insns": [
+      {"code": 98, "dst": 10, "src": 0, "off": -4, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -4},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_map_lookup_elem(sockmap, &key); sk->type [fullsock field]; bpf_sk_release(sk)",
+    "result": "ACCEPT",
+    "prog_type": 14,
+    "fixups": {
+    "fixup_map_sockmap": [3]
+    },
+    "insns": [
+      {"code": 98, "dst": 10, "src": 0, "off": -4, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -4},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 86},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_map_lookup_elem(sockhash, &key); sk->type [fullsock field]; bpf_sk_release(sk)",
+    "result": "ACCEPT",
+    "prog_type": 14,
+    "fixups": {
+    "fixup_map_sockhash": [3]
+    },
+    "insns": [
+      {"code": 98, "dst": 10, "src": 0, "off": -4, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -4},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 86},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_sk_select_reuseport(ctx, reuseport_array, &key, flags)",
+    "result": "ACCEPT",
+    "prog_type": 21,
+    "fixups": {
+    "fixup_map_reuseport_array": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 98, "dst": 10, "src": 0, "off": -4, "imm": 0},
+      {"code": 191, "dst": 3, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 3, "src": 0, "off": 0, "imm": -4},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 82},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_sk_select_reuseport(ctx, sockmap, &key, flags)",
+    "result": "ACCEPT",
+    "prog_type": 21,
+    "fixups": {
+    "fixup_map_sockmap": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 98, "dst": 10, "src": 0, "off": -4, "imm": 0},
+      {"code": 191, "dst": 3, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 3, "src": 0, "off": 0, "imm": -4},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 82},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_sk_select_reuseport(ctx, sockhash, &key, flags)",
+    "result": "ACCEPT",
+    "prog_type": 21,
+    "fixups": {
+    "fixup_map_sockmap": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 98, "dst": 10, "src": 0, "off": -4, "imm": 0},
+      {"code": 191, "dst": 3, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 3, "src": 0, "off": 0, "imm": -4},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 82},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "mark null check on return value of bpf_skc_to helpers",
+    "result": "REJECT",
+    "result_unpriv": "REJECT",
+    "errstr": "invalid mem access",
+    "errstr_unpriv": "unknown func",
+    "prog_type": 3,
+    "insns": [
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 140},
+      {"code": 191, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 139},
+      {"code": 191, "dst": 8, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 8, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 7, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

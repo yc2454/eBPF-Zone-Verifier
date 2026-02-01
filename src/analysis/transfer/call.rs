@@ -365,7 +365,8 @@ fn validate_single_arg(
                         } else {
                             let map_def = map_def.unwrap();
                             if matches!(map_def.type_, 
-                                constants::BPF_MAP_TYPE_STACK_TRACE | constants::BPF_MAP_TYPE_PROG_ARRAY) {
+                                constants::BPF_MAP_TYPE_STACK_TRACE | constants::BPF_MAP_TYPE_PROG_ARRAY
+                                | constants::BPF_MAP_TYPE_SK_STORAGE) {
                                 env.fail(VerificationError::InvalidArgType { pc, reg });
                                 return false;
                             }
@@ -672,7 +673,7 @@ pub(crate) fn transfer_call(
     // ========================================================================
     if helper == constants::BPF_TAIL_CALL {
         // Update types (clobber caller-saved, R0 = scalar)
-        update_call_types(&in_types, &mut state, helper);
+        update_call_types(env, &in_types, &mut state, helper);
         
         // Forget caller-saved in DBM
         for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
@@ -697,7 +698,7 @@ pub(crate) fn transfer_call(
     }
 
     // 1. Update types
-    update_call_types(&in_types, &mut state, helper);
+    update_call_types(env, &in_types, &mut state, helper);
     
     // 2. Update DBM - forget caller-saved registers
     for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {

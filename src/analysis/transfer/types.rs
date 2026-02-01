@@ -279,7 +279,7 @@ pub(crate) fn invalidate_stack_packet_pointers(types: &mut TypeState) {
 }
 
 /// Updates register types after a helper Call.
-pub(crate) fn update_call_types(in_types: &TypeState, state: &mut State, helper: u32) {
+pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, state: &mut State, helper: u32) {
     // 1. Clobber caller-saved registers - they are NOT readable after the call
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
         state.types.set(r, RegType::NotInit);
@@ -292,8 +292,22 @@ pub(crate) fn update_call_types(in_types: &TypeState, state: &mut State, helper:
                 RegType::PtrToMapObject { map_idx } => map_idx,
                 _ => 0,
             };
-            let id = new_packet_id();
-            state.types.set(Reg::R0, RegType::PtrToMapValueOrNull { id, map_idx });
+            let map_def_opt = env.ctx.map_defs.get(map_idx);
+            if map_def_opt.is_none() {
+                state.types.set(Reg::R0, RegType::ScalarValue);
+            } else {
+                let map_def = map_def_opt.unwrap();
+                match map_def.type_ {
+                    constants::BPF_MAP_TYPE_SOCKMAP | constants::BPF_MAP_TYPE_SOCKHASH => {
+                        let id = state.acquire_ref();
+                        state.types.set(Reg::R0, RegType::PtrToSocketOrNull { id });
+                    }
+                    _ => {
+                        let id = new_packet_id();
+                        state.types.set(Reg::R0, RegType::PtrToMapValueOrNull { id, map_idx });
+                    }
+                }
+            }
         }
         
         // Socket lookup helpers - return PTR_TO_SOCKET_OR_NULL
