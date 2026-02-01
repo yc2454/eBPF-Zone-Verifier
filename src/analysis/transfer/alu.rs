@@ -56,6 +56,7 @@ pub(crate) fn transfer_alu(
     let dst_type = state.types.get(dst);
 
     if !check_ptr_arithmetic(env, &state, op, &dst_type, &src_type, &src) {
+        env.fail(VerificationError::InvalidPointerArithmetic { pc: state.pc });
         return vec![];
     }
 
@@ -132,16 +133,10 @@ pub(crate) fn check_ptr_arithmetic(
             AluOp::Sub => {
                 if RegType::is_same_pointer_type(dst_type, src_type) {
                     true
-                } else {
-                    env.fail(VerificationError::InvalidPointerArithmetic { pc: state.pc });
-                    false
-                }
+                } else { false }
             },
             // Ptr + Ptr, Ptr * Ptr, etc. are invalid
-            _ => {
-                env.fail(VerificationError::InvalidPointerArithmetic { pc: state.pc });
-                false
-            }
+            _ => { false }
         }
     }
     // 3. Pointer <op> Scalar (dst=Ptr, src=Scalar)
@@ -151,14 +146,13 @@ pub(crate) fn check_ptr_arithmetic(
                 if matches!(dst_type, RegType::PtrToMapValue { .. }) {
                     // The verifier identifies 0xFFFFFFFF (4294967295) as a forbidden offset
                     if src_max > i32::MAX as i64 || op == AluOp::Sub {
-                        env.fail(VerificationError::InvalidPointerArithmetic { pc: state.pc });
                         return false;
                     }
                 }
                 true
             },
             AluOp::Mov => true, 
-            _ => { /* fail generic */ false }
+            _ => { false }
         }
     }
     // 4. Scalar <op> Pointer (dst=Scalar, src=Ptr)
@@ -169,19 +163,13 @@ pub(crate) fn check_ptr_arithmetic(
             AluOp::Add => true,
             
             // Scalar - Ptr is FORBIDDEN.
-            AluOp::Sub => {
-                env.fail(VerificationError::InvalidPointerArithmetic { pc: state.pc });
-                false
-            }
+            AluOp::Sub => { false }
 
             // Mov Scalar, Ptr is allowed (dst becomes Ptr).
             AluOp::Mov => true,
             
             // Scalar * Ptr, etc. forbidden.
-            _ => {
-                env.fail(VerificationError::InvalidPointerArithmetic { pc: state.pc });
-                false
-            }
+            _ => { false }
         }
     }
 }
