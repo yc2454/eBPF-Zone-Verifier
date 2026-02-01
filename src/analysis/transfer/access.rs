@@ -359,19 +359,12 @@ pub fn check_store(
             }
         }
         PtrToMapValueOrNull { map_idx, .. } => {
-             let final_offset = off as i64;
-             let access_end = final_offset + size;
-             let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) {
-                 def.value_size as i64
-             } else { constants::DEFAULT_MAP_VALUE_SIZE as i64 };
-             if !(final_offset >= 0 && access_end <= map_limit) {
-                error!("Unsafe nullable map store at pc {}", pc);
-                    env.fail(VerificationError::UnsafeMapStore { pc, 
-                    off: final_offset, 
-                    size,
-                    limit: map_limit
-                } );
-             }
+            error!("Unsafe nullable map store at pc {}", pc);
+            env.fail(VerificationError::UnsafeMapStore { pc, 
+                off: off as i64, 
+                size,
+                limit: env.ctx.map_defs.get(map_idx).unwrap().value_size as i64
+            });
         }
         PtrToCtx => {
             if !ctx_model::is_valid_ctx_write(ctx.prog_kind, off, size) {

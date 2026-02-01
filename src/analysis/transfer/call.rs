@@ -353,6 +353,26 @@ fn validate_single_arg(
                 error!("[Verifier] pc {}: R{} expected PTR_TO_MAP, got {:?}", 
                        pc, arg_index + 1, actual);
                 return false;
+            } 
+            // There are special requirements for bpf_map_lookup_elem
+            else if helper == constants::BPF_MAP_LOOKUP_ELEM {
+                match actual {
+                    RegType::PtrToMapObject { map_idx } => {
+                        let map_def = env.ctx.map_defs.get(map_idx);
+                        if map_def.is_none() {
+                            env.fail(VerificationError::InvalidArgType { pc, reg });
+                            return false;
+                        } else {
+                            let map_def = map_def.unwrap();
+                            if matches!(map_def.type_, 
+                                constants::BPF_MAP_TYPE_STACK_TRACE | constants::BPF_MAP_TYPE_PROG_ARRAY) {
+                                env.fail(VerificationError::InvalidArgType { pc, reg });
+                                return false;
+                            }
+                        }
+                    }
+                    _ => return true
+                }
             }
             true
         }
