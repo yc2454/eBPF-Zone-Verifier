@@ -33,7 +33,9 @@ pub(crate) fn transfer_load(
         return vec![];
     }
 
-    access::check_load(env, &state, base, size, off);
+    let access_size = size.bytes() as i64;
+
+    access::check_load(env, &state, base, access_size, off);
     
     // Try to resolve concrete value from .rodata
     // If successful, this sets the register to an exact constant (e.g., 0 or 1)
@@ -43,7 +45,7 @@ pub(crate) fn transfer_load(
         return vec![state];
     }
     
-    update_load_types(env, &mut state.types, size, dst, base, off);
+    update_load_types(env, &mut state.types, access_size as usize, dst, base, off);
     forget(&mut state.dbm, dst);
     
     // Apply upper bounds for sub-64-bit loads
@@ -91,7 +93,9 @@ pub(crate) fn transfer_store(
         return vec![];
     }
 
-    access::check_store(env, &state, base, size, off);
+    let access_size = size.bytes() as i64;
+
+    access::check_store(env, &state, base, access_size, off);
     
     let src_type = {
         match src {
@@ -144,8 +148,9 @@ pub(crate) fn transfer_atomic(
     // 4. Memory Safety Check
     // Atomic ops (Add, Xchg, CmpXchg) read the value from memory first.
     // We must ensure the memory at [base + off] is readable (initialized).
-    access::check_load(env, &state, base, size, off);
-    access::check_store(env, &state, base, size, off);
+    let access_size = size.bytes() as i64;
+    access::check_load(env, &state, base, access_size, off);
+    access::check_store(env, &state, base, access_size, off);
     if env.failed() { return vec![]; }
 
     // 5. Update Memory State

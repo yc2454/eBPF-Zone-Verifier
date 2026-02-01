@@ -2,7 +2,7 @@
 use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;
 use crate::analysis::reg_types::RegType;
-use crate::ast::{MemSize, ProgramKind};
+use crate::ast::{ProgramKind};
 use crate::zone::domain::{get_bounds, get_relative_bound};
 use crate::analysis::env::VerificationError;
 use crate::common::constants;
@@ -17,22 +17,21 @@ pub fn check_load(
     env: &mut VerifierEnv,
     state: &State,
     base: crate::zone::domain::Reg,
-    size: MemSize,
+    size: i64,
     off: i16,
 ) {
     let ctx = env.ctx;
     let base_type = state.types.get(base);
-    let access_size = match size { MemSize::U8 => 1, MemSize::U16 => 2, MemSize::U32 => 4, MemSize::U64 => 8 };
     let pc = state.pc;
 
     match base_type {
         PtrToStack { offset } => {
-            check_stack_access(env, state, base, offset, off as i64, access_size, pc, AccessKind::Read);
+            check_stack_access(env, state, base, offset, off as i64, size, pc, AccessKind::Read);
         }
         PtrToPacket { id: _, range, is_base: _, off: off_from_packet } => {
             // Total offset from base = off + instruction offset
             let total_off = off_from_packet + off as i64;
-            let access_end = total_off + access_size;
+            let access_end = total_off + size;
             let mut safe = false;
             
             // 1. Negative offset is never allowed (can't go before packet start)
@@ -93,7 +92,7 @@ pub fn check_load(
                     // We trust the type system's tracking here.
                     Some(fixed_off) => {
                         let final_offset = fixed_off + (off as i64);
-                        let access_end = final_offset + access_size;
+                        let access_end = final_offset + size;
 
                         if final_offset >= 0 && access_end <= map_limit {
                             // Safe!
@@ -150,7 +149,7 @@ pub fn check_load(
         },
         PtrToMapValueOrNull { map_idx, .. } => {
             let final_offset = off as i64;
-            let access_end = final_offset + access_size;
+            let access_end = final_offset + size;
             let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) {
                 def.value_size as i64
             } else { constants::DEFAULT_MAP_VALUE_SIZE as i64 };
@@ -165,7 +164,7 @@ pub fn check_load(
             }
         }
         PtrToMem { region, range } => {
-            let access_end = off as i64 + access_size;
+            let access_end = off as i64 + size;
             let mut safe = false;
             
             if off < 0 {
@@ -203,10 +202,10 @@ pub fn check_load(
             }
         }
         RegType::PtrToSocket {..} | RegType::PtrToSockCommon {..} | RegType::PtrToTcpSock {..} => {
-            if !is_valid_socket_access(&base_type, off as i64, access_size) {
+            if !is_valid_socket_access(&base_type, off as i64, size) {
                 error!(
                     "Invalid socket access at pc {}: {:?} offset {} size {}", 
-                    pc, base_type, off, access_size
+                    pc, base_type, off, size
                 );
                 env.fail(VerificationError::UnsafeSocketAccess { pc, off, size });
             }
@@ -230,7 +229,7 @@ pub fn check_load(
                 // So check: upper_bound(base - data_reg) + off + size <= 0
                 
                 let (_, ub_opt) = get_relative_bound(&state.dbm, base, data_reg);
-                let access_end = off as i64 + size.bytes() as i64;
+                let access_end = off as i64 + size as i64;
                 
                 match ub_opt {
                     Some(ub) if ub + access_end <= 0 => {
@@ -266,12 +265,11 @@ pub fn check_store(
     env: &mut VerifierEnv,
     state: &State,
     base: crate::zone::domain::Reg,
-    size: MemSize,
+    size: i64,
     off: i16,
 ) {
     let ctx = env.ctx;
     let base_ty = state.types.get(base);
-    let access_size = match size { MemSize::U8 => 1, MemSize::U16 => 2, MemSize::U32 => 4, MemSize::U64 => 8 };
     let pc = state.pc;
 
     match base_ty {
@@ -285,7 +283,7 @@ pub fn check_store(
                 let map_limit = map_def.value_size as i64;
                 if let Some(fixed_off) = map_off {
                     let final_offset = fixed_off + (off as i64);
-                    let access_end = final_offset + access_size;
+                    let access_end = final_offset + size;
                     if !(final_offset >= 0 && access_end <= map_limit) {
                         error!("Unsafe map store (constant) at pc {}: off {} limit {}", pc, final_offset, map_limit);
                         env.fail(VerificationError::UnsafeMapStore { 
@@ -303,7 +301,7 @@ pub fn check_store(
                             info!("Checking variable map store. Pointer bounds: {} - {}, map limit {}", 
                                 min_val, max_val, map_limit);
                             let access_start = min_val + (off as i64);
-                            let access_end = max_val + (off as i64) + (size.bytes() as i64);
+                            let access_end = max_val + (off as i64) + (size as i64);
                             if !(access_start >= 0 && access_end <= map_limit) {
                                 error!("Unsafe variable map store at pc {}: range [{}, {}], limit {}", 
                                     pc, access_start, access_end, map_limit);
@@ -331,7 +329,7 @@ pub fn check_store(
         }
         PtrToStack { offset } => {
             info!("Checking stack store");
-            check_stack_access(env, state, base, offset, off as i64, access_size as i64, pc, AccessKind::Write);
+            check_stack_access(env, state, base, offset, off as i64, size as i64, pc, AccessKind::Write);
         }
         PtrToPacket { id: _, range, is_base: _, off: off_from_packet } => {
             // Check if the program type allows direct packet writes
@@ -342,7 +340,7 @@ pub fn check_store(
             }
             // Total offset from base = off + instruction offset
             let total_off = off_from_packet + off as i64;
-            let access_end = total_off + access_size;
+            let access_end = total_off + size;
             let mut safe = false;
             
             if total_off < 0 {
@@ -375,7 +373,7 @@ pub fn check_store(
         }
         PtrToMapValueOrNull { map_idx, .. } => {
              let final_offset = off as i64;
-             let access_end = final_offset + access_size;
+             let access_end = final_offset + size;
              let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) {
                  def.value_size as i64
              } else { constants::DEFAULT_MAP_VALUE_SIZE as i64 };
@@ -641,12 +639,10 @@ pub fn check_packet_alignment(
     state: &State,
     base: Reg,
     off: i16,
-    size: MemSize,
+    size: i64,
 ) -> bool {
-    let access_size = size.bytes() as i64;
-    
     // U8 is always aligned
-    if access_size == 1 {
+    if size == 1 {
         return true;
     }
     
@@ -660,11 +656,11 @@ pub fn check_packet_alignment(
             
             // Check if all offsets in range have same alignment class
             // AND that alignment is correct for access size
-            let lo_aligned = (NET_IP_ALIGN + lo) % access_size == 0;
-            let hi_aligned = (NET_IP_ALIGN + hi) % access_size == 0;
+            let lo_aligned = (NET_IP_ALIGN + lo) % size == 0;
+            let hi_aligned = (NET_IP_ALIGN + hi) % size == 0;
             
             // If range spans different alignment classes, reject
-            if lo % access_size != hi % access_size {
+            if lo % size != hi % size {
                 return false;
             }
             

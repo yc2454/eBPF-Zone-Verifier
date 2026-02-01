@@ -169,10 +169,6 @@ pub fn nonneg(dbm: &Dbm, x: Reg) -> bool {
     lo.map_or(false, |l| l >= 0)
 }
 
-pub fn get_diff(dbm: &Dbm, x: Reg, y: Reg) -> i64 {
-    return dbm.get(x, y);
-}
-
 // --- transfer functions ---
 // exec.rs wants a uniform name.
 pub fn forget(dbm: &mut Dbm, x: Reg) {

@@ -328,17 +328,11 @@ const PT_REGS_FIELDS: &[CtxField] = &[
 
 /// Look up field info for a context access.
 /// Returns None if no valid field exists at (offset, size).
-fn lookup_field(fields: &[CtxField], off: i16, size: MemSize) -> Option<CtxAccessInfo> {
-    let access_size = size.bytes() as i16;
-    let access_end = off + access_size;
+fn lookup_field(fields: &[CtxField], off: i16, size: i64) -> Option<CtxAccessInfo> {
+    let access_end = off + size as i16;
     
     // Check natural alignment
-    let aligned = match size {
-        MemSize::U8 => true,
-        MemSize::U16 => off % 2 == 0,
-        MemSize::U32 => off % 4 == 0,
-        MemSize::U64 => off % 8 == 0,
-    };
+    let aligned = off % size as i16 == 0;
     if !aligned {
         return None;
     }
@@ -352,7 +346,7 @@ fn lookup_field(fields: &[CtxField], off: i16, size: MemSize) -> Option<CtxAcces
                 off >= f.offset && access_end <= field_end
             } else {
                 // Require exact offset and size match
-                f.offset == off && f.size == size
+                f.offset == off && f.size.bytes() == size as usize
             }
         })
         .map(|f| CtxAccessInfo {
@@ -467,7 +461,7 @@ fn apply_prog_type_overrides(prog_kind: ProgramKind, off: i16, info: &mut CtxAcc
 ///     }
 /// }
 /// ```
-pub fn validate_ctx_access(prog_kind: ProgramKind, off: i16, size: MemSize) -> Option<CtxAccessInfo> {
+pub fn validate_ctx_access(prog_kind: ProgramKind, off: i16, size: i64) -> Option<CtxAccessInfo> {
     let ctx_kind = prog_kind.context_kind();
 
     let fields = match get_field_table(ctx_kind) {
@@ -493,7 +487,7 @@ pub fn validate_ctx_access(prog_kind: ProgramKind, off: i16, size: MemSize) -> O
 ///
 /// This is a convenience wrapper around `validate_ctx_access` for cases
 /// where you only need to check validity without the field info.
-pub fn is_valid_ctx_read(prog_kind: ProgramKind, off: i16, size: MemSize) -> bool {
+pub fn is_valid_ctx_read(prog_kind: ProgramKind, off: i16, size: i64) -> bool {
     validate_ctx_access(prog_kind, off, size)
         .map(|info| info.readable)
         .unwrap_or(false)
@@ -502,7 +496,7 @@ pub fn is_valid_ctx_read(prog_kind: ProgramKind, off: i16, size: MemSize) -> boo
 /// Check if a context field is writable at the given offset and size.
 ///
 /// Returns true only if the access is valid AND the field is writable.
-pub fn is_valid_ctx_write(prog_kind: ProgramKind, off: i16, size: MemSize) -> bool {
+pub fn is_valid_ctx_write(prog_kind: ProgramKind, off: i16, size: i64) -> bool {
     validate_ctx_access(prog_kind, off, size)
         .map(|info| info.writable)
         .unwrap_or(false)

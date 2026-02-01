@@ -1,6 +1,6 @@
 use crate::analysis::history::History;
 // src/analysis/env.rs
-use crate::ast::{Program, MemSize};
+use crate::ast::{Program};
 use crate::analysis::state::State;
 use crate::analysis::context::ExecContext;
 use std::collections::{HashMap, HashSet};
@@ -12,18 +12,18 @@ pub enum VerificationError {
     PointerOutOfBounds { pc: usize },
     UninitializedStackRead { pc: usize, offset: i64 },
     InvalidStackRead { pc: usize, offset: i64 },
-    UnsafePacketLoad { pc: usize, off: i16, size: MemSize, range: u64 },
-    UnsafePacketStore { pc: usize, off: i16, size: MemSize },
-    IllegalPacketStore { pc: usize, off: i16, size: MemSize },
-    UnsafeMapLoad { pc: usize, off: i64, size: MemSize, limit: i64 },
-    UnsafeMapStore { pc: usize, off: i64, size: MemSize, limit: i64 },
+    UnsafePacketLoad { pc: usize, off: i16, size: i64, range: u64 },
+    UnsafePacketStore { pc: usize, off: i16, size: i64 },
+    IllegalPacketStore { pc: usize, off: i16, size: i64 },
+    UnsafeMapLoad { pc: usize, off: i64, size: i64, limit: i64 },
+    UnsafeMapStore { pc: usize, off: i64, size: i64, limit: i64 },
     MapStoreForbidden { pc: usize, map_idx: usize },
     MapLoadForbidden { pc: usize, map_idx: usize },
     UnsafeGenericLoad { pc: usize, base: Reg, off: i16 },
     UnsafeMemoryRegionLoad { pc: usize, base: Reg, off: i16 },
-    UnsafeCtxAccess { pc: usize, off: i16, size: MemSize },
+    UnsafeCtxAccess { pc: usize, off: i16, size: i64 },
     UnsafeGenericStore { pc: usize, base: Reg, off: i16 },
-    UnsafeSocketAccess { pc: usize, off: i16, size: MemSize },
+    UnsafeSocketAccess { pc: usize, off: i16, size: i64 },
     DbmInconsistent { pc: usize },
     ComplexityLimitExceeded { limit: usize },
     RegisterNotReadable { pc: usize, reg: Reg },
@@ -38,7 +38,7 @@ pub enum VerificationError {
     MaxCallDepthExceeded { pc: usize },
     MisalignedAccess { pc: usize, off: i64 },
     InvalidReturnCode { pc: usize },
-    MisalignedPacketAccess { pc: usize, off: i16, size: MemSize },
+    MisalignedPacketAccess { pc: usize, off: i16, size: i64 },
     InvalidRegisterTypeState { pc: usize },
     RegisterTypeConflict { pc: usize },
 }

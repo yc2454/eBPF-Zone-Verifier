@@ -171,7 +171,7 @@ pub(crate) fn update_alu_types(
 pub(crate) fn update_load_types(
     env: &VerifierEnv, 
     types: &mut TypeState, 
-    size: MemSize, 
+    size: usize, 
     dst: Reg, 
     base: Reg, 
     off: i16
@@ -179,7 +179,7 @@ pub(crate) fn update_load_types(
     let base_ty = types.get(base);
     match base_ty {
         RegType::PtrToCtx => {
-            let kind = validate_ctx_access(env.ctx.prog_kind, off, size);
+            let kind = validate_ctx_access(env.ctx.prog_kind, off, size as i64);
             if let Some(info) = kind {
                 match info.kind {
                     CtxFieldKind::PacketStart => {
@@ -205,7 +205,7 @@ pub(crate) fn update_load_types(
             match base_offset {
                 Some(base) => {
                     let actual_slot = base + (off as i64);
-                    if size == MemSize::U64 { 
+                    if size == MemSize::U64.bytes() as usize { 
                         types.set(dst, types.get_stack(actual_slot as i16)); 
                     } else { 
                         types.set(dst, RegType::ScalarValue); 
