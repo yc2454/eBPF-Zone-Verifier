@@ -285,6 +285,23 @@ struct bpf_insn {
 
 #define BPF_SRC(code)   ((code) & 0x08)
 
+#define BPF_SK_LOOKUP(func) \
+    /* struct bpf_sock_tuple tuple = {} */ \
+    BPF_MOV64_IMM(BPF_REG_2, 0), \
+    BPF_STX_MEM(BPF_W, BPF_REG_10, BPF_REG_2, -8), \
+    BPF_STX_MEM(BPF_DW, BPF_REG_10, BPF_REG_2, -16), \
+    BPF_STX_MEM(BPF_DW, BPF_REG_10, BPF_REG_2, -24), \
+    BPF_STX_MEM(BPF_DW, BPF_REG_10, BPF_REG_2, -32), \
+    BPF_STX_MEM(BPF_DW, BPF_REG_10, BPF_REG_2, -40), \
+    BPF_STX_MEM(BPF_DW, BPF_REG_10, BPF_REG_2, -48), \
+    /* sk = func(ctx, &tuple, sizeof tuple, 0, 0) */ \
+    BPF_MOV64_REG(BPF_REG_2, BPF_REG_10), \
+    BPF_ALU64_IMM(BPF_ADD, BPF_REG_2, -48), \
+    BPF_MOV64_IMM(BPF_REG_3, sizeof(struct bpf_sock_tuple)), \
+    BPF_MOV64_IMM(BPF_REG_4, 0), \
+    BPF_MOV64_IMM(BPF_REG_5, 0), \
+    BPF_EMIT_CALL(BPF_FUNC_ ## func)
+
 // ============================================================================
 // Test-specific macros (from test_verifier.c)
 // ============================================================================
@@ -418,8 +435,49 @@ struct bpf_perf_event_data {
     __u64 addr;
 };
 
+struct bpf_sock_tuple {
+    union {
+        struct {
+            __u32 saddr;
+            __u32 daddr;
+            __u16 sport;
+            __u16 dport;
+        } ipv4;
+        struct {
+            __u32 saddr[4];
+            __u32 daddr[4];
+            __u16 sport;
+            __u16 dport;
+        } ipv6;
+    };
+};
+
 struct bpf_flow_keys;
-struct bpf_sock;
+
+struct bpf_sock {
+    __u32 bound_dev_if;
+    __u32 family;
+    __u32 type;
+    __u32 protocol;
+    __u32 mark;
+    __u32 priority;
+    __u32 src_ip4;
+    __u32 src_ip6[4];
+    __u32 src_port;
+    // ... more fields as needed
+};
+
+struct bpf_tcp_sock {
+    __u32 snd_cwnd;
+    __u32 srtt_us;
+    __u32 rtt_min;
+    __u32 snd_ssthresh;
+    __u32 rcv_nxt;
+    __u32 snd_nxt;
+    __u32 snd_una;
+    __u32 mss_cache;
+    // ... more fields as needed
+};
 
 // ============================================================================
 // Register names
@@ -550,6 +608,14 @@ struct bpf_sock;
 #define BPF_FUNC_check_mtu              99
 #define BPF_FUNC_for_each_map_elem      164
 #define BPF_FUNC_snprintf               165
+#define BPF_FUNC_sk_lookup_tcp          84
+#define BPF_FUNC_sk_lookup_udp          85
+#define BPF_FUNC_sk_release             86
+#define BPF_FUNC_skc_lookup_tcp         99
+#define BPF_FUNC_sk_fullsock            95
+#define BPF_FUNC_tcp_sock               96
+#define BPF_FUNC_get_listener_sock      98
+#define BPF_FUNC_skc_to_tcp_sock        140
 
 // ============================================================================
 // Program types
