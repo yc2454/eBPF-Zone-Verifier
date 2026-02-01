@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 use std::convert::TryInto;
 use crate::parsing::elf_loader::BpfMapDef;
-use log::{info, debug, warn};
+use log::{info};
 
 const BTF_MAGIC: u16 = 0xeB9F;
 
@@ -30,6 +30,40 @@ pub const BTF_KIND_ENUM64: u8 = 19;
 // -----------------------------------------------------------------------------
 // PART 1: Public Interface for Analyzer (The "Context" view)
 // -----------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpecialFieldKind {
+    SpinLock,
+    Timer,
+    ListHead,
+    ListNode,
+    RbRoot,
+    RbNode,
+    Refcount,
+    // Future types...
+}
+
+#[derive(Debug, Clone)]
+pub struct SpecialField {
+    pub kind: SpecialFieldKind,
+    pub offset: u32,  // byte offset
+    pub size: u32,
+}
+
+impl SpecialFieldKind {
+    fn from_type_name(name: &str) -> Option<Self> {
+        match name {
+            "bpf_spin_lock" => Some(Self::SpinLock),
+            "bpf_timer" => Some(Self::Timer),
+            "bpf_list_head" => Some(Self::ListHead),
+            "bpf_list_node" => Some(Self::ListNode),
+            "bpf_rb_root" => Some(Self::RbRoot),
+            "bpf_rb_node" => Some(Self::RbNode),
+            "bpf_refcount" => Some(Self::Refcount),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct BtfMember {
@@ -106,6 +140,43 @@ impl BtfContext {
             if depth > 10 { break; } // Prevent loops
         }
         false
+    }
+
+    /// Find all special fields in a struct type
+    pub fn find_special_fields(&self, type_id: u32) -> Vec<SpecialField> {
+        let mut fields = Vec::new();
+        
+        let Some(ty) = self.types.get(&type_id) else {
+            return fields;
+        };
+        
+        for member in &ty.members {
+            let Some(member_type) = self.types.get(&member.type_id) else {
+                continue;
+            };
+            let Some(name) = self.get_string(member_type.name_off) else {
+                continue;
+            };
+            
+            if let Some(kind) = SpecialFieldKind::from_type_name(name) {
+                fields.push(SpecialField {
+                    kind,
+                    offset: member.offset / 8,
+                    size: member_type.size_or_type,
+                });
+            }
+        }
+        
+        fields
+    }
+    
+    fn get_string(&self, offset: u32) -> Option<&str> {
+        let start = offset as usize;
+        if start >= self.strings.len() {
+            return None;
+        }
+        let end = self.strings[start..].iter().position(|&b| b == 0)? + start;
+        std::str::from_utf8(&self.strings[start..end]).ok()
     }
 }
 
@@ -281,7 +352,7 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
     let mut map_defs = Vec::new();
     info!(target: "app", "Scanning {} BTF types for Maps...", types.len());
 
-    for (i, t) in types.iter().enumerate() {
+    for (_i, t) in types.iter().enumerate() {
         if t.kind() == BTF_KIND_VAR {
             let name = get_str(t.name_off);
             let def_id = t.size_or_type;

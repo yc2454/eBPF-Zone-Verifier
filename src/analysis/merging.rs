@@ -23,8 +23,9 @@ pub fn check_compatibility(
 
     if let Some(prev_states) = env.explored_states.get(&pc) {
         for prev in prev_states {
-            if let Some((reg, old_ty, new_ty)) = find_type_conflict(&prev.types, &state.types, &live_regs) {
-                return Err(VerificationError::RegisterTypeConflict { pc });
+            if let Some((reg, old_ty, new_ty)) = 
+                find_type_conflict(&prev.types, &state.types, &live_regs) {
+                return Err(VerificationError::RegisterTypeConflict { pc, reg, old: old_ty, new: new_ty });
             }
         }
     }

@@ -289,3 +289,10 @@ pub const BPF_PROG_TYPE_EXT: u32 = 28;
 pub const BPF_PROG_TYPE_LSM: u32 = 29;
 pub const BPF_PROG_TYPE_SK_LOOKUP: u32 = 30;
 pub const BPF_PROG_TYPE_NETFILTER: u32 = 31;
+
+// ==================================================
+// BTF Constants
+// ==================================================
+
+pub const BTF_KIND_INT: u8 = 1;
+pub const BTF_KIND_STRUCT: u8 = 4;

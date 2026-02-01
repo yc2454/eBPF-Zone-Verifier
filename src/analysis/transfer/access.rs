@@ -3,7 +3,9 @@ use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;
 use crate::analysis::reg_types::RegType;
 use crate::ast::{ProgramKind};
+use crate::parsing::elf_loader::BpfMapDef;
 use crate::zone::domain::{get_bounds, get_relative_bound};
+use crate::parsing::btf::{self, BtfContext};
 use crate::analysis::env::VerificationError;
 use crate::common::constants;
 use crate::analysis::ctx_model;
@@ -86,6 +88,11 @@ pub fn check_load(
                         let final_offset = fixed_off + (off as i64);
                         let access_end = final_offset + size;
 
+                        if let Some(btf_id) = map_def.btf_val_type_id {
+                            check_btf_fields_access(env, pc, final_offset, access_end, size, map_limit, btf_id);
+                            return;
+                        }
+
                         if final_offset >= 0 && access_end <= map_limit {
                             // Safe!
                         } else {
@@ -109,6 +116,11 @@ pub fn check_load(
                                 // (assuming the abstract domain normalizes map bases to 0 for tracking).
                                 let access_start = min_val + (off as i64);
                                 let access_end = max_val + (off as i64) + (size as i64);
+
+                                if let Some(btf_id) = map_def.btf_val_type_id {
+                                    check_btf_fields_access(env, pc, off.into(), access_end, size, map_limit, btf_id);
+                                    return;
+                                }
 
                                 if access_start >= 0 && access_end <= map_limit {
                                     // Safe!
@@ -276,6 +288,12 @@ pub fn check_store(
                 if let Some(fixed_off) = map_off {
                     let final_offset = fixed_off + (off as i64);
                     let access_end = final_offset + size;
+                    
+                    if let Some(btf_id) = map_def.btf_val_type_id {
+                        check_btf_fields_access(env, pc, final_offset, access_end, size, map_limit, btf_id);
+                        return;
+                    }
+
                     if !(final_offset >= 0 && access_end <= map_limit) {
                         error!("Unsafe map store (constant) at pc {}: off {} limit {}", pc, final_offset, map_limit);
                         env.fail(VerificationError::UnsafeMapStore { 
@@ -294,6 +312,12 @@ pub fn check_store(
                                 min_val, max_val, map_limit);
                             let access_start = min_val + (off as i64);
                             let access_end = max_val + (off as i64) + (size as i64);
+
+                            if let Some(btf_id) = map_def.btf_val_type_id {
+                                check_btf_fields_access(env, pc, off.into(), access_end, size, map_limit, btf_id);
+                                return;
+                            }
+                            
                             if !(access_start >= 0 && access_end <= map_limit) {
                                 error!("Unsafe variable map store at pc {}: range [{}, {}], limit {}", 
                                     pc, access_start, access_end, map_limit);
@@ -689,5 +713,31 @@ fn prog_kind_support_direct_packet_write(prog_kind: ProgramKind) -> bool {
     match prog_kind {
         ProgramKind::LwtIn | ProgramKind::LwtOut => false,
         _ => true,
+    }
+}
+
+// ------------------- Map Checking Helpers -------------------
+fn check_btf_fields_access(
+    env: &mut VerifierEnv,
+    pc: usize,
+    final_offset: i64,
+    access_end: i64,
+    size: i64,
+    map_limit: i64,
+    btf_id: u32,
+) {
+    let btf_fields = env.ctx.btf.find_special_fields(btf_id);
+    for field in btf_fields {
+        let field_end = field.offset + field.size;
+        
+        if final_offset < field_end.into() && access_end > field.offset.into() {
+            error!("Cannot access BTF field");
+            env.fail(VerificationError::UnsafeMapLoad { 
+                pc, 
+                off: final_offset, 
+                size,
+                limit: map_limit
+            });
+        }
     }
 }

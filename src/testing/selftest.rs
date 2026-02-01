@@ -19,6 +19,7 @@ use crate::analysis::context::{default_exec_ctx};
 use crate::common::constants;
 use crate::ast::ProgramKind;
 use crate::parsing::bpf_to_ast::{lower_raw_to_program, LowerErrorKind};
+use crate::parsing::btf::{BtfContext, BtfMember, BtfType};
 use crate::common::config::VerifierConfig;
 use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::parsing::elf_loader::{BpfMapDef, RelocInfo};
@@ -354,13 +355,13 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
         }),
         "fixup_map_spin_lock" => Some(BpfMapDef {
-            type_: BPF_MAP_TYPE_ARRAY,  // 2
+            type_: BPF_MAP_TYPE_ARRAY,
             key_size: 4,
-            value_size: 8,  // includes struct bpf_spin_lock (4 bytes) + data
+            value_size: 8,
             max_entries: 1,
             map_flags: 0,
-            name: "test_spin_lock".to_string(),
-            btf_val_type_id: None,
+            name: "spin_lock_map".to_string(),
+            btf_val_type_id: Some(3),  // points to struct val
             initial_data: None,
         }),
         // Add more fixup types as needed
@@ -371,6 +372,46 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
 // ============================================================================
 // Build ExecContext from Test Case
 // ============================================================================
+
+pub fn create_spin_lock_btf() -> BtfContext {
+    let strings = b"\0bpf_spin_lock\0val\0cnt\0l".to_vec();
+    
+    let mut types = HashMap::new();
+    
+    // Type 1: int
+    types.insert(1, BtfType {
+        id: 1,
+        name_off: 0,
+        info: 1 << 24,  // BTF_KIND_INT
+        size_or_type: 4,
+        members: vec![],
+    });
+    
+    // Type 2: struct bpf_spin_lock
+    types.insert(2, BtfType {
+        id: 2,
+        name_off: 1,  // "bpf_spin_lock"
+        info: (4 << 24) | 1,  // BTF_KIND_STRUCT, 1 member
+        size_or_type: 4,
+        members: vec![
+            BtfMember { name_off: 15, type_id: 1, offset: 0 },
+        ],
+    });
+    
+    // Type 3: struct val (the map value type)
+    types.insert(3, BtfType {
+        id: 3,
+        name_off: 15,  // "val"
+        info: (4 << 24) | 2,  // BTF_KIND_STRUCT, 2 members
+        size_or_type: 8,
+        members: vec![
+            BtfMember { name_off: 19, type_id: 1, offset: 0 },   // cnt @ byte 0
+            BtfMember { name_off: 23, type_id: 2, offset: 32 },  // lock @ byte 4
+        ],
+    });
+    
+    BtfContext { types, strings }
+}
 
 fn build_exec_context(test: &JsonTestCase) -> (crate::analysis::context::ExecContext, bool) {
     let mut ctx = default_exec_ctx();
@@ -427,6 +468,8 @@ fn build_exec_context(test: &JsonTestCase) -> (crate::analysis::context::ExecCon
         _ => ProgramKind::SocketFilter, 
     };
     println!("Program Type: {:?}", ctx.prog_kind);
+
+    ctx.btf = create_spin_lock_btf();
 
     (ctx, has_unsupported_fixup)
 }

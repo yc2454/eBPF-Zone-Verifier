@@ -5,6 +5,7 @@ use crate::analysis::state::State;
 use crate::analysis::context::ExecContext;
 use std::collections::{HashMap, HashSet};
 use crate::zone::domain::Reg;
+use crate::analysis::reg_types::RegType;
 
 #[derive(Clone, Debug)]
 pub enum VerificationError {
@@ -40,7 +41,7 @@ pub enum VerificationError {
     InvalidReturnCode { pc: usize },
     MisalignedPacketAccess { pc: usize, off: i16, size: i64 },
     InvalidRegisterTypeState { pc: usize },
-    RegisterTypeConflict { pc: usize },
+    RegisterTypeConflict { pc: usize, reg: Reg, old: RegType, new: RegType },
     UnreleasedReference,
 }
 
@@ -143,8 +144,8 @@ impl VerificationError {
             VerificationError::MapLoadForbidden { pc, map_idx } => {
                 format!("Attemp to read from write-only map {} at pc {}", map_idx, pc)
             }
-            VerificationError::RegisterTypeConflict { pc } => {
-                format!("Register type conflict at pc {}", pc)
+            VerificationError::RegisterTypeConflict { pc, reg, old, new } => {
+                format!("Register {} type conflict at pc {}: old: {:?}, new: {:?}", reg.name(), pc, old, new)
             }
             VerificationError::UnreleasedReference  => {
                 format!("Unreleased reference in program")

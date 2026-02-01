@@ -98,7 +98,7 @@ pub(crate) fn transfer_alu(
 /// Returns Ok(()) if the operation is legal (even if it changes the result type).
 /// Returns Err(String) if the operation is strictly forbidden.
 pub(crate) fn check_ptr_arithmetic(
-    env: &mut VerifierEnv,
+    _env: &mut VerifierEnv,
     state: &State,
     op: AluOp,
     dst_type: &RegType,
