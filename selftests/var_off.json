@@ -1,0 +1,214 @@
+[
+  {
+    "name": "variable-offset ctx access",
+    "result": "REJECT",
+    "errstr": "variable ctx access var_off=(0x0; 0x4)",
+    "prog_type": 10,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 87, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 15, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "variable-offset stack read, priv vs unpriv",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R2 variable stack access prohibited for !root",
+    "prog_type": 8,
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 87, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 23, "dst": 2, "src": 0, "off": 0, "imm": 8},
+      {"code": 15, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "variable-offset stack read, uninitialized",
+    "result": "REJECT",
+    "errstr": "invalid variable-offset read from stack R2",
+    "prog_type": 10,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 87, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 23, "dst": 2, "src": 0, "off": 0, "imm": 8},
+      {"code": 15, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "variable-offset stack write, priv vs unpriv",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R2 variable stack access prohibited for !root",
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 87, "dst": 2, "src": 0, "off": 0, "imm": 8},
+      {"code": 23, "dst": 2, "src": 0, "off": 0, "imm": 16},
+      {"code": 15, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 3, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "variable-offset stack write clobbers spilled regs",
+    "result": "REJECT",
+    "result_unpriv": "REJECT",
+    "errstr": "R2 invalid mem access 'inv'",
+    "errstr_unpriv": "R2 variable stack access prohibited for !root",
+    "fixups": {
+    "fixup_map_hash_8b": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 87, "dst": 2, "src": 0, "off": 0, "imm": 8},
+      {"code": 23, "dst": 2, "src": 0, "off": 0, "imm": 16},
+      {"code": 15, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 123, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 2, "src": 10, "off": -8, "imm": 0},
+      {"code": 121, "dst": 0, "src": 2, "off": 8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "indirect variable-offset stack access, unbounded",
+    "result": "REJECT",
+    "errstr": "invalid unbounded variable-offset indirect access to stack R4",
+    "prog_type": 13,
+    "insns": [
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 6},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 28},
+      {"code": 122, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 121, "dst": 4, "src": 1, "off": 168, "imm": 0},
+      {"code": 197, "dst": 4, "src": 0, "off": 4, "imm": 0},
+      {"code": 23, "dst": 4, "src": 0, "off": 0, "imm": 16},
+      {"code": 15, "dst": 4, "src": 10, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 8},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 57},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "indirect variable-offset stack access, max out of bound",
+    "result": "REJECT",
+    "errstr": "invalid variable-offset indirect access to stack R2",
+    "prog_type": 10,
+    "fixups": {
+    "fixup_map_hash_8b": [5]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 87, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 23, "dst": 2, "src": 0, "off": 0, "imm": 8},
+      {"code": 15, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "indirect variable-offset stack access, min out of bound",
+    "result": "REJECT",
+    "errstr": "invalid variable-offset indirect access to stack R2",
+    "prog_type": 10,
+    "fixups": {
+    "fixup_map_hash_8b": [5]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 87, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 23, "dst": 2, "src": 0, "off": 0, "imm": 516},
+      {"code": 15, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "indirect variable-offset stack access, min_off < min_initialized",
+    "result": "REJECT",
+    "errstr": "invalid indirect read from stack R2 var_off",
+    "prog_type": 10,
+    "fixups": {
+    "fixup_map_hash_8b": [5]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 87, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 23, "dst": 2, "src": 0, "off": 0, "imm": 16},
+      {"code": 15, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "indirect variable-offset stack access, priv vs unpriv",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R2 variable stack access prohibited for !root",
+    "prog_type": 8,
+    "fixups": {
+    "fixup_map_hash_8b": [6]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 87, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 23, "dst": 2, "src": 0, "off": 0, "imm": 16},
+      {"code": 15, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "indirect variable-offset stack access, ok",
+    "result": "ACCEPT",
+    "prog_type": 10,
+    "fixups": {
+    "fixup_map_hash_8b": [6]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 87, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 23, "dst": 2, "src": 0, "off": 0, "imm": 16},
+      {"code": 15, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

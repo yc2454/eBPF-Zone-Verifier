@@ -1,0 +1,99 @@
+[
+  {
+    "name": "xadd/w check unaligned stack",
+    "result": "REJECT",
+    "errstr": "misaligned stack access off",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 123, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 195, "dst": 10, "src": 0, "off": -7, "imm": 0},
+      {"code": 121, "dst": 0, "src": 10, "off": -8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "xadd/w check unaligned map",
+    "result": "REJECT",
+    "errstr": "misaligned value access off",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 195, "dst": 0, "src": 1, "off": 3, "imm": 0},
+      {"code": 97, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "xadd/w check unaligned pkt",
+    "result": "REJECT",
+    "errstr": "BPF_ATOMIC stores into R2 pkt is not allowed",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 173, "dst": 1, "src": 3, "off": 2, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 99},
+      {"code": 5, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 98, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 98, "dst": 2, "src": 0, "off": 3, "imm": 0},
+      {"code": 195, "dst": 2, "src": 0, "off": 1, "imm": 0},
+      {"code": 195, "dst": 2, "src": 0, "off": 2, "imm": 0},
+      {"code": 97, "dst": 0, "src": 2, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "xadd/w check whether src/dst got mangled, 1",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 7, "src": 10, "off": 0, "imm": 0},
+      {"code": 123, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 219, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 219, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 93, "dst": 6, "src": 0, "off": 3, "imm": 0},
+      {"code": 93, "dst": 7, "src": 10, "off": 2, "imm": 0},
+      {"code": 121, "dst": 0, "src": 10, "off": -8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 42},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "xadd/w check whether src/dst got mangled, 2",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 7, "src": 10, "off": 0, "imm": 0},
+      {"code": 99, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 195, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 195, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 93, "dst": 6, "src": 0, "off": 3, "imm": 0},
+      {"code": 93, "dst": 7, "src": 10, "off": 2, "imm": 0},
+      {"code": 97, "dst": 0, "src": 10, "off": -8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 42},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

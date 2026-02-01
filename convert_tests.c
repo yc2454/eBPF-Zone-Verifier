@@ -123,6 +123,9 @@ struct bpf_insn {
 // Endian conversion
 #define BPF_TO_LE       0x00
 #define BPF_TO_BE       0x08
+#define BPF_END		0xd0	/* flags for endianness conversion: */
+#define BPF_FROM_LE	BPF_TO_LE
+#define BPF_FROM_BE	BPF_TO_BE
 
 // Limits
 #include <limits.h>
@@ -504,6 +507,95 @@ struct bpf_xdp_sock {
     __u32 queue_id;
 };
 
+struct bpf_sock_ops {
+	__u32 op;
+	union {
+		__u32 args[4];		/* Optionally passed to bpf program */
+		__u32 reply;		/* Returned by bpf program	    */
+		__u32 replylong[4];	/* Optionally returned by bpf prog  */
+	};
+	__u32 family;
+	__u32 remote_ip4;	/* Stored in network byte order */
+	__u32 local_ip4;	/* Stored in network byte order */
+	__u32 remote_ip6[4];	/* Stored in network byte order */
+	__u32 local_ip6[4];	/* Stored in network byte order */
+	__u32 remote_port;	/* Stored in network byte order */
+	__u32 local_port;	/* stored in host byte order */
+	__u32 is_fullsock;	/* Some TCP fields are only valid if
+				 * there is a full socket. If not, the
+				 * fields read as zero.
+				 */
+	__u32 snd_cwnd;
+	__u32 srtt_us;		/* Averaged RTT << 3 in usecs */
+	__u32 bpf_sock_ops_cb_flags; /* flags defined in uapi/linux/tcp.h */
+	__u32 state;
+	__u32 rtt_min;
+	__u32 snd_ssthresh;
+	__u32 rcv_nxt;
+	__u32 snd_nxt;
+	__u32 snd_una;
+	__u32 mss_cache;
+	__u32 ecn_flags;
+	__u32 rate_delivered;
+	__u32 rate_interval_us;
+	__u32 packets_out;
+	__u32 retrans_out;
+	__u32 total_retrans;
+	__u32 segs_in;
+	__u32 data_segs_in;
+	__u32 segs_out;
+	__u32 data_segs_out;
+	__u32 lost_out;
+	__u32 sacked_out;
+	__u32 sk_txhash;
+	__u64 bytes_received;
+	__u64 bytes_acked;
+	__bpf_md_ptr(struct bpf_sock *, sk);
+	/* [skb_data, skb_data_end) covers the whole TCP header.
+	 *
+	 * BPF_SOCK_OPS_PARSE_HDR_OPT_CB: The packet received
+	 * BPF_SOCK_OPS_HDR_OPT_LEN_CB:   Not useful because the
+	 *                                header has not been written.
+	 * BPF_SOCK_OPS_WRITE_HDR_OPT_CB: The header and options have
+	 *				  been written so far.
+	 * BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB:  The SYNACK that concludes
+	 *					the 3WHS.
+	 * BPF_SOCK_OPS_PASSIVE_ESTABLISHED_CB: The ACK that concludes
+	 *					the 3WHS.
+	 *
+	 * bpf_load_hdr_opt() can also be used to read a particular option.
+	 */
+	__bpf_md_ptr(void *, skb_data);
+	__bpf_md_ptr(void *, skb_data_end);
+	__u32 skb_len;		/* The total length of a packet.
+				 * It includes the header, options,
+				 * and payload.
+				 */
+	__u32 skb_tcp_flags;	/* tcp_flags of the header.  It provides
+				 * an easy way to check for tcp_flags
+				 * without parsing skb_data.
+				 *
+				 * In particular, the skb_tcp_flags
+				 * will still be available in
+				 * BPF_SOCK_OPS_HDR_OPT_LEN even though
+				 * the outgoing header has not
+				 * been written yet.
+				 */
+};
+
+struct bpf_sock_addr {
+    __u32 user_family;
+    __u32 user_ip4;
+    __u32 user_ip6[4];
+    __u32 user_port;
+    __u32 family;
+    __u32 type;
+    __u32 protocol;
+    __u32 msg_src_ip4;
+    __u32 msg_src_ip6[4];
+    __bpf_md_ptr(struct bpf_sock *, sk);
+};
+
 // ============================================================================
 // Register names
 // ============================================================================
@@ -520,6 +612,17 @@ struct bpf_xdp_sock {
 #define BPF_REG_9   9
 #define BPF_REG_10  10
 #define BPF_REG_FP  BPF_REG_10
+
+/* ArgX, context and stack frame pointer register positions. Note,
+ * Arg1, Arg2, Arg3, etc are used as argument mappings of function
+ * calls in BPF_CALL instruction.
+ */
+#define BPF_REG_ARG1	BPF_REG_1
+#define BPF_REG_ARG2	BPF_REG_2
+#define BPF_REG_ARG3	BPF_REG_3
+#define BPF_REG_ARG4	BPF_REG_4
+#define BPF_REG_ARG5	BPF_REG_5
+#define BPF_REG_CTX	BPF_REG_6
 
 // ============================================================================
 // BPF helper function IDs (common ones)

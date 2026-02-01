@@ -172,6 +172,14 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
+        constants::BPF_GET_HASH_RECALC => HelperSignature::new([
+            PtrToCtx,       // R1: ctx
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ]),
+
         // ---- SKB data access ----
         constants::BPF_SKB_LOAD_BYTES => HelperSignature::new([
             PtrToCtx,       // R1: skb

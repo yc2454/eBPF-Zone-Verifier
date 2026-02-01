@@ -1,0 +1,197 @@
+[
+  {
+    "name": "multiple registers share map_lookup_elem result",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_hash_8b": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 10},
+      {"code": 123, "dst": 10, "src": 1, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 122, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "alu ops on ptr_to_map_value_or_null, 1",
+    "result": "REJECT",
+    "errstr": "R4 pointer arithmetic on map_value_or_null",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_hash_8b": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 10},
+      {"code": 123, "dst": 10, "src": 1, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": -2},
+      {"code": 7, "dst": 4, "src": 0, "off": 0, "imm": 2},
+      {"code": 21, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 122, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "alu ops on ptr_to_map_value_or_null, 2",
+    "result": "REJECT",
+    "errstr": "R4 pointer arithmetic on map_value_or_null",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_hash_8b": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 10},
+      {"code": 123, "dst": 10, "src": 1, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 4, "src": 0, "off": 0, "imm": -1},
+      {"code": 21, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 122, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "alu ops on ptr_to_map_value_or_null, 3",
+    "result": "REJECT",
+    "errstr": "R4 pointer arithmetic on map_value_or_null",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_hash_8b": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 10},
+      {"code": 123, "dst": 10, "src": 1, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 103, "dst": 4, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 122, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid memory access with multiple map_lookup_elem calls",
+    "result": "REJECT",
+    "errstr": "R4 !read_ok",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_hash_8b": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 10},
+      {"code": 123, "dst": 10, "src": 1, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 8, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 7, "src": 2, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 8, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 7, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 122, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "valid indirect map_lookup_elem access with 2nd lookup in branch",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_hash_8b": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 10},
+      {"code": 123, "dst": 10, "src": 1, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 8, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 7, "src": 2, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 10},
+      {"code": 85, "dst": 2, "src": 0, "off": 3, "imm": 0},
+      {"code": 191, "dst": 1, "src": 8, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 7, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 122, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid map access from else condition",
+    "result": "REJECT",
+    "result_unpriv": "REJECT",
+    "errstr": "R0 unbounded memory access",
+    "errstr_unpriv": "R0 leaks addr",
+    "flags": 1,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 53, "dst": 1, "src": 0, "off": 1, "imm": 10},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 103, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 4},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map lookup and null branch prediction",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "fixups": {
+    "fixup_map_hash_8b": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 10},
+      {"code": 123, "dst": 10, "src": 1, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 6, "src": 0, "off": 2, "imm": 0},
+      {"code": 85, "dst": 6, "src": 0, "off": 1, "imm": 0},
+      {"code": 7, "dst": 10, "src": 0, "off": 0, "imm": 10},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

@@ -120,6 +120,12 @@ pub(crate) fn transfer_atomic(
     off: i16,
     src: Reg,
 ) -> Vec<State> {
+    // 0. Alignment check 
+    if off % size.bytes() as i16 != 0 {
+        env.fail(VerificationError::MisalignedAccess { pc: state.pc, off: off.into() });
+        return vec![];
+    }
+    
     // 1. Check readability
     if !check_reg_readable(env, &state, base) { return vec![]; }
     if !check_reg_readable(env, &state, src) { return vec![]; }
@@ -139,7 +145,7 @@ pub(crate) fn transfer_atomic(
     let base_ty = state.types.get(base);
 
     // 3. Context Pointer Check
-    // Atomic ops on Context (sk_buff, etc.) are generally forbidden.
+    // Atomic ops on Context (sk_buff, etc.) are forbidden.
     if matches!(base_ty, RegType::PtrToCtx) {
         env.fail(VerificationError::InvalidArgType { pc: state.pc, reg: base });
         return vec![];

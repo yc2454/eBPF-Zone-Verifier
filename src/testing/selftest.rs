@@ -477,6 +477,8 @@ pub fn run_test(test: &JsonTestCase, config: &VerifierConfig) -> TestResult {
                         outcome = TestOutcome::Pass
                     } else if s.contains("jump out of range") && matches!(e.kind, LowerErrorKind::BranchTargetOutOfRange) {
                         outcome = TestOutcome::Pass
+                    } else if s.contains("R15") && matches!(e.kind, LowerErrorKind::InvalidRegister) {
+                        outcome = TestOutcome::Pass
                     }
                 }
                 None => {}
@@ -985,23 +987,41 @@ pub fn selftest_suite(dir: &str, config: &VerifierConfig, output_dir: Option<&st
 
             // Per-file summary
             println!("Per-file results:");
+            let mut soundness = Vec::new(); // ⚠
+            let mut clean = Vec::new();     // ✓
+            let mut precision = Vec::new(); // ○
+
             for file in &result.files {
-                let status = if file.false_negatives > 0 {
-                    "⚠"  // Warning for soundness issues
+                if file.false_negatives > 0 {
+                    soundness.push(file);
                 } else if file.false_positives == 0 && file.errors == 0 {
-                    "✓"
+                    clean.push(file);
                 } else {
-                    "○"  // Circle for precision-only issues
-                };
-                println!("  {} {} ({}/{} passed, {} soundness, {} precision)",
-                         status,
-                         Path::new(&file.file).file_name().unwrap().to_string_lossy(),
-                         file.passed,
-                         file.total,
-                         file.false_negatives,
-                         file.false_positives);
+                    precision.push(file);
+                }
             }
 
+            let print_group = |status: &str, files: Vec<&FileResult>| {
+                for file in files {
+                    println!(
+                        "  {} {} ({}/{} passed, {} soundness, {} precision)",
+                        status,
+                        Path::new(&file.file)
+                            .file_name()
+                            .unwrap()
+                            .to_string_lossy(),
+                        file.passed,
+                        file.total,
+                        file.false_negatives,
+                        file.false_positives
+                    );
+                }
+            };
+
+            print_group("⚠", soundness);
+            print_group("○", precision);
+            print_group("✓", clean);
+            
             // Write reports
             let out = output_dir.unwrap_or(".");
             let txt_path = format!("{}/selftest_report.txt", out);

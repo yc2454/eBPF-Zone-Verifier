@@ -1,0 +1,562 @@
+[
+  {
+    "name": "unpriv: return pointer",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 leaks addr",
+    "insns": [
+      {"code": 191, "dst": 0, "src": 10, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: add const to pointer",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: add pointer to pointer",
+    "result": "REJECT",
+    "errstr": "R1 pointer += pointer",
+    "insns": [
+      {"code": 15, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: neg pointer",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R1 pointer arithmetic",
+    "insns": [
+      {"code": 135, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: cmp pointer with const",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R1 pointer comparison",
+    "insns": [
+      {"code": 21, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: cmp pointer with pointer",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R10 pointer comparison",
+    "insns": [
+      {"code": 29, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: check that printk is disallowed",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "unknown func bpf_trace_printk#6",
+    "prog_type": 5,
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -8},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 8},
+      {"code": 191, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 6},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: pass pointer to helper function",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R4 leaks addr",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 3, "src": 2, "off": 0, "imm": 0},
+      {"code": 191, "dst": 4, "src": 2, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: indirectly pass pointer on stack to helper function",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "invalid indirect read from stack R2 off -8+0 size 8",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 123, "dst": 10, "src": 10, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: mangle pointer on stack 1",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "attempt to corrupt spilled",
+    "insns": [
+      {"code": 123, "dst": 10, "src": 10, "off": -8, "imm": 0},
+      {"code": 98, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: mangle pointer on stack 2",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "attempt to corrupt spilled",
+    "insns": [
+      {"code": 123, "dst": 10, "src": 10, "off": -8, "imm": 0},
+      {"code": 114, "dst": 10, "src": 0, "off": -1, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: read pointer from stack in small chunks",
+    "result": "REJECT",
+    "errstr": "invalid size",
+    "insns": [
+      {"code": 123, "dst": 10, "src": 10, "off": -8, "imm": 0},
+      {"code": 97, "dst": 0, "src": 10, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: write pointer into ctx",
+    "result": "REJECT",
+    "result_unpriv": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "errstr_unpriv": "R1 leaks addr",
+    "insns": [
+      {"code": 123, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: spill/fill of ctx",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -8},
+      {"code": 123, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 121, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: spill/fill of ctx 2",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -8},
+      {"code": 123, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 121, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 34},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: spill/fill of ctx 3",
+    "result": "REJECT",
+    "errstr": "R1 type=fp expected=ctx",
+    "prog_type": 3,
+    "insns": [
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -8},
+      {"code": 123, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 123, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 121, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 34},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: spill/fill of ctx 4",
+    "result": "REJECT",
+    "errstr": "R1 type=inv expected=ctx",
+    "prog_type": 3,
+    "insns": [
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -8},
+      {"code": 123, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 219, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 121, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 34},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: spill/fill of different pointers stx",
+    "result": "REJECT",
+    "errstr": "same insn cannot be used with different pointers",
+    "prog_type": 3,
+    "insns": [
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 42},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -8},
+      {"code": 21, "dst": 1, "src": 0, "off": 3, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -16},
+      {"code": 123, "dst": 6, "src": 2, "off": 0, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 123, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 121, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 99, "dst": 1, "src": 3, "off": 8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: spill/fill of different pointers stx - ctx and sock",
+    "result": "REJECT",
+    "errstr": "type=ctx expected=sock",
+    "prog_type": 3,
+    "insns": [
+      {"code": 191, "dst": 8, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 99, "dst": 10, "src": 2, "off": -8, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -16, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -24, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -32, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -40, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -48, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -48},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 36},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 84},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 1, "src": 8, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 123, "dst": 6, "src": 2, "off": 0, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 123, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 121, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 42},
+      {"code": 99, "dst": 1, "src": 3, "off": 8, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 86},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: spill/fill of different pointers stx - leak sock",
+    "result": "REJECT",
+    "errstr": "Unreleased reference",
+    "prog_type": 3,
+    "insns": [
+      {"code": 191, "dst": 8, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 99, "dst": 10, "src": 2, "off": -8, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -16, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -24, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -32, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -40, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -48, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -48},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 36},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 84},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 1, "src": 8, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 123, "dst": 6, "src": 2, "off": 0, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 123, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 121, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 42},
+      {"code": 99, "dst": 1, "src": 3, "off": 8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: spill/fill of different pointers stx - sock and ctx (read)",
+    "result": "REJECT",
+    "errstr": "same insn cannot be used with different pointers",
+    "prog_type": 3,
+    "insns": [
+      {"code": 191, "dst": 8, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 99, "dst": 10, "src": 2, "off": -8, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -16, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -24, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -32, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -40, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -48, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -48},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 36},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 84},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 1, "src": 8, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 123, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 123, "dst": 6, "src": 2, "off": 0, "imm": 0},
+      {"code": 121, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 2, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 16, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 86},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: spill/fill of different pointers stx - sock and ctx (write)",
+    "result": "REJECT",
+    "errstr": "cannot write into sock",
+    "prog_type": 3,
+    "insns": [
+      {"code": 191, "dst": 8, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 99, "dst": 10, "src": 2, "off": -8, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -16, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -24, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -32, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -40, "imm": 0},
+      {"code": 123, "dst": 10, "src": 2, "off": -48, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -48},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 36},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 5, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 84},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -8},
+      {"code": 191, "dst": 1, "src": 8, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 123, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 123, "dst": 6, "src": 2, "off": 0, "imm": 0},
+      {"code": 121, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 42},
+      {"code": 99, "dst": 1, "src": 3, "off": 16, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 86},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: spill/fill of different pointers ldx",
+    "result": "REJECT",
+    "errstr": "same insn cannot be used with different pointers",
+    "prog_type": 7,
+    "insns": [
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -8},
+      {"code": 21, "dst": 1, "src": 0, "off": 3, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -176},
+      {"code": 123, "dst": 6, "src": 2, "off": 0, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 123, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 121, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 121, "dst": 1, "src": 1, "off": 168, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: write pointer into map elem value",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 leaks addr",
+    "fixups": {
+    "fixup_map_hash_8b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 123, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "alu32: mov u32 const",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R7 invalid mem access 'inv'",
+    "insns": [
+      {"code": 180, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 84, "dst": 7, "src": 0, "off": 0, "imm": 1},
+      {"code": 188, "dst": 0, "src": 7, "off": 0, "imm": 0},
+      {"code": 21, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 7, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: partial copy of pointer",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R10 partial copy",
+    "insns": [
+      {"code": 188, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: pass pointer to tail_call",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R3 leaks addr into helper",
+    "fixups": {
+    "fixup_prog1": [1]
+    },
+    "insns": [
+      {"code": 191, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 24, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 12},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: cmp map pointer with zero",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R1 pointer comparison",
+    "fixups": {
+    "fixup_map_hash_8b": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: write into frame pointer",
+    "result": "REJECT",
+    "errstr": "frame pointer is read only",
+    "insns": [
+      {"code": 191, "dst": 10, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: spill/fill frame pointer",
+    "result": "REJECT",
+    "errstr": "frame pointer is read only",
+    "insns": [
+      {"code": 191, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": -8},
+      {"code": 123, "dst": 6, "src": 10, "off": 0, "imm": 0},
+      {"code": 121, "dst": 10, "src": 6, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: cmp of frame pointer",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R10 pointer comparison",
+    "insns": [
+      {"code": 21, "dst": 10, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: adding of fp, reg",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R1 stack pointer arithmetic goes out of range",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 15, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 123, "dst": 1, "src": 0, "off": -8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: adding of fp, imm",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R1 stack pointer arithmetic goes out of range",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 123, "dst": 1, "src": 0, "off": -8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "unpriv: cmp of stack pointer",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R2 pointer comparison",
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 21, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

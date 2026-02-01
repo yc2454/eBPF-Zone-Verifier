@@ -1,0 +1,14 @@
+[
+  {
+    "name": "XDP, using ifindex from netdev",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 2, "src": 1, "off": 12, "imm": 0},
+      {"code": 165, "dst": 2, "src": 0, "off": 1, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

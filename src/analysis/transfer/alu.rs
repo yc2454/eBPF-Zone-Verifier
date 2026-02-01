@@ -12,7 +12,7 @@ use crate::zone::domain::{
     assign_and_mask, assign_div_imm, assign_div_reg, bit_and_const,
     assign_neg, assign_sub_reg, assume_eq_const
 };
-use crate::zone::dbm::Dbm;
+use crate::zone::dbm::{Dbm, INF};
 use crate::zone::tnum::Tnum;
 use crate::common::constants;
 use log::error;
@@ -55,7 +55,7 @@ pub(crate) fn transfer_alu(
     };
     let dst_type = state.types.get(dst);
 
-    if !check_ptr_arithmetic(env, &state, op, &dst_type, &src_type) {
+    if !check_ptr_arithmetic(env, &state, op, &dst_type, &src_type, &src) {
         return vec![];
     }
 
@@ -102,9 +102,21 @@ pub(crate) fn check_ptr_arithmetic(
     op: AluOp,
     dst_type: &RegType,
     src_type: &RegType,
+    src: &Operand
 ) -> bool {
     let dst_is_ptr = dst_type.is_pointer();
     let src_is_ptr = src_type.is_pointer();
+
+    let src_max = match src {
+        Operand::Imm(k) => *k,
+        Operand::Reg(r) => {
+            let (_, max_opt) = get_bounds(&state.dbm, *r);
+            match max_opt {
+                Some(max) => max,
+                None => INF,
+            }
+        }
+    };
 
     // 1. Scalar <op> Scalar
     // Always allowed.
@@ -135,18 +147,18 @@ pub(crate) fn check_ptr_arithmetic(
     // 3. Pointer <op> Scalar (dst=Ptr, src=Scalar)
     else if dst_is_ptr {
         match op {
-            // Ptr + Scalar, Ptr - Scalar are allowed.
-            // (Result is Ptr or Scalar depending on rigidity, handled by caller)
-            AluOp::Add | AluOp::Sub => true,
-            
-            // Mov is allowed (overwrite).
-            AluOp::Mov => true,
-            
-            // All other ops (Mul, Div, And, Or, etc.) on pointers are forbidden.
-            _ => {
-                env.fail(VerificationError::InvalidPointerArithmetic { pc: state.pc });
-                false
-            }
+            AluOp::Add | AluOp::Sub => {
+                if matches!(dst_type, RegType::PtrToMapValue { .. }) {
+                    // The verifier identifies 0xFFFFFFFF (4294967295) as a forbidden offset
+                    if src_max > i32::MAX as i64 || op == AluOp::Sub {
+                        env.fail(VerificationError::InvalidPointerArithmetic { pc: state.pc });
+                        return false;
+                    }
+                }
+                true
+            },
+            AluOp::Mov => true, 
+            _ => { /* fail generic */ false }
         }
     }
     // 4. Scalar <op> Pointer (dst=Scalar, src=Ptr)

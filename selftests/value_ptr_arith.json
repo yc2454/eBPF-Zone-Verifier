@@ -1,0 +1,1211 @@
+[
+  {
+    "name": "map access: known scalar += value_ptr unknown vs const",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R1 tried to add from different maps, paths or scalars",
+    "fixups": {
+    "fixup_map_hash_16b": [5],
+    "fixup_map_array_48b": [8]
+    },
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 9, "imm": 0},
+      {"code": 113, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 4, "src": 0, "off": 4, "imm": 1},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 6},
+      {"code": 135, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 3},
+      {"code": 15, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: known scalar += value_ptr const vs unknown",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R1 tried to add from different maps, paths or scalars",
+    "fixups": {
+    "fixup_map_hash_16b": [5],
+    "fixup_map_array_48b": [8]
+    },
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 9, "imm": 0},
+      {"code": 113, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 4, "src": 0, "off": 2, "imm": 1},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 3},
+      {"code": 5, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 6},
+      {"code": 135, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 15, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: known scalar += value_ptr const vs const (ne)",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R1 tried to add from different maps, paths or scalars",
+    "fixups": {
+    "fixup_map_hash_16b": [5],
+    "fixup_map_array_48b": [8]
+    },
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 7, "imm": 0},
+      {"code": 113, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 4, "src": 0, "off": 2, "imm": 1},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 3},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 5},
+      {"code": 15, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: known scalar += value_ptr const vs const (eq)",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_hash_16b": [5],
+    "fixup_map_array_48b": [8]
+    },
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 7, "imm": 0},
+      {"code": 113, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 4, "src": 0, "off": 2, "imm": 1},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 5},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 5},
+      {"code": 15, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: known scalar += value_ptr unknown vs unknown (eq)",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_hash_16b": [5],
+    "fixup_map_array_48b": [8]
+    },
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 11, "imm": 0},
+      {"code": 113, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 4, "src": 0, "off": 4, "imm": 1},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 6},
+      {"code": 135, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 5, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 6},
+      {"code": 135, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 15, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: known scalar += value_ptr unknown vs unknown (lt)",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R1 tried to add from different maps, paths or scalars",
+    "fixups": {
+    "fixup_map_hash_16b": [5],
+    "fixup_map_array_48b": [8]
+    },
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 11, "imm": 0},
+      {"code": 113, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 4, "src": 0, "off": 4, "imm": 1},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 6},
+      {"code": 135, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 3},
+      {"code": 5, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 6},
+      {"code": 135, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 15, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: known scalar += value_ptr unknown vs unknown (gt)",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R1 tried to add from different maps, paths or scalars",
+    "fixups": {
+    "fixup_map_hash_16b": [5],
+    "fixup_map_array_48b": [8]
+    },
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 11, "imm": 0},
+      {"code": 113, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 4, "src": 0, "off": 4, "imm": 1},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 6},
+      {"code": 135, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 5, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 6},
+      {"code": 135, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 3},
+      {"code": 15, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: known scalar += value_ptr from different maps",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_hash_16b": [5],
+    "fixup_map_array_48b": [8]
+    },
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 15, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr -= known scalar from different maps",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 min value is outside of the allowed memory range",
+    "fixups": {
+    "fixup_map_hash_16b": [5],
+    "fixup_map_array_48b": [8]
+    },
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 31, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: known scalar += value_ptr from different maps, but same value properties",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_hash_48b": [5],
+    "fixup_map_array_48b": [8]
+    },
+    "insns": [
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 0, "src": 0, "off": 2, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 15, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: mixing value pointer and scalar, 1",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R2 pointer comparison prohibited",
+    "fixups": {
+    "fixup_map_array_48b": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -16},
+      {"code": 122, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 3, "imm": 0},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 1048576},
+      {"code": 15, "dst": 2, "src": 3, "off": 0, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 322376503},
+      {"code": 85, "dst": 2, "src": 0, "off": 2, "imm": 1048576},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: mixing value pointer and scalar, 2",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 invalid mem access 'inv'",
+    "fixups": {
+    "fixup_map_array_48b": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -16},
+      {"code": 122, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 1048576},
+      {"code": 5, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 15, "dst": 2, "src": 3, "off": 0, "imm": 0},
+      {"code": 85, "dst": 1, "src": 0, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 322376503},
+      {"code": 85, "dst": 2, "src": 0, "off": 2, "imm": 1048576},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sanitation: alu with different scalars 1",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_array_48b": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -16},
+      {"code": 122, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 21, "dst": 1, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 1048576},
+      {"code": 5, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 42},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 1048577},
+      {"code": 15, "dst": 2, "src": 3, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sanitation: alu with different scalars 2",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_array_48b": [1]
+    },
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -16},
+      {"code": 122, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 3},
+      {"code": 191, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -16},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 3},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 8, "src": 6, "off": 0, "imm": 0},
+      {"code": 15, "dst": 8, "src": 7, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 8, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "sanitation: alu with different scalars 3",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 22},
+      {"code": 39, "dst": 0, "src": 0, "off": 0, "imm": -1},
+      {"code": 191, "dst": 7, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 22},
+      {"code": 39, "dst": 0, "src": 0, "off": 0, "imm": -1},
+      {"code": 191, "dst": 6, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 8, "src": 6, "off": 0, "imm": 0},
+      {"code": 15, "dst": 8, "src": 7, "off": 0, "imm": 0},
+      {"code": 191, "dst": 0, "src": 8, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr += known scalar, upper oob arith, test 1",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 pointer arithmetic of map value goes out of range",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 48},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 31, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr += known scalar, upper oob arith, test 2",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 pointer arithmetic of map value goes out of range",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 49},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 31, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr += known scalar, upper oob arith, test 3",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 47},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 31, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr -= known scalar, lower oob arith, test 1",
+    "result": "REJECT",
+    "result_unpriv": "REJECT",
+    "errstr": "R0 min value is outside of the allowed memory range",
+    "errstr_unpriv": "R0 pointer arithmetic of map value goes out of range",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 5, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 47},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 48},
+      {"code": 31, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr -= known scalar, lower oob arith, test 2",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 pointer arithmetic of map value goes out of range",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 7, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 47},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 48},
+      {"code": 31, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr -= known scalar, lower oob arith, test 3",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 5, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 47},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 47},
+      {"code": 31, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: known scalar += value_ptr",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 15, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr += known scalar, 1",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr += known scalar, 2",
+    "result": "REJECT",
+    "errstr": "invalid access to map value",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 49},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr += known scalar, 3",
+    "result": "REJECT",
+    "errstr": "invalid access to map value",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": -1},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr += known scalar, 4",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 7, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 5},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": -2},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": -1},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr += known scalar, 5",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 28},
+      {"code": 15, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr += known scalar, 6",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 5, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 16},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 12},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr += N, value_ptr -= N known scalar",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 180, "dst": 1, "src": 0, "off": 0, "imm": 305419896},
+      {"code": 99, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 2},
+      {"code": 31, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: unknown scalar += value_ptr, 1",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 15},
+      {"code": 15, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: unknown scalar += value_ptr, 2",
+    "result": "ACCEPT",
+    "flags": 1,
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 31},
+      {"code": 15, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: unknown scalar += value_ptr, 3",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 pointer arithmetic of map value goes out of range",
+    "flags": 1,
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": -1},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 1},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 31},
+      {"code": 15, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: unknown scalar += value_ptr, 4",
+    "result": "REJECT",
+    "errstr": "R1 max value is outside of the allowed memory range",
+    "errstr_unpriv": "R1 pointer arithmetic of map value goes out of range",
+    "flags": 1,
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 6, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 19},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 31},
+      {"code": 15, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr += unknown scalar, 1",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 15},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr += unknown scalar, 2",
+    "result": "ACCEPT",
+    "flags": 1,
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 97, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 31},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr += unknown scalar, 3",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 11, "imm": 0},
+      {"code": 121, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 121, "dst": 2, "src": 0, "off": 8, "imm": 0},
+      {"code": 121, "dst": 3, "src": 0, "off": 16, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 15},
+      {"code": 87, "dst": 3, "src": 0, "off": 0, "imm": 1},
+      {"code": 71, "dst": 3, "src": 0, "off": 0, "imm": 1},
+      {"code": 45, "dst": 2, "src": 3, "off": 4, "imm": 0},
+      {"code": 15, "dst": 0, "src": 3, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 5, "dst": 0, "src": 0, "off": -3, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr += value_ptr",
+    "result": "REJECT",
+    "errstr": "R0 pointer += pointer prohibited",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 15, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: known scalar -= value_ptr",
+    "result": "REJECT",
+    "errstr": "R1 tried to subtract pointer from scalar",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 31, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr -= known scalar",
+    "result": "REJECT",
+    "errstr": "R0 min value is outside of the allowed memory range",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 3, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 4},
+      {"code": 31, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr -= known scalar, 2",
+    "result": "ACCEPT",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 5, "imm": 0},
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 6},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 4},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 31, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: unknown scalar -= value_ptr",
+    "result": "REJECT",
+    "errstr": "R1 tried to subtract pointer from scalar",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 15},
+      {"code": 31, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr -= unknown scalar",
+    "result": "REJECT",
+    "errstr": "R0 min value is negative",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 15},
+      {"code": 31, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr -= unknown scalar, 2",
+    "result": "ACCEPT",
+    "result_unpriv": "REJECT",
+    "errstr_unpriv": "R0 pointer arithmetic of map value goes out of range",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 15},
+      {"code": 71, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 15, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 31, "dst": 0, "src": 1, "off": 0, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: value_ptr -= value_ptr",
+    "result": "REJECT",
+    "errstr": "R0 invalid mem access 'inv'",
+    "errstr_unpriv": "R0 pointer -= pointer prohibited",
+    "fixups": {
+    "fixup_map_array_48b": [3]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 31, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 113, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map access: trying to leak tained dst reg",
+    "result": "REJECT",
+    "errstr": "math between map_value pointer and 4294967295 is not allowed",
+    "fixups": {
+    "fixup_map_array_48b": [4]
+    },
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 191, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 180, "dst": 1, "src": 0, "off": 0, "imm": -1},
+      {"code": 188, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 31, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 123, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "32bit pkt_ptr -= scalar",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 8, "src": 1, "off": 80, "imm": 0},
+      {"code": 97, "dst": 7, "src": 1, "off": 76, "imm": 0},
+      {"code": 191, "dst": 6, "src": 7, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": 40},
+      {"code": 45, "dst": 6, "src": 8, "off": 2, "imm": 0},
+      {"code": 188, "dst": 4, "src": 7, "off": 0, "imm": 0},
+      {"code": 28, "dst": 6, "src": 4, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "32bit scalar -= pkt_ptr",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 8, "src": 1, "off": 80, "imm": 0},
+      {"code": 97, "dst": 7, "src": 1, "off": 76, "imm": 0},
+      {"code": 191, "dst": 6, "src": 7, "off": 0, "imm": 0},
+      {"code": 7, "dst": 6, "src": 0, "off": 0, "imm": 40},
+      {"code": 45, "dst": 6, "src": 8, "off": 2, "imm": 0},
+      {"code": 188, "dst": 4, "src": 6, "off": 0, "imm": 0},
+      {"code": 28, "dst": 4, "src": 7, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

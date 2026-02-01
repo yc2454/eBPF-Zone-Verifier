@@ -1,0 +1,112 @@
+[
+  {
+    "name": "map element value illegal alu op, 1",
+    "result": "REJECT",
+    "errstr": "R0 bitwise operator &= on pointer",
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 8},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 22},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map element value illegal alu op, 2",
+    "result": "REJECT",
+    "errstr": "R0 32-bit pointer arithmetic prohibited",
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 4, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 22},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map element value illegal alu op, 3",
+    "result": "REJECT",
+    "errstr": "R0 pointer arithmetic with /= operator",
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 55, "dst": 0, "src": 0, "off": 0, "imm": 42},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 22},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map element value illegal alu op, 4",
+    "result": "REJECT",
+    "result_unpriv": "REJECT",
+    "errstr": "invalid mem access 'inv'",
+    "errstr_unpriv": "R0 pointer arithmetic prohibited",
+    "flags": 1,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 220, "dst": 0, "src": 0, "off": 0, "imm": 64},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 22},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "map element value illegal alu op, 5",
+    "result": "REJECT",
+    "errstr": "R0 invalid mem access 'inv'",
+    "errstr_unpriv": "leaking pointer from stack off -8",
+    "flags": 1,
+    "fixups": {
+    "fixup_map_hash_48b": [3]
+    },
+    "insns": [
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 122, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 24, "dst": 1, "src": 1, "off": 0, "imm": 0},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 21, "dst": 0, "src": 0, "off": 7, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 4096},
+      {"code": 191, "dst": 2, "src": 10, "off": 0, "imm": 0},
+      {"code": 7, "dst": 2, "src": 0, "off": 0, "imm": -8},
+      {"code": 123, "dst": 2, "src": 0, "off": 0, "imm": 0},
+      {"code": 219, "dst": 2, "src": 3, "off": 0, "imm": 0},
+      {"code": 121, "dst": 0, "src": 2, "off": 0, "imm": 0},
+      {"code": 122, "dst": 0, "src": 0, "off": 0, "imm": 22},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

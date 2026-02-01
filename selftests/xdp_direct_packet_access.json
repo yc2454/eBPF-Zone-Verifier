@@ -1,0 +1,1388 @@
+[
+  {
+    "name": "XDP pkt read, pkt_end mangling, bad access 1",
+    "result": "REJECT",
+    "errstr": "R3 pointer arithmetic on pkt_end",
+    "prog_type": 6,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 7, "dst": 3, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end mangling, bad access 2",
+    "result": "REJECT",
+    "errstr": "R3 pointer arithmetic on pkt_end",
+    "prog_type": 6,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 23, "dst": 3, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data' > pkt_end, corner case, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data' > pkt_end, bad access 1",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -4, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data' > pkt_end, bad access 2",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data' > pkt_end, corner case +1, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 9},
+      {"code": 45, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -9, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data' > pkt_end, corner case -1, bad access",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 45, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -7, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end > pkt_data', good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": -5, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end > pkt_data', corner case -1, bad access",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 6},
+      {"code": 45, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -6, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end > pkt_data', bad access 2",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end > pkt_data', corner case, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 45, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -7, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end > pkt_data', corner case +1, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data' < pkt_end, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 173, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": -5, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data' < pkt_end, corner case -1, bad access",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 6},
+      {"code": 173, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -6, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data' < pkt_end, bad access 2",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 173, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data' < pkt_end, corner case, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 173, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -7, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data' < pkt_end, corner case +1, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 173, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end < pkt_data', corner case, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 173, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end < pkt_data', bad access 1",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 173, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -4, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end < pkt_data', bad access 2",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 173, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end < pkt_data', corner case +1, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 9},
+      {"code": 173, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -9, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end < pkt_data', corner case -1, bad access",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 173, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -7, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data' >= pkt_end, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 61, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": -5, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data' >= pkt_end, corner case -1, bad access",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 6},
+      {"code": 61, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -6, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data' >= pkt_end, bad access 2",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 61, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": -5, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data' >= pkt_end, corner case, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 61, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -7, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data' >= pkt_end, corner case +1, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 61, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end >= pkt_data', corner case, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 61, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end >= pkt_data', bad access 1",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 61, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -4, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end >= pkt_data', bad access 2",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 61, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end >= pkt_data', corner case +1, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 9},
+      {"code": 61, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -9, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end >= pkt_data', corner case -1, bad access",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 61, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -7, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data' <= pkt_end, corner case, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 189, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data' <= pkt_end, bad access 1",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 189, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -4, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data' <= pkt_end, bad access 2",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 189, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data' <= pkt_end, corner case +1, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 9},
+      {"code": 189, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -9, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data' <= pkt_end, corner case -1, bad access",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 189, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -7, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end <= pkt_data', good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 189, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": -5, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end <= pkt_data', corner case -1, bad access",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 6},
+      {"code": 189, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -6, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end <= pkt_data', bad access 2",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 189, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": -5, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end <= pkt_data', corner case, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 189, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -7, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_end <= pkt_data', corner case +1, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 189, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_meta' > pkt_data, corner case, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_meta' > pkt_data, bad access 1",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -4, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_meta' > pkt_data, bad access 2",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_meta' > pkt_data, corner case +1, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 9},
+      {"code": 45, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -9, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_meta' > pkt_data, corner case -1, bad access",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 45, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -7, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data > pkt_meta', good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": -5, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data > pkt_meta', corner case -1, bad access",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 6},
+      {"code": 45, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -6, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data > pkt_meta', bad access 2",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data > pkt_meta', corner case, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 45, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -7, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data > pkt_meta', corner case +1, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 45, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_meta' < pkt_data, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 173, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": -5, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_meta' < pkt_data, corner case -1, bad access",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 6},
+      {"code": 173, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -6, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_meta' < pkt_data, bad access 2",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 173, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_meta' < pkt_data, corner case, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 173, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -7, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_meta' < pkt_data, corner case +1, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 173, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data < pkt_meta', corner case, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 173, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data < pkt_meta', bad access 1",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 173, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -4, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data < pkt_meta', bad access 2",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 173, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data < pkt_meta', corner case +1, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 9},
+      {"code": 173, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -9, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data < pkt_meta', corner case -1, bad access",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 173, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -7, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_meta' >= pkt_data, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 61, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": -5, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_meta' >= pkt_data, corner case -1, bad access",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 6},
+      {"code": 61, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -6, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_meta' >= pkt_data, bad access 2",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 61, "dst": 1, "src": 3, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": -5, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_meta' >= pkt_data, corner case, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 61, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -7, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_meta' >= pkt_data, corner case +1, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 61, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data >= pkt_meta', corner case, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 61, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data >= pkt_meta', bad access 1",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 61, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -4, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data >= pkt_meta', bad access 2",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 61, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data >= pkt_meta', corner case +1, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 9},
+      {"code": 61, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -9, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data >= pkt_meta', corner case -1, bad access",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 61, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -7, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_meta' <= pkt_data, corner case, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 189, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_meta' <= pkt_data, bad access 1",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 189, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -4, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_meta' <= pkt_data, bad access 2",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 189, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_meta' <= pkt_data, corner case +1, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 9},
+      {"code": 189, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -9, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_meta' <= pkt_data, corner case -1, bad access",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 189, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 5, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -7, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data <= pkt_meta', good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 189, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": -5, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data <= pkt_meta', corner case -1, bad access",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 6},
+      {"code": 189, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -6, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data <= pkt_meta', bad access 2",
+    "result": "REJECT",
+    "errstr": "R1 offset is outside of the packet",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 189, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 0, "src": 1, "off": -5, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data <= pkt_meta', corner case, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 7},
+      {"code": 189, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -7, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "XDP pkt read, pkt_data <= pkt_meta', corner case +1, good access",
+    "result": "ACCEPT",
+    "prog_type": 6,
+    "flags": 1,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 0, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 189, "dst": 3, "src": 1, "off": 1, "imm": 0},
+      {"code": 121, "dst": 0, "src": 1, "off": -8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

@@ -564,12 +564,12 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
 
             // 0xd7: END_LE_64 (dst = to_le_64(dst))
             // Supports imm = 16, 32, 64
-            0xd7 => Instr::Endian {
-                width: Width::W64,
-                dst: dst,
-                op: EndianOp::ToLe,
-                size: insn.imm as u32,
-            },
+            // 0xd7 => Instr::Endian {
+            //     width: Width::W64,
+            //     dst: dst,
+            //     op: EndianOp::ToLe,
+            //     size: insn.imm as u32,
+            // },
 
             // --- JMP ---
             // 0x95: exit (JMP | EXIT)
