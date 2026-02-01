@@ -10,6 +10,7 @@ pub mod cfg;
 pub mod pruning;
 pub mod history;
 pub mod ctx_model;
+pub mod merging;
 
 use std::collections::VecDeque;
 use crate::ast::Program;
@@ -66,7 +67,6 @@ pub fn analyze_program(
 
     // Track pruning statistics
     let mut prune_count: usize = 0;
-    let mut pruning_mgr = pruning::PruningManager::new();
 
     // 4. Main Analysis Loop
     while let Some(state) = worklist.pop_back() {
@@ -81,11 +81,20 @@ pub fn analyze_program(
             break;
         }
 
-        // A. Pruning Check
-        if pruning::is_state_visited(&mut env, &state, config, &mut pruning_mgr) {
+        // A.a TYPE COMPATIBILITY CHECK (safety - may reject program)
+        if let Err(e) = merging::check_compatibility(&env, &state) {
+            env.fail(e);
+            break;
+        }
+
+        // A.b PRUNING CHECK (efficiency - may skip this path)
+        if pruning::should_prune(&env, &state, config) {
             prune_count += 1;
             continue;
         }
+
+        // A.c RECORD STATE (must come after pruning check, before transfer)
+        merging::record_state(&mut env, state.clone());
 
         // B. Global Complexity Limit (only count non-pruned states)
         env.insn_processed += 1;

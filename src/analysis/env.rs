@@ -4,7 +4,6 @@ use crate::ast::{Program, MemSize};
 use crate::analysis::state::State;
 use crate::analysis::context::ExecContext;
 use std::collections::{HashMap, HashSet};
-use std::fmt::format;
 use crate::zone::domain::Reg;
 
 #[derive(Clone, Debug)]
@@ -41,6 +40,7 @@ pub enum VerificationError {
     InvalidReturnCode { pc: usize },
     MisalignedPacketAccess { pc: usize, off: i16, size: MemSize },
     InvalidRegisterTypeState { pc: usize },
+    RegisterTypeConflict { pc: usize },
 }
 
 impl VerificationError {
@@ -141,6 +141,9 @@ impl VerificationError {
             }
             VerificationError::MapLoadForbidden { pc, map_idx } => {
                 format!("Attemp to read from write-only map {} at pc {}", map_idx, pc)
+            }
+            VerificationError::RegisterTypeConflict { pc } => {
+                format!("Register type conflict at pc {}", pc)
             }
         }
     }
