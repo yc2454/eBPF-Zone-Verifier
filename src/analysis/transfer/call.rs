@@ -6,6 +6,7 @@ use crate::analysis::env::{VerifierEnv, VerificationError};
 use crate::analysis::state::State;
 use crate::analysis::reg_types::{RegType, TypeState};
 use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, is_zero, nonneg};
+use crate::zone::tnum::{Tnum};
 use crate::analysis::transfer::access;
 use crate::parsing::btf::SpecialFieldKind;
 use crate::common::constants;
@@ -277,6 +278,15 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
 
         constants::BPF_SPIN_UNLOCK => HelperSignature::new([
             Anything,
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ]),
+
+        // ---- Miscellaneous ----
+        constants::BPF_GET_PRANDOM_U32 => HelperSignature::new([
+            DontCare,
             DontCare,
             DontCare,
             DontCare,
@@ -675,6 +685,11 @@ pub(crate) fn transfer_call(
     let in_types = state.types.clone();
     let pc = state.pc;
 
+    if state.has_active_lock() && !allowed_while_in_active_lock(helper) {
+        env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R0 });
+        return vec![];
+    }
+
     // ========================================================================
     // Check argument registers are readable before the call
     // ========================================================================
@@ -830,6 +845,12 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
             // Returns 0 on success, negative on error
             // Could add bounds but being conservative for now
         }
+        constants::BPF_GET_PRANDOM_U32 => {
+            // Returns a random u32
+            assume_ge_const(&mut state.dbm, Reg::R0, 0);
+            assume_le_const(&mut state.dbm, Reg::R0, 0xFFFF_FFFF);
+            state.set_tnum(Reg::R0, Tnum::u32_unknown());
+        }
         _ => {}
     }
 }
@@ -843,6 +864,13 @@ fn get_arg_regs_from_signature(helper: u32) -> Vec<Reg> {
     } else {
         // Unknown helper - conservatively check R1
         vec![Reg::R1]
+    }
+}
+
+fn allowed_while_in_active_lock(helper: u32) -> bool {
+    match helper {
+        constants::BPF_GET_PRANDOM_U32 => false,
+        _ => true,
     }
 }
 

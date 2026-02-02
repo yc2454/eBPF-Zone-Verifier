@@ -176,6 +176,27 @@ impl Tnum {
         self.add(Tnum::constant(imm as u64))
     }
 
+    /// Subtraction (approximate - may lose precision)
+    pub fn sub(self, other: Tnum) -> Tnum {
+        // Subtraction with unknown bits is complex due to carries.
+        let sm = self.mask.wrapping_sub(other.mask);
+        let sv = self.value.wrapping_sub(other.value);
+        let sigma = sm.wrapping_sub(sv);
+        let chi = sigma ^ sv;
+        let mu = chi | self.mask | other.mask;
+        
+        Tnum {
+            value: sv & !mu,
+            mask: mu,
+        }
+    }
+
+      /// Subtract immediate
+    #[inline]
+    pub fn sub_imm(self, imm: i64) -> Tnum {
+        self.sub(Tnum::constant(imm as u64))
+    }
+
     /// Left shift by constant
     pub fn shl(self, shift: u32) -> Tnum {
         if shift >= 64 {
@@ -205,6 +226,14 @@ impl Tnum {
         Tnum {
             value: self.value << shift,
             mask: self.mask << shift,
+        }
+    }
+
+    /// Shift right by immediate
+    pub fn shr_imm(self, shift: u64) -> Tnum {
+        Tnum {
+            value: self.value >> shift,
+            mask: self.mask >> shift,
         }
     }
     

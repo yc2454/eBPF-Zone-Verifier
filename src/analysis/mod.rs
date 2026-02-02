@@ -128,8 +128,8 @@ pub fn analyze_program(
         if config.verbosity >= 2 {
             state.dbm.pretty_print();
         }
-        debug!(target: "app", "|PC:{}| Instr: {:?} | Regs: {:?}", 
-               state.pc, instr, state.types);
+        debug!(target: "app", "|PC:{}| Instr: {:?} | Regs: {:?}\n | Tnums: {:?}", 
+               state.pc, instr, state.types.reg_types_str(), state.tnums);
 
         // F. Transfer Function
         let successors = transfer::transfer(&mut env, state, instr);

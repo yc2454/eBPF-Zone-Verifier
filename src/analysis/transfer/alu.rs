@@ -237,6 +237,14 @@ fn handle_add(
         }
     }
     
+    let dst_tnum = state.get_tnum(dst);
+    let new_tnum = match src {
+        Operand::Imm(c) => dst_tnum.add_imm(*c),
+        Operand::Reg(r) => dst_tnum.add(state.get_tnum(*r)),
+    };
+    let new_tnum = if width == Width::W32 { new_tnum.trunc32() } else { new_tnum };
+    state.set_tnum(dst, new_tnum);
+    
     if width == Width::W32 {
         apply_w32_truncation(&mut state.dbm, dst);
     }
@@ -267,6 +275,14 @@ fn handle_sub(
             }
         }
     }
+
+    let dst_tnum = state.get_tnum(dst);
+    let new_tnum = match src {
+        Operand::Imm(c) => dst_tnum.sub_imm(*c),
+        Operand::Reg(r) => dst_tnum.sub(state.get_tnum(*r)),
+    };
+    let new_tnum = if width == Width::W32 { new_tnum.trunc32() } else { new_tnum };
+    state.set_tnum(dst, new_tnum);
     
     if width == Width::W32 {
         apply_w32_truncation(&mut state.dbm, dst);
@@ -376,6 +392,7 @@ fn handle_or(
     dst: Reg,
     src: &Operand,
 ) {
+    // Conservative update to the DBM. Just forget it.
     forget(&mut state.dbm, dst);
     
     // Tnum update
@@ -410,9 +427,17 @@ fn handle_neg(
     if width == Width::W32 {
         bit_and_const(&mut state.dbm, dst, 0xFFFFFFFF);
     }
+
+    // Tnum update
+    let t = state.get_tnum(dst);
+    let new_t = if width == Width::W32 {
+        t.trunc32()
+    } else {
+        // Conservative
+        Tnum::unknown()
+    };
+    state.set_tnum(dst, new_t);
     
-    // Type Update
-    state.types.set(dst, RegType::ScalarValue);
 }
 
 fn handle_shr(
@@ -433,6 +458,12 @@ fn handle_shr(
             } else {
                 assume_eq_const(&mut state.dbm, dst, 0);
             }
+            // Tnum update for immediate shift
+            // For W32, only lower 5 bits matter; for W64, lower 6 bits
+            let shift_amount = if width == Width::W32 { k & 0x1F } else { k & 0x3F };
+            let t = state.get_tnum(dst);
+            let new_t = t.shr_imm(shift_amount as u64);
+            state.set_tnum(dst, new_t);
         }
         Operand::Reg(_) => {
             forget(&mut state.dbm, dst);
@@ -512,6 +543,9 @@ fn handle_mul(
     if width == Width::W32 {
         apply_w32_truncation(&mut state.dbm, dst);
     }
+
+    // Tnum update
+    state.set_tnum(dst, Tnum::unknown());
 }
 
 fn handle_mod(
@@ -552,6 +586,9 @@ fn handle_mod(
     if width == Width::W32 {
         apply_w32_truncation(&mut state.dbm, dst);
     }
+
+    // Tnum update
+    state.set_tnum(dst, Tnum::unknown());
 }
 
 fn handle_div(
@@ -569,8 +606,9 @@ fn handle_div(
     if width == Width::W32 {
         bit_and_const(&mut state.dbm, dst, 0xFFFFFFFF);
     }
-    
-    state.types.set(dst, RegType::ScalarValue);
+
+    // Tnum update
+    state.set_tnum(dst, Tnum::unknown());
 }
 
 /// Apply W32 truncation to a register's bounds.
