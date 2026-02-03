@@ -3,6 +3,7 @@ use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;
 use crate::analysis::reg_types::RegType;
 use crate::ast::{ProgramKind};
+use crate::parsing::elf_loader::BpfMapDef;
 use crate::zone::domain::{get_bounds, get_relative_bound};
 use crate::analysis::env::VerificationError;
 use crate::common::constants;
@@ -79,71 +80,7 @@ pub fn check_load(
                     env.fail(VerificationError::MapLoadForbidden { pc, map_idx });
                 }
                 let map_limit = map_def.value_size as i64;
-                match map_off_opt {
-                    // Case A: Constant/Known Offset (e.g., r1 = map_value; r1 += 10)
-                    // We trust the type system's tracking here.
-                    Some(fixed_off) => {
-                        let final_offset = fixed_off + (off as i64);
-                        let access_end = final_offset + size;
-
-                        if let Some(btf_id) = map_def.btf_val_type_id {
-                            check_btf_fields_access(env, pc, final_offset, access_end, size, map_limit, btf_id);
-                            return;
-                        }
-
-                        if final_offset >= 0 && access_end <= map_limit {
-                            // Safe!
-                        } else {
-                            error!("Unsafe map load (constant) at pc {}: off {} limit {}", pc, final_offset, map_limit);
-                            env.fail(VerificationError::UnsafeMapLoad { 
-                                pc, 
-                                off: final_offset, 
-                                size,
-                                limit: map_limit
-                            });
-                        }
-                    },
-                    // Case B: Variable/Unknown Offset (e.g., r1 += r_random)
-                    // The Type system lost track (offset is None). We MUST query the DBM.
-                    None => {
-                        // Query the DBM for the absolute range of the register.
-                        let (dbm_min, dbm_max) = get_bounds(&state.dbm, base);
-                        match (dbm_min, dbm_max) {
-                            (Some(min_val), Some(max_val)) => {
-                                // We treat the DBM value as the effective offset into the map
-                                // (assuming the abstract domain normalizes map bases to 0 for tracking).
-                                let access_start = min_val + (off as i64);
-                                let access_end = max_val + (off as i64) + (size as i64);
-
-                                if let Some(btf_id) = map_def.btf_val_type_id {
-                                    check_btf_fields_access(env, pc, off.into(), access_end, size, map_limit, btf_id);
-                                    return;
-                                }
-
-                                if access_start >= 0 && access_end <= map_limit {
-                                    // Safe!
-                                } else {
-                                    error!("Unsafe variable map access at pc {}: range [{}, {}], limit {}", 
-                                        pc, access_start, access_end, map_limit);
-                                    env.fail(VerificationError::UnsafeMapLoad { 
-                                        pc, 
-                                        off: access_start, 
-                                        size,
-                                        limit: map_limit 
-                                    });
-                                }
-                            },
-                            _ => {
-                                // Bounds are infinite or unknown. This is a potential OOB.
-                                error!("Unbounded variable map access at pc {}", pc);
-                                state.dbm.pretty_print();
-                                env.fail(VerificationError::UnsafeMapLoad { 
-                                    pc, off: -1, size, limit: map_limit 
-                                });
-                            }
-                        }
-                    }
-                }
+                check_map_access(env, state, map_limit, map_off_opt, map_idx, base, map_def, off, size, pc);
             } else {
                 error!("Map not found!");
                 env.fail(VerificationError::MapNotFound { pc, map_idx })
@@ -283,59 +220,7 @@ pub fn check_store(
                     env.fail(VerificationError::MapStoreForbidden { pc, map_idx });
                 }
                 let map_limit = map_def.value_size as i64;
-                if let Some(fixed_off) = map_off {
-                    let final_offset = fixed_off + (off as i64);
-                    let access_end = final_offset + size;
-                    
-                    if let Some(btf_id) = map_def.btf_val_type_id {
-                        check_btf_fields_access(env, pc, final_offset, access_end, size, map_limit, btf_id);
-                        return;
-                    }
-
-                    if !(final_offset >= 0 && access_end <= map_limit) {
-                        error!("Unsafe map store (constant) at pc {}: off {} limit {}", pc, final_offset, map_limit);
-                        env.fail(VerificationError::UnsafeMapStore { 
-                            pc, 
-                            off: final_offset, 
-                            size,
-                            limit: map_limit
-                        } );
-                    }
-                } else {
-                    // Variable/unknown offset - use DBM to check
-                    let (dbm_min, dbm_max) = get_bounds(&state.dbm, base);
-                    match (dbm_min, dbm_max) {
-                        (Some(min_val), Some(max_val)) => {
-                            info!("Checking variable map store. Pointer bounds: {} - {}, map limit {}", 
-                                min_val, max_val, map_limit);
-                            let access_start = min_val + (off as i64);
-                            let access_end = max_val + (off as i64) + (size as i64);
-
-                            if let Some(btf_id) = map_def.btf_val_type_id {
-                                check_btf_fields_access(env, pc, off.into(), access_end, size, map_limit, btf_id);
-                                return;
-                            }
-
-                            if !(access_start >= 0 && access_end <= map_limit) {
-                                error!("Unsafe variable map store at pc {}: range [{}, {}], limit {}", 
-                                    pc, access_start, access_end, map_limit);
-                                env.fail(VerificationError::UnsafeMapStore { 
-                                    pc, 
-                                    off: access_start, 
-                                    size,
-                                    limit: map_limit
-                                } );
-                            }
-                        },
-                        _ => {
-                            error!("Unbounded variable map store at pc {}", pc);
-                            state.dbm.pretty_print();
-                            env.fail(VerificationError::UnsafeMapStore { 
-                                pc, off: -1, size, limit: map_limit 
-                            });
-                        }
-                    }
-                }
+                check_map_access(env, state, map_limit, map_off, map_idx, base, map_def, off, size, pc);
             } else {
                 error!("Map not found!");
                 env.fail(VerificationError::MapNotFound { pc, map_idx })
@@ -736,6 +621,84 @@ fn check_btf_fields_access(
                 size,
                 limit: map_limit
             });
+        }
+    }
+}
+
+pub fn check_map_access(
+    env: &mut VerifierEnv,
+    state: &State,
+    map_limit: i64,
+    map_off_opt: Option<i64>,
+    map_idx: usize,
+    base: Reg,
+    map_def: &BpfMapDef,
+    insn_off: i16,
+    size: i64,
+    pc: usize,
+) {
+    match map_off_opt {
+        // Case A: Constant/Known Offset (e.g., r1 = map_value; r1 += 10)
+        // We trust the type system's tracking here.
+        Some(fixed_off) => {
+            let final_offset = fixed_off + (insn_off as i64);
+            let access_end = final_offset + size;
+
+            if let Some(btf_id) = map_def.btf_val_type_id {
+                check_btf_fields_access(env, pc, final_offset, access_end, size, map_limit, btf_id);
+                return;
+            }
+
+            if final_offset >= 0 && access_end <= map_limit {
+                // Safe!
+            } else {
+                error!("Unsafe map access at pc {}: off {} limit {}", pc, final_offset, map_limit);
+                env.fail(VerificationError::UnsafeMapAccess { 
+                    pc, 
+                    size,
+                    map_idx
+                });
+            }
+        },
+        // Case B: Variable/Unknown Offset (e.g., r1 += r_random)
+        // The Type system lost track (offset is None). We MUST query the DBM.
+        None => {
+            // Query the DBM for the absolute range of the register.
+            let (dbm_min, dbm_max) = get_bounds(&state.dbm, base);
+            match (dbm_min, dbm_max) {
+                (Some(min_val), Some(max_val)) => {
+                    // We treat the DBM value as the effective offset into the map
+                    // (assuming the abstract domain normalizes map bases to 0 for tracking).
+                    let access_start = min_val + (insn_off as i64);
+                    let access_end = max_val + (insn_off as i64) + (size as i64);
+
+                    if let Some(btf_id) = map_def.btf_val_type_id {
+                        check_btf_fields_access(env, pc, insn_off.into(), access_end, size, map_limit, btf_id);
+                        return;
+                    }
+
+                    if access_start >= 0 && access_end <= map_limit {
+                        // Safe!
+                    } else {
+                        error!("Unsafe variable map access at pc {}: range [{}, {}], limit {}", 
+                            pc, access_start, access_end, map_limit);
+                        env.fail(VerificationError::UnsafeMapLoad { 
+                            pc, 
+                            off: access_start, 
+                            size,
+                            limit: map_limit 
+                        });
+                    }
+                },
+                _ => {
+                    // Bounds are infinite or unknown. This is a potential OOB.
+                    error!("Unbounded variable map access at pc {}", pc);
+                    state.dbm.pretty_print();
+                    env.fail(VerificationError::UnsafeMapLoad { 
+                        pc, off: -1, size, limit: map_limit 
+                    });
+                }
+            }
         }
     }
 }

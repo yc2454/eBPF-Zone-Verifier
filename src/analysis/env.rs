@@ -48,7 +48,9 @@ pub enum VerificationError {
     LockAlreadyHeld { pc: usize },
     LockNotHeld { pc: usize },
     UnreleasedLock,
-    LoadAbsUnderLock { pc: usize}
+    LoadAbsUnderLock { pc: usize},
+    InvalidMapValueAccess { pc: usize, value_size: i64, offset: i64, available: i64 },
+    RelocationInfoMissing { pc: usize },
 }
 
 impl VerificationError {
@@ -173,6 +175,12 @@ impl VerificationError {
             }
             VerificationError::LoadAbsUnderLock { pc } => {
                 format!("ld_abs with an active lock at pc {}", pc)
+            }
+            VerificationError::InvalidMapValueAccess { pc, value_size, offset, available } => {
+                format!("Invalid map value access at pc {}: value_size {}, offset {}, available {}", pc, value_size, offset, available)
+            }
+            VerificationError::RelocationInfoMissing { pc } => {
+                format!("Relocation info missing at pc {}", pc)
             }
         }
     }

@@ -5,12 +5,12 @@
 use crate::analysis::env::{VerifierEnv, VerificationError};
 use crate::analysis::state::State;
 use crate::analysis::reg_types::{RegType, TypeState};
-use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, is_zero, nonneg, get_bounds};
+use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, is_zero, nonneg, get_bounds, positive};
 use crate::zone::tnum::{Tnum};
 use crate::analysis::transfer::access;
 use crate::parsing::btf::SpecialFieldKind;
 use crate::common::constants;
-use log::{error, warn};
+use log::{error, info, warn};
 
 use super::types::{update_call_types, helper_invalidates_packets};
 use super::common::check_regs_readable;
@@ -316,6 +316,14 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
+        constants::BPF_TRACE_PRINTK => HelperSignature::new([
+            PtrToMem,    // R1: fmt string
+            ConstSize,   // R2: fmt_size (MUST BE > 0)
+            Anything,    // R3: arg1
+            Anything,    // R4: arg2
+            Anything,    // R5: arg3
+        ]),
+
         _ => return None,
     })
 }
@@ -414,6 +422,7 @@ fn validate_helper_args(
     let arg_regs = [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
     
     for (i, (&arg_type, &reg)) in sig.args.iter().zip(arg_regs.iter()).enumerate() {
+        info!("[Verifier] pc {}: validating arg R{} as {:?}", pc, i + 1, arg_type);
         if arg_type == DontCare {
             break; // No more arguments
         }
@@ -478,19 +487,52 @@ fn validate_single_arg(
 
         // ---- Map key pointer ----
         PtrToMapKey => {
-            let Some(info) = map_info else {
-                // Can't validate without map info
+            let Some(target_info) = map_info else {
                 return true;
             };
-            validate_readable_mem(env, state, types, pc, reg, actual, Some(info.key_size))
+            
+            if let RegType::PtrToMapValue { map_idx, .. } = actual {
+                if let Some(map_def) = env.ctx.map_defs.get(map_idx) {
+                    println!("Validating map value size: expected {}, got {}", 
+                             target_info.value_size, map_def.value_size);
+                    if map_def.value_size != target_info.value_size {
+                        env.fail(VerificationError::InvalidArgType { pc, reg });
+                        error!("[Verifier] pc {}: R{} map value size mismatch: expected {}, got {}", 
+                               pc, arg_index + 1, target_info.value_size, map_def.key_size);
+                        return false;
+                    }
+                } else {
+                    env.fail(VerificationError::MapNotFound { pc, map_idx });
+                    return false;
+                }
+            }
+            
+            validate_readable_mem(env, state, types, pc, reg, actual, Some(target_info.key_size))
         }
 
         // ---- Map value pointer ----
         PtrToMapValue => {
-            let Some(info) = map_info else {
+            let Some(target_info) = map_info else {
                 return true;
             };
-            validate_readable_mem(env, state, types, pc, reg, actual, Some(info.value_size))
+            
+            if let RegType::PtrToMapValue { map_idx, .. } = actual {
+                if let Some(map_def) = env.ctx.map_defs.get(map_idx) {
+                    println!("Validating map value size: expected {}, got {}", 
+                             target_info.value_size, map_def.value_size);
+                    if map_def.value_size != target_info.value_size {
+                        env.fail(VerificationError::InvalidArgType { pc, reg });
+                        error!("[Verifier] pc {}: R{} map value size mismatch: expected {}, got {}", 
+                               pc, arg_index + 1, target_info.value_size, map_def.value_size);
+                        return false;
+                    }
+                } else {
+                    env.fail(VerificationError::MapNotFound { pc, map_idx });
+                    return false;
+                }
+            }
+            
+            validate_readable_mem(env, state, types, pc, reg, actual, Some(target_info.value_size))
         }
 
         // ---- Uninitialized map value (output buffer) ----
@@ -522,10 +564,10 @@ fn validate_single_arg(
 
         // ---- Size arguments ----
         ConstSize => {
-            // Must be a non-negative scalar
-            if !nonneg(&state.dbm, reg) {
+            // Must be positive
+            if !positive(&state.dbm, reg) {
                 env.fail(VerificationError::InvalidArgType { pc, reg });
-                error!("[Verifier] pc {}: R{} (ConstSize) must be non-negative", 
+                error!("[Verifier] pc {}: R{} (ConstSize) must be positive", 
                        pc, arg_index + 1);
                 return false;
             }
@@ -1103,18 +1145,19 @@ fn check_ptr_access_size(
                 return false;
             };
             
-            let access_end = offset.unwrap_or(0) as u32 + size;
-            if access_end > map_def.value_size {
-                env.fail(VerificationError::UnsafeMapAccess { 
-                    pc, 
-                    size: size as i64,
-                    map_idx,
-                });
-                error!("[Verifier] pc {}: map value access exceeds value_size ({})",
-                       pc, map_def.value_size);
-                return false;
-            }
-            true
+            access::check_map_access(
+                env,
+                state,
+                map_def.value_size as i64,
+                offset,
+                map_idx,
+                ptr_reg,
+                map_def,
+                0,
+                size as i64,
+                pc,
+            );
+            !env.failed()
         }
         
         RegType::PtrToPacket { .. } => {
