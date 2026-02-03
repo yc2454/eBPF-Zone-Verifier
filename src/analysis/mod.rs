@@ -2,11 +2,7 @@
 
 pub mod transfer;
 pub mod machine;
-pub mod liveness;
-pub mod cfg;
-pub mod pruning;
-pub mod ctx_model;
-pub mod merging;
+pub mod flow;
 
 use std::collections::VecDeque;
 use crate::ast::Program;
@@ -19,6 +15,7 @@ use self::machine::env::{VerifierEnv, VerificationError};
 use self::machine::state::State;
 use self::machine::reg_types::RegType;
 use crate::common::config::VerifierConfig;
+use self::flow::{cfg, liveness, pruning, merging};
 
 pub fn analyze_program(
     ctx: &ExecContext,

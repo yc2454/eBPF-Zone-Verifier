@@ -7,7 +7,7 @@ use crate::parsing::elf_loader::BpfMapDef;
 use crate::zone::domain::{get_bounds, get_relative_bound};
 use crate::analysis::machine::env::VerificationError;
 use crate::common::constants;
-use crate::analysis::ctx_model;
+use crate::common::ctx_model;
 use log::{error, info};
 use RegType::*;
 use crate::zone::domain::Reg;

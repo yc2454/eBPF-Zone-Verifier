@@ -7,7 +7,7 @@ use crate::analysis::machine::reg_types::{RegType, TypeState, new_ptr_id};
 use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, AtomicOp, MapLoadKind, MemSize, Operand, Width};
 use crate::zone::domain::Reg;
-use crate::analysis::ctx_model::{
+use crate::common::ctx_model::{
     CtxFieldKind, validate_ctx_access
 };
 use crate::common::constants;
