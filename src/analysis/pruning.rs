@@ -2,9 +2,9 @@
 
 use std::collections::HashSet;
 
-use crate::analysis::env::VerifierEnv;
-use crate::analysis::reg_types::{RegType, TypeState};
-use crate::analysis::state::State;
+use crate::analysis::machine::env::VerifierEnv;
+use crate::analysis::machine::reg_types::{RegType, TypeState};
+use crate::analysis::machine::state::State;
 use crate::common::config::VerifierConfig;
 use crate::zone::dbm::Dbm;
 use crate::zone::domain::Reg;

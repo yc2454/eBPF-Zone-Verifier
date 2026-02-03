@@ -4,8 +4,8 @@
 
 use log::info;
 
-use crate::analysis::env::VerifierEnv;
-use crate::analysis::state::State;
+use crate::analysis::machine::env::VerifierEnv;
+use crate::analysis::machine::state::State;
 use crate::ast::{Instr, CmpOp, Operand, Width};
 use crate::zone::domain::{
     Reg, get_bounds, assume_eq_const, assume_ge_const, assume_le_const,
@@ -14,8 +14,8 @@ use crate::zone::domain::{
 };
 use crate::zone::dbm::Dbm;
 use crate::zone::tnum::Tnum;
-use crate::analysis::env::VerificationError;
-use crate::analysis::reg_types::RegType;
+use crate::analysis::machine::env::VerificationError;
+use crate::analysis::machine::reg_types::RegType;
 
 use super::refinement::{refine_mem_ranges, refine_branch};
 use super::common::{check_reg_readable, check_operand_readable};

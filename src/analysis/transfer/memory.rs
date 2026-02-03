@@ -2,9 +2,9 @@
 //
 // Load, Store, and AtomicAdd instruction handling
 
-use crate::analysis::env::{VerifierEnv, VerificationError};
-use crate::analysis::state::State;
-use crate::analysis::reg_types::RegType;
+use crate::analysis::machine::env::{VerifierEnv, VerificationError};
+use crate::analysis::machine::state::State;
+use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::transfer::types::update_atomic_op_types;
 use crate::ast::{Operand, MemSize, AtomicOp};
 use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, assume_eq_const};

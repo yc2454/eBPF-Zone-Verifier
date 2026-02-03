@@ -2,9 +2,9 @@
 //
 // Common validation utilities shared across transfer functions
 
-use crate::analysis::env::{VerifierEnv, VerificationError};
-use crate::analysis::state::State;
-use crate::analysis::reg_types::RegType;
+use crate::analysis::machine::env::{VerifierEnv, VerificationError};
+use crate::analysis::machine::state::State;
+use crate::analysis::machine::reg_types::RegType;
 use crate::ast::Operand;
 use crate::zone::domain::Reg;
 

@@ -2,9 +2,9 @@
 //
 // Type update logic for all instruction types
 
-use crate::analysis::env::VerifierEnv;
-use crate::analysis::reg_types::{RegType, TypeState, new_ptr_id};
-use crate::analysis::state::State;
+use crate::analysis::machine::env::VerifierEnv;
+use crate::analysis::machine::reg_types::{RegType, TypeState, new_ptr_id};
+use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, AtomicOp, MapLoadKind, MemSize, Operand, Width};
 use crate::zone::domain::Reg;
 use crate::analysis::ctx_model::{

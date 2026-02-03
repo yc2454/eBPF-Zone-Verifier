@@ -2,9 +2,9 @@
 //
 // Call and CallRel instruction handling, helper validation
 
-use crate::analysis::env::{VerifierEnv, VerificationError};
-use crate::analysis::state::State;
-use crate::analysis::reg_types::{RegType, TypeState};
+use crate::analysis::machine::env::{VerifierEnv, VerificationError};
+use crate::analysis::machine::state::State;
+use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, is_zero, nonneg, get_bounds, positive};
 use crate::zone::tnum::{Tnum};
 use crate::analysis::transfer::access;

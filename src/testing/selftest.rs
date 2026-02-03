@@ -16,7 +16,7 @@ use log::info;
 use serde::{Deserialize, Serialize};
 
 use crate::analysis;
-use crate::analysis::context::{default_exec_ctx};
+use crate::analysis::machine::context::{default_exec_ctx};
 use crate::common::constants;
 use crate::ast::ProgramKind;
 use crate::parsing::bpf_to_ast::{lower_raw_to_program, LowerErrorKind};
@@ -414,7 +414,7 @@ pub fn create_spin_lock_btf() -> BtfContext {
     BtfContext { types, strings }
 }
 
-fn build_exec_context(test: &JsonTestCase) -> (crate::analysis::context::ExecContext, bool) {
+fn build_exec_context(test: &JsonTestCase) -> (crate::analysis::machine::context::ExecContext, bool) {
     let mut ctx = default_exec_ctx();
     let mut has_unsupported_fixup = false;
 

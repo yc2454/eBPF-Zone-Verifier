@@ -1,6 +1,6 @@
 // src/analysis/cfg.rs
 use crate::ast::{Program, Instr};
-use crate::analysis::env::VerifierEnv;
+use crate::analysis::machine::env::VerifierEnv;
 use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, PartialEq, Eq)]

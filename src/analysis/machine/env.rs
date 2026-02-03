@@ -1,11 +1,11 @@
-use crate::analysis::history::History;
+use crate::analysis::machine::history::History;
 // src/analysis/env.rs
 use crate::ast::{Program};
-use crate::analysis::state::State;
-use crate::analysis::context::ExecContext;
+use crate::analysis::machine::state::State;
+use crate::analysis::machine::context::ExecContext;
 use std::collections::{HashMap, HashSet};
 use crate::zone::domain::Reg;
-use crate::analysis::reg_types::RegType;
+use crate::analysis::machine::reg_types::RegType;
 
 #[derive(Clone, Debug)]
 pub enum VerificationError {

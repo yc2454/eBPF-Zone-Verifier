@@ -14,13 +14,13 @@ mod packet_load;
 mod map_load;
 mod access;
 
-use crate::analysis::env::VerifierEnv;
-use crate::analysis::state::State;
-use crate::analysis::reg_types::RegType;
+use crate::analysis::machine::env::VerifierEnv;
+use crate::analysis::machine::state::State;
+use crate::analysis::machine::reg_types::RegType;
 use crate::ast::{EndianOp, Instr, Width};
 use crate::zone::domain::{Reg, forget, assign_and_mask, bit_and_const, get_bounds};
 use crate::analysis::transfer::common::check_reg_readable;
-use crate::analysis::env::VerificationError;
+use crate::analysis::machine::env::VerificationError;
 
 /// Main transfer function - dispatches to appropriate handler based on instruction type.
 pub fn transfer(

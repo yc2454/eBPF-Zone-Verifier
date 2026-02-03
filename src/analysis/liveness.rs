@@ -1,7 +1,7 @@
 // src/analysis/liveness.rs
 use crate::ast::{Program, Instr, Operand};
 use crate::zone::domain::Reg;
-use crate::analysis::env::VerifierEnv;
+use crate::analysis::machine::env::VerifierEnv;
 use std::collections::{HashSet};
 
 /// Computes Liveness Analysis and populates env.insn_aux_data[pc].live_regs

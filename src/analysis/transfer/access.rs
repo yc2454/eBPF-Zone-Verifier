@@ -1,11 +1,11 @@
 // src/analysis/access.rs
-use crate::analysis::env::VerifierEnv;
-use crate::analysis::state::State;
-use crate::analysis::reg_types::RegType;
+use crate::analysis::machine::env::VerifierEnv;
+use crate::analysis::machine::state::State;
+use crate::analysis::machine::reg_types::RegType;
 use crate::ast::{ProgramKind};
 use crate::parsing::elf_loader::BpfMapDef;
 use crate::zone::domain::{get_bounds, get_relative_bound};
-use crate::analysis::env::VerificationError;
+use crate::analysis::machine::env::VerificationError;
 use crate::common::constants;
 use crate::analysis::ctx_model;
 use log::{error, info};

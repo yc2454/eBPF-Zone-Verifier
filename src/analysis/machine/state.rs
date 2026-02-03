@@ -1,6 +1,6 @@
 // src/analysis/state.rs
 use crate::zone::dbm::Dbm;
-use crate::analysis::reg_types::TypeState;
+use crate::analysis::machine::reg_types::TypeState;
 use crate::zone::tnum::Tnum;
 use crate::zone::domain::Reg;
 use std::collections::{HashMap, HashSet};
@@ -86,7 +86,7 @@ impl State {
 
     /// Acquire a new reference, returns the ref_id
     pub fn acquire_ref(&mut self) -> u32 {
-        let id = crate::analysis::reg_types::new_ref_id();
+        let id = crate::analysis::machine::reg_types::new_ref_id();
         self.active_refs.insert(id);
         id
     }
@@ -103,7 +103,7 @@ impl State {
 
     /// Invalidate all registers (and stack slots) holding a given ref_id
     pub fn invalidate_ref(&mut self, id: u32) {
-        use crate::analysis::reg_types::RegType;
+        use crate::analysis::machine::reg_types::RegType;
         
         // Invalidate registers
         for i in 0..self.types.regs.len() {

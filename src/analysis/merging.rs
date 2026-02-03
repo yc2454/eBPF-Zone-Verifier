@@ -2,9 +2,9 @@
 
 use std::collections::HashSet;
 
-use crate::analysis::env::{VerificationError, VerifierEnv};
-use crate::analysis::reg_types::RegType;
-use crate::analysis::state::State;
+use crate::analysis::machine::env::{VerificationError, VerifierEnv};
+use crate::analysis::machine::reg_types::RegType;
+use crate::analysis::machine::state::State;
 use crate::zone::domain::Reg;
 
 /// Check if `state` is type-compatible with all previously explored states at the same PC.
@@ -44,8 +44,8 @@ pub fn record_state(env: &mut VerifierEnv, state: State) {
 /// Find the first type conflict between two type states.
 /// Returns Some((reg, old_type, new_type)) if conflict found.
 fn find_type_conflict(
-    old: &crate::analysis::reg_types::TypeState,
-    new: &crate::analysis::reg_types::TypeState,
+    old: &crate::analysis::machine::reg_types::TypeState,
+    new: &crate::analysis::machine::reg_types::TypeState,
     live_regs: &HashSet<Reg>,
 ) -> Option<(Reg, RegType, RegType)> {
     for &r in live_regs {

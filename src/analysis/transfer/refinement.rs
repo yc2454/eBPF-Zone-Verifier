@@ -2,8 +2,8 @@
 //
 // Pointer range refinement logic for packet, memory, and null checks
 
-use crate::analysis::state::State;
-use crate::analysis::reg_types::{RegType, TypeState};
+use crate::analysis::machine::state::State;
+use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::ast::{Instr, CmpOp, Operand};
 use crate::zone::domain::Reg;
 use crate::zone::dbm::{Dbm, INF};

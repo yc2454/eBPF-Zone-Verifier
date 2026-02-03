@@ -3,7 +3,7 @@
 use crate::ast::{AluOp, CmpOp, Instr, Operand, Width, EndianKind};
 use crate::zone::dbm::{Dbm, INF};
 use crate::zone::domain::REG_ENV;
-use crate::analysis::context::ExecContext;
+use crate::analysis::machine::context::ExecContext;
 use crate::utils::{clamped_add, clamped_add3};
 
 pub fn inconsistent(dbm: &Dbm) -> bool {

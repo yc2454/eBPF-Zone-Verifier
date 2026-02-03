@@ -1,6 +1,6 @@
-use crate::analysis::env::VerifierEnv;
-use crate::analysis::state::State;
-use crate::analysis::reg_types::RegType;
+use crate::analysis::machine::env::VerifierEnv;
+use crate::analysis::machine::state::State;
+use crate::analysis::machine::reg_types::RegType;
 use crate::ast::{MemSize, PacketLoadMode};
 use crate::zone::domain::{Reg, forget, assume_range};
 use crate::analysis::transfer::common::check_reg_readable;
@@ -31,7 +31,7 @@ pub(crate) fn transfer_packet_load(
 
     // 3. Abs mode is forbidden under a lock
     if state.has_active_lock() && mode == PacketLoadMode::Abs {
-        env.fail(crate::analysis::env::VerificationError::LoadAbsUnderLock { pc: state.pc });
+        env.fail(crate::analysis::machine::env::VerificationError::LoadAbsUnderLock { pc: state.pc });
         return vec![];
     }
 

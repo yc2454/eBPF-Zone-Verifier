@@ -1,14 +1,10 @@
 // src/analysis.rs
 
-pub mod context;
 pub mod transfer;
-pub mod state;
-pub mod reg_types;
-pub mod env;
+pub mod machine;
 pub mod liveness;
 pub mod cfg;
 pub mod pruning;
-pub mod history;
 pub mod ctx_model;
 pub mod merging;
 
@@ -18,10 +14,10 @@ use crate::zone::dbm::Dbm;
 use crate::zone::domain::{REG_ENV, Reg};
 use log::{debug, error, info};
 
-use self::context::ExecContext;
-use self::env::VerifierEnv;
-use self::state::State;
-use self::reg_types::RegType;
+use self::machine::context::ExecContext;
+use self::machine::env::{VerifierEnv, VerificationError};
+use self::machine::state::State;
+use self::machine::reg_types::RegType;
 use crate::common::config::VerifierConfig;
 
 pub fn analyze_program(
@@ -29,7 +25,7 @@ pub fn analyze_program(
     prog: &Program,
     entry_dbm: Dbm,
     config: &VerifierConfig,
-) -> Result<Vec<Dbm>, env::VerificationError> {
+) -> Result<Vec<Dbm>, VerificationError> {
     // 1. Initialize Verifier Environment
     let mut env = VerifierEnv::new(ctx, prog);
 
@@ -42,12 +38,12 @@ pub fn analyze_program(
 
     if let Err(e) = cfg::check_subprogs(prog) {
         error!(target: "app", "[Analysis] CFG Error: {}", e);
-        return Err(env::VerificationError::CfgError(e));
+        return Err(VerificationError::CfgError(e));
     }
 
     if let Err(e) = cfg::check_cfg(prog, &mut env) {
         error!(target: "app", "[Analysis] CFG Error: {}", e);
-        return Err(env::VerificationError::CfgError(e));
+        return Err(VerificationError::CfgError(e));
     }
 
     liveness::compute_liveness(prog, &mut env);
@@ -77,7 +73,7 @@ pub fn analyze_program(
 
         // Fail immediately if we somehow reach the second half of LD_IMM64
         if prog.invalid_pc_set.contains(&state.pc) {
-            env.fail(env::VerificationError::InvalidBPFLoadImmInsn { pc: state.pc });
+            env.fail(VerificationError::InvalidBPFLoadImmInsn { pc: state.pc });
             break;
         }
 
@@ -104,7 +100,7 @@ pub fn analyze_program(
             error!(target: "analysis", "[Verifier] Hit complexity limit ({} instructions). Aborting.", config.max_insn);
             info!(target: "app", "[Verifier] (Pruned {} states before limit)", prune_count);
             info!(target: "app", "[Verifier] Tip: Try --skip-dbm or --max-insn N to increase limit");
-            env.fail(env::VerificationError::ComplexityLimitExceeded { limit: config.max_insn });
+            env.fail(VerificationError::ComplexityLimitExceeded { limit: config.max_insn });
             break;
         }
 

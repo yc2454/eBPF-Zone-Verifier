@@ -2,9 +2,9 @@
 //
 // ALU instruction handlers (add, sub, mov, and, or, mul, div, etc.)
 
-use crate::analysis::env::{VerifierEnv, VerificationError};
-use crate::analysis::state::State;
-use crate::analysis::reg_types::{RegType, TypeState};
+use crate::analysis::machine::env::{VerifierEnv, VerificationError};
+use crate::analysis::machine::state::State;
+use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::ast::{AluOp, Operand, Width};
 use crate::zone::domain::{
     Reg, forget, get_bounds, assign_add_imm, assign_add_reg, assign_eq,

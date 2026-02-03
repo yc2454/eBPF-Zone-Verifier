@@ -1,8 +1,8 @@
 // src/runner.rs
 
 use crate::analysis;
-use crate::analysis::context::{default_exec_ctx};
-use crate::analysis::env::VerificationError;
+use crate::analysis::machine::context::{default_exec_ctx};
+use crate::analysis::machine::env::VerificationError;
 use crate::common::config::VerifierConfig;
 use crate::zone::dbm::Dbm;
 use crate::zone::domain::{REG_ENV, assign_zero};
