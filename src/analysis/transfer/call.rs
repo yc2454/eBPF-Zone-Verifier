@@ -5,11 +5,12 @@
 use crate::analysis::env::{VerifierEnv, VerificationError};
 use crate::analysis::state::State;
 use crate::analysis::reg_types::{RegType, TypeState};
-use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, is_zero, nonneg};
+use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, is_zero, nonneg, get_bounds, positive};
+use crate::zone::tnum::{Tnum};
 use crate::analysis::transfer::access;
 use crate::parsing::btf::SpecialFieldKind;
 use crate::common::constants;
-use log::{error, warn};
+use log::{error, info, warn, debug};
 
 use super::types::{update_call_types, helper_invalidates_packets};
 use super::common::check_regs_readable;
@@ -70,6 +71,29 @@ pub enum BpfArgType {
     PtrToMemOrNull,
     /// PTR_TO_STACK | PTR_MAYBE_NULL
     PtrToStackOrNull,
+}
+
+// ============================================================================
+// Pointer-Size Pair Table
+// ============================================================================
+
+/// A pointer argument paired with its size argument.
+#[derive(Debug, Clone, Copy)]
+pub struct MemSizePair {
+    pub ptr_reg: Reg,
+    pub size_reg: Reg,
+    /// If true, size can be 0 (and if ptr is NULL, size MUST be 0)
+    pub allow_zero: bool,
+}
+
+impl MemSizePair {
+    const fn new(ptr_reg: Reg, size_reg: Reg) -> Self {
+        Self { ptr_reg, size_reg, allow_zero: false }
+    }
+    
+    const fn new_nullable(ptr_reg: Reg, size_reg: Reg) -> Self {
+        Self { ptr_reg, size_reg, allow_zero: true }
+    }
 }
 
 // ============================================================================
@@ -283,8 +307,64 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
+        // ---- Miscellaneous ----
+        constants::BPF_GET_PRANDOM_U32 => HelperSignature::new([
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ]),
+
+        constants::BPF_TRACE_PRINTK => HelperSignature::new([
+            PtrToMem,    // R1: fmt string
+            ConstSize,   // R2: fmt_size (MUST BE > 0)
+            Anything,    // R3: arg1
+            Anything,    // R4: arg2
+            Anything,    // R5: arg3
+        ]),
+
         _ => return None,
     })
+}
+
+/// Returns all pointer-size pairs for a given helper.
+/// Returns empty slice if helper has no such pairs (e.g., map ops use fixed sizes).
+pub fn get_mem_size_pairs(helper: u32) -> &'static [MemSizePair] {
+    use Reg::*;
+    
+    // Define static arrays for each helper pattern
+    static PROBE_READ: [MemSizePair; 1] = [
+        MemSizePair::new_nullable(R1, R2),
+    ];
+    
+    static SKB_LOAD_BYTES: [MemSizePair; 1] = [
+        MemSizePair::new(R3, R4),
+    ];
+    
+    static SKB_STORE_BYTES: [MemSizePair; 1] = [
+        MemSizePair::new(R3, R4),
+    ];
+    
+    static CSUM_DIFF: [MemSizePair; 2] = [
+        MemSizePair::new_nullable(R1, R2),
+        MemSizePair::new_nullable(R3, R4),
+    ];
+    
+    static EMPTY: [MemSizePair; 0] = [];
+    
+    match helper {
+        constants::BPF_PROBE_READ_USER |
+        constants::BPF_PROBE_READ_KERNEL => &PROBE_READ,
+        
+        constants::BPF_SKB_LOAD_BYTES => &SKB_LOAD_BYTES,
+        
+        constants::BPF_SKB_STORE_BYTES => &SKB_STORE_BYTES,
+        
+        constants::BPF_CSUM_DIFF => &CSUM_DIFF,
+        
+        _ => &EMPTY,
+    }
 }
 
 /// Returns true if the helper rejects packet pointers for the given argument index.
@@ -342,6 +422,7 @@ fn validate_helper_args(
     let arg_regs = [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
     
     for (i, (&arg_type, &reg)) in sig.args.iter().zip(arg_regs.iter()).enumerate() {
+        info!("[Verifier] pc {}: validating arg R{} as {:?}", pc, i + 1, arg_type);
         if arg_type == DontCare {
             break; // No more arguments
         }
@@ -406,19 +487,52 @@ fn validate_single_arg(
 
         // ---- Map key pointer ----
         PtrToMapKey => {
-            let Some(info) = map_info else {
-                // Can't validate without map info
+            let Some(target_info) = map_info else {
                 return true;
             };
-            validate_readable_mem(env, state, types, pc, reg, actual, Some(info.key_size))
+            
+            if let RegType::PtrToMapValue { map_idx, .. } = actual {
+                if let Some(map_def) = env.ctx.map_defs.get(map_idx) {
+                    println!("Validating map value size: expected {}, got {}", 
+                             target_info.value_size, map_def.value_size);
+                    if map_def.value_size != target_info.value_size {
+                        env.fail(VerificationError::InvalidArgType { pc, reg });
+                        error!("[Verifier] pc {}: R{} map value size mismatch: expected {}, got {}", 
+                               pc, arg_index + 1, target_info.value_size, map_def.key_size);
+                        return false;
+                    }
+                } else {
+                    env.fail(VerificationError::MapNotFound { pc, map_idx });
+                    return false;
+                }
+            }
+            
+            validate_readable_mem(env, state, types, pc, reg, actual, Some(target_info.key_size))
         }
 
         // ---- Map value pointer ----
         PtrToMapValue => {
-            let Some(info) = map_info else {
+            let Some(target_info) = map_info else {
                 return true;
             };
-            validate_readable_mem(env, state, types, pc, reg, actual, Some(info.value_size))
+            
+            if let RegType::PtrToMapValue { map_idx, .. } = actual {
+                if let Some(map_def) = env.ctx.map_defs.get(map_idx) {
+                    println!("Validating map value size: expected {}, got {}", 
+                             target_info.value_size, map_def.value_size);
+                    if map_def.value_size != target_info.value_size {
+                        env.fail(VerificationError::InvalidArgType { pc, reg });
+                        error!("[Verifier] pc {}: R{} map value size mismatch: expected {}, got {}", 
+                               pc, arg_index + 1, target_info.value_size, map_def.value_size);
+                        return false;
+                    }
+                } else {
+                    env.fail(VerificationError::MapNotFound { pc, map_idx });
+                    return false;
+                }
+            }
+            
+            validate_readable_mem(env, state, types, pc, reg, actual, Some(target_info.value_size))
         }
 
         // ---- Uninitialized map value (output buffer) ----
@@ -450,10 +564,10 @@ fn validate_single_arg(
 
         // ---- Size arguments ----
         ConstSize => {
-            // Must be a non-negative scalar
-            if !nonneg(&state.dbm, reg) {
+            // Must be positive
+            if !positive(&state.dbm, reg) {
                 env.fail(VerificationError::InvalidArgType { pc, reg });
-                error!("[Verifier] pc {}: R{} (ConstSize) must be non-negative", 
+                error!("[Verifier] pc {}: R{} (ConstSize) must be positive", 
                        pc, arg_index + 1);
                 return false;
             }
@@ -529,7 +643,7 @@ fn validate_single_arg(
         }
 
         PtrToMemOrNull => {
-            if is_zero(&state.dbm, reg) {
+            if state.types.get(reg).is_nullable() {
                 // Pointer is NULL - check that paired size arg is also 0
                 if let Some(size_arg_idx) = get_nullable_ptr_size_pair(helper, arg_index) {
                     let size_reg = [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5][size_arg_idx];
@@ -540,7 +654,7 @@ fn validate_single_arg(
                         return false;
                     }
                 }
-                return true;
+                return validate_readable_mem(env, state, types, pc, reg, actual, None)
             }
             validate_readable_mem(env, state, types, pc, reg, actual, None)
         }
@@ -570,7 +684,7 @@ fn validate_readable_mem(
             false
         }
         // Delegate the checking for these to access.rs
-        RegType::PtrToMapValue { .. } | RegType::PtrToPacket { .. } => {
+        RegType::PtrToMapValue { map_idx, .. } => {
             if let Some(size) = size {
                 access::check_load(env, state, reg, size as i64, 0);
                 if env.failed() {
@@ -578,6 +692,21 @@ fn validate_readable_mem(
                 }
                 true
             } else {
+                access::check_map_rw(env, map_idx, pc, false);
+                false
+            }
+        }
+        RegType::PtrToPacket { .. } => {
+            if let Some(size) = size {
+                access::check_load(env, state, reg, size as i64, 0);
+                if env.failed() {
+                    return false;
+                }
+                true
+            } else {
+                // Conservatively reject packet pointer without size
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!("[Verifier] pc {}: packet pointer requires size for read access", pc);
                 false
             }
         }
@@ -639,6 +768,66 @@ fn validate_writable_mem(
     }
 }
 
+fn check_and_handle_spin_lock(
+    env: &mut VerifierEnv,
+    state: &mut State,
+    helper: u32
+) -> bool {
+    let pc = state.pc;
+    match state.types.get(Reg::R1) {
+        RegType::PtrToMapValue { offset: _, map_idx, id } => {
+            match env.ctx.map_defs.get(map_idx) {
+                Some(map_def) => {
+                    if let Some(val_type_id) = map_def.btf_val_type_id {
+                        if helper == constants::BPF_SPIN_LOCK {
+                            if state.has_active_lock() {
+                                env.fail(VerificationError::LockAlreadyHeld { pc });
+                                return false;
+                            }
+                            let special_fields = env.ctx.btf.find_special_fields(val_type_id);
+                            let lock_offset_op = 
+                                special_fields.iter().find(
+                                    |f| f.kind == SpecialFieldKind::SpinLock)
+                                    .map(|f| f.offset);
+                            if lock_offset_op.is_none() {
+                                env.fail(VerificationError::InvalidBtfType);
+                                return false;
+                            } else {
+                                let lock_offset = lock_offset_op.unwrap();
+                                state.acquire_lock(id, lock_offset);
+                            }
+                        } else {
+                            if !state.has_active_lock() {
+                                env.fail(VerificationError::LockNotHeld { pc });
+                                return false;
+                            } else {
+                                let lock = state.get_active_lock().unwrap();
+                                if lock.ptr_id != id {
+                                    env.fail(VerificationError::LockNotHeld { pc });
+                                    return false;
+                                }
+                            }
+                            state.release_lock();
+                        }
+                    } else {
+                        env.fail(VerificationError::InvalidBtfType);
+                        return false;
+                    }
+                }
+                _ => {
+                    env.fail(VerificationError::MapNotFound { pc, map_idx });
+                    return false;
+                }
+            }
+        }
+        _ => {
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            return false;
+        }
+    }
+    return true;
+}
+
 // ============================================================================
 // Map Info Helpers
 // ============================================================================
@@ -674,6 +863,21 @@ pub(crate) fn transfer_call(
 ) -> Vec<State> {
     let in_types = state.types.clone();
     let pc = state.pc;
+
+    // ========================================================================
+    // Check if the call is forbidden under an active lock
+    // ========================================================================
+    if state.has_active_lock() && !allowed_while_in_active_lock(helper) {
+        env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R0 });
+        return vec![];
+    }
+
+    // ========================================================================
+    // Validate pointer-size pairs
+    // ========================================================================
+    if !check_mem_size_pairs(env, &state, helper, pc) {
+        return vec![];
+    }
 
     // ========================================================================
     // Check argument registers are readable before the call
@@ -723,56 +927,8 @@ pub(crate) fn transfer_call(
 
     // bpf_spin_lock and bpf_spin_unlock
     if helper == constants::BPF_SPIN_LOCK || helper == constants::BPF_SPIN_UNLOCK {
-        match state.types.get(Reg::R1) {
-            RegType::PtrToMapValue { offset: _, map_idx, id } => {
-                match env.ctx.map_defs.get(map_idx) {
-                    Some(map_def) => {
-                        if let Some(val_type_id) = map_def.btf_val_type_id {
-                            if helper == constants::BPF_SPIN_LOCK {
-                                if state.has_active_lock() {
-                                    env.fail(VerificationError::LockAlreadyHeld { pc });
-                                    return vec![];
-                                }
-                                let special_fields = env.ctx.btf.find_special_fields(val_type_id);
-                                let lock_offset_op = 
-                                    special_fields.iter().find(
-                                        |f| f.kind == SpecialFieldKind::SpinLock)
-                                        .map(|f| f.offset);
-                                if lock_offset_op.is_none() {
-                                    env.fail(VerificationError::InvalidBtfType);
-                                    return vec![];
-                                } else {
-                                    let lock_offset = lock_offset_op.unwrap();
-                                    state.acquire_lock(id, lock_offset);
-                                }
-                            } else {
-                                if !state.has_active_lock() {
-                                    env.fail(VerificationError::LockNotHeld { pc });
-                                    return vec![];
-                                } else {
-                                    let lock = state.get_active_lock().unwrap();
-                                    if lock.ptr_id != id {
-                                        env.fail(VerificationError::LockNotHeld { pc });
-                                        return vec![];
-                                    }
-                                }
-                                state.release_lock();
-                            }
-                        } else {
-                            env.fail(VerificationError::InvalidBtfType);
-                            return vec![];
-                        }
-                    }
-                    _ => {
-                        env.fail(VerificationError::MapNotFound { pc, map_idx });
-                        return vec![];
-                    }
-                }
-            }
-            _ => {
-                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
-                return vec![];
-            }
+        if !check_and_handle_spin_lock(env, &mut state, helper) {
+            return vec![];
         }
     }
     
@@ -830,6 +986,12 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
             // Returns 0 on success, negative on error
             // Could add bounds but being conservative for now
         }
+        constants::BPF_GET_PRANDOM_U32 => {
+            // Returns a random u32
+            assume_ge_const(&mut state.dbm, Reg::R0, 0);
+            assume_le_const(&mut state.dbm, Reg::R0, 0xFFFF_FFFF);
+            state.set_tnum(Reg::R0, Tnum::u32_unknown());
+        }
         _ => {}
     }
 }
@@ -843,6 +1005,13 @@ fn get_arg_regs_from_signature(helper: u32) -> Vec<Reg> {
     } else {
         // Unknown helper - conservatively check R1
         vec![Reg::R1]
+    }
+}
+
+fn allowed_while_in_active_lock(helper: u32) -> bool {
+    match helper {
+        constants::BPF_GET_PRANDOM_U32 => false,
+        _ => true,
     }
 }
 
@@ -870,4 +1039,154 @@ pub(crate) fn transfer_call_rel(
 
     // Only the "enter callee" path — return path comes from callee's Exit
     vec![state]
+}
+
+// ============================================================================
+// Bounds Checking Helper
+// ============================================================================
+
+/// Validates all pointer-size pairs for a helper call.
+/// Returns true if all pairs are valid, false otherwise (error reported).
+pub fn check_mem_size_pairs(
+    env: &mut VerifierEnv,
+    state: &State,
+    helper: u32,
+    pc: usize,
+) -> bool {
+    let pairs = get_mem_size_pairs(helper);
+    
+    for pair in pairs {
+        if !check_single_mem_size_pair(env, state, pair, pc) {
+            return false;
+        }
+    }
+    
+    true
+}
+
+/// Validates a single pointer-size pair.
+fn check_single_mem_size_pair(
+    env: &mut VerifierEnv,
+    state: &State,
+    pair: &MemSizePair,
+    pc: usize,
+) -> bool {
+    let ptr_type = state.types.get(pair.ptr_reg);
+    
+    // Handle NULL pointer case
+    if is_zero(&state.dbm, pair.ptr_reg) {
+        if pair.allow_zero {
+            // NULL ptr is OK, but size must also be 0
+            if !is_zero(&state.dbm, pair.size_reg) {
+                env.fail(VerificationError::InvalidArgType { pc, reg: pair.size_reg });
+                error!("[Verifier] pc {}: {:?} must be 0 when {:?} is NULL",
+                       pc, pair.size_reg, pair.ptr_reg);
+                return false;
+            }
+            return true;
+        } else {
+            // NULL not allowed for this pair
+            env.fail(VerificationError::InvalidArgType { pc, reg: pair.ptr_reg });
+            error!("[Verifier] pc {}: {:?} cannot be NULL", pc, pair.ptr_reg);
+            return false;
+        }
+    }
+    
+    // Get size bounds from DBM
+    let (_, Some(max_size)) = get_bounds(&state.dbm, pair.size_reg) else {
+        // Size is unbounded - reject
+        env.fail(VerificationError::InvalidArgType { pc, reg: pair.size_reg });
+        error!("[Verifier] pc {}: {:?} has unbounded size", pc, pair.size_reg);
+        return false;
+    };
+    
+    // Size must be non-negative
+    if !nonneg(&state.dbm, pair.size_reg) {
+        env.fail(VerificationError::InvalidArgType { pc, reg: pair.size_reg });
+        error!("[Verifier] pc {}: {:?} must be non-negative", pc, pair.size_reg);
+        return false;
+    }
+    
+    // Check zero size
+    if max_size == 0 {
+        if pair.allow_zero {
+            return true;
+        } else {
+            env.fail(VerificationError::InvalidArgType { pc, reg: pair.size_reg });
+            error!("[Verifier] pc {}: {:?} cannot be 0", pc, pair.size_reg);
+            return false;
+        }
+    }
+    
+    // Validate pointer can accommodate the access
+    check_ptr_access_size(env, state, pair.ptr_reg, ptr_type, max_size as u32, pc)
+}
+
+/// Checks that a pointer can safely access `size` bytes.
+fn check_ptr_access_size(
+    env: &mut VerifierEnv,
+    state: &State,
+    ptr_reg: Reg,
+    ptr_type: RegType,
+    size: u32,
+    pc: usize,
+) -> bool {
+    match ptr_type {
+        RegType::PtrToStack { offset: Some(off) } => {
+            // Stack: check [off, off + size) is within stack bounds
+            // Stack grows down, so valid range is [-512, 0)
+            let end_offset = off + size as i64;
+            if off < -512 || end_offset > 0 {
+                env.fail(VerificationError::StackOutOfBounds { pc, off, size: size.into() });
+                error!("[Verifier] pc {}: stack access [{}, {}) out of bounds",
+                       pc, off, end_offset);
+                return false;
+            }
+            // Also check stack slots are initialized for reads
+            access::check_stack_arg_readable(env, state, off, size as i64, pc);
+            !env.failed()
+        }
+        
+        RegType::PtrToStack { offset: None } => {
+            env.fail(VerificationError::InvalidArgType { pc, reg: ptr_reg });
+            error!("[Verifier] pc {}: {:?} has unknown stack offset", pc, ptr_reg);
+            false
+        }
+        
+        RegType::PtrToMapValue { map_idx, offset, id: _ } => {
+            // Map value: check offset + size <= value_size
+            let Some(map_def) = env.ctx.map_defs.get(map_idx) else {
+                env.fail(VerificationError::MapNotFound { pc, map_idx });
+                return false;
+            };
+            
+            access::check_map_access(
+                env,
+                state,
+                map_def.value_size as i64,
+                offset,
+                map_idx,
+                ptr_reg,
+                map_def,
+                0,
+                size as i64,
+                pc,
+            );
+            !env.failed()
+        }
+        
+        RegType::PtrToPacket { .. } => {
+            // Packet: need to verify against packet bounds (data_end - data)
+            // This requires range analysis between packet_data and packet_end
+            access::check_load(env, state, ptr_reg, size as i64, 0);
+            !env.failed()
+        }
+        
+        _ => {
+            env.fail(VerificationError::InvalidArgType { pc, reg: ptr_reg });
+            error!("[Verifier] pc {}: {:?} ({:?}) not a valid memory pointer",
+                   pc, ptr_reg, ptr_type);
+            false
+        }
+    }
 }

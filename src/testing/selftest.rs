@@ -12,6 +12,7 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
 
+use log::info;
 use serde::{Deserialize, Serialize};
 
 use crate::analysis;
@@ -440,6 +441,9 @@ fn build_exec_context(test: &JsonTestCase) -> (crate::analysis::context::ExecCon
             }
         }
     }
+
+    info!("Loaded {} map definitions", ctx.map_defs.len());
+    info!("Map Definitions: {:?}", ctx.map_defs);
 
     ctx.prog_kind = match test.prog_type {
         Some(constants::BPF_PROG_TYPE_UNSPEC) => ProgramKind::Unspec,

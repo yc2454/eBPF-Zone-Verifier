@@ -9,16 +9,16 @@ pub(crate) fn transfer_map_load(
     mut state: State,
     dst: Reg,
     kind: MapLoadKind,
-    map_fd: i32
+    _map_fd: i32
 ) -> Vec<State> {
-    // 1. Common Logic: Verify Map Exists
-    if let Some(_map_def) = env.ctx.map_defs.get(map_fd as usize) {
-        update_map_load_types(&mut state.types, kind, map_fd as usize, dst);
+    let reloc_info = env.ctx.pc_to_reloc.get(&state.pc);
+    if let Some(reloc) = reloc_info {
+        update_map_load_types(&mut state.types, kind, reloc.map_idx as usize, dst);
         forget(&mut state.dbm, dst);
         state.pc += 2;
-        vec![state]
+        return vec![state];
     } else {
-        env.fail(VerificationError::MapNotFound { pc: state.pc, map_idx: map_fd as usize });
+        env.fail(VerificationError::RelocationInfoMissing { pc: state.pc });
         return vec![]
     }
 }

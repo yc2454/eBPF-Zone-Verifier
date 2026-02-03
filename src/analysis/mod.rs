@@ -82,7 +82,8 @@ pub fn analyze_program(
         }
 
         // A.a TYPE COMPATIBILITY CHECK (safety - may reject program)
-        if let Err(e) = merging::check_compatibility(&env, &state) {
+        if state.pc < prog.instrs.len() - 1 // No need to check last instruction
+            && let Err(e) = merging::check_compatibility(&env, &state) {
             env.fail(e);
             break;
         }
@@ -128,8 +129,8 @@ pub fn analyze_program(
         if config.verbosity >= 2 {
             state.dbm.pretty_print();
         }
-        debug!(target: "app", "|PC:{}| Instr: {:?} | Regs: {:?}", 
-               state.pc, instr, state.types);
+        debug!(target: "app", "|PC:{}| Instr: {:?}\nRegs: {:?}\nTnums: {:?}", 
+               state.pc, instr, state.types.reg_types_str(), state.tnums);
 
         // F. Transfer Function
         let successors = transfer::transfer(&mut env, state, instr);

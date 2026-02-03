@@ -20,6 +20,7 @@ pub enum VerificationError {
     UnsafeMapStore { pc: usize, off: i64, size: i64, limit: i64 },
     MapStoreForbidden { pc: usize, map_idx: usize },
     MapLoadForbidden { pc: usize, map_idx: usize },
+    UnsafeMapAccess { pc: usize, map_idx: usize, size: i64 },
     UnsafeGenericLoad { pc: usize, base: Reg, off: i16 },
     UnsafeMemoryRegionLoad { pc: usize, base: Reg, off: i16 },
     UnsafeCtxAccess { pc: usize, off: i16, size: i64 },
@@ -47,7 +48,9 @@ pub enum VerificationError {
     LockAlreadyHeld { pc: usize },
     LockNotHeld { pc: usize },
     UnreleasedLock,
-    LoadAbsUnderLock { pc: usize}
+    LoadAbsUnderLock { pc: usize},
+    InvalidMapValueAccess { pc: usize, value_size: i64, offset: i64, available: i64 },
+    RelocationInfoMissing { pc: usize },
 }
 
 impl VerificationError {
@@ -76,6 +79,9 @@ impl VerificationError {
             }
             VerificationError::UnsafeMapStore { pc, off, size, limit } => {
                 format!("Unsafe map store at pc {}: offset {}, size {:?}, limit {}", pc, off, size, limit)
+            }
+            VerificationError::UnsafeMapAccess { pc, map_idx, size } => {
+                format!("Unsafe map store at pc {}: map index {}, size {:?}", pc, map_idx, size)
             }
             VerificationError::UnsafeGenericLoad { pc, base, off } => {
                 format!("Unsafe generic load at pc {}: base {:?}, offset {}", pc, base, off)
@@ -169,6 +175,12 @@ impl VerificationError {
             }
             VerificationError::LoadAbsUnderLock { pc } => {
                 format!("ld_abs with an active lock at pc {}", pc)
+            }
+            VerificationError::InvalidMapValueAccess { pc, value_size, offset, available } => {
+                format!("Invalid map value access at pc {}: value_size {}, offset {}, available {}", pc, value_size, offset, available)
+            }
+            VerificationError::RelocationInfoMissing { pc } => {
+                format!("Relocation info missing at pc {}", pc)
             }
         }
     }

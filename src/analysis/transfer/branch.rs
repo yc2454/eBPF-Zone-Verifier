@@ -2,6 +2,8 @@
 //
 // If/branch handling, constraint application, interval checks
 
+use log::info;
+
 use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;
 use crate::ast::{Instr, CmpOp, Operand, Width};
@@ -33,7 +35,6 @@ pub(crate) fn transfer_if(
         let on_path = state.history_idx
             .map(|idx| env.history.path_contains_pc(idx, target))
             .unwrap_or(false);
-        
         if !on_path {
             env.fail(VerificationError::BackEdge { pc: state.pc, target });
             return vec![];
@@ -49,7 +50,6 @@ pub(crate) fn transfer_if(
     }
     
     // --- STEP 1: Abstract Interpretation (Constraint Refinement) ---
-    let mut out = Vec::new();
     let mut state_then = state.clone();
     let mut state_else = state.clone();
 
@@ -67,10 +67,98 @@ pub(crate) fn transfer_if(
     refine_branch(&mut state_then, &instr, true);
     refine_branch(&mut state_else, &instr, false);
 
-    // Return only consistent states
+    // Check for statically determined branches
+    if let Some(outcome) = condition_outcome(&state, width, left, op, &right) {
+        return if outcome {
+            vec![state_then]
+        } else {
+            vec![state_else]
+        };
+    }
+
+    println!("THEN BRANCH STATE: --------------------------------");
+    state_then.dbm.pretty_print();
+    println!("ELSE BRANCH STATE: --------------------------------");
+    state_else.dbm.pretty_print();
+
+    // Return only consistent states (the ORIGINAL logic)
+    let mut out = Vec::new();
     if !state_else.dbm.is_inconsistent() { out.push(state_else); }
     if !state_then.dbm.is_inconsistent() { out.push(state_then); }
     out
+}
+
+/// Check if a branch condition can be determined at analysis time.
+/// Returns:
+///   Some(true)  - condition is ALWAYS true (only then-branch reachable)
+///   Some(false) - condition is ALWAYS false (only else-branch reachable)
+///   None        - condition could go either way
+fn condition_outcome(
+    state: &State,
+    width: Width,
+    left: Reg,
+    op: CmpOp,
+    right: &Operand,
+) -> Option<bool> {
+    if state.types.get(left).is_pointer() {
+        return None;
+    }
+    
+    let left_tnum = match width {
+        Width::W32 => state.get_tnum(left).trunc32(),
+        Width::W64 => state.get_tnum(left),
+    };
+    
+    match right {
+        Operand::Imm(imm) => {
+            let imm_val = match width {
+                Width::W32 => (*imm as u32) as u64,
+                Width::W64 => *imm as u64,
+            };
+            
+            let min = left_tnum.min_value();
+            let max = left_tnum.max_value();
+            
+            match op {
+                CmpOp::ULt => {
+                    if max < imm_val { Some(true) }      // always true
+                    else if min >= imm_val { Some(false) } // always false
+                    else { None }
+                }
+                CmpOp::UGe => {
+                    if min >= imm_val { Some(true) }
+                    else if max < imm_val { Some(false) }
+                    else { None }
+                }
+                CmpOp::Eq => {
+                    if left_tnum.is_const() && left_tnum.value == imm_val { Some(true) }
+                    else if !left_tnum.could_equal(imm_val) { Some(false) }
+                    else { None }
+                }
+                CmpOp::Ne => {
+                    if left_tnum.is_const() && left_tnum.value != imm_val { Some(true) }
+                    else if !left_tnum.could_equal(imm_val) { Some(false) }
+                    else { None }
+                }
+                CmpOp::ULe => {
+                    if max <= imm_val { Some(true) }
+                    else if min > imm_val { Some(false) }
+                    else { None }
+                }
+                CmpOp::UGt => {
+                    if min > imm_val { Some(true) }
+                    else if max <= imm_val { Some(false) }
+                    else { None }
+                }
+                _ => None,
+            }
+        }
+        Operand::Reg(_r) => {
+            // Could also compare tnum ranges between two registers
+            None // Start conservative
+        }
+    }
+    
 }
 
 /// Check if we can safely apply signed constraints for 32-bit comparisons.
@@ -204,9 +292,6 @@ fn apply_imm_constraints(
             if imm == 0 {
                 if let Some(non_null) = then_s.types.get(left).to_non_null() {
                     then_s.types.set(left, non_null);
-                    if let Some(offset) = non_null.get_offset() {
-                        assume_eq_const(&mut then_s.dbm, left, offset);
-                    }
                 }
             }
         }
@@ -216,9 +301,6 @@ fn apply_imm_constraints(
             if imm == 0 {
                 if let Some(non_null) = else_s.types.get(left).to_non_null() {
                     else_s.types.set(left, non_null);
-                    if let Some(offset) = non_null.get_offset() {
-                        assume_eq_const(&mut else_s.dbm, left, offset);
-                    }
                 }
             }
         }

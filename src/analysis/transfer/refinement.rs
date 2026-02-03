@@ -7,7 +7,6 @@ use crate::analysis::reg_types::{RegType, TypeState};
 use crate::ast::{Instr, CmpOp, Operand};
 use crate::zone::domain::Reg;
 use crate::zone::dbm::{Dbm, INF};
-use crate::zone::domain::assign_zero;
 use crate::analysis::ctx_model::MemRegionId;
 
 /// Refines the safe access range of memory region pointers based on DBM constraints.
@@ -142,7 +141,6 @@ fn maybe_promote_map_val(state: &mut State, reg: Reg) {
         if let RegType::PtrToMapValueOrNull { id, map_idx } = state.types.get(r) {
             if id == target_id {
                 state.types.set(r, RegType::PtrToMapValue { id, offset: Some(0), map_idx });
-                assign_zero(&mut state.dbm, r);
             }
         }
     }
