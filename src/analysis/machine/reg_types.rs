@@ -132,14 +132,12 @@ pub fn new_ref_id() -> u32 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TypeState {
     pub regs: [RegType; NUM_REGS],
-    pub stack: BTreeMap<i16, RegType>,
 }
 
 impl TypeState {
     pub fn new_not_init() -> Self {
         Self {
             regs: [RegType::NotInit; NUM_REGS],
-            stack: BTreeMap::new(),
         }
     }
 
@@ -155,14 +153,6 @@ impl TypeState {
         if let Some(i) = crate::zone::domain::reg_to_index(r) {
             self.regs[i] = ty;
         }
-    }
-
-    pub fn get_stack(&self, off: i16) -> RegType {
-        *self.stack.get(&off).unwrap_or(&RegType::ScalarValue)
-    }
-
-    pub fn set_stack(&mut self, off: i16, ty: RegType) {
-        self.stack.insert(off, ty);
     }
 
     pub fn print(&self) {

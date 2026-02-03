@@ -336,12 +336,12 @@ fn check_stack_access(
                 // For the access range
                 for i in 0..size {
                     let slot = (actual_offset + i) as i16;
-                    if !state.types.stack.contains_key(&slot) {
+                    if !state.stack.is_slot_initialized(slot) {
                         env.fail(VerificationError::UninitializedStackRead { pc, offset: actual_offset });
                         return;
                     }
                     // The read size for a pointer must be 64-bit
-                    let slot_type = state.types.get_stack(actual_offset as i16);
+                    let slot_type = state.stack.get_slot_type(slot);
                     if slot_type.is_pointer() {
                         if size != 8 {
                             env.fail(VerificationError::InvalidStackRead { pc, offset: actual_offset });
@@ -376,7 +376,7 @@ fn check_stack_access(
                         for off_candidate in lower..=upper {
                             for i in 0..size {
                                 let slot = (off_candidate + instruction_offset + i) as i16;
-                                if !state.types.stack.contains_key(&slot) {
+                                if !state.stack.is_slot_initialized(slot) {
                                     env.fail(VerificationError::UninitializedStackRead { pc, offset: instruction_offset });
                                     return;
                                 }

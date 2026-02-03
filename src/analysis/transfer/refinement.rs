@@ -4,6 +4,7 @@
 
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
+use crate::analysis::machine::stack_state::StackState;
 use crate::ast::{Instr, CmpOp, Operand};
 use crate::zone::domain::Reg;
 use crate::zone::dbm::{Dbm, INF};
@@ -11,7 +12,7 @@ use crate::common::ctx_model::MemRegionId;
 
 /// Refines the safe access range of memory region pointers based on DBM constraints.
 /// Similar to refine_packet_ranges but for PtrToMem.
-pub(crate) fn refine_mem_ranges(dbm: &Dbm, types: &mut TypeState, mem_reg: Reg, end_reg: Reg) {
+pub(crate) fn refine_mem_ranges(dbm: &Dbm, types: &mut TypeState, stack: &mut StackState, mem_reg: Reg, end_reg: Reg) {
     let target_region = match types.get(mem_reg) {
         RegType::PtrToMem { region, .. } => region,
         _ => return,
@@ -43,9 +44,8 @@ pub(crate) fn refine_mem_ranges(dbm: &Dbm, types: &mut TypeState, mem_reg: Reg, 
     }
     
     // Also update stack slots with matching region
-    let stack_keys: Vec<i16> = types.stack.keys().cloned().collect();
-    for k in stack_keys {
-        if let RegType::PtrToMem { region, range } = types.get_stack(k) {
+    for k in stack.slot_offsets() {
+        if let RegType::PtrToMem { region, range } = stack.get_slot_type(k) {
             if region == target_region {
                 let max_range = Reg::ALL.iter()
                     .filter_map(|&r| match types.get(r) {
@@ -55,7 +55,7 @@ pub(crate) fn refine_mem_ranges(dbm: &Dbm, types: &mut TypeState, mem_reg: Reg, 
                     .max()
                     .unwrap_or(0);
                 if max_range > range {
-                    types.set_stack(k, RegType::PtrToMem { region, range: max_range });
+                    stack.set_slot_type(k, RegType::PtrToMem { region, range: max_range });
                 }
             }
         }
@@ -144,11 +144,10 @@ fn maybe_promote_map_val(state: &mut State, reg: Reg) {
             }
         }
     }
-    let stack_keys: Vec<i16> = state.types.stack.keys().cloned().collect();
-    for k in stack_keys {
-        if let RegType::PtrToMapValueOrNull { id, map_idx } = state.types.get_stack(k) {
+    for k in state.stack.slot_offsets() {
+        if let RegType::PtrToMapValueOrNull { id, map_idx } = state.stack.get_slot_type(k) {
             if id == target_id {
-                state.types.set_stack(k, RegType::PtrToMapValue { id, offset: Some(0), map_idx });
+                state.stack.set_slot_type(k, RegType::PtrToMapValue { id, offset: Some(0), map_idx });
             }
         }
     }

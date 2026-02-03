@@ -146,6 +146,13 @@ pub fn get_bounds(dbm: &Dbm, x: Reg) -> (Option<i64>, Option<i64>) {
     (lb_opt, ub_opt)
 }
 
+pub fn get_simple_bounds(dbm: &Dbm, x: Reg) -> (i64, i64) {
+    let (lo_opt, hi_opt) = get_bounds(dbm, x);
+    let lo = lo_opt.unwrap_or(i64::MIN);
+    let hi = hi_opt.unwrap_or(i64::MAX);
+    (lo, hi)
+}
+
 pub fn get_relative_bound(dbm: &Dbm, x: Reg, y: Reg) -> (Option<i64>, Option<i64>) {
     let x_minus_y = dbm.get(x, y);
     let y_minus_x = dbm.get(y, x);
@@ -172,6 +179,11 @@ pub fn nonneg(dbm: &Dbm, x: Reg) -> bool {
 pub fn positive(dbm: &Dbm, x: Reg) -> bool {
     let (lo, _) = get_bounds(dbm, x);
     lo.map_or(false, |l| l > 0)
+}
+
+pub fn set_bounds(dbm: &mut Dbm, r: Reg, min: i64, max: i64) {
+    assume_ge_const(dbm, r, min);
+    assume_le_const(dbm, r, max);
 }
 
 // --- transfer functions ---

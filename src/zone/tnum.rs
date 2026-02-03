@@ -284,6 +284,18 @@ impl Tnum {
         // The value must match our known bits
         (val & !self.mask) == self.value
     }
+
+    pub fn mask_lower(self, bits: u32) -> Tnum {
+        if bits >= 64 {
+            self
+        } else {
+            let mask = (1u64 << bits) - 1;
+            Tnum {
+                value: self.value & mask,
+                mask: self.mask & mask,
+            }
+        }
+    }
 }
 
 impl Default for Tnum {

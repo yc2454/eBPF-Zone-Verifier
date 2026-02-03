@@ -2,7 +2,9 @@
 use crate::zone::dbm::Dbm;
 use crate::analysis::machine::reg_types::TypeState;
 use crate::zone::tnum::Tnum;
-use crate::zone::domain::Reg;
+use crate::zone::domain::{self, Reg, get_simple_bounds};
+use crate::analysis::machine::stack_state::{StackState, SpilledReg, ScalarBounds};
+use crate::ast::MemSize;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +20,9 @@ pub struct State {
     /// 1. Register and Stack Types
     /// Mirrors `bpf_reg_state.type`
     pub types: TypeState,
+
+    // Stack state for spilled registers
+    pub stack: StackState,
 
     /// 2. Numerical Domain (Values)
     /// Mirrors `bpf_reg_state.{smin_value, umax_value, var_off}`
@@ -54,6 +59,7 @@ impl State {
         }
         State {
             types: TypeState::new_not_init(),
+            stack: StackState::new(),
             dbm,
             pc,
             history_idx: None,
@@ -113,11 +119,7 @@ impl State {
         }
         
         // Invalidate stack slots
-        for (_, ty) in self.types.stack.iter_mut() {
-            if ty.get_ref_id() == Some(id) {
-                *ty = RegType::ScalarValue;
-            }
-        }
+        self.stack.invalidate_ref(id);
     }
 
     /// Acquire a spin lock
@@ -138,6 +140,44 @@ impl State {
     /// Get the currently held lock, if any
     pub fn get_active_lock(&self) -> Option<&LockState> {
         self.active_lock.as_ref()
+    }
+
+    // Spill a register onto stack at given offset
+    pub fn spill(&mut self, reg: Reg, offset: i16) {
+        let (min, max) = get_simple_bounds(&self.dbm, reg);
+        self.stack.insert(
+            offset, 
+            SpilledReg {
+                reg_type: self.types.get(reg),
+                tnum: self.tnums.get(&reg).cloned().unwrap_or(Tnum::unknown()),
+                bounds: ScalarBounds { min, max }
+            }
+        );
+    }
+    
+    /// Attempts to reload a spilled register from the stack.
+    /// Returns true if successful (state was updated from the spill snapshot).
+    pub fn try_reload(
+        &mut self,
+        dst: Reg,
+        base: Reg,
+        off: i16,
+        size: MemSize,
+    ) -> bool {
+        // Only 64-bit loads from stack pointer can restore spilled state
+        if base != Reg::R10 || size != MemSize::U64 {
+            return false;
+        }
+
+        if let Some(spilled) = self.stack.get_slot(off) {
+            // Restore the full abstract state from the snapshot
+            self.types.set(dst, spilled.reg_type);
+            self.tnums.insert(dst, spilled.tnum.clone());
+            domain::set_bounds(&mut self.dbm, dst, spilled.bounds.min, spilled.bounds.max);
+            true
+        } else {
+            false
+        }
     }
      
 }

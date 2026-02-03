@@ -2,8 +2,6 @@
 //
 // If/branch handling, constraint application, interval checks
 
-use log::info;
-
 use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::state::State;
 use crate::ast::{Instr, CmpOp, Operand, Width};
@@ -360,8 +358,8 @@ fn apply_reg_constraints(
             CmpOp::SLt | CmpOp::SLe | CmpOp::SGt | CmpOp::SGe => {
                 if !fits_in_i32_range(&then_s.dbm, left) || !fits_in_i32_range(&then_s.dbm, right) {
                     for state in [&mut *then_s, &mut *else_s] {
-                        refine_mem_ranges(&state.dbm, &mut state.types, left, right);
-                        refine_mem_ranges(&state.dbm, &mut state.types, right, left);
+                        refine_mem_ranges(&state.dbm, &mut state.types, &mut state.stack, left, right);
+                        refine_mem_ranges(&state.dbm, &mut state.types, &mut state.stack, right, left);
                     }
                     return;
                 }
@@ -379,8 +377,8 @@ fn apply_reg_constraints(
             // One or both could be negative (signed) = large (unsigned)
             // Cannot safely convert unsigned constraints to signed DBM constraints
             for state in [&mut *then_s, &mut *else_s] {
-                refine_mem_ranges(&state.dbm, &mut state.types, left, right);
-                refine_mem_ranges(&state.dbm, &mut state.types, right, left);
+                refine_mem_ranges(&state.dbm, &mut state.types, &mut state.stack, left, right);
+                refine_mem_ranges(&state.dbm, &mut state.types, &mut state.stack, right, left);
             }
             return;
         }
@@ -417,7 +415,7 @@ fn apply_reg_constraints(
     
     // Refine pointer ranges on both states
     for state in [&mut *then_s, &mut *else_s] {
-        refine_mem_ranges(&state.dbm, &mut state.types, left, right);
-        refine_mem_ranges(&state.dbm, &mut state.types, right, left);
+        refine_mem_ranges(&state.dbm, &mut state.types, &mut state.stack, left, right);
+        refine_mem_ranges(&state.dbm, &mut state.types, &mut state.stack, right, left);
     }
 }

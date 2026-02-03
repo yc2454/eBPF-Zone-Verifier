@@ -4,6 +4,7 @@
 
 use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg_types::{RegType, TypeState, new_ptr_id};
+use crate::analysis::machine::stack_state::StackState;
 use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, AtomicOp, MapLoadKind, MemSize, Operand, Width};
 use crate::zone::domain::Reg;
@@ -169,6 +170,7 @@ pub(crate) fn update_alu_types(
 pub(crate) fn update_load_types(
     env: &VerifierEnv, 
     types: &mut TypeState, 
+    stack: &mut StackState,
     size: usize, 
     dst: Reg, 
     base: Reg, 
@@ -204,7 +206,7 @@ pub(crate) fn update_load_types(
                 Some(base) => {
                     let actual_slot = base + (off as i64);
                     if size == MemSize::U64.bytes() as usize { 
-                        types.set(dst, types.get_stack(actual_slot as i16)); 
+                        types.set(dst, stack.get_slot_type(actual_slot as i16)); 
                     } else { 
                         types.set(dst, RegType::ScalarValue); 
                     }
@@ -222,7 +224,7 @@ pub(crate) fn update_load_types(
 
 /// Updates stack types after a Store operation.
 pub(crate) fn update_store_types(
-    types: &mut TypeState, 
+    stack: &mut StackState,
     src_type: RegType, 
     size: MemSize, 
     base_type: RegType, 
@@ -239,15 +241,15 @@ pub(crate) fn update_store_types(
         
         if size == MemSize::U64 {
             // Full 8-byte store preserves type info at the base slot
-            types.set_stack(slot, src_type);
+            stack.set_slot_type(slot, src_type);
             // Mark remaining bytes as initialized (but no type info)
             for i in 1..byte_count {
-                types.set_stack(slot + i, RegType::ScalarValue);
+                stack.set_slot_type(slot + i, RegType::ScalarValue);
             }
         } else {
             // Partial store: mark all bytes as initialized, but poison type info
             for i in 0..byte_count {
-                types.set_stack(slot + i, RegType::ScalarValue);
+                stack.set_slot_type(slot + i, RegType::ScalarValue);
             }
         }
     }
@@ -264,19 +266,6 @@ pub(crate) fn helper_invalidates_packets(helper: u32) -> bool {
         constants::BPF_SKB_CHANGE_PROTO |
         constants::BPF_SKB_ADJUST_ROOM
     )
-}
-
-/// Invalidates packet pointers on the stack.
-pub(crate) fn invalidate_stack_packet_pointers(types: &mut TypeState) {
-    let keys: Vec<i16> = types.stack.keys().cloned().collect();
-    for k in keys {
-        match types.get_stack(k) {
-            RegType::PtrToPacket { .. } | RegType::PtrToPacketEnd => {
-                types.set_stack(k, RegType::ScalarValue);
-            }
-            _ => {}
-        }
-    }
 }
 
 /// Updates register types after a helper Call.
@@ -357,7 +346,7 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
             match mem_ptr_ty {
                 RegType::PtrToStack { offset: Some(off) } => {
                     let slot = off as i16;
-                    state.types.set_stack(slot, RegType::ScalarValue);
+                    state.stack.set_slot_type(slot, RegType::ScalarValue);
                 }
                 _ => {} // Do nothing for the other cases for now
             }
@@ -378,7 +367,7 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
                 _ => {}
             }
         }
-        invalidate_stack_packet_pointers(&mut state.types);
+        state.stack.invalidate_packet_pointers();
     }
 }
 
