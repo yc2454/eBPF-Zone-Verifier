@@ -702,3 +702,27 @@ pub fn check_map_access(
         }
     }
 }
+
+pub fn check_map_rw(
+    env: &mut VerifierEnv,
+    map_idx: usize,
+    pc: usize,
+    is_write: bool
+) {
+    let flag_to_check = if is_write {
+        constants::BPF_F_RDONLY_PROG
+    } else {
+        constants::BPF_F_WRONLY_PROG
+    };
+    let ctx = env.ctx;
+    if let Some(map_def) = ctx.map_defs.get(map_idx) {
+        // If the map is write-only
+        if map_def.map_flags == flag_to_check {
+            error!("Map read is forbidden!");
+            env.fail(VerificationError::MapLoadForbidden { pc, map_idx });
+        }
+    } else {
+        error!("Map not found!");
+        env.fail(VerificationError::MapNotFound { pc, map_idx })
+    }
+}

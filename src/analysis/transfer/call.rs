@@ -10,7 +10,7 @@ use crate::zone::tnum::{Tnum};
 use crate::analysis::transfer::access;
 use crate::parsing::btf::SpecialFieldKind;
 use crate::common::constants;
-use log::{error, info, warn};
+use log::{error, info, warn, debug};
 
 use super::types::{update_call_types, helper_invalidates_packets};
 use super::common::check_regs_readable;
@@ -643,7 +643,7 @@ fn validate_single_arg(
         }
 
         PtrToMemOrNull => {
-            if is_zero(&state.dbm, reg) {
+            if state.types.get(reg).is_nullable() {
                 // Pointer is NULL - check that paired size arg is also 0
                 if let Some(size_arg_idx) = get_nullable_ptr_size_pair(helper, arg_index) {
                     let size_reg = [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5][size_arg_idx];
@@ -654,7 +654,7 @@ fn validate_single_arg(
                         return false;
                     }
                 }
-                return true;
+                return validate_readable_mem(env, state, types, pc, reg, actual, None)
             }
             validate_readable_mem(env, state, types, pc, reg, actual, None)
         }
@@ -684,7 +684,7 @@ fn validate_readable_mem(
             false
         }
         // Delegate the checking for these to access.rs
-        RegType::PtrToMapValue { .. } | RegType::PtrToPacket { .. } => {
+        RegType::PtrToMapValue { map_idx, .. } => {
             if let Some(size) = size {
                 access::check_load(env, state, reg, size as i64, 0);
                 if env.failed() {
@@ -692,6 +692,21 @@ fn validate_readable_mem(
                 }
                 true
             } else {
+                access::check_map_rw(env, map_idx, pc, false);
+                false
+            }
+        }
+        RegType::PtrToPacket { .. } => {
+            if let Some(size) = size {
+                access::check_load(env, state, reg, size as i64, 0);
+                if env.failed() {
+                    return false;
+                }
+                true
+            } else {
+                // Conservatively reject packet pointer without size
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!("[Verifier] pc {}: packet pointer requires size for read access", pc);
                 false
             }
         }

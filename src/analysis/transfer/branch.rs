@@ -2,6 +2,8 @@
 //
 // If/branch handling, constraint application, interval checks
 
+use log::info;
+
 use crate::analysis::env::VerifierEnv;
 use crate::analysis::state::State;
 use crate::ast::{Instr, CmpOp, Operand, Width};
@@ -74,6 +76,11 @@ pub(crate) fn transfer_if(
         };
     }
 
+    println!("THEN BRANCH STATE: --------------------------------");
+    state_then.dbm.pretty_print();
+    println!("ELSE BRANCH STATE: --------------------------------");
+    state_else.dbm.pretty_print();
+
     // Return only consistent states (the ORIGINAL logic)
     let mut out = Vec::new();
     if !state_else.dbm.is_inconsistent() { out.push(state_else); }
@@ -128,7 +135,21 @@ fn condition_outcome(
                     else if !left_tnum.could_equal(imm_val) { Some(false) }
                     else { None }
                 }
-                // ... other cases
+                CmpOp::Ne => {
+                    if left_tnum.is_const() && left_tnum.value != imm_val { Some(true) }
+                    else if !left_tnum.could_equal(imm_val) { Some(false) }
+                    else { None }
+                }
+                CmpOp::ULe => {
+                    if max <= imm_val { Some(true) }
+                    else if min > imm_val { Some(false) }
+                    else { None }
+                }
+                CmpOp::UGt => {
+                    if min > imm_val { Some(true) }
+                    else if max <= imm_val { Some(false) }
+                    else { None }
+                }
                 _ => None,
             }
         }
@@ -271,9 +292,6 @@ fn apply_imm_constraints(
             if imm == 0 {
                 if let Some(non_null) = then_s.types.get(left).to_non_null() {
                     then_s.types.set(left, non_null);
-                    if let Some(offset) = non_null.get_offset() {
-                        assume_eq_const(&mut then_s.dbm, left, offset);
-                    }
                 }
             }
         }
@@ -283,9 +301,6 @@ fn apply_imm_constraints(
             if imm == 0 {
                 if let Some(non_null) = else_s.types.get(left).to_non_null() {
                     else_s.types.set(left, non_null);
-                    if let Some(offset) = non_null.get_offset() {
-                        assume_eq_const(&mut else_s.dbm, left, offset);
-                    }
                 }
             }
         }

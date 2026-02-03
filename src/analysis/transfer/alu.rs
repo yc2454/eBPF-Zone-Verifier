@@ -151,7 +151,7 @@ pub(crate) fn check_ptr_arithmetic(
                 }
                 true
             },
-            AluOp::Mov => true, 
+            AluOp::Mov | AluOp::And => true, 
             _ => { false }
         }
     }
