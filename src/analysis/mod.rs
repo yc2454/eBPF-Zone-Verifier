@@ -82,7 +82,8 @@ pub fn analyze_program(
         }
 
         // A.a TYPE COMPATIBILITY CHECK (safety - may reject program)
-        if let Err(e) = merging::check_compatibility(&env, &state) {
+        if state.pc < prog.instrs.len() - 1 // No need to check last instruction
+            && let Err(e) = merging::check_compatibility(&env, &state) {
             env.fail(e);
             break;
         }

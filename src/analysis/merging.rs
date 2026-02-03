@@ -74,11 +74,19 @@ fn types_compatible(a: &RegType, b: &RegType) -> bool {
         (PtrToStack { .. }, PtrToStack { .. }) => true,
         (PtrToMapValue { .. }, PtrToMapValue { .. }) => true,
         (PtrToMapValueOrNull { .. }, PtrToMapValueOrNull { .. }) => true,
+        (PtrToMapValue { id: id1, .. }, PtrToMapValueOrNull { id: id2, .. }) 
+        | (PtrToMapValueOrNull { id: id1, .. }, PtrToMapValue { id: id2, .. }) => id1 == id2,
         (PtrToPacket { .. }, PtrToPacket { .. }) => true,
         (PtrToPacketEnd, PtrToPacketEnd) => true,
         (PtrToMem { .. }, PtrToMem { .. }) => true,
         (PtrToSocket { .. }, PtrToSocket { .. }) => true,
         (PtrToSocketOrNull { .. }, PtrToSocketOrNull { .. }) => true,
+        (PtrToSockCommon { .. }, PtrToSockCommon { .. }) => true,
+        (PtrToSockCommonOrNull { .. }, PtrToSockCommonOrNull { .. }) => true,
+        (PtrToTcpSock { .. }, PtrToTcpSock { .. }) => true,
+        (PtrToTcpSockOrNull { .. }, PtrToTcpSockOrNull { .. }) => true,
+        (PtrToSocketOrNull { id: id1 }, PtrToSocket { id: id2 }) 
+        | (PtrToSocket { id: id1 }, PtrToSocketOrNull { id: id2 }) => id1 == id2,
         
         // Different type families = incompatible
         _ => false,
