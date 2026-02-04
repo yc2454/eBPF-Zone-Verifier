@@ -85,7 +85,7 @@ impl BtfType {
     pub fn kind(&self) -> u8 { ((self.info >> 24) & 0x1f) as u8 }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct BtfContext {
     pub types: HashMap<u32, BtfType>,
     pub strings: Vec<u8>,

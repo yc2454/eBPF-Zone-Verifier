@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::analysis;
 use crate::analysis::machine::context::{default_exec_ctx};
 use crate::common::constants;
-use crate::ast::ProgramKind;
+use crate::ast::{AttachKind, ProgramKind};
 use crate::parsing::bpf_to_ast::{lower_raw_to_program, LowerErrorKind};
 use crate::parsing::btf::{BtfContext, BtfMember, BtfType};
 use crate::common::config::VerifierConfig;
@@ -39,6 +39,7 @@ pub struct JsonTestCase {
     pub errstr: Option<String>,
     pub errstr_unpriv: Option<String>,
     pub prog_type: Option<u32>,
+    pub expected_attach_type: Option<u32>,
     pub flags: Option<u32>,
     pub fixups: Option<HashMap<String, Vec<usize>>>,
     pub insns: Vec<JsonInsn>,
@@ -468,10 +469,22 @@ fn build_exec_context(test: &JsonTestCase) -> (crate::analysis::machine::context
         Some(constants::BPF_PROG_TYPE_LSM) => ProgramKind::Lsm,
         Some(constants::BPF_PROG_TYPE_SK_LOOKUP) => ProgramKind::SkLookup,
         Some(constants::BPF_PROG_TYPE_RAW_TRACEPOINT_WRITABLE) => ProgramKind::RawTracepointWritable,
+        Some(constants::BPF_PROG_TYPE_TRACING) => ProgramKind::Tracing,
         // Default fallback (usually SocketFilter is the safe default for tests)
         _ => ProgramKind::SocketFilter, 
     };
     println!("Program Type: {:?}", ctx.prog_kind);
+
+    ctx.attach_kind = match test.expected_attach_type {
+        Some(constants::BPF_ATTACH_TYPE_TRACE_RAW_TP) => AttachKind::TraceRawTp,
+        _ => AttachKind::Unknown,
+    };
+
+    if test.flags.is_some() {
+        if test.flags.unwrap() == constants::F_NEEDS_EFFICIENT_UNALIGNED_ACCESS {
+            ctx.flags |= constants::F_NEEDS_EFFICIENT_UNALIGNED_ACCESS;
+        }
+    }
 
     ctx.btf = create_spin_lock_btf();
 

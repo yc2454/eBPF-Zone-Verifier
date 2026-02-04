@@ -292,8 +292,26 @@ pub const BPF_PROG_TYPE_SK_LOOKUP: u32 = 30;
 pub const BPF_PROG_TYPE_NETFILTER: u32 = 31;
 
 // ==================================================
+// BPF Attach types
+// ==================================================
+pub const BPF_ATTACH_TYPE_UNSPEC: u32 = 0;
+pub const BPF_ATTACH_TYPE_NONE: u32 = 1;
+pub const BPF_ATTACH_TYPE_SK_SKB: u32 = 2;
+pub const BPF_ATTACH_TYPE_SK_MSG: u32 = 3;
+pub const BPF_ATTACH_TYPE_SK_REUSEPORT: u32 = 4;
+pub const BPF_ATTACH_TYPE_SK_LOOKUP: u32 = 5;
+pub const BPF_ATTACH_TYPE_TRACE_RAW_TP: u32 = 24;
+
+
+// ==================================================
 // BTF Constants
 // ==================================================
 
 pub const BTF_KIND_INT: u8 = 1;
 pub const BTF_KIND_STRUCT: u8 = 4;
+
+// ==================================================
+// BPF Test flags
+// ==================================================
+pub const F_NEEDS_EFFICIENT_UNALIGNED_ACCESS: u32 = 1 << 0;
+pub const F_LOAD_WITH_STRICT_ALIGNMENT: u32 = 1 << 1;

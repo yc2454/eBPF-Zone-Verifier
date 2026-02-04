@@ -46,7 +46,7 @@ pub fn check_load(
                 if let Some(end_reg) = end_reg_opt {
                     // Need: base + access_end <= data_end
                     // i.e.: base - data_end <= -access_end
-                    let required_bound = -access_end;
+                    let required_bound = access_end;
                     let (_, ub) = get_relative_bound(&state.dbm, base, *end_reg);
                     if let Some(upper) = ub { 
                         if upper <= required_bound { 
@@ -61,7 +61,7 @@ pub fn check_load(
             }
 
             // Alignment check
-            if !check_packet_alignment(state, base, off, size) {
+            if !ctx.has_flag(constants::F_NEEDS_EFFICIENT_UNALIGNED_ACCESS) && !check_packet_alignment(state, base, off, size) {
                 env.fail(VerificationError::MisalignedPacketAccess { pc, off, size });
                 return;
             }

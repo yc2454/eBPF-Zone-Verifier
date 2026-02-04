@@ -74,10 +74,12 @@ pub(crate) fn transfer_if(
         };
     }
 
+    println!("---------------------------------------------------");
     println!("THEN BRANCH STATE: --------------------------------");
     state_then.dbm.pretty_print();
     println!("ELSE BRANCH STATE: --------------------------------");
     state_else.dbm.pretty_print();
+    println!("---------------------------------------------------");
 
     // Return only consistent states (the ORIGINAL logic)
     let mut out = Vec::new();

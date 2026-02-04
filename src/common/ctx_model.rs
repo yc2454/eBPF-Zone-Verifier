@@ -501,3 +501,32 @@ pub fn is_valid_ctx_write(prog_kind: ProgramKind, off: i16, size: i64) -> bool {
         .map(|info| info.writable)
         .unwrap_or(false)
 }
+
+// pub fn validate_packet_access(prog_kind: ProgramKind, off: i16, size: i64, is_write: bool) -> bool {
+//     let ctx_kind = prog_kind.context_kind();
+
+//     let fields = match get_field_table(ctx_kind) {
+//         Some(f) => f,
+//         None => {
+//             return false
+//         }
+//     };
+
+//     let packet_start = fields.iter().find(|f| f.kind == CtxFieldKind::PacketStart);
+//     let packet_end = fields.iter().find(|f| f.kind == CtxFieldKind::PacketEnd);
+
+//     if let (Some(packet_start), Some(packet_end)) = (packet_start, packet_end) {
+//         let access_end = off + size as i16;
+//         if access_end <= packet_end.offset && off >= packet_start.offset {
+//             if is_write{
+//                 return packet_start.writable
+//             } else {
+//                 return packet_start.readable
+//             }
+//         } else {
+//             return false
+//         }
+//     } else {
+//         false
+//     }
+// }

@@ -6,6 +6,7 @@ use crate::analysis::machine::env::{VerifierEnv, VerificationError};
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::transfer::types::update_call_rel_types;
+use crate::ast::{Program, ProgramKind, AttachKind};
 use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, is_zero, nonneg, get_bounds, positive};
 use crate::zone::tnum::{Tnum};
 use crate::analysis::transfer::access;
@@ -968,6 +969,20 @@ pub(crate) fn transfer_call(
     if helper == constants::BPF_SPIN_LOCK || helper == constants::BPF_SPIN_UNLOCK {
         if !check_and_handle_spin_lock(env, &mut state, helper) {
             return vec![];
+        }
+    }
+
+    // bpf_d_path is restrictive
+    println!("THE CURRENT EXECUTION CONTEXT: {:?}", env.ctx);
+    if helper == constants::BPF_D_PATH {
+        if !matches!(env.ctx.prog_kind, ProgramKind::Tracing | ProgramKind::Lsm) {
+            env.fail(VerificationError::HelperNotAllowedForProgram { pc, helper, kind: env.ctx.prog_kind });
+            return vec![];
+        } else {
+            if matches!(env.ctx.attach_kind, AttachKind::TraceRawTp) {
+                env.fail(VerificationError::HelperNotAllowedForProgram { pc, helper, kind: env.ctx.prog_kind });
+                return vec![];
+            }
         }
     }
     

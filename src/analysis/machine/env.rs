@@ -1,6 +1,6 @@
 use crate::analysis::machine::history::History;
 // src/analysis/env.rs
-use crate::ast::{Program};
+use crate::ast::{Program, ProgramKind};
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::context::ExecContext;
 use std::collections::{HashMap, HashSet};
@@ -54,6 +54,7 @@ pub enum VerificationError {
     SubprogError { e: SubprogError },
     CannotReturnStackPointer { pc: usize },
     SpillToCaller{ pc: usize },
+    HelperNotAllowedForProgram { pc: usize, helper: u32, kind: ProgramKind },
 }
 
 impl VerificationError {
@@ -190,6 +191,9 @@ impl VerificationError {
             }
             VerificationError::SpillToCaller { pc } => {
                 format!("Spill to caller at pc {}", pc)
+            }
+            VerificationError::HelperNotAllowedForProgram { pc, helper, kind } => {
+                format!("Helper {} not allowed for program {:?} at pc {}", helper, kind, pc)
             }
         }
     }

@@ -309,15 +309,29 @@ struct bpf_insn {
 // Test-specific macros (from test_verifier.c)
 // ============================================================================
 
-// Direct packet access setup: R2 = skb->data, R3 = skb->data_end
-#define BPF_DIRECT_PKT_R2 \
-    BPF_LDX_MEM(BPF_W, BPF_REG_2, BPF_REG_1, offsetof(struct __sk_buff, data)), \
-    BPF_LDX_MEM(BPF_W, BPF_REG_3, BPF_REG_1, offsetof(struct __sk_buff, data_end))
+/* BPF_DIRECT_PKT_R2 contains 7 instructions, it initializes default return
+ * value into 0 and does necessary preparation for direct packet access
+ * through r2. The allowed access range is 8 bytes.
+ */
+#define BPF_DIRECT_PKT_R2                                               \
+    BPF_MOV64_IMM(BPF_REG_0, 0),                                        \
+    BPF_LDX_MEM(BPF_W, BPF_REG_2, BPF_REG_1,                            \
+                offsetof(struct __sk_buff, data)),                      \
+    BPF_LDX_MEM(BPF_W, BPF_REG_3, BPF_REG_1,                            \
+                offsetof(struct __sk_buff, data_end)),                  \
+    BPF_MOV64_REG(BPF_REG_4, BPF_REG_2),                                \
+    BPF_ALU64_IMM(BPF_ADD, BPF_REG_4, 8),                               \
+    BPF_JMP_REG(BPF_JLE, BPF_REG_4, BPF_REG_3, 1),                      \
+    BPF_EXIT_INSN()
 
-// Random number generation with zero extension
-#define BPF_RAND_UEXT_R7 \
-    BPF_RAW_INSN(BPF_JMP | BPF_CALL, 0, 0, 0, BPF_FUNC_get_prandom_u32), \
-    BPF_MOV64_REG(BPF_REG_7, BPF_REG_0)
+/* BPF_RAND_UEXT_R7 contains 4 instructions, it initializes R7 into a random
+ * positive u32, and zero-extend it into 64-bit.
+ */
+#define BPF_RAND_UEXT_R7                                                \
+    BPF_RAW_INSN(BPF_JMP | BPF_CALL, 0, 0, 0, BPF_FUNC_get_prandom_u32),\
+    BPF_MOV64_REG(BPF_REG_7, BPF_REG_0),                                \
+    BPF_ALU64_IMM(BPF_LSH, BPF_REG_7, 33),                              \
+    BPF_ALU64_IMM(BPF_RSH, BPF_REG_7, 33)
 
 // Random number generation with sign extension  
 #define BPF_RAND_SEXT_R7 \

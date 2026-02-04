@@ -202,6 +202,7 @@ pub enum ProgramKind {
     RawTracepointWritable,
     CgroupSockAddr,
     Lsm,
+    Tracing,
     #[default]
     Unknown
 }
@@ -217,6 +218,12 @@ pub enum ContextKind {
     BpfSockAddr,    // struct bpf_sock_addr
     PtRegs,         // struct pt_regs (kprobe)
     Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttachKind {
+    TraceRawTp,
+    Unknown
 }
 
 impl ProgramKind {
