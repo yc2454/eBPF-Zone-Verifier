@@ -314,10 +314,13 @@ fn check_stack_access(
     pc: usize,
     kind: AccessKind,
 ) {
+    // The frame depth is stored as a positive number (e.g., 300 means R10-300)
+    let current_frame_depth = -(state.total_stack_depth() as i64);
+
     match ptr_type_offset {
         Some(base_off) => {
             let actual_offset = base_off + instruction_offset;
-            let access_end = actual_offset + size;
+            let access_end = current_frame_depth + actual_offset + size;
 
             // Alignment check
             if actual_offset % size != 0 {
@@ -327,7 +330,8 @@ fn check_stack_access(
             
             // Bounds check
             if actual_offset < constants::BPF_STACK_MIN || access_end > constants::BPF_STACK_MAX {
-                env.fail(VerificationError::StackOutOfBounds { pc, off: instruction_offset, size });
+                error!(target: "app", "Stack access out of bounds at pc {}: off {} size {} (Known offset)", pc, actual_offset, size);
+                env.fail(VerificationError::StackOutOfBounds { pc, off: actual_offset, size });
                 return;
             }
             
@@ -344,6 +348,7 @@ fn check_stack_access(
                     let slot_type = state.stack.get_slot_type(slot);
                     if slot_type.is_pointer() {
                         if size != 8 {
+                            error!(target: "app", "Pointer read with invalid size at pc {}: off {} size {}", pc, actual_offset, size);
                             env.fail(VerificationError::InvalidStackRead { pc, offset: actual_offset });
                         }
                     }
@@ -357,13 +362,14 @@ fn check_stack_access(
             let safe = match (lo, hi) {
                 (Some(lower), Some(upper)) => {
                     let min_offset = lower + instruction_offset;
-                    let max_access_end = upper + instruction_offset + size;
+                    let max_access_end = current_frame_depth as i64 + upper + instruction_offset + size;
                     min_offset >= constants::BPF_STACK_MIN && max_access_end <= constants::BPF_STACK_MAX
                 }
                 _ => false,
             };
             
             if !safe {
+                error!(target: "app", "Stack access out of bounds at pc {}: off {} size {} (Unknown offset)", pc, instruction_offset, size);
                 env.fail(VerificationError::StackOutOfBounds { pc, off: instruction_offset, size });
                 return;
             }

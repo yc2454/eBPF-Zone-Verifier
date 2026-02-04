@@ -13,6 +13,21 @@ pub struct LockState {
     pub lock_offset: u32,   // offset of spin_lock within value (e.g., 4)
 }
 
+/// A saved call frame (caller's state when entering a subfunction)
+#[derive(Clone, Debug, Default)]
+pub struct CallFrame {
+    pub return_pc: usize,
+    pub stack: StackState,
+    pub frame_depth: u16,  // max bytes used in this frame
+}
+
+impl CallFrame {
+    pub fn to_string(&self) -> String {
+        format!("Return PC: {}, Frame Depth: {}, Spilled Slots: {:?}", 
+                self.return_pc, self.frame_depth, self.stack.slot_offsets())
+    }
+}
+
 /// Mirrors `struct bpf_verifier_state` (partially).
 /// Holds the snapshot of execution at a specific PC.
 #[derive(Clone, Debug)]
@@ -21,7 +36,7 @@ pub struct State {
     /// Mirrors `bpf_reg_state.type`
     pub types: TypeState,
 
-    // Stack state for spilled registers
+    // Stack state for spilled registers (for current frame)
     pub stack: StackState,
 
     /// 2. Numerical Domain (Values)
@@ -39,7 +54,10 @@ pub struct State {
     /// Call stack for BPF-to-BPF function calls.
     /// Stores return addresses (PC + 1 of CallRel instructions).
     /// Empty for main function; populated when entering subfunctions.
-    pub call_stack: Vec<usize>,
+    pub call_stack: Vec<CallFrame>,
+
+    /// Current frame's max stack depth (positive, e.g., 300 means accessed R10-300)
+    pub frame_depth: u16,
 
     /// Active references that must be released before exit
     pub active_refs: HashSet<u32>,
@@ -65,6 +83,7 @@ impl State {
             history_idx: None,
             tnums: tnums.clone(),
             call_stack: Vec::new(),
+            frame_depth: 0,
             active_refs: HashSet::new(),
             active_lock: None,
         }
@@ -177,6 +196,45 @@ impl State {
             true
         } else {
             false
+        }
+    }
+
+    /// Called on every stack access to track depth
+    pub fn update_frame_depth(&mut self, off: i16) {
+        if off < 0 {
+            let depth = (-off) as u16;
+            self.frame_depth = self.frame_depth.max(depth);
+        } else {
+            // Positive offsets do not affect frame depth
+        }
+    }
+
+    /// Total stack usage across all frames
+    pub fn total_stack_depth(&self) -> u16 {
+        let prev: u16 = self.call_stack.iter().map(|f| f.frame_depth).sum();
+        prev + self.frame_depth
+    }
+
+    /// Enter a subfunction
+    pub fn push_frame(&mut self, return_pc: usize) {
+        let frame = CallFrame {
+            return_pc,
+            stack: std::mem::take(&mut self.stack),
+            frame_depth: self.frame_depth,
+        };
+        self.call_stack.push(frame);
+        self.stack = StackState::new();
+        self.frame_depth = 0;
+    }
+
+    /// Return from a subfunction
+    pub fn pop_frame(&mut self) -> Option<usize> {
+        if let Some(frame) = self.call_stack.pop() {
+            self.stack = frame.stack;
+            self.frame_depth = frame.frame_depth;
+            Some(frame.return_pc)
+        } else {
+            None
         }
     }
      

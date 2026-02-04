@@ -1034,7 +1034,7 @@ pub(crate) fn transfer_call_rel(
     }
 
     // Push return address and jump to callee
-    state.call_stack.push(state.pc + 1);
+    state.push_frame(state.pc + 1);
     state.pc = target;
 
     // Only the "enter callee" path — return path comes from callee's Exit

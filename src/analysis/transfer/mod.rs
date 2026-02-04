@@ -176,7 +176,7 @@ fn transfer_exit(
         return vec![];
     }
 
-    if let Some(return_pc) = state.call_stack.pop() {
+    if let Some(return_pc) = state.pop_frame() {
         // Returning from subfunction — continue at caller's return site
         // R0 retains its current type (the actual return value)
         state.pc = return_pc;

@@ -16,7 +16,7 @@ pub struct SpilledReg {
     pub bounds: ScalarBounds,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct StackState {
     /// Spilled registers, keyed by stack offset
     pub slots: BTreeMap<i16, SpilledReg>,

@@ -32,7 +32,7 @@ fn visit_insn(
     // 1. NON-BRANCH INSTRUCTIONS (ALU, Load, Store)
     // Kernel: "All non-branch instructions have a single fall-through edge."
     // Logic: push_insn(t, t + 1, FALLTHROUGH, ...)
-    if !matches!(instr, Instr::Jmp { .. } | Instr::If { .. } | Instr::Exit | Instr::Call { .. }) {
+    if !matches!(instr, Instr::Jmp { .. } | Instr::If { .. } | Instr::Exit | Instr::Call { .. } | Instr::CallRel { .. }) {
         if pc + 1 < n { succs.push(pc + 1); }
         return Ok(succs);
     }

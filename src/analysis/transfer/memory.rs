@@ -108,6 +108,8 @@ pub(crate) fn transfer_store(
                 state.stack.clear_slot(off);
             }
         }
+        // Update frame depth
+        state.update_frame_depth(off);
     }
 
     let src_type = match src {
@@ -131,20 +133,20 @@ pub(crate) fn transfer_atomic(
     off: i16,
     src: Reg,
 ) -> Vec<State> {
-    // 0. Alignment check 
+    // Alignment check 
     if off % size.bytes() as i16 != 0 {
         env.fail(VerificationError::MisalignedAccess { pc: state.pc, off: off.into() });
         return vec![];
     }
 
-    // 1. Check readability
+    // Check readability
     if !check_reg_readable(env, &state, base) { return vec![]; }
     if !check_reg_readable(env, &state, src) { return vec![]; }
     if op == AtomicOp::CmpXchg {
         if !check_reg_readable(env, &state, Reg::R0) { return vec![]; }
     }
 
-    // 2. Check writability
+    // Check writability
     if op == AtomicOp::CmpXchg {
         if !check_reg_writable(env, &state, Reg::R0) { return vec![]; }
     } else if fetch {
@@ -153,20 +155,20 @@ pub(crate) fn transfer_atomic(
 
     let base_ty = state.types.get(base);
 
-    // 3. Context Pointer Check
+    // Context Pointer Check
     if matches!(base_ty, RegType::PtrToCtx) {
         env.fail(VerificationError::InvalidArgType { pc: state.pc, reg: base });
         return vec![];
     }
 
-    // 4. Memory Safety Check
+    // Memory Safety Check
     let access_size = size.bytes() as i64;
     access::check_load(env, &state, base, access_size, off);
     access::check_store(env, &state, base, access_size, off);
     if env.failed() { return vec![]; }
 
-    // 5. Try to reload spilled state BEFORE invalidating
-    //    (fetch reads the OLD value before the atomic op modifies it)
+    // Try to reload spilled state BEFORE invalidating
+    // (fetch reads the OLD value before the atomic op modifies it)
     let reloaded = if op == AtomicOp::CmpXchg {
         state.try_reload(Reg::R0, base, off, size)
     } else if fetch {
@@ -175,15 +177,10 @@ pub(crate) fn transfer_atomic(
         false
     };
 
-    // 6. Invalidate any spilled slot (atomic ops modify memory)
-    if base == Reg::R10 {
-        state.stack.clear_slot(off);
-    }
-
-    // 7. Update Memory State
+    // Update Memory State
     update_store_types(&mut state.stack, RegType::ScalarValue, size, base_ty, off);
 
-    // 8. Update Register State (The "Fetch" part)
+    // Update Register State (The "Fetch" part)
     update_atomic_op_types(&mut state.types, op, src, fetch);
     if op == AtomicOp::CmpXchg {
         if !reloaded {
@@ -195,6 +192,11 @@ pub(crate) fn transfer_atomic(
             forget(&mut state.dbm, src);
             state.set_tnum(src, Tnum::unknown());
         }
+    }
+
+    // Update frame depth if storing to stack
+    if base == Reg::R10 {
+        state.update_frame_depth(off);
     }
 
     state.pc += 1;
