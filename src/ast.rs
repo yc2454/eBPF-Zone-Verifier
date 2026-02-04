@@ -341,7 +341,7 @@ impl fmt::Display for Instr {
 
                 let src_str = match src {
                     Operand::Reg(r) => r.name().to_string(),
-                    Operand::Imm(i) => format!("{}", i),
+                    Operand::Imm(i) => format!("0x{:016x}", i),
                 };
 
                 // dst.name() is "r0", "r1", ...
@@ -392,13 +392,13 @@ impl fmt::Display for Instr {
                 };
                 let right_str = match right {
                     Operand::Reg(r) => r.name().to_string(),
-                    Operand::Imm(i) => format!("{}", i),
+                    Operand::Imm(i) => format!("0x{:016x}", i),
                 };
                 let width_str = match width {
-                    Width::W32 => "w",
-                    Width::W64 => "r",
+                    Width::W32 => "32",
+                    Width::W64 => "64",
                 };
-                write!(f, "if {} {} {} {} goto {}", left.name(), op_str, right_str, width_str, target)
+                write!(f, "if {} {}{} {} goto {}", left.name(), op_str, width_str, right_str, target)
             },
 
             Jmp { target } =>
@@ -423,7 +423,7 @@ impl fmt::Display for Instr {
                 };
                 let src_str = match src {
                     Operand::Reg(r) => r.name().to_string(),
-                    Operand::Imm(i) => format!("{}", i),
+                    Operand::Imm(i) => format!("0x{:016x}", i),
                 };
                 write!(f, "*({} *)({} + {}) = {}", size_str, base.name(), off, src_str)
             },

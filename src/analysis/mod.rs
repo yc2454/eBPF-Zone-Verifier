@@ -127,7 +127,7 @@ pub fn analyze_program(
         if config.verbosity >= 2 {
             state.dbm.pretty_print();
         }
-        debug!(target: "app", "|PC:{}| Instr: {:?}\nRegs: {:?}\nTnums: {:?}\nCall Frame: {:?}\n", 
+        debug!(target: "app", "|PC:{}| Instr: [[{}]]\nRegs: {:?}\nTnums: {:?}\nCall Frame: {:?}\n", 
                state.pc, instr, state.types.reg_types_str(), state.tnums, state.call_stack);
 
         // F. Transfer Function

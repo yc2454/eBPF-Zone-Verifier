@@ -2,13 +2,15 @@
 //
 // If/branch handling, constraint application, interval checks
 
+use log::{warn};
+
 use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::state::State;
 use crate::ast::{Instr, CmpOp, Operand, Width};
 use crate::zone::domain::{
     Reg, get_bounds, assume_eq_const, assume_ge_const, assume_le_const,
     assume_less_than, assume_ge_var, assume_le_var, assume_gt_var,
-    assume_le_var_plus_const, assign_eq, nonneg
+    assume_le_var_plus_const, assign_eq, nonneg, get_constant_value
 };
 use crate::zone::dbm::Dbm;
 use crate::zone::tnum::Tnum;
@@ -74,17 +76,10 @@ pub(crate) fn transfer_if(
         };
     }
 
-    println!("---------------------------------------------------");
-    println!("THEN BRANCH STATE: --------------------------------");
-    state_then.dbm.pretty_print();
-    println!("ELSE BRANCH STATE: --------------------------------");
-    state_else.dbm.pretty_print();
-    println!("---------------------------------------------------");
-
     // Return only consistent states (the ORIGINAL logic)
     let mut out = Vec::new();
-    if !state_else.dbm.is_inconsistent() { out.push(state_else); }
-    if !state_then.dbm.is_inconsistent() { out.push(state_then); }
+    if !state_else.dbm.is_inconsistent() { out.push(state_else); } else { warn!("Else branch is inconsistent") }
+    if !state_then.dbm.is_inconsistent() { out.push(state_then); } else { warn!("Then branch is inconsistent") }
     out
 }
 
@@ -100,14 +95,13 @@ fn condition_outcome(
     op: CmpOp,
     right: &Operand,
 ) -> Option<bool> {
+    // Don't eliminate paths based on pointer comparisons
     if state.types.get(left).is_pointer() {
         return None;
     }
     
-    let left_tnum = match width {
-        Width::W32 => state.get_tnum(left).trunc32(),
-        Width::W64 => state.get_tnum(left),
-    };
+    // Get combined bounds from tnum and DBM
+    let (min, max) = get_combined_bounds(state, left, width)?;
     
     match right {
         Operand::Imm(imm) => {
@@ -115,9 +109,8 @@ fn condition_outcome(
                 Width::W32 => (*imm as u32) as u64,
                 Width::W64 => *imm as u64,
             };
-            
-            let min = left_tnum.min_value();
-            let max = left_tnum.max_value();
+
+            println!("min {}, max {}, imm {}", min, max, imm_val);
             
             match op {
                 CmpOp::ULt => {
@@ -130,16 +123,6 @@ fn condition_outcome(
                     else if max < imm_val { Some(false) }
                     else { None }
                 }
-                CmpOp::Eq => {
-                    if left_tnum.is_const() && left_tnum.value == imm_val { Some(true) }
-                    else if !left_tnum.could_equal(imm_val) { Some(false) }
-                    else { None }
-                }
-                CmpOp::Ne => {
-                    if left_tnum.is_const() && left_tnum.value != imm_val { Some(true) }
-                    else if !left_tnum.could_equal(imm_val) { Some(false) }
-                    else { None }
-                }
                 CmpOp::ULe => {
                     if max <= imm_val { Some(true) }
                     else if min > imm_val { Some(false) }
@@ -150,15 +133,82 @@ fn condition_outcome(
                     else if max <= imm_val { Some(false) }
                     else { None }
                 }
-                _ => None,
+                CmpOp::Eq => {
+                    if min == max && min == imm_val { Some(true) }
+                    else if min > imm_val || max < imm_val { Some(false) }
+                    else { None }
+                }
+                CmpOp::Ne => {
+                    if min > imm_val || max < imm_val { Some(true) }
+                    else if min == max && min == imm_val { Some(false) }
+                    else { None }
+                }
+                // Signed comparisons - only if we can trust the bounds
+                CmpOp::SLt | CmpOp::SLe | CmpOp::SGt | CmpOp::SGe => {
+                    // More complex - need signed interpretation
+                    // Skip for now, or handle carefully
+                    None
+                }
+                CmpOp::Test => None,
             }
         }
         Operand::Reg(_r) => {
-            // Could also compare tnum ranges between two registers
-            None // Start conservative
+            // Could compare ranges of two registers
+            // For now, conservative
+            None
         }
     }
+}
+
+/// Get combined bounds from tnum and DBM, as unsigned values.
+/// Returns None if we can't safely determine bounds.
+fn get_combined_bounds(state: &State, reg: Reg, width: Width) -> Option<(u64, u64)> {
+    // Tnum bounds
+    let tnum = match width {
+        Width::W32 => state.get_tnum(reg).trunc32(),
+        Width::W64 => state.get_tnum(reg),
+    };
+    let tnum_min = tnum.min_value();
+    let tnum_max = tnum.max_value();
     
+    // DBM bounds
+    let (dbm_lo, dbm_hi) = get_bounds(&state.dbm, reg);
+    
+    // Combine bounds
+    match (dbm_lo, dbm_hi) {
+        (Some(lo), Some(hi)) => {
+            // For unsigned comparison, DBM bounds only useful if non-negative
+            if lo >= 0 {
+                let dbm_min = lo as u64;
+                let dbm_max = hi as u64;
+                
+                // For W32, also check DBM is in u32 range
+                if width == Width::W32 && dbm_max > 0xFFFFFFFF {
+                    return Some((tnum_min, tnum_max));
+                }
+                
+                // Intersect the ranges
+                let combined_min = tnum_min.max(dbm_min);
+                let combined_max = tnum_max.min(dbm_max);
+                
+                // Sanity check - ranges should overlap
+                if combined_min <= combined_max {
+                    Some((combined_min, combined_max))
+                } else {
+                    // Contradiction - shouldn't happen if state is consistent
+                    // Return tnum bounds as fallback
+                    Some((tnum_min, tnum_max))
+                }
+            } else {
+                // DBM has negative values - can't safely use for unsigned comparison
+                Some((tnum_min, tnum_max))
+            }
+        }
+        _ => {
+            // No DBM bounds, use tnum only
+            Some((tnum_min, tnum_max))
+        }
+    }
 }
 
 /// Check if we can safely apply signed constraints for 32-bit comparisons.
@@ -367,6 +417,14 @@ fn apply_reg_constraints(
                 }
             }
             _ => {}
+        }
+        if let Some(right_val) = get_constant_value(&then_s.dbm, right) {
+            let right_val_trunc = right_val as u32;
+            // Only apply if left fits in u32 (so its truncation is a no-op)
+            if fits_in_u32_range(&then_s.dbm, left) {
+                apply_imm_constraints(then_s, else_s, left, op, width, right_val_trunc as i64);
+                return;
+            }
         }
     }
     

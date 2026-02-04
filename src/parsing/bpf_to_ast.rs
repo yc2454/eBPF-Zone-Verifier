@@ -651,13 +651,13 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 }
             },
 
-            // 0x2e: JLT_X (if dst < src goto target)
+            // 0x2e: JGT_X (if dst > (u32)src goto target)
             0x2e => {
                 let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
                 Instr::If {
-                    width: Width::W64,
+                    width: Width::W32,
                     left: dst,
-                    op: CmpOp::ULt,
+                    op: CmpOp::UGt,
                     right: Operand::Reg(src),
                     target,
                 }

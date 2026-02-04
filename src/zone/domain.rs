@@ -163,6 +163,15 @@ pub fn get_relative_bound(dbm: &Dbm, x: Reg, y: Reg) -> (Option<i64>, Option<i64
     (lb_opt, ub_opt)
 }
 
+pub fn get_constant_value(dbm: &Dbm, x: Reg) -> Option<i64> {
+    if let (Some(lo), Some(hi)) = get_bounds(dbm, x) {
+        if lo == hi {
+            return Some(lo);
+        }
+    }
+    None
+}
+
 pub fn is_zero(dbm: &Dbm, x: Reg) -> bool {
     if let (Some(l), Some(u)) = get_bounds(dbm, x) {
         return l == u && l == 0;

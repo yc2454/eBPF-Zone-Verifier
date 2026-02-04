@@ -555,7 +555,7 @@ pub fn run_test(test: &JsonTestCase, config: &VerifierConfig) -> TestResult {
 
     println!("Test '{}': Lowered Program AST:", test.name);
     for (instr, idx) in program.instrs.iter().zip(0..) {
-        println!("  {:04}: {:?}", idx, instr);
+        println!("  {:04}: {}", idx, instr);
     }
 
     // Build execution context
