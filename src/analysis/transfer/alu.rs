@@ -89,7 +89,12 @@ pub(crate) fn transfer_alu(
         state.dbm.dump_matrix();
         vec![]
     } else {
-        state.pc += 1;
+        let next_pc = if env.invalid_pc_set.contains(&(state.pc + 1)) {
+            state.pc + 2
+        } else {
+            state.pc + 1
+        };
+        state.pc = next_pc;
         vec![state]
     }
 }
