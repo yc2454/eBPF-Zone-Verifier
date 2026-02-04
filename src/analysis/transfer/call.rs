@@ -11,7 +11,7 @@ use crate::zone::tnum::{Tnum};
 use crate::analysis::transfer::access;
 use crate::parsing::btf::SpecialFieldKind;
 use crate::common::constants;
-use log::{error, info, warn, debug};
+use log::{error, info, warn};
 
 use super::types::{update_call_types, helper_invalidates_packets};
 use super::common::check_regs_readable;
@@ -72,6 +72,14 @@ pub enum BpfArgType {
     PtrToMemOrNull,
     /// PTR_TO_STACK | PTR_MAYBE_NULL
     PtrToStackOrNull,
+
+    // ---- Fixed-size pointer types ----
+    /// pointer to initialized long/u64 value (helper reads from it)
+    PtrToLong,
+    // /// pointer to long/u64 that helper will write to (doesn't need to be initialized)
+    // PtrToUninitLong,
+    // /// PTR_TO_LONG | PTR_MAYBE_NULL
+    // PtrToLongOrNull,
 }
 
 // ============================================================================
@@ -323,6 +331,14 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             Anything,    // R3: arg1
             Anything,    // R4: arg2
             Anything,    // R5: arg3
+        ]),
+
+        constants::BPF_STRTOUL => HelperSignature::new([
+            PtrToMem,
+            ConstSize,
+            Anything,
+            PtrToLong,
+            DontCare,
         ]),
 
         _ => return None,
@@ -658,6 +674,28 @@ fn validate_single_arg(
                 return validate_readable_mem(env, state, types, pc, reg, actual, None)
             }
             validate_readable_mem(env, state, types, pc, reg, actual, None)
+        }
+
+        PtrToLong => {
+            if let RegType::PtrToStack { offset, frame_level } = actual {
+                access::check_stack_access(
+                    env, 
+                    state, 
+                    reg, 
+                    offset, 
+                    0, 
+                    8, // PtrToLong is 8-byte access
+                    pc, 
+                    access::AccessKind::HelperOutput,
+                    frame_level
+                );
+                !env.failed()
+            } else {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!("[Verifier] pc {}: R{} expected PTR_TO_LONG, got {:?}", 
+                       pc, arg_index + 1, actual);
+                false
+            }
         }
     }
 }
