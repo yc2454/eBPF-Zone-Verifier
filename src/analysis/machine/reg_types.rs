@@ -1,5 +1,4 @@
 // src/analysis/reg_types.rs
-use std::collections::{BTreeMap};
 use crate::zone::domain::Reg;
 use crate::common::ctx_model::MemRegionId;
 
@@ -10,7 +9,7 @@ pub enum RegType {
     NotInit,        
     ScalarValue,    
     PtrToCtx,       
-    PtrToStack { offset: Option<i64> },  
+    PtrToStack { offset: Option<i64>, frame_level: usize },  
     PtrToPacket { 
         id: u32,
         is_base: bool,

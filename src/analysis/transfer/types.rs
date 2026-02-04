@@ -34,11 +34,7 @@ pub(crate) fn update_alu_types(
                 Operand::Reg(r) => { 
                     let src_ty = in_types.get(*r);
                     // Special case: R10 (frame pointer) becomes PtrToStack { offset: 0 }
-                    if *r == Reg::R10 {
-                        types.set(dst, RegType::PtrToStack { offset: Some(0) });
-                    } else {
-                        types.set(dst, src_ty); 
-                    }
+                    types.set(dst, src_ty); 
                 }
                 Operand::Imm(_) => {
                     let reloc = env.ctx.pc_to_reloc.get(&pc)
@@ -95,11 +91,11 @@ pub(crate) fn update_alu_types(
                             types.set(dst, RegType::ScalarValue);
                         }
                     },
-                    (RegType::PtrToStack { offset }, Operand::Imm(k)) => {
-                        types.set(dst, RegType::PtrToStack { offset: offset.map(|o| o + k) });
+                    (RegType::PtrToStack { offset, frame_level }, Operand::Imm(k)) => {
+                        types.set(dst, RegType::PtrToStack { offset: offset.map(|o| o + k), frame_level });
                     },
-                    (RegType::PtrToStack { offset: _ }, Operand::Reg(_)) => {
-                        types.set(dst, RegType::PtrToStack { offset: None });
+                    (RegType::PtrToStack { offset: _, frame_level }, Operand::Reg(_)) => {
+                        types.set(dst, RegType::PtrToStack { offset: None, frame_level });
                     },
                     (RegType::PtrToCtx, Operand::Imm(0)) => {
                         types.set(dst, RegType::PtrToCtx);
@@ -138,8 +134,8 @@ pub(crate) fn update_alu_types(
                     RegType::PtrToPacket { id, is_base: _ } => {
                         types.set(dst, RegType::PtrToPacket { id, is_base: false });
                     },
-                    RegType::PtrToStack { offset } => {
-                        types.set(dst, RegType::PtrToStack { offset: offset.map(|o| o - k) });
+                    RegType::PtrToStack { offset, frame_level } => {
+                        types.set(dst, RegType::PtrToStack { offset: offset.map(|o| o - k), frame_level });
                     },
                     RegType::PtrToCtx => {
                         if *k == 0 {
@@ -201,7 +197,7 @@ pub(crate) fn update_load_types(
                 types.set(dst, RegType::ScalarValue);
             }
         }
-        RegType::PtrToStack { offset: base_offset } => {
+        RegType::PtrToStack { offset: base_offset, .. } => {
             match base_offset {
                 Some(base) => {
                     let actual_slot = base + (off as i64);
@@ -231,7 +227,7 @@ pub(crate) fn update_store_types(
     off: i16
 ) {
     let stack_slot = match base_type {
-        RegType::PtrToStack { offset } => offset.map(|o| o + (off as i64)),
+        RegType::PtrToStack { offset, .. } => offset.map(|o| o + (off as i64)),
         _ => None,
     };
     
@@ -344,7 +340,7 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
         constants::BPF_SKB_LOAD_BYTES => {
             let mem_ptr_ty = in_types.get(Reg::R3);
             match mem_ptr_ty {
-                RegType::PtrToStack { offset: Some(off) } => {
+                RegType::PtrToStack { offset: Some(off), .. } => {
                     let slot = off as i16;
                     state.stack.set_slot_type(slot, RegType::ScalarValue);
                 }
@@ -369,6 +365,10 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
         }
         state.stack.invalidate_packet_pointers();
     }
+}
+
+pub(crate) fn update_call_rel_types(state: &mut State) {
+    state.types.set(Reg::R10, RegType::PtrToStack { offset: Some(0), frame_level: state.current_frame_level() });
 }
 
 pub(crate) fn update_packet_load_types(types: &mut TypeState) {

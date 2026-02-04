@@ -5,6 +5,7 @@
 use crate::analysis::machine::env::{VerifierEnv, VerificationError};
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
+use crate::analysis::transfer::types::update_call_rel_types;
 use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, is_zero, nonneg, get_bounds, positive};
 use crate::zone::tnum::{Tnum};
 use crate::analysis::transfer::access;
@@ -672,13 +673,13 @@ fn validate_readable_mem(
     size: Option<u32>,
 ) -> bool {
     match reg_type {
-        RegType::PtrToStack { offset: Some(off) } => {
+        RegType::PtrToStack { offset: Some(off), .. } => {
             if let Some(sz) = size {
                 access::check_stack_arg_readable(env, state, off, sz as i64, pc);
             }
             true
         }
-        RegType::PtrToStack { offset: None } => {
+        RegType::PtrToStack { offset: None, .. } => {
             // Unknown stack offset - reject conservatively
             env.fail(VerificationError::UninitializedStackRead { pc, offset: 0 });
             false
@@ -733,11 +734,11 @@ fn validate_writable_mem(
     _size: Option<u32>,
 ) -> bool {
     match reg_type {
-        RegType::PtrToStack { offset: Some(_) } => {
+        RegType::PtrToStack { offset: Some(_), .. } => {
             // Stack is writable
             true
         }
-        RegType::PtrToStack { offset: None } => {
+        RegType::PtrToStack { offset: None, .. } => {
             // Unknown stack offset
             env.fail(VerificationError::UninitializedStackRead { pc, offset: 0 });
             false
@@ -1036,6 +1037,9 @@ pub(crate) fn transfer_call_rel(
 
     // Push return address and jump to callee
     state.push_frame(state.pc + 1);
+
+    // Update types
+    update_call_rel_types(&mut state);
     state.pc = target;
 
     // Only the "enter callee" path — return path comes from callee's Exit
@@ -1133,7 +1137,7 @@ fn check_ptr_access_size(
     pc: usize,
 ) -> bool {
     match ptr_type {
-        RegType::PtrToStack { offset: Some(off) } => {
+        RegType::PtrToStack { offset: Some(off), .. } => {
             // Stack: check [off, off + size) is within stack bounds
             // Stack grows down, so valid range is [-512, 0)
             let end_offset = off + size as i64;
@@ -1148,7 +1152,7 @@ fn check_ptr_access_size(
             !env.failed()
         }
         
-        RegType::PtrToStack { offset: None } => {
+        RegType::PtrToStack { offset: None, .. } => {
             env.fail(VerificationError::InvalidArgType { pc, reg: ptr_reg });
             error!("[Verifier] pc {}: {:?} has unknown stack offset", pc, ptr_reg);
             false

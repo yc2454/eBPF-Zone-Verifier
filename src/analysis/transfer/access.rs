@@ -8,7 +8,7 @@ use crate::zone::domain::{get_bounds, get_relative_bound};
 use crate::analysis::machine::env::VerificationError;
 use crate::common::constants;
 use crate::common::ctx_model;
-use log::{error, info};
+use log::{error};
 use RegType::*;
 use crate::zone::domain::Reg;
 
@@ -26,8 +26,8 @@ pub fn check_load(
     let pc = state.pc;
 
     match base_type {
-        PtrToStack { offset } => {
-            check_stack_access(env, state, base, offset, off as i64, size, pc, AccessKind::Read);
+        PtrToStack { offset, frame_level } => {
+            check_stack_access(env, state, base, offset, off as i64, size, pc, AccessKind::Read, frame_level);
         }
         PtrToPacket { id: _, is_base: _ } => {
             let access_end = off as i64 + size;
@@ -226,9 +226,8 @@ pub fn check_store(
                 env.fail(VerificationError::MapNotFound { pc, map_idx })
             }
         }
-        PtrToStack { offset } => {
-            info!("Checking stack store");
-            check_stack_access(env, state, base, offset, off as i64, size as i64, pc, AccessKind::Write);
+        PtrToStack { offset, frame_level } => {
+            check_stack_access(env, state, base, offset, off as i64, size as i64, pc, AccessKind::Write, frame_level);
         }
         PtrToPacket { id: _, is_base: _ } => {
             // Check if the program type allows direct packet writes
@@ -313,7 +312,12 @@ fn check_stack_access(
     size: i64,
     pc: usize,
     kind: AccessKind,
+    pointer_frame_lv: usize
 ) {
+    if state.current_frame_level() > pointer_frame_lv {
+        env.fail(VerificationError::SpillToCaller { pc });
+        return;
+    }
     // The frame depth is stored as a positive number (e.g., 300 means R10-300)
     let current_frame_depth = -(state.total_stack_depth() as i64);
 
@@ -414,6 +418,7 @@ pub fn check_stack_arg_readable(
         size,
         pc,
         AccessKind::Read,
+        state.current_frame_level()
     )
 }
 

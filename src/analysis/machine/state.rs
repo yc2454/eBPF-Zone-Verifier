@@ -238,5 +238,9 @@ impl State {
     pub fn call_frame_empty(&self) -> bool {
         self.call_stack.is_empty()
     }
+
+    pub fn current_frame_level(&self) -> usize {
+        self.call_stack.len()
+    }
      
 }

@@ -128,11 +128,11 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
 
         // Stack pointers
         (
-            PtrToStack { offset: o1 },
-            PtrToStack { offset: o2 },
+            PtrToStack { offset: o1, frame_level: fl1 },
+            PtrToStack { offset: o2, frame_level: fl2 },
         ) => match (o1, o2) {
-            (None, _) => true,
-            (Some(a), Some(b)) => a == b,
+            (None, _) => fl1 == fl2,
+            (Some(a), Some(b)) => a == b && fl1 == fl2,
             (Some(_), None) => false,
         },
 

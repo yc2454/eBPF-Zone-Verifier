@@ -53,6 +53,7 @@ pub enum VerificationError {
     RelocationInfoMissing { pc: usize },
     SubprogError { e: SubprogError },
     CannotReturnStackPointer { pc: usize },
+    SpillToCaller{ pc: usize },
 }
 
 impl VerificationError {
@@ -186,6 +187,9 @@ impl VerificationError {
             }
             VerificationError::CannotReturnStackPointer { pc } => {
                 format!("Cannot return stack pointer in R0 at pc {}", pc)
+            }
+            VerificationError::SpillToCaller { pc } => {
+                format!("Spill to caller at pc {}", pc)
             }
         }
     }

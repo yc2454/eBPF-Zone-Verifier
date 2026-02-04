@@ -53,7 +53,7 @@ pub fn analyze_program(
     // 2. Initialize Entry State
     let mut initial_state = State::new(entry_dbm, 0);
     initial_state.types.set(Reg::R1, RegType::PtrToCtx);
-    initial_state.types.set(Reg::R10, RegType::PtrToStack { offset: Some(0) });
+    initial_state.types.set(Reg::R10, RegType::PtrToStack { offset: Some(0), frame_level: 0 });
 
     // 3. Setup Worklist
     let mut worklist = VecDeque::new();

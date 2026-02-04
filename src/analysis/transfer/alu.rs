@@ -631,7 +631,7 @@ fn apply_w32_truncation(dbm: &mut Dbm, dst: Reg) {
 fn is_clean_ptr(types: &TypeState, reg: Reg) -> bool {
     match types.get(reg) {
         RegType::PtrToMapValue { offset: Some(0), .. } |
-        RegType::PtrToStack { offset: Some(0) } |
+        RegType::PtrToStack { offset: Some(0), .. } |
         RegType::PtrToPacket { .. } => true,
         _ => false,
     }
