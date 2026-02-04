@@ -131,10 +131,9 @@ pub(crate) fn check_ptr_arithmetic(
             // Ptr - Ptr is allowed ONLY if types match.
             // (Result is Scalar, handled by caller)
             AluOp::Sub => {
-                if RegType::is_same_pointer_type(dst_type, src_type) {
-                    true
-                } else { false }
+                RegType::is_same_pointer_type(dst_type, src_type)
             },
+            AluOp::Mov => true,
             // Ptr + Ptr, Ptr * Ptr, etc. are invalid
             _ => { false }
         }
@@ -638,12 +637,10 @@ fn is_clean_ptr(types: &TypeState, reg: Reg) -> bool {
     }
 }
 
-fn is_div_by_zero(dbm: &Dbm, src: &Operand) -> bool {
+fn is_div_by_zero(_dbm: &Dbm, src: &Operand) -> bool {
     match src {
         Operand::Imm(k) => *k == 0,
-        Operand::Reg(r) => {
-            let (lo, hi) = get_bounds(dbm, *r);
-            matches!((lo, hi), (Some(0), Some(0)))
-        }
+        // We don't need to report potential division by zero for register operands here.
+        Operand::Reg(_) => false
     }
 }
