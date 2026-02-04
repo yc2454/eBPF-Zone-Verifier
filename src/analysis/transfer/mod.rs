@@ -176,6 +176,18 @@ fn transfer_exit(
         return vec![];
     }
 
+    if state.stack_frame_count() >= 8 {
+        env.fail(VerificationError::MaxCallDepthExceeded { pc: state.pc });
+        return vec![];
+    }
+    
+    if !state.call_frame_empty() {
+        if matches!(state.types.get(Reg::R0), RegType::PtrToStack { .. }) {
+            env.fail(VerificationError::CannotReturnStackPointer { pc: state.pc });
+            return vec![];
+        }
+    }
+
     if let Some(return_pc) = state.pop_frame() {
         // Returning from subfunction — continue at caller's return site
         // R0 retains its current type (the actual return value)

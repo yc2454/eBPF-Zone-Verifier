@@ -15,7 +15,7 @@ use self::machine::env::{VerifierEnv, VerificationError};
 use self::machine::state::State;
 use self::machine::reg_types::RegType;
 use crate::common::config::VerifierConfig;
-use self::flow::{cfg, liveness, pruning, merging};
+use self::flow::{cfg, liveness, pruning, merging, subprog};
 
 pub fn analyze_program(
     ctx: &ExecContext,
@@ -33,9 +33,14 @@ pub fn analyze_program(
         }
     }
 
-    if let Err(e) = cfg::check_subprogs(prog) {
+    if let Err(e) = subprog::check_subprogs(prog) {
         error!(target: "app", "[Analysis] CFG Error: {}", e);
-        return Err(VerificationError::CfgError(e));
+        return Err(VerificationError::SubprogError { e });
+    }
+
+    if let Err(e) = subprog::check_stack_overflow(prog) {
+        error!(target: "app", "[Analysis] Stack Error: {}", e);
+        return Err(VerificationError::SubprogError{e});
     }
 
     if let Err(e) = cfg::check_cfg(prog, &mut env) {

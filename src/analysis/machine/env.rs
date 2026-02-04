@@ -6,6 +6,7 @@ use crate::analysis::machine::context::ExecContext;
 use std::collections::{HashMap, HashSet};
 use crate::zone::domain::Reg;
 use crate::analysis::machine::reg_types::RegType;
+use crate::analysis::flow::subprog::SubprogError;
 
 #[derive(Clone, Debug)]
 pub enum VerificationError {
@@ -49,8 +50,9 @@ pub enum VerificationError {
     LockNotHeld { pc: usize },
     UnreleasedLock,
     LoadAbsUnderLock { pc: usize},
-    InvalidMapValueAccess { pc: usize, value_size: i64, offset: i64, available: i64 },
     RelocationInfoMissing { pc: usize },
+    SubprogError { e: SubprogError },
+    CannotReturnStackPointer { pc: usize },
 }
 
 impl VerificationError {
@@ -176,11 +178,14 @@ impl VerificationError {
             VerificationError::LoadAbsUnderLock { pc } => {
                 format!("ld_abs with an active lock at pc {}", pc)
             }
-            VerificationError::InvalidMapValueAccess { pc, value_size, offset, available } => {
-                format!("Invalid map value access at pc {}: value_size {}, offset {}, available {}", pc, value_size, offset, available)
-            }
             VerificationError::RelocationInfoMissing { pc } => {
                 format!("Relocation info missing at pc {}", pc)
+            }
+            VerificationError::SubprogError { e } => {
+                format!("Subprogram error: {}", e)
+            }
+            VerificationError::CannotReturnStackPointer { pc } => {
+                format!("Cannot return stack pointer in R0 at pc {}", pc)
             }
         }
     }

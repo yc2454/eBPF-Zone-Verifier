@@ -1028,7 +1028,8 @@ pub(crate) fn transfer_call_rel(
     }
 
     // BPF enforces max call depth of 8
-    if state.call_stack.len() >= 8 {
+    info!("[Verifier] pc {}: current call depth = {}", state.pc, state.stack_frame_count());
+    if state.stack_frame_count() >= 8 {
         env.fail(VerificationError::MaxCallDepthExceeded { pc: state.pc });
         return vec![];
     }

@@ -21,13 +21,6 @@ pub struct CallFrame {
     pub frame_depth: u16,  // max bytes used in this frame
 }
 
-impl CallFrame {
-    pub fn to_string(&self) -> String {
-        format!("Return PC: {}, Frame Depth: {}, Spilled Slots: {:?}", 
-                self.return_pc, self.frame_depth, self.stack.slot_offsets())
-    }
-}
-
 /// Mirrors `struct bpf_verifier_state` (partially).
 /// Holds the snapshot of execution at a specific PC.
 #[derive(Clone, Debug)]
@@ -236,6 +229,14 @@ impl State {
         } else {
             None
         }
+    }
+
+    pub fn stack_frame_count(&self) -> usize {
+        self.call_stack.len()
+    }
+
+    pub fn call_frame_empty(&self) -> bool {
+        self.call_stack.is_empty()
     }
      
 }
