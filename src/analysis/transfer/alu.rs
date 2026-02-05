@@ -459,39 +459,49 @@ fn handle_shr(
             let shift_amount = if width == Width::W32 { k & 0x1F } else { k & 0x3F };
             
             let (old_lo, old_hi) = get_bounds(&state.dbm, dst);
+            let old_tnum = state.get_tnum(dst);
             forget(&mut state.dbm, dst);
             
-            // Logical right shift result is always non-negative
-            assume_ge_const(&mut state.dbm, dst, 0);
-            
-            if let (Some(lo), Some(hi)) = (old_lo, old_hi) {
-                if lo >= 0 {
-                    // Non-negative range: shift preserves ordering
-                    let new_lo = (lo as u64 >> shift_amount) as i64;
-                    let new_hi = (hi as u64 >> shift_amount) as i64;
-                    assume_ge_const(&mut state.dbm, dst, new_lo);
-                    assume_le_const(&mut state.dbm, dst, new_hi);
-                } else if shift_amount > 0 {
-                    // Mixed/negative range, but shift reduces magnitude
-                    let max_result = u64::MAX >> shift_amount;
-                    if max_result <= i64::MAX as u64 {
-                        assume_le_const(&mut state.dbm, dst, max_result as i64);
+            // For W32, truncate to 32 bits first, then shift
+            if width == Width::W32 {
+                // Truncate tnum to 32 bits first
+                let truncated_tnum = old_tnum.trunc32();
+                let trunc_lo = truncated_tnum.min_value();
+                let trunc_hi = truncated_tnum.max_value();
+                
+                // Now shift
+                let new_lo = (trunc_lo >> shift_amount) as i64;
+                let new_hi = (trunc_hi >> shift_amount) as i64;
+                
+                assume_ge_const(&mut state.dbm, dst, new_lo);
+                assume_le_const(&mut state.dbm, dst, new_hi);
+                
+                let new_tnum = truncated_tnum.shr_imm(shift_amount as u64);
+                state.set_tnum(dst, new_tnum);
+            } else {
+                // W64: shift full 64-bit value
+                assume_ge_const(&mut state.dbm, dst, 0);
+                
+                if let (Some(lo), Some(hi)) = (old_lo, old_hi) {
+                    if lo >= 0 {
+                        let new_lo = (lo as u64 >> shift_amount) as i64;
+                        let new_hi = (hi as u64 >> shift_amount) as i64;
+                        assume_ge_const(&mut state.dbm, dst, new_lo);
+                        assume_le_const(&mut state.dbm, dst, new_hi);
+                    } else if shift_amount > 0 {
+                        let max_result = u64::MAX >> shift_amount;
+                        if max_result <= i64::MAX as u64 {
+                            assume_le_const(&mut state.dbm, dst, max_result as i64);
+                        }
                     }
                 }
+                
+                let new_tnum = old_tnum.shr_imm(shift_amount as u64);
+                state.set_tnum(dst, new_tnum);
             }
-            
-            if width == Width::W32 {
-                apply_w32_truncation(&mut state.dbm, dst);
-            }
-            
-            let t = state.get_tnum(dst);
-            let new_t = t.shr_imm(shift_amount as u64);
-            state.set_tnum(dst, new_t);
         }
         Operand::Reg(_) => {
             forget(&mut state.dbm, dst);
-            
-            // Result is non-negative
             assume_ge_const(&mut state.dbm, dst, 0);
             
             if width == Width::W32 {
