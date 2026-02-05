@@ -123,10 +123,12 @@ pub fn check_load(
         }
         PtrToPacketMeta => {
             // Find a register pointing to packet data (data pointer)
-            let reg_pointing_to_packet_data = crate::zone::domain::REG_ENV
-                .all()
-                .iter()
-                .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket { is_base: true, .. }));
+            let reg_pointing_to_packet_data = 
+                REG_ENV
+                    .all()
+                    .iter()
+                    .find(|&&r| 
+                        matches!(state.types.get(r), RegType::PtrToPacket { is_base: true, .. }));
             
             if let Some(&data_reg) = reg_pointing_to_packet_data {
                 // We need to prove: data_meta + off + size <= data

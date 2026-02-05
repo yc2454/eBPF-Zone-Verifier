@@ -7,17 +7,19 @@ use crate::analysis::machine::reg_types::{RegType, TypeState, new_ptr_id};
 use crate::analysis::machine::stack_state::StackState;
 use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, AtomicOp, MapLoadKind, MemSize, Operand, Width};
-use crate::zone::domain::Reg;
+use crate::zone::domain::{self, Reg};
 use crate::common::ctx_model::{
     CtxFieldKind, validate_ctx_access
 };
 use crate::common::constants;
+use crate::zone::dbm::Dbm;
 
 /// Updates register types after an ALU operation.
 pub(crate) fn update_alu_types(
     env: &VerifierEnv, 
     in_types: &TypeState, 
     types: &mut TypeState,
+    dbm: &Dbm,
     width: Width,
     op: AluOp,
     dst: Reg,
@@ -80,15 +82,49 @@ pub(crate) fn update_alu_types(
                         if *k > constants::MAX_PACKET_OFF as i64 || *k < 0 {
                             types.set(dst, RegType::ScalarValue);
                         } else {
-                            types.set(dst, RegType::PtrToPacket {
-                                id,
-                                is_base: false,
-                            });
+                            let packet_start_reg_op = domain::REG_ENV.all().iter()
+                                .find(|&&r| matches!(in_types.get(r), RegType::PtrToPacket { id: _, is_base: true }));
+                            if packet_start_reg_op.is_none() {
+                                types.set(dst, RegType::ScalarValue);
+                            } else {
+                                let packet_start_reg = packet_start_reg_op.unwrap();
+                                if let (Some(_), Some(packet_offset)) = domain::get_relative_bound(dbm, dst, *packet_start_reg) {
+                                    let new_offset = packet_offset + *k;
+                                    println!("!!!The packet offset of {} is {}", dst.name(), new_offset);
+                                    if new_offset <= constants::MAX_PACKET_OFF as i64 {
+                                        types.set(dst, RegType::PtrToPacket { id, is_base: false });
+                                    } else {
+                                        types.set(dst, RegType::ScalarValue);
+                                    }
+                                }
+                            }
+                            // types.set(dst, RegType::PtrToPacket {
+                            //     id,
+                            //     is_base: false,
+                            // });
                         }
                     },
                     (RegType::PtrToPacketMeta, Operand::Imm(k)) => {
                         if *k > constants::MAX_PACKET_OFF as i64 || *k < 0 {
                             types.set(dst, RegType::ScalarValue);
+                        } else {
+                            let packet_start_reg_op = domain::REG_ENV.all().iter()
+                                .find(|&&r| matches!(in_types.get(r), RegType::PtrToPacket { id: _, is_base: true }));
+                            if packet_start_reg_op.is_none() {
+                                types.set(dst, RegType::ScalarValue);
+                            } else {
+                                let packet_start_reg = packet_start_reg_op.unwrap();
+                                if let (Some(_), Some(packet_offset)) = domain::get_relative_bound(dbm, dst, *packet_start_reg) {
+                                    let new_offset = packet_offset + *k;
+                                    if new_offset <= constants::MAX_PACKET_OFF as i64 {
+                                        types.set(dst, RegType::PtrToPacketMeta);
+                                    } else {
+                                        println!("!!!The packet offset of {} is {}", dst.name(), new_offset);
+                                        println!("Mangling the pointer type back to scalar");
+                                        types.set(dst, RegType::ScalarValue);
+                                    }
+                                }
+                            }
                         }
                     },
                     (RegType::PtrToStack { offset, frame_level }, Operand::Imm(k)) => {

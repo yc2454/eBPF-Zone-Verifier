@@ -37,7 +37,7 @@ impl RegType {
         use RegType::*;
         matches!(self, 
             PtrToCtx | PtrToStack { .. } | PtrToMapValue { .. } | 
-            PtrToPacket { .. } | PtrToPacketEnd | 
+            PtrToPacket { .. } | PtrToPacketEnd | PtrToPacketMeta |
             PtrToMem { .. } | PtrToMapValueOrNull { .. }
         )
     }

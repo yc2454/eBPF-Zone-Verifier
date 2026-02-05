@@ -17,7 +17,6 @@ use crate::zone::domain::{
 use crate::zone::dbm::Dbm;
 use crate::zone::tnum::Tnum;
 use crate::analysis::machine::env::VerificationError;
-use crate::analysis::machine::reg_types::{RegType, TypeState};
 
 use super::refinement::{refine_mem_ranges, refine_branch};
 use super::common::{check_reg_readable, check_operand_readable};
@@ -32,7 +31,7 @@ pub(crate) fn transfer_if(
     right: Operand,
     target: usize,
 ) -> Vec<State> {
-    println!("PC: {}", state.pc);
+    // println!("PC: {}", state.pc);
     // Target cannot be a back edge
     if target < state.pc {
         let on_path = state.history_idx
@@ -471,20 +470,6 @@ fn resolve_right_operand(
     }
 }
 
-fn has_packet_scalar_mismatch(types: &TypeState, left: Reg, right: Reg) -> bool {
-    let is_packet_related = |t: &RegType| matches!(
-        t,
-        RegType::PtrToPacket { .. } | 
-        RegType::PtrToPacketMeta | 
-        RegType::PtrToPacketEnd
-    );
-    
-    let left_is_packet = is_packet_related(&types.get(left));
-    let right_is_packet = is_packet_related(&types.get(right));
-    
-    left_is_packet != right_is_packet
-}
-
 // ============ Public entry points ============
 
 pub fn apply_jmp_constraints(
@@ -498,13 +483,6 @@ pub fn apply_jmp_constraints(
     if op == CmpOp::Test {
         apply_test_constraints(then_s, else_s, left, width, right);
         return;
-    }
-
-    // Check packet pointer mixing
-    if let Either::Left(right_reg) = right {
-        if has_packet_scalar_mismatch(&then_s.types, left, right_reg) {
-            return;
-        }
     }
     
     // Resolve operand (truncate, extract constant)

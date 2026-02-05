@@ -7,10 +7,10 @@ use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::ast::{AluOp, Operand, Width};
 use crate::zone::domain::{
-    Reg, forget, get_bounds, assign_add_imm, assign_add_reg, assign_eq,
+    Reg, REG_ENV, forget, get_bounds, assign_add_imm, assign_add_reg, assign_eq,
     assume_ge_const, assume_le_const, assign_zero, assign_mul_imm,
     assign_and_mask, assign_div_imm, assign_div_reg, bit_and_const,
-    assign_neg, assign_sub_reg, assume_eq_const
+    assign_neg, assign_sub_reg, assume_eq_const, get_relative_bound
 };
 use crate::zone::dbm::{Dbm, INF};
 use crate::zone::tnum::Tnum;
@@ -66,8 +66,6 @@ pub(crate) fn transfer_alu(
         return vec![];
     }
 
-    update_alu_types(env, &in_types, &mut state.types, width, op, dst, &src, state.pc);
-
     match op {
         AluOp::Add => handle_add(env, &mut state, &in_types, width, dst, &src),
         AluOp::Sub => handle_sub(env, &mut state, &in_types, width, dst, &src),
@@ -85,6 +83,8 @@ pub(crate) fn transfer_alu(
         AluOp::Lsh => handle_shl(&mut state, width, dst, &src), // Same as Shl
         AluOp::Xor => forget(&mut state.dbm, dst),
     }
+
+    update_alu_types(env, &in_types, &mut state.types, &state.dbm, width, op, dst, &src, state.pc);
 
     if state.dbm.is_inconsistent() {
         env.fail(VerificationError::DbmInconsistent { pc: state.pc });
@@ -185,7 +185,7 @@ pub(crate) fn check_ptr_arithmetic(
 /// Check pointer bounds after arithmetic operations.
 pub(crate) fn check_ptr_bounds(
     env: &mut VerifierEnv,
-    state: &State,
+    state: &mut State,
     reg: Reg,
 ) {
     let (lo, hi) = get_bounds(&state.dbm, reg);
@@ -211,6 +211,19 @@ pub(crate) fn check_ptr_bounds(
             };
             if !in_bounds {
                 env.fail(VerificationError::PointerOutOfBounds { pc: state.pc });
+            }
+        }
+        RegType::PtrToPacket { .. } | RegType::PtrToPacketMeta => {
+            let packet_start_reg_op = REG_ENV.all().iter()
+                .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket { id: _, is_base: true }));
+            if !packet_start_reg_op.is_none()  {
+                let packet_start_reg = packet_start_reg_op.unwrap();
+                if let (Some(_), Some(packet_offset)) = get_relative_bound(&state.dbm, reg, *packet_start_reg) {
+                    if packet_offset > constants::MAX_PACKET_OFF as i64 {
+                        println!("!!!!! FORGETTING THE BOUNDS OF {} because offset is {} !!!!!", reg.name(), packet_offset);
+                        forget(&mut state.dbm, reg);
+                    }
+                }
             }
         }
         _ => {}
