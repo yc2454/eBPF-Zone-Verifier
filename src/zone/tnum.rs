@@ -28,6 +28,10 @@ impl Tnum {
         mask: u64::MAX,
     };
 
+    pub fn is_unknown(&self) -> bool {
+        self.mask == u64::MAX
+    }
+
     /// Create a tnum representing an exact constant
     #[inline]
     pub fn constant(c: u64) -> Tnum {
@@ -318,6 +322,21 @@ impl Tnum {
                 mask: self.mask & mask,
             }
         }
+    }
+
+    pub fn to_string(&self) -> String {
+        let mut s = String::new();
+        for i in (0..64).rev() {
+            let bit_mask = 1u64 << i;
+            if (self.mask & bit_mask) != 0 {
+                s.push('x'); // unknown
+            } else if (self.value & bit_mask) != 0 {
+                s.push('1'); // known 1
+            } else {
+                s.push('0'); // known 0
+            }
+        }
+        s
     }
 }
 

@@ -242,5 +242,17 @@ impl State {
     pub fn current_frame_level(&self) -> usize {
         self.call_stack.len()
     }
+
+    pub fn tnums_to_string(&self) -> String {
+        let mut parts = Vec::new();
+        for r in Reg::ALL {
+            let tnum = self.get_tnum(r);
+            if tnum.is_unknown() {
+                continue;
+            }
+            parts.push(format!("{:?}: {}", r, tnum.to_string()));
+        }
+        parts.join(", ")
+    }
      
 }

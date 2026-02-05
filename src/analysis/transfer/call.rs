@@ -1047,7 +1047,7 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
             // Returns 0 on success, negative on error
             // Could add bounds but being conservative for now
         }
-        constants::BPF_GET_PRANDOM_U32 => {
+        constants::BPF_GET_PRANDOM_U32 | constants::BPF_GET_CGROUP_CLASS_ID => {
             // Returns a random u32
             assume_ge_const(&mut state.dbm, Reg::R0, 0);
             assume_le_const(&mut state.dbm, Reg::R0, 0xFFFF_FFFF);

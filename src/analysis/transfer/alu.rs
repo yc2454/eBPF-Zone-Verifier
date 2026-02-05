@@ -502,6 +502,8 @@ fn handle_shr(
             }
         }
     }
+
+    sync_tnum_to_dbm(state, dst);
 }
 
 fn handle_shl(
@@ -556,6 +558,8 @@ fn handle_shl(
             state.set_tnum(dst, new_t);
         }
     }
+
+    sync_tnum_to_dbm(state, dst);
 }
 
 fn handle_mul(
@@ -696,6 +700,8 @@ fn handle_rsh(
             }
         }
     }
+
+    sync_tnum_to_dbm(state, dst);
 }
 
 fn handle_arsh(
@@ -756,6 +762,8 @@ fn handle_arsh(
             state.set_tnum(dst, Tnum::unknown());
         }
     }
+
+    sync_tnum_to_dbm(state, dst);
 }
 
 /// Apply W32 truncation to a register's bounds.
@@ -790,5 +798,34 @@ fn is_div_by_zero(_dbm: &Dbm, src: &Operand) -> bool {
         Operand::Imm(k) => *k == 0,
         // We don't need to report potential division by zero for register operands here.
         Operand::Reg(_) => false
+    }
+}
+
+fn sync_tnum_to_dbm(state: &mut State, reg: Reg) {
+    let tnum = state.get_tnum(reg);
+    let tnum_min = tnum.min_value();
+    let tnum_max = tnum.max_value();
+    
+    // Only sync if tnum bounds fit in signed i64 range
+    if tnum_max <= i64::MAX as u64 {
+        let (dbm_lo, dbm_hi) = get_bounds(&state.dbm, reg);
+        
+        // Tighten lower bound
+        match dbm_lo {
+            None => assume_ge_const(&mut state.dbm, reg, tnum_min as i64),
+            Some(l) if (tnum_min as i64) > l => {
+                assume_ge_const(&mut state.dbm, reg, tnum_min as i64)
+            }
+            _ => {}
+        }
+        
+        // Tighten upper bound
+        match dbm_hi {
+            None => assume_le_const(&mut state.dbm, reg, tnum_max as i64),
+            Some(h) if (tnum_max as i64) < h => {
+                assume_le_const(&mut state.dbm, reg, tnum_max as i64)
+            }
+            _ => {}
+        }
     }
 }

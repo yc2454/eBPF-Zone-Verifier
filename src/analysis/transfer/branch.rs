@@ -32,6 +32,7 @@ pub(crate) fn transfer_if(
     right: Operand,
     target: usize,
 ) -> Vec<State> {
+    println!("PC: {}", state.pc);
     // Target cannot be a back edge
     if target < state.pc {
         let on_path = state.history_idx
@@ -113,8 +114,6 @@ fn condition_outcome(
                 Width::W32 => (*imm as u32) as u64,
                 Width::W64 => *imm as u64,
             };
-
-            println!("min {}, max {}, imm {}", min, max, imm_val);
             
             match op {
                 CmpOp::ULt => {
@@ -258,6 +257,7 @@ fn can_apply_dbm_constraint(
         if dominated_by_signed {
             return fits_in_i32_range(dbm, left) && fits_in_i32(right_bounds);
         } else if dominated_by_unsigned {
+            println!("Can we apply unsigned constraints? {}, {}", fits_in_u32_range(dbm, left), fits_in_u32(right_bounds));
             return fits_in_u32_range(dbm, left) && fits_in_u32(right_bounds);
         }
     }
@@ -509,10 +509,12 @@ pub fn apply_jmp_constraints(
     
     // Resolve operand (truncate, extract constant)
     let (resolved, right_bounds) = resolve_right_operand(&then_s.dbm, right, width, op);
-    
+    println!("Resolved right: {:?}, bounds: {:?}", resolved, right_bounds);
     // Apply DBM constraints if safe
     if can_apply_dbm_constraint(&then_s.dbm, left, op, width, right_bounds) {
         apply_cmp_to_dbm(&mut then_s.dbm, &mut else_s.dbm, left, op, resolved);
+    } else {
+        println!("DBM constraints not safe, CAN't apply");
     }
     
     // Apply type/tnum refinements
