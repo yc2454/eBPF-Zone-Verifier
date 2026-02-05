@@ -80,7 +80,10 @@ pub(crate) fn transfer_alu(
         AluOp::Mul => handle_mul(&mut state, width, dst, &src),
         AluOp::Mod => handle_mod(&mut state, width, dst, &src),
         AluOp::Div => handle_div(&mut state, width, dst, &src),
-        AluOp::Xor | AluOp::Arsh => forget(&mut state.dbm, dst),
+        AluOp::Arsh => handle_arsh(&mut state, width, dst, &src),
+        AluOp::Rsh => handle_rsh(&mut state, width, dst, &src),
+        AluOp::Lsh => handle_shl(&mut state, width, dst, &src), // Same as Shl
+        AluOp::Xor => forget(&mut state.dbm, dst),
     }
 
     if state.dbm.is_inconsistent() {
@@ -613,6 +616,120 @@ fn handle_div(
 
     // Tnum update
     state.set_tnum(dst, Tnum::unknown());
+}
+
+fn handle_rsh(
+    state: &mut State,
+    width: Width,
+    dst: Reg,
+    src: &Operand,
+) {
+    match src {
+        Operand::Imm(k) => {
+            let k = *k as u32;
+            let shift_amount = if width == Width::W32 { k & 0x1F } else { k & 0x3F };
+            
+            let (old_lo, old_hi) = get_bounds(&state.dbm, dst);
+            forget(&mut state.dbm, dst);
+            
+            if let (Some(lo), Some(hi)) = (old_lo, old_hi) {
+                if lo >= 0 {
+                    // Logical right shift on non-negative values
+                    let new_lo = (lo as u64 >> shift_amount) as i64;
+                    let new_hi = (hi as u64 >> shift_amount) as i64;
+                    assume_ge_const(&mut state.dbm, dst, new_lo);
+                    assume_le_const(&mut state.dbm, dst, new_hi);
+                } else {
+                    // Mixed or negative range - result is non-negative but hard to bound precisely
+                    assume_ge_const(&mut state.dbm, dst, 0);
+                    if shift_amount > 0 {
+                        assume_le_const(&mut state.dbm, dst, (u64::MAX >> shift_amount) as i64);
+                    }
+                }
+            }
+            
+            if width == Width::W32 {
+                apply_w32_truncation(&mut state.dbm, dst);
+            }
+            
+            let t = state.get_tnum(dst);
+            let new_t = t.rsh_imm(shift_amount as u64);
+            state.set_tnum(dst, new_t);
+        }
+        Operand::Reg(_) => {
+            forget(&mut state.dbm, dst);
+            
+            // Result is non-negative (logical shift)
+            assume_ge_const(&mut state.dbm, dst, 0);
+            
+            if width == Width::W32 {
+                assume_le_const(&mut state.dbm, dst, u32::MAX as i64);
+                state.set_tnum(dst, Tnum::u32_unknown());
+            } else {
+                state.set_tnum(dst, Tnum::unknown());
+            }
+        }
+    }
+}
+
+fn handle_arsh(
+    state: &mut State,
+    width: Width,
+    dst: Reg,
+    src: &Operand,
+) {
+    match src {
+        Operand::Imm(k) => {
+            let k = *k as u32;
+            let shift_amount = if width == Width::W32 { k & 0x1F } else { k & 0x3F };
+            
+            let old_tnum = state.get_tnum(dst);
+            let (old_lo, old_hi) = get_bounds(&state.dbm, dst);
+            forget(&mut state.dbm, dst);
+            
+            // Special case: ARSH 32 when lower 32 bits are known zeros
+            // This detects the sign-extension pattern: LSH 32 followed by ARSH 32
+            if width == Width::W64 && shift_amount == 32 {
+                let lower_32_bits = 0xFFFFFFFF_u64;
+                let lower_known_zero = (old_tnum.mask & lower_32_bits) == 0 
+                                    && (old_tnum.value & lower_32_bits) == 0;
+                if lower_known_zero {
+                    // Result is a sign-extended i32
+                    assume_ge_const(&mut state.dbm, dst, i32::MIN as i64);
+                    assume_le_const(&mut state.dbm, dst, i32::MAX as i64);
+                    
+                    let new_t = old_tnum.arsh_imm(shift_amount as u64);
+                    state.set_tnum(dst, new_t);
+                    return;
+                }
+            }
+            
+            // Standard case: if we have valid signed bounds, shift them
+            if let (Some(lo), Some(hi)) = (old_lo, old_hi) {
+                let new_lo = lo >> shift_amount;
+                let new_hi = hi >> shift_amount;
+                assume_ge_const(&mut state.dbm, dst, new_lo);
+                assume_le_const(&mut state.dbm, dst, new_hi);
+            }
+            
+            if width == Width::W32 {
+                apply_w32_truncation(&mut state.dbm, dst);
+            }
+            
+            let new_t = old_tnum.arsh_imm(shift_amount as u64);
+            state.set_tnum(dst, new_t);
+        }
+        Operand::Reg(_) => {
+            forget(&mut state.dbm, dst);
+            
+            if width == Width::W32 {
+                assume_ge_const(&mut state.dbm, dst, i32::MIN as i64);
+                assume_le_const(&mut state.dbm, dst, i32::MAX as i64);
+            }
+            
+            state.set_tnum(dst, Tnum::unknown());
+        }
+    }
 }
 
 /// Apply W32 truncation to a register's bounds.

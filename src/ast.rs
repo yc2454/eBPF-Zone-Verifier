@@ -30,7 +30,8 @@ pub enum AluOp {
     Mod,
     Div,
     Neg,
-    // later: Div, Neg, etc.
+    Rsh,
+    Lsh,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -337,6 +338,8 @@ impl fmt::Display for Instr {
                     AluOp::Mod  => "%",
                     AluOp::Div  => "/",
                     AluOp::Neg  => "-",
+                    AluOp::Rsh  => ">>",
+                    AluOp::Lsh  => "<<",
                 };
 
                 let src_str = match src {

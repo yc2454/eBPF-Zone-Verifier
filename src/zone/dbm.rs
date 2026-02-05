@@ -161,10 +161,10 @@ impl Dbm {
             let ub = self.get(i, zero);      // x - 0 ≤ ub  →  x ≤ ub
             let lb_neg = self.get(zero, i);  // 0 - x ≤ lb_neg  →  x ≥ -lb_neg
             
-            let min_str = if lb_neg >= INF { "-INF".to_string() } else { format!("{:#x}", -lb_neg) };
-            let max_str = if ub >= INF { "+INF".to_string() } else { format!("{:#x}", ub) };
-            // let min_str = if lb_neg >= INF { "-INF".to_string() } else { (-lb_neg).to_string() };
-            // let max_str = if ub >= INF { "+INF".to_string() } else { ub.to_string() };
+            // let min_str = if lb_neg >= INF { "-INF".to_string() } else { format!("{:#x}", -lb_neg) };
+            // let max_str = if ub >= INF { "+INF".to_string() } else { format!("{:#x}", ub) };
+            let min_str = if lb_neg >= INF { "-INF".to_string() } else { (-lb_neg).to_string() };
+            let max_str = if ub >= INF { "+INF".to_string() } else { ub.to_string() };
 
             if min_str != "-INF" || max_str != "+INF" {
                 println!("    {}: [{}, {}]", i.name(), min_str, max_str);
@@ -175,8 +175,8 @@ impl Dbm {
                 if j == zero || j == i { continue; }
                 
                 let val = self.get(i, j);
-                let diff_str = if val >= INF || val <= -INF { "INF".to_string() } else { format!("{:#x}", val) };
-                // let diff_str = if val >= INF || val <= -INF { "INF".to_string() } else { val.to_string() };
+                // let diff_str = if val >= INF || val <= -INF { "INF".to_string() } else { format!("{:#x}", val) };
+                let diff_str = if val >= INF || val <= -INF { "INF".to_string() } else { val.to_string() };
                 if diff_str != "INF" {
                     println!("    {} - {} = {}", i.name(), j.name(), diff_str);
                 }

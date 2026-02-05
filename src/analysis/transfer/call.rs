@@ -973,7 +973,6 @@ pub(crate) fn transfer_call(
     }
 
     // bpf_d_path is restrictive
-    println!("THE CURRENT EXECUTION CONTEXT: {:?}", env.ctx);
     if helper == constants::BPF_D_PATH {
         if !matches!(env.ctx.prog_kind, ProgramKind::Tracing | ProgramKind::Lsm) {
             env.fail(VerificationError::HelperNotAllowedForProgram { pc, helper, kind: env.ctx.prog_kind });

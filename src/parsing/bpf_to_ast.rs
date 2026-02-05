@@ -853,7 +853,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 Instr::If {
                     width: Width::W32,
                     left: dst,
-                    op: CmpOp::UGt, // MVP: Map to unsigned bucket (no refinement)
+                    op: CmpOp::SGt,
                     right: Operand::Reg(src),
                     target,
                 }

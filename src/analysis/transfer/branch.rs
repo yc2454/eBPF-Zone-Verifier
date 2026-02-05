@@ -363,23 +363,30 @@ fn resolve_right_operand(
     dbm: &Dbm,
     right: Either<Reg, i64>,
     width: Width,
+    op: CmpOp,
 ) -> (Either<Reg, i64>, (i64, i64)) {
+    let is_signed = matches!(op, CmpOp::SLt | CmpOp::SLe | CmpOp::SGt | CmpOp::SGe);
+    
+    let truncate = |val: i64| -> i64 {
+        if width == Width::W32 {
+            if is_signed {
+                (val as u32) as i32 as i64  // sign-extend
+            } else {
+                (val as u32) as i64  // zero-extend
+            }
+        } else {
+            val
+        }
+    };
+    
     match right {
         Either::Right(imm) => {
-            let eff = if width == Width::W32 {
-                (imm as u32) as i64
-            } else {
-                imm
-            };
+            let eff = truncate(imm);
             (Either::Right(eff), (eff, eff))
         }
         Either::Left(reg) => {
             if let Some(val) = get_constant_value(dbm, reg) {
-                let eff = if width == Width::W32 {
-                    (val as u32) as i64
-                } else {
-                    val
-                };
+                let eff = truncate(val);
                 (Either::Right(eff), (eff, eff))
             } else {
                 let bounds = get_bounds(dbm, reg);
@@ -414,6 +421,7 @@ pub fn apply_jmp_constraints(
     width: Width,
     right: Either<Reg, i64>,
 ) {
+    println!("Applying jmp constraints {:?} {:?} {:?}", left, op, right);
     // Check packet pointer mixing
     if let Either::Left(right_reg) = right {
         if has_packet_scalar_mismatch(&then_s.types, left, right_reg) {
@@ -422,7 +430,8 @@ pub fn apply_jmp_constraints(
     }
     
     // Resolve operand (truncate, extract constant)
-    let (resolved, right_bounds) = resolve_right_operand(&then_s.dbm, right, width);
+    let (resolved, right_bounds) = resolve_right_operand(&then_s.dbm, right, width, op);
+    println!("After resolving {:?} {:?}", resolved, right_bounds);
     
     // Apply DBM constraints if safe
     if can_apply_dbm_constraint(&then_s.dbm, left, op, width, right_bounds) {

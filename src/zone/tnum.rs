@@ -236,6 +236,29 @@ impl Tnum {
             mask: self.mask >> shift,
         }
     }
+
+    pub fn arsh_imm(self, shift: u64) -> Tnum {
+        if shift >= 64 {
+            // All bits become sign bit
+            if (self.value & 0x8000_0000_0000_0000) != 0 {
+                Tnum::constant(u64::MAX) // All 1s
+            } else {
+                Tnum::constant(0) // All 0s
+            }
+        } else {
+            let sign_bit = (self.value >> 63) & 1;
+            let shifted_value = (self.value >> shift) | (if sign_bit != 0 { u64::MAX << (64 - shift) } else { 0 });
+            let shifted_mask = self.mask >> shift;
+            Tnum {
+                value: shifted_value & !shifted_mask,
+                mask: shifted_mask,
+            }
+        }
+    }
+
+    pub fn rsh_imm(self, shift: u64) -> Tnum {
+        self.shr_imm(shift)
+    }
     
     /// Fully unknown 32-bit value
     pub fn u32_unknown() -> Tnum {
