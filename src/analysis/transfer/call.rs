@@ -342,6 +342,14 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
+        constants::BPF_GET_CGROUP_CLASS_ID => HelperSignature::new([
+            PtrToCtx,
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ]),
+
         _ => return None,
     })
 }

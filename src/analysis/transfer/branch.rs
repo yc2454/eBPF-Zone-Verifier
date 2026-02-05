@@ -358,6 +358,80 @@ fn apply_eq_refinements(
     }
 }
 
+fn apply_test_constraints(
+    then_s: &mut State,
+    else_s: &mut State,
+    left: Reg,
+    width: Width,
+    right: Either<Reg, i64>,
+) {
+    let mask = match right {
+        Either::Right(imm) => {
+            if width == Width::W32 {
+                (imm as u32) as u64
+            } else {
+                imm as u64
+            }
+        }
+        Either::Left(reg) => {
+            // If right is a register, check if it's a known constant
+            if let Some(val) = get_constant_value(&then_s.dbm, reg) {
+                if width == Width::W32 {
+                    (val as u32) as u64
+                } else {
+                    val as u64
+                }
+            } else {
+                // Can't derive much without knowing the mask
+                return;
+            }
+        }
+    };
+    
+    // Not-taken branch: left & mask == 0
+    // Those bits are definitely zero in left
+    let else_tnum = else_s.get_tnum(left);
+    let refined = Tnum {
+        value: else_tnum.value & !mask,  // Those bits are 0
+        mask: else_tnum.mask & !mask,    // Those bits are known (not uncertain)
+    };
+    else_s.set_tnum(left, refined);
+    
+    // Taken branch: left & mask != 0
+    // At least one bit is set, but we don't know which
+    // Limited tnum refinement possible
+    
+    // Special case: power of 2 mask (single bit test)
+    if mask.is_power_of_two() {
+        let bit_pos = mask.trailing_zeros();
+        
+        // Taken: that specific bit is set
+        let then_tnum = then_s.get_tnum(left);
+        let refined = Tnum {
+            value: then_tnum.value | mask,  // That bit is 1
+            mask: then_tnum.mask & !mask,   // That bit is known
+        };
+        then_s.set_tnum(left, refined);
+        
+        // DBM constraints for sign bit tests
+        if width == Width::W32 && bit_pos == 31 {
+            // Testing 32-bit sign bit
+            if fits_in_u32_range(&then_s.dbm, left) {
+                // Taken: bit 31 set -> value in [0x80000000, 0xFFFFFFFF]
+                assume_ge_const(&mut then_s.dbm, left, 0x80000000);
+                // Not taken: bit 31 clear -> value in [0, 0x7FFFFFFF]
+                assume_le_const(&mut else_s.dbm, left, 0x7FFFFFFF);
+            }
+        } else if width == Width::W64 && bit_pos == 63 {
+            // Testing 64-bit sign bit
+            // Taken: negative (in signed terms)
+            // Not taken: non-negative
+            assume_less_than(&mut then_s.dbm, left, 0);
+            assume_ge_const(&mut else_s.dbm, left, 0);
+        }
+    }
+}
+
 /// Resolve right operand: truncate for 32-bit, extract constant if possible
 fn resolve_right_operand(
     dbm: &Dbm,
@@ -421,7 +495,11 @@ pub fn apply_jmp_constraints(
     width: Width,
     right: Either<Reg, i64>,
 ) {
-    println!("Applying jmp constraints {:?} {:?} {:?}", left, op, right);
+    if op == CmpOp::Test {
+        apply_test_constraints(then_s, else_s, left, width, right);
+        return;
+    }
+
     // Check packet pointer mixing
     if let Either::Left(right_reg) = right {
         if has_packet_scalar_mismatch(&then_s.types, left, right_reg) {
@@ -431,7 +509,6 @@ pub fn apply_jmp_constraints(
     
     // Resolve operand (truncate, extract constant)
     let (resolved, right_bounds) = resolve_right_operand(&then_s.dbm, right, width, op);
-    println!("After resolving {:?} {:?}", resolved, right_bounds);
     
     // Apply DBM constraints if safe
     if can_apply_dbm_constraint(&then_s.dbm, left, op, width, right_bounds) {
