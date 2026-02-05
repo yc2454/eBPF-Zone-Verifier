@@ -178,7 +178,7 @@ impl Dbm {
                 // let diff_str = if val >= INF || val <= -INF { "INF".to_string() } else { format!("{:#x}", val) };
                 let diff_str = if val >= INF || val <= -INF { "INF".to_string() } else { val.to_string() };
                 if diff_str != "INF" {
-                    println!("    {} - {} = {}", i.name(), j.name(), diff_str);
+                    println!("    {} - {} <= {}", i.name(), j.name(), diff_str);
                 }
             }
         }

@@ -10,7 +10,7 @@ use crate::common::constants;
 use crate::common::ctx_model;
 use log::{error};
 use RegType::*;
-use crate::zone::domain::Reg;
+use crate::zone::domain::{Reg, REG_ENV};
 
 /// Validates memory load safety.
 /// Does NOT update the state (types/dbm); that happens in transfer.rs.
@@ -30,41 +30,7 @@ pub fn check_load(
             check_stack_access(env, state, base, offset, off as i64, size, pc, AccessKind::Read, frame_level);
         }
         PtrToPacket { id: _, is_base: _ } => {
-            let access_end = off as i64 + size;
-            let mut safe = false;
-            
-            // 1. Negative offset is never allowed (can't go before packet start)
-            if off < 0 {
-                error!("Negative packet load at pc {}: base {:?}+{}", pc, base, off);
-                env.fail(VerificationError::UnsafePacketLoad { pc, off: off as i16, size });
-                return;
-            } else {
-                let end_reg_opt = 
-                    crate::zone::domain::REG_ENV
-                        .all().iter()
-                        .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacketEnd));
-                if let Some(end_reg) = end_reg_opt {
-                    // Need: base + access_end <= data_end
-                    // i.e.: base - data_end <= -access_end
-                    let required_bound = access_end;
-                    let (_, ub) = get_relative_bound(&state.dbm, base, *end_reg);
-                    if let Some(upper) = ub { 
-                        if upper <= required_bound { 
-                            safe = true; 
-                        } 
-                    }
-                }
-            }
-            if !safe {
-                error!("Unsafe packet load at pc {}: base {:?}", pc, base);
-                env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
-            }
-
-            // Alignment check
-            if !ctx.has_flag(constants::F_NEEDS_EFFICIENT_UNALIGNED_ACCESS) && !check_packet_alignment(state, base, off, size) {
-                env.fail(VerificationError::MisalignedPacketAccess { pc, off, size });
-                return;
-            }
+            check_packet_access(env, state, base, off, size, pc, AccessKind::Read);
         }
         PtrToCtx => {
             if !ctx_model::is_valid_ctx_read(ctx.prog_kind, off, size) {
@@ -230,39 +196,7 @@ pub fn check_store(
             check_stack_access(env, state, base, offset, off as i64, size as i64, pc, AccessKind::Write, frame_level);
         }
         PtrToPacket { id: _, is_base: _ } => {
-            // Check if the program type allows direct packet writes
-            if !prog_kind_support_direct_packet_write(ctx.prog_kind) {
-                error!("Direct packet store at pc {} is not supported for {:?} program", pc, ctx.prog_kind);
-                env.fail(VerificationError::IllegalPacketStore { pc, off, size });
-                return;
-            }
-            // Total offset from base = off + instruction offset
-            let access_end = off as i64 + size;
-            let mut safe = false;
-            
-            if off < 0 {
-                error!("Negative packet store at pc {}: base {:?}+{}", pc, base, off);
-                env.fail(VerificationError::UnsafePacketStore { pc, off: off as i16, size });
-                return;
-            } else {
-                let end_reg_opt = crate::zone::domain::REG_ENV.all().iter().find(|&&r| matches!(state.types.get(r), PtrToPacketEnd));
-                if let Some(end_reg) = end_reg_opt {
-                    let bound = -access_end;
-                    let (_, ub) = get_relative_bound(&state.dbm, base, *end_reg);
-                    if let Some(upper) = ub { if upper <= bound { safe = true; } }
-                }
-            }
-
-            if !safe {
-                error!("Unsafe packet store at pc {}: base {:?}+{}", pc, base, off);
-                env.fail(VerificationError::UnsafePacketStore { pc, off, size });
-            }
-
-            // Alignment check
-            if !check_packet_alignment(state, base, off, size) {
-                env.fail(VerificationError::MisalignedPacketAccess { pc, off, size });
-                return;
-            }
+            check_packet_access(env, state, base, off, size, pc, AccessKind::Write);
         }
         PtrToMapValueOrNull { map_idx, .. } => {
             error!("Unsafe nullable map store at pc {}", pc);
@@ -626,6 +560,76 @@ fn prog_kind_support_direct_packet_write(prog_kind: ProgramKind) -> bool {
     match prog_kind {
         ProgramKind::LwtIn | ProgramKind::LwtOut => false,
         _ => true,
+    }
+}
+
+fn check_packet_access(
+    env: &mut VerifierEnv,
+    state: &State,
+    base: Reg,
+    off: i16,
+    size: i64,
+    pc: usize,
+    kind: AccessKind
+) {
+    // 0. Check if the program type allows direct packet writes
+    if matches!(kind, AccessKind::Write) && !prog_kind_support_direct_packet_write(env.ctx.prog_kind) {
+        error!("Direct packet store at pc {} is not supported for {:?} program", pc, env.ctx.prog_kind);
+        env.fail(VerificationError::IllegalPacketStore { pc, off, size });
+        return;
+    }
+    // 1. Locate the Packet Start and Packet End registers
+    // (Ideally, 'base' should know which packet_id it belongs to, 
+    // avoiding this global search)
+    let start_reg_opt = REG_ENV.all().iter()
+        .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket { is_base: true, .. }));
+
+    let end_reg_opt = REG_ENV.all().iter()
+        .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacketEnd));
+
+    // 2. Perform START Check (Underflow Protection)
+    // Rule: Base + Off >= Start  -->  Base - Start >= -Off
+    let mut start_safe = false;
+    if let Some(start_reg) = start_reg_opt {
+        // We need the Lower bound (Minimum distance) to be safe
+        if let (Some(lower), _) = get_relative_bound(&state.dbm, base, *start_reg) {
+            // Debug: println!("Start Check: {} >= {}", lower, -off);
+            if lower >= -(off as i64) {
+                start_safe = true;
+            }
+        }
+    }
+
+    // 3. Perform END Check (Overflow Protection)
+    // Rule: Base + Off + Size <= End  -->  Base - End <= -(Off + Size)
+    let mut end_safe = false;
+    if let Some(end_reg) = end_reg_opt {
+        // We need the Upper bound (Maximum distance) to be safe
+        if let (_, Some(upper)) = get_relative_bound(&state.dbm, base, *end_reg) {
+            let limit = -(off as i64 + size);
+            // Debug: println!("End Check: {} <= {}", upper, limit);
+            if upper <= limit {
+                end_safe = true;
+            }
+        }
+    }
+
+    // 4. Final Verdict
+    if !(start_safe && end_safe) {
+        if matches!(kind, AccessKind::Read) {
+            env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
+        } else {
+            env.fail(VerificationError::UnsafePacketStore { pc, off, size });
+        }
+        return;
+    }
+
+    // 5. Alignment check
+    if !env.ctx.has_flag(constants::F_NEEDS_EFFICIENT_UNALIGNED_ACCESS) 
+       && !check_packet_alignment(state, base, off, size) 
+    {
+        env.fail(VerificationError::MisalignedPacketAccess { pc, off, size });
+        return;
     }
 }
 
