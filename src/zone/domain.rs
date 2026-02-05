@@ -163,6 +163,10 @@ pub fn get_relative_bound(dbm: &Dbm, x: Reg, y: Reg) -> (Option<i64>, Option<i64
     (lb_opt, ub_opt)
 }
 
+pub fn get_diff(dbm: &Dbm, x: Reg, y: Reg) -> i64 {
+    dbm.get(x, y)
+}
+
 pub fn get_constant_value(dbm: &Dbm, x: Reg) -> Option<i64> {
     if let (Some(lo), Some(hi)) = get_bounds(dbm, x) {
         if lo == hi {
@@ -204,7 +208,7 @@ pub fn forget(dbm: &mut Dbm, x: Reg) {
 
 // dst += imm
 pub fn assign_add_imm(dbm: &mut Dbm, dst: Reg, imm: i64) {
-    add_imm(dbm, dst, imm); // your add_imm already closes
+    add_imm(dbm, dst, imm);
 }
 
 // dst += src

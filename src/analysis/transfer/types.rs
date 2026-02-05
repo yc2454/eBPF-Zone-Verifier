@@ -35,8 +35,18 @@ pub(crate) fn update_alu_types(
              match src {
                 Operand::Reg(r) => { 
                     let src_ty = in_types.get(*r);
-                    // Special case: R10 (frame pointer) becomes PtrToStack { offset: 0 }
-                    types.set(dst, src_ty); 
+                    types.set(dst, src_ty);
+                    if src_ty.is_pointer() {
+                        match src_ty {
+                            RegType::PtrToPacket { id: _, is_base: true } => {
+                                types.set(dst, RegType::PtrToPacket { id: new_ptr_id(), is_base: false });
+                            },
+                            RegType::PtrToPacketMeta { is_base: true } => {
+                                types.set(dst, RegType::PtrToPacketMeta { is_base: false });
+                            },
+                            _ => {}
+                        }
+                    }            
                 }
                 Operand::Imm(_) => {
                     let reloc = env.ctx.pc_to_reloc.get(&pc)
@@ -89,40 +99,31 @@ pub(crate) fn update_alu_types(
                             } else {
                                 let packet_start_reg = packet_start_reg_op.unwrap();
                                 if let (Some(_), Some(packet_offset)) = domain::get_relative_bound(dbm, dst, *packet_start_reg) {
-                                    let new_offset = packet_offset + *k;
-                                    println!("!!!The packet offset of {} is {}", dst.name(), new_offset);
-                                    if new_offset <= constants::MAX_PACKET_OFF as i64 {
+                                    if packet_offset <= constants::MAX_PACKET_OFF as i64 {
                                         types.set(dst, RegType::PtrToPacket { id, is_base: false });
                                     } else {
                                         types.set(dst, RegType::ScalarValue);
                                     }
                                 }
                             }
-                            // types.set(dst, RegType::PtrToPacket {
-                            //     id,
-                            //     is_base: false,
-                            // });
                         }
                     },
-                    (RegType::PtrToPacketMeta, Operand::Imm(k)) => {
+                    (RegType::PtrToPacketMeta { .. }, Operand::Imm(k)) => {
                         if *k > constants::MAX_PACKET_OFF as i64 || *k < 0 {
                             types.set(dst, RegType::ScalarValue);
                         } else {
                             let packet_start_reg_op = domain::REG_ENV.all().iter()
-                                .find(|&&r| matches!(in_types.get(r), RegType::PtrToPacket { id: _, is_base: true }));
+                                .find(|&&r| matches!(in_types.get(r), RegType::PtrToPacketMeta { is_base: true }));
                             if packet_start_reg_op.is_none() {
                                 types.set(dst, RegType::ScalarValue);
                             } else {
                                 let packet_start_reg = packet_start_reg_op.unwrap();
-                                if let (Some(_), Some(packet_offset)) = domain::get_relative_bound(dbm, dst, *packet_start_reg) {
-                                    let new_offset = packet_offset + *k;
-                                    if new_offset <= constants::MAX_PACKET_OFF as i64 {
-                                        types.set(dst, RegType::PtrToPacketMeta);
-                                    } else {
-                                        println!("!!!The packet offset of {} is {}", dst.name(), new_offset);
-                                        println!("Mangling the pointer type back to scalar");
-                                        types.set(dst, RegType::ScalarValue);
-                                    }
+                                let packet_offset = domain::get_diff(dbm, dst, *packet_start_reg);
+                                if packet_offset <= constants::MAX_PACKET_OFF as i64 {
+                                    types.set(dst, RegType::PtrToPacketMeta { is_base: false } );
+                                } else {
+                                    dbm.dump_matrix();
+                                    types.set(dst, RegType::ScalarValue);
                                 }
                             }
                         }
@@ -225,7 +226,8 @@ pub(crate) fn update_load_types(
                         types.set(dst, RegType::PtrToMem { region, range: 0 });
                     }
                     CtxFieldKind::PacketMeta => {
-                        types.set(dst, RegType::PtrToPacketMeta);
+                        types.set(dst, RegType::PtrToPacketMeta { is_base: true });
+                    
                     }
                     _ => types.set(dst, RegType::ScalarValue),
                 }

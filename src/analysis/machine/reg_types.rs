@@ -15,7 +15,7 @@ pub enum RegType {
         is_base: bool,
     },    
     PtrToPacketEnd, 
-    PtrToPacketMeta,
+    PtrToPacketMeta { is_base: bool },
     PtrToMem { region: MemRegionId, range: u64 },           
     PtrToMapObject { map_idx: usize }, 
     PtrToMapValueOrNull { id: u32, map_idx: usize }, 
@@ -37,7 +37,7 @@ impl RegType {
         use RegType::*;
         matches!(self, 
             PtrToCtx | PtrToStack { .. } | PtrToMapValue { .. } | 
-            PtrToPacket { .. } | PtrToPacketEnd | PtrToPacketMeta |
+            PtrToPacket { .. } | PtrToPacketEnd | PtrToPacketMeta { .. } |
             PtrToMem { .. } | PtrToMapValueOrNull { .. }
         )
     }

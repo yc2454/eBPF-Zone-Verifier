@@ -213,9 +213,22 @@ pub(crate) fn check_ptr_bounds(
                 env.fail(VerificationError::PointerOutOfBounds { pc: state.pc });
             }
         }
-        RegType::PtrToPacket { .. } | RegType::PtrToPacketMeta => {
+        RegType::PtrToPacket { .. } => {
             let packet_start_reg_op = REG_ENV.all().iter()
                 .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket { id: _, is_base: true }));
+            if !packet_start_reg_op.is_none()  {
+                let packet_start_reg = packet_start_reg_op.unwrap();
+                if let (Some(_), Some(packet_offset)) = get_relative_bound(&state.dbm, reg, *packet_start_reg) {
+                    if packet_offset > constants::MAX_PACKET_OFF as i64 {
+                        println!("!!!!! FORGETTING THE BOUNDS OF {} because offset is {} !!!!!", reg.name(), packet_offset);
+                        forget(&mut state.dbm, reg);
+                    }
+                }
+            }
+        }
+        RegType::PtrToPacketMeta { .. } => {
+            let packet_start_reg_op = REG_ENV.all().iter()
+                .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacketMeta { is_base: true }));
             if !packet_start_reg_op.is_none()  {
                 let packet_start_reg = packet_start_reg_op.unwrap();
                 if let (Some(_), Some(packet_offset)) = get_relative_bound(&state.dbm, reg, *packet_start_reg) {
