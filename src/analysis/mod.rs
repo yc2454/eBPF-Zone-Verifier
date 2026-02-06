@@ -162,7 +162,7 @@ pub fn analyze_program(
 
     // --- FINAL REPORT ---
     if let Some(err) = &env.error {
-        info!(target: "app", "\n[Verifier] FAILURE: {:?}", err);
+        info!(target: "app", "\n[Verifier] FAILURE: {}", err.description());
         if config.verbosity >= 1 { 
             info!(target: "app", "[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count); 
         }

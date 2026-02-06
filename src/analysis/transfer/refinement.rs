@@ -133,40 +133,84 @@ fn maybe_promote_map_val(state: &mut State, reg: Reg) {
 /// On the NULL path: releases the reference from tracking.
 fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
     let target_ref_id = match state.types.get(reg) {
-        RegType::PtrToSocketOrNull { ref_id } => ref_id,
+        RegType::PtrToSocketOrNull { ref_id } 
+        | RegType::PtrToSockCommonOrNull { ref_id } 
+        | RegType::PtrToTcpSockOrNull { id: ref_id } => ref_id,
         _ => return,
     };
 
     if is_non_null {
         for r in Reg::ALL {
-            if let RegType::PtrToSocketOrNull { ref_id } = state.types.get(r) {
-                if ref_id == target_ref_id {
-                    state.types.set(r, RegType::PtrToSocket { ref_id });
+            let ty = state.types.get(r);
+            match ty {
+                RegType::PtrToSocketOrNull { ref_id } 
+                | RegType::PtrToSockCommonOrNull { ref_id } 
+                | RegType::PtrToTcpSockOrNull { id: ref_id } => {
+                    if ref_id == target_ref_id {
+                        state.types.set(r, ty.to_non_null().unwrap());
+                    }
                 }
+                _ => {}
             }
+            // if let RegType::PtrToSocketOrNull { ref_id } = state.types.get(r) {
+            //     if ref_id == target_ref_id {
+            //         state.types.set(r, RegType::PtrToSocket { ref_id });
+            //     }
+            // }
         }
         for k in state.stack.slot_offsets() {
-            if let RegType::PtrToSocketOrNull { ref_id } = state.stack.get_slot_type(k) {
-                if ref_id == target_ref_id {
-                    state.stack.set_slot_type(k, RegType::PtrToSocket { ref_id });
+            let ty = state.stack.get_slot_type(k);
+            match ty {
+                RegType::PtrToSocketOrNull { ref_id } 
+                | RegType::PtrToSockCommonOrNull { ref_id } 
+                | RegType::PtrToTcpSockOrNull { id: ref_id } => {
+                    if ref_id == target_ref_id {
+                        state.stack.set_slot_type(k, ty.to_non_null().unwrap());
+                    }
                 }
+                _ => {}
             }
+            // if let RegType::PtrToSocketOrNull { ref_id } = state.stack.get_slot_type(k) {
+            //     if ref_id == target_ref_id {
+            //         state.stack.set_slot_type(k, RegType::PtrToSocket { ref_id });
+            //     }
+            // }
         }
     } else {
         state.release_ref(target_ref_id);
         for r in Reg::ALL {
-            if let RegType::PtrToSocketOrNull { ref_id } = state.types.get(r) {
-                if ref_id == target_ref_id {
-                    state.types.set(r, RegType::ScalarValue);
+            match state.types.get(r) {
+                RegType::PtrToSocketOrNull { ref_id } 
+                | RegType::PtrToSockCommonOrNull { ref_id } 
+                | RegType::PtrToTcpSockOrNull { id: ref_id } => {
+                    if ref_id == target_ref_id {
+                        state.types.set(r, RegType::ScalarValue);
+                    }
                 }
+                _ => {}
             }
+            // if let RegType::PtrToSocketOrNull { ref_id } = state.types.get(r) {
+            //     if ref_id == target_ref_id {
+            //         state.types.set(r, RegType::ScalarValue);
+            //     }
+            // }
         }
         for k in state.stack.slot_offsets() {
-            if let RegType::PtrToSocketOrNull { ref_id } = state.stack.get_slot_type(k) {
-                if ref_id == target_ref_id {
-                    state.stack.set_slot_type(k, RegType::ScalarValue);
+            match state.stack.get_slot_type(k) {
+                RegType::PtrToSocketOrNull { ref_id } 
+                | RegType::PtrToSockCommonOrNull { ref_id } 
+                | RegType::PtrToTcpSockOrNull { id: ref_id } => {
+                    if ref_id == target_ref_id {
+                        state.stack.set_slot_type(k, RegType::ScalarValue);
+                    }
                 }
+                _ => {}
             }
+            // if let RegType::PtrToSocketOrNull { ref_id } = state.stack.get_slot_type(k) {
+            //     if ref_id == target_ref_id {
+            //         state.stack.set_slot_type(k, RegType::ScalarValue);
+            //     }
+            // }
         }
     }
 }

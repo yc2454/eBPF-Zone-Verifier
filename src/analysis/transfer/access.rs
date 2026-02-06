@@ -27,7 +27,7 @@ pub fn check_load(
 
     match base_type {
         PtrToStack { offset, frame_level } => {
-            check_stack_access(env, state, base, offset, off as i64, size, pc, AccessKind::Read, frame_level);
+            check_stack_access(env, state, base, offset, off as i64, size, pc, AccessKind::Read, None, frame_level);
         }
         PtrToPacket { id: _, is_base: _ } => {
             check_packet_access(env, state, base, off, size, pc, AccessKind::Read);
@@ -106,7 +106,7 @@ pub fn check_load(
                 env.fail(VerificationError::UnsafeMemoryRegionLoad { pc, base, off });
             }
         }
-        RegType::PtrToSocket {..} | RegType::PtrToSockCommon {..} | RegType::PtrToTcpSock {..} => {
+        PtrToSocket {..} | PtrToSockCommon {..} | PtrToTcpSock {..} => {
             if !is_valid_socket_access(&base_type, off as i64, size) {
                 error!(
                     "Invalid socket access at pc {}: {:?} offset {} size {}", 
@@ -121,7 +121,7 @@ pub fn check_load(
                      pc, base, off);
             env.fail(VerificationError::UnsafeGenericLoad { pc, base, off });
         }
-        PtrToPacketMeta => {
+        PtrToPacketMeta { .. } => {
             // Find a register pointing to packet data (data pointer)
             let reg_pointing_to_packet_data = 
                 REG_ENV
@@ -171,9 +171,10 @@ pub fn check_load(
 pub fn check_store(
     env: &mut VerifierEnv,
     state: &State,
-    base: crate::zone::domain::Reg,
+    base: Reg,
     size: i64,
     off: i16,
+    src_type: RegType
 ) {
     let ctx = env.ctx;
     let base_ty = state.types.get(base);
@@ -195,7 +196,9 @@ pub fn check_store(
             }
         }
         PtrToStack { offset, frame_level } => {
-            check_stack_access(env, state, base, offset, off as i64, size as i64, pc, AccessKind::Write, frame_level);
+            check_stack_access(
+                env, state, base, offset, off as i64, 
+                size as i64, pc, AccessKind::Write, Some(src_type), frame_level);
         }
         PtrToPacket { id: _, is_base: _ } => {
             check_packet_access(env, state, base, off, size, pc, AccessKind::Write);
@@ -250,11 +253,24 @@ pub fn check_stack_access(
     size: i64,
     pc: usize,
     kind: AccessKind,
+    src_type_op: Option<RegType>,
     pointer_frame_lv: usize
 ) {
     if state.current_frame_level() > pointer_frame_lv {
-        env.fail(VerificationError::SpillToCaller { pc });
-        return;
+        if let AccessKind::Write = kind && src_type_op.is_some() {
+            if let Some(ty) = src_type_op {
+                let allowed = matches!(ty,
+                    RegType::ScalarValue
+                    | RegType::NotInit
+                    | RegType::PtrToSocket { .. }
+                    | RegType::PtrToSocketOrNull { .. }
+                );
+                if !allowed {
+                    env.fail(VerificationError::SpillToCaller { pc });
+                    return;
+                }
+            }
+        }
     }
     // The frame depth is stored as a positive number (e.g., 300 means R10-300)
     let current_frame_depth = -(state.total_stack_depth() as i64);
@@ -373,7 +389,8 @@ pub fn check_stack_arg_readable(
         size,
         pc,
         AccessKind::Read,
-        state.current_frame_level()
+        None,
+        state.current_frame_level(),
     )
 }
 
@@ -595,7 +612,7 @@ fn check_packet_access(
     if let Some(start_reg) = start_reg_opt {
         // We need the Lower bound (Minimum distance) to be safe
         if let (Some(lower), _) = get_relative_bound(&state.dbm, base, *start_reg) {
-            // Debug: println!("Start Check: {} >= {}", lower, -off);
+            println!("Packet Start Check: {} >= {}", lower, -off);
             if lower >= -(off as i64) {
                 start_safe = true;
             }
@@ -609,7 +626,7 @@ fn check_packet_access(
         // We need the Upper bound (Maximum distance) to be safe
         if let (_, Some(upper)) = get_relative_bound(&state.dbm, base, *end_reg) {
             let limit = -(off as i64 + size);
-            // Debug: println!("End Check: {} <= {}", upper, limit);
+            println!("Packet End Check: {} <= {}", upper, limit);
             if upper <= limit {
                 end_safe = true;
             }

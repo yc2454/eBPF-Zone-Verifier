@@ -94,7 +94,12 @@ pub(crate) fn transfer_store(
 
     let access_size = size.bytes() as i64;
 
-    access::check_store(env, &state, base, access_size, off);
+    let src_type = match src {
+        Operand::Reg(r) => state.types.get(*r),
+        Operand::Imm(_) => RegType::ScalarValue,
+    };
+
+    access::check_store(env, &state, base, access_size, off, src_type);
     
     // Handle spilling to stack
     if base == Reg::R10 {
@@ -111,11 +116,6 @@ pub(crate) fn transfer_store(
         // Update frame depth
         state.update_frame_depth(off);
     }
-
-    let src_type = match src {
-        Operand::Reg(r) => state.types.get(*r),
-        Operand::Imm(_) => RegType::ScalarValue,
-    };
     let base_type = state.types.get(base);
     update_store_types(&mut state.stack, src_type, size, base_type, off);
 
@@ -164,7 +164,7 @@ pub(crate) fn transfer_atomic(
     // Memory Safety Check
     let access_size = size.bytes() as i64;
     access::check_load(env, &state, base, access_size, off);
-    access::check_store(env, &state, base, access_size, off);
+    access::check_store(env, &state, base, access_size, off, state.types.get(src));
     if env.failed() { return vec![]; }
 
     // Try to reload spilled state BEFORE invalidating

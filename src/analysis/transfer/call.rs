@@ -262,7 +262,7 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
         constants::BPF_SK_LOOKUP_TCP => HelperSignature::new([
             PtrToCtx,       // R1: ctx
             PtrToMem,       // R2: tuple
-            Anything,       // R3: tuple_size
+            ConstSize,       // R3: tuple_size
             Anything,       // R4: netns
             Anything,       // R5: flags
         ]),
@@ -270,7 +270,7 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
         constants::BPF_SK_LOOKUP_UDP => HelperSignature::new([
             PtrToCtx,       // R1: ctx
             PtrToMem,       // R2: tuple
-            Anything,       // R3: tuple_size
+            ConstSize,       // R3: tuple_size
             Anything,       // R4: netns
             Anything,       // R5: flags
         ]),
@@ -384,6 +384,14 @@ pub fn get_mem_size_pairs(helper: u32) -> &'static [MemSizePair] {
         MemSizePair::new_nullable(R1, R2),
         MemSizePair::new_nullable(R3, R4),
     ];
+
+    static SK_LOOKUP_TCP: [MemSizePair; 1] = [
+        MemSizePair::new(R2, R3)
+    ];
+    
+    static SK_LOOKUP_UDP: [MemSizePair; 1] = [
+        MemSizePair::new(R2, R3)
+    ];
     
     static EMPTY: [MemSizePair; 0] = [];
     
@@ -396,6 +404,10 @@ pub fn get_mem_size_pairs(helper: u32) -> &'static [MemSizePair] {
         constants::BPF_SKB_STORE_BYTES => &SKB_STORE_BYTES,
         
         constants::BPF_CSUM_DIFF => &CSUM_DIFF,
+
+        constants::BPF_SK_LOOKUP_TCP => &SK_LOOKUP_TCP,
+        
+        constants::BPF_SK_LOOKUP_UDP => &SK_LOOKUP_UDP,
         
         _ => &EMPTY,
     }
@@ -579,6 +591,9 @@ fn validate_single_arg(
 
         // ---- Generic memory pointer ----
         PtrToMem => {
+            if checked_by_mem_size_pairs(helper, reg) {
+                return true;
+            }
             // Some helpers reject packet pointers for specific args
             if matches!(actual, RegType::PtrToPacket { .. }) 
                 && helper_rejects_packet_for_arg(helper, arg_index) 
@@ -650,7 +665,7 @@ fn validate_single_arg(
 
         // ---- Socket types ----
         PtrToSocket => {
-            if !matches!(actual, RegType::PtrToSocket { .. }) {
+            if !matches!(actual, RegType::PtrToSocket { .. } | RegType::PtrToSockCommon { .. } | RegType::PtrToStack { .. }) {
                 env.fail(VerificationError::InvalidArgType { pc, reg });
                 error!("[Verifier] pc {}: R{} expected PTR_TO_SOCKET, got {:?}", 
                        pc, arg_index + 1, actual);
@@ -718,6 +733,7 @@ fn validate_single_arg(
                     8, // PtrToLong is 8-byte access
                     pc, 
                     access::AccessKind::HelperOutput,
+                    None,
                     frame_level
                 );
                 !env.failed()
@@ -974,6 +990,11 @@ pub(crate) fn transfer_call(
     //
     // We only model the FAILURE path. Success means execution went elsewhere.
     if helper == constants::BPF_TAIL_CALL {
+        if state.has_unreleased_refs() {
+            error!("Entering tail calls but has unreleased references!");
+            env.fail(VerificationError::UnreleasedReference {});
+            return vec![];
+        }
         // Update types (clobber caller-saved, R0 = scalar)
         update_call_types(env, &in_types, &mut state, helper);
         
@@ -1020,7 +1041,6 @@ pub(crate) fn transfer_call(
     // ========================================================================
 
     // 1. Update types
-    println!("Before updating call types: {}", state.types.reg_types_str());
     update_call_types(env, &in_types, &mut state, helper);
     
     // 2. Update DBM - forget caller-saved registers
@@ -1208,6 +1228,21 @@ fn check_single_mem_size_pair(
     
     // Validate pointer can accommodate the access
     check_ptr_access_size(env, state, pair.ptr_reg, ptr_type, max_size as u32, pc)
+}
+
+fn checked_by_mem_size_pairs(
+    helper: u32,
+    reg: Reg
+) -> bool {
+    let pairs = get_mem_size_pairs(helper);
+    
+    for pair in pairs {
+        if pair.ptr_reg == reg {
+            return true;
+        }
+    }
+    
+    false
 }
 
 /// Checks that a pointer can safely access `size` bytes.
