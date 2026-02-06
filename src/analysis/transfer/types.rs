@@ -311,11 +311,6 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
             state.invalidate_ref(ref_id);
         }
     }
-
-    // Clobber caller-saved registers - they are NOT readable after the call
-    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-        state.types.set(r, RegType::NotInit);
-    }
     
     // Set R0 based on helper return type
     match helper {
@@ -358,21 +353,30 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
             let id = state.acquire_ref();
             state.types.set(Reg::R0, RegType::PtrToSockCommonOrNull { ref_id: Some(id) });
         }
+
+        constants::BPF_SK_RELEASE => {
+            if let Some(ref_id) = state.types.get(Reg::R1).get_ref_id() {
+                state.release_ref(ref_id);
+                state.invalidate_ref(ref_id);
+            }
+        }
         
         // SKC to TCP sock conversion - returns PTR_TO_TCP_SOCK_OR_NULL
         constants::BPF_SKC_TO_TCP_SOCK | 
         constants::BPF_SKC_TO_TCP6_SOCK |
         constants::BPF_SKC_TO_TCP_TIMEWAIT_SOCK |
         constants::BPF_SKC_TO_TCP_REQUEST_SOCK => {
-            let id = state.acquire_ref();
-            state.types.set(Reg::R0, RegType::PtrToTcpSockOrNull { id: Some(id) });
+            if let Some(ref_id) = state.types.get(Reg::R1).get_ref_id() {
+                state.types.set(Reg::R0, RegType::PtrToTcpSockOrNull { id: Some(ref_id) });
+            }
         }
         
         // SKC to UDP/Unix - return SOCK_COMMON for now (simplified)
         constants::BPF_SKC_TO_UDP6_SOCK |
         constants::BPF_SKC_TO_UNIX_SOCK => {
-            let id = state.acquire_ref();
-            state.types.set(Reg::R0, RegType::PtrToSockCommonOrNull { ref_id: Some(id) });
+            if let Some(ref_id) = state.types.get(Reg::R1).get_ref_id() {
+                state.types.set(Reg::R0, RegType::PtrToSockCommonOrNull { ref_id: Some(ref_id) });
+            }
         }
         
         // tail_call: R0 is undefined on failure path
@@ -394,6 +398,11 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
         _ => {
             state.types.set(Reg::R0, RegType::ScalarValue);
         }
+    }
+
+    // Clobber caller-saved registers - they are NOT readable after the call
+    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+        state.types.set(r, RegType::NotInit);
     }
     
     // 3. Invalidate packet pointers if needed

@@ -283,6 +283,14 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
+        constants::BPF_SKC_TO_UDP6_SOCK => HelperSignature::new([
+            PtrToSocket,       // R1: socket
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ]),
+
         // ---- FIB lookup ----
         constants::BPF_FIB_LOOKUP => HelperSignature::new([
             PtrToCtx,       // R1: ctx
