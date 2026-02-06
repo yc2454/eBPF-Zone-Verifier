@@ -201,11 +201,6 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
                 }
                 _ => {}
             }
-            // if let RegType::PtrToSocketOrNull { ref_id } = state.types.get(r) {
-            //     if ref_id == target_ref_id {
-            //         state.types.set(r, RegType::PtrToSocket { ref_id });
-            //     }
-            // }
         }
         for k in state.stack.slot_offsets() {
             let ty = state.stack.get_slot_type(k);
@@ -219,14 +214,11 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
                 }
                 _ => {}
             }
-            // if let RegType::PtrToSocketOrNull { ref_id } = state.stack.get_slot_type(k) {
-            //     if ref_id == target_ref_id {
-            //         state.stack.set_slot_type(k, RegType::PtrToSocket { ref_id });
-            //     }
-            // }
         }
     } else {
-        state.release_ref(target_ref_id);
+        if target_ref_id.is_some() {
+            state.release_ref(target_ref_id.unwrap());
+        }
         for r in Reg::ALL {
             match state.types.get(r) {
                 RegType::PtrToSocketOrNull { ref_id } 
@@ -238,11 +230,6 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
                 }
                 _ => {}
             }
-            // if let RegType::PtrToSocketOrNull { ref_id } = state.types.get(r) {
-            //     if ref_id == target_ref_id {
-            //         state.types.set(r, RegType::ScalarValue);
-            //     }
-            // }
         }
         for k in state.stack.slot_offsets() {
             match state.stack.get_slot_type(k) {
@@ -255,11 +242,6 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
                 }
                 _ => {}
             }
-            // if let RegType::PtrToSocketOrNull { ref_id } = state.stack.get_slot_type(k) {
-            //     if ref_id == target_ref_id {
-            //         state.stack.set_slot_type(k, RegType::ScalarValue);
-            //     }
-            // }
         }
     }
 }

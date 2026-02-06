@@ -332,7 +332,7 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
                 match map_def.type_ {
                     constants::BPF_MAP_TYPE_SOCKMAP | constants::BPF_MAP_TYPE_SOCKHASH => {
                         let id = state.acquire_ref();
-                        state.types.set(Reg::R0, RegType::PtrToSocketOrNull { ref_id: id });
+                        state.types.set(Reg::R0, RegType::PtrToSocketOrNull { ref_id: Some(id) });
                     }
                     _ => {
                         let id = new_ptr_id();
@@ -345,13 +345,18 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
         // Socket lookup helpers - return PTR_TO_SOCKET_OR_NULL
         constants::BPF_SK_LOOKUP_TCP | constants::BPF_SK_LOOKUP_UDP => {
             let id = state.acquire_ref();
-            state.types.set(Reg::R0, RegType::PtrToSocketOrNull { ref_id: id });
+            state.types.set(Reg::R0, RegType::PtrToSocketOrNull { ref_id: Some(id) });
+        }
+        
+        // The socket reference from bpf_get_listener_sock doesn't need to be released
+        constants::BPF_GET_LISTENER_SOCK => {
+            state.types.set(Reg::R0, RegType::PtrToSocketOrNull { ref_id: None });
         }
         
         // SKC lookup - returns PTR_TO_SOCK_COMMON_OR_NULL
         constants::BPF_SKC_LOOKUP_TCP => {
             let id = state.acquire_ref();
-            state.types.set(Reg::R0, RegType::PtrToSockCommonOrNull { ref_id: id });
+            state.types.set(Reg::R0, RegType::PtrToSockCommonOrNull { ref_id: Some(id) });
         }
         
         // SKC to TCP sock conversion - returns PTR_TO_TCP_SOCK_OR_NULL
@@ -360,14 +365,14 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
         constants::BPF_SKC_TO_TCP_TIMEWAIT_SOCK |
         constants::BPF_SKC_TO_TCP_REQUEST_SOCK => {
             let id = state.acquire_ref();
-            state.types.set(Reg::R0, RegType::PtrToTcpSockOrNull { id });
+            state.types.set(Reg::R0, RegType::PtrToTcpSockOrNull { id: Some(id) });
         }
         
         // SKC to UDP/Unix - return SOCK_COMMON for now (simplified)
         constants::BPF_SKC_TO_UDP6_SOCK |
         constants::BPF_SKC_TO_UNIX_SOCK => {
             let id = state.acquire_ref();
-            state.types.set(Reg::R0, RegType::PtrToSockCommonOrNull { ref_id: id });
+            state.types.set(Reg::R0, RegType::PtrToSockCommonOrNull { ref_id: Some(id) });
         }
         
         // tail_call: R0 is undefined on failure path

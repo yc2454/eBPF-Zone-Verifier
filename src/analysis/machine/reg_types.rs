@@ -21,12 +21,12 @@ pub enum RegType {
     PtrToMapObject { map_idx: usize }, 
     PtrToMapValueOrNull { id: u32, map_idx: usize }, 
     PtrToMapValue { id: u32, offset: Option<i64>, map_idx: usize },
-    PtrToSocket { ref_id: u32 },
-    PtrToSocketOrNull { ref_id: u32 },
-    PtrToSockCommon { ref_id: u32 },
-    PtrToSockCommonOrNull { ref_id: u32 },
-    PtrToTcpSock { id: u32 },
-    PtrToTcpSockOrNull { id: u32 },
+    PtrToSocket { ref_id: Option<u32> },
+    PtrToSocketOrNull { ref_id: Option<u32>  },
+    PtrToSockCommon { ref_id: Option<u32>  },
+    PtrToSockCommonOrNull { ref_id: Option<u32>  },
+    PtrToTcpSock { id: Option<u32>  },
+    PtrToTcpSockOrNull { id: Option<u32>  },
 }
 
 impl Default for RegType {
@@ -109,7 +109,7 @@ impl RegType {
             RegType::PtrToSockCommon { ref_id: id } |
             RegType::PtrToSockCommonOrNull { ref_id: id } |
             RegType::PtrToTcpSock { id } |
-            RegType::PtrToTcpSockOrNull { id } => Some(id),
+            RegType::PtrToTcpSockOrNull { id } => id,
             _ => None,
         }
     }

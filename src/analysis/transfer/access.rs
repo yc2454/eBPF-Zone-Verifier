@@ -281,7 +281,7 @@ pub fn check_stack_access(
             let access_end = current_frame_depth + actual_offset + size;
 
             // Alignment check
-            if actual_offset % size != 0 {
+            if !matches!(kind, AccessKind::HelperOutput) && actual_offset % size != 0 {
                 env.fail(VerificationError::MisalignedAccess { pc, off: actual_offset });
                 return;
             }
@@ -380,6 +380,7 @@ pub fn check_stack_arg_readable(
     stack_offset: i64,  // already resolved offset from R10
     size: i64,
     pc: usize,
+    kind: AccessKind
 ) {
     // For helper args, offset is already known (R10 + some constant)
     check_stack_access(
@@ -388,7 +389,7 @@ pub fn check_stack_arg_readable(
         0,  // no additional instruction offset
         size,
         pc,
-        AccessKind::Read,
+        kind,
         None,
         state.current_frame_level(),
     )

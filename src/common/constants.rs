@@ -56,6 +56,7 @@ pub const BPF_SK_ANCESTOR_CGROUP_ID: u32 = 129;
 pub const BPF_SPIN_LOCK: u32 = 93;
 pub const BPF_SPIN_UNLOCK: u32 = 94;
 pub const BPF_SKB_ECN_SET_CE: u32 = 97;
+pub const BPF_GET_LISTENER_SOCK: u32 = 98;
 pub const BPF_STRTOUL: u32 = 106;
 pub const BPF_PROBE_READ_USER: u32 = 112;
 pub const BPF_PROBE_READ_KERNEL: u32 = 113;

@@ -9,7 +9,7 @@ use crate::analysis::transfer::types::update_call_rel_types;
 use crate::ast::{Program, ProgramKind, AttachKind};
 use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, is_zero, nonneg, get_bounds, positive};
 use crate::zone::tnum::{Tnum};
-use crate::analysis::transfer::access;
+use crate::analysis::transfer::access::{self, AccessKind};
 use crate::parsing::btf::SpecialFieldKind;
 use crate::common::constants;
 use log::{error, info, warn};
@@ -760,7 +760,7 @@ fn validate_readable_mem(
     match reg_type {
         RegType::PtrToStack { offset: Some(off), .. } => {
             if let Some(sz) = size {
-                access::check_stack_arg_readable(env, state, off, sz as i64, pc);
+                access::check_stack_arg_readable(env, state, off, sz as i64, pc, AccessKind::Read);
             }
             true
         }
@@ -1266,7 +1266,7 @@ fn check_ptr_access_size(
                 return false;
             }
             // Also check stack slots are initialized for reads
-            access::check_stack_arg_readable(env, state, off, size as i64, pc);
+            access::check_stack_arg_readable(env, state, off, size as i64, pc, AccessKind::HelperOutput);
             !env.failed()
         }
         
