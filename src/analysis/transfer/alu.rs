@@ -215,7 +215,7 @@ pub(crate) fn check_ptr_bounds(
         }
         RegType::PtrToPacket { .. } => {
             let packet_start_reg_op = REG_ENV.all().iter()
-                .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket { id: _, is_base: true }));
+                .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket { id: _, is_base: true, range: _ }));
             if !packet_start_reg_op.is_none()  {
                 let packet_start_reg = packet_start_reg_op.unwrap();
                 if let (Some(_), Some(packet_offset)) = get_relative_bound(&state.dbm, reg, *packet_start_reg) {

@@ -62,6 +62,55 @@ pub(crate) fn refine_mem_ranges(dbm: &Dbm, types: &mut TypeState, stack: &mut St
     }
 }
 
+pub(crate) fn refine_packet_ranges(dbm: &Dbm, types: &mut TypeState, stack: &mut StackState, pkt_reg: Reg, end_reg: Reg) {
+    println!("Refining packet ranges");
+    // Determine which register is PtrToPacket and which is PtrToPacketEnd
+    let target_id = match (types.get(pkt_reg), types.get(end_reg)) {
+        (RegType::PtrToPacket { id, .. }, RegType::PtrToPacketEnd) => id,
+        (RegType::PtrToPacketEnd, RegType::PtrToPacket { .. }) => {
+            // Swap: recurse with correct argument order
+            return refine_packet_ranges(dbm, types, stack, end_reg, pkt_reg);
+        }
+        _ => return,
+    };
+
+    println!("Target ID: {}", target_id);
+
+    // Update all PtrToPacket registers with matching id
+    for r in Reg::ALL {
+        if let RegType::PtrToPacket { id, is_base, range } = types.get(r) {
+            if id == target_id {
+                let dist = dbm.get(r, end_reg);
+                println!("{:?} -> {:?}: dist = {}", r, end_reg, dist);
+                if dist < INF && dist <= 0 {
+                    let safe_bytes = dist.unsigned_abs() as i64;
+                    if safe_bytes > range {
+                        types.set(r, RegType::PtrToPacket { id, is_base, range: safe_bytes });
+                    }
+                }
+            }
+        }
+    }
+
+    // Also update stack slots with matching id
+    for k in stack.slot_offsets() {
+        if let RegType::PtrToPacket { id, is_base, range } = stack.get_slot_type(k) {
+            if id == target_id {
+                let max_range = Reg::ALL.iter()
+                    .filter_map(|&r| match types.get(r) {
+                        RegType::PtrToPacket { id: rid, range, .. } if rid == target_id => Some(range),
+                        _ => None,
+                    })
+                    .max()
+                    .unwrap_or(0);
+                if max_range > range {
+                    stack.set_slot_type(k, RegType::PtrToPacket { id, is_base, range: max_range });
+                }
+            }
+        }
+    }
+}
+
 /// Refines register types based on the outcome of a conditional branch.
 ///
 /// This function analyzes the branch condition to promote types from "Unsafe" or "Nullable"

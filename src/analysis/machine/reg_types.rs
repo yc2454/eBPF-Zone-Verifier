@@ -13,6 +13,7 @@ pub enum RegType {
     PtrToPacket { 
         id: u32,
         is_base: bool,
+        range: i64,
     },    
     PtrToPacketEnd, 
     PtrToPacketMeta { is_base: bool },

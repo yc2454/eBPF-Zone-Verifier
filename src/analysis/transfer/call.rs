@@ -1298,10 +1298,11 @@ fn check_ptr_access_size(
             !env.failed()
         }
         
-        RegType::PtrToPacket { .. } => {
+        RegType::PtrToPacket { range, .. } => {
             // Packet: need to verify against packet bounds (data_end - data)
             // This requires range analysis between packet_data and packet_end
-            access::check_load(env, state, ptr_reg, size as i64, 0);
+            // access::check_load(env, state, ptr_reg, size as i64, 0);
+            access::check_packet_access(env, state, ptr_reg, 0, size as i64, range, pc, access::AccessKind::HelperOutput);
             !env.failed()
         }
         
