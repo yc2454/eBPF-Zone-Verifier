@@ -55,7 +55,7 @@ pub(crate) fn transfer_alu(
     };
     let dst_type = state.types.get(dst);
 
-    if !check_ptr_arithmetic(env, &state, op, &dst_type, &src_type, &src) {
+    if !check_ptr_arithmetic(env, &state, op, width, &dst_type, &src_type, &src) {
         env.fail(VerificationError::InvalidPointerArithmetic { pc: state.pc });
         return vec![];
     }
@@ -109,6 +109,7 @@ pub(crate) fn check_ptr_arithmetic(
     _env: &mut VerifierEnv,
     state: &State,
     op: AluOp,
+    width: Width,
     dst_type: &RegType,
     src_type: &RegType,
     src: &Operand
@@ -171,13 +172,13 @@ pub(crate) fn check_ptr_arithmetic(
             AluOp::Add => true,
             
             // Scalar - Ptr is FORBIDDEN.
-            AluOp::Sub => { false }
+            AluOp::Sub => width == Width::W32,
 
             // Mov Scalar, Ptr is allowed (dst becomes Ptr).
             AluOp::Mov => true,
             
             // Scalar * Ptr, etc. forbidden.
-            _ => { false }
+            _ => false
         }
     }
 }
@@ -427,11 +428,8 @@ fn handle_or(
         }
     };
     state.set_tnum(dst, new_t);
-    
-    // If tnum proves non-zero, inform DBM
-    if new_t.is_definitely_nonzero() {
-        assume_ge_const(&mut state.dbm, dst, 1);
-    }
+
+    sync_tnum_to_dbm(state, dst);
 }
 
 fn handle_neg(

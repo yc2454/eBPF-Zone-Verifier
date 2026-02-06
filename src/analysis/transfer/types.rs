@@ -85,8 +85,14 @@ pub(crate) fn update_alu_types(
                         let new_off = offset.map(|o| o + k);
                         types.set(dst, RegType::PtrToMapValue { id, offset: new_off, map_idx });
                     },
-                    (RegType::PtrToMapValue { id, map_idx, .. }, Operand::Reg(_)) => {
-                        types.set(dst, RegType::PtrToMapValue { offset: None, map_idx, id });
+                    (RegType::PtrToMapValue { id, map_idx, offset }, Operand::Reg(src_reg)) => {
+                        let src_reg_value = domain::get_constant_value(dbm, *src_reg);
+                        if src_reg_value.is_some() {
+                            let src_reg_value = src_reg_value.unwrap();
+                            types.set(dst, RegType::PtrToMapValue { offset: offset.map(|o| o + src_reg_value), map_idx, id });
+                        } else {
+                            types.set(dst, RegType::PtrToMapValue { offset: None, map_idx, id });
+                        }
                     },
                     (RegType::PtrToPacket { id, is_base: _, range }, Operand::Imm(k)) => {
                         if *k > constants::MAX_PACKET_OFF as i64 || *k < 0 {
@@ -173,11 +179,17 @@ pub(crate) fn update_alu_types(
             if dst_ty.is_pointer() {
                 match (dst_ty, src) {
                     (RegType::PtrToMapValue { id, offset, map_idx }, Operand::Imm(k)) => {
-                        let new_off = offset.map(|o| o + k);
+                        let new_off = offset.map(|o| o - k);
                         types.set(dst, RegType::PtrToMapValue { id, offset: new_off, map_idx });
                     },
-                    (RegType::PtrToMapValue { id, map_idx, .. }, Operand::Reg(_)) => {
-                        types.set(dst, RegType::PtrToMapValue { offset: None, map_idx, id });
+                    (RegType::PtrToMapValue { id, map_idx, offset }, Operand::Reg(src_reg)) => {
+                        let src_reg_value = domain::get_constant_value(dbm, *src_reg);
+                        if src_reg_value.is_some() {
+                            let src_reg_value = src_reg_value.unwrap();
+                            types.set(dst, RegType::PtrToMapValue { offset: offset.map(|o| o - src_reg_value), map_idx, id });
+                        } else {
+                            types.set(dst, RegType::PtrToMapValue { offset: None, map_idx, id });
+                        }
                     },
                     (RegType::PtrToPacket { id, is_base: _, range }, Operand::Imm(k)) => {
                         if *k > constants::MAX_PACKET_OFF as i64 || *k < 0 {
