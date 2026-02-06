@@ -66,7 +66,7 @@ pub(crate) fn transfer_if(
             apply_jmp_constraints(&mut state_then, &mut state_else, left, op, width, Left(*r)),
     }
 
-    // Branch Type Refinement (For map pointers)
+    // Branch Type Refinement (For map and socket pointers)
     let instr = Instr::If { width, left, op, right: right.clone(), target };
     refine_branch(&mut state_then, &instr, true);
     refine_branch(&mut state_else, &instr, false);
@@ -256,7 +256,6 @@ fn can_apply_dbm_constraint(
         if dominated_by_signed {
             return fits_in_i32_range(dbm, left) && fits_in_i32(right_bounds);
         } else if dominated_by_unsigned {
-            println!("Can we apply unsigned constraints? {}, {}", fits_in_u32_range(dbm, left), fits_in_u32(right_bounds));
             return fits_in_u32_range(dbm, left) && fits_in_u32(right_bounds);
         }
     }
@@ -339,19 +338,9 @@ fn apply_eq_refinements(
     match (op, imm) {
         (CmpOp::Eq, Some(v)) => {
             then_s.set_tnum(left, Tnum::constant(v as u64));
-            if v == 0 {
-                if let Some(non_null) = else_s.types.get(left).to_non_null() {
-                    else_s.types.set(left, non_null);
-                }
-            }
         }
         (CmpOp::Ne, Some(v)) => {
             else_s.set_tnum(left, Tnum::constant(v as u64));
-            if v == 0 {
-                if let Some(non_null) = then_s.types.get(left).to_non_null() {
-                    then_s.types.set(left, non_null);
-                }
-            }
         }
         _ => {}
     }
@@ -491,8 +480,6 @@ pub fn apply_jmp_constraints(
     // Apply DBM constraints if safe
     if can_apply_dbm_constraint(&then_s.dbm, left, op, width, right_bounds) {
         apply_cmp_to_dbm(&mut then_s.dbm, &mut else_s.dbm, left, op, resolved);
-    } else {
-        println!("DBM constraints not safe, CAN't apply");
     }
     
     // Apply type/tnum refinements

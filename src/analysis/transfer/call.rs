@@ -275,6 +275,14 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             Anything,       // R5: flags
         ]),
 
+        constants::BPF_SK_RELEASE => HelperSignature::new([
+            PtrToSocket,       // R1: socket
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ]),
+
         // ---- FIB lookup ----
         constants::BPF_FIB_LOOKUP => HelperSignature::new([
             PtrToCtx,       // R1: ctx
@@ -641,9 +649,23 @@ fn validate_single_arg(
         }
 
         // ---- Socket types ----
-        PtrToSockCommon | PtrToSocket => {
-            // TODO: Add socket pointer types to RegType
-            warn!("[Verifier] Socket pointer validation not yet implemented");
+        PtrToSocket => {
+            if !matches!(actual, RegType::PtrToSocket { .. }) {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!("[Verifier] pc {}: R{} expected PTR_TO_SOCKET, got {:?}", 
+                       pc, arg_index + 1, actual);
+                return false;
+            }
+            true
+        }
+
+        PtrToSockCommon => {
+            if !matches!(actual, RegType::PtrToSockCommon { .. }) {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!("[Verifier] pc {}: R{} expected PTR_TO_SOCK_COMMON, got {:?}", 
+                       pc, arg_index + 1, actual);
+                return false;
+            }
             true
         }
 
@@ -998,6 +1020,7 @@ pub(crate) fn transfer_call(
     // ========================================================================
 
     // 1. Update types
+    println!("Before updating call types: {}", state.types.reg_types_str());
     update_call_types(env, &in_types, &mut state, helper);
     
     // 2. Update DBM - forget caller-saved registers

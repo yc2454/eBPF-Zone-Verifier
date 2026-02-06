@@ -20,10 +20,10 @@ pub enum RegType {
     PtrToMapObject { map_idx: usize }, 
     PtrToMapValueOrNull { id: u32, map_idx: usize }, 
     PtrToMapValue { id: u32, offset: Option<i64>, map_idx: usize },
-    PtrToSocket { id: u32 },
-    PtrToSocketOrNull { id: u32 },
-    PtrToSockCommon { id: u32 },
-    PtrToSockCommonOrNull { id: u32 },
+    PtrToSocket { ref_id: u32 },
+    PtrToSocketOrNull { ref_id: u32 },
+    PtrToSockCommon { ref_id: u32 },
+    PtrToSockCommonOrNull { ref_id: u32 },
     PtrToTcpSock { id: u32 },
     PtrToTcpSockOrNull { id: u32 },
 }
@@ -57,11 +57,11 @@ impl RegType {
             RegType::PtrToMapValueOrNull { id, map_idx } => {
                 Some(RegType::PtrToMapValue { offset: Some(0), map_idx, id })
             }
-            RegType::PtrToSocketOrNull { id } => {
-                Some(RegType::PtrToSocket { id })
+            RegType::PtrToSocketOrNull { ref_id: id } => {
+                Some(RegType::PtrToSocket { ref_id: id })
             }
-            RegType::PtrToSockCommonOrNull { id } => {
-                Some(RegType::PtrToSockCommon { id })
+            RegType::PtrToSockCommonOrNull { ref_id: id } => {
+                Some(RegType::PtrToSockCommon { ref_id: id })
             }
             RegType::PtrToTcpSockOrNull { id } => {
                 Some(RegType::PtrToTcpSock { id })
@@ -103,10 +103,10 @@ impl RegType {
     /// Returns the ref_id if this type holds a reference
     pub fn get_ref_id(&self) -> Option<u32> {
         match *self {
-            RegType::PtrToSocket { id } |
-            RegType::PtrToSocketOrNull { id } |
-            RegType::PtrToSockCommon { id } |
-            RegType::PtrToSockCommonOrNull { id } |
+            RegType::PtrToSocket { ref_id: id } |
+            RegType::PtrToSocketOrNull { ref_id: id } |
+            RegType::PtrToSockCommon { ref_id: id } |
+            RegType::PtrToSockCommonOrNull { ref_id: id } |
             RegType::PtrToTcpSock { id } |
             RegType::PtrToTcpSockOrNull { id } => Some(id),
             _ => None,

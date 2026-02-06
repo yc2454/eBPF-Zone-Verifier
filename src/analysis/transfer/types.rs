@@ -304,12 +304,20 @@ pub(crate) fn helper_invalidates_packets(helper: u32) -> bool {
 
 /// Updates register types after a helper Call.
 pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, state: &mut State, helper: u32) {
-    // 1. Clobber caller-saved registers - they are NOT readable after the call
+    // Release socket reference
+    if helper == constants::BPF_SK_RELEASE {
+        if let Some(ref_id) = state.types.get(Reg::R1).get_ref_id() {
+            state.release_ref(ref_id);
+            state.invalidate_ref(ref_id);
+        }
+    }
+
+    // Clobber caller-saved registers - they are NOT readable after the call
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
         state.types.set(r, RegType::NotInit);
     }
     
-    // 2. Set R0 based on helper return type
+    // Set R0 based on helper return type
     match helper {
         constants::BPF_MAP_LOOKUP_ELEM => {
             let map_idx = match in_types.get(Reg::R1) {
@@ -324,7 +332,7 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
                 match map_def.type_ {
                     constants::BPF_MAP_TYPE_SOCKMAP | constants::BPF_MAP_TYPE_SOCKHASH => {
                         let id = state.acquire_ref();
-                        state.types.set(Reg::R0, RegType::PtrToSocketOrNull { id });
+                        state.types.set(Reg::R0, RegType::PtrToSocketOrNull { ref_id: id });
                     }
                     _ => {
                         let id = new_ptr_id();
@@ -337,13 +345,13 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
         // Socket lookup helpers - return PTR_TO_SOCKET_OR_NULL
         constants::BPF_SK_LOOKUP_TCP | constants::BPF_SK_LOOKUP_UDP => {
             let id = state.acquire_ref();
-            state.types.set(Reg::R0, RegType::PtrToSocketOrNull { id });
+            state.types.set(Reg::R0, RegType::PtrToSocketOrNull { ref_id: id });
         }
         
         // SKC lookup - returns PTR_TO_SOCK_COMMON_OR_NULL
         constants::BPF_SKC_LOOKUP_TCP => {
             let id = state.acquire_ref();
-            state.types.set(Reg::R0, RegType::PtrToSockCommonOrNull { id });
+            state.types.set(Reg::R0, RegType::PtrToSockCommonOrNull { ref_id: id });
         }
         
         // SKC to TCP sock conversion - returns PTR_TO_TCP_SOCK_OR_NULL
@@ -359,15 +367,7 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
         constants::BPF_SKC_TO_UDP6_SOCK |
         constants::BPF_SKC_TO_UNIX_SOCK => {
             let id = state.acquire_ref();
-            state.types.set(Reg::R0, RegType::PtrToSockCommonOrNull { id });
-        }
-
-        // Release socket reference
-        constants::BPF_SK_RELEASE => {
-            if let Some(ref_id) = state.types.get(Reg::R1).get_ref_id() {
-                state.release_ref(ref_id);
-                state.invalidate_ref(ref_id);
-            }
+            state.types.set(Reg::R0, RegType::PtrToSockCommonOrNull { ref_id: id });
         }
         
         // tail_call: R0 is undefined on failure path

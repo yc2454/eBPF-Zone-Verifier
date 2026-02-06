@@ -40,6 +40,19 @@ pub const BPF_SKB_CHANGE_TAIL: u32 = 38;
 pub const BPF_SKB_CHANGE_PROTO: u32 = 31;
 pub const BPF_SKB_ADJUST_ROOM: u32 = 50;
 pub const BPF_FIB_LOOKUP: u32 = 69;
+pub const BPF_SK_LOOKUP_TCP: u32 = 84;
+pub const BPF_SK_LOOKUP_UDP: u32 = 85;
+pub const BPF_SK_RELEASE: u32 = 86;
+pub const BPF_SKC_LOOKUP_TCP: u32 = 99;
+pub const BPF_SK_ASSIGN: u32 = 124;
+pub const BPF_SKC_TO_TCP6_SOCK: u32 = 125;
+pub const BPF_SKC_TO_TCP_SOCK: u32 = 126;
+pub const BPF_SKC_TO_TCP_TIMEWAIT_SOCK: u32 = 127;
+pub const BPF_SKC_TO_TCP_REQUEST_SOCK: u32 = 128;
+pub const BPF_SKC_TO_UDP6_SOCK: u32 = 129;
+pub const BPF_SKC_TO_UNIX_SOCK: u32 = 130;
+pub const BPF_SK_CGROUP_ID: u32 = 128;
+pub const BPF_SK_ANCESTOR_CGROUP_ID: u32 = 129;
 pub const BPF_SPIN_LOCK: u32 = 93;
 pub const BPF_SPIN_UNLOCK: u32 = 94;
 pub const BPF_SKB_ECN_SET_CE: u32 = 97;
@@ -240,21 +253,6 @@ pub const SHT_NOBITS: u32 = 8;
 pub const BPF_F_RDONLY_PROG: u32      = 1 << 7;  // 0x0080
 pub const BPF_F_WRONLY_PROG: u32      = 1 << 8;  // 0x0100
 pub const BPF_F_RDWR_PROG: u32        = 1 << 9;  // 0x0200
-
-// Socket/networking helpers
-pub const BPF_SK_LOOKUP_TCP: u32 = 84;
-pub const BPF_SK_LOOKUP_UDP: u32 = 85;
-pub const BPF_SK_RELEASE: u32 = 86;
-pub const BPF_SKC_LOOKUP_TCP: u32 = 99;
-pub const BPF_SK_ASSIGN: u32 = 124;
-pub const BPF_SKC_TO_TCP6_SOCK: u32 = 125;
-pub const BPF_SKC_TO_TCP_SOCK: u32 = 126;
-pub const BPF_SKC_TO_TCP_TIMEWAIT_SOCK: u32 = 127;
-pub const BPF_SKC_TO_TCP_REQUEST_SOCK: u32 = 128;
-pub const BPF_SKC_TO_UDP6_SOCK: u32 = 129;
-pub const BPF_SKC_TO_UNIX_SOCK: u32 = 130;
-pub const BPF_SK_CGROUP_ID: u32 = 128;
-pub const BPF_SK_ANCESTOR_CGROUP_ID: u32 = 129;
 
 // ===========================================================================
 // BPF Program Types

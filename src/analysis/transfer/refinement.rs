@@ -81,57 +81,33 @@ pub(crate) fn refine_mem_ranges(dbm: &Dbm, types: &mut TypeState, stack: &mut St
 /// * `branch_taken` - `true` if analyzing the path where the jump occurs; `false` if analyzing the fallthrough.
 pub(crate) fn refine_branch(
     state: &mut State,
-    instr: &Instr, 
-    branch_taken: bool // True if we are analyzing the branch-taken path, False if fallthrough
+    instr: &Instr,
+    branch_taken: bool,
 ) {
     match instr {
         Instr::If { op, left, right: Operand::Imm(0), .. } => {
-            match op {
-                CmpOp::Ne => {
-                    // if (reg != 0) goto Target;
-                    // Taken (True) -> reg != 0 -> SAFE
-                    if branch_taken { maybe_promote_map_val(state, *left); }
-                },
-                CmpOp::Eq => {
-                    // if (reg == 0) goto Target;
-                    // Fallthrough (False) -> reg != 0 -> SAFE
-                    if !branch_taken { maybe_promote_map_val(state, *left); }
-                },
-                CmpOp::SGe | CmpOp::UGe | CmpOp::SGt | CmpOp::UGt => {
-                    // if (reg >= 0) goto Target;  or  if (reg > 0) goto Target;
-                    // Taken (True) -> reg >= 1 -> SAFE
-                    if branch_taken { maybe_promote_map_val(state, *left); }
-                },
-                CmpOp::SLe | CmpOp::ULe | CmpOp::SLt | CmpOp::ULt => {
-                    // if (reg <= 0) goto Target;  or  if (reg < 0) goto Target;
-                    // Fallthrough (False) -> reg >= 1 -> SAFE
-                    if !branch_taken { maybe_promote_map_val(state, *left); }
-                },
-                CmpOp::Test => {
-                    // if (reg & 0xFF != 0) goto Target;
-                    // Taken (True) -> reg != 0 -> SAFE
-                    if branch_taken { maybe_promote_map_val(state, *left); }
-                }
+            // Determine if this path implies reg is non-null
+            let is_non_null = match op {
+                CmpOp::Ne      => branch_taken,   // if (reg != 0) goto => taken means non-null
+                CmpOp::Eq      => !branch_taken,  // if (reg == 0) goto => fallthrough means non-null
+                CmpOp::SGe | CmpOp::UGe | CmpOp::SGt | CmpOp::UGt => branch_taken,
+                CmpOp::SLe | CmpOp::ULe | CmpOp::SLt | CmpOp::ULt => !branch_taken,
+                CmpOp::Test    => branch_taken,
+            };
+
+            // Existing map value promotion
+            if is_non_null {
+                maybe_promote_map_val(state, *left);
             }
+
+            // refine acquired references (handles both paths)
+            maybe_refine_acquired_ref(state, *left, is_non_null);
         },
         _ => {}
     }
 }
 
 /// Promotes a Nullable Map Pointer to a Safe Map Pointer.
-///
-/// This helper function is called when a register is proven to be non-zero (non-NULL).
-/// It transitions a register from `RegType::PtrToMapValueOrNull` to `RegType::PtrToMapValue`.
-///
-/// # Aliasing
-/// This function scans **all** registers and **all** stack slots. Any location holding
-/// a pointer with the same unique ID as `reg` is also promoted. This ensures that verifying
-/// one alias (e.g., `if r1 != 0`) validates all copies of that pointer (e.g., `r2 = r1`).
-///
-/// # Arguments
-///
-/// * `state` - The mutable state to update.
-/// * `reg` - The register that was validated as non-null.
 fn maybe_promote_map_val(state: &mut State, reg: Reg) {
     let (target_id, _target_map_idx) = match state.types.get(reg) {
         RegType::PtrToMapValueOrNull { id, map_idx } => (id, map_idx),
@@ -148,6 +124,48 @@ fn maybe_promote_map_val(state: &mut State, reg: Reg) {
         if let RegType::PtrToMapValueOrNull { id, map_idx } = state.stack.get_slot_type(k) {
             if id == target_id {
                 state.stack.set_slot_type(k, RegType::PtrToMapValue { id, offset: Some(0), map_idx });
+            }
+        }
+    }
+}
+
+/// On the non-NULL path: promotes PtrToSocketOrNull → PtrToSocket (ref stays active).
+/// On the NULL path: releases the reference from tracking.
+fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
+    let target_ref_id = match state.types.get(reg) {
+        RegType::PtrToSocketOrNull { ref_id } => ref_id,
+        _ => return,
+    };
+
+    if is_non_null {
+        for r in Reg::ALL {
+            if let RegType::PtrToSocketOrNull { ref_id } = state.types.get(r) {
+                if ref_id == target_ref_id {
+                    state.types.set(r, RegType::PtrToSocket { ref_id });
+                }
+            }
+        }
+        for k in state.stack.slot_offsets() {
+            if let RegType::PtrToSocketOrNull { ref_id } = state.stack.get_slot_type(k) {
+                if ref_id == target_ref_id {
+                    state.stack.set_slot_type(k, RegType::PtrToSocket { ref_id });
+                }
+            }
+        }
+    } else {
+        state.release_ref(target_ref_id);
+        for r in Reg::ALL {
+            if let RegType::PtrToSocketOrNull { ref_id } = state.types.get(r) {
+                if ref_id == target_ref_id {
+                    state.types.set(r, RegType::ScalarValue);
+                }
+            }
+        }
+        for k in state.stack.slot_offsets() {
+            if let RegType::PtrToSocketOrNull { ref_id } = state.stack.get_slot_type(k) {
+                if ref_id == target_ref_id {
+                    state.stack.set_slot_type(k, RegType::ScalarValue);
+                }
             }
         }
     }

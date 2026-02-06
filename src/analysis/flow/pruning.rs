@@ -123,8 +123,8 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
         ) => m1 == m2 && id1 == id2,
 
         // Socket pointers
-        (PtrToSocket { id: id1 }, PtrToSocket { id: id2 }) => id1 == id2,
-        (PtrToSocketOrNull { id: id1 }, PtrToSocketOrNull { id: id2 }) => id1 == id2,
+        (PtrToSocket { ref_id: id1 }, PtrToSocket { ref_id: id2 }) => id1 == id2,
+        (PtrToSocketOrNull { ref_id: id1 }, PtrToSocketOrNull { ref_id: id2 }) => id1 == id2,
 
         // Stack pointers
         (
