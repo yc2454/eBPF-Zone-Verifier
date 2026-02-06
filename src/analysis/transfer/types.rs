@@ -38,8 +38,8 @@ pub(crate) fn update_alu_types(
                     types.set(dst, src_ty);
                     if src_ty.is_pointer() {
                         match src_ty {
-                            RegType::PtrToPacket { id: _, is_base: true } => {
-                                types.set(dst, RegType::PtrToPacket { id: new_ptr_id(), is_base: false });
+                            RegType::PtrToPacket { id, is_base: true, range } => {
+                                types.set(dst, RegType::PtrToPacket { id, is_base: false, range });
                             },
                             RegType::PtrToPacketMeta { is_base: true } => {
                                 types.set(dst, RegType::PtrToPacketMeta { is_base: false });
@@ -88,19 +88,19 @@ pub(crate) fn update_alu_types(
                     (RegType::PtrToMapValue { id, map_idx, .. }, Operand::Reg(_)) => {
                         types.set(dst, RegType::PtrToMapValue { offset: None, map_idx, id });
                     },
-                    (RegType::PtrToPacket { id, is_base: _ }, Operand::Imm(k)) => {
+                    (RegType::PtrToPacket { id, is_base: _, range }, Operand::Imm(k)) => {
                         if *k > constants::MAX_PACKET_OFF as i64 || *k < 0 {
                             types.set(dst, RegType::ScalarValue);
                         } else {
                             let packet_start_reg_op = domain::REG_ENV.all().iter()
-                                .find(|&&r| matches!(in_types.get(r), RegType::PtrToPacket { id: _, is_base: true }));
+                                .find(|&&r| matches!(in_types.get(r), RegType::PtrToPacket { id: _, is_base: true, range: _ }));
                             if packet_start_reg_op.is_none() {
                                 types.set(dst, RegType::ScalarValue);
                             } else {
                                 let packet_start_reg = packet_start_reg_op.unwrap();
                                 if let (Some(_), Some(packet_offset)) = domain::get_relative_bound(dbm, dst, *packet_start_reg) {
                                     if packet_offset <= constants::MAX_PACKET_OFF as i64 {
-                                        types.set(dst, RegType::PtrToPacket { id, is_base: false });
+                                        types.set(dst, RegType::PtrToPacket { id, is_base: false, range });
                                     } else {
                                         types.set(dst, RegType::ScalarValue);
                                     }
@@ -168,8 +168,8 @@ pub(crate) fn update_alu_types(
                         let new_off = offset.map(|o| o - k);
                         types.set(dst, RegType::PtrToMapValue { id, offset: new_off, map_idx });
                     },
-                    RegType::PtrToPacket { id, is_base: _ } => {
-                        types.set(dst, RegType::PtrToPacket { id, is_base: false });
+                    RegType::PtrToPacket { id, is_base: _, range } => {
+                        types.set(dst, RegType::PtrToPacket { id, is_base: false, range });
                     },
                     RegType::PtrToStack { offset, frame_level } => {
                         types.set(dst, RegType::PtrToStack { offset: offset.map(|o| o - k), frame_level });
@@ -217,7 +217,7 @@ pub(crate) fn update_load_types(
                 match info.kind {
                     CtxFieldKind::PacketStart => {
                         let new_id = new_ptr_id();
-                        types.set(dst, RegType::PtrToPacket { id: new_id, is_base: true });
+                        types.set(dst, RegType::PtrToPacket { id: new_id, is_base: true, range: 0 });
                     }
                     CtxFieldKind::PacketEnd => {
                         types.set(dst, RegType::PtrToPacketEnd);
@@ -311,11 +311,6 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
             state.invalidate_ref(ref_id);
         }
     }
-
-    // Clobber caller-saved registers - they are NOT readable after the call
-    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-        state.types.set(r, RegType::NotInit);
-    }
     
     // Set R0 based on helper return type
     match helper {
@@ -332,7 +327,7 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
                 match map_def.type_ {
                     constants::BPF_MAP_TYPE_SOCKMAP | constants::BPF_MAP_TYPE_SOCKHASH => {
                         let id = state.acquire_ref();
-                        state.types.set(Reg::R0, RegType::PtrToSocketOrNull { ref_id: id });
+                        state.types.set(Reg::R0, RegType::PtrToSocketOrNull { ref_id: Some(id) });
                     }
                     _ => {
                         let id = new_ptr_id();
@@ -345,13 +340,25 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
         // Socket lookup helpers - return PTR_TO_SOCKET_OR_NULL
         constants::BPF_SK_LOOKUP_TCP | constants::BPF_SK_LOOKUP_UDP => {
             let id = state.acquire_ref();
-            state.types.set(Reg::R0, RegType::PtrToSocketOrNull { ref_id: id });
+            state.types.set(Reg::R0, RegType::PtrToSocketOrNull { ref_id: Some(id) });
+        }
+        
+        // The socket reference from bpf_get_listener_sock doesn't need to be released
+        constants::BPF_GET_LISTENER_SOCK => {
+            state.types.set(Reg::R0, RegType::PtrToSocketOrNull { ref_id: None });
         }
         
         // SKC lookup - returns PTR_TO_SOCK_COMMON_OR_NULL
         constants::BPF_SKC_LOOKUP_TCP => {
             let id = state.acquire_ref();
-            state.types.set(Reg::R0, RegType::PtrToSockCommonOrNull { ref_id: id });
+            state.types.set(Reg::R0, RegType::PtrToSockCommonOrNull { ref_id: Some(id) });
+        }
+
+        constants::BPF_SK_RELEASE => {
+            if let Some(ref_id) = state.types.get(Reg::R1).get_ref_id() {
+                state.release_ref(ref_id);
+                state.invalidate_ref(ref_id);
+            }
         }
         
         // SKC to TCP sock conversion - returns PTR_TO_TCP_SOCK_OR_NULL
@@ -359,15 +366,17 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
         constants::BPF_SKC_TO_TCP6_SOCK |
         constants::BPF_SKC_TO_TCP_TIMEWAIT_SOCK |
         constants::BPF_SKC_TO_TCP_REQUEST_SOCK => {
-            let id = state.acquire_ref();
-            state.types.set(Reg::R0, RegType::PtrToTcpSockOrNull { id });
+            if let Some(ref_id) = state.types.get(Reg::R1).get_ref_id() {
+                state.types.set(Reg::R0, RegType::PtrToTcpSockOrNull { id: Some(ref_id) });
+            }
         }
         
         // SKC to UDP/Unix - return SOCK_COMMON for now (simplified)
         constants::BPF_SKC_TO_UDP6_SOCK |
         constants::BPF_SKC_TO_UNIX_SOCK => {
-            let id = state.acquire_ref();
-            state.types.set(Reg::R0, RegType::PtrToSockCommonOrNull { ref_id: id });
+            if let Some(ref_id) = state.types.get(Reg::R1).get_ref_id() {
+                state.types.set(Reg::R0, RegType::PtrToSockCommonOrNull { ref_id: Some(ref_id) });
+            }
         }
         
         // tail_call: R0 is undefined on failure path
@@ -389,6 +398,11 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
         _ => {
             state.types.set(Reg::R0, RegType::ScalarValue);
         }
+    }
+
+    // Clobber caller-saved registers - they are NOT readable after the call
+    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+        state.types.set(r, RegType::NotInit);
     }
     
     // 3. Invalidate packet pointers if needed

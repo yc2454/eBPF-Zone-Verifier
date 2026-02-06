@@ -166,6 +166,7 @@ fn transfer_exit(
 
     // Check if there is any released reference
     if state.call_frame_empty() && state.has_unreleased_refs() {
+        println!("Unreleased reference: {:?}", state.active_refs);
         env.fail(VerificationError::UnreleasedReference);
         return vec![];
     }

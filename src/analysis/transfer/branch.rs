@@ -12,13 +12,13 @@ use crate::ast::{Instr, CmpOp, Operand, Width};
 use crate::zone::domain::{
     Reg, get_bounds, assume_eq_const, assume_ge_const, assume_le_const,
     assume_less_than, assume_ge_var, assume_le_var, assume_gt_var,
-    assume_le_var_plus_const, assign_eq, nonneg, get_constant_value
+    assume_le_var_plus_const, assign_eq, nonneg, get_constant_value,
 };
 use crate::zone::dbm::Dbm;
 use crate::zone::tnum::Tnum;
 use crate::analysis::machine::env::VerificationError;
 
-use super::refinement::{refine_mem_ranges, refine_branch};
+use super::refinement::{refine_mem_ranges, refine_branch, refine_packet_ranges};
 use super::common::{check_reg_readable, check_operand_readable};
 
 /// Transfer function for conditional branch instructions.
@@ -99,6 +99,14 @@ fn condition_outcome(
     op: CmpOp,
     right: &Operand,
 ) -> Option<bool> {
+    // Special case for NULL check
+    if matches!(op, CmpOp::Eq | CmpOp::Ne) && matches!(right, Operand::Imm(0)) {
+        let left_ty = state.types.get(left);
+        if left_ty.is_null_checked() && !left_ty.is_nullable() {
+            return Some(matches!(op, CmpOp::Ne));
+        }
+    }
+
     // Don't eliminate paths based on pointer comparisons
     if state.types.get(left).is_pointer() {
         return None;
@@ -492,6 +500,8 @@ pub fn apply_jmp_constraints(
     // Refine memory ranges
     if let Either::Left(right_reg) = right {
         for state in [&mut *then_s, &mut *else_s] {
+            refine_packet_ranges(&state.dbm, &mut state.types, &mut state.stack, left, right_reg);
+            refine_packet_ranges(&state.dbm, &mut state.types, &mut state.stack, right_reg, left);
             refine_mem_ranges(&state.dbm, &mut state.types, &mut state.stack, left, right_reg);
             refine_mem_ranges(&state.dbm, &mut state.types, &mut state.stack, right_reg, left);
         }

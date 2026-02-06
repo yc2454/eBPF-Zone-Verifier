@@ -13,6 +13,7 @@ pub enum RegType {
     PtrToPacket { 
         id: u32,
         is_base: bool,
+        range: i64,
     },    
     PtrToPacketEnd, 
     PtrToPacketMeta { is_base: bool },
@@ -20,12 +21,12 @@ pub enum RegType {
     PtrToMapObject { map_idx: usize }, 
     PtrToMapValueOrNull { id: u32, map_idx: usize }, 
     PtrToMapValue { id: u32, offset: Option<i64>, map_idx: usize },
-    PtrToSocket { ref_id: u32 },
-    PtrToSocketOrNull { ref_id: u32 },
-    PtrToSockCommon { ref_id: u32 },
-    PtrToSockCommonOrNull { ref_id: u32 },
-    PtrToTcpSock { id: u32 },
-    PtrToTcpSockOrNull { id: u32 },
+    PtrToSocket { ref_id: Option<u32> },
+    PtrToSocketOrNull { ref_id: Option<u32>  },
+    PtrToSockCommon { ref_id: Option<u32>  },
+    PtrToSockCommonOrNull { ref_id: Option<u32>  },
+    PtrToTcpSock { id: Option<u32>  },
+    PtrToTcpSockOrNull { id: Option<u32>  },
 }
 
 impl Default for RegType {
@@ -35,11 +36,20 @@ impl Default for RegType {
 impl RegType {
     pub fn is_pointer(self) -> bool {
         use RegType::*;
-        matches!(self, 
-            PtrToCtx | PtrToStack { .. } | PtrToMapValue { .. } | 
-            PtrToPacket { .. } | PtrToPacketEnd | PtrToPacketMeta { .. } |
-            PtrToMem { .. } | PtrToMapValueOrNull { .. }
-        )
+        !matches!(self, ScalarValue | NotInit)
+    }
+
+    // Pointers that will experience null checks or the result of null checks
+    pub fn is_null_checked(self) -> bool {
+        use RegType::*;
+        matches!(self, PtrToMapValueOrNull { .. } | 
+                       PtrToSocketOrNull { .. } | 
+                       PtrToSockCommonOrNull { .. } | 
+                       PtrToTcpSockOrNull { .. } |
+                       PtrToMapValue { .. } | 
+                       PtrToSocket { .. } | 
+                       PtrToSockCommon { .. } | 
+                       PtrToTcpSock { .. })
     }
 
     pub fn is_scalar(self) -> bool {
@@ -108,7 +118,7 @@ impl RegType {
             RegType::PtrToSockCommon { ref_id: id } |
             RegType::PtrToSockCommonOrNull { ref_id: id } |
             RegType::PtrToTcpSock { id } |
-            RegType::PtrToTcpSockOrNull { id } => Some(id),
+            RegType::PtrToTcpSockOrNull { id } => id,
             _ => None,
         }
     }

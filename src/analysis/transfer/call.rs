@@ -9,7 +9,7 @@ use crate::analysis::transfer::types::update_call_rel_types;
 use crate::ast::{Program, ProgramKind, AttachKind};
 use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, is_zero, nonneg, get_bounds, positive};
 use crate::zone::tnum::{Tnum};
-use crate::analysis::transfer::access;
+use crate::analysis::transfer::access::{self, AccessKind};
 use crate::parsing::btf::SpecialFieldKind;
 use crate::common::constants;
 use log::{error, info, warn};
@@ -276,6 +276,14 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
         ]),
 
         constants::BPF_SK_RELEASE => HelperSignature::new([
+            PtrToSocket,       // R1: socket
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ]),
+
+        constants::BPF_SKC_TO_UDP6_SOCK => HelperSignature::new([
             PtrToSocket,       // R1: socket
             DontCare,
             DontCare,
@@ -760,7 +768,7 @@ fn validate_readable_mem(
     match reg_type {
         RegType::PtrToStack { offset: Some(off), .. } => {
             if let Some(sz) = size {
-                access::check_stack_arg_readable(env, state, off, sz as i64, pc);
+                access::check_stack_arg_readable(env, state, off, sz as i64, pc, AccessKind::Read);
             }
             true
         }
@@ -1266,7 +1274,7 @@ fn check_ptr_access_size(
                 return false;
             }
             // Also check stack slots are initialized for reads
-            access::check_stack_arg_readable(env, state, off, size as i64, pc);
+            access::check_stack_arg_readable(env, state, off, size as i64, pc, AccessKind::HelperArg);
             !env.failed()
         }
         
@@ -1298,10 +1306,11 @@ fn check_ptr_access_size(
             !env.failed()
         }
         
-        RegType::PtrToPacket { .. } => {
+        RegType::PtrToPacket { range, .. } => {
             // Packet: need to verify against packet bounds (data_end - data)
             // This requires range analysis between packet_data and packet_end
-            access::check_load(env, state, ptr_reg, size as i64, 0);
+            // access::check_load(env, state, ptr_reg, size as i64, 0);
+            access::check_packet_access(env, state, ptr_reg, 0, size as i64, range, pc, access::AccessKind::HelperArg);
             !env.failed()
         }
         

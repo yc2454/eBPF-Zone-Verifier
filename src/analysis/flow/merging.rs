@@ -90,7 +90,8 @@ fn types_compatible(a: &RegType, b: &RegType) -> bool {
         (PtrToTcpSockOrNull { .. }, PtrToTcpSockOrNull { .. }) => true,
         (PtrToSocketOrNull { ref_id: id1 }, PtrToSocket { ref_id: id2 }) 
         | (PtrToSocket { ref_id: id1 }, PtrToSocketOrNull { ref_id: id2 }) => id1 == id2,
-        
+        (PtrToSocket { .. }, ScalarValue) => true,
+        (ScalarValue, PtrToSocket { .. }) => true,
         // Different type families = incompatible
         _ => false,
     }

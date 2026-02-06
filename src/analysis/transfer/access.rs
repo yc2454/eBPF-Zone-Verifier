@@ -29,8 +29,8 @@ pub fn check_load(
         PtrToStack { offset, frame_level } => {
             check_stack_access(env, state, base, offset, off as i64, size, pc, AccessKind::Read, None, frame_level);
         }
-        PtrToPacket { id: _, is_base: _ } => {
-            check_packet_access(env, state, base, off, size, pc, AccessKind::Read);
+        PtrToPacket { id: _, is_base: _, range } => {
+            check_packet_access(env, state, base, off, size, range, pc, AccessKind::Read);
         }
         PtrToCtx => {
             if !ctx_model::is_valid_ctx_read(ctx.prog_kind, off, size) {
@@ -200,8 +200,8 @@ pub fn check_store(
                 env, state, base, offset, off as i64, 
                 size as i64, pc, AccessKind::Write, Some(src_type), frame_level);
         }
-        PtrToPacket { id: _, is_base: _ } => {
-            check_packet_access(env, state, base, off, size, pc, AccessKind::Write);
+        PtrToPacket { id: _, is_base: _, range } => {
+            check_packet_access(env, state, base, off, size, range, pc, AccessKind::Write);
         }
         PtrToMapValueOrNull { map_idx, .. } => {
             error!("Unsafe nullable map store at pc {}", pc);
@@ -239,7 +239,8 @@ pub fn check_store(
 pub enum AccessKind {
     Read,
     Write,
-    HelperOutput
+    HelperOutput,
+    HelperArg
 }
 
 /// Check if a stack access at (base + off) of size bytes is safe.
@@ -281,7 +282,7 @@ pub fn check_stack_access(
             let access_end = current_frame_depth + actual_offset + size;
 
             // Alignment check
-            if actual_offset % size != 0 {
+            if !matches!(kind, AccessKind::HelperArg) && actual_offset % size != 0 {
                 env.fail(VerificationError::MisalignedAccess { pc, off: actual_offset });
                 return;
             }
@@ -357,7 +358,7 @@ fn check_stack_initialization(
                 }
             }
         }
-        AccessKind::HelperOutput => {
+        AccessKind::HelperOutput | AccessKind::HelperArg => {
             // At least ONE byte must be initialized (stack slot was "claimed")
             let any_initialized = (0..size)
                 .any(|i| state.stack.is_slot_initialized((actual_offset + i) as i16));
@@ -380,6 +381,7 @@ pub fn check_stack_arg_readable(
     stack_offset: i64,  // already resolved offset from R10
     size: i64,
     pc: usize,
+    kind: AccessKind
 ) {
     // For helper args, offset is already known (R10 + some constant)
     check_stack_access(
@@ -388,7 +390,7 @@ pub fn check_stack_arg_readable(
         0,  // no additional instruction offset
         size,
         pc,
-        AccessKind::Read,
+        kind,
         None,
         state.current_frame_level(),
     )
@@ -582,12 +584,13 @@ fn prog_kind_support_direct_packet_write(prog_kind: ProgramKind) -> bool {
     }
 }
 
-fn check_packet_access(
+pub fn check_packet_access(
     env: &mut VerifierEnv,
     state: &State,
     base: Reg,
     off: i16,
     size: i64,
+    range: i64,
     pc: usize,
     kind: AccessKind
 ) {
@@ -620,18 +623,28 @@ fn check_packet_access(
     }
 
     // 3. Perform END Check (Overflow Protection)
-    // Rule: Base + Off + Size <= End  -->  Base - End <= -(Off + Size)
     let mut end_safe = false;
+
+    // 3a. Try the DBM-based check against PtrToPacketEnd register
     if let Some(end_reg) = end_reg_opt {
-        // We need the Upper bound (Maximum distance) to be safe
         if let (_, Some(upper)) = get_relative_bound(&state.dbm, base, *end_reg) {
             let limit = -(off as i64 + size);
-            println!("Packet End Check: {} <= {}", upper, limit);
+            println!("Packet End Check (DBM): {} <= {}", upper, limit);
             if upper <= limit {
                 end_safe = true;
             }
         }
     }
+
+    // 3b. Fallback: use the range stamped on the pointer itself
+    if !end_safe {
+        if range > 0 && (off as i64) + size <= range {
+            println!("Packet End Check (range): off({}) + size({}) <= range({})", off, size, range);
+            end_safe = true;
+        }
+    }
+
+    println!("Start Safe: {}, End Safe: {}", start_safe, end_safe);
 
     // 4. Final Verdict
     if !(start_safe && end_safe) {
@@ -645,6 +658,7 @@ fn check_packet_access(
 
     // 5. Alignment check
     if !env.ctx.has_flag(constants::F_NEEDS_EFFICIENT_UNALIGNED_ACCESS) 
+       && !matches!(kind, AccessKind::HelperOutput | AccessKind::HelperArg) 
        && !check_packet_alignment(state, base, off, size) 
     {
         env.fail(VerificationError::MisalignedPacketAccess { pc, off, size });
