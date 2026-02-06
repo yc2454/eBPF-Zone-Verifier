@@ -77,7 +77,7 @@ fn types_compatible(a: &RegType, b: &RegType) -> bool {
         (PtrToMapValue { id: id1, .. }, PtrToMapValueOrNull { id: id2, .. }) 
         | (PtrToMapValueOrNull { id: id1, .. }, PtrToMapValue { id: id2, .. }) => id1 == id2,
         (PtrToMapValueOrNull { .. }, ScalarValue) => true,
-        (PtrToMapObject { map_idx: id1 }, PtrToMapObject { map_idx: id2 }) => id1 == id2,
+        (PtrToMapObject { map_idx: _id1 }, PtrToMapObject { map_idx: _id2 }) => true,
         (ScalarValue, PtrToMapValueOrNull { .. }) => true,
         (PtrToPacket { .. }, PtrToPacket { .. }) => true,
         (PtrToPacketEnd, PtrToPacketEnd) => true,

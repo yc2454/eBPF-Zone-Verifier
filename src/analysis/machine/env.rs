@@ -64,7 +64,7 @@ impl VerificationError {
                 format!("Stack out of bounds at pc {}: offset {}, size {}", pc, off, size)
             }
             VerificationError::PointerOutOfBounds { pc,  } => {
-                format!("Stack out of bounds at pc {}", pc)
+                format!("Pointer out of bounds at pc {}", pc)
             }
             VerificationError::UninitializedStackRead { pc, offset} => {
                 format!("Reading uninitialized stack slot at pc {}: offset {}", pc, offset)

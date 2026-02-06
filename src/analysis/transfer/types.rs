@@ -157,42 +157,106 @@ pub(crate) fn update_alu_types(
                     _ => types.set(dst, RegType::ScalarValue),
                 }
             } else {
-                types.set(dst, RegType::ScalarValue);
+                match src {
+                    Operand::Imm(_) => {
+                        types.set(dst, RegType::ScalarValue);
+                    }
+                    Operand::Reg(src_reg) => {
+                        let src_ty = in_types.get(*src_reg);
+                        types.set(dst, src_ty);
+                    }
+                }
             }
         },
         AluOp::Sub => {
             let dst_ty = in_types.get(dst);
-            if let (true, Operand::Imm(k)) = (dst_ty.is_pointer(), src) {
-                match dst_ty {
-                    RegType::PtrToMapValue { id, offset, map_idx } => {
-                        let new_off = offset.map(|o| o - k);
+            if dst_ty.is_pointer() {
+                match (dst_ty, src) {
+                    (RegType::PtrToMapValue { id, offset, map_idx }, Operand::Imm(k)) => {
+                        let new_off = offset.map(|o| o + k);
                         types.set(dst, RegType::PtrToMapValue { id, offset: new_off, map_idx });
                     },
-                    RegType::PtrToPacket { id, is_base: _, range } => {
-                        types.set(dst, RegType::PtrToPacket { id, is_base: false, range });
+                    (RegType::PtrToMapValue { id, map_idx, .. }, Operand::Reg(_)) => {
+                        types.set(dst, RegType::PtrToMapValue { offset: None, map_idx, id });
                     },
-                    RegType::PtrToStack { offset, frame_level } => {
-                        types.set(dst, RegType::PtrToStack { offset: offset.map(|o| o - k), frame_level });
-                    },
-                    RegType::PtrToCtx => {
-                        if *k == 0 {
-                            types.set(dst, RegType::PtrToCtx);
-                        } else {
+                    (RegType::PtrToPacket { id, is_base: _, range }, Operand::Imm(k)) => {
+                        if *k > constants::MAX_PACKET_OFF as i64 || *k < 0 {
                             types.set(dst, RegType::ScalarValue);
+                        } else {
+                            let packet_start_reg_op = domain::REG_ENV.all().iter()
+                                .find(|&&r| matches!(in_types.get(r), RegType::PtrToPacket { id: _, is_base: true, range: _ }));
+                            if packet_start_reg_op.is_none() {
+                                types.set(dst, RegType::ScalarValue);
+                            } else {
+                                let packet_start_reg = packet_start_reg_op.unwrap();
+                                if let (Some(_), Some(packet_offset)) = domain::get_relative_bound(dbm, dst, *packet_start_reg) {
+                                    if packet_offset <= constants::MAX_PACKET_OFF as i64 {
+                                        types.set(dst, RegType::PtrToPacket { id, is_base: false, range });
+                                    } else {
+                                        types.set(dst, RegType::ScalarValue);
+                                    }
+                                }
+                            }
                         }
                     },
-                    RegType::PtrToMem { region, range } => {
+                    (RegType::PtrToPacketMeta { .. }, Operand::Imm(k)) => {
+                        if *k > constants::MAX_PACKET_OFF as i64 || *k < 0 {
+                            types.set(dst, RegType::ScalarValue);
+                        } else {
+                            let packet_start_reg_op = domain::REG_ENV.all().iter()
+                                .find(|&&r| matches!(in_types.get(r), RegType::PtrToPacketMeta { is_base: true }));
+                            if packet_start_reg_op.is_none() {
+                                types.set(dst, RegType::ScalarValue);
+                            } else {
+                                let packet_start_reg = packet_start_reg_op.unwrap();
+                                let packet_offset = domain::get_diff(dbm, dst, *packet_start_reg);
+                                if packet_offset <= constants::MAX_PACKET_OFF as i64 {
+                                    types.set(dst, RegType::PtrToPacketMeta { is_base: false } );
+                                } else {
+                                    dbm.dump_matrix();
+                                    types.set(dst, RegType::ScalarValue);
+                                }
+                            }
+                        }
+                    },
+                    (RegType::PtrToStack { offset, frame_level }, Operand::Imm(k)) => {
+                        types.set(dst, RegType::PtrToStack { offset: offset.map(|o| o - k), frame_level });
+                    },
+                    (RegType::PtrToStack { offset: _, frame_level }, Operand::Reg(_)) => {
+                        types.set(dst, RegType::PtrToStack { offset: None, frame_level });
+                    },
+                    (RegType::PtrToCtx, Operand::Imm(0)) => {
+                        types.set(dst, RegType::PtrToCtx);
+                    },
+                    (RegType::PtrToCtx, Operand::Imm(_)) => {
+                        // PtrToCtx should not be altered. If it is, we invalidate the type
+                        // by setting it to ScalarValue
+                        types.set(dst, RegType::ScalarValue);
+                    },
+                    (RegType::PtrToMem { region, range }, Operand::Imm(k)) => {
                         let new_range = if *k > 0 { 
-                            range.saturating_add(*k as u64) 
+                            range.saturating_sub(*k as u64) 
                         } else { 
-                            range.saturating_sub(k.wrapping_neg() as u64) 
+                            range.saturating_add(k.wrapping_neg() as u64) 
                         };
                         types.set(dst, RegType::PtrToMem { region, range: new_range });
+                    },
+                    (RegType::PtrToMem { .. }, Operand::Reg(_)) => {
+                        // Variable offset - lose precise tracking
+                        types.set(dst, RegType::ScalarValue);
                     },
                     _ => types.set(dst, RegType::ScalarValue),
                 }
             } else {
-                types.set(dst, RegType::ScalarValue);
+                match src {
+                    Operand::Imm(_) => {
+                        types.set(dst, RegType::ScalarValue);
+                    }
+                    Operand::Reg(src_reg) => {
+                        let src_ty = in_types.get(*src_reg);
+                        types.set(dst, src_ty);
+                    }
+                }
             }
         },
         _ => types.set(dst, RegType::ScalarValue),

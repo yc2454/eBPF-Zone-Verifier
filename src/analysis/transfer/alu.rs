@@ -152,7 +152,7 @@ pub(crate) fn check_ptr_arithmetic(
             AluOp::Add | AluOp::Sub => {
                 if matches!(dst_type, RegType::PtrToMapValue { .. }) {
                     // The verifier identifies 0xFFFFFFFF (4294967295) as a forbidden offset
-                    if src_max > i32::MAX as i64 || op == AluOp::Sub {
+                    if src_max > i32::MAX as i64 {
                         error!("Forbidden offset {}", src_max);
                         return false;
                     }
@@ -191,19 +191,6 @@ pub(crate) fn check_ptr_bounds(
     let (lo, hi) = get_bounds(&state.dbm, reg);
     
     match state.types.get(reg) {
-        RegType::PtrToMapValue { map_idx, .. } => {
-            if let Some(map_def) = env.ctx.map_defs.get(map_idx) {
-                let in_bounds = match (lo, hi) {
-                    (Some(l), Some(h)) => l >= 0 && h < map_def.value_size as i64,
-                    _ => false,
-                };
-                if !in_bounds {
-                    env.fail(VerificationError::PointerOutOfBounds { pc: state.pc });
-                }
-            } else {
-                log::warn!("This should be unreachable")
-            }
-        }
         RegType::PtrToStack { .. } => {
             let in_bounds = match (lo, hi) {
                 (Some(l), Some(h)) => l >= constants::BPF_STACK_MIN && h <= 0,
@@ -220,7 +207,6 @@ pub(crate) fn check_ptr_bounds(
                 let packet_start_reg = packet_start_reg_op.unwrap();
                 if let (Some(_), Some(packet_offset)) = get_relative_bound(&state.dbm, reg, *packet_start_reg) {
                     if packet_offset > constants::MAX_PACKET_OFF as i64 {
-                        println!("!!!!! FORGETTING THE BOUNDS OF {} because offset is {} !!!!!", reg.name(), packet_offset);
                         forget(&mut state.dbm, reg);
                     }
                 }
@@ -233,7 +219,6 @@ pub(crate) fn check_ptr_bounds(
                 let packet_start_reg = packet_start_reg_op.unwrap();
                 if let (Some(_), Some(packet_offset)) = get_relative_bound(&state.dbm, reg, *packet_start_reg) {
                     if packet_offset > constants::MAX_PACKET_OFF as i64 {
-                        println!("!!!!! FORGETTING THE BOUNDS OF {} because offset is {} !!!!!", reg.name(), packet_offset);
                         forget(&mut state.dbm, reg);
                     }
                 }
