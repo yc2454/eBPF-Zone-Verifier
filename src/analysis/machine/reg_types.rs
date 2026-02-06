@@ -36,11 +36,20 @@ impl Default for RegType {
 impl RegType {
     pub fn is_pointer(self) -> bool {
         use RegType::*;
-        matches!(self, 
-            PtrToCtx | PtrToStack { .. } | PtrToMapValue { .. } | 
-            PtrToPacket { .. } | PtrToPacketEnd | PtrToPacketMeta { .. } |
-            PtrToMem { .. } | PtrToMapValueOrNull { .. }
-        )
+        !matches!(self, ScalarValue | NotInit)
+    }
+
+    // Pointers that will experience null checks or the result of null checks
+    pub fn is_null_checked(self) -> bool {
+        use RegType::*;
+        matches!(self, PtrToMapValueOrNull { .. } | 
+                       PtrToSocketOrNull { .. } | 
+                       PtrToSockCommonOrNull { .. } | 
+                       PtrToTcpSockOrNull { .. } |
+                       PtrToMapValue { .. } | 
+                       PtrToSocket { .. } | 
+                       PtrToSockCommon { .. } | 
+                       PtrToTcpSock { .. })
     }
 
     pub fn is_scalar(self) -> bool {

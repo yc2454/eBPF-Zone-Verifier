@@ -239,7 +239,8 @@ pub fn check_store(
 pub enum AccessKind {
     Read,
     Write,
-    HelperOutput
+    HelperOutput,
+    HelperArg
 }
 
 /// Check if a stack access at (base + off) of size bytes is safe.
@@ -281,7 +282,7 @@ pub fn check_stack_access(
             let access_end = current_frame_depth + actual_offset + size;
 
             // Alignment check
-            if !matches!(kind, AccessKind::HelperOutput) && actual_offset % size != 0 {
+            if !matches!(kind, AccessKind::HelperArg) && actual_offset % size != 0 {
                 env.fail(VerificationError::MisalignedAccess { pc, off: actual_offset });
                 return;
             }
@@ -357,7 +358,7 @@ fn check_stack_initialization(
                 }
             }
         }
-        AccessKind::HelperOutput => {
+        AccessKind::HelperOutput | AccessKind::HelperArg => {
             // At least ONE byte must be initialized (stack slot was "claimed")
             let any_initialized = (0..size)
                 .any(|i| state.stack.is_slot_initialized((actual_offset + i) as i16));
@@ -657,7 +658,7 @@ pub fn check_packet_access(
 
     // 5. Alignment check
     if !env.ctx.has_flag(constants::F_NEEDS_EFFICIENT_UNALIGNED_ACCESS) 
-       && !matches!(kind, AccessKind::HelperOutput) 
+       && !matches!(kind, AccessKind::HelperOutput | AccessKind::HelperArg) 
        && !check_packet_alignment(state, base, off, size) 
     {
         env.fail(VerificationError::MisalignedPacketAccess { pc, off, size });

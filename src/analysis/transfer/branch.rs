@@ -99,6 +99,14 @@ fn condition_outcome(
     op: CmpOp,
     right: &Operand,
 ) -> Option<bool> {
+    // Special case for NULL check
+    if matches!(op, CmpOp::Eq | CmpOp::Ne) && matches!(right, Operand::Imm(0)) {
+        let left_ty = state.types.get(left);
+        if left_ty.is_null_checked() && !left_ty.is_nullable() {
+            return Some(matches!(op, CmpOp::Ne));
+        }
+    }
+
     // Don't eliminate paths based on pointer comparisons
     if state.types.get(left).is_pointer() {
         return None;

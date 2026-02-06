@@ -1274,7 +1274,7 @@ fn check_ptr_access_size(
                 return false;
             }
             // Also check stack slots are initialized for reads
-            access::check_stack_arg_readable(env, state, off, size as i64, pc, AccessKind::HelperOutput);
+            access::check_stack_arg_readable(env, state, off, size as i64, pc, AccessKind::HelperArg);
             !env.failed()
         }
         
@@ -1310,7 +1310,7 @@ fn check_ptr_access_size(
             // Packet: need to verify against packet bounds (data_end - data)
             // This requires range analysis between packet_data and packet_end
             // access::check_load(env, state, ptr_reg, size as i64, 0);
-            access::check_packet_access(env, state, ptr_reg, 0, size as i64, range, pc, access::AccessKind::HelperOutput);
+            access::check_packet_access(env, state, ptr_reg, 0, size as i64, range, pc, access::AccessKind::HelperArg);
             !env.failed()
         }
         
