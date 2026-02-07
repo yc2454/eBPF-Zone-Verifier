@@ -159,14 +159,6 @@ impl TypeState {
         }
     }
 
-    pub fn print(&self) {
-        println!("Register Types:");
-        for (i, ty) in self.regs.iter().enumerate() {
-            print!("  R{}: {:?} ", i, ty);
-        }
-        println!();
-    }
-
     pub fn reg_types_str(&self) -> String {
         let mut s = String::new();
         for (i, ty) in self.regs.iter().enumerate() {

@@ -10,11 +10,9 @@ use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::state::State;
 use crate::ast::{Instr, CmpOp, Operand, Width};
 use crate::zone::domain::{
-    Reg, get_bounds, assume_eq_const, assume_ge_const, assume_le_const,
-    assume_less_than, assume_ge_var, assume_le_var, assume_gt_var,
-    assume_le_var_plus_const, assign_eq, nonneg, get_constant_value,
+    Reg, assign_eq, assume_eq_const, assume_ge_const, assume_ge_var, assume_gt_var, assume_le_const, assume_le_var, assume_le_var_plus_const, assume_less_than, get_bounds, get_constant_value, nonneg
 };
-use crate::zone::dbm::Dbm;
+use crate::zone::dbm::{Dbm};
 use crate::zone::tnum::Tnum;
 use crate::analysis::machine::env::VerificationError;
 
@@ -271,8 +269,10 @@ fn can_apply_dbm_constraint(
     if dominated_by_unsigned {
         // For 64-bit unsigned, both sides must be non-negative for signed DBM
         let left_nonneg = nonneg(dbm, left);
+        let (lo, _) = get_bounds(dbm, left);
+        let left_inf = lo.is_none();
         let right_nonneg = right_bounds.0 >= 0;
-        return left_nonneg && right_nonneg;
+        return (left_nonneg || left_inf) && right_nonneg;
     }
     
     true
@@ -484,7 +484,7 @@ pub fn apply_jmp_constraints(
     
     // Resolve operand (truncate, extract constant)
     let (resolved, right_bounds) = resolve_right_operand(&then_s.dbm, right, width, op);
-    println!("Resolved right: {:?}, bounds: {:?}", resolved, right_bounds);
+    println!("Resolved right: {:?}, bounds: ({:#x}, {:#x})", resolved, right_bounds.0, right_bounds.1);
     // Apply DBM constraints if safe
     if can_apply_dbm_constraint(&then_s.dbm, left, op, width, right_bounds) {
         apply_cmp_to_dbm(&mut then_s.dbm, &mut else_s.dbm, left, op, resolved);
