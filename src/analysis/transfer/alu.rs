@@ -4,7 +4,7 @@
 
 use crate::analysis::machine::env::{VerifierEnv, VerificationError};
 use crate::analysis::machine::state::State;
-use crate::analysis::machine::reg_types::{RegType, TypeState};
+use crate::analysis::machine::reg_types::{RegType, TypeState };
 use crate::ast::{AluOp, Operand, Width};
 use crate::zone::domain::{
     REG_ENV, Reg, assign_add_imm, assign_add_reg, 
@@ -12,7 +12,7 @@ use crate::zone::domain::{
     assign_eq, assign_mul_imm, assign_neg, assign_sub_reg, 
     assign_zero, assume_eq_const, assume_ge_const, assume_le_const, 
     bit_and_const, forget, get_bounds, get_constant_value, 
-    get_relative_bound, link_regs_with_offset
+    get_relative_bound, link_regs_with_offset, set_bounds
 };
 use crate::zone::dbm::{Dbm, INF};
 use crate::zone::tnum::Tnum;
@@ -260,6 +260,10 @@ fn handle_add(
                     assign_add_imm(&mut state.dbm, dst, lo.unwrap());
                 } else {
                     // Non-constant: fall back to interval
+                    if let Some(off) = RegType::get_ptr_offset(&in_types.get(dst)) {
+                        forget(&mut state.dbm, dst);
+                        set_bounds(&mut state.dbm, dst, off, off);
+                    }
                     assign_add_reg(&mut state.dbm, dst, *r);
                 }
             } else if src_is_ptr && !dst_is_ptr {
@@ -268,7 +272,11 @@ fn handle_add(
                 if lo == hi && lo.is_some() {
                     link_regs_with_offset(&mut state.dbm, dst, *r, lo.unwrap());
                 } else {
-                    state.dbm.forget_var(dst);
+                    if let Some(off) = RegType::get_ptr_offset(&in_types.get(*r)) {
+                        forget(&mut state.dbm, *r);
+                        set_bounds(&mut state.dbm, *r, off, off);
+                    }
+                    forget(&mut state.dbm, dst);
                     if let Some(hi) = hi {
                         state.dbm.add_constraint(dst, *r, hi);
                     }

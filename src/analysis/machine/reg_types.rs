@@ -35,8 +35,7 @@ impl Default for RegType {
 
 impl RegType {
     pub fn is_pointer(self) -> bool {
-        use RegType::*;
-        !matches!(self, ScalarValue | NotInit)
+        !self.is_scalar()
     }
 
     // Pointers that will experience null checks or the result of null checks
@@ -55,10 +54,6 @@ impl RegType {
     pub fn is_scalar(self) -> bool {
         use RegType::*;
         matches!(self, ScalarValue | NotInit)
-    }
-
-    pub fn is_init(self) -> bool {
-        !matches!(self, RegType::NotInit)
     }
 
     /// Returns the non-null version of a nullable pointer type
@@ -90,7 +85,7 @@ impl RegType {
         )
     }
 
-    pub fn get_offset(&self) -> Option<i64> {
+    pub fn get_ptr_offset(&self) -> Option<i64> {
         match *self {
             RegType::PtrToMapValue { offset, map_idx: _, .. } => offset,
             _ => None
