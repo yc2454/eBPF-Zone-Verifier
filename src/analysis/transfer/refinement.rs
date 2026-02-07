@@ -63,7 +63,6 @@ pub(crate) fn refine_mem_ranges(dbm: &Dbm, types: &mut TypeState, stack: &mut St
 }
 
 pub(crate) fn refine_packet_ranges(dbm: &Dbm, types: &mut TypeState, stack: &mut StackState, pkt_reg: Reg, end_reg: Reg) {
-    println!("Refining packet ranges");
     // Determine which register is PtrToPacket and which is PtrToPacketEnd
     let target_id = match (types.get(pkt_reg), types.get(end_reg)) {
         (RegType::PtrToPacket { id, .. }, RegType::PtrToPacketEnd) => id,
@@ -74,14 +73,11 @@ pub(crate) fn refine_packet_ranges(dbm: &Dbm, types: &mut TypeState, stack: &mut
         _ => return,
     };
 
-    println!("Target ID: {}", target_id);
-
     // Update all PtrToPacket registers with matching id
     for r in Reg::ALL {
         if let RegType::PtrToPacket { id, is_base, range } = types.get(r) {
             if id == target_id {
                 let dist = dbm.get(r, end_reg);
-                println!("{:?} -> {:?}: dist = {}", r, end_reg, dist);
                 if dist < INF && dist <= 0 {
                     let safe_bytes = dist.unsigned_abs() as i64;
                     if safe_bytes > range {

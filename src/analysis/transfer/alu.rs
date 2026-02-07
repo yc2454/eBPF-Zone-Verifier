@@ -7,10 +7,12 @@ use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::ast::{AluOp, Operand, Width};
 use crate::zone::domain::{
-    Reg, REG_ENV, forget, get_bounds, assign_add_imm, assign_add_reg, assign_eq,
-    assume_ge_const, assume_le_const, assign_zero, assign_mul_imm,
-    assign_and_mask, assign_div_imm, assign_div_reg, bit_and_const,
-    assign_neg, assign_sub_reg, assume_eq_const, get_relative_bound
+    REG_ENV, Reg, assign_add_imm, assign_add_reg, 
+    assign_and_mask, assign_div_imm, assign_div_reg, 
+    assign_eq, assign_mul_imm, assign_neg, assign_sub_reg, 
+    assign_zero, assume_eq_const, assume_ge_const, assume_le_const, 
+    bit_and_const, forget, get_bounds, get_constant_value, 
+    get_relative_bound, link_regs_with_offset
 };
 use crate::zone::dbm::{Dbm, INF};
 use crate::zone::tnum::Tnum;
@@ -246,12 +248,34 @@ fn handle_add(
             assign_add_imm(&mut state.dbm, dst, *c);
         }
         Operand::Reg(r) => {
-            if is_clean_ptr(in_types, dst) {
-                // Special Case: Ptr(Offset 0) += Scalar.
-                // NewOffset = 0 + Scalar = Scalar.
+            let src_is_ptr = in_types.get(*r).is_pointer();
+
+            if is_clean_ptr(in_types, dst) && !src_is_ptr {
+                // ptr(offset=0) += scalar
                 assign_eq(&mut state.dbm, dst, *r);
+            } else if src_is_ptr && !in_types.get(dst).is_pointer() {
+                // scalar += ptr  (test18 pattern)
+                // new_dst = old_scalar + ptr, so new_dst - ptr = old_scalar
+                let (lo, hi) = get_bounds(&state.dbm, dst);
+
+                if lo == hi && lo.is_some() {
+                    // Exact constant: link_regs_with_offset gives us dst - r == c
+                    link_regs_with_offset(&mut state.dbm, dst, *r, lo.unwrap());
+                } else {
+                    // Bounded scalar: set difference constraints
+                    state.dbm.forget_var(dst);
+                    if let Some(hi) = hi {
+                        state.dbm.add_constraint(dst, *r, hi);   // dst - r <= hi
+                    }
+                    if let Some(lo) = lo {
+                        if lo > i64::MIN {
+                            state.dbm.add_constraint(*r, dst, -lo); // r - dst <= -lo
+                        }
+                    }
+                    state.dbm.close();
+                }
             } else {
-                // Standard Case: Ptr(Offset X) += Scalar OR Scalar += Scalar
+                // scalar += scalar (or fallback)
                 assign_add_reg(&mut state.dbm, dst, *r);
             }
         }
@@ -285,12 +309,22 @@ fn handle_sub(
             assign_add_imm(&mut state.dbm, dst, -c);
         }
         Operand::Reg(r) => {
-            if is_clean_ptr(in_types, dst) {
-                // dst = 0 - r => dst = -r
-                assign_eq(&mut state.dbm, dst, *r);
-                assign_neg(&mut state.dbm, dst);
+            let dst_is_ptr = in_types.get(dst).is_pointer();
+            let src_is_ptr = in_types.get(*r).is_pointer();
+
+            if dst_is_ptr && !src_is_ptr {
+                // ptr -= scalar: try to preserve relational info
+                let const_value = get_constant_value(&state.dbm, *r);
+                
+                if const_value.is_some() {
+                    // Scalar is a known constant: exact relational shift
+                    assign_add_imm(&mut state.dbm, dst, -const_value.unwrap());
+                } else {
+                    // Bounded but not constant: fall back to interval
+                    assign_sub_reg(&mut state.dbm, dst, *r);
+                }
             } else {
-                // Standard Case: Interval Subtraction
+                // scalar -= scalar, scalar -= ptr, ptr -= ptr
                 assign_sub_reg(&mut state.dbm, dst, *r);
             }
         }

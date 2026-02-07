@@ -169,7 +169,14 @@ pub(crate) fn update_alu_types(
                     }
                     Operand::Reg(src_reg) => {
                         let src_ty = in_types.get(*src_reg);
-                        types.set(dst, src_ty);
+                        match src_ty {
+                            RegType::PtrToPacket { id, is_base: true, range } => {
+                                types.set(dst, RegType::PtrToPacket { id, is_base: false, range });
+                            }
+                            _ => {
+                                types.set(dst, src_ty);
+                            }
+                        }
                     }
                 }
             }

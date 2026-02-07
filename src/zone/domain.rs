@@ -206,6 +206,27 @@ pub fn forget(dbm: &mut Dbm, x: Reg) {
     dbm.close(); // keep the "always closed" invariant
 }
 
+/// Establishes the relationship dst = src + imm (i.e., dst - src = imm)
+/// This records the exact difference between two registers in the DBM.
+pub fn link_regs_with_offset(dbm: &mut Dbm, dst: Reg, src: Reg, imm: i64) {
+    // 1. Clear any old information about the destination register
+    dbm.forget_var(dst);
+
+    // 2. Add the bidirectional constraints to enforce equality: dst - src == imm
+    // dst - src <= imm
+    dbm.add_constraint(dst, src, imm);
+
+    // src - dst <= -imm (equivalent to dst - src >= imm)
+    // Handle i64::MIN edge case to avoid negation panic
+    if imm > i64::MIN {
+        dbm.add_constraint(src, dst, -imm);
+    }
+
+    // 3. Re-close the DBM to propagate this new relationship to other registers
+    // (e.g., if src was linked to R10, dst is now also linked to R10)
+    dbm.close();
+}
+
 // dst += imm
 pub fn assign_add_imm(dbm: &mut Dbm, dst: Reg, imm: i64) {
     add_imm(dbm, dst, imm);
