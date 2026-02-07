@@ -142,7 +142,8 @@ pub(crate) fn check_ptr_arithmetic(
             // Ptr - Ptr is allowed ONLY if types match.
             // (Result is Scalar, handled by caller)
             AluOp::Sub => {
-                RegType::is_same_pointer_type(dst_type, src_type)
+                RegType::is_same_pointer_type(dst_type, src_type) || 
+                (matches!(dst_type, RegType::PtrToPacketEnd) && matches!(src_type, RegType::PtrToPacket { .. }))
             },
             AluOp::Mov => true,
             // Ptr + Ptr, Ptr * Ptr, etc. are invalid
@@ -249,33 +250,37 @@ fn handle_add(
         }
         Operand::Reg(r) => {
             let src_is_ptr = in_types.get(*r).is_pointer();
+            let dst_is_ptr = in_types.get(dst).is_pointer();
 
-            if is_clean_ptr(in_types, dst) && !src_is_ptr {
-                // ptr(offset=0) += scalar
-                assign_eq(&mut state.dbm, dst, *r);
-            } else if src_is_ptr && !in_types.get(dst).is_pointer() {
-                // scalar += ptr  (test18 pattern)
-                // new_dst = old_scalar + ptr, so new_dst - ptr = old_scalar
-                let (lo, hi) = get_bounds(&state.dbm, dst);
-
+            if dst_is_ptr && !src_is_ptr {
+                // ptr += scalar: preserve relational info if possible
+                let (lo, hi) = get_bounds(&state.dbm, *r);
                 if lo == hi && lo.is_some() {
-                    // Exact constant: link_regs_with_offset gives us dst - r == c
+                    // Known constant: shift all relations exactly
+                    assign_add_imm(&mut state.dbm, dst, lo.unwrap());
+                } else {
+                    // Non-constant: fall back to interval
+                    assign_add_reg(&mut state.dbm, dst, *r);
+                }
+            } else if src_is_ptr && !dst_is_ptr {
+                // scalar += ptr (test18 pattern)
+                let (lo, hi) = get_bounds(&state.dbm, dst);
+                if lo == hi && lo.is_some() {
                     link_regs_with_offset(&mut state.dbm, dst, *r, lo.unwrap());
                 } else {
-                    // Bounded scalar: set difference constraints
                     state.dbm.forget_var(dst);
                     if let Some(hi) = hi {
-                        state.dbm.add_constraint(dst, *r, hi);   // dst - r <= hi
+                        state.dbm.add_constraint(dst, *r, hi);
                     }
                     if let Some(lo) = lo {
                         if lo > i64::MIN {
-                            state.dbm.add_constraint(*r, dst, -lo); // r - dst <= -lo
+                            state.dbm.add_constraint(*r, dst, -lo);
                         }
                     }
                     state.dbm.close();
                 }
             } else {
-                // scalar += scalar (or fallback)
+                // scalar += scalar, ptr += ptr, etc.
                 assign_add_reg(&mut state.dbm, dst, *r);
             }
         }
@@ -887,16 +892,6 @@ fn apply_w32_truncation(dbm: &mut Dbm, dst: Reg) {
         forget(dbm, dst);
         assume_ge_const(dbm, dst, 0);
         assume_le_const(dbm, dst, 0xFFFFFFFF);
-    }
-}
-
-/// Check if a register holds a "clean" pointer (offset == 0)
-fn is_clean_ptr(types: &TypeState, reg: Reg) -> bool {
-    match types.get(reg) {
-        RegType::PtrToMapValue { offset: Some(0), .. } |
-        RegType::PtrToStack { offset: Some(0), .. } |
-        RegType::PtrToPacket { .. } => true,
-        _ => false,
     }
 }
 
