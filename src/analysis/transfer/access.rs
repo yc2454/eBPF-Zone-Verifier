@@ -600,27 +600,31 @@ pub fn check_packet_access(
         env.fail(VerificationError::IllegalPacketStore { pc, off, size });
         return;
     }
-    // 1. Locate the Packet Start and Packet End registers
+    // 1. Locate the Packet End register
     // (Ideally, 'base' should know which packet_id it belongs to, 
     // avoiding this global search)
-    let start_reg_opt = REG_ENV.all().iter()
-        .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket { is_base: true, .. }));
 
     let end_reg_opt = REG_ENV.all().iter()
         .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacketEnd));
 
     // 2. Perform START Check (Underflow Protection)
-    // Rule: Base + Off >= Start  -->  Base - Start >= -Off
-    let mut start_safe = false;
-    if let Some(start_reg) = start_reg_opt {
-        // We need the Lower bound (Minimum distance) to be safe
-        if let (Some(lower), _) = get_relative_bound(&state.dbm, base, *start_reg) {
-            println!("Packet Start Check: {} >= {}", lower, -off);
-            if lower >= -(off as i64) {
-                start_safe = true;
-            }
-        }
-    }
+    // Type system guarantees base >= data (PtrToPacket is only created
+    // by adding non-negative values to data). So if off >= 0, it's trivial.
+    let start_safe = if off >= 0 {
+        true
+    } else {
+        // off < 0: need to verify base - data >= -off via DBM
+        let needed = -(off as i64);
+        REG_ENV.all().iter()
+            .filter(|&&r| matches!(state.types.get(r), RegType::PtrToPacket { is_base: true, .. }))
+            .any(|start_reg| {
+                if let (Some(lower), _) = get_relative_bound(&state.dbm, base, *start_reg) {
+                    lower >= needed
+                } else {
+                    false
+                }
+            })
+    };
 
     // 3. Perform END Check (Overflow Protection)
     let mut end_safe = false;

@@ -179,6 +179,9 @@ pub(crate) fn transfer_atomic(
 
     // Update Memory State
     update_store_types(&mut state.stack, RegType::ScalarValue, size, base_ty, off);
+    if base == Reg::R10 {
+        state.stack.invalidate_slot(off);
+    }
 
     // Update Register State (The "Fetch" part)
     update_atomic_op_types(&mut state.types, op, src, fetch);

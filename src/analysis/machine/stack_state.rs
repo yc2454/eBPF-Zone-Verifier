@@ -87,4 +87,12 @@ impl StackState {
     pub fn clear_slot(&mut self, offset: i16) {
         self.slots.remove(&offset);
     }
+
+    pub fn invalidate_slot(&mut self, offset: i16) {
+        self.slots.insert(offset, SpilledReg {
+                reg_type: RegType::ScalarValue,
+                tnum: Tnum::unknown(),
+                bounds: ScalarBounds { min: i64::MIN, max: i64::MAX },
+            });
+    }
 }
