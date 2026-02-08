@@ -94,6 +94,8 @@ fn types_compatible(a: &RegType, b: &RegType) -> bool {
         (ScalarValue, PtrToSocket { .. }) => true,
         (PtrToMapValue { .. }, ScalarValue) => true,
         (ScalarValue, PtrToMapValue { .. }) => true,
+        (PtrToPacket { .. }, ScalarValue) => true,
+        (ScalarValue, PtrToPacket { .. }) => true,
         // Different type families = incompatible
         _ => false,
     }

@@ -158,6 +158,18 @@ const SK_BUFF_FIELDS: &[CtxField] = &[
 pub const SK_BUFF_CB_START: i16 = 48;
 pub const SK_BUFF_CB_END: i16 = 68; // 48 + 5*4 = 68
 
+// Only available for CGROUP_SKB and CLS
+const SK_BUFF_EXTENDED_FIELDS: &[CtxField] = &[
+    // __u64 tstamp (offset 152)
+    CtxField { offset: 152, size: MemSize::U64, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
+    // __u32 wire_len (offset 160)
+    CtxField { offset: 160, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
+    // __u32 gso_segs (offset 164)
+    CtxField { offset: 164, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
+    // __u32 gso_size (offset 176)
+    CtxField { offset: 176, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
+];
+
 /// struct xdp_md (XDP context)
 ///
 /// Reference: linux/include/uapi/linux/bpf.h
@@ -392,15 +404,22 @@ fn lookup_region(ctx_kind: ContextKind, off: i16, size: i64) -> Option<CtxAccess
 }
 
 /// Get the field table for a given context kind.
-fn get_field_table(ctx_kind: ContextKind) -> Option<&'static [CtxField]> {
+fn get_field_tables(ctx_kind: ContextKind, prog_kind: ProgramKind) -> Option<(&'static [CtxField], &'static [CtxField])> {
     match ctx_kind {
-        ContextKind::SkBuff => Some(SK_BUFF_FIELDS),
-        ContextKind::XdpMd => Some(XDP_MD_FIELDS),
-        ContextKind::BpfSockAddr => Some(SOCK_ADDR_FIELDS),
-        ContextKind::SkLookup => Some(SK_LOOKUP_FIELDS),
-        ContextKind::SkMsgMd => Some(SK_MSG_MD_FIELDS),
-        ContextKind::PtRegs => Some(PT_REGS_FIELDS),
-        // Unknown context types - return None to indicate we can't validate
+        ContextKind::SkBuff => {
+            let extended = match prog_kind {
+                ProgramKind::CgroupSkb
+                | ProgramKind::SchedCls
+                | ProgramKind::SchedAct => SK_BUFF_EXTENDED_FIELDS,
+                _ => &[],
+            };
+            Some((SK_BUFF_FIELDS, extended))
+        }
+        ContextKind::XdpMd => Some((XDP_MD_FIELDS, &[])),
+        ContextKind::BpfSockAddr => Some((SOCK_ADDR_FIELDS, &[])),
+        ContextKind::SkLookup => Some((SK_LOOKUP_FIELDS, &[])),
+        ContextKind::SkMsgMd => Some((SK_MSG_MD_FIELDS, &[])),
+        ContextKind::PtRegs => Some((PT_REGS_FIELDS, &[])),
         _ => None,
     }
 }
@@ -421,7 +440,7 @@ fn get_regions(ctx_kind: ContextKind) -> &'static [CtxRegion] {
 /// Called after base field lookup to adjust readable/writable based on program type.
 fn apply_prog_type_overrides(prog_kind: ProgramKind, off: i16, info: &mut CtxAccessInfo) {
     let ctx_kind = prog_kind.context_kind();
-    
+
     match ctx_kind {
         ContextKind::SkBuff => {
             match off {
@@ -438,9 +457,21 @@ fn apply_prog_type_overrides(prog_kind: ProgramKind, off: i16, info: &mut CtxAcc
                         }
                     }
                 }
+                // priority (offset 32)
+                // Writable for CgroupSkb, SchedCls, SchedAct
+                32 => {
+                    match prog_kind {
+                        ProgramKind::CgroupSkb
+                        | ProgramKind::SchedCls
+                        | ProgramKind::SchedAct => {
+                            info.writable = true;
+                        }
+                        _ => {}
+                    }
+                }
                 // tc_classid (offset 72)
                 // - TC ingress: write-only
-                // - TC egress: read-write  
+                // - TC egress: read-write
                 // - SK_SKB: not accessible
                 72 => {
                     match prog_kind {
@@ -461,24 +492,49 @@ fn apply_prog_type_overrides(prog_kind: ProgramKind, off: i16, info: &mut CtxAcc
                 }
                 // data and data_end
                 76..=80 => {
-                    if !matches!(prog_kind, ProgramKind::SchedCls | ProgramKind::SchedAct | ProgramKind::SkSkb
-                        | ProgramKind::LwtIn | ProgramKind::LwtOut | ProgramKind::LwtXmit) {
+                    if !matches!(
+                        prog_kind,
+                        ProgramKind::SchedCls
+                            | ProgramKind::SchedAct
+                            | ProgramKind::SkSkb
+                            | ProgramKind::LwtIn
+                            | ProgramKind::LwtOut
+                            | ProgramKind::LwtXmit
+                    ) {
                         info.readable = false;
                     }
                 }
                 // family, remote_ip4, local_ip4, remote_ip6, local_ip6, remote_port, local_port
-                // Only readable for cgroup_skb and sock_ops programs
+                // Only readable for cgroup_skb, sock_ops, sk_skb programs
                 88 | 92 | 96 | 100..=128 | 132 | 136 => {
-                    if !matches!(prog_kind, ProgramKind::CgroupSkb | ProgramKind::SockOps | ProgramKind::SkSkb) {
+                    if !matches!(
+                        prog_kind,
+                        ProgramKind::CgroupSkb | ProgramKind::SockOps | ProgramKind::SkSkb
+                    ) {
                         info.readable = false;
                     }
                 }
-                // data_meta
+                // data_meta (offset 140)
                 140 => {
                     if matches!(prog_kind, ProgramKind::CgroupSkb | ProgramKind::SockOps) {
                         info.readable = false;
                     }
                 }
+                // tstamp (offset 152)
+                // Readable for extended program types (via extended table)
+                // Writable only for CgroupSkb, SchedCls, SchedAct
+                152 => {
+                    match prog_kind {
+                        ProgramKind::CgroupSkb
+                        | ProgramKind::SchedCls
+                        | ProgramKind::SchedAct => {
+                            info.writable = true;
+                        }
+                        _ => {}
+                    }
+                }
+                // wire_len (offset 160), gso_segs (offset 164), gso_size (offset 176)
+                // Read-only for all extended program types, no overrides needed
                 _ => {}
             }
         }
@@ -498,8 +554,15 @@ fn apply_prog_type_overrides(prog_kind: ProgramKind, off: i16, info: &mut CtxAcc
 pub fn validate_ctx_access(prog_kind: ProgramKind, off: i16, size: i64) -> Option<CtxAccessInfo> {
     let ctx_kind = prog_kind.context_kind();
 
-    let fields = match get_field_table(ctx_kind) {
-        Some(f) => f,
+    // Check scratch regions first (e.g., cb)
+    if let Some(info) = lookup_region(ctx_kind, off, size) {
+        let mut info = info;
+        apply_prog_type_overrides(prog_kind, off, &mut info);
+        return Some(info);
+    }
+
+    let (base, extended) = match get_field_tables(ctx_kind, prog_kind) {
+        Some(tables) => tables,
         None => {
             return Some(CtxAccessInfo {
                 kind: CtxFieldKind::Scalar,
@@ -509,15 +572,10 @@ pub fn validate_ctx_access(prog_kind: ProgramKind, off: i16, size: i64) -> Optio
         }
     };
 
-    // First, check if access falls in a scratch region (e.g., cb)
-    if let Some(info) = lookup_region(ctx_kind, off, size) {
-        let mut info = info;
-        apply_prog_type_overrides(prog_kind, off, &mut info);
-        return Some(info);
-    }
+    // Search base fields, then extended fields
+    let mut info = lookup_field(base, off, size)
+        .or_else(|| lookup_field(extended, off, size))?;
 
-    // Otherwise, do normal per-field lookup
-    let mut info = lookup_field(fields, off, size)?;
     apply_prog_type_overrides(prog_kind, off, &mut info);
     Some(info)
 }
