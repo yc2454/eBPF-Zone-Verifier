@@ -59,6 +59,15 @@ pub struct CtxField {
     pub narrow_access: bool,
 }
 
+/// A contiguous scratch region in a context struct where any
+/// aligned access within bounds is permitted (e.g., __sk_buff.cb).
+pub struct CtxRegion {
+    pub start: i16,
+    pub end: i16,
+    pub readable: bool,
+    pub writable: bool,
+}
+
 /// Result of validating a context access.
 #[derive(Clone, Copy, Debug)]
 pub struct CtxAccessInfo {
@@ -145,6 +154,9 @@ const SK_BUFF_FIELDS: &[CtxField] = &[
     CtxField { offset: 140, size: MemSize::U32, kind: CtxFieldKind::PtrToMem { region: MemRegionId::CalicoMetaRegion }, writable: false, readable: true, narrow_access: false },
     // Additional fields can be added as needed...
 ];
+
+pub const SK_BUFF_CB_START: i16 = 48;
+pub const SK_BUFF_CB_END: i16 = 68; // 48 + 5*4 = 68
 
 /// struct xdp_md (XDP context)
 ///
@@ -356,6 +368,29 @@ fn lookup_field(fields: &[CtxField], off: i16, size: i64) -> Option<CtxAccessInf
         })
 }
 
+fn lookup_region(ctx_kind: ContextKind, off: i16, size: i64) -> Option<CtxAccessInfo> {
+    let access_end = off + size as i16;
+
+    // Must be a power-of-2 size (1, 2, 4, 8)
+    if size <= 0 || !(size & (size - 1) == 0) || size > 8 {
+        return None;
+    }
+
+    // Check natural alignment
+    if off % size as i16 != 0 {
+        return None;
+    }
+
+    get_regions(ctx_kind)
+        .iter()
+        .find(|r| off >= r.start && access_end <= r.end)
+        .map(|r| CtxAccessInfo {
+            kind: CtxFieldKind::Scalar,
+            readable: r.readable,
+            writable: r.writable,
+        })
+}
+
 /// Get the field table for a given context kind.
 fn get_field_table(ctx_kind: ContextKind) -> Option<&'static [CtxField]> {
     match ctx_kind {
@@ -367,6 +402,18 @@ fn get_field_table(ctx_kind: ContextKind) -> Option<&'static [CtxField]> {
         ContextKind::PtRegs => Some(PT_REGS_FIELDS),
         // Unknown context types - return None to indicate we can't validate
         _ => None,
+    }
+}
+
+fn get_regions(ctx_kind: ContextKind) -> &'static [CtxRegion] {
+    match ctx_kind {
+        ContextKind::SkBuff => &[CtxRegion {
+            start: SK_BUFF_CB_START,
+            end: SK_BUFF_CB_END,
+            readable: true,
+            writable: true,
+        }],
+        _ => &[],
     }
 }
 
@@ -448,19 +495,6 @@ fn apply_prog_type_overrides(prog_kind: ProgramKind, off: i16, info: &mut CtxAcc
 /// Returns:
 /// - `Some(info)` if the access is valid, with field kind and writability
 /// - `None` if the access is invalid (wrong offset, wrong size, or unknown context)
-///
-/// # Example
-/// ```ignore
-/// match validate_ctx_access(prog_kind, off, size) {
-///     Some(info) => {
-///         // For loads: use info.kind to determine destination register type
-///         // For stores: check info.writable
-///     }
-///     None => {
-///         // Invalid access - reject the program
-///     }
-/// }
-/// ```
 pub fn validate_ctx_access(prog_kind: ProgramKind, off: i16, size: i64) -> Option<CtxAccessInfo> {
     let ctx_kind = prog_kind.context_kind();
 
@@ -475,11 +509,16 @@ pub fn validate_ctx_access(prog_kind: ProgramKind, off: i16, size: i64) -> Optio
         }
     };
 
+    // First, check if access falls in a scratch region (e.g., cb)
+    if let Some(info) = lookup_region(ctx_kind, off, size) {
+        let mut info = info;
+        apply_prog_type_overrides(prog_kind, off, &mut info);
+        return Some(info);
+    }
+
+    // Otherwise, do normal per-field lookup
     let mut info = lookup_field(fields, off, size)?;
-    
-    // Apply program-type-specific overrides
     apply_prog_type_overrides(prog_kind, off, &mut info);
-    
     Some(info)
 }
 
