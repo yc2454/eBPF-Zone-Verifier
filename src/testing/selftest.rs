@@ -481,9 +481,7 @@ fn build_exec_context(test: &JsonTestCase) -> (crate::analysis::machine::context
     };
 
     if test.flags.is_some() {
-        if test.flags.unwrap() == constants::F_NEEDS_EFFICIENT_UNALIGNED_ACCESS {
-            ctx.flags |= constants::F_NEEDS_EFFICIENT_UNALIGNED_ACCESS;
-        }
+        ctx.flags |= test.flags.unwrap();
     }
 
     ctx.btf = create_spin_lock_btf();

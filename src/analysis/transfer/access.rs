@@ -661,7 +661,7 @@ pub fn check_packet_access(
     }
 
     // 5. Alignment check
-    if !env.ctx.has_flag(constants::F_NEEDS_EFFICIENT_UNALIGNED_ACCESS) 
+    if env.ctx.has_flag(constants::F_LOAD_WITH_STRICT_ALIGNMENT) 
        && !matches!(kind, AccessKind::HelperOutput | AccessKind::HelperArg) 
        && !check_packet_alignment(state, base, off, size) 
     {
