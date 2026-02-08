@@ -655,6 +655,9 @@ fn validate_single_arg(
 
         // ---- Context pointer or NULL ----
         PtrToCtxOrNull => {
+            if state.types.get(reg).is_scalar() && is_zero(&state.dbm, reg) {
+                return true;
+            }
             if !matches!(actual, RegType::PtrToCtx) && !is_zero(&state.dbm, reg) {
                 env.fail(VerificationError::InvalidArgType { pc, reg });
                 error!("[Verifier] pc {}: R{} expected PTR_TO_CTX or NULL, got {:?}", 
@@ -704,6 +707,9 @@ fn validate_single_arg(
         }
 
         PtrToStackOrNull => {
+            if state.types.get(reg).is_scalar() && is_zero(&state.dbm, reg) {
+                return true;
+            }
             if !matches!(actual, RegType::PtrToStack { .. }) && !is_zero(&state.dbm, reg) {
                 env.fail(VerificationError::InvalidArgType { pc, reg });
                 error!("[Verifier] pc {}: R{} expected PTR_TO_STACK or NULL, got {:?}", 
@@ -714,6 +720,9 @@ fn validate_single_arg(
         }
 
         PtrToMemOrNull => {
+            if state.types.get(reg).is_scalar() && is_zero(&state.dbm, reg) {
+                return true;
+            }
             if state.types.get(reg).is_nullable() {
                 // Pointer is NULL - check that paired size arg is also 0
                 if let Some(size_arg_idx) = get_nullable_ptr_size_pair(helper, arg_index) {

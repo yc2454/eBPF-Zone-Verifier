@@ -299,35 +299,75 @@ fn apply_cmp_to_dbm(
         (CmpOp::Ne, Either::Left(reg)) => {
             assign_eq(else_dbm, left, reg);
         }
-        (CmpOp::UGe | CmpOp::SGe, Either::Right(imm)) => {
+        (CmpOp::UGe, Either::Right(imm)) => {
+            assume_ge_const(then_dbm, left, imm);
+            assume_less_than(else_dbm, left, imm);
+            assume_ge_const(else_dbm, left, 0);
+        }
+        (CmpOp::SGe, Either::Right(imm)) => {
             assume_ge_const(then_dbm, left, imm);
             assume_less_than(else_dbm, left, imm);
         }
-        (CmpOp::UGe | CmpOp::SGe, Either::Left(reg)) => {
+        (CmpOp::UGe, Either::Left(reg)) => {
+            assume_ge_var(then_dbm, left, reg);
+            assume_le_var_plus_const(else_dbm, left, reg, -1);
+            assume_ge_const(else_dbm, left, 0);
+        }
+        (CmpOp::SGe, Either::Left(reg)) => {
             assume_ge_var(then_dbm, left, reg);
             assume_le_var_plus_const(else_dbm, left, reg, -1);
         }
-        (CmpOp::ULe | CmpOp::SLe, Either::Right(imm)) => {
-            assume_le_const(then_dbm, left, imm);
-            assume_ge_const(else_dbm, left, imm + 1);
+        (CmpOp::UGt, Either::Right(imm)) => {
+            assume_ge_const(then_dbm, left, imm + 1);
+            assume_le_const(else_dbm, left, imm);
+            assume_ge_const(else_dbm, left, 0);
         }
-        (CmpOp::ULe | CmpOp::SLe, Either::Left(reg)) => {
-            assume_le_var(then_dbm, left, reg);
-            assume_gt_var(else_dbm, left, reg);
-        }
-        (CmpOp::UGt | CmpOp::SGt, Either::Right(imm)) => {
+        (CmpOp::SGt, Either::Right(imm)) => {
             assume_ge_const(then_dbm, left, imm + 1);
             assume_le_const(else_dbm, left, imm);
         }
-        (CmpOp::UGt | CmpOp::SGt, Either::Left(reg)) => {
+        (CmpOp::UGt, Either::Left(reg)) => {
+            assume_gt_var(then_dbm, left, reg);
+            assume_le_var(else_dbm, left, reg);
+            assume_ge_const(else_dbm, left, 0);
+        }
+        (CmpOp::SGt, Either::Left(reg)) => {
             assume_gt_var(then_dbm, left, reg);
             assume_le_var(else_dbm, left, reg);
         }
-        (CmpOp::ULt | CmpOp::SLt, Either::Right(imm)) => {
+        (CmpOp::ULe, Either::Right(imm)) => {
+            assume_le_const(then_dbm, left, imm);
+            assume_ge_const(then_dbm, left, 0);
+            assume_ge_const(else_dbm, left, imm + 1);
+        }
+        (CmpOp::SLe, Either::Right(imm)) => {
+            assume_le_const(then_dbm, left, imm);
+            assume_ge_const(else_dbm, left, imm + 1);
+        }
+        (CmpOp::ULe, Either::Left(reg)) => {
+            assume_le_var(then_dbm, left, reg);
+            assume_ge_const(then_dbm, left, 0);
+            assume_gt_var(else_dbm, left, reg);
+        }
+        (CmpOp::SLe, Either::Left(reg)) => {
+            assume_le_var(then_dbm, left, reg);
+            assume_gt_var(else_dbm, left, reg);
+        }
+        (CmpOp::ULt, Either::Right(imm)) => {
+            assume_less_than(then_dbm, left, imm);
+            assume_ge_const(then_dbm, left, 0);
+            assume_ge_const(else_dbm, left, imm);
+        }
+        (CmpOp::SLt, Either::Right(imm)) => {
             assume_less_than(then_dbm, left, imm);
             assume_ge_const(else_dbm, left, imm);
         }
-        (CmpOp::ULt | CmpOp::SLt, Either::Left(reg)) => {
+        (CmpOp::ULt, Either::Left(reg)) => {
+            assume_le_var_plus_const(then_dbm, left, reg, -1);
+            assume_ge_const(then_dbm, left, 0);
+            assume_ge_var(else_dbm, left, reg);
+        }
+        (CmpOp::SLt, Either::Left(reg)) => {
             assume_le_var_plus_const(then_dbm, left, reg, -1);
             assume_ge_var(else_dbm, left, reg);
         }
