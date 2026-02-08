@@ -155,7 +155,12 @@ impl Tnum {
         // XOR: result is known only if both inputs are known (both known-0 or both known-1)
         let value = self.value ^ other.value;
         let mask = self.mask | other.mask;
-        Tnum { value, mask }
+        Tnum { value: value & !mask, mask }
+    }
+
+    #[inline]
+    pub fn xor_imm(self, imm: u64) -> Tnum {
+        self.xor(Tnum::constant(imm))
     }
 
     /// Addition (approximate - may lose precision)

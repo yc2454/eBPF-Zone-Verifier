@@ -83,7 +83,7 @@ pub(crate) fn transfer_alu(
         AluOp::Arsh => handle_arsh(&mut state, width, dst, &src),
         AluOp::Rsh => handle_rsh(&mut state, width, dst, &src),
         AluOp::Lsh => handle_shl(&mut state, width, dst, &src), // Same as Shl
-        AluOp::Xor => forget(&mut state.dbm, dst),
+        AluOp::Xor => handle_xor(&mut state, width, dst, &src),
     }
 
     update_alu_types(env, &in_types, &mut state.types, &state.dbm, width, op, dst, &src, state.pc);
@@ -472,6 +472,32 @@ fn handle_or(
         Operand::Reg(r) => {
             let r_tnum = state.get_tnum(*r);
             t.or(r_tnum)
+        }
+    };
+    state.set_tnum(dst, new_t);
+
+    sync_tnum_to_dbm(state, dst);
+}
+
+fn handle_xor(
+    state: &mut State,
+    width: Width,
+    dst: Reg,
+    src: &Operand,
+) {
+    // Conservative update to the DBM - forget it
+    forget(&mut state.dbm, dst);
+    
+    // Tnum update
+    let t = state.get_tnum(dst);
+    let new_t = match src {
+        Operand::Imm(c) => {
+            let c = if width == Width::W32 { (*c as u32) as u64 } else { *c as u64 };
+            t.xor_imm(c)
+        }
+        Operand::Reg(r) => {
+            let r_tnum = state.get_tnum(*r);
+            t.xor(r_tnum)
         }
     };
     state.set_tnum(dst, new_t);
