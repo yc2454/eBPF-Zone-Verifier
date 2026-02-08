@@ -807,10 +807,7 @@ fn validate_readable_mem(
                 }
                 true
             } else {
-                // Conservatively reject packet pointer without size
-                env.fail(VerificationError::InvalidArgType { pc, reg });
-                error!("[Verifier] pc {}: packet pointer requires size for read access", pc);
-                false
+                true
             }
         }
         RegType::PtrToCtx => {

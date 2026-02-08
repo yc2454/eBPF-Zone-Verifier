@@ -302,7 +302,9 @@ fn apply_cmp_to_dbm(
         (CmpOp::UGe, Either::Right(imm)) => {
             assume_ge_const(then_dbm, left, imm);
             assume_less_than(else_dbm, left, imm);
-            assume_ge_const(else_dbm, left, 0);
+            if imm > 0 {
+                assume_ge_const(else_dbm, left, 0);
+            }
         }
         (CmpOp::SGe, Either::Right(imm)) => {
             assume_ge_const(then_dbm, left, imm);
@@ -355,7 +357,9 @@ fn apply_cmp_to_dbm(
         }
         (CmpOp::ULt, Either::Right(imm)) => {
             assume_less_than(then_dbm, left, imm);
-            assume_ge_const(then_dbm, left, 0);
+            if imm > 0 {
+                assume_ge_const(then_dbm, left, 0);
+            }
             assume_ge_const(else_dbm, left, imm);
         }
         (CmpOp::SLt, Either::Right(imm)) => {
