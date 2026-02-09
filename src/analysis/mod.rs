@@ -88,6 +88,7 @@ pub fn analyze_program(
 
         // A.b PRUNING CHECK (efficiency - may skip this path)
         if pruning::should_prune(&env, &state, config) {
+            info!("Pruned state at pc {}", state.pc);
             prune_count += 1;
             continue;
         }
@@ -129,9 +130,11 @@ pub fn analyze_program(
         }
         debug!(target: "app", "|PC:{}| Instr: [[{}]]\nRegs: {:?}\nTnums: {:?}\n", 
                state.pc, instr, state.types.reg_types_str(), state.tnums_to_string());
-        for cf in state.call_stack.iter() {
-            println!("{}: {}", cf, cf.stack);
-        }
+        // debug!(target: "app", "|PC:{}| Instr: [[{}]]\n", 
+        //        state.pc, instr);
+        // for cf in state.call_stack.iter() {
+        //     println!("{}: {}", cf, cf.stack);
+        // }
 
         // F. Transfer Function
         let successors = transfer::transfer(&mut env, state, instr);

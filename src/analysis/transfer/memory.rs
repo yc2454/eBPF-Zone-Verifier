@@ -44,9 +44,11 @@ pub(crate) fn transfer_load(
     }
 
     // Try to reload from spilled stack slot
-    if state.try_reload(dst, off, size) {
-        state.pc += 1;
-        return vec![state];
+    if let RegType::PtrToStack { offset, frame_level } = state.types.get(base) {
+        if state.try_reload_at(frame_level, dst, off+ offset.unwrap_or(0) as i16, size) {
+            state.pc += 1;
+            return vec![state];
+        }
     }
     
     update_load_types(env, &mut state, access_size as usize, dst, base, off);
@@ -103,13 +105,12 @@ pub(crate) fn transfer_store(
     
     // Handle spilling to stack
     let base_type = state.types.get(base);
-    if base_type.is_stack_pointer() {
-        let full_offset = base_type.get_stack_offset().unwrap_or(0) + off as i64;
+    if let RegType::PtrToStack { offset, frame_level } = base_type {
+        let full_offset = offset.unwrap_or(0) + off as i64;
         match src {
             Operand::Reg(r) if size == MemSize::U64 => {
                 // Full 64-bit register spill — snapshot the abstract state
-                println!("Spilling {:?} to stack offset {}", r, full_offset);
-                state.spill(*r, full_offset as i16);
+                state.spill_at(frame_level, *r, full_offset as i16);
             }
             _ => {
                 // Partial write or immediate — invalidate any existing spill

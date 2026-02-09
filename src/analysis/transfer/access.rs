@@ -290,15 +290,6 @@ pub fn check_stack_access(
     }
 }
 
-fn types_compatible(existing: &RegType, new: &RegType) -> bool {
-    match (existing, new) {
-        // Slot was uninitialized or scalar — any type can fill it
-        (RegType::NotInit, _) | (RegType::ScalarValue, _) => true,
-        // Same kind of pointer is fine
-        _ => std::mem::discriminant(existing) == std::mem::discriminant(new),
-    }
-}
-
 fn check_stack_initialization(
     env: &mut VerifierEnv,
     state: &State,

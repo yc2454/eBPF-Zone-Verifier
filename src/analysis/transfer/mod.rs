@@ -192,6 +192,10 @@ fn transfer_exit(
     if let Some(return_pc) = state.pop_frame() {
         // Returning from subfunction — continue at caller's return site
         // R0 retains its current type (the actual return value)
+        state.types.set(Reg::R10, RegType::PtrToStack { 
+            offset: Some(0), 
+            frame_level: state.current_frame_level() 
+        });
         state.pc = return_pc;
         vec![state]
     } else {

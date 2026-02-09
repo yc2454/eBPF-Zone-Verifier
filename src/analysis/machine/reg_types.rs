@@ -54,18 +54,6 @@ impl RegType {
         matches!(self, ScalarValue | NotInit)
     }
 
-    pub fn is_stack_pointer(self) -> bool {
-        use RegType::*;
-        matches!(self, PtrToStack { .. })
-    }
-
-    pub fn get_stack_offset(&self) -> Option<i64> {
-        match *self {
-            RegType::PtrToStack { offset, .. } => offset,
-            _ => None,
-        }
-    }
-
     /// Returns the non-null version of a nullable pointer type
     pub fn to_non_null(&self) -> Option<RegType> {
         match *self {

@@ -528,7 +528,6 @@ pub fn apply_jmp_constraints(
     
     // Resolve operand (truncate, extract constant)
     let (resolved, right_bounds) = resolve_right_operand(&then_s.dbm, right, width, op);
-    println!("Resolved right: {:?}, bounds: ({:#x}, {:#x})", resolved, right_bounds.0, right_bounds.1);
     // Apply DBM constraints if safe
     if can_apply_dbm_constraint(&then_s.dbm, left, op, width, right_bounds) {
         apply_cmp_to_dbm(&mut then_s.dbm, &mut else_s.dbm, left, op, resolved);

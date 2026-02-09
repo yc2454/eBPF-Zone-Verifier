@@ -71,7 +71,6 @@ fn find_type_conflict(
         for offset in all_offsets {
             let old_ty = old_frame.stack.get_slot_type(offset);
             let new_ty = new_frame.stack.get_slot_type(offset);
-            println!("[State merging check] Checking offset {}: {:?} vs {:?}", offset, old_ty, new_ty);
             if !types_compatible(&old_ty, &new_ty) {
                 // You may want a different error variant for stack conflicts
                 return Some((Reg::R0, old_ty, new_ty));

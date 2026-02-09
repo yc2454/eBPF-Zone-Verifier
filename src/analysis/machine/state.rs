@@ -164,6 +164,7 @@ impl State {
     /// Spill into a specific frame (cross-frame, e.g. store via PtrToStack)
     pub fn spill_at(&mut self, frame_level: usize, reg: Reg, offset: i16) {
         let (min, max) = get_simple_bounds(&self.dbm, reg);
+        println!("At spilling, {} bounds: [{}, {}]", reg.name(), min, max);
         self.call_stack[frame_level].stack.insert(
             offset,
             SpilledReg {
@@ -185,6 +186,7 @@ impl State {
             return false;
         }
         if let Some(spilled) = self.call_stack[frame_level].stack.get_slot(offset) {
+            domain::forget(&mut self.dbm, dst);
             self.types.set(dst, spilled.reg_type);
             self.tnums.insert(dst, spilled.tnum);
             domain::set_bounds(&mut self.dbm, dst, spilled.bounds.min, spilled.bounds.max);
