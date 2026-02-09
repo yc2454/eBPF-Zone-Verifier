@@ -307,6 +307,8 @@ fn handle_add(
     }
 
     check_ptr_bounds(env, state, dst);
+
+    sync_tnum_to_dbm(state, dst);
 }
 
 fn handle_sub(
@@ -356,6 +358,8 @@ fn handle_sub(
     }
 
     check_ptr_bounds(env, state, dst);
+
+    sync_tnum_to_dbm(state, dst);
 }
 
 fn handle_mov(
