@@ -54,6 +54,13 @@ impl RegType {
         matches!(self, ScalarValue | NotInit)
     }
 
+    pub fn is_nullable_socket_pointer(self) -> bool {
+        use RegType::*;
+        matches!(self, PtrToSocketOrNull { .. } 
+                     | PtrToTcpSockOrNull { .. } 
+                     | PtrToSockCommonOrNull { .. })
+    }
+
     /// Returns the non-null version of a nullable pointer type
     pub fn to_non_null(&self) -> Option<RegType> {
         match *self {

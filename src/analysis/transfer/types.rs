@@ -404,8 +404,19 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
         }
         
         // The socket reference from bpf_get_listener_sock doesn't need to be released
-        constants::BPF_GET_LISTENER_SOCK | constants::BPF_SK_FULLSOCK => {
+        constants::BPF_GET_LISTENER_SOCK => {
             state.types.set(Reg::R0, RegType::PtrToSocketOrNull { ref_id: None });
+        }
+
+        // Copies ref id from argument
+        constants::BPF_SK_FULLSOCK => {
+            let ref_id = state.types.get(Reg::R1).get_ref_id();
+            state.types.set(Reg::R0, RegType::PtrToSocketOrNull { ref_id });
+        }
+
+        constants::BPF_TCP_SOCK => {
+            let id = state.types.get(Reg::R1).get_ref_id();
+            state.types.set(Reg::R0, RegType::PtrToTcpSockOrNull { id });
         }
         
         // SKC lookup - returns PTR_TO_SOCK_COMMON_OR_NULL
@@ -429,10 +440,6 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
             if let Some(ref_id) = state.types.get(Reg::R1).get_ref_id() {
                 state.types.set(Reg::R0, RegType::PtrToTcpSockOrNull { id: Some(ref_id) });
             }
-        }
-
-        constants::BPF_TCP_SOCK => {
-            state.types.set(Reg::R0, RegType::PtrToTcpSockOrNull { id: None });
         }
         
         // SKC to UDP/Unix - return SOCK_COMMON for now (simplified)

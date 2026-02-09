@@ -121,10 +121,20 @@ fn maybe_promote_map_val(state: &mut State, reg: Reg) {
     }
 }
 
+fn same_socket_nullable_pointer(t1: &RegType, t2: &RegType) -> bool {
+    match (t1, t2) {
+        (RegType::PtrToSocketOrNull { ref_id: id1 }, RegType::PtrToSocketOrNull { ref_id: id2 }) => id1 == id2,
+        (RegType::PtrToSockCommonOrNull { ref_id: id1 }, RegType::PtrToSockCommonOrNull { ref_id: id2 }) => id1 == id2,
+        (RegType::PtrToTcpSockOrNull { id: id1 }, RegType::PtrToTcpSockOrNull { id: id2 }) => id1 == id2,
+        _ =>false 
+    }
+}
+
 /// On the non-NULL path: promotes PtrToSocketOrNull → PtrToSocket (ref stays active).
 /// On the NULL path: releases the reference from tracking.
 fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
-    let target_ref_id = match state.types.get(reg) {
+    let reg_type = state.types.get(reg);
+    let target_ref_id = match reg_type {
         RegType::PtrToSocketOrNull { ref_id } 
         | RegType::PtrToSockCommonOrNull { ref_id } 
         | RegType::PtrToTcpSockOrNull { id: ref_id } => ref_id,
@@ -134,28 +144,14 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
     if is_non_null {
         for r in Reg::ALL {
             let ty = state.types.get(r);
-            match ty {
-                RegType::PtrToSocketOrNull { ref_id } 
-                | RegType::PtrToSockCommonOrNull { ref_id } 
-                | RegType::PtrToTcpSockOrNull { id: ref_id } => {
-                    if ref_id == target_ref_id {
-                        state.types.set(r, ty.to_non_null().unwrap());
-                    }
-                }
-                _ => {}
+            if same_socket_nullable_pointer(&reg_type, &ty) {
+                state.types.set(r, ty.to_non_null().unwrap());
             }
         }
         for k in state.stack.slot_offsets() {
             let ty = state.stack.get_slot_type(k);
-            match ty {
-                RegType::PtrToSocketOrNull { ref_id } 
-                | RegType::PtrToSockCommonOrNull { ref_id } 
-                | RegType::PtrToTcpSockOrNull { id: ref_id } => {
-                    if ref_id == target_ref_id {
-                        state.stack.set_slot_type(k, ty.to_non_null().unwrap());
-                    }
-                }
-                _ => {}
+            if same_socket_nullable_pointer(&reg_type, &ty) {
+                state.stack.set_slot_type(k, ty.to_non_null().unwrap());
             }
         }
     } else {
