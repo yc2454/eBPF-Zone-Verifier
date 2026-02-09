@@ -45,6 +45,7 @@ pub const BPF_SK_LOOKUP_UDP: u32 = 85;
 pub const BPF_SK_RELEASE: u32 = 86;
 pub const BPF_SPIN_LOCK: u32 = 93;
 pub const BPF_SPIN_UNLOCK: u32 = 94;
+pub const BPF_SK_FULLSOCK: u32 = 95;
 pub const BPF_SKB_ECN_SET_CE: u32 = 97;
 pub const BPF_GET_LISTENER_SOCK: u32 = 98;
 pub const BPF_SKC_LOOKUP_TCP: u32 = 99;

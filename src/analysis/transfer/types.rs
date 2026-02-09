@@ -9,7 +9,7 @@ use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, AtomicOp, MapLoadKind, MemSize, Operand, Width};
 use crate::zone::domain::{self, Reg};
 use crate::common::ctx_model::{
-    CtxFieldKind, validate_ctx_access
+    CtxFieldKind, validate_ctx_access, MemRegionId
 };
 use crate::common::constants;
 use crate::zone::dbm::Dbm;
@@ -307,12 +307,14 @@ pub(crate) fn update_load_types(
                     CtxFieldKind::PacketEnd => {
                         types.set(dst, RegType::PtrToPacketEnd);
                     }
+                    CtxFieldKind::PtrToMem { region: MemRegionId::BpfSock } => {
+                        types.set(dst, RegType::PtrToSockCommon { ref_id: None });
+                    }
                     CtxFieldKind::PtrToMem { region } => {
                         types.set(dst, RegType::PtrToMem { region, range: 0 });
                     }
                     CtxFieldKind::PacketMeta => {
                         types.set(dst, RegType::PtrToPacketMeta { is_base: true });
-                    
                     }
                     _ => types.set(dst, RegType::ScalarValue),
                 }
@@ -429,7 +431,7 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
         }
         
         // The socket reference from bpf_get_listener_sock doesn't need to be released
-        constants::BPF_GET_LISTENER_SOCK => {
+        constants::BPF_GET_LISTENER_SOCK | constants::BPF_SK_FULLSOCK => {
             state.types.set(Reg::R0, RegType::PtrToSocketOrNull { ref_id: None });
         }
         

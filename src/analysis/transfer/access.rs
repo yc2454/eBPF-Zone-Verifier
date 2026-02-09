@@ -85,6 +85,9 @@ pub fn check_load(
                     ctx_model::MemRegionId::CalicoMetaRegion => {
                         |ty| matches!(ty, RegType::PtrToPacket { is_base: true, .. })
                     }
+                    _ => {
+                        |ty| matches!(ty, RegType::PtrToStack { .. })
+                    }
                 };
                 
                 let end_reg_opt = crate::zone::domain::REG_ENV.all().iter()

@@ -23,6 +23,7 @@ pub(crate) fn refine_mem_ranges(dbm: &Dbm, types: &mut TypeState, stack: &mut St
         MemRegionId::CalicoMetaRegion => {
             matches!(types.get(end_reg), RegType::PtrToPacket { is_base: true, .. })
         }
+        _ => true
     };
     if !is_valid_end {
         return;

@@ -291,6 +291,14 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
+        constants::BPF_SK_FULLSOCK => HelperSignature::new([
+            PtrToSockCommon,       // R1: sock_common
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ]),
+
         // ---- FIB lookup ----
         constants::BPF_FIB_LOOKUP => HelperSignature::new([
             PtrToCtx,       // R1: ctx
