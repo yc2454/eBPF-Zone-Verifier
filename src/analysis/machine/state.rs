@@ -21,6 +21,12 @@ pub struct CallFrame {
     pub frame_depth: u16,  // max bytes used in this frame
 }
 
+impl std::fmt::Display for CallFrame {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CallFrame(return_pc={}, frame_depth={})", self.return_pc, self.frame_depth)
+    }
+}
+
 /// Mirrors `struct bpf_verifier_state` (partially).
 /// Holds the snapshot of execution at a specific PC.
 #[derive(Clone, Debug)]

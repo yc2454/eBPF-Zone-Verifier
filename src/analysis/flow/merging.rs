@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use crate::analysis::machine::env::{VerificationError, VerifierEnv};
-use crate::analysis::machine::reg_types::RegType;
+use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::state::State;
 use crate::zone::domain::Reg;
 
@@ -24,7 +24,7 @@ pub fn check_compatibility(
     if let Some(prev_states) = env.explored_states.get(&pc) {
         for prev in prev_states {
             if let Some((reg, old_ty, new_ty)) = 
-                find_type_conflict(&prev.types, &state.types, &live_regs) {
+                find_type_conflict(&prev.types, &state.types, prev, state, &live_regs) {
                 return Err(VerificationError::RegisterTypeConflict { pc, reg, old: old_ty, new: new_ty });
             }
         }
@@ -44,18 +44,41 @@ pub fn record_state(env: &mut VerifierEnv, state: State) {
 /// Find the first type conflict between two type states.
 /// Returns Some((reg, old_type, new_type)) if conflict found.
 fn find_type_conflict(
-    old: &crate::analysis::machine::reg_types::TypeState,
-    new: &crate::analysis::machine::reg_types::TypeState,
+    old: &TypeState,
+    new: &TypeState,
+    old_state: &State,
+    new_state: &State,
     live_regs: &HashSet<Reg>,
 ) -> Option<(Reg, RegType, RegType)> {
+    // Existing register check
     for &r in live_regs {
         let old_ty = old.get(r);
         let new_ty = new.get(r);
-        
         if !types_compatible(&old_ty, &new_ty) {
             return Some((r, old_ty, new_ty));
         }
     }
+
+    // Check stack slots across all frames
+    for (_frame_idx, (old_frame, new_frame)) in old_state.call_stack.iter()
+        .zip(new_state.call_stack.iter())
+        .enumerate()
+    {
+        let all_offsets: HashSet<i16> = old_frame.stack.slot_offsets().into_iter()
+            .chain(new_frame.stack.slot_offsets())
+            .collect();
+
+        for offset in all_offsets {
+            let old_ty = old_frame.stack.get_slot_type(offset);
+            let new_ty = new_frame.stack.get_slot_type(offset);
+            println!("[State merging check] Checking offset {}: {:?} vs {:?}", offset, old_ty, new_ty);
+            if !types_compatible(&old_ty, &new_ty) {
+                // You may want a different error variant for stack conflicts
+                return Some((Reg::R0, old_ty, new_ty));
+            }
+        }
+    }
+
     None
 }
 

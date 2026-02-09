@@ -223,13 +223,8 @@ pub fn check_stack_access(
     if state.current_frame_level() > pointer_frame_lv {
         if let AccessKind::Write = kind && src_type_op.is_some() {
             if let Some(ty) = src_type_op {
-                let allowed = matches!(ty,
-                    RegType::ScalarValue
-                    | RegType::NotInit
-                    | RegType::PtrToSocket { .. }
-                    | RegType::PtrToSocketOrNull { .. }
-                );
-                if !allowed {
+                // Callee stack pointers become dangling after return
+                if matches!(ty, RegType::PtrToStack { .. }) {
                     env.fail(VerificationError::SpillToCaller { pc });
                     return;
                 }
@@ -292,6 +287,15 @@ pub fn check_stack_access(
                 }
             }
         }
+    }
+}
+
+fn types_compatible(existing: &RegType, new: &RegType) -> bool {
+    match (existing, new) {
+        // Slot was uninitialized or scalar — any type can fill it
+        (RegType::NotInit, _) | (RegType::ScalarValue, _) => true,
+        // Same kind of pointer is fine
+        _ => std::mem::discriminant(existing) == std::mem::discriminant(new),
     }
 }
 

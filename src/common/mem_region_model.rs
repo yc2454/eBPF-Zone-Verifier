@@ -243,7 +243,7 @@ const BPF_XFRM_STATE_FIELDS: &[MemRegionField] = &[
 
 /// Look up field info for a memory region access.
 /// Returns None if no valid field exists at (offset, size).
-fn lookup_field(fields: &[MemRegionField], off: i16, size: i64) -> Option<MemRegionAccessInfo> {
+fn lookup_field(reg_type: RegType, fields: &[MemRegionField], off: i16, size: i64) -> Option<MemRegionAccessInfo> {
     let access_end = off + size as i16;
 
     // Check natural alignment
@@ -256,7 +256,8 @@ fn lookup_field(fields: &[MemRegionField], off: i16, size: i64) -> Option<MemReg
         .find(|f| {
             if f.narrow_access {
                 if size == 1 {
-                    return true;
+                    // Cannot access bpf_sock offset 50-51
+                    return !(matches!(reg_type, RegType::PtrToSockCommon { .. } | RegType::PtrToSocket { .. }) && off == 50);
                 }
                 // Allow aligned sub-field access within bounds
                 let field_end = f.offset + f.size.bytes() as i16;
@@ -292,7 +293,7 @@ fn get_region_fields(reg_type: RegType) -> Option<&'static [MemRegionField]> {
 /// All memory region accesses are read-only. Writes are never permitted.
 pub fn validate_mem_region_access(reg_type: RegType, off: i16, size: i64) -> Option<MemRegionAccessInfo> {
     let fields = get_region_fields(reg_type)?;
-    lookup_field(fields, off, size)
+    lookup_field(reg_type, fields, off, size)
 }
 
 /// Check if a memory region field is readable at the given offset and size.

@@ -54,11 +54,16 @@ impl RegType {
         matches!(self, ScalarValue | NotInit)
     }
 
-    pub fn is_nullable_socket_pointer(self) -> bool {
+    pub fn is_stack_pointer(self) -> bool {
         use RegType::*;
-        matches!(self, PtrToSocketOrNull { .. } 
-                     | PtrToTcpSockOrNull { .. } 
-                     | PtrToSockCommonOrNull { .. })
+        matches!(self, PtrToStack { .. })
+    }
+
+    pub fn get_stack_offset(&self) -> Option<i64> {
+        match *self {
+            RegType::PtrToStack { offset, .. } => offset,
+            _ => None,
+        }
     }
 
     /// Returns the non-null version of a nullable pointer type

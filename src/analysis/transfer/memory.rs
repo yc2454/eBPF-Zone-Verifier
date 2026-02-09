@@ -4,7 +4,7 @@
 
 use crate::analysis::machine::env::{VerifierEnv, VerificationError};
 use crate::analysis::machine::state::State;
-use crate::analysis::machine::reg_types::RegType;
+use crate::analysis::machine::reg_types::{RegType};
 use crate::analysis::transfer::types::update_atomic_op_types;
 use crate::ast::{Operand, MemSize, AtomicOp};
 use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, assume_eq_const};
@@ -102,21 +102,23 @@ pub(crate) fn transfer_store(
     access::check_store(env, &state, base, access_size, off, src_type);
     
     // Handle spilling to stack
-    if base == Reg::R10 {
+    let base_type = state.types.get(base);
+    if base_type.is_stack_pointer() {
+        let full_offset = base_type.get_stack_offset().unwrap_or(0) + off as i64;
         match src {
             Operand::Reg(r) if size == MemSize::U64 => {
                 // Full 64-bit register spill — snapshot the abstract state
-                state.spill(*r, off);
+                println!("Spilling {:?} to stack offset {}", r, full_offset);
+                state.spill(*r, full_offset as i16);
             }
             _ => {
                 // Partial write or immediate — invalidate any existing spill
-                state.stack.clear_slot(off);
+                state.stack.clear_slot(full_offset as i16);
             }
         }
         // Update frame depth
         state.update_frame_depth(off);
     }
-    let base_type = state.types.get(base);
     update_store_types(&mut state.stack, src_type, size, base_type, off);
 
     state.pc += 1;

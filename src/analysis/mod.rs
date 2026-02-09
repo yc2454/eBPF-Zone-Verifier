@@ -127,8 +127,11 @@ pub fn analyze_program(
         if config.verbosity >= 2 {
             state.dbm.pretty_print();
         }
-        debug!(target: "app", "|PC:{}| Instr: [[{}]]\nRegs: {:?}\nTnums: {:?}\nCall Frame: {:?}\n", 
-               state.pc, instr, state.types.reg_types_str(), state.tnums_to_string(), state.call_stack);
+        debug!(target: "app", "|PC:{}| Instr: [[{}]]\nRegs: {:?}\nTnums: {:?}\n", 
+               state.pc, instr, state.types.reg_types_str(), state.tnums_to_string());
+        for cf in state.call_stack.iter() {
+            println!("{}: {}", cf, cf.stack);
+        }
 
         // F. Transfer Function
         let successors = transfer::transfer(&mut env, state, instr);

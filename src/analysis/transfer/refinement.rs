@@ -159,27 +159,15 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
             state.release_ref(target_ref_id.unwrap());
         }
         for r in Reg::ALL {
-            match state.types.get(r) {
-                RegType::PtrToSocketOrNull { ref_id } 
-                | RegType::PtrToSockCommonOrNull { ref_id } 
-                | RegType::PtrToTcpSockOrNull { id: ref_id } => {
-                    if ref_id == target_ref_id {
-                        state.types.set(r, RegType::ScalarValue);
-                    }
-                }
-                _ => {}
+            let ty = state.types.get(r);
+            if same_socket_nullable_pointer(&reg_type, &ty) {
+                state.types.set(r, RegType::ScalarValue);
             }
         }
         for k in state.stack.slot_offsets() {
-            match state.stack.get_slot_type(k) {
-                RegType::PtrToSocketOrNull { ref_id } 
-                | RegType::PtrToSockCommonOrNull { ref_id } 
-                | RegType::PtrToTcpSockOrNull { id: ref_id } => {
-                    if ref_id == target_ref_id {
-                        state.stack.set_slot_type(k, RegType::ScalarValue);
-                    }
-                }
-                _ => {}
+            let ty = state.stack.get_slot_type(k);
+            if same_socket_nullable_pointer(&reg_type, &ty) {
+                state.stack.set_slot_type(k, RegType::ScalarValue);
             }
         }
     }

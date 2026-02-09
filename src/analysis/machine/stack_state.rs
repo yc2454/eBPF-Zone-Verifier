@@ -22,6 +22,17 @@ pub struct StackState {
     pub slots: BTreeMap<i16, SpilledReg>,
 }
 
+impl std::fmt::Display for StackState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut entries: Vec<String> = Vec::new();
+        for (offset, spilled) in &self.slots {
+            entries.push(format!("offset {}: type={:?}, bounds=[{}, {}]", 
+                offset, spilled.reg_type, spilled.bounds.min, spilled.bounds.max));
+        }
+        write!(f, "StackState {{\n  {}\n}}", entries.join("\n  "))
+    }
+}
+
 impl StackState {
     pub fn new() -> Self {
         Self {
