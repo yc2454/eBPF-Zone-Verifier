@@ -498,6 +498,7 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
 }
 
 pub(crate) fn update_call_rel_types(state: &mut State) {
+    state.types.set(Reg::R0, RegType::NotInit);
     state.types.set(Reg::R10, RegType::PtrToStack { offset: Some(0), frame_level: state.current_frame_level() });
 }
 

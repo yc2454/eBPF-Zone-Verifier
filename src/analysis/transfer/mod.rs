@@ -158,8 +158,8 @@ fn transfer_exit(
         }
     }
 
-    // R0 must be readable (it's the return value)
-    if !check_reg_readable(env, &state, Reg::R0) {
+    // R0 must be readable at the main frame (it's the return value)
+    if state.at_last_call_frame() && !check_reg_readable(env, &state, Reg::R0) {
         env.fail(VerificationError::RegisterNotReadable { pc, reg: Reg::R0 });
         return vec![];
     }

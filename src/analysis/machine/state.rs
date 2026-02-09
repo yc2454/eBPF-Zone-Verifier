@@ -14,7 +14,7 @@ pub struct LockState {
 }
 
 /// A saved call frame (caller's state when entering a subfunction)
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CallFrame {
     pub return_pc: usize,
     pub stack: StackState,
