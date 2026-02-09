@@ -98,12 +98,6 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
             PtrToPacket { is_base: b2, .. },
         ) => b1 == b2,
 
-        // Mem pointers: old must have >= range
-        (
-            PtrToMem { region: reg1, range: r1 },
-            PtrToMem { region: reg2, range: r2 },
-        ) => reg1 == reg2 && r1 >= r2,
-
         // Map value pointers
         (
             PtrToMapValue { offset: o1, map_idx: m1, .. },

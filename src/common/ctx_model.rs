@@ -11,26 +11,6 @@ use crate::{ast::{ContextKind, MemSize, ProgramKind}};
 // Core Types
 // ===========================================================================
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MemRegionId {
-    /// struct bpf_sock — returned by sk_lookup ctx->sk, skb->sk, bpf_sk_fullsock(), etc.
-    BpfSock,
-
-    /// struct bpf_tcp_sock — returned by bpf_tcp_sock()
-    BpfTcpSock,
-
-    /// struct bpf_xfrm_state — returned by bpf_skb_get_xfrm_state()
-    BpfXfrmState,
-
-    /// Region used by the Calico debug/metadata buffer pattern:
-    ///   r6 = *(ctx + 0x8c)
-    ///   r1 = *(ctx + 0x4c)
-    ///   check: r6 + 4 <= r1
-    CalicoMetaRegion,
-
-    // Future: BpfSockAddr, BpfSkLookup, etc.
-}
-
 /// What kind of value a ctx field holds (for type inference after loads).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CtxFieldKind {
@@ -38,7 +18,7 @@ pub enum CtxFieldKind {
     Scalar,
 
     /// A pointer into some memory region.
-    PtrToMem { region: MemRegionId },
+    SockCommon,
 
     /// Pointer to the start of the packet data.
     PacketStart,
@@ -159,7 +139,7 @@ const SK_BUFF_FIELDS: &[CtxField] = &[
     // __u32 local_port
     CtxField { offset: 136, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
     // __u32 data_meta
-    CtxField { offset: 140, size: MemSize::U32, kind: CtxFieldKind::PtrToMem { region: MemRegionId::CalicoMetaRegion }, writable: false, readable: true, narrow_access: false },
+    CtxField { offset: 140, size: MemSize::U32, kind: CtxFieldKind::PacketMeta, writable: false, readable: true, narrow_access: false },
     // Additional fields can be added as needed...
 ];
 
@@ -175,7 +155,7 @@ const SK_BUFF_EXTENDED_FIELDS: &[CtxField] = &[
     // __u32 gso_segs (offset 164)
     CtxField { offset: 164, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
     CtxField { offset: 168, size: MemSize::U64,
-           kind: CtxFieldKind::PtrToMem { region: MemRegionId::BpfSock },
+           kind: CtxFieldKind::SockCommon,
            writable: false, readable: true, narrow_access: false },
     // __u32 gso_size (offset 176)
     CtxField { offset: 176, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
@@ -258,7 +238,7 @@ const SOCK_ADDR_MSG_SRC_IP6_END: i16 = 56; // 44 + 4*4 = 56
 const SK_LOOKUP_FIELDS: &[CtxField] = &[
     // struct bpf_sock *sk (offset 0)
     CtxField { offset: 0, size: MemSize::U64,
-           kind: CtxFieldKind::PtrToMem { region: MemRegionId::BpfSock },
+           kind: CtxFieldKind::SockCommon,
            writable: false, readable: true, narrow_access: false },
     // __u32 family (offset 8)
     CtxField { offset: 8, size: MemSize::U32, kind: CtxFieldKind::Scalar,

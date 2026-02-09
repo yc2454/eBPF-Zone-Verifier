@@ -14,9 +14,7 @@
 // - No kernel rewriting of access offsets
 // - No scratch regions
 
-use crate::ast::MemSize;
-
-use super::ctx_model::MemRegionId;
+use crate::{analysis::machine::reg_types::RegType, ast::MemSize};
 
 // ===========================================================================
 // Core Types
@@ -105,6 +103,13 @@ const BPF_SOCK_FIELDS: &[MemRegionField] = &[
     MemRegionField { offset: 72, size: MemSize::U32, narrow_access: true },
     // __s32 rx_queue_mapping
     MemRegionField { offset: 76, size: MemSize::U32, narrow_access: true },
+];
+
+const BPF_SOCK_COMMON_FIELDS: &[MemRegionField] = &[
+    MemRegionField { offset: 0,  size: MemSize::U32, narrow_access: true }, // bound_dev_if
+    MemRegionField { offset: 4,  size: MemSize::U32, narrow_access: true }, // family
+    MemRegionField { offset: 8,  size: MemSize::U32, narrow_access: true }, // type
+    MemRegionField { offset: 12, size: MemSize::U32, narrow_access: true }, // protocol
 ];
 
 /// struct bpf_tcp_sock
@@ -262,11 +267,11 @@ fn lookup_field(fields: &[MemRegionField], off: i16, size: i64) -> Option<MemReg
 }
 
 /// Get the field table for a given memory region.
-fn get_region_fields(region: MemRegionId) -> Option<&'static [MemRegionField]> {
-    match region {
-        MemRegionId::BpfSock => Some(BPF_SOCK_FIELDS),
-        MemRegionId::BpfTcpSock => Some(BPF_TCP_SOCK_FIELDS),
-        MemRegionId::BpfXfrmState => Some(BPF_XFRM_STATE_FIELDS),
+fn get_region_fields(reg_type: RegType) -> Option<&'static [MemRegionField]> {
+    match reg_type {
+        RegType::PtrToSockCommon { .. } => Some(BPF_SOCK_FIELDS),
+        RegType::PtrToTcpSock { .. } => Some(BPF_TCP_SOCK_FIELDS),
+        RegType::PtrToSocket { .. } => Some(BPF_SOCK_FIELDS),
         _ => None,
     }
 }
@@ -282,16 +287,16 @@ fn get_region_fields(region: MemRegionId) -> Option<&'static [MemRegionField]> {
 /// - `None` if the access is invalid (wrong offset, wrong size, or unknown region)
 ///
 /// All memory region accesses are read-only. Writes are never permitted.
-pub fn validate_mem_region_access(region: MemRegionId, off: i16, size: i64) -> Option<MemRegionAccessInfo> {
-    let fields = get_region_fields(region)?;
+pub fn validate_mem_region_access(reg_type: RegType, off: i16, size: i64) -> Option<MemRegionAccessInfo> {
+    let fields = get_region_fields(reg_type)?;
     lookup_field(fields, off, size)
 }
 
 /// Check if a memory region field is readable at the given offset and size.
 ///
 /// Convenience wrapper around `validate_mem_region_access`.
-pub fn is_valid_mem_region_read(region: MemRegionId, off: i16, size: i64) -> bool {
-    validate_mem_region_access(region, off, size)
+pub fn is_valid_mem_region_read(reg_type: RegType, off: i16, size: i64) -> bool {
+    validate_mem_region_access(reg_type, off, size)
         .map(|info| info.readable)
         .unwrap_or(false)
 }

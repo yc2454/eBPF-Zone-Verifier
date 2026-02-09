@@ -16,7 +16,7 @@ use crate::zone::dbm::{Dbm};
 use crate::zone::tnum::Tnum;
 use crate::analysis::machine::env::VerificationError;
 
-use super::refinement::{refine_mem_ranges, refine_branch, refine_packet_ranges};
+use super::refinement::{refine_branch, refine_packet_ranges};
 use super::common::{check_reg_readable, check_operand_readable};
 
 /// Transfer function for conditional branch instructions.
@@ -546,8 +546,6 @@ pub fn apply_jmp_constraints(
         for state in [&mut *then_s, &mut *else_s] {
             refine_packet_ranges(&state.dbm, &mut state.types, &mut state.stack, left, right_reg);
             refine_packet_ranges(&state.dbm, &mut state.types, &mut state.stack, right_reg, left);
-            refine_mem_ranges(&state.dbm, &mut state.types, &mut state.stack, left, right_reg);
-            refine_mem_ranges(&state.dbm, &mut state.types, &mut state.stack, right_reg, left);
         }
     }
 }

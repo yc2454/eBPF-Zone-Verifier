@@ -8,6 +8,7 @@ use crate::zone::domain::{get_bounds, get_relative_bound};
 use crate::analysis::machine::env::VerificationError;
 use crate::common::constants;
 use crate::common::ctx_model;
+use crate::common::mem_region_model;
 use log::{error};
 use RegType::*;
 use crate::zone::domain::{Reg, REG_ENV};
@@ -68,49 +69,8 @@ pub fn check_load(
                  } );
             }
         }
-        PtrToMem { region, range } => {
-            let access_end = off as i64 + size;
-            let mut safe = false;
-            
-            if off < 0 {
-                // Negative offset never allowed
-            } 
-            // Standard check using pre-computed range
-            else if (access_end as u64) <= range {
-                safe = true;
-            }
-            // Fallback: direct DBM query
-            else {
-                let end_type_matcher: fn(&RegType) -> bool = match region {
-                    ctx_model::MemRegionId::CalicoMetaRegion => {
-                        |ty| matches!(ty, RegType::PtrToPacket { is_base: true, .. })
-                    }
-                    _ => {
-                        |ty| matches!(ty, RegType::PtrToStack { .. })
-                    }
-                };
-                
-                let end_reg_opt = crate::zone::domain::REG_ENV.all().iter()
-                    .find(|&&r| end_type_matcher(&state.types.get(r)));
-
-                if let Some(&end_reg) = end_reg_opt {
-                    let required_bound = -access_end;
-                    let (_, upper) = get_relative_bound(&state.dbm, base, end_reg);
-                    if let Some(ub) = upper {
-                        if ub <= required_bound {
-                            safe = true;
-                        }
-                    }
-                }
-            }
-            
-            if !safe {
-                error!("Unsafe mem region load at pc {}: base {:?}+{} (range={})", pc, base, off, range);
-                env.fail(VerificationError::UnsafeMemoryRegionLoad { pc, base, off });
-            }
-        }
-        PtrToSocket {..} | PtrToSockCommon {..} | PtrToTcpSock {..} => {
-            if !is_valid_socket_access(&base_type, off as i64, size) {
+        PtrToTcpSock {..} | PtrToSockCommon {..} | PtrToSocket {..} => {
+            if !mem_region_model::is_valid_mem_region_read(state.types.get(base), off, size) {
                 error!(
                     "Invalid socket access at pc {}: {:?} offset {} size {}", 
                     pc, base_type, off, size
@@ -397,111 +357,6 @@ pub fn check_stack_arg_readable(
         None,
         state.current_frame_level(),
     )
-}
-
-// ---------------------- Socket checking helper ------------------ //
-
-/// A field in a BPF-visible socket struct
-struct SocketField {
-    offset: u32,
-    size: u32,
-}
-
-/// struct bpf_sock fields (v5.15)
-/// Full socket info, returned by bpf_sk_fullsock()
-const BPF_SOCK_FIELDS: &[SocketField] = &[
-    SocketField { offset: 0, size: 4 },   // bound_dev_if
-    SocketField { offset: 4, size: 4 },   // family
-    SocketField { offset: 8, size: 4 },   // type
-    SocketField { offset: 12, size: 4 },  // protocol
-    SocketField { offset: 16, size: 4 },  // mark
-    SocketField { offset: 20, size: 4 },  // priority
-    SocketField { offset: 24, size: 4 },  // src_ip4
-    SocketField { offset: 28, size: 4 },  // src_ip6[0]
-    SocketField { offset: 32, size: 4 },  // src_ip6[1]
-    SocketField { offset: 36, size: 4 },  // src_ip6[2]
-    SocketField { offset: 40, size: 4 },  // src_ip6[3]
-    SocketField { offset: 44, size: 4 },  // src_port
-    SocketField { offset: 48, size: 4 },  // dst_port
-    SocketField { offset: 52, size: 4 },  // dst_ip4
-    SocketField { offset: 56, size: 4 },  // dst_ip6[0]
-    SocketField { offset: 60, size: 4 },  // dst_ip6[1]
-    SocketField { offset: 64, size: 4 },  // dst_ip6[2]
-    SocketField { offset: 68, size: 4 },  // dst_ip6[3]
-    SocketField { offset: 72, size: 4 },  // state
-    SocketField { offset: 76, size: 4 },  // rx_queue_mapping
-];
-
-/// struct bpf_tcp_sock fields (v5.15)
-/// TCP-specific info, returned by bpf_tcp_sock()
-const BPF_TCP_SOCK_FIELDS: &[SocketField] = &[
-    SocketField { offset: 0, size: 4 },   // snd_cwnd
-    SocketField { offset: 4, size: 4 },   // srtt_us
-    SocketField { offset: 8, size: 4 },   // rtt_min
-    SocketField { offset: 12, size: 4 },  // snd_ssthresh
-    SocketField { offset: 16, size: 4 },  // rcv_nxt
-    SocketField { offset: 20, size: 4 },  // snd_nxt
-    SocketField { offset: 24, size: 4 },  // snd_una
-    SocketField { offset: 28, size: 4 },  // mss_cache
-    SocketField { offset: 32, size: 4 },  // ecn_flags
-    SocketField { offset: 36, size: 4 },  // rate_delivered
-    SocketField { offset: 40, size: 4 },  // rate_interval_us
-    SocketField { offset: 44, size: 4 },  // packets_out
-    SocketField { offset: 48, size: 4 },  // retrans_out
-    SocketField { offset: 52, size: 4 },  // total_retrans
-    SocketField { offset: 56, size: 4 },  // segs_in
-    SocketField { offset: 60, size: 4 },  // data_segs_in
-    SocketField { offset: 64, size: 4 },  // segs_out
-    SocketField { offset: 68, size: 4 },  // data_segs_out
-    SocketField { offset: 72, size: 4 },  // lost_out
-    SocketField { offset: 76, size: 4 },  // sacked_out
-    SocketField { offset: 80, size: 8 },  // bytes_received (u64)
-    SocketField { offset: 88, size: 8 },  // bytes_acked (u64)
-    SocketField { offset: 96, size: 4 },  // dsack_dups
-    SocketField { offset: 100, size: 4 }, // delivered
-    SocketField { offset: 104, size: 4 }, // delivered_ce
-    SocketField { offset: 108, size: 4 }, // icsk_retransmits
-];
-
-/// struct bpf_sock_common fields (v5.15)
-/// Limited socket info from skb->sk without full socket lock
-const BPF_SOCK_COMMON_FIELDS: &[SocketField] = &[
-    SocketField { offset: 0, size: 4 },   // family
-    SocketField { offset: 4, size: 4 },   // src_ip4
-    SocketField { offset: 8, size: 4 },   // src_ip6[0]
-    SocketField { offset: 12, size: 4 },  // src_ip6[1]
-    SocketField { offset: 16, size: 4 },  // src_ip6[2]
-    SocketField { offset: 20, size: 4 },  // src_ip6[3]
-    SocketField { offset: 24, size: 4 },  // src_port
-];
-
-/// Check if access [off, off+size) falls entirely within a valid field
-fn access_within_fields(fields: &[SocketField], off: u32, size: u32) -> bool {
-    fields.iter().any(|f| off >= f.offset && off + size <= f.offset + f.size)
-}
-
-/// Validates a memory access to a socket pointer.
-/// Returns true if the access is valid for the given socket type.
-pub fn is_valid_socket_access(ty: &RegType, off: i64, size: i64) -> bool {
-    // Negative offsets never allowed
-    if off < 0 || size <= 0 {
-        return false;
-    }
-    
-    let off = off as u32;
-    let size = size as u32;
-    
-    // Check for overflow
-    if off.checked_add(size).is_none() {
-        return false;
-    }
-    
-    match ty {
-        RegType::PtrToSockCommon {..} => access_within_fields(BPF_SOCK_COMMON_FIELDS, off, size),
-        RegType::PtrToSocket {..} => access_within_fields(BPF_SOCK_FIELDS, off, size),
-        RegType::PtrToTcpSock {..} => access_within_fields(BPF_TCP_SOCK_FIELDS, off, size),
-        _ => false,
-    }
 }
 
 // ------------------- Packet Checking Helpers -------------------

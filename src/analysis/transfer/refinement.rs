@@ -8,60 +8,6 @@ use crate::analysis::machine::stack_state::StackState;
 use crate::ast::{Instr, CmpOp, Operand};
 use crate::zone::domain::Reg;
 use crate::zone::dbm::{Dbm, INF};
-use crate::common::ctx_model::MemRegionId;
-
-/// Refines the safe access range of memory region pointers based on DBM constraints.
-/// Similar to refine_packet_ranges but for PtrToMem.
-pub(crate) fn refine_mem_ranges(dbm: &Dbm, types: &mut TypeState, stack: &mut StackState, mem_reg: Reg, end_reg: Reg) {
-    let target_region = match types.get(mem_reg) {
-        RegType::PtrToMem { region, .. } => region,
-        _ => return,
-    };
-    
-    // Validate end_reg is the correct end marker for this region
-    let is_valid_end = match target_region {
-        MemRegionId::CalicoMetaRegion => {
-            matches!(types.get(end_reg), RegType::PtrToPacket { is_base: true, .. })
-        }
-        _ => true
-    };
-    if !is_valid_end {
-        return;
-    }
-    
-    // Update all PtrToMem registers with matching region
-    for r in Reg::ALL {
-        if let RegType::PtrToMem { region, range } = types.get(r) {
-            if region == target_region {
-                let dist = dbm.get(r, end_reg);
-                if dist < INF && dist <= 0 {
-                    let safe_bytes = dist.unsigned_abs();
-                    if safe_bytes > range {
-                        types.set(r, RegType::PtrToMem { region, range: safe_bytes });
-                    }
-                }
-            }
-        }
-    }
-    
-    // Also update stack slots with matching region
-    for k in stack.slot_offsets() {
-        if let RegType::PtrToMem { region, range } = stack.get_slot_type(k) {
-            if region == target_region {
-                let max_range = Reg::ALL.iter()
-                    .filter_map(|&r| match types.get(r) {
-                        RegType::PtrToMem { region: rg, range } if rg == target_region => Some(range),
-                        _ => None,
-                    })
-                    .max()
-                    .unwrap_or(0);
-                if max_range > range {
-                    stack.set_slot_type(k, RegType::PtrToMem { region, range: max_range });
-                }
-            }
-        }
-    }
-}
 
 pub(crate) fn refine_packet_ranges(dbm: &Dbm, types: &mut TypeState, stack: &mut StackState, pkt_reg: Reg, end_reg: Reg) {
     // Determine which register is PtrToPacket and which is PtrToPacketEnd

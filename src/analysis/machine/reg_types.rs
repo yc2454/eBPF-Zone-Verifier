@@ -1,6 +1,5 @@
 // src/analysis/reg_types.rs
 use crate::zone::domain::Reg;
-use crate::common::ctx_model::MemRegionId;
 
 pub const NUM_REGS: usize = 11; 
 
@@ -16,8 +15,7 @@ pub enum RegType {
         range: i64,
     },    
     PtrToPacketEnd, 
-    PtrToPacketMeta { is_base: bool },
-    PtrToMem { region: MemRegionId, range: u64 },           
+    PtrToPacketMeta { is_base: bool },         
     PtrToMapObject { map_idx: usize }, 
     PtrToMapValueOrNull { id: u32, map_idx: usize }, 
     PtrToMapValue { id: u32, offset: Option<i64>, map_idx: usize },

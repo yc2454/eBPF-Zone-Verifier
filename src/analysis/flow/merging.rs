@@ -81,7 +81,6 @@ fn types_compatible(a: &RegType, b: &RegType) -> bool {
         (ScalarValue, PtrToMapValueOrNull { .. }) => true,
         (PtrToPacket { .. }, PtrToPacket { .. }) => true,
         (PtrToPacketEnd, PtrToPacketEnd) => true,
-        (PtrToMem { .. }, PtrToMem { .. }) => true,
         (PtrToSocket { .. }, PtrToSocket { .. }) => true,
         (PtrToSocketOrNull { .. }, PtrToSocketOrNull { .. }) => true,
         (PtrToSockCommon { .. }, PtrToSockCommon { .. }) => true,

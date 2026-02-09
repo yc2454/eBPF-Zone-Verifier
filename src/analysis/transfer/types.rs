@@ -9,7 +9,7 @@ use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, AtomicOp, MapLoadKind, MemSize, Operand, Width};
 use crate::zone::domain::{self, Reg};
 use crate::common::ctx_model::{
-    CtxFieldKind, validate_ctx_access, MemRegionId
+    CtxFieldKind, validate_ctx_access
 };
 use crate::common::constants;
 use crate::zone::dbm::Dbm;
@@ -167,18 +167,6 @@ pub(crate) fn update_alu_types(
                         // by setting it to ScalarValue
                         types.set(dst, RegType::ScalarValue);
                     },
-                    (RegType::PtrToMem { region, range }, Operand::Imm(k)) => {
-                        let new_range = if *k > 0 { 
-                            range.saturating_sub(*k as u64) 
-                        } else { 
-                            range.saturating_add(k.wrapping_neg() as u64) 
-                        };
-                        types.set(dst, RegType::PtrToMem { region, range: new_range });
-                    },
-                    (RegType::PtrToMem { .. }, Operand::Reg(_)) => {
-                        // Variable offset - lose precise tracking
-                        types.set(dst, RegType::ScalarValue);
-                    },
                     _ => types.set(dst, RegType::ScalarValue),
                 }
             } else {
@@ -254,18 +242,6 @@ pub(crate) fn update_alu_types(
                         // by setting it to ScalarValue
                         types.set(dst, RegType::ScalarValue);
                     },
-                    (RegType::PtrToMem { region, range }, Operand::Imm(k)) => {
-                        let new_range = if *k > 0 { 
-                            range.saturating_sub(*k as u64) 
-                        } else { 
-                            range.saturating_add(k.wrapping_neg() as u64) 
-                        };
-                        types.set(dst, RegType::PtrToMem { region, range: new_range });
-                    },
-                    (RegType::PtrToMem { .. }, Operand::Reg(_)) => {
-                        // Variable offset - lose precise tracking
-                        types.set(dst, RegType::ScalarValue);
-                    },
                     _ => types.set(dst, RegType::ScalarValue),
                 }
             } else {
@@ -307,11 +283,8 @@ pub(crate) fn update_load_types(
                     CtxFieldKind::PacketEnd => {
                         types.set(dst, RegType::PtrToPacketEnd);
                     }
-                    CtxFieldKind::PtrToMem { region: MemRegionId::BpfSock } => {
+                    CtxFieldKind::SockCommon => {
                         types.set(dst, RegType::PtrToSockCommon { ref_id: None });
-                    }
-                    CtxFieldKind::PtrToMem { region } => {
-                        types.set(dst, RegType::PtrToMem { region, range: 0 });
                     }
                     CtxFieldKind::PacketMeta => {
                         types.set(dst, RegType::PtrToPacketMeta { is_base: true });
