@@ -220,6 +220,11 @@ const SOCK_ADDR_FIELDS: &[CtxField] = &[
     CtxField { offset: 60, size: MemSize::U64, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
 ];
 
+const SOCK_ADDR_USER_IP6_START: i16 = 8;
+const SOCK_ADDR_USER_IP6_END: i16 = 24; // 8 + 4*4 = 23
+const SOCK_ADDR_MSG_SRC_IP6_START: i16 = 44;
+const SOCK_ADDR_MSG_SRC_IP6_END: i16 = 56; // 44 + 4*4 = 56
+
 /// struct bpf_sk_lookup (SK_LOOKUP context)
 ///
 /// Reference: linux/include/uapi/linux/bpf.h
@@ -447,6 +452,20 @@ fn get_regions(ctx_kind: ContextKind) -> &'static [CtxRegion] {
             readable: true,
             writable: true,
         }],
+        ContextKind::BpfSockAddr => &[
+            CtxRegion {
+                start: SOCK_ADDR_USER_IP6_START,
+                end: SOCK_ADDR_USER_IP6_END,
+                readable: true,
+                writable: true,
+            }, 
+            CtxRegion {
+                start: SOCK_ADDR_MSG_SRC_IP6_START,
+                end: SOCK_ADDR_MSG_SRC_IP6_END,
+                readable: true,
+                writable: true,
+            }
+        ],
         _ => &[],
     }
 }
