@@ -79,7 +79,7 @@ pub struct CtxAccessInfo {
 /// rewrites accesses for. Field offsets here match the BPF-visible layout.
 const SK_BUFF_FIELDS: &[CtxField] = &[
     // __u32 len
-    CtxField { offset: 0, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
+    CtxField { offset: 0, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },
     // __u32 pkt_type
     CtxField { offset: 4, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
     // __u32 mark

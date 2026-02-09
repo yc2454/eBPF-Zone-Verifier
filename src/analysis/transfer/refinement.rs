@@ -35,18 +35,19 @@ pub(crate) fn refine_packet_ranges(state: &mut State, pkt_reg: Reg, end_reg: Reg
     }
 
     // Also update stack slots with matching id
-    for k in state.stack().slot_offsets() {
-        if let RegType::PtrToPacket { id, is_base, range } = state.stack().get_slot_type(k) {
-            if id == target_id {
-                let max_range = Reg::ALL.iter()
-                    .filter_map(|&r| match state.types.get(r) {
-                        RegType::PtrToPacket { id: rid, range, .. } if rid == target_id => Some(range),
-                        _ => None,
-                    })
-                    .max()
-                    .unwrap_or(0);
-                if max_range > range {
-                    state.stack_mut().set_slot_type(k, RegType::PtrToPacket { id, is_base, range: max_range });
+    let max_range = Reg::ALL.iter()
+        .filter_map(|&r| match state.types.get(r) {
+            RegType::PtrToPacket { id: rid, range, .. } if rid == target_id => Some(range),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0);
+
+    for frame_idx in 0..state.num_frames() {
+        for k in state.stack_at(frame_idx).slot_offsets() {
+            if let RegType::PtrToPacket { id, is_base, range } = state.stack_at(frame_idx).get_slot_type(k) {
+                if id == target_id && max_range > range {
+                    state.stack_at_mut(frame_idx).set_slot_type(k, RegType::PtrToPacket { id, is_base, range: max_range });
                 }
             }
         }
