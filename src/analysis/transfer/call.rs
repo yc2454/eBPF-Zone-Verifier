@@ -623,7 +623,12 @@ fn validate_single_arg(
             if reg_type.is_scalar() && is_zero(&state.dbm, reg) {
                 return true;
             } else {
-                if !matches!(reg_type, RegType::PtrToMapValue { .. } | RegType::PtrToMapValueOrNull { .. }) {
+                if !matches!(reg_type, 
+                    RegType::PtrToMapValue { .. } 
+                    | RegType::PtrToMapValueOrNull { .. }
+                    | RegType::PtrToStack { .. }
+                    | RegType::PtrToPacket { .. }
+                    | RegType::PtrToPacketMeta { .. }) {
                     env.fail(VerificationError::InvalidArgType { pc, reg });
                     error!("[Verifier] pc {}: R{} expected PTR_TO_MAP_VALUE or NULL, got {:?}", 
                            pc, arg_index + 1, actual);
@@ -730,7 +735,7 @@ fn validate_single_arg(
         }
 
         PtrToSockCommon => {
-            if !matches!(actual, RegType::PtrToSockCommon { .. }) {
+            if !matches!(actual, RegType::PtrToSockCommon { .. } | RegType::PtrToSocket { .. } | RegType::PtrToTcpSock { .. }) {
                 env.fail(VerificationError::InvalidArgType { pc, reg });
                 error!("[Verifier] pc {}: R{} expected PTR_TO_SOCK_COMMON, got {:?}", 
                        pc, arg_index + 1, actual);

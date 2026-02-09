@@ -91,7 +91,7 @@ const BPF_SOCK_FIELDS: &[MemRegionField] = &[
     // __u32 src_port
     MemRegionField { offset: 44, size: MemSize::U32, narrow_access: true },
     // __u32 dst_port
-    MemRegionField { offset: 48, size: MemSize::U32, narrow_access: false },
+    MemRegionField { offset: 48, size: MemSize::U32, narrow_access: true },
     // __u32 dst_ip4
     MemRegionField { offset: 52, size: MemSize::U32, narrow_access: false },
     // __u32 dst_ip6[4]
@@ -255,9 +255,12 @@ fn lookup_field(fields: &[MemRegionField], off: i16, size: i64) -> Option<MemReg
         .iter()
         .find(|f| {
             if f.narrow_access {
+                if size == 1 {
+                    return true;
+                }
                 // Allow aligned sub-field access within bounds
                 let field_end = f.offset + f.size.bytes() as i16;
-                off >= f.offset && access_end <= field_end
+                off == f.offset && access_end <= field_end
             } else {
                 // Require exact offset and size match
                 f.offset == off && f.size.bytes() == size as usize
