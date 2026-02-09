@@ -920,16 +920,36 @@ fn handle_rsh(
 /// If the current bounds exceed [0, 0xFFFFFFFF], widen to that range.
 fn apply_w32_truncation(dbm: &mut Dbm, dst: Reg) {
     let (lo, hi) = get_bounds(dbm, dst);
-    
+
     let safe = match (lo, hi) {
         (Some(l), Some(h)) => l >= 0 && h <= 0xFFFFFFFF,
         _ => false,
     };
-    
+
     if !safe {
-        forget(dbm, dst);
-        assume_ge_const(dbm, dst, 0);
-        assume_le_const(dbm, dst, 0xFFFFFFFF);
+        // Check if the lower 32 bits form a non-wrapping range.
+        // This is true when lo and hi fall in the same 2^32 "page",
+        // i.e. their upper 32 bits are identical.
+        let tight = match (lo, hi) {
+            (Some(l), Some(h)) => {
+                let l_u = l as u64;
+                let h_u = h as u64;
+                (l_u >> 32) == (h_u >> 32)
+            }
+            _ => false,
+        };
+
+        if tight {
+            let new_lo = (lo.unwrap() as u64 & 0xFFFFFFFF) as i64;
+            let new_hi = (hi.unwrap() as u64 & 0xFFFFFFFF) as i64;
+            forget(dbm, dst);
+            assume_ge_const(dbm, dst, new_lo);
+            assume_le_const(dbm, dst, new_hi);
+        } else {
+            forget(dbm, dst);
+            assume_ge_const(dbm, dst, 0);
+            assume_le_const(dbm, dst, 0xFFFFFFFF);
+        }
     }
 }
 
