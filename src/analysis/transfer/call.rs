@@ -590,7 +590,7 @@ fn validate_single_arg(
                 }
             }
             
-            validate_readable_mem(env, state, types, pc, reg, actual, Some(target_info.key_size))
+            validate_readable_mem(env, state, pc, reg, actual, Some(target_info.key_size))
         }
 
         // ---- Map value pointer ----
@@ -615,7 +615,7 @@ fn validate_single_arg(
                 }
             }
             
-            validate_readable_mem(env, state, types, pc, reg, actual, Some(target_info.value_size))
+            validate_readable_mem(env, state, pc, reg, actual, Some(target_info.value_size))
         }
 
         PtrToMapValueOrNull => {
@@ -660,7 +660,7 @@ fn validate_single_arg(
                        pc, helper, arg_index + 1);
                 return false;
             }
-            validate_readable_mem(env, state, types, pc, reg, actual, None)
+            validate_readable_mem(env, state, pc, reg, actual, None)
         }
 
         // ---- Uninitialized memory (output buffer) ----
@@ -796,9 +796,9 @@ fn validate_single_arg(
                         return false;
                     }
                 }
-                return validate_readable_mem(env, state, types, pc, reg, actual, None)
+                return validate_readable_mem(env, state, pc, reg, actual, None)
             }
-            validate_readable_mem(env, state, types, pc, reg, actual, None)
+            validate_readable_mem(env, state, pc, reg, actual, None)
         }
 
         PtrToLong => {
@@ -830,7 +830,6 @@ fn validate_single_arg(
 fn validate_readable_mem(
     env: &mut VerifierEnv,
     state: &State,
-    _types: &TypeState,
     pc: usize,
     reg: Reg,
     reg_type: RegType,

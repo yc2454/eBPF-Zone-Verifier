@@ -119,8 +119,8 @@ pub(crate) fn transfer_store(
         }
         // Update frame depth
         state.update_frame_depth(off);
+        update_store_types(state.stack_at_mut(frame_level), src_type, size, base_type, off);
     }
-    update_store_types(state.stack_mut(), src_type, size, base_type, off);
 
     state.pc += 1;
     vec![state]
