@@ -543,9 +543,9 @@ pub fn apply_jmp_constraints(
     
     // Refine memory ranges
     if let Either::Left(right_reg) = right {
-        for state in [&mut *then_s, &mut *else_s] {
-            refine_packet_ranges(&state.dbm, &mut state.types, &mut state.stack, left, right_reg);
-            refine_packet_ranges(&state.dbm, &mut state.types, &mut state.stack, right_reg, left);
+        for mut state in [&mut *then_s, &mut *else_s] {
+            refine_packet_ranges(&mut state, left, right_reg);
+            refine_packet_ranges(&mut state, right_reg, left);
         }
     }
 }

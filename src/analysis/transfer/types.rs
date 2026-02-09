@@ -263,14 +263,13 @@ pub(crate) fn update_alu_types(
 /// Updates register types after a Load operation.
 pub(crate) fn update_load_types(
     env: &VerifierEnv, 
-    types: &mut TypeState, 
-    stack: &mut StackState,
+    state: &mut State,
     size: usize, 
     dst: Reg, 
     base: Reg, 
     off: i16
 ) {
-    let base_ty = types.get(base);
+    let base_ty = state.types.get(base);
     match base_ty {
         RegType::PtrToCtx => {
             let kind = validate_ctx_access(env.ctx.prog_kind, off, size as i64);
@@ -278,21 +277,21 @@ pub(crate) fn update_load_types(
                 match info.kind {
                     CtxFieldKind::PacketStart => {
                         let new_id = new_ptr_id();
-                        types.set(dst, RegType::PtrToPacket { id: new_id, is_base: true, range: 0 });
+                        state.types.set(dst, RegType::PtrToPacket { id: new_id, is_base: true, range: 0 });
                     }
                     CtxFieldKind::PacketEnd => {
-                        types.set(dst, RegType::PtrToPacketEnd);
+                        state.types.set(dst, RegType::PtrToPacketEnd);
                     }
                     CtxFieldKind::SockCommon => {
-                        types.set(dst, RegType::PtrToSockCommonOrNull { ref_id: None });
+                        state.types.set(dst, RegType::PtrToSockCommonOrNull { ref_id: None });
                     }
                     CtxFieldKind::PacketMeta => {
-                        types.set(dst, RegType::PtrToPacketMeta { is_base: true });
+                        state.types.set(dst, RegType::PtrToPacketMeta { is_base: true });
                     }
-                    _ => types.set(dst, RegType::ScalarValue),
+                    _ => state.types.set(dst, RegType::ScalarValue),
                 }
             } else {
-                types.set(dst, RegType::ScalarValue);
+                state.types.set(dst, RegType::ScalarValue);
             }
         }
         RegType::PtrToStack { offset: base_offset, .. } => {
@@ -300,19 +299,19 @@ pub(crate) fn update_load_types(
                 Some(base) => {
                     let actual_slot = base + (off as i64);
                     if size == MemSize::U64.bytes() as usize { 
-                        types.set(dst, stack.get_slot_type(actual_slot as i16)); 
+                        state.types.set(dst, state.stack().get_slot_type(actual_slot as i16)); 
                     } else { 
-                        types.set(dst, RegType::ScalarValue); 
+                        state.types.set(dst, RegType::ScalarValue); 
                     }
                 }
                 None => {
                     // Unknown stack offset - can't determine which slot we're reading
                     // Conservative: result is scalar (could be anything)
-                    types.set(dst, RegType::ScalarValue);
+                    state.types.set(dst, RegType::ScalarValue);
                 }
             }
         }
-        _ => types.set(dst, RegType::ScalarValue),
+        _ => state.types.set(dst, RegType::ScalarValue),
     }
 }
 
@@ -468,7 +467,7 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
             match mem_ptr_ty {
                 RegType::PtrToStack { offset: Some(off), .. } => {
                     let slot = off as i16;
-                    state.stack.set_slot_type(slot, RegType::ScalarValue);
+                    state.stack_mut().set_slot_type(slot, RegType::ScalarValue);
                 }
                 _ => {} // Do nothing for the other cases for now
             }
@@ -494,7 +493,7 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
                 _ => {}
             }
         }
-        state.stack.invalidate_packet_pointers();
+        state.stack_mut().invalidate_packet_pointers();
     }
 }
 

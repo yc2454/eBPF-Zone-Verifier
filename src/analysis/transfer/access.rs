@@ -313,12 +313,12 @@ fn check_stack_initialization(
             // ALL bytes must be initialized
             for i in 0..size {
                 let slot = (actual_offset + i) as i16;
-                if !state.stack.is_slot_initialized(slot) {
+                if !state.stack().is_slot_initialized(slot) {
                     env.fail(VerificationError::UninitializedStackRead { pc, offset: actual_offset });
                     return;
                 }
                 // The read size for a pointer must be 64-bit
-                let slot_type = state.stack.get_slot_type(slot);
+                let slot_type = state.stack().get_slot_type(slot);
                 if slot_type.is_pointer() && size != 8 {
                     error!(target: "app", "Pointer read with invalid size at pc {}: off {} size {}", pc, actual_offset, size);
                     env.fail(VerificationError::InvalidStackRead { pc, offset: actual_offset });
@@ -328,7 +328,7 @@ fn check_stack_initialization(
         AccessKind::HelperOutput | AccessKind::HelperArg => {
             // At least ONE byte must be initialized (stack slot was "claimed")
             let any_initialized = (0..size)
-                .any(|i| state.stack.is_slot_initialized((actual_offset + i) as i16));
+                .any(|i| state.stack().is_slot_initialized((actual_offset + i) as i16));
             
             if !any_initialized {
                 env.fail(VerificationError::UninitializedStackRead { pc, offset: actual_offset });

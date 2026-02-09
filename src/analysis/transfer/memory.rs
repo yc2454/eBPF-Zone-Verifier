@@ -44,12 +44,12 @@ pub(crate) fn transfer_load(
     }
 
     // Try to reload from spilled stack slot
-    if state.try_reload(dst, base, off, size) {
+    if state.try_reload(dst, off, size) {
         state.pc += 1;
         return vec![state];
     }
     
-    update_load_types(env, &mut state.types, &mut state.stack, access_size as usize, dst, base, off);
+    update_load_types(env, &mut state, access_size as usize, dst, base, off);
     forget(&mut state.dbm, dst);
     
     // Apply upper bounds for sub-64-bit loads
@@ -113,13 +113,13 @@ pub(crate) fn transfer_store(
             }
             _ => {
                 // Partial write or immediate — invalidate any existing spill
-                state.stack.clear_slot(full_offset as i16);
+                state.stack_mut().clear_slot(full_offset as i16);
             }
         }
         // Update frame depth
         state.update_frame_depth(off);
     }
-    update_store_types(&mut state.stack, src_type, size, base_type, off);
+    update_store_types(state.stack_mut(), src_type, size, base_type, off);
 
     state.pc += 1;
     vec![state]
@@ -172,17 +172,17 @@ pub(crate) fn transfer_atomic(
     // Try to reload spilled state BEFORE invalidating
     // (fetch reads the OLD value before the atomic op modifies it)
     let reloaded = if op == AtomicOp::CmpXchg {
-        state.try_reload(Reg::R0, base, off, size)
+        state.try_reload(Reg::R0, off, size)
     } else if fetch {
-        state.try_reload(src, base, off, size)
+        state.try_reload(src, off, size)
     } else {
         false
     };
 
     // Update Memory State
-    update_store_types(&mut state.stack, RegType::ScalarValue, size, base_ty, off);
+    update_store_types(state.stack_mut(), RegType::ScalarValue, size, base_ty, off);
     if base == Reg::R10 {
-        state.stack.invalidate_slot(off);
+        state.stack_mut().invalidate_slot(off);
     }
 
     // Update Register State (The "Fetch" part)

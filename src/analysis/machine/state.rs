@@ -31,14 +31,11 @@ impl std::fmt::Display for CallFrame {
 /// Holds the snapshot of execution at a specific PC.
 #[derive(Clone, Debug)]
 pub struct State {
-    /// 1. Register and Stack Types
+    /// Register and Stack Types
     /// Mirrors `bpf_reg_state.type`
     pub types: TypeState,
 
-    // Stack state for spilled registers (for current frame)
-    pub stack: StackState,
-
-    /// 2. Numerical Domain (Values)
+    /// Numerical Domain (Values)
     /// Mirrors `bpf_reg_state.{smin_value, umax_value, var_off}`
     pub dbm: Dbm,
     
@@ -76,12 +73,11 @@ impl State {
         }
         State {
             types: TypeState::new_not_init(),
-            stack: StackState::new(),
             dbm,
             pc,
             history_idx: None,
             tnums: tnums.clone(),
-            call_stack: Vec::new(),
+            call_stack: vec![CallFrame::default()],
             frame_depth: 0,
             active_refs: HashSet::new(),
             active_lock: None,
@@ -137,7 +133,7 @@ impl State {
         }
         
         // Invalidate stack slots
-        self.stack.invalidate_ref(id);
+        self.stack_mut().invalidate_ref(id);
     }
 
     /// Acquire a spin lock
@@ -160,37 +156,37 @@ impl State {
         self.active_lock.as_ref()
     }
 
-    // Spill a register onto stack at given offset
+    /// Spill into current frame (common case, e.g. store to R10+off)
     pub fn spill(&mut self, reg: Reg, offset: i16) {
+        self.spill_at(self.current_frame_level(), reg, offset);
+    }
+
+    /// Spill into a specific frame (cross-frame, e.g. store via PtrToStack)
+    pub fn spill_at(&mut self, frame_level: usize, reg: Reg, offset: i16) {
         let (min, max) = get_simple_bounds(&self.dbm, reg);
-        self.stack.insert(
-            offset, 
+        self.call_stack[frame_level].stack.insert(
+            offset,
             SpilledReg {
                 reg_type: self.types.get(reg),
                 tnum: self.tnums.get(&reg).cloned().unwrap_or(Tnum::unknown()),
-                bounds: ScalarBounds { min, max }
-            }
+                bounds: ScalarBounds { min, max },
+            },
         );
     }
-    
-    /// Attempts to reload a spilled register from the stack.
-    /// Returns true if successful (state was updated from the spill snapshot).
-    pub fn try_reload(
-        &mut self,
-        dst: Reg,
-        base: Reg,
-        off: i16,
-        size: MemSize,
-    ) -> bool {
-        // Only 64-bit loads from stack pointer can restore spilled state
-        if base != Reg::R10 || size != MemSize::U64 {
+
+    /// Reload from current frame
+    pub fn try_reload(&mut self, dst: Reg, offset: i16, size: MemSize) -> bool {
+        self.try_reload_at(self.current_frame_level(), dst, offset, size)
+    }
+
+    /// Reload from a specific frame (cross-frame)
+    pub fn try_reload_at(&mut self, frame_level: usize, dst: Reg, offset: i16, size: MemSize) -> bool {
+        if size != MemSize::U64 {
             return false;
         }
-
-        if let Some(spilled) = self.stack.get_slot(off) {
-            // Restore the full abstract state from the snapshot
+        if let Some(spilled) = self.call_stack[frame_level].stack.get_slot(offset) {
             self.types.set(dst, spilled.reg_type);
-            self.tnums.insert(dst, spilled.tnum.clone());
+            self.tnums.insert(dst, spilled.tnum);
             domain::set_bounds(&mut self.dbm, dst, spilled.bounds.min, spilled.bounds.max);
             true
         } else {
@@ -208,35 +204,6 @@ impl State {
         }
     }
 
-    /// Total stack usage across all frames
-    pub fn total_stack_depth(&self) -> u16 {
-        let prev: u16 = self.call_stack.iter().map(|f| f.frame_depth).sum();
-        prev + self.frame_depth
-    }
-
-    /// Enter a subfunction
-    pub fn push_frame(&mut self, return_pc: usize) {
-        let frame = CallFrame {
-            return_pc,
-            stack: std::mem::take(&mut self.stack),
-            frame_depth: self.frame_depth,
-        };
-        self.call_stack.push(frame);
-        self.stack = StackState::new();
-        self.frame_depth = 0;
-    }
-
-    /// Return from a subfunction
-    pub fn pop_frame(&mut self) -> Option<usize> {
-        if let Some(frame) = self.call_stack.pop() {
-            self.stack = frame.stack;
-            self.frame_depth = frame.frame_depth;
-            Some(frame.return_pc)
-        } else {
-            None
-        }
-    }
-
     pub fn stack_frame_count(&self) -> usize {
         self.call_stack.len()
     }
@@ -245,7 +212,56 @@ impl State {
         self.call_stack.is_empty()
     }
 
+    // === Current frame (most common case, no frame level needed) ===
+    
+    pub fn stack(&self) -> &StackState {
+        &self.call_stack.last().unwrap().stack
+    }
+
+    pub fn stack_mut(&mut self) -> &mut StackState {
+        &mut self.call_stack.last_mut().unwrap().stack
+    }
+
+    pub fn frame_depth(&self) -> u16 {
+        self.call_stack.last().unwrap().frame_depth
+    }
+
+    pub fn set_frame_depth(&mut self, depth: u16) {
+        self.call_stack.last_mut().unwrap().frame_depth = depth;
+    }
+
+    // === Cross-frame access (rare, explicit frame level) ===
+
+    pub fn stack_at(&self, frame_level: usize) -> &StackState {
+        &self.call_stack[frame_level].stack
+    }
+
+    pub fn stack_at_mut(&mut self, frame_level: usize) -> &mut StackState {
+        &mut self.call_stack[frame_level].stack
+    }
+
+    // === Frame management ===
+
     pub fn current_frame_level(&self) -> usize {
+        self.call_stack.len() - 1
+    }
+
+    pub fn push_frame(&mut self, return_pc: usize) {
+        self.call_stack.last_mut().unwrap().return_pc = return_pc;
+        self.call_stack.push(CallFrame::default());
+    }
+
+    pub fn pop_frame(&mut self) -> Option<usize> {
+        if self.call_stack.len() <= 1 { return None; }
+        self.call_stack.pop();
+        Some(self.call_stack.last().unwrap().return_pc)
+    }
+
+    pub fn total_stack_depth(&self) -> u16 {
+        self.call_stack.iter().map(|f| f.frame_depth).sum()
+    }
+
+    pub fn num_frames(&self) -> usize {
         self.call_stack.len()
     }
 

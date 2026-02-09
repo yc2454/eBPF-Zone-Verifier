@@ -3,32 +3,31 @@
 // Pointer range refinement logic for packet, memory, and null checks
 
 use crate::analysis::machine::state::State;
-use crate::analysis::machine::reg_types::{RegType, TypeState};
-use crate::analysis::machine::stack_state::StackState;
+use crate::analysis::machine::reg_types::{RegType};
 use crate::ast::{Instr, CmpOp, Operand};
 use crate::zone::domain::Reg;
-use crate::zone::dbm::{Dbm, INF};
+use crate::zone::dbm::{INF};
 
-pub(crate) fn refine_packet_ranges(dbm: &Dbm, types: &mut TypeState, stack: &mut StackState, pkt_reg: Reg, end_reg: Reg) {
+pub(crate) fn refine_packet_ranges(state: &mut State, pkt_reg: Reg, end_reg: Reg) {
     // Determine which register is PtrToPacket and which is PtrToPacketEnd
-    let target_id = match (types.get(pkt_reg), types.get(end_reg)) {
+    let target_id = match (state.types.get(pkt_reg), state.types.get(end_reg)) {
         (RegType::PtrToPacket { id, .. }, RegType::PtrToPacketEnd) => id,
         (RegType::PtrToPacketEnd, RegType::PtrToPacket { .. }) => {
             // Swap: recurse with correct argument order
-            return refine_packet_ranges(dbm, types, stack, end_reg, pkt_reg);
+            return refine_packet_ranges(state, end_reg, pkt_reg);
         }
         _ => return,
     };
 
     // Update all PtrToPacket registers with matching id
     for r in Reg::ALL {
-        if let RegType::PtrToPacket { id, is_base, range } = types.get(r) {
+        if let RegType::PtrToPacket { id, is_base, range } = state.types.get(r) {
             if id == target_id {
-                let dist = dbm.get(r, end_reg);
+                let dist = state.dbm.get(r, end_reg);
                 if dist < INF && dist <= 0 {
                     let safe_bytes = dist.unsigned_abs() as i64;
                     if safe_bytes > range {
-                        types.set(r, RegType::PtrToPacket { id, is_base, range: safe_bytes });
+                        state.types.set(r, RegType::PtrToPacket { id, is_base, range: safe_bytes });
                     }
                 }
             }
@@ -36,18 +35,18 @@ pub(crate) fn refine_packet_ranges(dbm: &Dbm, types: &mut TypeState, stack: &mut
     }
 
     // Also update stack slots with matching id
-    for k in stack.slot_offsets() {
-        if let RegType::PtrToPacket { id, is_base, range } = stack.get_slot_type(k) {
+    for k in state.stack().slot_offsets() {
+        if let RegType::PtrToPacket { id, is_base, range } = state.stack().get_slot_type(k) {
             if id == target_id {
                 let max_range = Reg::ALL.iter()
-                    .filter_map(|&r| match types.get(r) {
+                    .filter_map(|&r| match state.types.get(r) {
                         RegType::PtrToPacket { id: rid, range, .. } if rid == target_id => Some(range),
                         _ => None,
                     })
                     .max()
                     .unwrap_or(0);
                 if max_range > range {
-                    stack.set_slot_type(k, RegType::PtrToPacket { id, is_base, range: max_range });
+                    state.stack_mut().set_slot_type(k, RegType::PtrToPacket { id, is_base, range: max_range });
                 }
             }
         }
@@ -112,10 +111,10 @@ fn maybe_promote_map_val(state: &mut State, reg: Reg) {
             }
         }
     }
-    for k in state.stack.slot_offsets() {
-        if let RegType::PtrToMapValueOrNull { id, map_idx } = state.stack.get_slot_type(k) {
+    for k in state.stack().slot_offsets() {
+        if let RegType::PtrToMapValueOrNull { id, map_idx } = state.stack().get_slot_type(k) {
             if id == target_id {
-                state.stack.set_slot_type(k, RegType::PtrToMapValue { id, offset: Some(0), map_idx });
+                state.stack_mut().set_slot_type(k, RegType::PtrToMapValue { id, offset: Some(0), map_idx });
             }
         }
     }
@@ -148,10 +147,10 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
                 state.types.set(r, ty.to_non_null().unwrap());
             }
         }
-        for k in state.stack.slot_offsets() {
-            let ty = state.stack.get_slot_type(k);
+        for k in state.stack().slot_offsets() {
+            let ty = state.stack().get_slot_type(k);
             if same_socket_nullable_pointer(&reg_type, &ty) {
-                state.stack.set_slot_type(k, ty.to_non_null().unwrap());
+                state.stack_mut().set_slot_type(k, ty.to_non_null().unwrap());
             }
         }
     } else {
@@ -164,10 +163,10 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
                 state.types.set(r, RegType::ScalarValue);
             }
         }
-        for k in state.stack.slot_offsets() {
-            let ty = state.stack.get_slot_type(k);
+        for k in state.stack().slot_offsets() {
+            let ty = state.stack().get_slot_type(k);
             if same_socket_nullable_pointer(&reg_type, &ty) {
-                state.stack.set_slot_type(k, RegType::ScalarValue);
+                state.stack_mut().set_slot_type(k, RegType::ScalarValue);
             }
         }
     }
