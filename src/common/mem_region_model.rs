@@ -91,9 +91,9 @@ const BPF_SOCK_FIELDS: &[MemRegionField] = &[
     // __u32 src_port
     MemRegionField { offset: 44, size: MemSize::U32, narrow_access: true },
     // __u32 dst_port
-    MemRegionField { offset: 48, size: MemSize::U32, narrow_access: true },
+    MemRegionField { offset: 48, size: MemSize::U32, narrow_access: false },
     // __u32 dst_ip4
-    MemRegionField { offset: 52, size: MemSize::U32, narrow_access: true },
+    MemRegionField { offset: 52, size: MemSize::U32, narrow_access: false },
     // __u32 dst_ip6[4]
     MemRegionField { offset: 56, size: MemSize::U32, narrow_access: true },
     MemRegionField { offset: 60, size: MemSize::U32, narrow_access: true },
@@ -106,10 +106,10 @@ const BPF_SOCK_FIELDS: &[MemRegionField] = &[
 ];
 
 const BPF_SOCK_COMMON_FIELDS: &[MemRegionField] = &[
-    MemRegionField { offset: 0,  size: MemSize::U32, narrow_access: true }, // bound_dev_if
+    // MemRegionField { offset: 0,  size: MemSize::U32, narrow_access: true }, // bound_dev_if
     MemRegionField { offset: 4,  size: MemSize::U32, narrow_access: true }, // family
-    MemRegionField { offset: 8,  size: MemSize::U32, narrow_access: true }, // type
-    MemRegionField { offset: 12, size: MemSize::U32, narrow_access: true }, // protocol
+    // MemRegionField { offset: 8,  size: MemSize::U32, narrow_access: true }, // type
+    // MemRegionField { offset: 12, size: MemSize::U32, narrow_access: true }, // protocol
 ];
 
 /// struct bpf_tcp_sock
@@ -269,7 +269,7 @@ fn lookup_field(fields: &[MemRegionField], off: i16, size: i64) -> Option<MemReg
 /// Get the field table for a given memory region.
 fn get_region_fields(reg_type: RegType) -> Option<&'static [MemRegionField]> {
     match reg_type {
-        RegType::PtrToSockCommon { .. } => Some(BPF_SOCK_FIELDS),
+        RegType::PtrToSockCommon { .. } => Some(BPF_SOCK_COMMON_FIELDS),
         RegType::PtrToTcpSock { .. } => Some(BPF_TCP_SOCK_FIELDS),
         RegType::PtrToSocket { .. } => Some(BPF_SOCK_FIELDS),
         _ => None,

@@ -41,7 +41,7 @@
     ]
   },
   {
-    "name": "bpf_sk_fullsock(skb->sk): no !skb->sk check",
+    "name": "bpf_sk_fullsock(skb->sk): no skb->sk check",
     "result": "REJECT",
     "errstr": "type=sock_common_or_null expected=sock_common",
     "prog_type": 8,

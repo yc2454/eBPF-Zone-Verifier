@@ -284,7 +284,7 @@ pub(crate) fn update_load_types(
                         types.set(dst, RegType::PtrToPacketEnd);
                     }
                     CtxFieldKind::SockCommon => {
-                        types.set(dst, RegType::PtrToSockCommon { ref_id: None });
+                        types.set(dst, RegType::PtrToSockCommonOrNull { ref_id: None });
                     }
                     CtxFieldKind::PacketMeta => {
                         types.set(dst, RegType::PtrToPacketMeta { is_base: true });
@@ -430,6 +430,10 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
                 state.types.set(Reg::R0, RegType::PtrToTcpSockOrNull { id: Some(ref_id) });
             }
         }
+
+        constants::BPF_TCP_SOCK => {
+            state.types.set(Reg::R0, RegType::PtrToTcpSockOrNull { id: None });
+        }
         
         // SKC to UDP/Unix - return SOCK_COMMON for now (simplified)
         constants::BPF_SKC_TO_UDP6_SOCK |
@@ -437,6 +441,14 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
             if let Some(ref_id) = state.types.get(Reg::R1).get_ref_id() {
                 state.types.set(Reg::R0, RegType::PtrToSockCommonOrNull { ref_id: Some(ref_id) });
             }
+        }
+
+        constants::BPF_SK_STORAGE_GET => {
+            let RegType::PtrToMapValueOrNull { id, map_idx } = in_types.get(Reg::R3) else {
+                state.types.set(Reg::R0, RegType::ScalarValue);
+                return;
+            };
+            state.types.set(Reg::R0, RegType::PtrToMapValueOrNull { id, map_idx });
         }
         
         // tail_call: R0 is undefined on failure path

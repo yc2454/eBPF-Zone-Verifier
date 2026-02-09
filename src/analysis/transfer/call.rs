@@ -61,6 +61,8 @@ pub enum BpfArgType {
     PtrToSockCommon,
     /// pointer to bpf_sock (fullsock)
     PtrToSocket,
+    /// pointer to in-kernel sock_common or bpf-mirrored bpf_sock
+    PtrToBTFIdSockCommon, 
 
     // ---- Stack types ----
     /// pointer to stack
@@ -73,6 +75,8 @@ pub enum BpfArgType {
     PtrToMemOrNull,
     /// PTR_TO_STACK | PTR_MAYBE_NULL
     PtrToStackOrNull,
+    /// PTR_TO_MAP_VALUE | PTR_MAYBE_NULL
+    PtrToMapValueOrNull,
 
     // ---- Fixed-size pointer types ----
     /// pointer to initialized long/u64 value (helper reads from it)
@@ -296,6 +300,23 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
             DontCare,
             DontCare,
+            DontCare,
+        ]),
+
+        constants::BPF_TCP_SOCK => HelperSignature::new([
+            PtrToSockCommon,
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ]),
+        
+        // ---- Socket storage helpers ----
+        constants::BPF_SK_STORAGE_GET => HelperSignature::new([
+            ConstMapPtr,
+            PtrToBTFIdSockCommon,
+            PtrToMapValueOrNull,
+            Anything,
             DontCare,
         ]),
 
@@ -597,6 +618,21 @@ fn validate_single_arg(
             validate_readable_mem(env, state, types, pc, reg, actual, Some(target_info.value_size))
         }
 
+        PtrToMapValueOrNull => {
+            let reg_type = types.get(reg);
+            if reg_type.is_scalar() && is_zero(&state.dbm, reg) {
+                return true;
+            } else {
+                if !matches!(reg_type, RegType::PtrToMapValue { .. } | RegType::PtrToMapValueOrNull { .. }) {
+                    env.fail(VerificationError::InvalidArgType { pc, reg });
+                    error!("[Verifier] pc {}: R{} expected PTR_TO_MAP_VALUE or NULL, got {:?}", 
+                           pc, arg_index + 1, actual);
+                    return false;
+                }
+                true
+            }
+        }
+
         // ---- Uninitialized map value (output buffer) ----
         PtrToUninitMapValue => {
             let Some(info) = map_info else {
@@ -700,6 +736,19 @@ fn validate_single_arg(
                        pc, arg_index + 1, actual);
                 return false;
             }
+            true
+        }
+
+        PtrToBTFIdSockCommon => {
+            if !matches!(actual, 
+                RegType::PtrToSockCommon { .. }
+                | RegType::PtrToSocket { .. }
+                | RegType::PtrToTcpSock { .. }) {
+                    env.fail(VerificationError::InvalidArgType { pc, reg });
+                    error!("[Verifier] pc {}: R{} expected PTR_TO_BTF_ID_SOCK_COMMON, got {:?}", 
+                           pc, arg_index + 1, actual);
+                    return false;
+                }
             true
         }
 
