@@ -108,7 +108,7 @@ pub(crate) fn transfer_alu(
 /// Returns Ok(()) if the operation is legal (even if it changes the result type).
 /// Returns Err(String) if the operation is strictly forbidden.
 pub(crate) fn check_ptr_arithmetic(
-    _env: &mut VerifierEnv,
+    env: &mut VerifierEnv,
     state: &State,
     op: AluOp,
     width: Width,
@@ -142,6 +142,9 @@ pub(crate) fn check_ptr_arithmetic(
             // Ptr - Ptr is allowed ONLY if types match.
             // (Result is Scalar, handled by caller)
             AluOp::Sub => {
+                if env.ctx.is_privileged() {
+                    return true;
+                }
                 RegType::is_same_pointer_type(dst_type, src_type) || 
                 (matches!(dst_type, RegType::PtrToPacketEnd) && matches!(src_type, RegType::PtrToPacket { .. }))
             },
@@ -357,7 +360,14 @@ fn handle_sub(
         apply_w32_truncation(&mut state.dbm, dst);
     }
 
-    check_ptr_bounds(env, state, dst);
+    let dst_is_ptr = in_types.get(dst).is_pointer();
+    let src_is_ptr = match src {
+        Operand::Imm(_) => false,
+        Operand::Reg(r) => in_types.get(*r).is_pointer()
+    };
+    if !(dst_is_ptr && src_is_ptr) {
+        check_ptr_bounds(env, state, dst);
+    }
 
     sync_tnum_to_dbm(state, dst);
 }

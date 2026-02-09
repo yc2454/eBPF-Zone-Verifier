@@ -5,13 +5,17 @@ use crate::parsing::btf::BtfContext;
 use crate::ast::{ProgramKind, AttachKind};
 
 #[derive(Clone, Debug)]
+pub enum VerificationMode {Priviledged, Unprivileged}
+
+#[derive(Clone, Debug)]
 pub struct ExecContext {
     pub map_defs: Vec<BpfMapDef>,
     pub pc_to_reloc: HashMap<usize, RelocInfo>,
     pub btf: BtfContext,
     pub prog_kind: ProgramKind,
     pub attach_kind: AttachKind,
-    pub flags: u32
+    pub flags: u32,
+    pub mode: VerificationMode
 }
 
 pub fn default_exec_ctx() -> ExecContext {
@@ -21,12 +25,17 @@ pub fn default_exec_ctx() -> ExecContext {
         btf: BtfContext::new(),
         prog_kind: ProgramKind::Unknown,
         attach_kind: AttachKind::Unknown,
-        flags: 0
+        flags: 0,
+        mode: VerificationMode::Priviledged
     }
 }
 
 impl ExecContext {
     pub fn has_flag(&self, flag: u32) -> bool {
         self.flags & flag != 0
+    }
+
+    pub fn is_privileged(&self) -> bool {
+        matches!(self.mode, VerificationMode::Priviledged)
     }
 }
