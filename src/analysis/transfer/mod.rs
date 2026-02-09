@@ -165,7 +165,7 @@ fn transfer_exit(
     }
 
     // Check if there is any released reference
-    if state.call_frame_empty() && state.has_unreleased_refs() {
+    if state.at_last_call_frame() && state.has_unreleased_refs() {
         println!("Unreleased reference: {:?}", state.active_refs);
         env.fail(VerificationError::UnreleasedReference);
         return vec![];
@@ -182,7 +182,7 @@ fn transfer_exit(
         return vec![];
     }
     
-    if !state.call_frame_empty() {
+    if !state.at_last_call_frame() {
         if matches!(state.types.get(Reg::R0), RegType::PtrToStack { .. }) {
             env.fail(VerificationError::CannotReturnStackPointer { pc: state.pc });
             return vec![];

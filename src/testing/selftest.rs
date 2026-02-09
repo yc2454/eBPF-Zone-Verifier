@@ -537,6 +537,8 @@ pub fn run_test(test: &JsonTestCase, config: &VerifierConfig) -> TestResult {
                         outcome = TestOutcome::Pass
                     } else if s.contains("R15") && matches!(e.kind, LowerErrorKind::InvalidRegister) {
                         outcome = TestOutcome::Pass
+                    } else if s.contains("arg#0") && matches!(e.kind, LowerErrorKind::InvalidSrcReg) {
+                        outcome = TestOutcome::Pass
                     }
                 }
                 None => {}

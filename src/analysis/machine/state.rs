@@ -210,8 +210,8 @@ impl State {
         self.call_stack.len()
     }
 
-    pub fn call_frame_empty(&self) -> bool {
-        self.call_stack.is_empty()
+    pub fn at_last_call_frame(&self) -> bool {
+        self.stack_frame_count() == 1
     }
 
     // === Current frame (most common case, no frame level needed) ===
