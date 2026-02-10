@@ -442,6 +442,14 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 src: Operand::Imm((insn.imm as u32) as i64),
             },
 
+            // 0x7c: RSH32_X  w_dst >>= w_src
+            0x7c => Instr::Alu {
+                width: Width::W32,
+                op: AluOp::Shr,
+                dst,
+                src: Operand::Reg(src),
+            },
+
             // 0x84: NEG32 (w_dst = -w_dst)
             0x84 => Instr::Alu {
                 width: Width::W32,
@@ -554,6 +562,14 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             },
 
             // --- ENDIAN ---
+            // 0xd4: BPF_END: endian conversion on dst.
+            0xd4 => Instr::Endian {
+                width: Width::W32,
+                dst: dst,
+                op: EndianOp::ToLe,
+                size: insn.imm as u32,
+            },
+
             // 0xdc: BPF_END: endian conversion on dst.
             0xdc => Instr::Endian { 
                 width: Width::W32,

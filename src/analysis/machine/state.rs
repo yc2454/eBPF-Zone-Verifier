@@ -217,7 +217,7 @@ impl State {
 
     /// Called on every stack access to track depth
     pub fn update_frame_depth(&mut self, off: i16) {
-        if off < 0 {
+        if off < 0 && off > i16::MIN {
             let depth = (-off) as u16;
             self.frame_depth = self.frame_depth.max(depth);
         } else {

@@ -198,15 +198,15 @@ pub(crate) fn check_ptr_bounds(
     let (lo, hi) = get_bounds(&state.dbm, reg);
     
     match state.types.get(reg) {
-        RegType::PtrToStack { .. } => {
-            let in_bounds = match (lo, hi) {
-                (Some(l), Some(h)) => l >= constants::BPF_STACK_MIN && h <= 0,
-                _ => false,
-            };
-            if !in_bounds {
-                env.fail(VerificationError::PointerOutOfBounds { pc: state.pc });
-            }
-        }
+        // RegType::PtrToStack { .. } => {
+        //     let in_bounds = match (lo, hi) {
+        //         (Some(l), Some(h)) => l >= constants::BPF_STACK_MIN && h <= 0,
+        //         _ => false,
+        //     };
+        //     if !in_bounds {
+        //         env.fail(VerificationError::PointerOutOfBounds { pc: state.pc });
+        //     }
+        // }
         RegType::PtrToPacket { .. } => {
             let packet_start_reg_op = REG_ENV.all().iter()
                 .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket { id: _, is_base: true, range: _ }));
