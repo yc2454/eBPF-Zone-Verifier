@@ -169,6 +169,14 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
+        constants::BPF_GET_LOCAL_STORAGE => HelperSignature::new([
+            ConstMapPtr,    // R1: map
+            Anything,       // R2: index
+            DontCare,
+            DontCare,
+            DontCare,
+        ]),
+
         // ---- Tail call ----
         constants::BPF_TAIL_CALL => HelperSignature::new([
             PtrToCtx,       // R1: ctx
@@ -1113,6 +1121,22 @@ pub(crate) fn transfer_call(
                 env.fail(VerificationError::HelperNotAllowedForProgram { pc, helper, kind: env.ctx.prog_kind });
                 return vec![];
             }
+        }
+    }
+
+    // bpf_get_local_storage doesn't not support type 1 map and flag must be 0
+    if helper == constants::BPF_GET_LOCAL_STORAGE {
+        if let RegType::PtrToMapObject { map_idx } = state.types.get(Reg::R1) {
+            if let Some(map_def) = env.ctx.map_defs.get(map_idx) {
+                if map_def.type_ == constants::BPF_MAP_TYPE_HASH {
+                    env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+                    return vec![];
+                }
+            }
+        }
+        if !is_zero(&state.dbm, Reg::R2) {
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
+            return vec![];
         }
     }
     

@@ -526,6 +526,7 @@ fn apply_prog_type_overrides(prog_kind: ProgramKind, off: i16, info: &mut CtxAcc
                             | ProgramKind::LwtIn
                             | ProgramKind::LwtOut
                             | ProgramKind::LwtXmit
+                            | ProgramKind::CgroupSkb
                     ) {
                         info.readable = false;
                     }

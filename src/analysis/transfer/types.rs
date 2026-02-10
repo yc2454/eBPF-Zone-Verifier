@@ -373,7 +373,7 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
     
     // Set R0 based on helper return type
     match helper {
-        constants::BPF_MAP_LOOKUP_ELEM => {
+        constants::BPF_MAP_LOOKUP_ELEM | constants::BPF_GET_LOCAL_STORAGE => {
             let map_idx = match in_types.get(Reg::R1) {
                 RegType::PtrToMapObject { map_idx } => map_idx,
                 _ => 0,

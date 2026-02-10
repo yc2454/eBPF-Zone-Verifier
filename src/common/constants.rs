@@ -40,6 +40,7 @@ pub const BPF_GET_SOCKET_COOKIE: u32 = 46;
 pub const BPF_XDP_ADJUST_META: u32 = 54;
 pub const BPF_SKB_ADJUST_ROOM: u32 = 50;
 pub const BPF_FIB_LOOKUP: u32 = 69;
+pub const BPF_GET_LOCAL_STORAGE: u32 = 81;
 pub const BPF_SK_LOOKUP_TCP: u32 = 84;
 pub const BPF_SK_LOOKUP_UDP: u32 = 85;
 pub const BPF_SK_RELEASE: u32 = 86;
