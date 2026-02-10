@@ -130,6 +130,17 @@ pub(crate) fn check_ptr_arithmetic(
         }
     };
 
+    let src_min = match src {
+        Operand::Imm(k) => *k,
+        Operand::Reg(r) => {
+            let (min_opt, _) = get_bounds(&state.dbm, *r);
+            match min_opt {
+                Some(min) => min,
+                None => -INF,
+            }
+        }
+    };
+
     // 1. Scalar <op> Scalar
     // Always allowed.
     if !dst_is_ptr && !src_is_ptr {
@@ -157,12 +168,18 @@ pub(crate) fn check_ptr_arithmetic(
     else if dst_is_ptr {
         match op {
             AluOp::Add | AluOp::Sub => {
+                if src_min < -constants::MAX_VAR_OFF || src_max > constants::MAX_VAR_OFF {
+                    return false;
+                }
                 if matches!(dst_type, RegType::PtrToMapValue { .. }) {
                     // The verifier identifies 0xFFFFFFFF (4294967295) as a forbidden offset
                     if src_max > i32::MAX as i64 {
                         error!("Forbidden offset {}", src_max);
                         return false;
                     }
+                }
+                if op == AluOp::Sub && matches!(dst_type, RegType::PtrToStack { .. }) {
+                    return  false;
                 }
                 true
             },

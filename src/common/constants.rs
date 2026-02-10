@@ -37,8 +37,9 @@ pub const BPF_CSUM_UPDATE: u32 = 40;
 pub const BPF_SKB_CHANGE_HEAD: u32 = 43;
 pub const BPF_XDP_ADJUST_HEAD: u32 = 44;
 pub const BPF_GET_SOCKET_COOKIE: u32 = 46;
-pub const BPF_XDP_ADJUST_META: u32 = 54;
 pub const BPF_SKB_ADJUST_ROOM: u32 = 50;
+pub const BPF_XDP_ADJUST_META: u32 = 54;
+pub const BPF_GET_SOCKOPT:u32 = 57;
 pub const BPF_FIB_LOOKUP: u32 = 69;
 pub const BPF_GET_LOCAL_STORAGE: u32 = 81;
 pub const BPF_SK_LOOKUP_TCP: u32 = 84;
@@ -209,6 +210,7 @@ pub const MAX_INSN_PROCESSED: usize = 1_000_000;
 pub const MAX_TAIL_CALL_DEPTH: u32 = 33;
 pub const LOG_HEARTBEAT_INTERVAL: usize = 10_000;
 pub const MAX_PACKET_OFF: usize = 0xFFFF;
+pub const MAX_VAR_OFF: i64 = 1 << 29;
 
 // ============================================================================
 // BPF Map Types (from linux/bpf.h)

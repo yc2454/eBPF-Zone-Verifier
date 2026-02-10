@@ -332,6 +332,14 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
+        constants::BPF_GET_SOCKOPT => HelperSignature::new([
+            PtrToCtx,
+            Anything,
+            Anything,
+            PtrToUninitMem,
+            ConstSize,
+        ]),
+
         // ---- FIB lookup ----
         constants::BPF_FIB_LOOKUP => HelperSignature::new([
             PtrToCtx,       // R1: ctx
@@ -458,6 +466,10 @@ pub fn get_mem_size_pairs(helper: u32) -> &'static [MemSizePair] {
     static SK_LOOKUP_UDP: [MemSizePair; 1] = [
         MemSizePair::new(R2, R3)
     ];
+
+    static GET_SOCKOPT: [MemSizePair; 1] = [
+        MemSizePair::new(R4, R5)
+    ];
     
     static EMPTY: [MemSizePair; 0] = [];
     
@@ -474,6 +486,8 @@ pub fn get_mem_size_pairs(helper: u32) -> &'static [MemSizePair] {
         constants::BPF_SK_LOOKUP_TCP => &SK_LOOKUP_TCP,
         
         constants::BPF_SK_LOOKUP_UDP => &SK_LOOKUP_UDP,
+
+        constants::BPF_GET_SOCKOPT => &GET_SOCKOPT,
         
         _ => &EMPTY,
     }
