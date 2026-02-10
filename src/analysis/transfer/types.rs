@@ -467,7 +467,8 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
             match mem_ptr_ty {
                 RegType::PtrToStack { offset: Some(off), .. } => {
                     let slot = off as i16;
-                    state.stack_mut().set_slot_type(slot, RegType::ScalarValue, Some(Reg::R3));
+                    state.types.set(Reg::R3, RegType::ScalarValue);
+                    state.spill(Reg::R3, slot);
                 }
                 _ => {} // Do nothing for the other cases for now
             }

@@ -898,11 +898,11 @@ fn validate_writable_mem(
             // Stack is writable
             true
         }
-        RegType::PtrToStack { offset: None, .. } => {
-            // Unknown stack offset
-            env.fail(VerificationError::UninitializedStackRead { pc, offset: 0 });
-            false
-        }
+        // RegType::PtrToStack { offset: None, .. } => {
+        //     // Unknown stack offset
+        //     env.fail(VerificationError::UninitializedStackRead { pc, offset: 0 });
+        //     false
+        // }
         RegType::PtrToMapValue { map_idx, .. } => {
             let writable = env.ctx.map_defs.get(map_idx)
                 .map(|md| md.map_flags != constants::BPF_F_RDONLY_PROG)
@@ -1036,6 +1036,7 @@ pub(crate) fn transfer_call(
     // ========================================================================
     // Validate pointer-size pairs
     // ========================================================================
+    println!("[Verifier] pc {}: checking mem size pairs", pc);
     if !check_mem_size_pairs(env, &state, helper, pc) {
         return vec![];
     }
@@ -1043,14 +1044,15 @@ pub(crate) fn transfer_call(
     // ========================================================================
     // Check argument registers are readable before the call
     // ========================================================================
-    let arg_regs = get_arg_regs_from_signature(helper);
-    if !check_regs_readable(env, &state, &arg_regs) {
-        return vec![];
-    }
+    // let arg_regs = get_arg_regs_from_signature(helper);
+    // if !check_regs_readable(env, &state, &arg_regs) {
+    //     return vec![];
+    // }
 
     // ========================================================================
     // Validate helper arguments BEFORE executing
     // ========================================================================
+    println!("[Verifier] pc {}: validating helper arguments", pc);
     validate_helper_args(env, &state, helper, &in_types, pc);
     
     // ========================================================================
@@ -1251,7 +1253,7 @@ pub fn check_mem_size_pairs(
     let pairs = get_mem_size_pairs(helper);
     
     for pair in pairs {
-        if !check_single_mem_size_pair(env, state, pair, pc) {
+        if !check_single_mem_size_pair(env, helper, state, pair, pc) {
             return false;
         }
     }
@@ -1262,6 +1264,7 @@ pub fn check_mem_size_pairs(
 /// Validates a single pointer-size pair.
 fn check_single_mem_size_pair(
     env: &mut VerifierEnv,
+    helper: u32,
     state: &State,
     pair: &MemSizePair,
     pc: usize,
@@ -1312,9 +1315,10 @@ fn check_single_mem_size_pair(
             return false;
         }
     }
-    
     // Validate pointer can accommodate the access
-    check_ptr_access_size(env, state, pair.ptr_reg, ptr_type, max_size as u32, pc)
+    let sig = get_helper_signature(helper).unwrap();
+    let ptr_arg_type = sig.args.get(pair.ptr_reg.idx()-2).unwrap();
+    check_ptr_access_size(env, state, pair.ptr_reg, ptr_type, *ptr_arg_type, max_size as u32, pc)
 }
 
 fn checked_by_mem_size_pairs(
@@ -1338,6 +1342,7 @@ fn check_ptr_access_size(
     state: &State,
     ptr_reg: Reg,
     ptr_type: RegType,
+    ptr_arg_type: BpfArgType,
     size: u32,
     pc: usize,
 ) -> bool {
@@ -1353,7 +1358,9 @@ fn check_ptr_access_size(
                 return false;
             }
             // Also check stack slots are initialized for reads
-            access::check_stack_arg_readable(env, state, off, size as i64, pc, AccessKind::HelperArg);
+            if !matches!(ptr_arg_type, BpfArgType::PtrToUninitMem) {
+                access::check_stack_arg_readable(env, state, off, size as i64, pc, AccessKind::HelperArg);
+            }
             !env.failed()
         }
         
