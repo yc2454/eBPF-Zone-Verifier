@@ -11,7 +11,7 @@
   {
     "name": "junk insn2",
     "result": "REJECT",
-    "errstr": "BPF_LDX uses reserved fields",
+    "errstr": "unknown opcode 01",
     "insns": [
       {"code": 1, "dst": 0, "src": 0, "off": 0, "imm": 0},
       {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}

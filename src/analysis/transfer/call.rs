@@ -43,12 +43,16 @@ pub enum BpfArgType {
     PtrToMem,
     /// pointer to memory that doesn't need to be initialized (helper fills it)
     PtrToUninitMem,
+    /// pointer to dynamically allocated memory
+    PtrToAllocMem,
 
     // ---- Size argument types ----
     /// number of bytes accessed from memory
     ConstSize,
     /// number of bytes accessed from memory or 0
     ConstSizeOrZero,
+    /// number of allocated bytes requested
+    ConstAllocSizeOrZero,
 
     // ---- Context and general types ----
     /// pointer to context (sk_buff, xdp_md, etc.)
@@ -370,6 +374,23 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
+        // ---- Ringbuf helpers ----
+        constants::BPF_RINGBUF_RESERVE => HelperSignature::new([
+            ConstMapPtr,
+            ConstAllocSizeOrZero,
+            Anything,
+            DontCare,
+            DontCare,
+        ]),
+
+        constants::BPF_RINGBUF_SUBMIT => HelperSignature::new([
+            ConstMapPtr,
+            Anything,
+            Anything,
+            DontCare,
+            DontCare,
+        ]),
+
         // ---- Miscellaneous ----
         constants::BPF_GET_PRANDOM_U32 => HelperSignature::new([
             DontCare,
@@ -655,7 +676,7 @@ fn validate_single_arg(
         }
 
         // ---- Generic memory pointer ----
-        PtrToMem => {
+        PtrToMem | PtrToAllocMem => {
             if checked_by_mem_size_pairs(helper, reg) {
                 return true;
             }
@@ -688,7 +709,7 @@ fn validate_single_arg(
             true
         }
 
-        ConstSizeOrZero => {
+        ConstSizeOrZero | ConstAllocSizeOrZero => {
             // Can be zero or positive
             if !nonneg(&state.dbm, reg) {
                 env.fail(VerificationError::InvalidArgType { pc, reg });

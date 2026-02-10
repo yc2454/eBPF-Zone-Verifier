@@ -61,6 +61,8 @@ pub const BPF_SKC_TO_TCP_SOCK: u32 = 126;
 pub const BPF_SKC_TO_TCP_TIMEWAIT_SOCK: u32 = 127;
 pub const BPF_SKC_TO_TCP_REQUEST_SOCK: u32 = 128;
 pub const BPF_SKC_TO_UNIX_SOCK: u32 = 130;
+pub const BPF_RINGBUF_RESERVE: u32 = 131;
+pub const BPF_RINGBUF_SUBMIT: u32 = 132;
 pub const BPF_SKC_TO_UDP6_SOCK: u32 = 140;
 pub const BPF_D_PATH: u32 = 147;
 
