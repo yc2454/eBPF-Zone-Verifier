@@ -5,7 +5,6 @@
 use crate::analysis::machine::env::{VerifierEnv, VerificationError};
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType};
-use crate::analysis::transfer::types::update_atomic_op_types;
 use crate::ast::{Operand, MemSize, AtomicOp};
 use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, assume_eq_const};
 use crate::zone::tnum::Tnum;
@@ -44,9 +43,11 @@ pub(crate) fn transfer_load(
     }
 
     // Try to reload from spilled stack slot
-    if state.try_reload(dst, off, size) {
-        state.pc += 1;
-        return vec![state];
+    if let RegType::PtrToStack { offset, frame_level } = state.types.get(base) {
+        if state.try_reload_at(frame_level, dst, off+ offset.unwrap_or(0) as i16, size) {
+            state.pc += 1;
+            return vec![state];
+        }
     }
     
     update_load_types(env, &mut state, access_size as usize, dst, base, off);
@@ -103,13 +104,12 @@ pub(crate) fn transfer_store(
     
     // Handle spilling to stack
     let base_type = state.types.get(base);
-    if base_type.is_stack_pointer() {
-        let full_offset = base_type.get_stack_offset().unwrap_or(0) + off as i64;
+    if let RegType::PtrToStack { offset, frame_level } = base_type {
+        let full_offset = offset.unwrap_or(0) + off as i64;
         match src {
             Operand::Reg(r) if size == MemSize::U64 => {
                 // Full 64-bit register spill — snapshot the abstract state
-                println!("Spilling {:?} to stack offset {}", r, full_offset);
-                state.spill(*r, full_offset as i16);
+                state.spill_at(frame_level, *r, full_offset as i16);
             }
             _ => {
                 // Partial write or immediate — invalidate any existing spill
@@ -118,8 +118,8 @@ pub(crate) fn transfer_store(
         }
         // Update frame depth
         state.update_frame_depth(off);
+        update_store_types(state.stack_at_mut(frame_level), src_type, size, base_type, off);
     }
-    update_store_types(state.stack_mut(), src_type, size, base_type, off);
 
     state.pc += 1;
     vec![state]
@@ -186,7 +186,7 @@ pub(crate) fn transfer_atomic(
     }
 
     // Update Register State (The "Fetch" part)
-    update_atomic_op_types(&mut state.types, op, src, fetch);
+    // update_atomic_op_types(&mut state, op, base, src, fetch);
     if op == AtomicOp::CmpXchg {
         if !reloaded {
             forget(&mut state.dbm, Reg::R0);

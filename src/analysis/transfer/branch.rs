@@ -10,7 +10,10 @@ use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::state::State;
 use crate::ast::{Instr, CmpOp, Operand, Width};
 use crate::zone::domain::{
-    Reg, assign_eq, assume_eq_const, assume_ge_const, assume_ge_var, assume_gt_var, assume_le_const, assume_le_var, assume_le_var_plus_const, assume_less_than, get_bounds, get_constant_value, nonneg
+    Reg, assign_eq, assume_eq_const, assume_ge_const, 
+    assume_ge_var, assume_gt_var, assume_le_const, 
+    assume_le_var, assume_le_var_plus_const, assume_less_than, 
+    get_bounds, get_constant_value, nonneg
 };
 use crate::zone::dbm::{Dbm};
 use crate::zone::tnum::Tnum;
@@ -78,10 +81,10 @@ pub(crate) fn transfer_if(
         };
     }
 
-    // Return only consistent states (the ORIGINAL logic)
+    // Return only consistent states
     let mut out = Vec::new();
-    if !state_else.dbm.is_inconsistent() { out.push(state_else); } else { warn!("Else branch is inconsistent") }
     if !state_then.dbm.is_inconsistent() { out.push(state_then); } else { warn!("Then branch is inconsistent") }
+    if !state_else.dbm.is_inconsistent() { out.push(state_else); } else { warn!("Else branch is inconsistent") }
     out
 }
 
@@ -157,7 +160,42 @@ fn condition_outcome(
                     // Skip for now, or handle carefully
                     None
                 }
-                CmpOp::Test => None,
+                CmpOp::Test => {
+                    // 1. Get the Abstract State (TNum)
+                    // TNum tells us which bits are definitely 1 (value) and which are unknown (mask).
+                    let mut tnum = state.get_tnum(left);
+
+                    // 2. Handle 32-bit Width
+                    // If this is a W32 check, we must ignore the upper 32 bits of the register.
+                    if width == Width::W32 {
+                        // Assuming your TNum has a truncate or you can do it manually:
+                        tnum = tnum.trunc32(); 
+                        // Or manually:
+                        // tnum.value &= 0xFFFF_FFFF;
+                        // tnum.mask &= 0xFFFF_FFFF;
+                    }
+
+                    // 3. Check for Definite Outcomes
+                    
+                    // Case A: ALWAYS TRUE (Jump Taken)
+                    // Do we have a bit that is KNOWN to be 1 in 'left' AND is set in 'right'?
+                    // If yes, the result of (left & right) is definitely non-zero.
+                    if (tnum.value & imm_val) != 0 {
+                        Some(true)
+                    }
+                    // Case B: ALWAYS FALSE (Jump Not Taken)
+                    // Do we know for a fact that 'left' can NEVER have a 1 where 'right' has a 1?
+                    // 'tnum.value | tnum.mask' represents all bits that COULD possibly be 1.
+                    // If the intersection with 'imm_val' is 0, the result is always 0.
+                    else if ((tnum.value | tnum.mask) & imm_val) == 0 {
+                        Some(false)
+                    }
+                    // Case C: Indeterminate
+                    // The mask hits some "Unknown" bits in the register. We can't be sure.
+                    else {
+                        None
+                    }
+                }
             }
         }
         Operand::Reg(_r) => {
@@ -528,7 +566,6 @@ pub fn apply_jmp_constraints(
     
     // Resolve operand (truncate, extract constant)
     let (resolved, right_bounds) = resolve_right_operand(&then_s.dbm, right, width, op);
-    println!("Resolved right: {:?}, bounds: ({:#x}, {:#x})", resolved, right_bounds.0, right_bounds.1);
     // Apply DBM constraints if safe
     if can_apply_dbm_constraint(&then_s.dbm, left, op, width, right_bounds) {
         apply_cmp_to_dbm(&mut then_s.dbm, &mut else_s.dbm, left, op, resolved);

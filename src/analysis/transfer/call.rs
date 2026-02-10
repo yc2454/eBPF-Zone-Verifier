@@ -590,7 +590,7 @@ fn validate_single_arg(
                 }
             }
             
-            validate_readable_mem(env, state, types, pc, reg, actual, Some(target_info.key_size))
+            validate_readable_mem(env, state, pc, reg, actual, Some(target_info.key_size))
         }
 
         // ---- Map value pointer ----
@@ -615,7 +615,7 @@ fn validate_single_arg(
                 }
             }
             
-            validate_readable_mem(env, state, types, pc, reg, actual, Some(target_info.value_size))
+            validate_readable_mem(env, state, pc, reg, actual, Some(target_info.value_size))
         }
 
         PtrToMapValueOrNull => {
@@ -660,7 +660,7 @@ fn validate_single_arg(
                        pc, helper, arg_index + 1);
                 return false;
             }
-            validate_readable_mem(env, state, types, pc, reg, actual, None)
+            validate_readable_mem(env, state, pc, reg, actual, None)
         }
 
         // ---- Uninitialized memory (output buffer) ----
@@ -796,9 +796,9 @@ fn validate_single_arg(
                         return false;
                     }
                 }
-                return validate_readable_mem(env, state, types, pc, reg, actual, None)
+                return validate_readable_mem(env, state, pc, reg, actual, None)
             }
-            validate_readable_mem(env, state, types, pc, reg, actual, None)
+            validate_readable_mem(env, state, pc, reg, actual, None)
         }
 
         PtrToLong => {
@@ -830,7 +830,6 @@ fn validate_single_arg(
 fn validate_readable_mem(
     env: &mut VerifierEnv,
     state: &State,
-    _types: &TypeState,
     pc: usize,
     reg: Reg,
     reg_type: RegType,
@@ -1195,6 +1194,10 @@ fn allowed_while_in_active_lock(helper: u32) -> bool {
     }
 }
 
+// fn equal_states(s1: &State, s2: &State) -> bool {
+//     s1.types == s2.types && s1.dbm == s2.dbm
+// }
+
 /// Transfer function for relative Call (BPF-to-BPF function call) instructions.
 pub(crate) fn transfer_call_rel(
     env: &mut VerifierEnv,
@@ -1202,20 +1205,28 @@ pub(crate) fn transfer_call_rel(
     target: usize,
 ) -> Vec<State> {
     // Target cannot be a back edge
-    if target <= state.pc {
-        env.fail(VerificationError::BackEdge { pc: state.pc, target });
-        return vec![];
-    }
+    let pc = state.pc;
+    // if target <= state.pc {
+    //     let target_states_op = env.explored_states.get(&target);
+    //     if let Some(target_states) = target_states_op {
+    //         for target_state in target_states {
+    //             if equal_states(&state, target_state) {
+    //                 env.fail(VerificationError::BackEdge { pc, target });
+    //                 return vec![];
+    //             }
+    //         }
+    //     }
+    // }
 
     // BPF enforces max call depth of 8
-    info!("[Verifier] pc {}: current call depth = {}", state.pc, state.stack_frame_count());
+    info!("[Verifier] pc {}: current call depth = {}", pc, state.stack_frame_count());
     if state.stack_frame_count() >= 8 {
-        env.fail(VerificationError::MaxCallDepthExceeded { pc: state.pc });
+        env.fail(VerificationError::MaxCallDepthExceeded { pc });
         return vec![];
     }
 
     // Push return address and jump to callee
-    state.push_frame(state.pc + 1);
+    state.push_frame(pc + 1);
 
     // Update types
     update_call_rel_types(&mut state);

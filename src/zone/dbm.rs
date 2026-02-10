@@ -4,7 +4,7 @@ use crate::common::utils::{clamp_upper_bound, clamped_add};
 
 pub const INF: i64 = i64::MAX / 4;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dbm {
     pub data: Vec<Vec<i64>>,
 }

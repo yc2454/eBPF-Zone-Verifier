@@ -247,21 +247,43 @@ impl Tnum {
     }
 
     pub fn arsh_imm(self, shift: u64) -> Tnum {
+        if shift == 0 {
+            return self;
+        }
         if shift >= 64 {
-            // All bits become sign bit
+            // 1. Check if sign bit is Unknown
+            if (self.mask & 0x8000_0000_0000_0000) != 0 {
+                return Tnum::unknown();
+            }
+            // 2. Sign bit is Known (check value)
             if (self.value & 0x8000_0000_0000_0000) != 0 {
-                Tnum::constant(u64::MAX) // All 1s
+                return Tnum::constant(u64::MAX); // All 1s
             } else {
-                Tnum::constant(0) // All 0s
+                return Tnum::constant(0);        // All 0s
             }
-        } else {
-            let sign_bit = (self.value >> 63) & 1;
-            let shifted_value = (self.value >> shift) | (if sign_bit != 0 { u64::MAX << (64 - shift) } else { 0 });
-            let shifted_mask = self.mask >> shift;
-            Tnum {
-                value: shifted_value & !shifted_mask,
-                mask: shifted_mask,
-            }
+        }
+
+        // Standard Case (shift < 64)
+        let sign_bit = (self.value >> 63) & 1;
+        let sign_unknown = (self.mask >> 63) & 1;
+
+        // Calculate value as if we perform a standard arith shift
+        // (If sign is unknown, value is 0, so we shift in 0s. We will mask them out later).
+        let shifted_value = (self.value >> shift) | 
+                            (if sign_bit != 0 { u64::MAX << (64 - shift) } else { 0 });
+
+        // Calculate mask
+        let mut shifted_mask = self.mask >> shift;
+
+        // If sign was unknown, the new top bits must also be unknown
+        if sign_unknown != 0 {
+            let new_bits = !(u64::MAX >> shift); // The top 'shift' bits
+            shifted_mask |= new_bits;
+        }
+
+        Tnum {
+            value: shifted_value & !shifted_mask, // Standard TNum normalization
+            mask: shifted_mask,
         }
     }
 

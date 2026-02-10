@@ -7,7 +7,7 @@ use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::state::State;
 use crate::common::config::VerifierConfig;
 use crate::zone::dbm::Dbm;
-use crate::zone::domain::Reg;
+use crate::zone::domain::{Reg, get_simple_bounds};
 
 /// Check if we should prune this state (already covered by a previous exploration).
 pub fn should_prune(
@@ -57,10 +57,18 @@ fn state_subsumed_by(
     config: &VerifierConfig,
 ) -> bool {
     if config.skip_dbm_check {
+        println!("Pruning check (skip DBM): type: {}, Stack: {}", 
+            types_subsumed_by(&cur.types, &old.types, live_regs),
+            stack_subsumed_by(cur, old));
         types_subsumed_by(&cur.types, &old.types, live_regs)
+            && stack_subsumed_by(cur, old)
     } else {
+        println!("Pruning check: type: {}, Stack: {}", 
+            types_subsumed_by(&cur.types, &old.types, live_regs),
+            stack_subsumed_by(cur, old));
         types_subsumed_by(&cur.types, &old.types, live_regs)
             && dbm_subsumed_by(&cur.dbm, &old.dbm, live_regs)
+            && stack_subsumed_by(cur, old)
     }
 }
 
@@ -94,9 +102,9 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
 
         // Packet pointers: old must have >= range
         (
-            PtrToPacket { is_base: b1, .. },
-            PtrToPacket { is_base: b2, .. },
-        ) => b1 == b2,
+            PtrToPacket { is_base: b1, range: old_range, .. },
+            PtrToPacket { is_base: b2, range: cur_range, .. },
+        ) => b1 == b2 && old_range >= cur_range,
 
         // Map value pointers
         (
@@ -137,19 +145,33 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
 
 /// Check if cur DBM is subsumed by old DBM.
 fn dbm_subsumed_by(cur: &Dbm, old: &Dbm, live_regs: &HashSet<Reg>) -> bool {
-    let zero_idx = 0;
 
     for &r in live_regs {
-        let r_idx = r.idx();
-
-        // old subsumes cur if old has >= bounds (less constrained)
-        if old.get_idx(r_idx, zero_idx) < cur.get_idx(r_idx, zero_idx) {
-            return false;
-        }
-        if old.get_idx(zero_idx, r_idx) < cur.get_idx(zero_idx, r_idx) {
-            return false;
-        }
+        let (old_min, old_max) = get_simple_bounds(old, r);
+        let (cur_min, cur_max) = get_simple_bounds(cur, r);
+        return old_min <= cur_min && old_max >= cur_max;
     }
 
+    true
+}
+
+fn stack_subsumed_by(cur: &State, old: &State) -> bool {
+    for (_frame_idx, (old_frame, new_frame)) in old.call_stack.iter()
+        .zip(cur.call_stack.iter())
+        .enumerate()
+    {
+        let all_offsets: HashSet<i16> = old_frame.stack.slot_offsets().into_iter()
+            .chain(new_frame.stack.slot_offsets())
+            .collect();
+
+        for offset in all_offsets {
+            let old_ty = old_frame.stack.get_slot_type(offset);
+            let new_ty = new_frame.stack.get_slot_type(offset);
+            println!("[State subsumption check] Checking offset {}: {:?} vs {:?}", offset, old_ty, new_ty);
+            if !type_subsumed_by(&new_ty, &old_ty) {
+                return false;
+            }
+        }
+    }
     true
 }

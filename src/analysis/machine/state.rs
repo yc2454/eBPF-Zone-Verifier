@@ -1,6 +1,6 @@
 // src/analysis/state.rs
 use crate::zone::dbm::Dbm;
-use crate::analysis::machine::reg_types::TypeState;
+use crate::analysis::machine::reg_types::{TypeState, RegType};
 use crate::zone::tnum::Tnum;
 use crate::zone::domain::{self, Reg, get_simple_bounds};
 use crate::analysis::machine::stack_state::{StackState, SpilledReg, ScalarBounds};
@@ -14,7 +14,7 @@ pub struct LockState {
 }
 
 /// A saved call frame (caller's state when entering a subfunction)
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CallFrame {
     pub return_pc: usize,
     pub stack: StackState,
@@ -164,14 +164,34 @@ impl State {
     /// Spill into a specific frame (cross-frame, e.g. store via PtrToStack)
     pub fn spill_at(&mut self, frame_level: usize, reg: Reg, offset: i16) {
         let (min, max) = get_simple_bounds(&self.dbm, reg);
-        self.call_stack[frame_level].stack.insert(
-            offset,
-            SpilledReg {
-                reg_type: self.types.get(reg),
-                tnum: self.tnums.get(&reg).cloned().unwrap_or(Tnum::unknown()),
-                bounds: ScalarBounds { min, max },
-            },
-        );
+        println!("At spilling, {} bounds: [{}, {}]", reg.name(), min, max);
+        let spilled = SpilledReg {
+            source_reg: Some(reg),
+            reg_type: self.types.get(reg),
+            tnum: self.tnums.get(&reg).cloned().unwrap_or(Tnum::unknown()),
+            bounds: ScalarBounds { min, max },
+        };
+        let stack = &mut self.call_stack[frame_level].stack;
+        // A spill is always 8 bytes (MemSize::U64)
+        // We must mark the entire range [offset, offset + 8)
+        for i in 0..8 {
+            let current_byte = offset + i;
+            
+            if i == 0 {
+                // Write the actual data at the lowest address (Head)
+                stack.insert(current_byte, spilled.clone());
+            } else {
+                // Mark subsequent bytes as "parts" of the head
+                // This prevents them from being seen as "Uninitialized"
+                // And allows us to detect partial overwrites later
+                stack.insert(current_byte, SpilledReg {
+                    source_reg: None,
+                    reg_type: RegType::ScalarValue,
+                    tnum: Tnum::unknown(),
+                    bounds: ScalarBounds { min: i64::MIN, max: i64::MAX },
+                });
+            }
+        }
     }
 
     /// Reload from current frame
@@ -185,6 +205,7 @@ impl State {
             return false;
         }
         if let Some(spilled) = self.call_stack[frame_level].stack.get_slot(offset) {
+            domain::forget(&mut self.dbm, dst);
             self.types.set(dst, spilled.reg_type);
             self.tnums.insert(dst, spilled.tnum);
             domain::set_bounds(&mut self.dbm, dst, spilled.bounds.min, spilled.bounds.max);
@@ -208,8 +229,8 @@ impl State {
         self.call_stack.len()
     }
 
-    pub fn call_frame_empty(&self) -> bool {
-        self.call_stack.is_empty()
+    pub fn at_last_call_frame(&self) -> bool {
+        self.stack_frame_count() == 1
     }
 
     // === Current frame (most common case, no frame level needed) ===

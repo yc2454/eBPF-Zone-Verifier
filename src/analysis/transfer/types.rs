@@ -6,7 +6,7 @@ use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg_types::{RegType, TypeState, new_ptr_id};
 use crate::analysis::machine::stack_state::StackState;
 use crate::analysis::machine::state::State;
-use crate::ast::{AluOp, AtomicOp, MapLoadKind, MemSize, Operand, Width};
+use crate::ast::{AluOp, MapLoadKind, MemSize, Operand, Width};
 use crate::zone::domain::{self, Reg};
 use crate::common::ctx_model::{
     CtxFieldKind, validate_ctx_access
@@ -334,15 +334,15 @@ pub(crate) fn update_store_types(
         
         if size == MemSize::U64 {
             // Full 8-byte store preserves type info at the base slot
-            stack.set_slot_type(slot, src_type);
+            stack.set_slot_type(slot, src_type, None);
             // Mark remaining bytes as initialized (but no type info)
             for i in 1..byte_count {
-                stack.set_slot_type(slot + i, RegType::ScalarValue);
+                stack.set_slot_type(slot + i, RegType::ScalarValue, None);
             }
         } else {
             // Partial store: mark all bytes as initialized, but poison type info
             for i in 0..byte_count {
-                stack.set_slot_type(slot + i, RegType::ScalarValue);
+                stack.set_slot_type(slot + i, RegType::ScalarValue, None);
             }
         }
     }
@@ -467,7 +467,7 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
             match mem_ptr_ty {
                 RegType::PtrToStack { offset: Some(off), .. } => {
                     let slot = off as i16;
-                    state.stack_mut().set_slot_type(slot, RegType::ScalarValue);
+                    state.stack_mut().set_slot_type(slot, RegType::ScalarValue, Some(Reg::R3));
                 }
                 _ => {} // Do nothing for the other cases for now
             }
@@ -498,6 +498,7 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
 }
 
 pub(crate) fn update_call_rel_types(state: &mut State) {
+    state.types.set(Reg::R0, RegType::NotInit);
     state.types.set(Reg::R10, RegType::PtrToStack { offset: Some(0), frame_level: state.current_frame_level() });
 }
 
@@ -525,21 +526,4 @@ pub(crate) fn update_map_load_types(types: &mut TypeState, kind: MapLoadKind, ma
     };
 
     types.set(dst, new_type);
-}
-
-pub(crate) fn update_atomic_op_types(
-    types: &mut TypeState,
-    op: AtomicOp,
-    src: Reg,
-    fetch: bool
-) {
-    if op == AtomicOp::CmpXchg {
-        // CmpXchg: If match, memory updated. If mismatch, old value loaded into R0.
-        // In both cases, R0 is overwritten with the value from memory.
-        types.set(Reg::R0, RegType::ScalarValue);
-    } else if fetch {
-        // Add, And, Or, Xor, Xchg with Fetch:
-        // The 'src' register is overwritten with the OLD value from memory.
-        types.set(src, RegType::ScalarValue);
-    }
 }
