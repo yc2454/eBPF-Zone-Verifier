@@ -125,13 +125,13 @@ pub fn analyze_program(
         
         // E. Logging (Delegated to Global Logger)
         // We output the raw data following the protocol. The Logger filters it.
-        if config.verbosity >= 2 {
-            state.dbm.pretty_print();
-        }
-        debug!(target: "app", "|PC:{}| Instr: [[{}]]\nRegs: {:?}\nTnums: {:?}\n", 
-               state.pc, instr, state.types.reg_types_str(), state.tnums_to_string());
-        // debug!(target: "app", "|PC:{}| Instr: [[{}]]\n", 
-        //        state.pc, instr);
+        // if config.verbosity >= 2 {
+        //     state.dbm.pretty_print();
+        // }
+        // debug!(target: "app", "|PC:{}| Instr: [[{}]]\nRegs: {:?}\nTnums: {:?}\n", 
+        //        state.pc, instr, state.types.reg_types_str(), state.tnums_to_string());
+        debug!(target: "app", "|PC:{}| Instr: [[{}]]\n", 
+               state.pc, instr);
         // for cf in state.call_stack.iter() {
         //     println!("{}: {}", cf, cf.stack);
         // }

@@ -235,12 +235,10 @@ pub fn check_stack_access(
     // The frame depth is stored as a positive number (e.g., 300 means R10-300)
     let current_frame_depth = -(state.total_stack_depth() as i64);
     let stack_being_accessed = state.stack_at(pointer_frame_lv);
-    println!("We are accessing stack {} at frame level {}", stack_being_accessed, pointer_frame_lv);
 
     match ptr_type_offset {
         Some(base_off) => {
             let actual_offset = base_off + instruction_offset;
-            println!("Actual offset to stack: {}", actual_offset);
             let access_end = current_frame_depth + actual_offset + size;
 
             // Alignment check
@@ -309,7 +307,6 @@ fn check_stack_initialization(
             for i in 0..size {
                 let slot = (actual_offset + i) as i16;
                 if !stack.is_slot_initialized(slot) {
-                    println!("Slot {} is not initialized????", slot);
                     env.fail(VerificationError::UninitializedStackRead { pc, offset: actual_offset });
                     return;
                 }

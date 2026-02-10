@@ -166,6 +166,7 @@ impl State {
         let (min, max) = get_simple_bounds(&self.dbm, reg);
         println!("At spilling, {} bounds: [{}, {}]", reg.name(), min, max);
         let spilled = SpilledReg {
+            source_reg: Some(reg),
             reg_type: self.types.get(reg),
             tnum: self.tnums.get(&reg).cloned().unwrap_or(Tnum::unknown()),
             bounds: ScalarBounds { min, max },
@@ -184,6 +185,7 @@ impl State {
                 // This prevents them from being seen as "Uninitialized"
                 // And allows us to detect partial overwrites later
                 stack.insert(current_byte, SpilledReg {
+                    source_reg: None,
                     reg_type: RegType::ScalarValue,
                     tnum: Tnum::unknown(),
                     bounds: ScalarBounds { min: i64::MIN, max: i64::MAX },

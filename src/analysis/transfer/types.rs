@@ -334,15 +334,15 @@ pub(crate) fn update_store_types(
         
         if size == MemSize::U64 {
             // Full 8-byte store preserves type info at the base slot
-            stack.set_slot_type(slot, src_type);
+            stack.set_slot_type(slot, src_type, None);
             // Mark remaining bytes as initialized (but no type info)
             for i in 1..byte_count {
-                stack.set_slot_type(slot + i, RegType::ScalarValue);
+                stack.set_slot_type(slot + i, RegType::ScalarValue, None);
             }
         } else {
             // Partial store: mark all bytes as initialized, but poison type info
             for i in 0..byte_count {
-                stack.set_slot_type(slot + i, RegType::ScalarValue);
+                stack.set_slot_type(slot + i, RegType::ScalarValue, None);
             }
         }
     }
@@ -467,7 +467,7 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
             match mem_ptr_ty {
                 RegType::PtrToStack { offset: Some(off), .. } => {
                     let slot = off as i16;
-                    state.stack_mut().set_slot_type(slot, RegType::ScalarValue);
+                    state.stack_mut().set_slot_type(slot, RegType::ScalarValue, Some(Reg::R3));
                 }
                 _ => {} // Do nothing for the other cases for now
             }

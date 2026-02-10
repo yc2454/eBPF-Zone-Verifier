@@ -64,16 +64,21 @@ fn find_type_conflict(
         .zip(new_state.call_stack.iter())
         .enumerate()
     {
-        let all_offsets: HashSet<i16> = old_frame.stack.slot_offsets().into_iter()
-            .chain(new_frame.stack.slot_offsets())
+        // println!("Live regs: {:?}", live_regs);
+        let live_offsets: HashSet<i16> = old_frame.stack.live_slot_offsets(live_regs).into_iter()
+            .chain(new_frame.stack.live_slot_offsets(live_regs))
             .collect();
 
-        for offset in all_offsets {
+        for offset in live_offsets {
             let old_ty = old_frame.stack.get_slot_type(offset);
             let new_ty = new_frame.stack.get_slot_type(offset);
             if !types_compatible(&old_ty, &new_ty) {
-                // You may want a different error variant for stack conflicts
-                return Some((Reg::R0, old_ty, new_ty));
+                // Can recover the actual reg from either side
+                let reg = old_frame.stack.get_slot(offset)
+                    .or_else(|| new_frame.stack.get_slot(offset))
+                    .and_then(|s| s.source_reg)
+                    .unwrap_or(Reg::R0);
+                return Some((reg, old_ty, new_ty));
             }
         }
     }
@@ -97,7 +102,7 @@ fn types_compatible(a: &RegType, b: &RegType) -> bool {
         (PtrToMapValue { .. }, PtrToMapValue { .. }) => true,
         (PtrToMapValueOrNull { .. }, PtrToMapValueOrNull { .. }) => true,
         (PtrToMapValue { id: id1, .. }, PtrToMapValueOrNull { id: id2, .. }) 
-        | (PtrToMapValueOrNull { id: id1, .. }, PtrToMapValue { id: id2, .. }) => id1 == id2,
+        | (PtrToMapValueOrNull { id: id1, .. }, PtrToMapValue { id: id2, .. }) => true,
         (PtrToMapValueOrNull { .. }, ScalarValue) => true,
         (PtrToMapObject { map_idx: _id1 }, PtrToMapObject { map_idx: _id2 }) => true,
         (ScalarValue, PtrToMapValueOrNull { .. }) => true,

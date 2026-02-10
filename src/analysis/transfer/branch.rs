@@ -10,7 +10,10 @@ use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::state::State;
 use crate::ast::{Instr, CmpOp, Operand, Width};
 use crate::zone::domain::{
-    Reg, assign_eq, assume_eq_const, assume_ge_const, assume_ge_var, assume_gt_var, assume_le_const, assume_le_var, assume_le_var_plus_const, assume_less_than, get_bounds, get_constant_value, nonneg
+    Reg, assign_eq, assume_eq_const, assume_ge_const, 
+    assume_ge_var, assume_gt_var, assume_le_const, 
+    assume_le_var, assume_le_var_plus_const, assume_less_than, 
+    get_bounds, get_constant_value, nonneg
 };
 use crate::zone::dbm::{Dbm};
 use crate::zone::tnum::Tnum;

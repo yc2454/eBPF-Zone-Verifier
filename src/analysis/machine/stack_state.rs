@@ -1,6 +1,7 @@
 use crate::analysis::machine::reg_types::RegType;
 use crate::zone::tnum::Tnum;
-use std::collections::BTreeMap;
+use crate::zone::domain::Reg;
+use std::collections::{BTreeMap, HashSet};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScalarBounds {
@@ -11,6 +12,7 @@ pub struct ScalarBounds {
 /// Snapshot of a register's abstract state at spill time
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SpilledReg {
+    pub source_reg: Option<Reg>,
     pub reg_type: RegType,
     pub tnum: Tnum,
     pub bounds: ScalarBounds,
@@ -34,12 +36,6 @@ impl std::fmt::Display for StackState {
 }
 
 impl StackState {
-    pub fn new() -> Self {
-        Self {
-            slots: BTreeMap::new(),
-        }
-    }
-
     pub fn invalidate_ref(&mut self, id: u32) {
         for (_, spilled) in self.slots.iter_mut() {
             if spilled.reg_type.get_ref_id() == Some(id) {
@@ -68,11 +64,12 @@ impl StackState {
         self.slots.keys().cloned().collect()
     }
 
-    pub fn set_slot_type(&mut self, offset: i16, reg_type: RegType) {
+    pub fn set_slot_type(&mut self, offset: i16, reg_type: RegType, source_reg: Option<Reg>) {
         if let Some(spilled) = self.slots.get_mut(&offset) {
             spilled.reg_type = reg_type;
         } else {
             self.slots.insert(offset, SpilledReg {
+                source_reg,
                 reg_type,
                 tnum: Tnum::unknown(),
                 bounds: ScalarBounds { min: i64::MIN, max: i64::MAX },
@@ -101,9 +98,19 @@ impl StackState {
 
     pub fn invalidate_slot(&mut self, offset: i16) {
         self.slots.insert(offset, SpilledReg {
+                source_reg: None,
                 reg_type: RegType::ScalarValue,
                 tnum: Tnum::unknown(),
                 bounds: ScalarBounds { min: i64::MIN, max: i64::MAX },
             });
+    }
+
+    pub fn live_slot_offsets(&self, live_regs: &HashSet<Reg>) -> Vec<i16> {
+        self.slots.iter()
+            .filter(|(_, spilled)| {
+                spilled.source_reg.map_or(false, |r| live_regs.contains(&r))
+            })
+            .map(|(offset, _)| *offset)
+            .collect()
     }
 }
