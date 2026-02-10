@@ -232,7 +232,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 src: Operand::Reg(src),
             },
 
-            // 0x14: SUB32_K  w_dst -= imm   (you may already have this)
+            // 0x14: SUB32_K  w_dst -= imm
             0x14 => Instr::Alu {
                 width: Width::W32,
                 op: AluOp::Sub,
@@ -240,15 +240,15 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 src: Operand::Imm(insn.imm as i64),
             },
 
-            // 0x17: SUB_X_64 (dst = dst - src)
+            // 0x17: SUB64_K  r_dst -= imm
             0x17 => Instr::Alu {
                 width: Width::W64,
                 op: AluOp::Sub,
-                dst: dst,
-                src: Operand::Reg(src),
+                dst,
+                src: Operand::Imm(insn.imm as i64),
             },
 
-            // 0x1c: SUB32_X  w_dst -= w_src   ← new
+            // 0x1c: SUB32_X  w_dst -= w_src
             0x1c => Instr::Alu {
                 width: Width::W32,
                 op: AluOp::Sub,

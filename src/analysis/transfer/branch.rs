@@ -32,7 +32,6 @@ pub(crate) fn transfer_if(
     right: Operand,
     target: usize,
 ) -> Vec<State> {
-    // println!("PC: {}", state.pc);
     // Target cannot be a back edge
     if target < state.pc {
         let on_path = state.history_idx
