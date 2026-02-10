@@ -857,7 +857,10 @@ fn validate_readable_mem(
                 true
             } else {
                 access::check_map_rw(env, map_idx, pc, false);
-                false
+                if env.failed() {
+                    return false;
+                }
+                true
             }
         }
         RegType::PtrToPacket { .. } => {
