@@ -194,6 +194,38 @@ impl State {
         }
     }
 
+    pub fn store_imm_to_stack(&mut self, imm: i64, offset: i16) {
+        self.store_imm_to_stack_at(self.current_frame_level(), imm, offset);
+    }
+
+    pub fn store_imm_to_stack_at(&mut self, frame_level: usize, imm: i64, offset: i16) {
+        let slot_content = SpilledReg {
+            source_reg: None,
+            reg_type: RegType::ScalarValue,
+            tnum: Tnum::constant(imm as u64),
+            bounds: ScalarBounds { min: imm, max: imm },
+        };
+        let stack = &mut self.call_stack[frame_level].stack;
+        for i in 0..8 {
+            let current_byte = offset + i;
+            
+            if i == 0 {
+                // Write the actual data at the lowest address (Head)
+                stack.insert(current_byte, slot_content.clone());
+            } else {
+                // Mark subsequent bytes as "parts" of the head
+                // This prevents them from being seen as "Uninitialized"
+                // And allows us to detect partial overwrites later
+                stack.insert(current_byte, SpilledReg {
+                    source_reg: None,
+                    reg_type: RegType::ScalarValue,
+                    tnum: Tnum::unknown(),
+                    bounds: ScalarBounds { min: i64::MIN, max: i64::MAX },
+                });
+            }
+        }
+    }
+
     /// Reload from current frame
     pub fn try_reload(&mut self, dst: Reg, offset: i16, size: MemSize) -> bool {
         self.try_reload_at(self.current_frame_level(), dst, offset, size)

@@ -111,6 +111,9 @@ pub(crate) fn transfer_store(
                 // Full 64-bit register spill — snapshot the abstract state
                 state.spill_at(frame_level, *r, full_offset as i16);
             }
+            Operand::Imm(k) if size == MemSize::U64 => {
+                state.store_imm_to_stack_at(frame_level, *k, full_offset as i16);
+            }
             _ => {
                 // Partial write or immediate — invalidate any existing spill
                 state.stack_mut().clear_slot(full_offset as i16);
