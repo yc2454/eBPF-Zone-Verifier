@@ -720,19 +720,43 @@ fn handle_arsh(
                 
                 if signed_lo <= signed_hi {
                     // Normal range
-                    let new_lo = (signed_lo >> shift_amount) as i64;
-                    let new_hi = (signed_hi >> shift_amount) as i64;
+                    let new_lo = (signed_lo >> shift_amount) as u32 as i64;
+                    let new_hi = (signed_hi >> shift_amount) as u32 as i64;
                     assume_ge_const(&mut state.dbm, dst, new_lo);
                     assume_le_const(&mut state.dbm, dst, new_hi);
                 } else {
                     // Wrapped range (spans sign boundary), be conservative
-                    let min_possible = (i32::MIN >> shift_amount) as i64;
-                    let max_possible = (i32::MAX >> shift_amount) as i64;
-                    assume_ge_const(&mut state.dbm, dst, min_possible);
-                    assume_le_const(&mut state.dbm, dst, max_possible);
+                    assume_ge_const(&mut state.dbm, dst, 0);
+                    assume_le_const(&mut state.dbm, dst, u32::MAX as i64);
                 }
                 
-                let new_tnum = truncated_tnum.arsh_imm(shift_amount as u64);
+                // 1. Check the 32-bit sign bit (Bit 31)
+                let sign_bit = (truncated_tnum.value >> 31) & 1;
+                let sign_unknown = (truncated_tnum.mask >> 31) & 1;
+
+                // 2. Sign-Extend the Tnum to 64 bits
+                // We need Bit 63 to match Bit 31 so arsh_imm works correctly.
+                let mut sext_tnum = truncated_tnum; 
+                let upper_mask = 0xFFFFFFFF00000000;
+
+                if sign_unknown != 0 {
+                    // Sign is unknown -> Upper bits become unknown
+                    sext_tnum.mask |= upper_mask;
+                    sext_tnum.value &= !upper_mask;
+                } else if sign_bit != 0 {
+                    // Sign is 1 -> Upper bits become 1
+                    sext_tnum.value |= upper_mask;
+                    // (Mask remains 0 for upper bits because we know they are 1s)
+                }
+                // If sign is 0, upper bits are already 0 from trunc32, so we do nothing.
+
+                // 3. Perform the 64-bit Arith Shift
+                let arsh_result = sext_tnum.arsh_imm(shift_amount as u64);
+
+                // 4. Zero-Extend the result back to 32 bits (BPF Requirement)
+                // BPF writes to w0 always zero-extend to r0.
+                let new_tnum = arsh_result.trunc32();
+
                 state.set_tnum(dst, new_tnum);
             } else {
                 // W64

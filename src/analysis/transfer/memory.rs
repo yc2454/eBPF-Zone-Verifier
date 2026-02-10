@@ -5,7 +5,6 @@
 use crate::analysis::machine::env::{VerifierEnv, VerificationError};
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType};
-use crate::analysis::transfer::types::update_atomic_op_types;
 use crate::ast::{Operand, MemSize, AtomicOp};
 use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, assume_eq_const};
 use crate::zone::tnum::Tnum;
@@ -187,7 +186,7 @@ pub(crate) fn transfer_atomic(
     }
 
     // Update Register State (The "Fetch" part)
-    update_atomic_op_types(&mut state.types, op, src, fetch);
+    // update_atomic_op_types(&mut state, op, base, src, fetch);
     if op == AtomicOp::CmpXchg {
         if !reloaded {
             forget(&mut state.dbm, Reg::R0);

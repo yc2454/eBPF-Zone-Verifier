@@ -6,7 +6,7 @@ use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg_types::{RegType, TypeState, new_ptr_id};
 use crate::analysis::machine::stack_state::StackState;
 use crate::analysis::machine::state::State;
-use crate::ast::{AluOp, AtomicOp, MapLoadKind, MemSize, Operand, Width};
+use crate::ast::{AluOp, MapLoadKind, MemSize, Operand, Width};
 use crate::zone::domain::{self, Reg};
 use crate::common::ctx_model::{
     CtxFieldKind, validate_ctx_access
@@ -526,21 +526,4 @@ pub(crate) fn update_map_load_types(types: &mut TypeState, kind: MapLoadKind, ma
     };
 
     types.set(dst, new_type);
-}
-
-pub(crate) fn update_atomic_op_types(
-    types: &mut TypeState,
-    op: AtomicOp,
-    src: Reg,
-    fetch: bool
-) {
-    if op == AtomicOp::CmpXchg {
-        // CmpXchg: If match, memory updated. If mismatch, old value loaded into R0.
-        // In both cases, R0 is overwritten with the value from memory.
-        types.set(Reg::R0, RegType::ScalarValue);
-    } else if fetch {
-        // Add, And, Or, Xor, Xchg with Fetch:
-        // The 'src' register is overwritten with the OLD value from memory.
-        types.set(src, RegType::ScalarValue);
-    }
 }
