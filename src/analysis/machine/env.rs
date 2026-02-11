@@ -203,7 +203,10 @@ impl VerificationError {
 pub struct InsnAuxData {
     pub prune_point: bool,
     pub seen: bool,
+    /// Registers that are live (read before next write) at this PC.
     pub live_regs: HashSet<Reg>,
+    /// Stack slot offsets (byte-granularity, relative to R10) that are live at this PC.
+    pub live_slots: HashSet<i16>,
 }
 
 pub struct VerifierEnv<'a> {
