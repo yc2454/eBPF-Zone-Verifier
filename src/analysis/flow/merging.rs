@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use crate::analysis::machine::env::{VerificationError, VerifierEnv};
-use crate::analysis::machine::reg_types::{RegType, TypeState};
+use crate::analysis::machine::reg_types::{RegType, TypeState, type_family};
 use crate::analysis::machine::state::State;
 use crate::zone::domain::Reg;
 
@@ -86,43 +86,19 @@ fn find_type_conflict(
     None
 }
 
-/// Check if two types are compatible (same kind, could coexist at join point).
-/// This is different from subsumption - we just check if they're the same "family".
+/// Check if two types are compatible at a join point.
+/// This isn't subsumption — it just asks whether two different paths
+/// reaching the same PC could legitimately produce these types.
 fn types_compatible(a: &RegType, b: &RegType) -> bool {
     use RegType::*;
-    
-    match (a, b) {
-        // NotInit is compatible with anything (dead register)
-        (NotInit, _) | (_, NotInit) => true,
-        
-        // Same type families are compatible
-        (ScalarValue, ScalarValue) => true,
-        (PtrToCtx, PtrToCtx) => true,
-        (PtrToStack { .. }, PtrToStack { .. }) => true,
-        (PtrToMapValue { .. }, PtrToMapValue { .. }) => true,
-        (PtrToMapValueOrNull { .. }, PtrToMapValueOrNull { .. }) => true,
-        (PtrToMapValue { id: id1, .. }, PtrToMapValueOrNull { id: id2, .. }) 
-        | (PtrToMapValueOrNull { id: id1, .. }, PtrToMapValue { id: id2, .. }) => true,
-        (PtrToMapValueOrNull { .. }, ScalarValue) => true,
-        (PtrToMapObject { map_idx: _id1 }, PtrToMapObject { map_idx: _id2 }) => true,
-        (ScalarValue, PtrToMapValueOrNull { .. }) => true,
-        (PtrToPacket { .. }, PtrToPacket { .. }) => true,
-        (PtrToPacketEnd, PtrToPacketEnd) => true,
-        (PtrToSocket { .. }, PtrToSocket { .. }) => true,
-        (PtrToSocketOrNull { .. }, PtrToSocketOrNull { .. }) => true,
-        (PtrToSockCommon { .. }, PtrToSockCommon { .. }) => true,
-        (PtrToSockCommonOrNull { .. }, PtrToSockCommonOrNull { .. }) => true,
-        (PtrToTcpSock { .. }, PtrToTcpSock { .. }) => true,
-        (PtrToTcpSockOrNull { .. }, PtrToTcpSockOrNull { .. }) => true,
-        (PtrToSocketOrNull { ref_id: id1 }, PtrToSocket { ref_id: id2 }) 
-        | (PtrToSocket { ref_id: id1 }, PtrToSocketOrNull { ref_id: id2 }) => id1 == id2,
-        (PtrToSocket { .. }, ScalarValue) => true,
-        (ScalarValue, PtrToSocket { .. }) => true,
-        (PtrToMapValue { .. }, ScalarValue) => true,
-        (ScalarValue, PtrToMapValue { .. }) => true,
-        (PtrToPacket { .. }, ScalarValue) => true,
-        (ScalarValue, PtrToPacket { .. }) => true,
-        // Different type families = incompatible
-        _ => false,
-    }
+
+    // NotInit is compatible with anything (dead register, never read)
+    matches!(a, NotInit) || matches!(b, NotInit)
+    // ScalarValue is compatible with any type: null checks turn
+    // pointer-or-null into scalar 0, arithmetic can yield scalars
+    // from pointers, etc. This is the normal result of branching.
+    || matches!(a, ScalarValue) || matches!(b, ScalarValue)
+    // Same family is always compatible (e.g. PtrToMapValue with
+    // PtrToMapValueOrNull, PtrToSocket with PtrToSocketOrNull)
+    || type_family(a) == type_family(b)
 }

@@ -62,6 +62,7 @@ fn state_subsumed_by(
             stack_subsumed_by(cur, old));
         types_subsumed_by(&cur.types, &old.types, live_regs)
             && stack_subsumed_by(cur, old)
+            && tnum_subsumed_by(cur, old, live_regs)
     } else {
         println!("Pruning check: type: {}, Stack: {}", 
             types_subsumed_by(&cur.types, &old.types, live_regs),
@@ -69,6 +70,7 @@ fn state_subsumed_by(
         types_subsumed_by(&cur.types, &old.types, live_regs)
             && dbm_subsumed_by(&cur.dbm, &old.dbm, live_regs)
             && stack_subsumed_by(cur, old)
+            && tnum_subsumed_by(cur, old, live_regs)
     }
 }
 
@@ -98,7 +100,7 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
         (PtrToPacketEnd, PtrToPacketEnd) => true,
 
         // Anything subsumes NotInit
-        (_, NotInit) => true,
+        (NotInit, _) => true,
 
         // Packet pointers: old must have >= range
         (
@@ -149,7 +151,9 @@ fn dbm_subsumed_by(cur: &Dbm, old: &Dbm, live_regs: &HashSet<Reg>) -> bool {
     for &r in live_regs {
         let (old_min, old_max) = get_simple_bounds(old, r);
         let (cur_min, cur_max) = get_simple_bounds(cur, r);
-        return old_min <= cur_min && old_max >= cur_max;
+        if !(old_min <= cur_min && old_max >= cur_max) {
+            return false;
+        }
     }
 
     true
@@ -171,6 +175,24 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
             if !type_subsumed_by(&new_ty, &old_ty) {
                 return false;
             }
+        }
+    }
+    true
+}
+
+fn tnum_subsumed_by(cur_state: &State, old_state: &State, live_regs: &HashSet<Reg>) -> bool {
+    for &r in live_regs {
+        let cur = cur_state.get_tnum(r);
+        let old = old_state.get_tnum(r);
+        // Every unknown bit in cur must also be unknown in old
+        // (old.mask must be a superset of cur.mask)
+        if cur.mask & !old.mask != 0 {
+            return false;
+        }
+        // For bits that are known in both, the values must match
+        let both_known = !cur.mask & !old.mask;
+        if (cur.value & both_known) != (old.value & both_known) {
+            return false;
         }
     }
     true

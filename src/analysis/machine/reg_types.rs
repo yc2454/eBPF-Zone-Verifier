@@ -127,6 +127,26 @@ pub fn new_ref_id() -> u32 {
     REF_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
+/// Classify types into families. Pointer and pointer-or-null variants
+/// of the same kind share a family (e.g. PtrToMapValue and PtrToMapValueOrNull).
+pub fn type_family(ty: &RegType) -> u8 {
+    use RegType::*;
+    match ty {
+        NotInit                                          => 0,
+        ScalarValue                                      => 1,
+        PtrToCtx                                         => 2,
+        PtrToStack { .. }                                => 3,
+        PtrToMapValue { .. } | PtrToMapValueOrNull { .. } => 4,
+        PtrToMapObject { .. }                            => 5,
+        PtrToPacket { .. }                               => 6,
+        PtrToPacketEnd                                   => 7,
+        PtrToPacketMeta                                  => 8,
+        PtrToSocket { .. } | PtrToSocketOrNull { .. }    => 9,
+        PtrToSockCommon { .. } | PtrToSockCommonOrNull { .. } => 10,
+        PtrToTcpSock { .. } | PtrToTcpSockOrNull { .. }  => 11,
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TypeState {
     pub regs: [RegType; NUM_REGS],

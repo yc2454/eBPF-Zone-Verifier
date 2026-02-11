@@ -19,7 +19,6 @@ use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::RegType;
 use crate::ast::{EndianOp, Instr, Width};
 use crate::zone::domain::{Reg, forget, assign_and_mask, bit_and_const, get_bounds};
-use crate::analysis::transfer::common::check_reg_readable;
 use crate::analysis::machine::env::VerificationError;
 
 /// Main transfer function - dispatches to appropriate handler based on instruction type.

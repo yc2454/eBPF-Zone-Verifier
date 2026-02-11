@@ -1195,7 +1195,9 @@ pub(crate) fn transfer_call(
         for r in Reg::ALL {
             if r != Reg::R10 {
                 match in_types.get(r) {
-                    RegType::PtrToPacket { .. } | RegType::PtrToPacketEnd => {
+                    RegType::PtrToPacket
+                    | RegType::PtrToPacketEnd
+                    | RegType::PtrToPacketMeta => {
                         forget(&mut state.dbm, r);
                     }
                     _ => {}
