@@ -121,11 +121,15 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
         // Anything subsumes NotInit
         (_, NotInit) => true,
 
-        // Packet pointers: old must have >= range
+        // Packet pointers: old must have <= range (weaker guarantee).
+        // A larger range means "more bytes proven safe" — that's MORE specific.
+        // If old verified safely with a SMALLER range (weaker conditions),
+        // then cur with a larger range (stronger conditions) is also safe.
+        // old_range <= cur_range ensures old is at least as abstract as cur.
         (
             PtrToPacket { is_base: b1, range: old_range, .. },
             PtrToPacket { is_base: b2, range: cur_range, .. },
-        ) => b1 == b2 && old_range >= cur_range,
+        ) => b1 == b2 && old_range <= cur_range,
 
         // Map value pointers
         (

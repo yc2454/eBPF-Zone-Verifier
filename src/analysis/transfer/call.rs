@@ -1079,6 +1079,7 @@ pub(crate) fn transfer_call(
 ) -> Vec<State> {
     let in_types = state.types.clone();
     let pc = state.pc;
+    println!("Stack: {}", state.stack());
 
     // ========================================================================
     // Check if the call is forbidden under an active lock
