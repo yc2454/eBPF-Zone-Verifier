@@ -23,6 +23,7 @@ pub enum SubprogError {
     InvalidTerminator { pc: usize },
     StackOverflow { pc: usize, combined: u16 },
     CallDepthExceeded { pc: usize, depth: usize },
+    RecursiveCall { pc: usize, target: usize },
 }
 
 impl std::fmt::Display for SubprogError {
@@ -42,6 +43,9 @@ impl std::fmt::Display for SubprogError {
             }
             SubprogError::CallDepthExceeded { pc, depth } => {
                 write!(f, "call depth of {} at pc {} exceeds maximum of 8", depth, pc)
+            }
+            SubprogError::RecursiveCall { pc, target } => {
+                write!(f, "back-edge from insn {} to {}", pc, target)
             }
         }
     }
@@ -174,7 +178,7 @@ pub fn check_stack_overflow(prog: &Program) -> Result<(), SubprogError> {
         return Ok(());
     }
 
-    check_call_chain(prog, &subprogs, 0, 0, 1, &mut HashSet::new())
+    check_call_chain(prog, &subprogs, 0, 0, 1, None, &mut HashSet::new())
 }
 
 fn check_call_chain(
@@ -182,19 +186,25 @@ fn check_call_chain(
     subprogs: &BTreeMap<usize, SubprogInfo>,
     entry_pc: usize,
     depth_so_far: u16,
-    call_depth: usize,  // NEW: number of frames
+    call_depth: usize,  // number of frames
+    caller_pc: Option<usize>,  // PC of the CallRel that invoked us (None for root)
     visiting: &mut HashSet<usize>,
 ) -> Result<(), SubprogError> {
     // Check call depth first
     if call_depth > constants::BPF_MAX_CALL_FRAMES {
         return Err(SubprogError::CallDepthExceeded {
-            pc: entry_pc,
+            pc: caller_pc.unwrap_or(entry_pc),
             depth: call_depth,
         });
     }
 
+    // Detect recursive calls: if entry_pc is already being visited,
+    // we have a cycle in the call graph → reject as back-edge.
     if !visiting.insert(entry_pc) {
-        return Ok(());
+        return Err(SubprogError::RecursiveCall {
+            pc: caller_pc.unwrap_or(entry_pc),
+            target: entry_pc,
+        });
     }
 
     let info = match subprogs.get(&entry_pc) {
@@ -216,7 +226,7 @@ fn check_call_chain(
 
     for pc in info.start_pc..info.end_pc {
         if let Instr::CallRel { target } = &prog.instrs[pc] {
-            check_call_chain(prog, subprogs, *target, new_depth, call_depth + 1, visiting)?;
+            check_call_chain(prog, subprogs, *target, new_depth, call_depth + 1, Some(pc), visiting)?;
         }
     }
 

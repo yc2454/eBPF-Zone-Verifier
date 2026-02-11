@@ -82,8 +82,8 @@ pub(crate) fn transfer_if(
 
     // Return only consistent states
     let mut out = Vec::new();
-    if !state_then.dbm.is_inconsistent() { out.push(state_then); } else { warn!("Then branch is inconsistent") }
     if !state_else.dbm.is_inconsistent() { out.push(state_else); } else { warn!("Else branch is inconsistent") }
+    if !state_then.dbm.is_inconsistent() { out.push(state_then); } else { warn!("Then branch is inconsistent") }
     out
 }
 

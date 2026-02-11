@@ -65,6 +65,7 @@ pub const BPF_SKC_TO_UNIX_SOCK: u32 = 130;
 pub const BPF_RINGBUF_RESERVE: u32 = 131;
 pub const BPF_RINGBUF_SUBMIT: u32 = 132;
 pub const BPF_SKC_TO_UDP6_SOCK: u32 = 140;
+pub const BPF_GET_TASK_STACK:u32 = 141;
 pub const BPF_D_PATH: u32 = 147;
 
 // ============================================================================

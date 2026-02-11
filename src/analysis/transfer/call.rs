@@ -399,6 +399,15 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
+        // ---- Information helpers ----
+        constants::BPF_KTIME_GET_NS => HelperSignature::new([
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ]),
+
         // ---- Miscellaneous ----
         constants::BPF_GET_PRANDOM_U32 => HelperSignature::new([
             DontCare,
