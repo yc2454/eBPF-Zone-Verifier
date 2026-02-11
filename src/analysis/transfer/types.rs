@@ -446,6 +446,11 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
                 _ => {}
             }
         }
+        state.stack_mut().invalidate_packet_pointers();
+        state.frames.invalidate_caller_reg_type(
+            |ty| ty.is_packet_ptr(),
+            RegType::NotInit,
+        );
     }
 }
 

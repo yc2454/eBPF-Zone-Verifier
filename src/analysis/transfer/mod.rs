@@ -18,7 +18,9 @@ use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::RegType;
 use crate::ast::{EndianOp, Instr, Width};
-use crate::zone::domain::{Reg, forget, assign_and_mask, bit_and_const, get_bounds};
+use crate::zone::domain::{Reg, 
+    forget, assign_and_mask, bit_and_const, get_bounds,
+    get_simple_bounds, set_bounds};
 use crate::analysis::machine::env::VerificationError;
 
 /// Main transfer function - dispatches to appropriate handler based on instruction type.
@@ -189,10 +191,22 @@ fn transfer_exit(
     }
 
     if let Some(frame) = state.pop_frame() {
+        // Save callee's R0 (the return value) before restoring caller state
+        let ret_type = state.types.get(Reg::R0);
+        let ret_tnum = state.get_tnum(Reg::R0);
+        let ret_bounds = get_simple_bounds(&state.dbm, Reg::R0);
+
         let return_pc = frame.return_pc;
         state.types = frame.caller_types;
         state.dbm = frame.caller_dbm;
         state.tnums = frame.caller_tnums;
+
+        // Re-apply R0 from callee's return value
+        state.types.set(Reg::R0, ret_type);
+        state.set_tnum(Reg::R0, ret_tnum);
+        forget(&mut state.dbm, Reg::R0);
+        set_bounds(&mut state.dbm, Reg::R0, ret_bounds.0, ret_bounds.1);
+
         state.types.set(Reg::R10, RegType::PtrToStack { 
             offset: Some(0), 
             frame_level: state.current_frame_level() 

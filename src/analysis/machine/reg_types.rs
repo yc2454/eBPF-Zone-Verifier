@@ -100,6 +100,10 @@ impl RegType {
         }
     }
 
+    pub fn is_packet_ptr(&self) -> bool {
+        matches!(self, RegType::PtrToPacket | RegType::PtrToPacketEnd | RegType::PtrToPacketMeta)
+    }
+
     /// Returns the ref_id if this type holds a reference
     pub fn get_ref_id(&self) -> Option<u32> {
         match *self {

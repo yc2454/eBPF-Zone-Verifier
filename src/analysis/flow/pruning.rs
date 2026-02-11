@@ -92,8 +92,8 @@ fn state_subsumed_by(
     // two states that differ only in caller-frame r6-r9 values get pruned
     // against each other, hiding bugs that manifest after return.
     let saved = callee_saved_regs();
-    for (cur_frame, old_frame) in cur.frames.caller_frames().iter()
-        .zip(old.frames.caller_frames().iter())
+    for (cur_frame, old_frame) in cur.frames.iter()
+        .zip(old.frames.iter())
     {
         if !types_subsumed_by(&cur_frame.caller_types, &old_frame.caller_types, &saved) {
             return false;

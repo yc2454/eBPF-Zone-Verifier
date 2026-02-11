@@ -1,6 +1,6 @@
 // src/analysis/machine/frame_stack.rs
 
-use crate::analysis::machine::reg_types::{TypeState};
+use crate::analysis::machine::reg_types::{TypeState, RegType};
 use crate::analysis::machine::stack_state::StackState;
 use crate::zone::dbm::Dbm;
 use crate::zone::tnum::Tnum;
@@ -154,13 +154,6 @@ impl FrameStack {
         self.frames.iter()
     }
 
-    /// Iterate over caller frames only (excludes the current frame).
-    /// This is what pruning needs to check callee-saved registers.
-    pub fn caller_frames(&self) -> &[CallFrame] {
-        let len = self.frames.len();
-        &self.frames[..len - 1]
-    }
-
     /// Total stack depth across all frames.
     pub fn total_stack_depth(&self) -> u16 {
         self.frames.iter().map(|f| f.frame_depth).sum()
@@ -169,6 +162,22 @@ impl FrameStack {
     /// Mutable iteration over all frames.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut CallFrame> {
         self.frames.iter_mut()
+    }
+
+    /// Invalidate all registers of a given type across all caller frames.
+    /// Used when helpers like bpf_redirect invalidate packet pointers globally.
+    pub fn invalidate_caller_reg_type(
+        &mut self,
+        should_invalidate: impl Fn(&RegType) -> bool,
+        replacement: RegType,
+    ) {
+        for frame in self.frames.iter_mut() {
+            for r in Reg::ALL {
+                if should_invalidate(&frame.caller_types.get(r)) {
+                    frame.caller_types.set(r, replacement.clone());
+                }
+            }
+        }
     }
 }
 

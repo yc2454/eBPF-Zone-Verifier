@@ -1204,7 +1204,6 @@ pub(crate) fn transfer_call(
                 }
             }
         }
-        state.stack_mut().invalidate_packet_pointers();
         domain::reset_packet_anchors(&mut state.dbm);
     }
     
