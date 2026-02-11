@@ -19,7 +19,7 @@ use crate::zone::dbm::{Dbm};
 use crate::zone::tnum::Tnum;
 use crate::analysis::machine::env::VerificationError;
 
-use super::refinement::{refine_branch, refine_packet_ranges};
+use super::refinement::{refine_branch};
 use super::common::{check_reg_readable, check_operand_readable};
 
 /// Transfer function for conditional branch instructions.
@@ -576,12 +576,4 @@ pub fn apply_jmp_constraints(
         Either::Left(_) => None,
     };
     apply_eq_refinements(then_s, else_s, left, op, imm_val);
-    
-    // Refine memory ranges
-    if let Either::Left(right_reg) = right {
-        for mut state in [&mut *then_s, &mut *else_s] {
-            refine_packet_ranges(&mut state, left, right_reg);
-            refine_packet_ranges(&mut state, right_reg, left);
-        }
-    }
 }

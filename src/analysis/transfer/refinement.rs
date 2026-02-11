@@ -6,7 +6,6 @@ use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType};
 use crate::ast::{Instr, CmpOp, Operand};
 use crate::zone::domain::Reg;
-use crate::zone::dbm::{INF};
 
 /// Promote a pointer type across all stack frames by ref/ptr id.
 /// `should_promote` checks if a slot's type matches, `promote` returns the new type.
@@ -23,51 +22,6 @@ fn promote_stack_slots_all_frames(
             }
         }
     }
-}
-
-pub(crate) fn refine_packet_ranges(state: &mut State, pkt_reg: Reg, end_reg: Reg) {
-    // Determine which register is PtrToPacket and which is PtrToPacketEnd
-    let target_id = match (state.types.get(pkt_reg), state.types.get(end_reg)) {
-        (RegType::PtrToPacket { id, .. }, RegType::PtrToPacketEnd) => id,
-        (RegType::PtrToPacketEnd, RegType::PtrToPacket { .. }) => {
-            // Swap: recurse with correct argument order
-            return refine_packet_ranges(state, end_reg, pkt_reg);
-        }
-        _ => return,
-    };
-
-    // Update all PtrToPacket registers with matching id
-    for r in Reg::ALL {
-        if let RegType::PtrToPacket { id, is_base, range } = state.types.get(r) {
-            if id == target_id {
-                let dist = state.dbm.get(r, end_reg);
-                if dist < INF && dist <= 0 {
-                    let safe_bytes = dist.unsigned_abs() as i64;
-                    if safe_bytes > range {
-                        state.types.set(r, RegType::PtrToPacket { id, is_base, range: safe_bytes });
-                    }
-                }
-            }
-        }
-    }
-
-    // Also update stack slots with matching id
-    let max_range = Reg::ALL.iter()
-        .filter_map(|&r| match state.types.get(r) {
-            RegType::PtrToPacket { id: rid, range, .. } if rid == target_id => Some(range),
-            _ => None,
-        })
-        .max()
-        .unwrap_or(0);
-
-    promote_stack_slots_all_frames(state,
-        |ty| matches!(ty, RegType::PtrToPacket { id, range, .. } if *id == target_id && max_range > *range),
-        |ty| match ty {
-            RegType::PtrToPacket { id, is_base, .. } => 
-                RegType::PtrToPacket { id: *id, is_base: *is_base, range: max_range },
-            _ => unreachable!(),
-        },
-    );
 }
 
 /// Refines register types based on the outcome of a conditional branch.

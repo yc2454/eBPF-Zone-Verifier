@@ -31,7 +31,7 @@ pub fn check_load(
         PtrToStack { offset, frame_level } => {
             check_stack_access(env, state, base, offset, off as i64, size, pc, AccessKind::Read, None, frame_level);
         }
-        PtrToPacket { id: _, is_base: _, range: _ } => {
+        PtrToPacket => {
             check_packet_access(env, state, base, off, size, pc, AccessKind::Read);
         }
         PtrToCtx => {
@@ -385,7 +385,7 @@ fn get_packet_offset_range(
             let pkt_start_reg = crate::zone::domain::REG_ENV
                 .all()
                 .iter()
-                .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket { is_base: true, .. }));
+                .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket));
             
             if let Some(&start_reg) = pkt_start_reg {
                 let (lo, hi) = get_relative_bound(&state.dbm, base, start_reg);
@@ -416,11 +416,17 @@ pub fn check_packet_access(
     pc: usize,
     kind: AccessKind
 ) {
+    if matches!(kind, AccessKind::Write) && !prog_kind_support_direct_packet_write(env.ctx.prog_kind) {
+        error!("Direct packet store at pc {} is not supported for {:?} program", pc, env.ctx.prog_kind);
+        env.fail(VerificationError::IllegalPacketStore { pc, off, size });
+        return;
+    }
+
     let (start_ok, end_ok) = check_packet_access_dbm(&state.dbm, base, off as i64, size as i64);
     if !start_ok || !end_ok {
         env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
     }
-    // 5. Alignment check
+
     if env.ctx.has_flag(constants::F_LOAD_WITH_STRICT_ALIGNMENT) 
        && !matches!(kind, AccessKind::HelperOutput | AccessKind::HelperArg) 
        && !check_packet_alignment(state, base, off, size) 
