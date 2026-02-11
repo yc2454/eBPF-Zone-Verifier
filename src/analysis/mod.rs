@@ -160,7 +160,7 @@ pub fn analyze_program(
         }
 
         // H. Push Successors
-        for mut succ in successors {
+        for mut succ in successors.into_iter().rev() {
             succ.history_idx = current_step_idx;
             worklist.push_back(succ);
         }

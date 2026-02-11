@@ -371,10 +371,7 @@ fn get_use_def(instr: &Instr) -> UseDef {
             }
         }
 
-        Instr::Exit => {
-            // Return value is in R0.
-            ud.use_regs.insert(Reg::R0);
-        }
+        Instr::Exit => {}
 
         Instr::LoadPacket { src, .. } => {
             if let Some(r) = src {
