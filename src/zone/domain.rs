@@ -1,94 +1,72 @@
 // src/domain.rs
-use crate::zone::dbm::{Dbm, INF};
+use crate::{common::utils::clamped_add, zone::dbm::{Dbm, INF}};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Reg {
-    Zero,   // constant 0
-    R0,
-    R1,
-    R2,
-    R3,
-    R4,
-    R5,
-    R6,
-    R7,
-    R8,
-    R9,
-    R10,
-    // Later you can add Scratch(u16) or MapVal(u16) etc.
+    Zero,
+    R0, R1, R2, R3, R4, R5, R6, R7, R8, R9, R10,
+    // ── Phantom anchors (never appear in BPF instructions) ──
+    AnchorDataMeta,
+    AnchorData,
+    AnchorDataEnd,
 }
 
 impl Reg {
-    /// All "built-in" vars in index order used by DBM.
+    /// Only real registers — used by instruction dispatch, printing, iteration.
     pub const ALL: [Reg; 12] = [
         Reg::Zero,
-        Reg::R0,
-        Reg::R1,
-        Reg::R2,
-        Reg::R3,
-        Reg::R4,
-        Reg::R5,
-        Reg::R6,
-        Reg::R7,
-        Reg::R8,
-        Reg::R9,
-        Reg::R10,
+        Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5,
+        Reg::R6, Reg::R7, Reg::R8, Reg::R9, Reg::R10,
     ];
 
-    /// Index used inside the DBM matrix.
+    /// Total DBM dimension (registers + anchors).
+    pub const DBM_DIM: usize = 15;
+
     #[inline]
     pub fn idx(self) -> usize {
         match self {
             Reg::Zero => 0,
-            Reg::R0   => 1,
-            Reg::R1   => 2,
-            Reg::R2   => 3,
-            Reg::R3   => 4,
-            Reg::R4   => 5,
-            Reg::R5   => 6,
-            Reg::R6   => 7,
-            Reg::R7   => 8,
-            Reg::R8   => 9,
-            Reg::R9   => 10,
-            Reg::R10  => 11,
+            Reg::R0   => 1,  Reg::R1  => 2,  Reg::R2  => 3,
+            Reg::R3   => 4,  Reg::R4  => 5,  Reg::R5  => 6,
+            Reg::R6   => 7,  Reg::R7  => 8,  Reg::R8  => 9,
+            Reg::R9   => 10, Reg::R10 => 11,
+            Reg::AnchorDataMeta => 12,
+            Reg::AnchorData     => 13,
+            Reg::AnchorDataEnd  => 14,
         }
     }
 
-    /// Human-readable name.
-    #[inline]
     pub fn name(self) -> &'static str {
         match self {
             Reg::Zero => "0",
-            Reg::R0   => "r0",
-            Reg::R1   => "r1",
-            Reg::R2   => "r2",
-            Reg::R3   => "r3",
-            Reg::R4   => "r4",
-            Reg::R5   => "r5",
-            Reg::R6   => "r6",
-            Reg::R7   => "r7",
-            Reg::R8   => "r8",
-            Reg::R9   => "r9",
-            Reg::R10  => "r10",
+            Reg::R0  => "r0",  Reg::R1  => "r1",  Reg::R2  => "r2",
+            Reg::R3  => "r3",  Reg::R4  => "r4",  Reg::R5  => "r5",
+            Reg::R6  => "r6",  Reg::R7  => "r7",  Reg::R8  => "r8",
+            Reg::R9  => "r9",  Reg::R10 => "r10",
+            Reg::AnchorDataMeta => "@data_meta",
+            Reg::AnchorData     => "@data",
+            Reg::AnchorDataEnd  => "@data_end",
         }
     }
 
     pub fn idx_to_reg(idx: usize) -> Option<Reg> {
         match idx {
             0  => Some(Reg::Zero),
-            1  => Some(Reg::R0),
-            2  => Some(Reg::R1),
-            3  => Some(Reg::R2),
-            4  => Some(Reg::R3),
-            5  => Some(Reg::R4),
-            6  => Some(Reg::R5),
-            7  => Some(Reg::R6),
-            8  => Some(Reg::R7),
-            9  => Some(Reg::R8),
-            10 => Some(Reg::R9),
-            11 => Some(Reg::R10),
+            1  => Some(Reg::R0),  2  => Some(Reg::R1),  3  => Some(Reg::R2),
+            4  => Some(Reg::R3),  5  => Some(Reg::R4),  6  => Some(Reg::R5),
+            7  => Some(Reg::R6),  8  => Some(Reg::R7),  9  => Some(Reg::R8),
+            10 => Some(Reg::R9),  11 => Some(Reg::R10),
+            12 => Some(Reg::AnchorDataMeta),
+            13 => Some(Reg::AnchorData),
+            14 => Some(Reg::AnchorDataEnd),
             _  => None,
         }
+    }
+
+    /// True for phantom anchors — these must never be forgotten or overwritten.
+    #[inline]
+    pub fn is_anchor(self) -> bool {
+        matches!(self, Reg::AnchorDataMeta | Reg::AnchorData | Reg::AnchorDataEnd)
     }
 }
 
@@ -105,7 +83,7 @@ pub fn reg_to_index(r: Reg) -> Option<usize> {
         Reg::R8  => Some(8),
         Reg::R9  => Some(9),
         Reg::R10 => Some(10),
-        Reg::Zero => None,
+        _ => None,
     }
 }
 
@@ -234,47 +212,86 @@ pub fn assign_add_imm(dbm: &mut Dbm, dst: Reg, imm: i64) {
 
 // dst += src
 pub fn assign_add_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
-    // dst := dst + src  (sound interval-style update)
-    let (ld, ud) = get_bounds(dbm, dst);
-    let (ls, us) = get_bounds(dbm, src);
+    let (src_lo, src_hi) = get_bounds(dbm, src);
 
-    dbm.forget_var(dst);
+    match (src_lo, src_hi) {
+        (Some(lo), Some(hi)) => {
+            // src ∈ [lo, hi], so shift dst's relationships by that interval:
+            //   new(dst - z) <= old(dst - z) + hi
+            //   new(z - dst) <= old(z - dst) - lo
+            let di = dst.idx();
+            let n = dbm.num_vars();
 
-    if let (Some(ld), Some(ls)) = (ld, ls) {
-        assume_ge_const(dbm, dst, ld + ls); // closes
+            for j in 0..n {
+                if j == di { continue; }
+
+                let d_dj = dbm.get_idx(di, j);
+                if d_dj < INF {
+                    dbm.set_idx(di, j, clamped_add(d_dj, hi));
+                }
+
+                let d_jd = dbm.get_idx(j, di);
+                if d_jd < INF {
+                    dbm.set_idx(j, di, d_jd.saturating_sub(lo));
+                }
+            }
+            dbm.set_idx(di, di, 0);
+            dbm.close();
+        }
+        _ => {
+            // src is unbounded — no choice but to lose relational info
+            let (dst_lo, dst_hi) = get_bounds(dbm, dst);
+            dbm.forget_var(dst);
+            if let (Some(dl), Some(sl)) = (dst_lo, src_lo) {
+                assume_ge_const(dbm, dst, dl.saturating_add(sl));
+            }
+            if let (Some(dh), Some(sh)) = (dst_hi, src_hi) {
+                assume_le_const(dbm, dst, dh.saturating_add(sh));
+            }
+            dbm.close();
+        }
     }
-    if let (Some(ud), Some(us)) = (ud, us) {
-        assume_le_const(dbm, dst, ud + us); // closes
-    }
-
-    // If neither bound exists, dst becomes unconstrained; still close to keep invariant.
-    dbm.close();
 }
 
 /// Handle: dst = dst - src
 pub fn assign_sub_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
-    // 1. Get current bounds for both registers
-    
-    let (dst_min, dst_max) = get_bounds(dbm, dst);
-    let (src_min, src_max) = get_bounds(dbm, src);
+    let (src_lo, src_hi) = get_bounds(dbm, src);
 
-    // 2. Subtraction destroys the delicate difference relationships (x - z <= c)
-    // because (x - y) - z <= c requires knowing y + z relationship.
-    // So we must forget the old 'dst'.
-    forget(dbm, dst);
+    match (src_lo, src_hi) {
+        (Some(lo), Some(hi)) => {
+            // dst -= src where src ∈ [lo, hi]
+            //   new(dst - z) <= old(dst - z) - lo
+            //   new(z - dst) <= old(z - dst) + hi
+            let di = dst.idx();
+            let n = dbm.num_vars();
 
-    // 3. Re-establish bounds based on Interval Arithmetic
-    // New Min = Old Min - Src Max
-    // New Max = Old Max - Src Min
-    if let (Some(d_min), Some(d_max), Some(s_min), Some(s_max)) = (dst_min, dst_max, src_min, src_max) {
-        // Check for underflow/overflow safety if you want, usually BPF wraps.
-        // We assume 64-bit signed math for the verification domain.
-        
-        let new_min = d_min.saturating_sub(s_max);
-        let new_max = d_max.saturating_sub(s_min);
+            for j in 0..n {
+                if j == di { continue; }
 
-        assume_ge_const(dbm, dst, new_min);
-        assume_le_const(dbm, dst, new_max);
+                let d_dj = dbm.get_idx(di, j);
+                if d_dj < INF {
+                    dbm.set_idx(di, j, d_dj.saturating_sub(lo));
+                }
+
+                let d_jd = dbm.get_idx(j, di);
+                if d_jd < INF {
+                    dbm.set_idx(j, di, clamped_add(d_jd, hi));
+                }
+            }
+            dbm.set_idx(di, di, 0);
+            dbm.close();
+        }
+        _ => {
+            let (dst_lo, dst_hi) = get_bounds(dbm, dst);
+            dbm.forget_var(dst);
+            if let (Some(dl), Some(sh)) = (dst_lo, src_hi) {
+                assume_ge_const(dbm, dst, dl.saturating_sub(sh));
+            }
+            if let (Some(dh), Some(sl)) = (dst_hi, src_lo) {
+                assume_le_const(dbm, dst, dh.saturating_sub(sl));
+            }
+            dbm.close();
+        }
     }
 }
 
@@ -538,4 +555,70 @@ pub fn proven_u32_range(dbm: &Dbm, v: Reg, zero: Reg) -> bool {
     let lb = dbm.raw(zi, vi);
     // 0 <= v <= u32::MAX
     ub <= 0xffff_ffff && lb <= 0
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Packet region anchors
+// ═══════════════════════════════════════════════════════════
+
+/// Call once when the program type is known (e.g., XDP/SK_BUFF).
+/// Establishes the invariant: data_meta <= data <= data_end.
+pub fn init_packet_anchors(dbm: &mut Dbm) {
+    let meta = Reg::AnchorDataMeta;
+    let data = Reg::AnchorData;
+    let end  = Reg::AnchorDataEnd;
+
+    // data_meta <= data  (meta - data <= 0)
+    dbm.add_constraint(meta, data, 0);
+    // data <= data_end   (data - end <= 0)
+    dbm.add_constraint(data, end, 0);
+    // transitive: meta <= end
+    dbm.close();
+}
+
+/// Call when a context load produces a packet pointer.
+/// Links the register to the appropriate anchor with offset 0.
+///   e.g., bind_to_anchor(dbm, R2, AnchorDataMeta) after loading data_meta
+pub fn bind_to_anchor(dbm: &mut Dbm, reg: Reg, anchor: Reg) {
+    debug_assert!(anchor.is_anchor(), "bind_to_anchor requires an anchor");
+    // reg == anchor  (reg - anchor <= 0 AND anchor - reg <= 0)
+    dbm.add_constraint(reg, anchor, 0);
+    dbm.add_constraint(anchor, reg, 0);
+    dbm.close();
+}
+
+/// Unified packet/meta region access check.
+/// Returns (start_safe, end_safe).
+///
+/// Checks:  anchor_start + 0 <= base + off          (lower bound)
+///          base + off + size <= anchor_end + 0      (upper bound)
+///
+/// In DBM terms:
+///   start:  anchor_start - base <= off
+///   end:    base - anchor_end   <= -(off + size)
+pub fn check_region_access(
+    dbm: &Dbm,
+    base: Reg,
+    off: i64,
+    size: i64,
+    anchor_start: Reg,
+    anchor_end: Reg,
+) -> (bool, bool) {
+    let start_bound = dbm.get(anchor_start, base);  // anchor_start - base <= ?
+    let start_safe = start_bound < INF && start_bound <= off;
+
+    let end_bound = dbm.get(base, anchor_end);       // base - anchor_end <= ?
+    let end_safe = end_bound < INF && (end_bound + off + size) <= 0;
+
+    (start_safe, end_safe)
+}
+
+/// Convenience: check access into the metadata region [data_meta, data).
+pub fn check_meta_access(dbm: &Dbm, base: Reg, off: i64, size: i64) -> (bool, bool) {
+    check_region_access(dbm, base, off, size, Reg::AnchorDataMeta, Reg::AnchorData)
+}
+
+/// Convenience: check access into the packet region [data, data_end).
+pub fn check_packet_access_dbm(dbm: &Dbm, base: Reg, off: i64, size: i64) -> (bool, bool) {
+    check_region_access(dbm, base, off, size, Reg::AnchorData, Reg::AnchorDataEnd)
 }

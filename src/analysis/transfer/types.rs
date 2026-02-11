@@ -131,6 +131,8 @@ pub(crate) fn update_alu_types(
                         if const_value_op.is_some() {
                             let const_value = const_value_op.unwrap();
                             update_packet_ptr_type_after_add(types, in_types, dbm, dst, id, range, const_value);
+                        } else {
+                            types.set(dst, RegType::PtrToPacket { id, is_base: false, range });
                         }
                     }
                     (RegType::PtrToPacketMeta { .. }, Operand::Imm(k)) => {
@@ -151,6 +153,19 @@ pub(crate) fn update_alu_types(
                                     types.set(dst, RegType::ScalarValue);
                                 }
                             }
+                        }
+                    },
+                    (RegType::PtrToPacketMeta { is_base: _, .. }, Operand::Reg(r)) => {
+                        let const_value_op = domain::get_constant_value(dbm, *r);
+                        if const_value_op.is_some() {
+                            let const_value = const_value_op.unwrap();
+                            if const_value == 0 {
+                                // Maintain previous type
+                            } else {
+                                types.set(dst, RegType::PtrToPacketMeta { is_base: false });
+                            }
+                        } else {
+                            types.set(dst, RegType::PtrToPacketMeta { is_base: false });
                         }
                     },
                     (RegType::PtrToStack { offset, frame_level }, Operand::Imm(k)) => {
@@ -278,15 +293,20 @@ pub(crate) fn update_load_types(
                     CtxFieldKind::PacketStart => {
                         let new_id = new_ptr_id();
                         state.types.set(dst, RegType::PtrToPacket { id: new_id, is_base: true, range: 0 });
+                        domain::bind_to_anchor(&mut state.dbm, dst, Reg::AnchorData);
+                        println!("ANCHOR DEBUG: AnchorDataMeta - r1 = {}", state.dbm.get(Reg::AnchorDataMeta, dst));
+                        println!("ANCHOR DEBUG: r1 - AnchorData = {}", state.dbm.get(dst, Reg::AnchorData));
                     }
                     CtxFieldKind::PacketEnd => {
                         state.types.set(dst, RegType::PtrToPacketEnd);
+                        domain::bind_to_anchor(&mut state.dbm, dst, Reg::AnchorDataEnd);
                     }
                     CtxFieldKind::SockCommon => {
                         state.types.set(dst, RegType::PtrToSockCommonOrNull { ref_id: None });
                     }
                     CtxFieldKind::PacketMeta => {
                         state.types.set(dst, RegType::PtrToPacketMeta { is_base: true });
+                        domain::bind_to_anchor(&mut state.dbm, dst, Reg::AnchorDataMeta);
                     }
                     _ => state.types.set(dst, RegType::ScalarValue),
                 }

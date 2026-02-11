@@ -5,7 +5,7 @@ use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::RegType;
 use crate::ast::{ProgramKind};
 use crate::parsing::elf_loader::BpfMapDef;
-use crate::zone::domain::{get_bounds, get_relative_bound};
+use crate::zone::domain::{get_bounds, get_relative_bound, check_meta_access, check_packet_access_dbm};
 use crate::analysis::machine::env::VerificationError;
 use crate::common::constants;
 use crate::common::ctx_model;
@@ -31,8 +31,11 @@ pub fn check_load(
         PtrToStack { offset, frame_level } => {
             check_stack_access(env, state, base, offset, off as i64, size, pc, AccessKind::Read, None, frame_level);
         }
-        PtrToPacket { id: _, is_base: _, range } => {
-            check_packet_access(env, state, base, off, size, range, pc, AccessKind::Read);
+        PtrToPacket { id: _, is_base: _, range: _ } => {
+            let (start_ok, end_ok) = check_packet_access_dbm(&state.dbm, base, off as i64, size as i64);
+            if !start_ok || !end_ok {
+                env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
+            }
         }
         PtrToCtx => {
             if !ctx_model::is_valid_ctx_read(ctx.prog_kind, off, size) {
@@ -86,38 +89,11 @@ pub fn check_load(
             env.fail(VerificationError::UnsafeGenericLoad { pc, base, off });
         }
         PtrToPacketMeta { .. } => {
-            // Find a register pointing to packet data (data pointer)
-            let reg_pointing_to_packet_data = 
-                REG_ENV
-                    .all()
-                    .iter()
-                    .find(|&&r| 
-                        matches!(state.types.get(r), RegType::PtrToPacket { is_base: true, .. }));
-            
-            if let Some(&data_reg) = reg_pointing_to_packet_data {
-                // We need to prove: data_meta + off + size <= data
-                // Equivalently: (data_meta - data) <= -(off + size)
-                // So check: upper_bound(base - data_reg) + off + size <= 0
-                
-                let (_, ub_opt) = get_relative_bound(&state.dbm, base, data_reg);
-                let access_end = off as i64 + size as i64;
-                
-                match ub_opt {
-                    Some(ub) if ub + access_end <= 0 => {
-                        // Safe: proven that access is within metadata region
-                    }
-                    Some(ub) => {
-                        error!("Metadata access exceeds proven bounds (need {}, have {})", access_end, -ub);
-                        env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
-                    }
-                    None => {
-                        error!("No bounds check performed between data_meta and data");
-                        env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
-                    }
-                }
-            } else {
-                error!("Packet data pointer not found");
-                env.fail(VerificationError::InvalidRegisterTypeState { pc });
+            println!("ANCHOR DEBUG: AnchorDataMeta - r1 = {}", state.dbm.get(Reg::AnchorData, base));
+            println!("ANCHOR DEBUG: r1 - AnchorData = {}", state.dbm.get(base, Reg::AnchorData));
+            let (start_ok, end_ok) = check_meta_access(&state.dbm, base, off as i64, size as i64);
+            if !start_ok || !end_ok {
+                env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
             }
         }
         ScalarValue | NotInit => {
@@ -165,6 +141,8 @@ pub fn check_store(
                 size as i64, pc, AccessKind::Write, Some(src_type), frame_level);
         }
         PtrToPacket { id: _, is_base: _, range } => {
+            println!("ANCHOR DEBUG: AnchorDataMeta - r1 = {}", state.dbm.get(Reg::AnchorDataMeta, base));
+            println!("ANCHOR DEBUG: r1 - AnchorData = {}", state.dbm.get(base, Reg::AnchorData));
             check_packet_access(env, state, base, off, size, range, pc, AccessKind::Write);
         }
         PtrToMapValueOrNull { map_idx, .. } => {
