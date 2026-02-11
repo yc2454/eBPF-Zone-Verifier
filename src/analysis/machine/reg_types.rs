@@ -1,5 +1,6 @@
 // src/analysis/reg_types.rs
 use crate::zone::domain::Reg;
+use crate::analysis::machine::frame_stack::FrameLevel;
 
 pub const NUM_REGS: usize = 11; 
 
@@ -8,7 +9,7 @@ pub enum RegType {
     NotInit,        
     ScalarValue,    
     PtrToCtx,       
-    PtrToStack { offset: Option<i64>, frame_level: usize },  
+    PtrToStack { offset: Option<i64>, frame_level: FrameLevel },  
     PtrToPacket,    
     PtrToPacketEnd, 
     PtrToPacketMeta,         
@@ -179,5 +180,11 @@ impl TypeState {
             s.push_str(&format!("R{}: {:?} ", i, ty));
         }
         s
+    }
+}
+
+impl Default for TypeState {
+    fn default() -> Self {
+        Self::new_not_init()
     }
 }

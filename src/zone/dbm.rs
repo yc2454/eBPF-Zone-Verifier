@@ -242,3 +242,9 @@ impl Dbm {
         }
     }
 }
+
+impl Default for Dbm {
+    fn default() -> Self {
+        Self::new()
+    }
+}

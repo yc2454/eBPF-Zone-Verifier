@@ -14,11 +14,12 @@ fn promote_stack_slots_all_frames(
     should_promote: impl Fn(&RegType) -> bool,
     promote: impl Fn(&RegType) -> RegType,
 ) {
-    for frame_idx in 0..state.num_frames() {
-        for k in state.stack_at(frame_idx).slot_offsets() {
-            let ty = state.stack_at(frame_idx).get_slot_type(k);
+    for frame in state.frames.iter_mut() {
+        let offsets: Vec<i16> = frame.stack.slot_offsets();
+        for k in offsets {
+            let ty = frame.stack.get_slot_type(k);
             if should_promote(&ty) {
-                state.stack_at_mut(frame_idx).set_slot_type(k, promote(&ty), None);
+                frame.stack.set_slot_type(k, promote(&ty), None);
             }
         }
     }

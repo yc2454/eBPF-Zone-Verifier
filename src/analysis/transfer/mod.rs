@@ -158,13 +158,13 @@ fn transfer_exit(
     }
 
     // R0 must be readable at the main frame (it's the return value)
-    if state.at_last_call_frame() && state.types.get(Reg::R0) == RegType::NotInit {
+    if state.at_main_frame() && state.types.get(Reg::R0) == RegType::NotInit {
         env.fail(VerificationError::RegisterNotReadable { pc, reg: Reg::R0 });
         return vec![];
     }
 
     // Check if there is any released reference
-    if state.at_last_call_frame() && state.has_unreleased_refs() {
+    if state.at_main_frame() && state.has_unreleased_refs() {
         println!("Unreleased reference: {:?}", state.active_refs);
         env.fail(VerificationError::UnreleasedReference);
         return vec![];
@@ -176,21 +176,23 @@ fn transfer_exit(
         return vec![];
     }
 
-    if state.stack_frame_count() >= 8 {
+    if state.num_frames() >= 8 {
         env.fail(VerificationError::MaxCallDepthExceeded { pc: state.pc });
         return vec![];
     }
     
-    if !state.at_last_call_frame() {
+    if !state.at_main_frame() {
         if matches!(state.types.get(Reg::R0), RegType::PtrToStack { .. }) {
             env.fail(VerificationError::CannotReturnStackPointer { pc: state.pc });
             return vec![];
         }
     }
 
-    if let Some(return_pc) = state.pop_frame() {
-        // Returning from subfunction — continue at caller's return site
-        // R0 retains its current type (the actual return value)
+    if let Some(frame) = state.pop_frame() {
+        let return_pc = frame.return_pc;
+        state.types = frame.caller_types;
+        state.dbm = frame.caller_dbm;
+        state.tnums = frame.caller_tnums;
         state.types.set(Reg::R10, RegType::PtrToStack { 
             offset: Some(0), 
             frame_level: state.current_frame_level() 
@@ -198,8 +200,6 @@ fn transfer_exit(
         state.pc = return_pc;
         vec![state]
     } else {
-        // Main function exit — path terminates
-        // (R0 already validated above)
         vec![]
     }
 }

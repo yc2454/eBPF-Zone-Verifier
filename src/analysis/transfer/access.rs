@@ -1,5 +1,6 @@
 // src/analysis/access.rs
 use crate::analysis::machine::env::VerifierEnv;
+use crate::analysis::machine::frame_stack::FrameLevel;
 use crate::analysis::machine::stack_state::StackState;
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::RegType;
@@ -187,7 +188,7 @@ pub fn check_stack_access(
     pc: usize,
     kind: AccessKind,
     src_type_op: Option<RegType>,
-    pointer_frame_lv: usize
+    pointer_frame_lv: FrameLevel
 ) {
     if state.current_frame_level() > pointer_frame_lv {
         if let AccessKind::Write = kind && src_type_op.is_some() {

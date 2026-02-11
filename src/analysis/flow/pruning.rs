@@ -8,6 +8,7 @@ use crate::analysis::machine::state::State;
 use crate::common::config::VerifierConfig;
 use crate::zone::dbm::Dbm;
 use crate::zone::domain::{Reg, get_simple_bounds};
+use crate::zone::tnum::Tnum;
 
 /// Check if we should prune this state (already covered by a previous exploration).
 pub fn should_prune(
@@ -49,6 +50,12 @@ pub fn should_prune(
     false
 }
 
+/// Callee-saved registers that persist across calls and affect
+/// post-return control flow. Must be checked in caller frames.
+fn callee_saved_regs() -> HashSet<Reg> {
+    [Reg::R6, Reg::R7, Reg::R8, Reg::R9].into_iter().collect()
+}
+
 /// Check if `cur` is subsumed by `old` (old covers all behaviors of cur).
 fn state_subsumed_by(
     cur: &State,
@@ -56,22 +63,52 @@ fn state_subsumed_by(
     live_regs: &HashSet<Reg>,
     config: &VerifierConfig,
 ) -> bool {
+    // Check current frame
     if config.skip_dbm_check {
         println!("Pruning check (skip DBM): type: {}, Stack: {}", 
             types_subsumed_by(&cur.types, &old.types, live_regs),
             stack_subsumed_by(cur, old));
-        types_subsumed_by(&cur.types, &old.types, live_regs)
+        if !(types_subsumed_by(&cur.types, &old.types, live_regs)
             && stack_subsumed_by(cur, old)
-            && tnum_subsumed_by(cur, old, live_regs)
+            && tnum_subsumed_by(cur, old, live_regs))
+        {
+            return false;
+        }
     } else {
         println!("Pruning check: type: {}, Stack: {}", 
             types_subsumed_by(&cur.types, &old.types, live_regs),
             stack_subsumed_by(cur, old));
-        types_subsumed_by(&cur.types, &old.types, live_regs)
+        if !(types_subsumed_by(&cur.types, &old.types, live_regs)
             && dbm_subsumed_by(&cur.dbm, &old.dbm, live_regs)
             && stack_subsumed_by(cur, old)
-            && tnum_subsumed_by(cur, old, live_regs)
+            && tnum_subsumed_by(cur, old, live_regs))
+        {
+            return false;
+        }
     }
+
+    // Check caller frames: callee-saved registers (r6-r9) persist across
+    // calls and determine post-return control flow. Without this check,
+    // two states that differ only in caller-frame r6-r9 values get pruned
+    // against each other, hiding bugs that manifest after return.
+    let saved = callee_saved_regs();
+    for (cur_frame, old_frame) in cur.frames.caller_frames().iter()
+        .zip(old.frames.caller_frames().iter())
+    {
+        if !types_subsumed_by(&cur_frame.caller_types, &old_frame.caller_types, &saved) {
+            return false;
+        }
+        if !config.skip_dbm_check {
+            if !dbm_subsumed_by(&cur_frame.caller_dbm, &old_frame.caller_dbm, &saved) {
+                return false;
+            }
+        }
+        if !caller_tnum_subsumed_by(cur_frame, old_frame, &saved) {
+            return false;
+        }
+    }
+
+    true
 }
 
 /// Check if cur types are subsumed by old types.
@@ -160,9 +197,8 @@ fn dbm_subsumed_by(cur: &Dbm, old: &Dbm, live_regs: &HashSet<Reg>) -> bool {
 }
 
 fn stack_subsumed_by(cur: &State, old: &State) -> bool {
-    for (_frame_idx, (old_frame, new_frame)) in old.call_stack.iter()
-        .zip(cur.call_stack.iter())
-        .enumerate()
+    for (old_frame, new_frame) in old.frames.iter()
+        .zip(cur.frames.iter())
     {
         let all_offsets: HashSet<i16> = old_frame.stack.slot_offsets().into_iter()
             .chain(new_frame.stack.slot_offsets())
@@ -184,14 +220,34 @@ fn tnum_subsumed_by(cur_state: &State, old_state: &State, live_regs: &HashSet<Re
     for &r in live_regs {
         let cur = cur_state.get_tnum(r);
         let old = old_state.get_tnum(r);
-        // Every unknown bit in cur must also be unknown in old
-        // (old.mask must be a superset of cur.mask)
-        if cur.mask & !old.mask != 0 {
+        if !tnum_covers(&cur, &old) {
             return false;
         }
-        // For bits that are known in both, the values must match
-        let both_known = !cur.mask & !old.mask;
-        if (cur.value & both_known) != (old.value & both_known) {
+    }
+    true
+}
+
+/// Check if old tnum covers cur tnum (old's possible values are a superset of cur's).
+fn tnum_covers(cur: &crate::zone::tnum::Tnum, old: &crate::zone::tnum::Tnum) -> bool {
+    // Every unknown bit in cur must also be unknown in old
+    if cur.mask & !old.mask != 0 {
+        return false;
+    }
+    // For bits that are known in both, the values must match
+    let both_known = !cur.mask & !old.mask;
+    (cur.value & both_known) == (old.value & both_known)
+}
+
+/// Like tnum_subsumed_by but operates on call stack frames instead of full states.
+fn caller_tnum_subsumed_by(
+    cur_frame: &crate::analysis::machine::frame_stack::CallFrame,
+    old_frame: &crate::analysis::machine::frame_stack::CallFrame,
+    regs: &HashSet<Reg>,
+) -> bool {
+    for &r in regs {
+        let cur = cur_frame.caller_tnums.get(&r).copied().unwrap_or(Tnum::UNKNOWN);
+        let old = old_frame.caller_tnums.get(&r).copied().unwrap_or(Tnum::UNKNOWN);
+        if !tnum_covers(&cur, &old) {
             return false;
         }
     }

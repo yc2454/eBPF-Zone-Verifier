@@ -60,8 +60,8 @@ fn find_type_conflict(
     }
 
     // Check stack slots across all frames
-    for (_frame_idx, (old_frame, new_frame)) in old_state.call_stack.iter()
-        .zip(new_state.call_stack.iter())
+    for (_frame_idx, (old_frame, new_frame)) in old_state.frames.iter()
+        .zip(new_state.frames.iter())
         .enumerate()
     {
         // println!("Live regs: {:?}", live_regs);
