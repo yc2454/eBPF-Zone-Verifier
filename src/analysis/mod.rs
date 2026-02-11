@@ -128,8 +128,6 @@ pub fn analyze_program(
         // We output the raw data following the protocol. The Logger filters it.
         if config.verbosity >= 2 {
             state.dbm.pretty_print();
-            println!("Before 000{}", state.pc);
-            state.dbm.dump_matrix_full();
         }
         debug!(target: "app", "|PC:{}| Instr: [[{}]]\nRegs: {:?}\nTnums: {:?}\n", 
                state.pc, instr, state.types.reg_types_str(), state.tnums_to_string());

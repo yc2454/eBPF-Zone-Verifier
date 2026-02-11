@@ -12,7 +12,7 @@ use crate::common::ctx_model;
 use crate::common::mem_region_model;
 use log::{error};
 use RegType::*;
-use crate::zone::domain::{Reg, REG_ENV};
+use crate::zone::domain::{Reg};
 
 /// Validates memory load safety.
 /// Does NOT update the state (types/dbm); that happens in transfer.rs.
@@ -32,16 +32,7 @@ pub fn check_load(
             check_stack_access(env, state, base, offset, off as i64, size, pc, AccessKind::Read, None, frame_level);
         }
         PtrToPacket { id: _, is_base: _, range: _ } => {
-            let (start_ok, end_ok) = check_packet_access_dbm(&state.dbm, base, off as i64, size as i64);
-            if !start_ok || !end_ok {
-                env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
-            }
-            if env.ctx.has_flag(constants::F_LOAD_WITH_STRICT_ALIGNMENT)
-                && !check_packet_alignment(state, base, off, size) 
-            {
-                env.fail(VerificationError::MisalignedPacketAccess { pc, off, size });
-                return;
-            }
+            check_packet_access(env, state, base, off, size, pc, AccessKind::Read);
         }
         PtrToCtx => {
             if !ctx_model::is_valid_ctx_read(ctx.prog_kind, off, size) {
@@ -95,10 +86,7 @@ pub fn check_load(
             env.fail(VerificationError::UnsafeGenericLoad { pc, base, off });
         }
         PtrToPacketMeta { .. } => {
-            let (start_ok, end_ok) = check_meta_access(&state.dbm, base, off as i64, size as i64);
-            if !start_ok || !end_ok {
-                env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
-            }
+            check_packet_meta_access(env, state, base, off, size, pc);
         }
         ScalarValue | NotInit => {
             error!("Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})", pc, base, off, base_type);
@@ -144,10 +132,8 @@ pub fn check_store(
                 env, state, base, offset, off as i64, 
                 size as i64, pc, AccessKind::Write, Some(src_type), frame_level);
         }
-        PtrToPacket { id: _, is_base: _, range } => {
-            println!("ANCHOR DEBUG: AnchorDataMeta - r1 = {}", state.dbm.get(Reg::AnchorDataMeta, base));
-            println!("ANCHOR DEBUG: r1 - AnchorData = {}", state.dbm.get(base, Reg::AnchorData));
-            check_packet_access(env, state, base, off, size, range, pc, AccessKind::Write);
+        PtrToPacket { .. } => {
+            check_packet_access(env, state, base, off, size, pc, AccessKind::Write);
         }
         PtrToMapValueOrNull { map_idx, .. } => {
             error!("Unsafe nullable map store at pc {}", pc);
@@ -427,76 +413,13 @@ pub fn check_packet_access(
     base: Reg,
     off: i16,
     size: i64,
-    range: i64,
     pc: usize,
     kind: AccessKind
 ) {
-    // 0. Check if the program type allows direct packet writes
-    if matches!(kind, AccessKind::Write) && !prog_kind_support_direct_packet_write(env.ctx.prog_kind) {
-        error!("Direct packet store at pc {} is not supported for {:?} program", pc, env.ctx.prog_kind);
-        env.fail(VerificationError::IllegalPacketStore { pc, off, size });
-        return;
+    let (start_ok, end_ok) = check_packet_access_dbm(&state.dbm, base, off as i64, size as i64);
+    if !start_ok || !end_ok {
+        env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
     }
-    // 1. Locate the Packet End register
-    // (Ideally, 'base' should know which packet_id it belongs to, 
-    // avoiding this global search)
-
-    let end_reg_opt = REG_ENV.all().iter()
-        .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacketEnd));
-
-    // 2. Perform START Check (Underflow Protection)
-    // Type system guarantees base >= data (PtrToPacket is only created
-    // by adding non-negative values to data). So if off >= 0, it's trivial.
-    let start_safe = if off >= 0 {
-        true
-    } else {
-        // off < 0: need to verify base - data >= -off via DBM
-        let needed = -(off as i64);
-        REG_ENV.all().iter()
-            .filter(|&&r| matches!(state.types.get(r), RegType::PtrToPacket { is_base: true, .. }))
-            .any(|start_reg| {
-                if let (Some(lower), _) = get_relative_bound(&state.dbm, base, *start_reg) {
-                    lower >= needed
-                } else {
-                    false
-                }
-            })
-    };
-
-    // 3. Perform END Check (Overflow Protection)
-    let mut end_safe = false;
-
-    // 3a. Try the DBM-based check against PtrToPacketEnd register
-    if let Some(end_reg) = end_reg_opt {
-        if let (_, Some(upper)) = get_relative_bound(&state.dbm, base, *end_reg) {
-            let limit = -(off as i64 + size);
-            println!("Packet End Check (DBM): {} <= {}", upper, limit);
-            if upper <= limit {
-                end_safe = true;
-            }
-        }
-    }
-
-    // 3b. Fallback: use the range stamped on the pointer itself
-    if !end_safe {
-        if range > 0 && (off as i64) + size <= range {
-            println!("Packet End Check (range): off({}) + size({}) <= range({})", off, size, range);
-            end_safe = true;
-        }
-    }
-
-    println!("Start Safe: {}, End Safe: {}", start_safe, end_safe);
-
-    // 4. Final Verdict
-    if !(start_safe && end_safe) {
-        if matches!(kind, AccessKind::Read) {
-            env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
-        } else {
-            env.fail(VerificationError::UnsafePacketStore { pc, off, size });
-        }
-        return;
-    }
-
     // 5. Alignment check
     if env.ctx.has_flag(constants::F_LOAD_WITH_STRICT_ALIGNMENT) 
        && !matches!(kind, AccessKind::HelperOutput | AccessKind::HelperArg) 
@@ -504,6 +427,20 @@ pub fn check_packet_access(
     {
         env.fail(VerificationError::MisalignedPacketAccess { pc, off, size });
         return;
+    }
+}
+
+pub fn check_packet_meta_access(
+    env: &mut VerifierEnv,
+    state: &State,
+    base: Reg,
+    off: i16,
+    size: i64,
+    pc: usize,
+) {
+    let (start_ok, end_ok) = check_meta_access(&state.dbm, base, off as i64, size as i64);
+    if !start_ok || !end_ok {
+        env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
     }
 }
 
