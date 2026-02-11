@@ -36,6 +36,12 @@ pub fn check_load(
             if !start_ok || !end_ok {
                 env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
             }
+            if env.ctx.has_flag(constants::F_LOAD_WITH_STRICT_ALIGNMENT)
+                && !check_packet_alignment(state, base, off, size) 
+            {
+                env.fail(VerificationError::MisalignedPacketAccess { pc, off, size });
+                return;
+            }
         }
         PtrToCtx => {
             if !ctx_model::is_valid_ctx_read(ctx.prog_kind, off, size) {
@@ -89,8 +95,6 @@ pub fn check_load(
             env.fail(VerificationError::UnsafeGenericLoad { pc, base, off });
         }
         PtrToPacketMeta { .. } => {
-            println!("ANCHOR DEBUG: AnchorDataMeta - r1 = {}", state.dbm.get(Reg::AnchorData, base));
-            println!("ANCHOR DEBUG: r1 - AnchorData = {}", state.dbm.get(base, Reg::AnchorData));
             let (start_ok, end_ok) = check_meta_access(&state.dbm, base, off as i64, size as i64);
             if !start_ok || !end_ok {
                 env.fail(VerificationError::UnsafePacketLoad { pc, off, size });

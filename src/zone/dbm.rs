@@ -113,7 +113,7 @@ impl Dbm {
 
     pub fn dump_matrix(&self) {
         let vars = REG_ENV.all();
-        let n = self.num_vars();
+        let n = vars.len();
 
         println!("DBM [{} x {}]:", n, n);
 
@@ -137,6 +137,38 @@ impl Dbm {
             println!();
         }
 
+        println!();
+    }
+
+    pub fn dump_matrix_full(&self) {
+        let n = self.num_vars();
+        println!("DBM [{} x {}] (full, with anchors):", n, n);
+
+        // header
+        print!("{:>12} ", "");
+        for j in 0..n {
+            let name = Reg::idx_to_reg(j)
+                .map(|r| r.name())
+                .unwrap_or("???");
+            print!("{:>12} ", name);
+        }
+        println!();
+
+        for i in 0..n {
+            let name = Reg::idx_to_reg(i)
+                .map(|r| r.name())
+                .unwrap_or("???");
+            print!("{:>12} ", name);
+            for j in 0..n {
+                let v = self.data[i][j];
+                if v >= INF {
+                    print!("{:>12} ", "INF");
+                } else {
+                    print!("{:>12} ", v);
+                }
+            }
+            println!();
+        }
         println!();
     }
 
@@ -168,6 +200,43 @@ impl Dbm {
                 let diff_str = if val >= INF || val <= -INF { "INF".to_string() } else { val.to_string() };
                 if diff_str != "INF" {
                     println!("    {} - {} <= {}", i.name(), j.name(), diff_str);
+                }
+            }
+        }
+        let anchors = [
+            Reg::AnchorDataMeta,
+            Reg::AnchorData,
+            Reg::AnchorDataEnd,
+        ];
+
+        let mut has_anchor_info = false;
+        for i in 0..self.dim() {
+            let Some(reg) = Reg::idx_to_reg(i) else { continue };
+            if reg == Reg::Zero || reg.is_anchor() { continue; }
+
+            for &anchor in &anchors {
+                let reg_minus_anchor = self.get(reg, anchor);
+                let anchor_minus_reg = self.get(anchor, reg);
+
+                if reg_minus_anchor < INF || anchor_minus_reg < INF {
+                    if !has_anchor_info {
+                        println!("  Anchor offsets:");
+                        has_anchor_info = true;
+                    }
+                    if reg_minus_anchor < INF && anchor_minus_reg < INF {
+                        // exact or range: -anchor_minus_reg <= reg - anchor <= reg_minus_anchor
+                        let lo = -anchor_minus_reg;
+                        let hi = reg_minus_anchor;
+                        if lo == hi {
+                            println!("    {} - {} == {}", reg.name(), anchor.name(), lo);
+                        } else {
+                            println!("    {} - {} in [{}, {}]", reg.name(), anchor.name(), lo, hi);
+                        }
+                    } else if reg_minus_anchor < INF {
+                        println!("    {} - {} <= {}", reg.name(), anchor.name(), reg_minus_anchor);
+                    } else {
+                        println!("    {} - {} >= {}", reg.name(), anchor.name(), -anchor_minus_reg);
+                    }
                 }
             }
         }

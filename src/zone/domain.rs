@@ -92,9 +92,6 @@ pub fn reg_to_index(r: Reg) -> Option<usize> {
 pub struct RegEnv;
 
 impl RegEnv {
-    pub fn len(&self) -> usize {
-        Reg::ALL.len()
-    }
 
     pub fn all(&self) -> &'static [Reg] {
         &Reg::ALL
