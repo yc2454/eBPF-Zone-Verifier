@@ -7,7 +7,7 @@ use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::transfer::types::update_call_rel_types;
 use crate::ast::{ProgramKind, AttachKind};
-use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, is_zero, nonneg, get_bounds, positive};
+use crate::zone::domain::{self, Reg, assume_ge_const, assume_le_const, forget, get_bounds, is_zero, nonneg, positive};
 use crate::zone::tnum::{Tnum};
 use crate::analysis::transfer::access::{self, AccessKind};
 use crate::parsing::btf::SpecialFieldKind;
@@ -1202,6 +1202,8 @@ pub(crate) fn transfer_call(
                 }
             }
         }
+        state.stack_mut().invalidate_packet_pointers();
+        domain::reset_packet_anchors(&mut state.dbm);
     }
     
     // 5. Advance PC and return

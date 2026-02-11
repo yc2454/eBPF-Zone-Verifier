@@ -619,3 +619,15 @@ pub fn check_meta_access(dbm: &Dbm, base: Reg, off: i64, size: i64) -> (bool, bo
 pub fn check_packet_access_dbm(dbm: &Dbm, base: Reg, off: i64, size: i64) -> (bool, bool) {
     check_region_access(dbm, base, off, size, Reg::AnchorData, Reg::AnchorDataEnd)
 }
+
+pub fn reset_packet_anchors(dbm: &mut Dbm) {
+    for &anchor in &[Reg::AnchorDataMeta, Reg::AnchorData, Reg::AnchorDataEnd] {
+        let i = anchor.idx();
+        let n = dbm.num_vars();
+        for j in 0..n {
+            if i == j { dbm.set_idx(i, j, 0); }
+            else      { dbm.set_idx(i, j, INF); dbm.set_idx(j, i, INF); }
+        }
+    }
+    init_packet_anchors(dbm);
+}
