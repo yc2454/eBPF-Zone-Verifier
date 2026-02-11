@@ -10,13 +10,18 @@
 //   2. Stack slot tracking: Store to [R10+off] defines slot `off`, Load from [R10+off]
 //      uses slot `off`. Helper Calls do NOT affect the caller's stack slots. CallRel
 //      operates on a separate frame and also does not affect the caller's stack slots.
-//   3. Standard backward dataflow with reverse-iteration fixed-point computation.
+//   3. Cross-frame propagation (Phase 2): At each CallRel site, callee-saved registers
+//      (R6-R9) that are live in the caller's continuation (at PC+1) are propagated
+//      into the callee's entry AND throughout the callee body. This ensures the
+//      pruner at any point in the callee can distinguish invocations that differ in
+//      registers the caller depends on after the call returns.
+//   4. Standard backward dataflow with reverse-iteration fixed-point computation.
 
 use crate::ast::{Instr, Operand, Program};
 use crate::zone::domain::Reg;
 use crate::analysis::machine::env::VerifierEnv;
-use crate::analysis::flow::subprog;
-use std::collections::HashSet;
+use crate::analysis::flow::subprog::{self, SubprogInfo};
+use std::collections::{BTreeMap, HashSet};
 
 // ---------- Internal Live-Set Representation ----------
 
@@ -34,19 +39,93 @@ impl LiveSet {
     }
 }
 
+// ---------- Callee-Saved Registers ----------
+
+fn is_callee_saved(r: Reg) -> bool {
+    matches!(r, Reg::R6 | Reg::R7 | Reg::R8 | Reg::R9 | Reg::R10)
+}
+
 // ---------- Public API ----------
 
-/// Computes liveness analysis per-subprogram and populates
-/// `env.insn_aux_data[pc].live_regs` and `env.insn_aux_data[pc].live_slots`.
+/// Computes liveness analysis per-subprogram with cross-frame propagation.
+/// Populates `env.insn_aux_data[pc].live_regs` and `env.insn_aux_data[pc].live_slots`.
 pub fn compute_liveness(prog: &Program, env: &mut VerifierEnv) {
     let subprogs = subprog::analyze_subprograms(&prog.instrs);
 
+    // Phase 1: Compute per-subprogram local liveness.
+    // Each subprogram is analyzed in isolation. CallRel → PC+1 only.
     for (_entry, info) in &subprogs {
         compute_subprog_liveness(prog, env, info.start_pc, info.end_pc);
     }
+
+    // Phase 2: Cross-frame propagation.
+    // For each CallRel, propagate callee-saved registers that are live in the
+    // caller's continuation into the callee's body. Iterate to handle nested calls.
+    propagate_cross_frame_liveness(prog, env, &subprogs);
 }
 
-// ---------- Per-Subprogram Fixed-Point Solver ----------
+// ---------- Phase 2: Cross-Frame Propagation ----------
+
+/// Propagate caller-live callee-saved registers into callees.
+///
+/// For each `CallRel { target }` at PC `c`:
+///   - The caller's continuation is at PC `c+1`.
+///   - `live_regs[c+1]` tells us which registers the caller needs after the call.
+///   - The intersection with callee-saved registers (R6-R9, R10) gives us registers
+///     that pass through the call unchanged AND are needed by the caller.
+///   - These must be added to every instruction in the callee's subprogram so the
+///     pruner can distinguish invocations with different caller contexts.
+///
+/// We iterate until fixed point to handle nested calls (A calls B calls C:
+/// registers live in A's continuation must propagate through B into C).
+fn propagate_cross_frame_liveness(
+    prog: &Program,
+    env: &mut VerifierEnv,
+    subprogs: &BTreeMap<usize, SubprogInfo>,
+) {
+    let mut changed = true;
+
+    while changed {
+        changed = false;
+
+        for (pc, instr) in prog.instrs.iter().enumerate() {
+            if let Instr::CallRel { target } = instr {
+                let return_pc = pc + 1;
+                if return_pc >= prog.instrs.len() {
+                    continue;
+                }
+
+                // Gather callee-saved registers that are live at the return point.
+                let caller_live_at_return = &env.insn_aux_data[return_pc].live_regs;
+                let propagated: HashSet<Reg> = caller_live_at_return
+                    .iter()
+                    .filter(|r| is_callee_saved(**r))
+                    .cloned()
+                    .collect();
+
+                if propagated.is_empty() {
+                    continue;
+                }
+
+                // Find the callee's subprogram boundaries.
+                if let Some(info) = subprogs.get(target) {
+                    // Add propagated registers to EVERY instruction in the callee.
+                    // Since these registers are never def'd or used by the callee,
+                    // they are uniformly live throughout the callee's body.
+                    for callee_pc in info.start_pc..info.end_pc {
+                        for &r in &propagated {
+                            if env.insn_aux_data[callee_pc].live_regs.insert(r) {
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------- Phase 1: Per-Subprogram Fixed-Point Solver ----------
 
 fn compute_subprog_liveness(
     prog: &Program,
@@ -225,7 +304,6 @@ fn get_use_def(instr: &Instr) -> UseDef {
             ud.def_regs.insert(*dst);
             // If loading from stack (R10-based), the slot is "used" (read).
             if *base == Reg::R10 {
-                // Track every byte-aligned sub-slot that this load touches.
                 let byte_count = mem_size_bytes(size);
                 for i in 0..byte_count {
                     ud.use_slots.insert(*off + i as i16);
@@ -262,30 +340,26 @@ fn get_use_def(instr: &Instr) -> UseDef {
 
         Instr::Call { .. } => {
             // Helper calls: use R1-R5 as arguments, clobber R0-R5 on return.
-            // Stack is PRESERVED across helper calls (helpers may read from it
-            // via pointers, but that's handled by the type system, not liveness).
             for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
                 ud.use_regs.insert(r);
             }
             for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
                 ud.def_regs.insert(r);
             }
-            // No stack slot use/def — helpers don't directly touch the BPF stack
-            // in a way that liveness needs to model.
         }
 
         Instr::CallRel { .. } => {
             // BPF-to-BPF call: same register convention as helper calls.
             // The callee operates in its OWN stack frame; the caller's stack
             // slots are unaffected. Callee-saved registers (R6-R9) are preserved
-            // by convention but NOT modeled as defs here — they pass through.
+            // by convention — they are NOT listed as defs so they pass through
+            // in the liveness analysis.
             for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
                 ud.use_regs.insert(r);
             }
             for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
                 ud.def_regs.insert(r);
             }
-            // No stack slot use/def — callee has a separate frame.
         }
 
         Instr::Exit => {

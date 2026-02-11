@@ -3,13 +3,15 @@
 // State pruning: determines whether a new state is already covered by a
 // previously explored state, so the verifier can skip redundant paths.
 //
-// Changes from previous version:
-//   - stack_subsumed_by now takes `live_slots` and only compares slots that are
-//     actually live (read downstream).
-//   - For live slots, it checks BOTH type subsumption AND scalar bounds subsumption.
-//     This prevents pruning when two paths spill different scalar values to the same
-//     stack slot (e.g., Test 2: value 0 vs value 1 at [R10-16]).
-//   - dbm_subsumed_by loop fix: was using `return` instead of `continue`.
+// Key fixes:
+//   - Scalar bounds for live registers are ALWAYS compared via the DBM, even when
+//     `skip_dbm_check` is true. Without this, two states with the same register type
+//     (ScalarValue) but different values (0 vs 1) would be incorrectly considered
+//     equivalent. `skip_dbm_check` now only gates the relational constraint check
+//     (future enhancement), not the per-register simple bounds comparison.
+//   - `stack_subsumed_by` uses `live_slots` to only compare live stack slots, and
+//     checks both type AND scalar bounds for spilled values.
+//   - `dbm_subsumed_by` loop fix: was `return` instead of short-circuit.
 
 use std::collections::HashSet;
 
@@ -65,23 +67,25 @@ fn state_subsumed_by(
     old: &State,
     live_regs: &HashSet<Reg>,
     live_slots: &HashSet<i16>,
-    config: &VerifierConfig,
+    _config: &VerifierConfig,
 ) -> bool {
     // 1. Register types (only live registers)
     if !types_subsumed_by(&cur.types, &old.types, live_regs) {
         return false;
     }
 
-    // 2. Stack (only live slots — type + value)
-    if !stack_subsumed_by(cur, old, live_slots) {
+    // 2. Scalar bounds for live registers — ALWAYS checked.
+    //    This is essential: two ScalarValue registers with different value ranges
+    //    (e.g., R8=[0,0] vs R8=[1,1]) must NOT be pruned. Type-only comparison
+    //    can't distinguish them. The per-register bounds check from the DBM is
+    //    the minimum necessary comparison for sound pruning.
+    if !scalar_bounds_subsumed_by(&cur.dbm, &old.dbm, live_regs) {
         return false;
     }
 
-    // 3. DBM (numerical bounds for live registers)
-    if !config.skip_dbm_check {
-        if !dbm_subsumed_by(&cur.dbm, &old.dbm, live_regs) {
-            return false;
-        }
+    // 3. Stack (only live slots — type + spilled value)
+    if !stack_subsumed_by(cur, old, live_slots) {
+        return false;
     }
 
     true
@@ -160,14 +164,22 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
     }
 }
 
-// ---------- DBM (Numerical Bounds) Subsumption ----------
+// ---------- Scalar Bounds Subsumption ----------
 
-/// Check if cur DBM is subsumed by old DBM (only for live registers).
-fn dbm_subsumed_by(cur: &Dbm, old: &Dbm, live_regs: &HashSet<Reg>) -> bool {
+/// Check per-register scalar bounds for all live registers.
+/// old's range must contain cur's range for each live register.
+///
+/// This is ALWAYS performed regardless of `skip_dbm_check`. The skip flag
+/// should only gate expensive relational constraint comparisons (future),
+/// not the per-register bounds that are essential for soundness.
+fn scalar_bounds_subsumed_by(
+    cur: &Dbm,
+    old: &Dbm,
+    live_regs: &HashSet<Reg>,
+) -> bool {
     for &r in live_regs {
         let (old_min, old_max) = get_simple_bounds(old, r);
         let (cur_min, cur_max) = get_simple_bounds(cur, r);
-        // FIX: was `return` — must check ALL live regs, not just the first.
         if !(old_min <= cur_min && old_max >= cur_max) {
             return false;
         }
@@ -183,9 +195,6 @@ fn dbm_subsumed_by(cur: &Dbm, old: &Dbm, live_regs: &HashSet<Reg>) -> bool {
 /// For each live slot, checks both:
 ///   1. Type subsumption (e.g., PtrToMapValue vs ScalarValue)
 ///   2. Scalar bounds subsumption (old's range must cover cur's range)
-///
-/// This prevents pruning when two paths spill different scalar values
-/// to the same live slot (the key fix for the "search pruning" test).
 fn stack_subsumed_by(
     cur: &State,
     old: &State,
@@ -201,12 +210,11 @@ fn stack_subsumed_by(
         .enumerate()
     {
         // For the current (top) frame, use liveness-guided comparison.
-        // For caller frames saved on the call stack, we need to compare all
+        // For caller frames saved on the call stack, we compare all
         // occupied slots since we don't have per-frame liveness for saved frames.
         let is_current_frame = frame_idx == cur.call_stack.len() - 1;
 
         if is_current_frame {
-            // Only compare live slots
             for &offset in live_slots {
                 if !spilled_slot_subsumed(
                     cur_frame.stack.get_slot(offset),
@@ -235,35 +243,19 @@ fn stack_subsumed_by(
 }
 
 /// Check if a single spilled slot in cur is subsumed by the corresponding slot in old.
-///
-/// For subsumption to hold:
-///   - Types must be compatible (via type_subsumed_by)
-///   - For scalar slots, old's bounds must cover cur's bounds (wider range = more general)
-///   - For pointer slots, the types already encode the relevant info
 fn spilled_slot_subsumed(
     cur_slot: Option<&SpilledReg>,
     old_slot: Option<&SpilledReg>,
 ) -> bool {
     match (old_slot, cur_slot) {
-        // Both uninitialized — trivially subsumed
         (None, None) => true,
-
-        // Old has data, cur is uninitialized — cur is "less defined", subsumed
         (Some(_), None) => true,
-
-        // Old is uninitialized but cur has data — NOT subsumed.
-        // The old state would treat this as uninitialized, but cur's path
-        // depends on the spilled value. Cannot prune.
         (None, Some(_)) => false,
-
-        // Both initialized — compare type and value
         (Some(old_spill), Some(cur_spill)) => {
-            // 1. Type must be subsumed
             if !type_subsumed_by(&cur_spill.reg_type, &old_spill.reg_type) {
                 return false;
             }
-
-            // 2. For scalar values, bounds must be subsumed (old covers cur)
+            // For scalar values, bounds must be subsumed
             if matches!(old_spill.reg_type, RegType::ScalarValue)
                 && matches!(cur_spill.reg_type, RegType::ScalarValue)
             {
@@ -273,7 +265,6 @@ fn spilled_slot_subsumed(
                     return false;
                 }
             }
-
             true
         }
     }
