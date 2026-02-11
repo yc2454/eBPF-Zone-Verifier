@@ -418,6 +418,10 @@ fn handle_mov(
                     assume_le_const(&mut state.dbm, dst, 0xFFFFFFFF);
                 }
             } else {
+                // We can skip if src and dst are the same
+                if *r == dst {
+                    return;
+                }
                 if *r == Reg::R10 {
                     assign_zero(&mut state.dbm, dst);
                 } else {

@@ -39,8 +39,6 @@ impl LiveSet {
     }
 }
 
-// ---------- Callee-Saved Registers ----------
-
 fn is_callee_saved(r: Reg) -> bool {
     matches!(r, Reg::R6 | Reg::R7 | Reg::R8 | Reg::R9 | Reg::R10)
 }
@@ -270,16 +268,27 @@ fn get_use_def(instr: &Instr) -> UseDef {
 
         Instr::Alu { op, dst, src, .. } => {
             use crate::ast::AluOp;
-            if matches!(op, AluOp::Mov) {
+            // `Mov X, X` is a NOP — no use, no def for liveness purposes.
+            // Without this, `Mov R0, R0` would make R0 live even though its
+            // value is unchanged, preventing valid pruning at merge points.
+            let is_self_mov = matches!(op, AluOp::Mov)
+                && matches!(src, Operand::Reg(r) if *r == *dst);
+
+            if is_self_mov {
+                // Skip — NOP
+            } else if matches!(op, AluOp::Mov) {
                 // Mov overwrites dst completely
                 ud.def_regs.insert(*dst);
+                if let Operand::Reg(r) = src {
+                    ud.use_regs.insert(*r);
+                }
             } else {
                 // Other ALU ops read-then-write dst
                 ud.use_regs.insert(*dst);
                 ud.def_regs.insert(*dst);
-            }
-            if let Operand::Reg(r) = src {
-                ud.use_regs.insert(*r);
+                if let Operand::Reg(r) = src {
+                    ud.use_regs.insert(*r);
+                }
             }
         }
 
@@ -304,7 +313,7 @@ fn get_use_def(instr: &Instr) -> UseDef {
             ud.def_regs.insert(*dst);
             // If loading from stack (R10-based), the slot is "used" (read).
             if *base == Reg::R10 {
-                let byte_count = mem_size_bytes(size);
+                let byte_count = size.bytes();
                 for i in 0..byte_count {
                     ud.use_slots.insert(*off + i as i16);
                 }
@@ -318,7 +327,7 @@ fn get_use_def(instr: &Instr) -> UseDef {
             }
             // If storing to stack (R10-based), the slot is "defined" (written).
             if *base == Reg::R10 {
-                let byte_count = mem_size_bytes(size);
+                let byte_count = size.bytes();
                 for i in 0..byte_count {
                     ud.def_slots.insert(*off + i as i16);
                 }
@@ -330,7 +339,7 @@ fn get_use_def(instr: &Instr) -> UseDef {
             ud.use_regs.insert(*src);
             // Atomic ops read-modify-write the memory location.
             if *base == Reg::R10 {
-                let byte_count = mem_size_bytes(size);
+                let byte_count = size.bytes();
                 for i in 0..byte_count {
                     ud.use_slots.insert(*off + i as i16);
                     ud.def_slots.insert(*off + i as i16);
@@ -379,16 +388,4 @@ fn get_use_def(instr: &Instr) -> UseDef {
     }
 
     ud
-}
-
-// ---------- Utilities ----------
-
-fn mem_size_bytes(size: &crate::ast::MemSize) -> u8 {
-    use crate::ast::MemSize;
-    match size {
-        MemSize::U8 => 1,
-        MemSize::U16 => 2,
-        MemSize::U32 => 4,
-        MemSize::U64 => 8,
-    }
 }
