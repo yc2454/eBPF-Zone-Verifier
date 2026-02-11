@@ -11,7 +11,7 @@ use crate::analysis::machine::env::VerificationError;
 use crate::common::constants;
 use crate::common::ctx_model;
 use crate::common::mem_region_model;
-use log::{error};
+use log::{error, debug};
 use RegType::*;
 use crate::zone::domain::{Reg};
 
@@ -424,6 +424,8 @@ pub fn check_packet_access(
     }
 
     let (start_ok, end_ok) = check_packet_access_dbm(&state.dbm, base, off as i64, size as i64);
+    debug!("Packet access check at pc {}: base {} offset {} size {} => start_ok {}, end_ok {}", 
+        pc, base.name(), off, size, start_ok, end_ok);
     if !start_ok || !end_ok {
         env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
     }

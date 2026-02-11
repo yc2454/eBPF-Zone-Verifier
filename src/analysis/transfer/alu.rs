@@ -7,12 +7,7 @@ use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType, TypeState };
 use crate::ast::{AluOp, Operand, Width};
 use crate::zone::domain::{
-    REG_ENV, Reg, assign_add_imm, assign_add_reg, 
-    assign_and_mask, assign_div_imm, assign_div_reg, 
-    assign_eq, assign_mul_imm, assign_neg, assign_sub_reg, 
-    assign_zero, assume_eq_const, assume_ge_const, assume_le_const, 
-    bit_and_const, forget, get_bounds, get_constant_value, 
-    get_relative_bound, link_regs_with_offset, set_bounds
+    REG_ENV, Reg, assign_add_imm, assign_add_reg, assign_and_mask, assign_div_imm, assign_div_reg, assign_eq, assign_mul_imm, assign_neg, assign_sub_reg, assign_zero, assume_eq_const, assume_ge_const, assume_le_const, bind_to_anchor, bit_and_const, forget, get_bounds, get_constant_value, get_relative_bound, link_regs_with_offset, set_bounds
 };
 use crate::zone::dbm::{Dbm, INF};
 use crate::zone::tnum::Tnum;
@@ -86,7 +81,19 @@ pub(crate) fn transfer_alu(
         AluOp::Xor => handle_xor(&mut state, width, dst, &src),
     }
 
+    let old_dst_type = state.types.get(dst);
+
     update_alu_types(env, &in_types, &mut state.types, &state.dbm, width, op, dst, &src, state.pc);
+
+    let new_dst_type = state.types.get(dst);
+    if old_dst_type != new_dst_type {
+        match new_dst_type {
+            RegType::PtrToPacket => bind_to_anchor(&mut state.dbm, dst, Reg::AnchorData),
+            RegType::PtrToPacketMeta => bind_to_anchor(&mut state.dbm, dst, Reg::AnchorDataMeta),
+            RegType::PtrToPacketEnd => bind_to_anchor(&mut state.dbm, dst, Reg::AnchorDataEnd),
+            _ => {}
+        }
+    }
 
     if state.dbm.is_inconsistent() {
         env.fail(VerificationError::DbmInconsistent { pc: state.pc });

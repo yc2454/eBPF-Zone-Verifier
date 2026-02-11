@@ -14,7 +14,7 @@ use crate::common::ctx_model::{
 use crate::common::constants;
 use crate::zone::dbm::{Dbm, INF};
 
-fn update_packet_ptr_type_after_add(
+fn update_packet_ptr_type_after_alu(
     types: &mut TypeState,
     dbm: &Dbm,
     dst: Reg,
@@ -97,15 +97,18 @@ pub(crate) fn update_alu_types(
                             types.set(dst, RegType::PtrToMapValue { offset: None, map_idx, id });
                         }
                     },
-                    (RegType::PtrToPacket, Operand::Imm(_)) => {
-                        update_packet_ptr_type_after_add(types, dbm, dst);
+                    (RegType::PtrToPacket, Operand::Imm(k)) => {
+                        if *k >= constants::MAX_PACKET_OFF {
+                            types.set(dst, RegType::ScalarValue);
+                        }
                     },
                     (RegType::PtrToPacket, Operand::Reg(r)) => {
                         let const_value_op = domain::get_constant_value(dbm, *r);
                         if const_value_op.is_some() {
-                            update_packet_ptr_type_after_add(types, dbm, dst);
-                        } else {
-                            types.set(dst, RegType::PtrToPacket);
+                            let val_to_add = const_value_op.unwrap();
+                            if val_to_add >= constants::MAX_PACKET_OFF {
+                                types.set(dst, RegType::ScalarValue);
+                            }
                         }
                     }
                     (RegType::PtrToPacketMeta, Operand::Imm(_)) | 
@@ -170,7 +173,7 @@ pub(crate) fn update_alu_types(
                         }
                     },
                     (RegType::PtrToPacket, Operand::Imm(_)) => {
-                        update_packet_ptr_type_after_add(types, dbm, dst);
+                        update_packet_ptr_type_after_alu(types, dbm, dst);
                     },
                     (RegType::PtrToPacketMeta, Operand::Imm(_)) | 
                     (RegType::PtrToPacketMeta, Operand::Reg(_)) => {
