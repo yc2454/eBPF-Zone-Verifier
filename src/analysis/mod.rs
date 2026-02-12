@@ -5,9 +5,10 @@ pub mod machine;
 pub mod flow;
 
 use std::collections::VecDeque;
+use crate::analysis::machine::frame_stack::FrameLevel;
 use crate::ast::Program;
 use crate::zone::dbm::Dbm;
-use crate::zone::domain::{REG_ENV, Reg};
+use crate::zone::domain::{Reg, init_packet_anchors};
 use log::{debug, error, info};
 
 use self::machine::context::ExecContext;
@@ -53,7 +54,8 @@ pub fn analyze_program(
     // 2. Initialize Entry State
     let mut initial_state = State::new(entry_dbm, 0);
     initial_state.types.set(Reg::R1, RegType::PtrToCtx);
-    initial_state.types.set(Reg::R10, RegType::PtrToStack { offset: Some(0), frame_level: 0 });
+    initial_state.types.set(Reg::R10, RegType::PtrToStack { offset: Some(0), frame_level: FrameLevel::MAIN });
+    init_packet_anchors(&mut initial_state.dbm);
 
     // 3. Setup Worklist
     let mut worklist = VecDeque::new();
@@ -132,7 +134,7 @@ pub fn analyze_program(
                state.pc, instr, state.types.reg_types_str(), state.tnums_to_string());
         // debug!(target: "app", "|PC:{}| Instr: [[{}]]\n", 
         //        state.pc, instr);
-        // for cf in state.call_stack.iter() {
+        // for cf in state.frames.iter() {
         //     println!("{}: {}", cf, cf.stack);
         // }
 
@@ -191,10 +193,10 @@ pub fn analyze_program(
             if !states.is_empty() {
                 results.push(states[0].dbm.clone());
             } else {
-                results.push(Dbm::new(REG_ENV.len()));
+                results.push(Dbm::new());
             }
         } else {
-            results.push(Dbm::new(REG_ENV.len()));
+            results.push(Dbm::new());
         }
     }
 

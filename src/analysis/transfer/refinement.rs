@@ -6,7 +6,6 @@ use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType};
 use crate::ast::{Instr, CmpOp, Operand};
 use crate::zone::domain::Reg;
-use crate::zone::dbm::{INF};
 
 /// Promote a pointer type across all stack frames by ref/ptr id.
 /// `should_promote` checks if a slot's type matches, `promote` returns the new type.
@@ -15,59 +14,15 @@ fn promote_stack_slots_all_frames(
     should_promote: impl Fn(&RegType) -> bool,
     promote: impl Fn(&RegType) -> RegType,
 ) {
-    for frame_idx in 0..state.num_frames() {
-        for k in state.stack_at(frame_idx).slot_offsets() {
-            let ty = state.stack_at(frame_idx).get_slot_type(k);
+    for frame in state.frames.iter_mut() {
+        let offsets: Vec<i16> = frame.stack.slot_offsets();
+        for k in offsets {
+            let ty = frame.stack.get_slot_type(k);
             if should_promote(&ty) {
-                state.stack_at_mut(frame_idx).set_slot_type(k, promote(&ty), None);
+                frame.stack.set_slot_type(k, promote(&ty), None);
             }
         }
     }
-}
-
-pub(crate) fn refine_packet_ranges(state: &mut State, pkt_reg: Reg, end_reg: Reg) {
-    // Determine which register is PtrToPacket and which is PtrToPacketEnd
-    let target_id = match (state.types.get(pkt_reg), state.types.get(end_reg)) {
-        (RegType::PtrToPacket { id, .. }, RegType::PtrToPacketEnd) => id,
-        (RegType::PtrToPacketEnd, RegType::PtrToPacket { .. }) => {
-            // Swap: recurse with correct argument order
-            return refine_packet_ranges(state, end_reg, pkt_reg);
-        }
-        _ => return,
-    };
-
-    // Update all PtrToPacket registers with matching id
-    for r in Reg::ALL {
-        if let RegType::PtrToPacket { id, is_base, range } = state.types.get(r) {
-            if id == target_id {
-                let dist = state.dbm.get(r, end_reg);
-                if dist < INF && dist <= 0 {
-                    let safe_bytes = dist.unsigned_abs() as i64;
-                    if safe_bytes > range {
-                        state.types.set(r, RegType::PtrToPacket { id, is_base, range: safe_bytes });
-                    }
-                }
-            }
-        }
-    }
-
-    // Also update stack slots with matching id
-    let max_range = Reg::ALL.iter()
-        .filter_map(|&r| match state.types.get(r) {
-            RegType::PtrToPacket { id: rid, range, .. } if rid == target_id => Some(range),
-            _ => None,
-        })
-        .max()
-        .unwrap_or(0);
-
-    promote_stack_slots_all_frames(state,
-        |ty| matches!(ty, RegType::PtrToPacket { id, range, .. } if *id == target_id && max_range > *range),
-        |ty| match ty {
-            RegType::PtrToPacket { id, is_base, .. } => 
-                RegType::PtrToPacket { id: *id, is_base: *is_base, range: max_range },
-            _ => unreachable!(),
-        },
-    );
 }
 
 /// Refines register types based on the outcome of a conditional branch.

@@ -494,7 +494,7 @@ fn build_exec_context(test: &JsonTestCase) -> (crate::analysis::machine::context
 // ============================================================================
 
 fn make_entry_state() -> Dbm {
-    let mut dbm = Dbm::new(REG_ENV.len());
+    let mut dbm = Dbm::new();
     assign_zero(&mut dbm, Reg::R10);
     dbm
 }

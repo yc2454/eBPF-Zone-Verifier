@@ -1,5 +1,6 @@
 // src/analysis/reg_types.rs
 use crate::zone::domain::Reg;
+use crate::analysis::machine::frame_stack::FrameLevel;
 
 pub const NUM_REGS: usize = 11; 
 
@@ -8,14 +9,10 @@ pub enum RegType {
     NotInit,        
     ScalarValue,    
     PtrToCtx,       
-    PtrToStack { offset: Option<i64>, frame_level: usize },  
-    PtrToPacket { 
-        id: u32,
-        is_base: bool,
-        range: i64,
-    },    
+    PtrToStack { offset: Option<i64>, frame_level: FrameLevel },  
+    PtrToPacket,    
     PtrToPacketEnd, 
-    PtrToPacketMeta { is_base: bool },         
+    PtrToPacketMeta,         
     PtrToMapObject { map_idx: usize }, 
     PtrToMapValueOrNull { id: u32, map_idx: usize }, 
     PtrToMapValue { id: u32, offset: Option<i64>, map_idx: usize },
@@ -103,6 +100,10 @@ impl RegType {
         }
     }
 
+    pub fn is_packet_ptr(&self) -> bool {
+        matches!(self, RegType::PtrToPacket | RegType::PtrToPacketEnd | RegType::PtrToPacketMeta)
+    }
+
     /// Returns the ref_id if this type holds a reference
     pub fn get_ref_id(&self) -> Option<u32> {
         match *self {
@@ -129,6 +130,26 @@ pub fn new_ref_id() -> u32 {
     use std::sync::atomic::{AtomicU32, Ordering};
     static REF_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
     REF_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
+}
+
+/// Classify types into families. Pointer and pointer-or-null variants
+/// of the same kind share a family (e.g. PtrToMapValue and PtrToMapValueOrNull).
+pub fn type_family(ty: &RegType) -> u8 {
+    use RegType::*;
+    match ty {
+        NotInit                                          => 0,
+        ScalarValue                                      => 1,
+        PtrToCtx                                         => 2,
+        PtrToStack { .. }                                => 3,
+        PtrToMapValue { .. } | PtrToMapValueOrNull { .. } => 4,
+        PtrToMapObject { .. }                            => 5,
+        PtrToPacket { .. }                               => 6,
+        PtrToPacketEnd                                   => 7,
+        PtrToPacketMeta                                  => 8,
+        PtrToSocket { .. } | PtrToSocketOrNull { .. }    => 9,
+        PtrToSockCommon { .. } | PtrToSockCommonOrNull { .. } => 10,
+        PtrToTcpSock { .. } | PtrToTcpSockOrNull { .. }  => 11,
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -163,5 +184,11 @@ impl TypeState {
             s.push_str(&format!("R{}: {:?} ", i, ty));
         }
         s
+    }
+}
+
+impl Default for TypeState {
+    fn default() -> Self {
+        Self::new_not_init()
     }
 }

@@ -6,7 +6,7 @@ use crate::analysis::machine::env::{VerifierEnv, VerificationError};
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType};
 use crate::ast::{Operand, MemSize, AtomicOp};
-use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, assume_eq_const};
+use crate::zone::domain::{Reg, assume_eq_const, assume_ge_const, assume_le_const, bind_to_anchor, forget};
 use crate::zone::tnum::Tnum;
 use crate::analysis::transfer::access;
 
@@ -68,6 +68,20 @@ pub(crate) fn transfer_load(
             assume_le_const(&mut state.dbm, dst, 0xFFFFFFFF);
         }
         MemSize::U64 => {}
+    }
+
+    // Bind dst reg to packet anchors if it's one of the packet pointers
+    match state.types.get(dst) {
+        RegType::PtrToPacket { .. } => {
+            bind_to_anchor(&mut state.dbm, dst, Reg::AnchorData);
+        },
+        RegType::PtrToPacketMeta { .. } => {
+            bind_to_anchor(&mut state.dbm, dst, Reg::AnchorDataMeta);
+        },
+        RegType::PtrToPacketEnd { .. } => {
+            bind_to_anchor(&mut state.dbm, dst, Reg::AnchorDataEnd);
+        },
+        _ => {}
     }
 
     state.set_tnum(dst, Tnum::unknown());

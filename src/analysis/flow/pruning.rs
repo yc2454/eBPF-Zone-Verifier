@@ -22,6 +22,7 @@ use crate::analysis::machine::state::State;
 use crate::common::config::VerifierConfig;
 use crate::zone::dbm::Dbm;
 use crate::zone::domain::{Reg, get_simple_bounds};
+use crate::zone::tnum::Tnum;
 
 /// Check if we should prune this state (already covered by a previous exploration).
 pub fn should_prune(
@@ -61,6 +62,12 @@ pub fn should_prune(
     false
 }
 
+/// Callee-saved registers that persist across calls and affect
+/// post-return control flow. Must be checked in caller frames.
+fn callee_saved_regs() -> HashSet<Reg> {
+    [Reg::R6, Reg::R7, Reg::R8, Reg::R9].into_iter().collect()
+}
+
 /// Check if `cur` is subsumed by `old` (old covers all behaviors of cur).
 fn state_subsumed_by(
     cur: &State,
@@ -69,23 +76,49 @@ fn state_subsumed_by(
     live_slots: &HashSet<i16>,
     _config: &VerifierConfig,
 ) -> bool {
-    // 1. Register types (only live registers)
-    if !types_subsumed_by(&cur.types, &old.types, live_regs) {
-        return false;
+    // Check current frame
+    if config.skip_dbm_check {
+        println!("Pruning check (skip DBM): type: {}, Stack: {}", 
+            types_subsumed_by(&cur.types, &old.types, live_regs),
+            stack_subsumed_by(cur, old));
+        if !(types_subsumed_by(&cur.types, &old.types, live_regs)
+            && stack_subsumed_by(cur, old)
+            && tnum_subsumed_by(cur, old, live_regs))
+        {
+            return false;
+        }
+    } else {
+        println!("Pruning check: type: {}, Stack: {}", 
+            types_subsumed_by(&cur.types, &old.types, live_regs),
+            stack_subsumed_by(cur, old));
+        if !(types_subsumed_by(&cur.types, &old.types, live_regs)
+            && dbm_subsumed_by(&cur.dbm, &old.dbm, live_regs)
+            && stack_subsumed_by(cur, old)
+            && tnum_subsumed_by(cur, old, live_regs))
+        {
+            return false;
+        }
     }
 
-    // 2. Scalar bounds for live registers — ALWAYS checked.
-    //    This is essential: two ScalarValue registers with different value ranges
-    //    (e.g., R8=[0,0] vs R8=[1,1]) must NOT be pruned. Type-only comparison
-    //    can't distinguish them. The per-register bounds check from the DBM is
-    //    the minimum necessary comparison for sound pruning.
-    if !scalar_bounds_subsumed_by(&cur.dbm, &old.dbm, live_regs) {
-        return false;
-    }
-
-    // 3. Stack (only live slots — type + spilled value)
-    if !stack_subsumed_by(cur, old, live_slots) {
-        return false;
+    // Check caller frames: callee-saved registers (r6-r9) persist across
+    // calls and determine post-return control flow. Without this check,
+    // two states that differ only in caller-frame r6-r9 values get pruned
+    // against each other, hiding bugs that manifest after return.
+    let saved = callee_saved_regs();
+    for (cur_frame, old_frame) in cur.frames.iter()
+        .zip(old.frames.iter())
+    {
+        if !types_subsumed_by(&cur_frame.caller_types, &old_frame.caller_types, &saved) {
+            return false;
+        }
+        if !config.skip_dbm_check {
+            if !dbm_subsumed_by(&cur_frame.caller_dbm, &old_frame.caller_dbm, &saved) {
+                return false;
+            }
+        }
+        if !caller_tnum_subsumed_by(cur_frame, old_frame, &saved) {
+            return false;
+        }
     }
 
     true
@@ -119,7 +152,7 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
         (PtrToPacketEnd, PtrToPacketEnd) => true,
 
         // Anything subsumes NotInit
-        (_, NotInit) => true,
+        (NotInit, _) => true,
 
         // Packet pointers: old must have <= range (weaker guarantee).
         // A larger range means "more bytes proven safe" — that's MORE specific.
@@ -127,9 +160,9 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
         // then cur with a larger range (stronger conditions) is also safe.
         // old_range <= cur_range ensures old is at least as abstract as cur.
         (
-            PtrToPacket { is_base: b1, range: old_range, .. },
-            PtrToPacket { is_base: b2, range: cur_range, .. },
-        ) => b1 == b2 && old_range <= cur_range,
+            PtrToPacket,
+            PtrToPacket,
+        ) => true,
 
         // Map value pointers
         (
@@ -191,27 +224,9 @@ fn scalar_bounds_subsumed_by(
     true
 }
 
-// ---------- Stack Subsumption ----------
-
-/// Check if cur's stack is subsumed by old's stack.
-///
-/// Only compares stack slots that are LIVE at this program point.
-/// For each live slot, checks both:
-///   1. Type subsumption (e.g., PtrToMapValue vs ScalarValue)
-///   2. Scalar bounds subsumption (old's range must cover cur's range)
-fn stack_subsumed_by(
-    cur: &State,
-    old: &State,
-    live_slots: &HashSet<i16>,
-) -> bool {
-    // Must have the same call depth
-    if cur.call_stack.len() != old.call_stack.len() {
-        return false;
-    }
-
-    for (frame_idx, (old_frame, cur_frame)) in old.call_stack.iter()
-        .zip(cur.call_stack.iter())
-        .enumerate()
+fn stack_subsumed_by(cur: &State, old: &State) -> bool {
+    for (old_frame, new_frame) in old.frames.iter()
+        .zip(cur.frames.iter())
     {
         // For the current (top) frame, use liveness-guided comparison.
         // For caller frames saved on the call stack, we compare all
@@ -246,30 +261,40 @@ fn stack_subsumed_by(
     true
 }
 
-/// Check if a single spilled slot in cur is subsumed by the corresponding slot in old.
-fn spilled_slot_subsumed(
-    cur_slot: Option<&SpilledReg>,
-    old_slot: Option<&SpilledReg>,
-) -> bool {
-    match (old_slot, cur_slot) {
-        (None, None) => true,
-        (Some(_), None) => true,
-        (None, Some(_)) => false,
-        (Some(old_spill), Some(cur_spill)) => {
-            if !type_subsumed_by(&cur_spill.reg_type, &old_spill.reg_type) {
-                return false;
-            }
-            // For scalar values, bounds must be subsumed
-            if matches!(old_spill.reg_type, RegType::ScalarValue)
-                && matches!(cur_spill.reg_type, RegType::ScalarValue)
-            {
-                if !(old_spill.bounds.min <= cur_spill.bounds.min
-                    && old_spill.bounds.max >= cur_spill.bounds.max)
-                {
-                    return false;
-                }
-            }
-            true
+fn tnum_subsumed_by(cur_state: &State, old_state: &State, live_regs: &HashSet<Reg>) -> bool {
+    for &r in live_regs {
+        let cur = cur_state.get_tnum(r);
+        let old = old_state.get_tnum(r);
+        if !tnum_covers(&cur, &old) {
+            return false;
         }
     }
+    true
+}
+
+/// Check if old tnum covers cur tnum (old's possible values are a superset of cur's).
+fn tnum_covers(cur: &crate::zone::tnum::Tnum, old: &crate::zone::tnum::Tnum) -> bool {
+    // Every unknown bit in cur must also be unknown in old
+    if cur.mask & !old.mask != 0 {
+        return false;
+    }
+    // For bits that are known in both, the values must match
+    let both_known = !cur.mask & !old.mask;
+    (cur.value & both_known) == (old.value & both_known)
+}
+
+/// Like tnum_subsumed_by but operates on call stack frames instead of full states.
+fn caller_tnum_subsumed_by(
+    cur_frame: &crate::analysis::machine::frame_stack::CallFrame,
+    old_frame: &crate::analysis::machine::frame_stack::CallFrame,
+    regs: &HashSet<Reg>,
+) -> bool {
+    for &r in regs {
+        let cur = cur_frame.caller_tnums.get(&r).copied().unwrap_or(Tnum::UNKNOWN);
+        let old = old_frame.caller_tnums.get(&r).copied().unwrap_or(Tnum::UNKNOWN);
+        if !tnum_covers(&cur, &old) {
+            return false;
+        }
+    }
+    true
 }

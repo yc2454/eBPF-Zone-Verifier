@@ -18,8 +18,10 @@ use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::RegType;
 use crate::ast::{EndianOp, Instr, Width};
-use crate::zone::domain::{Reg, forget, assign_and_mask, bit_and_const, get_bounds};
-use crate::analysis::transfer::common::check_reg_readable;
+use crate::zone::domain::{Reg, 
+    forget, assign_and_mask, bit_and_const, get_bounds,
+    get_simple_bounds, set_bounds, preserve_anchor_constraints
+};
 use crate::analysis::machine::env::VerificationError;
 
 /// Main transfer function - dispatches to appropriate handler based on instruction type.
@@ -159,13 +161,13 @@ fn transfer_exit(
     }
 
     // R0 must be readable at the main frame (it's the return value)
-    if state.at_last_call_frame() && state.types.get(Reg::R0) == RegType::NotInit {
+    if state.at_main_frame() && state.types.get(Reg::R0) == RegType::NotInit {
         env.fail(VerificationError::RegisterNotReadable { pc, reg: Reg::R0 });
         return vec![];
     }
 
     // Check if there is any released reference
-    if state.at_last_call_frame() && state.has_unreleased_refs() {
+    if state.at_main_frame() && state.has_unreleased_refs() {
         println!("Unreleased reference: {:?}", state.active_refs);
         env.fail(VerificationError::UnreleasedReference);
         return vec![];
@@ -177,21 +179,43 @@ fn transfer_exit(
         return vec![];
     }
 
-    if state.stack_frame_count() >= 8 {
+    if state.num_frames() >= 8 {
         env.fail(VerificationError::MaxCallDepthExceeded { pc: state.pc });
         return vec![];
     }
     
-    if !state.at_last_call_frame() {
+    if !state.at_main_frame() {
         if matches!(state.types.get(Reg::R0), RegType::PtrToStack { .. }) {
             env.fail(VerificationError::CannotReturnStackPointer { pc: state.pc });
             return vec![];
         }
     }
 
-    if let Some(return_pc) = state.pop_frame() {
-        // Returning from subfunction — continue at caller's return site
-        // R0 retains its current type (the actual return value)
+    if let Some(frame) = state.pop_frame() {
+        // Save callee's R0 (the return value) before restoring caller state
+        let ret_type = state.types.get(Reg::R0);
+        let ret_tnum = state.get_tnum(Reg::R0);
+        let ret_bounds = get_simple_bounds(&state.dbm, Reg::R0);
+
+        // Save callee's anchor constraints before overwriting
+        let callee_dbm = state.dbm.clone();
+
+        let return_pc = frame.return_pc;
+        state.types = frame.caller_types;
+        state.dbm = frame.caller_dbm;
+        state.tnums = frame.caller_tnums;
+
+        // Preserve anchor-to-anchor constraints from the callee.
+        // These represent packet bounds (data/data_end/data_meta)
+        // that were verified in the callee and remain valid.
+        preserve_anchor_constraints(&mut state.dbm, &callee_dbm);
+
+        // Re-apply R0 from callee's return value
+        state.types.set(Reg::R0, ret_type);
+        state.set_tnum(Reg::R0, ret_tnum);
+        forget(&mut state.dbm, Reg::R0);
+        set_bounds(&mut state.dbm, Reg::R0, ret_bounds.0, ret_bounds.1);
+
         state.types.set(Reg::R10, RegType::PtrToStack { 
             offset: Some(0), 
             frame_level: state.current_frame_level() 
@@ -199,8 +223,6 @@ fn transfer_exit(
         state.pc = return_pc;
         vec![state]
     } else {
-        // Main function exit — path terminates
-        // (R0 already validated above)
         vec![]
     }
 }

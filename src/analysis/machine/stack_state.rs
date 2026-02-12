@@ -16,6 +16,10 @@ pub struct SpilledReg {
     pub reg_type: RegType,
     pub tnum: Tnum,
     pub bounds: ScalarBounds,
+    // NEW: saved anchor offsets for packet pointers
+    pub anchor_lo: Option<i64>,  // anchor - reg <= ? (i.e., reg >= anchor + lo)
+    pub anchor_hi: Option<i64>,  // reg - anchor <= ? (i.e., reg <= anchor + hi)
+    pub anchor: Option<Reg>,     // which anchor this relates to
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -28,8 +32,8 @@ impl std::fmt::Display for StackState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut entries: Vec<String> = Vec::new();
         for (offset, spilled) in &self.slots {
-            entries.push(format!("offset {}: type={:?}, bounds=[{}, {}]", 
-                offset, spilled.reg_type, spilled.bounds.min, spilled.bounds.max));
+            entries.push(format!("offset {}: type={:?}, bounds=[{}, {}], source_reg={:?}, anchor={:?} (lo {}, hi {})", 
+                offset, spilled.reg_type, spilled.bounds.min, spilled.bounds.max, spilled.source_reg, spilled.anchor, spilled.anchor_lo.unwrap_or(-1), spilled.anchor_hi.unwrap_or(-1)));
         }
         write!(f, "StackState {{\n  {}\n}}", entries.join("\n  "))
     }
@@ -60,6 +64,10 @@ impl StackState {
         self.slots.get(&offset)
     }
 
+    pub fn get_slot_mut(&mut self, offset: i16) -> Option<&mut SpilledReg> {
+        self.slots.get_mut(&offset)
+    }
+
     pub fn slot_offsets(&self) -> Vec<i16> {
         self.slots.keys().cloned().collect()
     }
@@ -73,6 +81,9 @@ impl StackState {
                 reg_type,
                 tnum: Tnum::unknown(),
                 bounds: ScalarBounds { min: i64::MIN, max: i64::MAX },
+                anchor: None,
+                anchor_hi: None,
+                anchor_lo: None
             });
         }
     }
@@ -102,6 +113,9 @@ impl StackState {
                 reg_type: RegType::ScalarValue,
                 tnum: Tnum::unknown(),
                 bounds: ScalarBounds { min: i64::MIN, max: i64::MAX },
+                anchor: None,
+                anchor_hi: None,
+                anchor_lo: None
             });
     }
 

@@ -7,7 +7,7 @@ use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::transfer::types::update_call_rel_types;
 use crate::ast::{ProgramKind, AttachKind};
-use crate::zone::domain::{Reg, forget, assume_ge_const, assume_le_const, is_zero, nonneg, get_bounds, positive};
+use crate::zone::domain::{self, Reg, assume_ge_const, assume_le_const, forget, get_bounds, is_zero, nonneg, positive};
 use crate::zone::tnum::{Tnum};
 use crate::analysis::transfer::access::{self, AccessKind};
 use crate::parsing::btf::SpecialFieldKind;
@@ -1204,13 +1204,16 @@ pub(crate) fn transfer_call(
         for r in Reg::ALL {
             if r != Reg::R10 {
                 match in_types.get(r) {
-                    RegType::PtrToPacket { .. } | RegType::PtrToPacketEnd => {
+                    RegType::PtrToPacket
+                    | RegType::PtrToPacketEnd
+                    | RegType::PtrToPacketMeta => {
                         forget(&mut state.dbm, r);
                     }
                     _ => {}
                 }
             }
         }
+        domain::reset_packet_anchors(&mut state.dbm);
     }
     
     // 5. Advance PC and return
@@ -1292,8 +1295,8 @@ pub(crate) fn transfer_call_rel(
     // }
 
     // BPF enforces max call depth of 8
-    info!("[Verifier] pc {}: current call depth = {}", pc, state.stack_frame_count());
-    if state.stack_frame_count() >= 8 {
+    info!("[Verifier] pc {}: current call depth = {}", pc, state.num_frames());
+    if state.num_frames() >= 8 {
         env.fail(VerificationError::MaxCallDepthExceeded { pc });
         return vec![];
     }
@@ -1463,11 +1466,11 @@ fn check_ptr_access_size(
             !env.failed()
         }
         
-        RegType::PtrToPacket { range, .. } => {
+        RegType::PtrToPacket { .. } => {
             // Packet: need to verify against packet bounds (data_end - data)
             // This requires range analysis between packet_data and packet_end
             // access::check_load(env, state, ptr_reg, size as i64, 0);
-            access::check_packet_access(env, state, ptr_reg, 0, size as i64, range, pc, access::AccessKind::HelperArg);
+            access::check_packet_access(env, state, ptr_reg, 0, size as i64, pc, access::AccessKind::HelperArg);
             !env.failed()
         }
         

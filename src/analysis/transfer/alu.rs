@@ -7,12 +7,7 @@ use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType, TypeState };
 use crate::ast::{AluOp, Operand, Width};
 use crate::zone::domain::{
-    REG_ENV, Reg, assign_add_imm, assign_add_reg, 
-    assign_and_mask, assign_div_imm, assign_div_reg, 
-    assign_eq, assign_mul_imm, assign_neg, assign_sub_reg, 
-    assign_zero, assume_eq_const, assume_ge_const, assume_le_const, 
-    bit_and_const, forget, get_bounds, get_constant_value, 
-    get_relative_bound, link_regs_with_offset, set_bounds
+    REG_ENV, Reg, assign_add_imm, assign_add_reg, assign_and_mask, assign_div_imm, assign_div_reg, assign_eq, assign_mul_imm, assign_neg, assign_sub_reg, assign_zero, assume_eq_const, assume_ge_const, assume_le_const, bind_to_anchor, bit_and_const, forget, get_bounds, get_constant_value, get_relative_bound, link_regs_with_offset, set_bounds
 };
 use crate::zone::dbm::{Dbm, INF};
 use crate::zone::tnum::Tnum;
@@ -226,7 +221,7 @@ pub(crate) fn check_ptr_bounds(
         // }
         RegType::PtrToPacket { .. } => {
             let packet_start_reg_op = REG_ENV.all().iter()
-                .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket { id: _, is_base: true, range: _ }));
+                .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket));
             if !packet_start_reg_op.is_none()  {
                 let packet_start_reg = packet_start_reg_op.unwrap();
                 if let (Some(_), Some(packet_offset)) = get_relative_bound(&state.dbm, reg, *packet_start_reg) {
@@ -238,7 +233,7 @@ pub(crate) fn check_ptr_bounds(
         }
         RegType::PtrToPacketMeta { .. } => {
             let packet_start_reg_op = REG_ENV.all().iter()
-                .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacketMeta { is_base: true }));
+                .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacketMeta));
             if !packet_start_reg_op.is_none()  {
                 let packet_start_reg = packet_start_reg_op.unwrap();
                 if let (Some(_), Some(packet_offset)) = get_relative_bound(&state.dbm, reg, *packet_start_reg) {
@@ -418,8 +413,7 @@ fn handle_mov(
                     assume_le_const(&mut state.dbm, dst, 0xFFFFFFFF);
                 }
             } else {
-                // We can skip if src and dst are the same
-                if *r == dst {
+                if dst == *r {
                     return;
                 }
                 if *r == Reg::R10 {

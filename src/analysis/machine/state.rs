@@ -1,9 +1,10 @@
 // src/analysis/state.rs
-use crate::zone::dbm::Dbm;
+use crate::zone::dbm::{Dbm, INF};
 use crate::analysis::machine::reg_types::{TypeState, RegType};
 use crate::zone::tnum::Tnum;
 use crate::zone::domain::{self, Reg, get_simple_bounds};
 use crate::analysis::machine::stack_state::{StackState, SpilledReg, ScalarBounds};
+use crate::analysis::machine::frame_stack::{FrameStack, FrameLevel, CallFrame};
 use crate::ast::MemSize;
 use std::collections::{HashMap, HashSet};
 
@@ -11,20 +12,6 @@ use std::collections::{HashMap, HashSet};
 pub struct LockState {
     pub ptr_id: u32,      // which pointer instance
     pub lock_offset: u32,   // offset of spin_lock within value (e.g., 4)
-}
-
-/// A saved call frame (caller's state when entering a subfunction)
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct CallFrame {
-    pub return_pc: usize,
-    pub stack: StackState,
-    pub frame_depth: u16,  // max bytes used in this frame
-}
-
-impl std::fmt::Display for CallFrame {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "CallFrame(return_pc={}, frame_depth={})", self.return_pc, self.frame_depth)
-    }
 }
 
 /// Mirrors `struct bpf_verifier_state` (partially).
@@ -48,9 +35,9 @@ pub struct State {
     pub tnums: HashMap<Reg, Tnum>, // tnum info for R0-R10
 
     /// Call stack for BPF-to-BPF function calls.
-    /// Stores return addresses (PC + 1 of CallRel instructions).
-    /// Empty for main function; populated when entering subfunctions.
-    pub call_stack: Vec<CallFrame>,
+    /// Always has at least one frame (main). The current frame is
+    /// always the last element; caller frames sit below it.
+    pub frames: FrameStack,
 
     /// Current frame's max stack depth (positive, e.g., 300 means accessed R10-300)
     pub frame_depth: u16,
@@ -77,24 +64,19 @@ impl State {
             pc,
             history_idx: None,
             tnums: tnums.clone(),
-            call_stack: vec![CallFrame::default()],
+            frames: FrameStack::new(),
             frame_depth: 0,
             active_refs: HashSet::new(),
             active_lock: None,
         }
     }
 
-    // Helper methods
+    // ── Tnum helpers ────────────────────────────────────────────
+
     pub fn get_tnum(&self, r: Reg) -> Tnum {
         match r {
             Reg::Zero => Tnum::constant(0),
-            _ => {
-                let t_op = self.tnums.get(&r);
-                match t_op {
-                    Some(t) => *t,
-                    None => Tnum::unknown()
-                }
-            }
+            _ => self.tnums.get(&r).copied().unwrap_or(Tnum::unknown()),
         }
     }
     
@@ -103,6 +85,8 @@ impl State {
             self.tnums.insert(r, t);
         }
     }
+
+    // ── Reference tracking ──────────────────────────────────────
 
     /// Acquire a new reference, returns the ref_id
     pub fn acquire_ref(&mut self) -> u32 {
@@ -123,46 +107,50 @@ impl State {
 
     /// Invalidate all registers (and stack slots) holding a given ref_id
     pub fn invalidate_ref(&mut self, id: u32) {
-        use crate::analysis::machine::reg_types::RegType;
-        
         // Invalidate registers
         for i in 0..self.types.regs.len() {
             if self.types.regs[i].get_ref_id() == Some(id) {
                 self.types.regs[i] = RegType::ScalarValue;
             }
         }
-        
         // Invalidate stack slots
         self.stack_mut().invalidate_ref(id);
     }
 
-    /// Acquire a spin lock
+    // ── Lock tracking ───────────────────────────────────────────
+
     pub fn acquire_lock(&mut self, ptr_id: u32, lock_offset: u32) {
         self.active_lock = Some(LockState { ptr_id, lock_offset });
     }
 
-    /// Release the spin lock
     pub fn release_lock(&mut self) {
         self.active_lock = None;
     }
 
-    /// Check if currently holding a lock
     pub fn has_active_lock(&self) -> bool {
         self.active_lock.is_some()
     }
 
-    /// Get the currently held lock, if any
     pub fn get_active_lock(&self) -> Option<&LockState> {
         self.active_lock.as_ref()
     }
 
+    // ── Stack spill/reload (current frame) ──────────────────────
+
     /// Spill into current frame (common case, e.g. store to R10+off)
     pub fn spill(&mut self, reg: Reg, offset: i16) {
-        self.spill_at(self.current_frame_level(), reg, offset);
+        let level = self.frames.current_level();
+        self.spill_at(level, reg, offset);
     }
 
     /// Spill into a specific frame (cross-frame, e.g. store via PtrToStack)
-    pub fn spill_at(&mut self, frame_level: usize, reg: Reg, offset: i16) {
+    pub fn spill_at(&mut self, level: FrameLevel, reg: Reg, offset: i16) {
+        let (
+                anchor, 
+                anchor_lo, 
+                anchor_hi
+            ) = self.save_anchor_info(reg);
+
         let (min, max) = get_simple_bounds(&self.dbm, reg);
         println!("At spilling, {} bounds: [{}, {}]", reg.name(), min, max);
         let spilled = SpilledReg {
@@ -170,57 +158,58 @@ impl State {
             reg_type: self.types.get(reg),
             tnum: self.tnums.get(&reg).cloned().unwrap_or(Tnum::unknown()),
             bounds: ScalarBounds { min, max },
+            anchor,
+            anchor_lo,
+            anchor_hi
         };
-        let stack = &mut self.call_stack[frame_level].stack;
-        // A spill is always 8 bytes (MemSize::U64)
-        // We must mark the entire range [offset, offset + 8)
+        let stack = &mut self.frames.get_mut(level).stack;
         for i in 0..8 {
             let current_byte = offset + i;
-            
             if i == 0 {
-                // Write the actual data at the lowest address (Head)
                 stack.insert(current_byte, spilled.clone());
             } else {
-                // Mark subsequent bytes as "parts" of the head
-                // This prevents them from being seen as "Uninitialized"
-                // And allows us to detect partial overwrites later
                 stack.insert(current_byte, SpilledReg {
                     source_reg: None,
                     reg_type: RegType::ScalarValue,
                     tnum: Tnum::unknown(),
                     bounds: ScalarBounds { min: i64::MIN, max: i64::MAX },
+                    anchor: None,
+                    anchor_lo: None,
+                    anchor_hi: None
                 });
             }
         }
     }
 
     pub fn store_imm_to_stack(&mut self, imm: i64, offset: i16) {
-        self.store_imm_to_stack_at(self.current_frame_level(), imm, offset);
+        let level = self.frames.current_level();
+        self.store_imm_to_stack_at(level, imm, offset);
     }
 
-    pub fn store_imm_to_stack_at(&mut self, frame_level: usize, imm: i64, offset: i16) {
+    pub fn store_imm_to_stack_at(&mut self, level: FrameLevel, imm: i64, offset: i16) {
         let slot_content = SpilledReg {
             source_reg: None,
             reg_type: RegType::ScalarValue,
             tnum: Tnum::constant(imm as u64),
             bounds: ScalarBounds { min: imm, max: imm },
+            anchor: None,
+            anchor_lo: None,
+            anchor_hi: None
         };
-        let stack = &mut self.call_stack[frame_level].stack;
+        let stack = &mut self.frames.get_mut(level).stack;
         for i in 0..8 {
             let current_byte = offset + i;
-            
             if i == 0 {
-                // Write the actual data at the lowest address (Head)
                 stack.insert(current_byte, slot_content.clone());
             } else {
-                // Mark subsequent bytes as "parts" of the head
-                // This prevents them from being seen as "Uninitialized"
-                // And allows us to detect partial overwrites later
                 stack.insert(current_byte, SpilledReg {
                     source_reg: None,
                     reg_type: RegType::ScalarValue,
                     tnum: Tnum::unknown(),
                     bounds: ScalarBounds { min: i64::MIN, max: i64::MAX },
+                    anchor: None,
+                    anchor_lo: None,
+                    anchor_hi: None
                 });
             }
         }
@@ -228,95 +217,131 @@ impl State {
 
     /// Reload from current frame
     pub fn try_reload(&mut self, dst: Reg, offset: i16, size: MemSize) -> bool {
-        self.try_reload_at(self.current_frame_level(), dst, offset, size)
+        let level = self.frames.current_level();
+        self.try_reload_at(level, dst, offset, size)
     }
 
     /// Reload from a specific frame (cross-frame)
-    pub fn try_reload_at(&mut self, frame_level: usize, dst: Reg, offset: i16, size: MemSize) -> bool {
+    pub fn try_reload_at(&mut self, level: FrameLevel, dst: Reg, offset: i16, size: MemSize) -> bool {
         if size != MemSize::U64 {
             return false;
         }
-        if let Some(spilled) = self.call_stack[frame_level].stack.get_slot(offset) {
+        if let Some(spilled) = self.frames.get(level).stack.get_slot(offset).cloned() {
             domain::forget(&mut self.dbm, dst);
             self.types.set(dst, spilled.reg_type);
             self.tnums.insert(dst, spilled.tnum);
             domain::set_bounds(&mut self.dbm, dst, spilled.bounds.min, spilled.bounds.max);
+            self.restore_anchor_info(dst, &spilled);
             true
         } else {
             false
         }
     }
 
+    pub fn save_anchor_info(&self, reg: Reg) -> (Option<Reg>, Option<i64>, Option<i64>) {
+        let anchor = match self.types.get(reg) {
+            RegType::PtrToPacket { .. } => Some(Reg::AnchorData),
+            RegType::PtrToPacketMeta    => Some(Reg::AnchorDataMeta),
+            RegType::PtrToPacketEnd     => Some(Reg::AnchorDataEnd),
+            _ => None,
+        };
+
+        if let Some(a) = anchor {
+            let hi = self.dbm.get(reg, a);    // reg - anchor <= hi
+            let lo = self.dbm.get(a, reg);    // anchor - reg <= lo  (i.e., reg - anchor >= -lo)
+            let hi = if hi >= INF { None } else { Some(hi) };
+            let lo = if lo >= INF { None } else { Some(lo) };
+            (Some(a), lo, hi)
+        } else {
+            (None, None, None)
+        }
+    }
+
+    pub fn restore_anchor_info(&mut self, reg: Reg, spilled: &SpilledReg) {
+        println!("Restoring anchor info for {}", reg.name());
+        println!("{:?}, ", spilled);
+        if let Some(anchor) = spilled.anchor {
+            if let Some(hi) = spilled.anchor_hi {
+                self.dbm.add_constraint(reg, anchor, hi);      // reg - anchor <= hi
+            }
+            if let Some(lo) = spilled.anchor_lo {
+                self.dbm.add_constraint(anchor, reg, lo);       // anchor - reg <= lo
+            }
+            self.dbm.close();
+        }
+    }
+
+    // ── Frame depth tracking ────────────────────────────────────
+
     /// Called on every stack access to track depth
     pub fn update_frame_depth(&mut self, off: i16) {
         if off < 0 && off > i16::MIN {
             let depth = (-off) as u16;
             self.frame_depth = self.frame_depth.max(depth);
-        } else {
-            // Positive offsets do not affect frame depth
         }
     }
 
-    pub fn stack_frame_count(&self) -> usize {
-        self.call_stack.len()
-    }
+    // ── Current frame convenience accessors ─────────────────────
 
-    pub fn at_last_call_frame(&self) -> bool {
-        self.stack_frame_count() == 1
-    }
-
-    // === Current frame (most common case, no frame level needed) ===
-    
     pub fn stack(&self) -> &StackState {
-        &self.call_stack.last().unwrap().stack
+        &self.frames.current().stack
     }
 
     pub fn stack_mut(&mut self) -> &mut StackState {
-        &mut self.call_stack.last_mut().unwrap().stack
+        &mut self.frames.current_mut().stack
     }
 
     pub fn frame_depth(&self) -> u16 {
-        self.call_stack.last().unwrap().frame_depth
+        self.frames.current().frame_depth
     }
 
     pub fn set_frame_depth(&mut self, depth: u16) {
-        self.call_stack.last_mut().unwrap().frame_depth = depth;
+        self.frames.current_mut().frame_depth = depth;
     }
 
-    // === Cross-frame access (rare, explicit frame level) ===
+    // ── Cross-frame access (for PtrToStack with different frame_level) ──
 
-    pub fn stack_at(&self, frame_level: usize) -> &StackState {
-        &self.call_stack[frame_level].stack
+    pub fn stack_at(&self, level: FrameLevel) -> &StackState {
+        &self.frames.get(level).stack
     }
 
-    pub fn stack_at_mut(&mut self, frame_level: usize) -> &mut StackState {
-        &mut self.call_stack[frame_level].stack
+    pub fn stack_at_mut(&mut self, level: FrameLevel) -> &mut StackState {
+        &mut self.frames.get_mut(level).stack
     }
 
-    // === Frame management ===
+    // ── Frame management (delegated to FrameStack) ──────────────
 
-    pub fn current_frame_level(&self) -> usize {
-        self.call_stack.len() - 1
+    pub fn current_frame_level(&self) -> FrameLevel {
+        self.frames.current_level()
     }
 
     pub fn push_frame(&mut self, return_pc: usize) {
-        self.call_stack.last_mut().unwrap().return_pc = return_pc;
-        self.call_stack.push(CallFrame::default());
+        self.frames.push(
+            return_pc,
+            self.types.clone(),
+            self.dbm.clone(),
+            self.tnums.clone(),
+        );
     }
 
-    pub fn pop_frame(&mut self) -> Option<usize> {
-        if self.call_stack.len() <= 1 { return None; }
-        self.call_stack.pop();
-        Some(self.call_stack.last().unwrap().return_pc)
+    /// Pop the current frame, returning it owned. Returns None at main.
+    pub fn pop_frame(&mut self) -> Option<CallFrame> {
+        self.frames.pop()
     }
 
-    pub fn total_stack_depth(&self) -> u16 {
-        self.call_stack.iter().map(|f| f.frame_depth).sum()
+    pub fn at_main_frame(&self) -> bool {
+        self.frames.at_main()
     }
 
     pub fn num_frames(&self) -> usize {
-        self.call_stack.len()
+        self.frames.depth()
     }
+
+    pub fn total_stack_depth(&self) -> u16 {
+        self.frames.total_stack_depth()
+    }
+
+    // ── Display helpers ─────────────────────────────────────────
 
     pub fn tnums_to_string(&self) -> String {
         let mut parts = Vec::new();
@@ -329,5 +354,4 @@ impl State {
         }
         parts.join(", ")
     }
-     
 }
