@@ -36,7 +36,7 @@ pub fn check_load(
             check_packet_access(env, state, base, off, size, pc, AccessKind::Read);
         }
         PtrToCtx => {
-            if !ctx_model::is_valid_ctx_read(ctx.prog_kind, off, size) {
+            if !ctx_model::is_valid_ctx_read(env, off, size) {
                 error!("Unsafe ctx load at pc {}: offset {} is not readable", pc, off);
                 env.fail(VerificationError::UnsafeCtxAccess { pc, off, size });
             }
@@ -88,6 +88,15 @@ pub fn check_load(
         }
         PtrToPacketMeta { .. } => {
             check_packet_meta_access(env, state, base, off, size, pc);
+        }
+        PtrToBtfId { .. } => {
+            if !mem_region_model::is_valid_mem_region_read(state.types.get(base), off, size) {
+                error!(
+                    "Invalid socket access at pc {}: {:?} offset {} size {}", 
+                    pc, base_type, off, size
+                );
+                env.fail(VerificationError::UnsafeSocketAccess { pc, off, size });
+            }
         }
         ScalarValue | NotInit => {
             error!("Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})", pc, base, off, base_type);
@@ -145,7 +154,7 @@ pub fn check_store(
             });
         }
         PtrToCtx => {
-            if !ctx_model::is_valid_ctx_write(ctx.prog_kind, off, size) {
+            if !ctx_model::is_valid_ctx_write(env, off, size) {
                 error!("Unsafe ctx store at pc {}: offset {} is not writable", pc, off);
                 env.fail(VerificationError::UnsafeCtxAccess { pc, off, size });
             }

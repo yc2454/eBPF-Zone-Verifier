@@ -5,7 +5,7 @@
 // This module defines the layout of BPF context structures (sk_buff, xdp_md, etc.)
 // as data tables, enabling unified validation of both reads and writes.
 
-use crate::{ast::{ContextKind, MemSize, ProgramKind}};
+use crate::{analysis::machine::env::VerifierEnv, ast::{AttachKind, ContextKind, MemSize, ProgramKind}};
 
 // ===========================================================================
 // Core Types
@@ -27,7 +27,10 @@ pub enum CtxFieldKind {
     PacketEnd,
 
     /// Pointer to packet metadata
-    PacketMeta
+    PacketMeta,
+
+    /// Trusted pointer to a kernel struct (PTR_TO_BTF_ID equivalent)
+    TrustedPtr { type_name: &'static str, nullable: bool },
 }
 
 /// A field in a BPF context struct.
@@ -358,6 +361,30 @@ const PT_REGS_FIELDS: &[CtxField] = &[
     CtxField { offset: 160, size: MemSize::U64, kind: CtxFieldKind::Scalar, readable: true, writable: false, narrow_access: false }, // ss
 ];
 
+/// struct bpf_iter__task (task iterator context)
+///
+/// Reference: kernel/bpf/task_iter.c
+const TRACE_ITER_TASK_FIELDS: &[CtxField] = &[
+    // __bpf_md_ptr(struct bpf_iter_meta *, meta)
+    CtxField { 
+        offset: 0, 
+        size: MemSize::U64, 
+        kind: CtxFieldKind::TrustedPtr { type_name: "bpf_iter_meta", nullable: false }, 
+        writable: false, 
+        readable: true, 
+        narrow_access: false 
+    },
+    // __bpf_md_ptr(struct task_struct *, task)
+    CtxField { 
+        offset: 8, 
+        size: MemSize::U64, 
+        kind: CtxFieldKind::TrustedPtr { type_name: "task_struct", nullable: true }, 
+        writable: false, 
+        readable: true, 
+        narrow_access: false 
+    },
+];
+
 // ===========================================================================
 // Field Lookup
 // ===========================================================================
@@ -432,6 +459,7 @@ fn get_field_tables(ctx_kind: ContextKind, prog_kind: ProgramKind) -> Option<(&'
         ContextKind::SkLookup => Some((SK_LOOKUP_FIELDS, &[])),
         ContextKind::SkMsgMd => Some((SK_MSG_MD_FIELDS, &[])),
         ContextKind::PtRegs => Some((PT_REGS_FIELDS, &[])),
+        ContextKind::IterTask => Some((TRACE_ITER_TASK_FIELDS, &[])),
         _ => None,
     }
 }
@@ -578,8 +606,20 @@ fn apply_prog_type_overrides(prog_kind: ProgramKind, off: i16, info: &mut CtxAcc
 /// Returns:
 /// - `Some(info)` if the access is valid, with field kind and writability
 /// - `None` if the access is invalid (wrong offset, wrong size, or unknown context)
-pub fn validate_ctx_access(prog_kind: ProgramKind, off: i16, size: i64) -> Option<CtxAccessInfo> {
-    let ctx_kind = prog_kind.context_kind();
+pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<CtxAccessInfo> {
+    let prog_kind = env.ctx.prog_kind;
+
+    println!("{:?}", env.ctx);
+
+    let ctx_kind = match prog_kind {
+        ProgramKind::Tracing => {
+            match (env.ctx.attach_kind, env.ctx.kfunc.as_deref()) {
+                (AttachKind::TraceIter, Some("task")) => ContextKind::IterTask,
+                _ => ContextKind::SkBuff
+            }
+        },
+        _ => prog_kind.context_kind()
+    };
 
     // Check scratch regions first (e.g., cb)
     if let Some(info) = lookup_region(ctx_kind, off, size) {
@@ -611,8 +651,8 @@ pub fn validate_ctx_access(prog_kind: ProgramKind, off: i16, size: i64) -> Optio
 ///
 /// This is a convenience wrapper around `validate_ctx_access` for cases
 /// where you only need to check validity without the field info.
-pub fn is_valid_ctx_read(prog_kind: ProgramKind, off: i16, size: i64) -> bool {
-    validate_ctx_access(prog_kind, off, size)
+pub fn is_valid_ctx_read(env: &VerifierEnv, off: i16, size: i64) -> bool {
+    validate_ctx_access(env, off, size)
         .map(|info| info.readable)
         .unwrap_or(false)
 }
@@ -620,8 +660,8 @@ pub fn is_valid_ctx_read(prog_kind: ProgramKind, off: i16, size: i64) -> bool {
 /// Check if a context field is writable at the given offset and size.
 ///
 /// Returns true only if the access is valid AND the field is writable.
-pub fn is_valid_ctx_write(prog_kind: ProgramKind, off: i16, size: i64) -> bool {
-    validate_ctx_access(prog_kind, off, size)
+pub fn is_valid_ctx_write(env: &VerifierEnv, off: i16, size: i64) -> bool {
+    validate_ctx_access(env, off, size)
         .map(|info| info.writable)
         .unwrap_or(false)
 }

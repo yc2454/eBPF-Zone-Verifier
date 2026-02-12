@@ -218,12 +218,14 @@ pub enum ContextKind {
     SkMsgMd,        // struct sk_msg_md
     BpfSockAddr,    // struct bpf_sock_addr
     PtRegs,         // struct pt_regs (kprobe)
+    IterTask,       // struct bpf_iter__task
     Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttachKind {
     TraceRawTp,
+    TraceIter,
     Unknown
 }
 

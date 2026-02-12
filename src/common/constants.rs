@@ -308,7 +308,7 @@ pub const BPF_ATTACH_TYPE_SK_MSG: u32 = 3;
 pub const BPF_ATTACH_TYPE_SK_REUSEPORT: u32 = 4;
 pub const BPF_ATTACH_TYPE_SK_LOOKUP: u32 = 5;
 pub const BPF_ATTACH_TYPE_TRACE_RAW_TP: u32 = 24;
-
+pub const BPF_ATTACH_TYPE_TRACE_ITER: u32 = 28;
 
 // ==================================================
 // BTF Constants

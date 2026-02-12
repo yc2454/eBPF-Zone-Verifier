@@ -15,7 +15,8 @@ pub struct ExecContext {
     pub prog_kind: ProgramKind,
     pub attach_kind: AttachKind,
     pub flags: u32,
-    pub mode: VerificationMode
+    pub mode: VerificationMode,
+    pub kfunc: Option<String>
 }
 
 pub fn default_exec_ctx() -> ExecContext {
@@ -26,7 +27,8 @@ pub fn default_exec_ctx() -> ExecContext {
         prog_kind: ProgramKind::Unknown,
         attach_kind: AttachKind::Unknown,
         flags: 0,
-        mode: VerificationMode::Priviledged
+        mode: VerificationMode::Priviledged,
+        kfunc: None
     }
 }
 

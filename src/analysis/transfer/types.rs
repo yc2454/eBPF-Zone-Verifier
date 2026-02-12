@@ -228,7 +228,7 @@ pub(crate) fn update_load_types(
     let base_ty = state.types.get(base);
     match base_ty {
         RegType::PtrToCtx => {
-            let kind = validate_ctx_access(env.ctx.prog_kind, off, size as i64);
+            let kind = validate_ctx_access(env, off, size as i64);
             if let Some(info) = kind {
                 match info.kind {
                     CtxFieldKind::PacketMeta => {
@@ -242,6 +242,13 @@ pub(crate) fn update_load_types(
                     }
                     CtxFieldKind::SockCommon => {
                         state.types.set(dst, RegType::PtrToSockCommonOrNull { ref_id: None });
+                    }
+                    CtxFieldKind::TrustedPtr { type_name, nullable } => {
+                        if nullable {
+                            state.types.set(dst, RegType::PtrToBtfIdOrNull { id: new_ptr_id(), type_name, trusted: true });
+                        } else {
+                            state.types.set(dst, RegType::PtrToBtfId { type_name, trusted: true });
+                        }
                     }
                     _ => state.types.set(dst, RegType::ScalarValue),
                 }
