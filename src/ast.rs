@@ -64,6 +64,17 @@ impl MemSize {
             MemSize::U64 => 8,
         }
     }
+
+    /// Returns bounds for an unbounded scalar of the given size.
+    /// Loads are zero-extended, so bounds are [0, max_unsigned].
+    pub fn unbounded_scalar_bounds(&self) -> (i64, i64) {
+        match self {
+            MemSize::U8 => (0, u8::MAX as i64),
+            MemSize::U16 => (0, u16::MAX as i64),
+            MemSize::U32 => (0, u32::MAX as i64),
+            MemSize::U64 => (i64::MIN, i64::MAX),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

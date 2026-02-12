@@ -430,7 +430,7 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
                 RegType::PtrToStack { offset: Some(off), .. } => {
                     let slot = off as i16;
                     state.types.set(Reg::R3, RegType::ScalarValue);
-                    state.spill(Reg::R3, slot);
+                    state.spill(Reg::R3, slot, MemSize::U64);
                 }
                 _ => {} // Do nothing for the other cases for now
             }

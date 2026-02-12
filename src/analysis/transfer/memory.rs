@@ -44,7 +44,7 @@ pub(crate) fn transfer_load(
 
     // Try to reload from spilled stack slot
     if let RegType::PtrToStack { offset, frame_level } = state.types.get(base) {
-        if state.try_reload_at(frame_level, dst, off+ offset.unwrap_or(0) as i16, size) {
+        if state.fill_at(frame_level, dst, off+ offset.unwrap_or(0) as i16, size) {
             state.pc += 1;
             return vec![state];
         }
@@ -121,15 +121,15 @@ pub(crate) fn transfer_store(
     if let RegType::PtrToStack { offset, frame_level } = base_type {
         let full_offset = offset.unwrap_or(0) + off as i64;
         match src {
-            Operand::Reg(r) if size == MemSize::U64 => {
+            Operand::Reg(r) => {
                 // Full 64-bit register spill — snapshot the abstract state
-                state.spill_at(frame_level, *r, full_offset as i16);
+                state.spill_at(frame_level, *r, full_offset as i16, size);
             }
-            Operand::Imm(k) if size == MemSize::U64 => {
-                state.store_imm_to_stack_at(frame_level, *k, full_offset as i16);
+            Operand::Imm(k) => {
+                state.store_imm_to_stack_at(frame_level, *k, full_offset as i16, size);
             }
             _ => {
-                // Partial write or immediate — invalidate any existing spill
+                // Partial write — invalidate any existing spill
                 state.stack_mut().clear_slot(full_offset as i16);
             }
         }
@@ -189,9 +189,9 @@ pub(crate) fn transfer_atomic(
     // Try to reload spilled state BEFORE invalidating
     // (fetch reads the OLD value before the atomic op modifies it)
     let reloaded = if op == AtomicOp::CmpXchg {
-        state.try_reload(Reg::R0, off, size)
+        state.fill(Reg::R0, off, size)
     } else if fetch {
-        state.try_reload(src, off, size)
+        state.fill(src, off, size)
     } else {
         false
     };

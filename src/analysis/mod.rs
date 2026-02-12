@@ -134,9 +134,9 @@ pub fn analyze_program(
                state.pc, instr, state.types.reg_types_str(), state.tnums_to_string());
         // debug!(target: "app", "|PC:{}| Instr: [[{}]]\n", 
         //        state.pc, instr);
-        // for cf in state.frames.iter() {
-        //     println!("{}: {}", cf, cf.stack);
-        // }
+        for cf in state.frames.iter() {
+            println!("{}: {}", cf, cf.stack);
+        }
 
         // F. Transfer Function
         let successors = transfer::transfer(&mut env, state, instr);
