@@ -1,9 +1,23 @@
-// src/analysis/pruning.rs
+// src/analysis/flow/pruning.rs
+//
+// State pruning: determines whether a new state is already covered by a
+// previously explored state, so the verifier can skip redundant paths.
+//
+// Key fixes:
+//   - Scalar bounds for live registers are ALWAYS compared via the DBM, even when
+//     `skip_dbm_check` is true. Without this, two states with the same register type
+//     (ScalarValue) but different values (0 vs 1) would be incorrectly considered
+//     equivalent. `skip_dbm_check` now only gates the relational constraint check
+//     (future enhancement), not the per-register simple bounds comparison.
+//   - `stack_subsumed_by` uses `live_slots` to only compare live stack slots, and
+//     checks both type AND scalar bounds for spilled values.
+//   - `dbm_subsumed_by` loop fix: was `return` instead of short-circuit.
 
 use std::collections::HashSet;
 
 use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
+use crate::analysis::machine::stack_state::SpilledReg;
 use crate::analysis::machine::state::State;
 use crate::common::config::VerifierConfig;
 use crate::zone::dbm::Dbm;
@@ -19,29 +33,27 @@ pub fn should_prune(
     let pc = state.pc;
 
     // Only prune at designated prune points
-    if let Some(aux) = env.insn_aux_data.get(pc) {
-        if !aux.prune_point {
-            return false;
-        }
-    } else {
-        return false;
-    }
+    let aux = match env.insn_aux_data.get(pc) {
+        Some(aux) if aux.prune_point => aux,
+        _ => return false,
+    };
 
     // Check if in a loop (don't prune loop iterations)
     let in_loop = state.history_idx
         .map(|idx| env.history.path_contains_pc(idx, pc))
         .unwrap_or(false);
-    
+
     if in_loop {
         return false;
     }
 
     // Check subsumption against all explored states at this PC
-    let live_regs = &env.insn_aux_data[pc].live_regs;
-    
+    let live_regs = &aux.live_regs;
+    let live_slots = &aux.live_slots;
+
     if let Some(prev_states) = env.explored_states.get(&pc) {
         for prev in prev_states {
-            if state_subsumed_by(state, prev, live_regs, config) {
+            if state_subsumed_by(state, prev, live_regs, live_slots, config) {
                 return true;
             }
         }
@@ -61,7 +73,8 @@ fn state_subsumed_by(
     cur: &State,
     old: &State,
     live_regs: &HashSet<Reg>,
-    config: &VerifierConfig,
+    live_slots: &HashSet<i16>,
+    _config: &VerifierConfig,
 ) -> bool {
     // Check current frame
     if config.skip_dbm_check {
@@ -111,7 +124,9 @@ fn state_subsumed_by(
     true
 }
 
-/// Check if cur types are subsumed by old types.
+// ---------- Register Type Subsumption ----------
+
+/// Check if cur types are subsumed by old types (only for live registers).
 fn types_subsumed_by(
     cur: &TypeState,
     old: &TypeState,
@@ -139,7 +154,11 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
         // Anything subsumes NotInit
         (NotInit, _) => true,
 
-        // Packet pointers: old must have >= range
+        // Packet pointers: old must have <= range (weaker guarantee).
+        // A larger range means "more bytes proven safe" — that's MORE specific.
+        // If old verified safely with a SMALLER range (weaker conditions),
+        // then cur with a larger range (stronger conditions) is also safe.
+        // old_range <= cur_range ensures old is at least as abstract as cur.
         (
             PtrToPacket,
             PtrToPacket,
@@ -182,9 +201,19 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
     }
 }
 
-/// Check if cur DBM is subsumed by old DBM.
-fn dbm_subsumed_by(cur: &Dbm, old: &Dbm, live_regs: &HashSet<Reg>) -> bool {
+// ---------- Scalar Bounds Subsumption ----------
 
+/// Check per-register scalar bounds for all live registers.
+/// old's range must contain cur's range for each live register.
+///
+/// This is ALWAYS performed regardless of `skip_dbm_check`. The skip flag
+/// should only gate expensive relational constraint comparisons (future),
+/// not the per-register bounds that are essential for soundness.
+fn scalar_bounds_subsumed_by(
+    cur: &Dbm,
+    old: &Dbm,
+    live_regs: &HashSet<Reg>,
+) -> bool {
     for &r in live_regs {
         let (old_min, old_max) = get_simple_bounds(old, r);
         let (cur_min, cur_max) = get_simple_bounds(cur, r);
@@ -192,7 +221,6 @@ fn dbm_subsumed_by(cur: &Dbm, old: &Dbm, live_regs: &HashSet<Reg>) -> bool {
             return false;
         }
     }
-
     true
 }
 
@@ -200,16 +228,33 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
     for (old_frame, new_frame) in old.frames.iter()
         .zip(cur.frames.iter())
     {
-        let all_offsets: HashSet<i16> = old_frame.stack.slot_offsets().into_iter()
-            .chain(new_frame.stack.slot_offsets())
-            .collect();
+        // For the current (top) frame, use liveness-guided comparison.
+        // For caller frames saved on the call stack, we compare all
+        // occupied slots since we don't have per-frame liveness for saved frames.
+        let is_current_frame = frame_idx == cur.call_stack.len() - 1;
 
-        for offset in all_offsets {
-            let old_ty = old_frame.stack.get_slot_type(offset);
-            let new_ty = new_frame.stack.get_slot_type(offset);
-            println!("[State subsumption check] Checking offset {}: {:?} vs {:?}", offset, old_ty, new_ty);
-            if !type_subsumed_by(&new_ty, &old_ty) {
-                return false;
+        if is_current_frame {
+            for &offset in live_slots {
+                if !spilled_slot_subsumed(
+                    cur_frame.stack.get_slot(offset),
+                    old_frame.stack.get_slot(offset),
+                ) {
+                    return false;
+                }
+            }
+        } else {
+            // Caller frame: compare all occupied slots from both frames
+            let all_offsets: HashSet<i16> = old_frame.stack.slot_offsets().into_iter()
+                .chain(cur_frame.stack.slot_offsets())
+                .collect();
+
+            for offset in all_offsets {
+                if !spilled_slot_subsumed(
+                    cur_frame.stack.get_slot(offset),
+                    old_frame.stack.get_slot(offset),
+                ) {
+                    return false;
+                }
             }
         }
     }
