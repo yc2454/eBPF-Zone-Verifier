@@ -20,7 +20,8 @@ use crate::analysis::machine::reg_types::RegType;
 use crate::ast::{EndianOp, Instr, Width};
 use crate::zone::domain::{Reg, 
     forget, assign_and_mask, bit_and_const, get_bounds,
-    get_simple_bounds, set_bounds};
+    get_simple_bounds, set_bounds, preserve_anchor_constraints
+};
 use crate::analysis::machine::env::VerificationError;
 
 /// Main transfer function - dispatches to appropriate handler based on instruction type.
@@ -196,10 +197,18 @@ fn transfer_exit(
         let ret_tnum = state.get_tnum(Reg::R0);
         let ret_bounds = get_simple_bounds(&state.dbm, Reg::R0);
 
+        // Save callee's anchor constraints before overwriting
+        let callee_dbm = state.dbm.clone();
+
         let return_pc = frame.return_pc;
         state.types = frame.caller_types;
         state.dbm = frame.caller_dbm;
         state.tnums = frame.caller_tnums;
+
+        // Preserve anchor-to-anchor constraints from the callee.
+        // These represent packet bounds (data/data_end/data_meta)
+        // that were verified in the callee and remain valid.
+        preserve_anchor_constraints(&mut state.dbm, &callee_dbm);
 
         // Re-apply R0 from callee's return value
         state.types.set(Reg::R0, ret_type);

@@ -427,7 +427,11 @@ pub fn check_packet_access(
     debug!("Packet access check at pc {}: base {} offset {} size {} => start_ok {}, end_ok {}", 
         pc, base.name(), off, size, start_ok, end_ok);
     if !start_ok || !end_ok {
-        env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
+        if matches!(kind, AccessKind::Read) {
+            env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
+        } else {
+            env.fail(VerificationError::UnsafePacketStore { pc, off, size });
+        }
     }
 
     if env.ctx.has_flag(constants::F_LOAD_WITH_STRICT_ALIGNMENT) 

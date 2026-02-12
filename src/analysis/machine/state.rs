@@ -1,5 +1,5 @@
 // src/analysis/state.rs
-use crate::zone::dbm::Dbm;
+use crate::zone::dbm::{Dbm, INF};
 use crate::analysis::machine::reg_types::{TypeState, RegType};
 use crate::zone::tnum::Tnum;
 use crate::zone::domain::{self, Reg, get_simple_bounds};
@@ -145,6 +145,12 @@ impl State {
 
     /// Spill into a specific frame (cross-frame, e.g. store via PtrToStack)
     pub fn spill_at(&mut self, level: FrameLevel, reg: Reg, offset: i16) {
+        let (
+                anchor, 
+                anchor_lo, 
+                anchor_hi
+            ) = self.save_anchor_info(reg);
+
         let (min, max) = get_simple_bounds(&self.dbm, reg);
         println!("At spilling, {} bounds: [{}, {}]", reg.name(), min, max);
         let spilled = SpilledReg {
@@ -152,6 +158,9 @@ impl State {
             reg_type: self.types.get(reg),
             tnum: self.tnums.get(&reg).cloned().unwrap_or(Tnum::unknown()),
             bounds: ScalarBounds { min, max },
+            anchor,
+            anchor_lo,
+            anchor_hi
         };
         let stack = &mut self.frames.get_mut(level).stack;
         for i in 0..8 {
@@ -164,6 +173,9 @@ impl State {
                     reg_type: RegType::ScalarValue,
                     tnum: Tnum::unknown(),
                     bounds: ScalarBounds { min: i64::MIN, max: i64::MAX },
+                    anchor: None,
+                    anchor_lo: None,
+                    anchor_hi: None
                 });
             }
         }
@@ -180,6 +192,9 @@ impl State {
             reg_type: RegType::ScalarValue,
             tnum: Tnum::constant(imm as u64),
             bounds: ScalarBounds { min: imm, max: imm },
+            anchor: None,
+            anchor_lo: None,
+            anchor_hi: None
         };
         let stack = &mut self.frames.get_mut(level).stack;
         for i in 0..8 {
@@ -192,6 +207,9 @@ impl State {
                     reg_type: RegType::ScalarValue,
                     tnum: Tnum::unknown(),
                     bounds: ScalarBounds { min: i64::MIN, max: i64::MAX },
+                    anchor: None,
+                    anchor_lo: None,
+                    anchor_hi: None
                 });
             }
         }
@@ -208,14 +226,48 @@ impl State {
         if size != MemSize::U64 {
             return false;
         }
-        if let Some(spilled) = self.frames.get(level).stack.get_slot(offset) {
+        if let Some(spilled) = self.frames.get(level).stack.get_slot(offset).cloned() {
             domain::forget(&mut self.dbm, dst);
             self.types.set(dst, spilled.reg_type);
             self.tnums.insert(dst, spilled.tnum);
             domain::set_bounds(&mut self.dbm, dst, spilled.bounds.min, spilled.bounds.max);
+            self.restore_anchor_info(dst, &spilled);
             true
         } else {
             false
+        }
+    }
+
+    pub fn save_anchor_info(&self, reg: Reg) -> (Option<Reg>, Option<i64>, Option<i64>) {
+        let anchor = match self.types.get(reg) {
+            RegType::PtrToPacket { .. } => Some(Reg::AnchorData),
+            RegType::PtrToPacketMeta    => Some(Reg::AnchorDataMeta),
+            RegType::PtrToPacketEnd     => Some(Reg::AnchorDataEnd),
+            _ => None,
+        };
+
+        if let Some(a) = anchor {
+            let hi = self.dbm.get(reg, a);    // reg - anchor <= hi
+            let lo = self.dbm.get(a, reg);    // anchor - reg <= lo  (i.e., reg - anchor >= -lo)
+            let hi = if hi >= INF { None } else { Some(hi) };
+            let lo = if lo >= INF { None } else { Some(lo) };
+            (Some(a), lo, hi)
+        } else {
+            (None, None, None)
+        }
+    }
+
+    pub fn restore_anchor_info(&mut self, reg: Reg, spilled: &SpilledReg) {
+        println!("Restoring anchor info for {}", reg.name());
+        println!("{:?}, ", spilled);
+        if let Some(anchor) = spilled.anchor {
+            if let Some(hi) = spilled.anchor_hi {
+                self.dbm.add_constraint(reg, anchor, hi);      // reg - anchor <= hi
+            }
+            if let Some(lo) = spilled.anchor_lo {
+                self.dbm.add_constraint(anchor, reg, lo);       // anchor - reg <= lo
+            }
+            self.dbm.close();
         }
     }
 

@@ -627,3 +627,28 @@ pub fn reset_packet_anchors(dbm: &mut Dbm) {
     }
     init_packet_anchors(dbm);
 }
+
+/// Merge anchor-to-anchor constraints from the callee into the caller's DBM.
+/// Anchors represent packet boundaries (data, data_end, data_meta) which are
+/// global — a bounds check in the callee is valid in the caller too.
+/// For each pair, we keep the tighter (smaller) constraint.
+pub fn preserve_anchor_constraints(caller_dbm: &mut Dbm, callee_dbm: &Dbm) {
+    let anchors = [Reg::AnchorData, Reg::AnchorDataEnd, Reg::AnchorDataMeta];
+
+    for &a in &anchors {
+        for &b in &anchors {
+            if a == b {
+                continue;
+            }
+            let callee_bound = callee_dbm.get(a, b);
+            let caller_bound = caller_dbm.get(a, b);
+
+            // A smaller value means a tighter constraint
+            // (a - b <= X, smaller X = tighter)
+            if callee_bound < caller_bound {
+                caller_dbm.add_constraint(a, b, callee_bound);
+            }
+        }
+    }
+    caller_dbm.close();
+}
