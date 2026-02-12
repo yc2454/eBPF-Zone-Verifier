@@ -609,8 +609,6 @@ fn apply_prog_type_overrides(prog_kind: ProgramKind, off: i16, info: &mut CtxAcc
 pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<CtxAccessInfo> {
     let prog_kind = env.ctx.prog_kind;
 
-    println!("{:?}", env.ctx);
-
     let ctx_kind = match prog_kind {
         ProgramKind::Tracing => {
             match (env.ctx.attach_kind, env.ctx.kfunc.as_deref()) {

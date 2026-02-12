@@ -184,6 +184,15 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
+        // ---- Memory helpers ----
+        constants::BPF_GET_STACK => HelperSignature::new([
+            PtrToCtx,
+            PtrToUninitMem,
+            ConstSizeOrZero,
+            Anything,
+            DontCare
+        ]),
+
         // ---- Tail call ----
         constants::BPF_TAIL_CALL => HelperSignature::new([
             PtrToCtx,       // R1: ctx
@@ -495,6 +504,10 @@ pub fn get_mem_size_pairs(helper: u32) -> &'static [MemSizePair] {
     static GET_TASK_STACK: [MemSizePair; 1] = [
         MemSizePair::new(R2, R3)
     ];
+
+    static GET_STACK: [MemSizePair; 1] = [
+        MemSizePair::new(R2, R3)
+    ];
     
     static EMPTY: [MemSizePair; 0] = [];
     
@@ -515,6 +528,8 @@ pub fn get_mem_size_pairs(helper: u32) -> &'static [MemSizePair] {
         constants::BPF_GET_SOCKOPT => &GET_SOCKOPT,
 
         constants::BPF_GET_TASK_STACK => &GET_TASK_STACK,
+
+        constants::BPF_GET_STACK => &GET_STACK,
         
         _ => &EMPTY,
     }
@@ -1219,14 +1234,14 @@ pub(crate) fn transfer_call(
 
     // 1. Update types
     update_call_types(env, &in_types, &mut state, helper);
+
+    // 2. Apply return value bounds for specific helpers
+    apply_return_bounds(&mut state, helper);
     
-    // 2. Update DBM - forget caller-saved registers
-    for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+    // 3. Update DBM - forget caller-saved registers
+    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
         forget(&mut state.dbm, r);
     }
-    
-    // 3. Apply return value bounds for specific helpers
-    apply_return_bounds(&mut state, helper);
     
     // 4. Forget packet pointer DBM entries if they were invalidated
     if helper_invalidates_packets(helper) {
@@ -1252,6 +1267,7 @@ pub(crate) fn transfer_call(
 
 /// Apply return value bounds based on helper semantics.
 fn apply_return_bounds(state: &mut State, helper: u32) {
+    forget(&mut state.dbm, Reg::R0);
     match helper {
         constants::BPF_REDIRECT => {
             // Returns TC_ACT_* (0-7)
@@ -1280,7 +1296,16 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
             let mem_size_pairs = get_mem_size_pairs(helper);
             let size_reg = mem_size_pairs[0].size_reg;
             let (_, hi) = get_simple_bounds(&state.dbm, size_reg);
+            println!("Size reg {} bound: {}", size_reg.name(), hi);
             assume_le_const(&mut state.dbm, Reg::R0, hi);
+        }
+        constants::BPF_GET_STACK => {
+            let mem_size_pairs = get_mem_size_pairs(helper);
+            let size_reg = mem_size_pairs[0].size_reg;
+            let (_, hi) = get_simple_bounds(&state.dbm, size_reg);
+            println!("Size reg {} bound: {}", size_reg.name(), hi);
+            assume_le_const(&mut state.dbm, Reg::R0, hi);
+            assume_ge_const(&mut state.dbm, Reg::R0, -constants::MAX_ERRNO);
         }
         _ => {}
     }

@@ -40,6 +40,7 @@ pub const BPF_GET_SOCKET_COOKIE: u32 = 46;
 pub const BPF_SKB_ADJUST_ROOM: u32 = 50;
 pub const BPF_XDP_ADJUST_META: u32 = 54;
 pub const BPF_GET_SOCKOPT:u32 = 57;
+pub const BPF_GET_STACK:u32 = 67;
 pub const BPF_FIB_LOOKUP: u32 = 69;
 pub const BPF_GET_LOCAL_STORAGE: u32 = 81;
 pub const BPF_SK_LOOKUP_TCP: u32 = 84;
@@ -69,140 +70,6 @@ pub const BPF_GET_TASK_STACK:u32 = 141;
 pub const BPF_D_PATH: u32 = 147;
 
 // ============================================================================
-// TC Context (__sk_buff) Field Offsets
-// ============================================================================
-//
-// struct __sk_buff {
-//     __u32 len;              // 0
-//     __u32 pkt_type;         // 4
-//     __u32 mark;             // 8   - WRITABLE
-//     __u32 queue_mapping;    // 12  - WRITABLE
-//     __u32 protocol;         // 16
-//     __u32 vlan_present;     // 20
-//     __u32 vlan_tci;         // 24
-//     __u32 vlan_proto;       // 28
-//     __u32 priority;         // 32  - WRITABLE
-//     __u32 ingress_ifindex;  // 36
-//     __u32 ifindex;          // 40
-//     __u32 tc_index;         // 44  - WRITABLE
-//     __u32 cb[5];            // 48-67 - WRITABLE
-//     __u32 hash;             // 68
-//     __u32 tc_classid;       // 72  - WRITABLE
-//     __u32 data;             // 76
-//     __u32 data_end;         // 80
-//     __u32 napi_id;          // 84
-//     __u32 family;           // 88
-//     ...
-//     __u32 data_meta;        // 140
-// };
-
-// Read-only fields
-pub const TC_CTX_LEN: i16 = 0;
-pub const TC_CTX_PKT_TYPE: i16 = 4;
-pub const TC_CTX_PROTOCOL: i16 = 16;
-pub const TC_CTX_VLAN_PRESENT: i16 = 20;
-pub const TC_CTX_VLAN_TCI: i16 = 24;
-pub const TC_CTX_VLAN_PROTO: i16 = 28;
-pub const TC_CTX_INGRESS_IFINDEX: i16 = 36;
-pub const TC_CTX_IFINDEX: i16 = 40;
-pub const TC_CTX_HASH: i16 = 68;
-pub const TC_CTX_DATA: i16 = 76;        // 0x4c - packet start
-pub const TC_CTX_DATA_END: i16 = 80;    // 0x50 - packet end
-pub const TC_CTX_NAPI_ID: i16 = 84;
-pub const TC_CTX_FAMILY: i16 = 88;
-pub const TC_CTX_DATA_META: i16 = 140;  // 0x8c
-
-// Writable fields (offset, end)
-pub const TC_CTX_MARK: i16 = 8;
-pub const TC_CTX_MARK_END: i16 = 12;
-
-pub const TC_CTX_QUEUE_MAPPING: i16 = 12;
-pub const TC_CTX_QUEUE_MAPPING_END: i16 = 16;
-
-pub const TC_CTX_PRIORITY: i16 = 32;
-pub const TC_CTX_PRIORITY_END: i16 = 36;
-
-pub const TC_CTX_TC_INDEX: i16 = 44;
-pub const TC_CTX_TC_INDEX_END: i16 = 48;
-
-pub const TC_CTX_CB_START: i16 = 48;
-pub const TC_CTX_CB_END: i16 = 68;      // cb[5] = 5 * 4 = 20 bytes
-
-pub const TC_CTX_TC_CLASSID: i16 = 72;
-pub const TC_CTX_TC_CLASSID_END: i16 = 76;
-
-// ============================================================================
-// XDP Context (xdp_md) Field Offsets
-// ============================================================================
-//
-// struct xdp_md {
-//     __u32 data;             // 0
-//     __u32 data_end;         // 4
-//     __u32 data_meta;        // 8
-//     __u32 ingress_ifindex;  // 12
-//     __u32 rx_queue_index;   // 16  - WRITABLE
-//     __u32 egress_ifindex;   // 20  - WRITABLE (XDP_REDIRECT)
-// };
-
-pub const XDP_CTX_DATA: i16 = 0;
-pub const XDP_CTX_DATA_END: i16 = 4;
-pub const XDP_CTX_DATA_META: i16 = 8;
-pub const XDP_CTX_INGRESS_IFINDEX: i16 = 12;
-
-// Writable fields
-pub const XDP_CTX_RX_QUEUE_INDEX: i16 = 16;
-pub const XDP_CTX_RX_QUEUE_INDEX_END: i16 = 20;
-
-pub const XDP_CTX_EGRESS_IFINDEX: i16 = 20;
-pub const XDP_CTX_EGRESS_IFINDEX_END: i16 = 24;
-
-// ============================================================================
-// Cgroup Sock Addr Context (bpf_sock_addr) Field Offsets
-// ============================================================================
-//
-// struct bpf_sock_addr {
-//     __u32 user_family;      // 0   - WRITABLE
-//     __u32 user_ip4;         // 4   - WRITABLE
-//     __u32 user_ip6[4];      // 8-23 - WRITABLE
-//     __u32 user_port;        // 24  - WRITABLE
-//     __u32 family;           // 28
-//     __u32 type;             // 32
-//     __u32 protocol;         // 36
-//     __u32 msg_src_ip4;      // 40
-//     __u32 msg_src_ip6[4];   // 44-59
-//     __bpf_md_ptr(sk);       // 60
-// };
-
-// Read-only fields
-pub const SOCK_ADDR_CTX_FAMILY: i16 = 28;
-pub const SOCK_ADDR_CTX_TYPE: i16 = 32;
-pub const SOCK_ADDR_CTX_PROTOCOL: i16 = 36;
-pub const SOCK_ADDR_CTX_MSG_SRC_IP4: i16 = 40;
-pub const SOCK_ADDR_CTX_MSG_SRC_IP6_START: i16 = 44;
-pub const SOCK_ADDR_CTX_MSG_SRC_IP6_END: i16 = 60;
-pub const SOCK_ADDR_CTX_SK: i16 = 60;
-
-// Writable fields (offset, end)
-pub const SOCK_ADDR_CTX_USER_FAMILY: i16 = 0;
-pub const SOCK_ADDR_CTX_USER_FAMILY_END: i16 = 4;
-
-pub const SOCK_ADDR_CTX_USER_IP4: i16 = 4;
-pub const SOCK_ADDR_CTX_USER_IP4_END: i16 = 8;
-
-pub const SOCK_ADDR_CTX_USER_IP6_START: i16 = 8;
-pub const SOCK_ADDR_CTX_USER_IP6_END: i16 = 24;  // 4 * 4 = 16 bytes
-
-pub const SOCK_ADDR_CTX_USER_PORT: i16 = 24;
-pub const SOCK_ADDR_CTX_USER_PORT_END: i16 = 28;
-
-// ============================================================================
-// Packet Access Heuristics
-// ============================================================================
-
-pub const MAX_PACKET_HEADER_ACCESS: i64 = 64;
-pub const ETH_HEADER_SIZE: i64 = 14;
-
-// ============================================================================
 // Limits & Defaults
 // ============================================================================
 
@@ -212,6 +79,7 @@ pub const MAX_TAIL_CALL_DEPTH: u32 = 33;
 pub const LOG_HEARTBEAT_INTERVAL: usize = 10_000;
 pub const MAX_PACKET_OFF: i64 = 0xFFFF;
 pub const MAX_VAR_OFF: i64 = 1 << 29;
+pub const MAX_ERRNO: i64 = 4095;
 
 // ============================================================================
 // BPF Map Types (from linux/bpf.h)
