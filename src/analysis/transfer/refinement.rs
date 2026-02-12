@@ -61,6 +61,8 @@ pub(crate) fn refine_branch(
             // Existing map value promotion
             if is_non_null {
                 maybe_promote_map_val(state, *left);
+                maybe_promote_btf_id(state, *left);
+                maybe_promote_mem(state, *left);
             }
 
             // refine acquired references (handles both paths)
@@ -88,6 +90,50 @@ fn maybe_promote_map_val(state: &mut State, reg: Reg) {
         |ty| match ty {
             RegType::PtrToMapValueOrNull { id, map_idx } => 
                 RegType::PtrToMapValue { id: *id, offset: Some(0), map_idx: *map_idx },
+            _ => unreachable!(),
+        },
+    );
+}
+
+fn maybe_promote_btf_id(state: &mut State, reg: Reg) {
+    let target_id = match state.types.get(reg) {
+        RegType::PtrToBtfIdOrNull { id, .. } => id,
+        _ => return,
+    };
+    for r in Reg::ALL {
+        if let RegType::PtrToBtfIdOrNull { id, type_name, trusted } = state.types.get(r) {
+            if id == target_id {
+                state.types.set(r, RegType::PtrToBtfId { type_name, trusted });
+            }
+        }
+    }
+    promote_stack_slots_all_frames(state,
+        |ty| matches!(ty, RegType::PtrToBtfIdOrNull { id, .. } if *id == target_id),
+        |ty| match ty {
+            RegType::PtrToBtfIdOrNull { id: _, type_name, trusted } => 
+                RegType::PtrToBtfId { type_name, trusted: *trusted },
+            _ => unreachable!(),
+        },
+    );
+}
+
+fn maybe_promote_mem(state: &mut State, reg: Reg) {
+    let (target_id, _) = match state.types.get(reg) {
+        RegType::PtrToAllocMemOrNull { id, mem_size } => (id, mem_size),
+        _ => return,
+    };
+    for r in Reg::ALL {
+        if let RegType::PtrToAllocMemOrNull { id, mem_size } = state.types.get(r) {
+            if id == target_id {
+                state.types.set(r, RegType::PtrToAllocMem { id, mem_size });
+            }
+        }
+    }
+    promote_stack_slots_all_frames(state,
+        |ty| matches!(ty, RegType::PtrToAllocMemOrNull { id, .. } if *id == target_id),
+        |ty| match ty {
+            RegType::PtrToAllocMemOrNull { id, mem_size } => 
+                RegType::PtrToAllocMem { id: *id, mem_size: *mem_size },
             _ => unreachable!(),
         },
     );

@@ -671,18 +671,27 @@ fn handle_shl(
                 state.set_tnum(dst, new_tnum);
             } else {
                 // W64
+                if shift_amount == 32 {
+                // Special case for sign-extension pattern (shl 32 + arsh 32)
+                // Preserve bounds if value fits in i32 range (even if negative)
                 if let (Some(lo), Some(hi)) = (old_lo, old_hi) {
-                    if lo >= 0 && shift_amount < 64 {
-                        let max_safe: i64 = if shift_amount == 63 { 0 } else { i64::MAX >> shift_amount };
-                        if hi <= max_safe {
-                            assume_ge_const(&mut state.dbm, dst, lo << shift_amount);
-                            assume_le_const(&mut state.dbm, dst, hi << shift_amount);
-                        }
+                    if lo >= i32::MIN as i64 && hi <= i32::MAX as i64 {
+                        assume_ge_const(&mut state.dbm, dst, lo << 32);
+                        assume_le_const(&mut state.dbm, dst, hi << 32);
                     }
                 }
-                
-                let new_tnum = old_tnum.shl_imm(shift_amount as u64);
-                state.set_tnum(dst, new_tnum);
+            } else if let (Some(lo), Some(hi)) = (old_lo, old_hi) {
+                if lo >= 0 && shift_amount < 64 {
+                    let max_safe: i64 = if shift_amount == 63 { 0 } else { i64::MAX >> shift_amount };
+                    if hi <= max_safe {
+                        assume_ge_const(&mut state.dbm, dst, lo << shift_amount);
+                        assume_le_const(&mut state.dbm, dst, hi << shift_amount);
+                    }
+                }
+            }
+
+            let new_tnum = old_tnum.shl_imm(shift_amount as u64);
+            state.set_tnum(dst, new_tnum);
             }
             
             sync_tnum_to_dbm(state, dst);
@@ -782,9 +791,23 @@ fn handle_arsh(
                     let lower_known_zero = (old_tnum.mask & lower_32_bits) == 0 
                                         && (old_tnum.value & lower_32_bits) == 0;
                     if lower_known_zero {
-                        // Result is a sign-extended i32
-                        assume_ge_const(&mut state.dbm, dst, i32::MIN as i64);
-                        assume_le_const(&mut state.dbm, dst, i32::MAX as i64);
+                        // Sign-extension pattern: the result equals the original value
+                        // before shl 32, interpreted as a signed 32-bit integer.
+                        //
+                        // The DBM bounds (old_lo, old_hi) are the bounds AFTER shl 32.
+                        // Arithmetic shift them back by 32 to recover original bounds,
+                        // clamped to i32 range.
+                        let new_lo = match old_lo {
+                            Some(lo) => (lo >> 32).max(i32::MIN as i64),
+                            None => i32::MIN as i64,
+                        };
+                        let new_hi = match old_hi {
+                            Some(hi) => (hi >> 32).min(i32::MAX as i64),
+                            None => i32::MAX as i64,
+                        };
+                        
+                        assume_ge_const(&mut state.dbm, dst, new_lo);
+                        assume_le_const(&mut state.dbm, dst, new_hi);
                         
                         let new_tnum = old_tnum.arsh_imm(shift_amount as u64);
                         state.set_tnum(dst, new_tnum);

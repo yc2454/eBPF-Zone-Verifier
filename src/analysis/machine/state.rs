@@ -138,33 +138,50 @@ impl State {
     // ── Stack spill/reload (current frame) ──────────────────────
 
     /// Spill into current frame (common case, e.g. store to R10+off)
-    pub fn spill(&mut self, reg: Reg, offset: i16) {
+    pub fn spill(&mut self, reg: Reg, offset: i16, size: MemSize) {
         let level = self.frames.current_level();
-        self.spill_at(level, reg, offset);
+        self.spill_at(level, reg, offset, size);
     }
 
     /// Spill into a specific frame (cross-frame, e.g. store via PtrToStack)
-    pub fn spill_at(&mut self, level: FrameLevel, reg: Reg, offset: i16) {
-        let (
-                anchor, 
-                anchor_lo, 
-                anchor_hi
-            ) = self.save_anchor_info(reg);
+    pub fn spill_at(&mut self, level: FrameLevel, reg: Reg, offset: i16, size: MemSize) {
+        let is_aligned = (offset % 8) == 0;
+        let reg_type = self.types.get(reg);
+        
+        // Only U64 stores at aligned offsets can preserve pointer types
+        let preserved_type = if size == MemSize::U64 && is_aligned {
+            reg_type
+        } else {
+            RegType::ScalarValue
+        };
+        
+        // Only save anchor info for aligned U64 stores
+        let (anchor, anchor_lo, anchor_hi) = if size == MemSize::U64 && is_aligned {
+            self.save_anchor_info(reg)
+        } else {
+            (None, None, None)
+        };
 
         let (min, max) = get_simple_bounds(&self.dbm, reg);
         println!("At spilling, {} bounds: [{}, {}]", reg.name(), min, max);
+        
+        // Only track as proper spill if 8-byte aligned
+        let source_reg = if is_aligned { Some(reg) } else { None };
+        
         let spilled = SpilledReg {
-            source_reg: Some(reg),
-            reg_type: self.types.get(reg),
+            source_reg,
+            reg_type: preserved_type,
             tnum: self.tnums.get(&reg).cloned().unwrap_or(Tnum::unknown()),
             bounds: ScalarBounds { min, max },
+            size,
             anchor,
             anchor_lo,
-            anchor_hi
+            anchor_hi,
         };
+        
         let stack = &mut self.frames.get_mut(level).stack;
-        for i in 0..8 {
-            let current_byte = offset + i;
+        for i in 0..size.bytes() {
+            let current_byte = offset + i as i16;
             if i == 0 {
                 stack.insert(current_byte, spilled.clone());
             } else {
@@ -173,32 +190,61 @@ impl State {
                     reg_type: RegType::ScalarValue,
                     tnum: Tnum::unknown(),
                     bounds: ScalarBounds { min: i64::MIN, max: i64::MAX },
+                    size,
                     anchor: None,
                     anchor_lo: None,
-                    anchor_hi: None
+                    anchor_hi: None,
                 });
             }
         }
     }
 
-    pub fn store_imm_to_stack(&mut self, imm: i64, offset: i16) {
+    pub fn store_imm_to_stack(&mut self, imm: i64, offset: i16, size: MemSize) {
         let level = self.frames.current_level();
-        self.store_imm_to_stack_at(level, imm, offset);
+        self.store_imm_to_stack_at(level, imm, offset, size);
     }
 
-    pub fn store_imm_to_stack_at(&mut self, level: FrameLevel, imm: i64, offset: i16) {
+    pub fn store_imm_to_stack_at(&mut self, level: FrameLevel, imm: i64, offset: i16, size: MemSize) {
+        let is_aligned = (offset % 8) == 0;
+        
+        // Mask the immediate value to the store size
+        let masked_imm = match size {
+            MemSize::U8 => (imm as u8) as i64,
+            MemSize::U16 => (imm as u16) as i64,
+            MemSize::U32 => (imm as u32) as i64,
+            MemSize::U64 => imm,
+        };
+        
+        // Only track bounds if aligned
+        let (tnum, bounds, _source_reg) = if is_aligned {
+            (
+                Tnum::constant(masked_imm as u64),
+                ScalarBounds { min: masked_imm, max: masked_imm },
+                None::<Reg>, // immediates don't have a source reg, but we use Some(dummy) to indicate trackable?
+            )
+        } else {
+            let (min, max) = size.unbounded_scalar_bounds();
+            (
+                Tnum::unknown(),
+                ScalarBounds { min, max },
+                None,
+            )
+        };
+        
         let slot_content = SpilledReg {
-            source_reg: None,
+            source_reg: if is_aligned { Some(Reg::R0) } else { None }, // Use dummy reg to indicate "trackable"
             reg_type: RegType::ScalarValue,
-            tnum: Tnum::constant(imm as u64),
-            bounds: ScalarBounds { min: imm, max: imm },
+            tnum,
+            bounds,
+            size,
             anchor: None,
             anchor_lo: None,
-            anchor_hi: None
+            anchor_hi: None,
         };
+        
         let stack = &mut self.frames.get_mut(level).stack;
-        for i in 0..8 {
-            let current_byte = offset + i;
+        for i in 0..size.bytes() {
+            let current_byte = offset + i as i16;
             if i == 0 {
                 stack.insert(current_byte, slot_content.clone());
             } else {
@@ -207,35 +253,67 @@ impl State {
                     reg_type: RegType::ScalarValue,
                     tnum: Tnum::unknown(),
                     bounds: ScalarBounds { min: i64::MIN, max: i64::MAX },
+                    size,
                     anchor: None,
                     anchor_lo: None,
-                    anchor_hi: None
+                    anchor_hi: None,
                 });
             }
         }
     }
 
     /// Reload from current frame
-    pub fn try_reload(&mut self, dst: Reg, offset: i16, size: MemSize) -> bool {
+    pub fn fill(&mut self, dst: Reg, offset: i16, size: MemSize) -> bool {
         let level = self.frames.current_level();
-        self.try_reload_at(level, dst, offset, size)
+        self.fill_at(level, dst, offset, size)
     }
 
     /// Reload from a specific frame (cross-frame)
-    pub fn try_reload_at(&mut self, level: FrameLevel, dst: Reg, offset: i16, size: MemSize) -> bool {
-        if size != MemSize::U64 {
-            return false;
+    pub fn fill_at(&mut self, level: FrameLevel, dst: Reg, offset: i16, size: MemSize) -> bool {
+        let stack = &self.frames.get(level).stack;
+        
+        // Check all bytes we're reading are initialized
+        for i in 0..size.bytes() {
+            let current_byte = offset + i as i16;
+            if stack.get_slot(current_byte).is_none() {
+                return false; // Reading uninitialized memory
+            }
         }
-        if let Some(spilled) = self.frames.get(level).stack.get_slot(offset).cloned() {
-            domain::forget(&mut self.dbm, dst);
+        
+        // Get the slot at base offset
+        let spilled = match stack.get_slot(offset).cloned() {
+            Some(s) => s,
+            None => return false,
+        };
+        
+        domain::forget(&mut self.dbm, dst);
+        
+        // Check if we can preserve type/bounds:
+        // 1. Must be reading from start of a spilled value (source_reg.is_some())
+        // 2. Load size must match store size
+        // 3. Offset must be 8-byte aligned
+        let is_aligned = (offset % 8) == 0;
+        let sizes_match = spilled.source_reg.is_some() && spilled.size == size;
+        
+        if sizes_match && is_aligned {
+            // Preserve type and bounds
             self.types.set(dst, spilled.reg_type);
             self.tnums.insert(dst, spilled.tnum);
             domain::set_bounds(&mut self.dbm, dst, spilled.bounds.min, spilled.bounds.max);
-            self.restore_anchor_info(dst, &spilled);
-            true
+            
+            // Only restore anchors for U64 (pointers need full 64-bit)
+            if size == MemSize::U64 {
+                self.restore_anchor_info(dst, &spilled);
+            }
         } else {
-            false
+            // Size mismatch or unaligned - return unbounded scalar for the load size
+            self.types.set(dst, RegType::ScalarValue);
+            let (min, max) = size.unbounded_scalar_bounds();
+            self.tnums.insert(dst, Tnum::unknown());
+            domain::set_bounds(&mut self.dbm, dst, min, max);
         }
+        
+        true
     }
 
     pub fn save_anchor_info(&self, reg: Reg) -> (Option<Reg>, Option<i64>, Option<i64>) {

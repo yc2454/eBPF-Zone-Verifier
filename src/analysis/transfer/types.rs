@@ -7,7 +7,7 @@ use crate::analysis::machine::reg_types::{RegType, TypeState, new_ptr_id};
 use crate::analysis::machine::stack_state::StackState;
 use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, MapLoadKind, MemSize, Operand, Width};
-use crate::zone::domain::{self, Reg};
+use crate::zone::domain::{self, Reg, get_simple_bounds};
 use crate::common::ctx_model::{
     CtxFieldKind, validate_ctx_access
 };
@@ -228,7 +228,7 @@ pub(crate) fn update_load_types(
     let base_ty = state.types.get(base);
     match base_ty {
         RegType::PtrToCtx => {
-            let kind = validate_ctx_access(env.ctx.prog_kind, off, size as i64);
+            let kind = validate_ctx_access(env, off, size as i64);
             if let Some(info) = kind {
                 match info.kind {
                     CtxFieldKind::PacketMeta => {
@@ -242,6 +242,13 @@ pub(crate) fn update_load_types(
                     }
                     CtxFieldKind::SockCommon => {
                         state.types.set(dst, RegType::PtrToSockCommonOrNull { ref_id: None });
+                    }
+                    CtxFieldKind::TrustedPtr { type_name, nullable } => {
+                        if nullable {
+                            state.types.set(dst, RegType::PtrToBtfIdOrNull { id: new_ptr_id(), type_name, trusted: true });
+                        } else {
+                            state.types.set(dst, RegType::PtrToBtfId { type_name, trusted: true });
+                        }
                     }
                     _ => state.types.set(dst, RegType::ScalarValue),
                 }
@@ -423,10 +430,15 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
                 RegType::PtrToStack { offset: Some(off), .. } => {
                     let slot = off as i16;
                     state.types.set(Reg::R3, RegType::ScalarValue);
-                    state.spill(Reg::R3, slot);
+                    state.spill(Reg::R3, slot, MemSize::U64);
                 }
                 _ => {} // Do nothing for the other cases for now
             }
+        }
+
+        constants::BPF_RINGBUF_RESERVE => {
+            let (_, hi) = get_simple_bounds(&state.dbm, Reg::R2);
+            state.types.set(Reg::R0, RegType::PtrToAllocMemOrNull { id: new_ptr_id(), mem_size: hi as u64 });
         }
         
         _ => {

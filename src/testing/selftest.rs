@@ -41,6 +41,7 @@ pub struct JsonTestCase {
     pub prog_type: Option<u32>,
     pub expected_attach_type: Option<u32>,
     pub flags: Option<u32>,
+    pub kfunc: Option<String>,
     pub fixups: Option<HashMap<String, Vec<usize>>>,
     pub insns: Vec<JsonInsn>,
 }
@@ -477,8 +478,11 @@ fn build_exec_context(test: &JsonTestCase) -> (crate::analysis::machine::context
 
     ctx.attach_kind = match test.expected_attach_type {
         Some(constants::BPF_ATTACH_TYPE_TRACE_RAW_TP) => AttachKind::TraceRawTp,
+        Some(constants::BPF_ATTACH_TYPE_TRACE_ITER) => AttachKind::TraceIter,
         _ => AttachKind::Unknown,
     };
+
+    ctx.kfunc = test.kfunc.clone();
 
     if test.flags.is_some() {
         ctx.flags |= test.flags.unwrap();

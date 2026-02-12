@@ -19,6 +19,7 @@ pub enum VerificationError {
     IllegalPacketStore { pc: usize, off: i16, size: i64 },
     UnsafeMapLoad { pc: usize, off: i64, size: i64, limit: i64 },
     UnsafeMapStore { pc: usize, off: i64, size: i64, limit: i64 },
+    UnsafeMemoryStore { pc: usize, base: Reg, off: i16, size: i64 },
     MapStoreForbidden { pc: usize, map_idx: usize },
     MapLoadForbidden { pc: usize, map_idx: usize },
     UnsafeMapAccess { pc: usize, map_idx: usize, size: i64 },
@@ -194,6 +195,9 @@ impl VerificationError {
             }
             VerificationError::HelperNotAllowedForProgram { pc, helper, kind } => {
                 format!("Helper {} not allowed for program {:?} at pc {}", helper, kind, pc)
+            }
+            VerificationError::UnsafeMemoryStore { pc, base, off, size } => {
+                format!("Unsafe memory store at pc {}: base {:?}, offset {}, size {}", pc, base, off, size)
             }
         }
     }

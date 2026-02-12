@@ -22,6 +22,23 @@ pub enum RegType {
     PtrToSockCommonOrNull { ref_id: Option<u32>  },
     PtrToTcpSock { id: Option<u32>  },
     PtrToTcpSockOrNull { id: Option<u32>  },
+    PtrToBtfId { 
+        type_name: &'static str,
+        trusted: bool,
+    },
+    PtrToBtfIdOrNull { 
+        id: u32,  // For null-tracking across branches
+        type_name: &'static str,
+        trusted: bool,
+    },
+    PtrToAllocMemOrNull { 
+    id: u32,
+    mem_size: u64,
+    },
+    PtrToAllocMem { 
+        id: u32,
+        mem_size: u64,
+    },
 }
 
 impl Default for RegType {
@@ -149,6 +166,8 @@ pub fn type_family(ty: &RegType) -> u8 {
         PtrToSocket { .. } | PtrToSocketOrNull { .. }    => 9,
         PtrToSockCommon { .. } | PtrToSockCommonOrNull { .. } => 10,
         PtrToTcpSock { .. } | PtrToTcpSockOrNull { .. }  => 11,
+        PtrToBtfId { .. } | PtrToBtfIdOrNull { .. } => 12,
+        PtrToAllocMem { .. } | PtrToAllocMemOrNull { .. } => 13
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::analysis::machine::reg_types::RegType;
+use crate::{analysis::machine::reg_types::RegType, ast::MemSize};
 use crate::zone::tnum::Tnum;
 use crate::zone::domain::Reg;
 use std::collections::{BTreeMap, HashSet};
@@ -16,6 +16,7 @@ pub struct SpilledReg {
     pub reg_type: RegType,
     pub tnum: Tnum,
     pub bounds: ScalarBounds,
+    pub size: MemSize,
     // NEW: saved anchor offsets for packet pointers
     pub anchor_lo: Option<i64>,  // anchor - reg <= ? (i.e., reg >= anchor + lo)
     pub anchor_hi: Option<i64>,  // reg - anchor <= ? (i.e., reg <= anchor + hi)
@@ -81,6 +82,7 @@ impl StackState {
                 reg_type,
                 tnum: Tnum::unknown(),
                 bounds: ScalarBounds { min: i64::MIN, max: i64::MAX },
+                size: MemSize::U64,
                 anchor: None,
                 anchor_hi: None,
                 anchor_lo: None
@@ -113,6 +115,7 @@ impl StackState {
                 reg_type: RegType::ScalarValue,
                 tnum: Tnum::unknown(),
                 bounds: ScalarBounds { min: i64::MIN, max: i64::MAX },
+                size: MemSize::U64,
                 anchor: None,
                 anchor_hi: None,
                 anchor_lo: None

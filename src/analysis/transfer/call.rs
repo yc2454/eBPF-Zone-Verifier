@@ -7,7 +7,7 @@ use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::transfer::types::update_call_rel_types;
 use crate::ast::{ProgramKind, AttachKind};
-use crate::zone::domain::{self, Reg, assume_ge_const, assume_le_const, forget, get_bounds, is_zero, nonneg, positive};
+use crate::zone::domain::{self, Reg, assume_ge_const, assume_le_const, forget, get_bounds, get_simple_bounds, is_zero, nonneg, positive};
 use crate::zone::tnum::{Tnum};
 use crate::analysis::transfer::access::{self, AccessKind};
 use crate::parsing::btf::SpecialFieldKind;
@@ -67,6 +67,9 @@ pub enum BpfArgType {
     PtrToSocket,
     /// pointer to in-kernel sock_common or bpf-mirrored bpf_sock
     PtrToBTFIdSockCommon, 
+
+    // ---- BTF ID types ----
+    PtrToBtfId,
 
     // ---- Stack types ----
     /// pointer to stack
@@ -179,6 +182,15 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
             DontCare,
             DontCare,
+        ]),
+
+        // ---- Memory helpers ----
+        constants::BPF_GET_STACK => HelperSignature::new([
+            PtrToCtx,
+            PtrToUninitMem,
+            ConstSizeOrZero,
+            Anything,
+            DontCare
         ]),
 
         // ---- Tail call ----
@@ -392,9 +404,9 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
         ]),
 
         constants::BPF_RINGBUF_SUBMIT => HelperSignature::new([
-            ConstMapPtr,
+            PtrToAllocMem,
             Anything,
-            Anything,
+            DontCare,
             DontCare,
             DontCare,
         ]),
@@ -406,6 +418,15 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
             DontCare,
             DontCare,
+        ]),
+
+        // ---- Process info helpers ----
+        constants::BPF_GET_TASK_STACK => HelperSignature::new([
+            PtrToBtfId,
+            PtrToUninitMem,
+            ConstSizeOrZero,
+            Anything,
+            DontCare
         ]),
 
         // ---- Miscellaneous ----
@@ -479,6 +500,14 @@ pub fn get_mem_size_pairs(helper: u32) -> &'static [MemSizePair] {
     static GET_SOCKOPT: [MemSizePair; 1] = [
         MemSizePair::new(R4, R5)
     ];
+
+    static GET_TASK_STACK: [MemSizePair; 1] = [
+        MemSizePair::new(R2, R3)
+    ];
+
+    static GET_STACK: [MemSizePair; 1] = [
+        MemSizePair::new(R2, R3)
+    ];
     
     static EMPTY: [MemSizePair; 0] = [];
     
@@ -497,6 +526,10 @@ pub fn get_mem_size_pairs(helper: u32) -> &'static [MemSizePair] {
         constants::BPF_SK_LOOKUP_UDP => &SK_LOOKUP_UDP,
 
         constants::BPF_GET_SOCKOPT => &GET_SOCKOPT,
+
+        constants::BPF_GET_TASK_STACK => &GET_TASK_STACK,
+
+        constants::BPF_GET_STACK => &GET_STACK,
         
         _ => &EMPTY,
     }
@@ -699,7 +732,7 @@ fn validate_single_arg(
         }
 
         // ---- Generic memory pointer ----
-        PtrToMem | PtrToAllocMem => {
+        PtrToMem => {
             if checked_by_mem_size_pairs(helper, reg) {
                 return true;
             }
@@ -718,6 +751,15 @@ fn validate_single_arg(
         // ---- Uninitialized memory (output buffer) ----
         PtrToUninitMem => {
             validate_writable_mem(env, state, types, pc, reg, actual, None)
+        }
+
+        // ---- Allocated memory (by bpf_ringbuf_reserve for example) ----
+        PtrToAllocMem => {
+            if !matches!(actual, RegType::PtrToAllocMem { .. }) {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                return false;
+            }
+            true
         }
 
         // ---- Size arguments ----
@@ -806,6 +848,17 @@ fn validate_single_arg(
                            pc, arg_index + 1, actual);
                     return false;
                 }
+            true
+        }
+
+        // ---- BTF ID pointer ----
+        PtrToBtfId => {
+            if !matches!(actual, RegType::PtrToBtfId { .. }) {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!("[Verifier] pc {}: R{} expected PTR_TO_BTF_ID, got {:?}", 
+                        pc, arg_index + 1, actual);
+                return false;
+            }
             true
         }
 
@@ -1190,14 +1243,14 @@ pub(crate) fn transfer_call(
 
     // 1. Update types
     update_call_types(env, &in_types, &mut state, helper);
+
+    // 2. Apply return value bounds for specific helpers
+    apply_return_bounds(&mut state, helper);
     
-    // 2. Update DBM - forget caller-saved registers
-    for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+    // 3. Update DBM - forget caller-saved registers
+    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
         forget(&mut state.dbm, r);
     }
-    
-    // 3. Apply return value bounds for specific helpers
-    apply_return_bounds(&mut state, helper);
     
     // 4. Forget packet pointer DBM entries if they were invalidated
     if helper_invalidates_packets(helper) {
@@ -1223,6 +1276,7 @@ pub(crate) fn transfer_call(
 
 /// Apply return value bounds based on helper semantics.
 fn apply_return_bounds(state: &mut State, helper: u32) {
+    forget(&mut state.dbm, Reg::R0);
     match helper {
         constants::BPF_REDIRECT => {
             // Returns TC_ACT_* (0-7)
@@ -1246,6 +1300,21 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
             assume_ge_const(&mut state.dbm, Reg::R0, 0);
             assume_le_const(&mut state.dbm, Reg::R0, 0xFFFF_FFFF);
             state.set_tnum(Reg::R0, Tnum::u32_unknown());
+        }
+        constants::BPF_GET_TASK_STACK => {
+            let mem_size_pairs = get_mem_size_pairs(helper);
+            let size_reg = mem_size_pairs[0].size_reg;
+            let (_, hi) = get_simple_bounds(&state.dbm, size_reg);
+            println!("Size reg {} bound: {}", size_reg.name(), hi);
+            assume_le_const(&mut state.dbm, Reg::R0, hi);
+        }
+        constants::BPF_GET_STACK => {
+            let mem_size_pairs = get_mem_size_pairs(helper);
+            let size_reg = mem_size_pairs[0].size_reg;
+            let (_, hi) = get_simple_bounds(&state.dbm, size_reg);
+            println!("Size reg {} bound: {}", size_reg.name(), hi);
+            assume_le_const(&mut state.dbm, Reg::R0, hi);
+            assume_ge_const(&mut state.dbm, Reg::R0, -constants::MAX_ERRNO);
         }
         _ => {}
     }
