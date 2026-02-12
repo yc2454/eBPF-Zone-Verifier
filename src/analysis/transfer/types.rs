@@ -7,7 +7,7 @@ use crate::analysis::machine::reg_types::{RegType, TypeState, new_ptr_id};
 use crate::analysis::machine::stack_state::StackState;
 use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, MapLoadKind, MemSize, Operand, Width};
-use crate::zone::domain::{self, Reg};
+use crate::zone::domain::{self, Reg, get_simple_bounds};
 use crate::common::ctx_model::{
     CtxFieldKind, validate_ctx_access
 };
@@ -434,6 +434,11 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
                 }
                 _ => {} // Do nothing for the other cases for now
             }
+        }
+
+        constants::BPF_RINGBUF_RESERVE => {
+            let (_, hi) = get_simple_bounds(&state.dbm, Reg::R2);
+            state.types.set(Reg::R0, RegType::PtrToAllocMemOrNull { id: new_ptr_id(), mem_size: hi as u64 });
         }
         
         _ => {

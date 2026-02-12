@@ -169,6 +169,14 @@ pub fn check_store(
             error!("Cannot write to nullable socket at pc {}", pc);
             env.fail(VerificationError::UnsafeGenericStore { pc, base, off });
         }
+        PtrToAllocMem { id: _, mem_size } => {
+            let access_end = off as i64 + size;
+            if access_end > mem_size as i64 {
+                error!("Unsafe memory store at pc {}: base {:?}+{} size {} exceeds allocated memory size {}", 
+                    pc, base, off, size, mem_size);
+                env.fail(VerificationError::UnsafeMemoryStore { pc, base, off, size });
+            }
+        }
         _ => {
             error!("Unsafe store at pc {}: base {:?}+{} has non-pointer type {:?}", pc, base, off, base_ty);
             env.fail(VerificationError::UnsafeGenericStore { pc, base, off });

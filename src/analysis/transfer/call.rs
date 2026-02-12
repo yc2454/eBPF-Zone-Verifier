@@ -404,9 +404,9 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
         ]),
 
         constants::BPF_RINGBUF_SUBMIT => HelperSignature::new([
-            ConstMapPtr,
+            PtrToAllocMem,
             Anything,
-            Anything,
+            DontCare,
             DontCare,
             DontCare,
         ]),
@@ -732,7 +732,7 @@ fn validate_single_arg(
         }
 
         // ---- Generic memory pointer ----
-        PtrToMem | PtrToAllocMem => {
+        PtrToMem => {
             if checked_by_mem_size_pairs(helper, reg) {
                 return true;
             }
@@ -751,6 +751,15 @@ fn validate_single_arg(
         // ---- Uninitialized memory (output buffer) ----
         PtrToUninitMem => {
             validate_writable_mem(env, state, types, pc, reg, actual, None)
+        }
+
+        // ---- Allocated memory (by bpf_ringbuf_reserve for example) ----
+        PtrToAllocMem => {
+            if !matches!(actual, RegType::PtrToAllocMem { .. }) {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                return false;
+            }
+            true
         }
 
         // ---- Size arguments ----
