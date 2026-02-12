@@ -81,19 +81,7 @@ pub(crate) fn transfer_alu(
         AluOp::Xor => handle_xor(&mut state, width, dst, &src),
     }
 
-    let old_dst_type = state.types.get(dst);
-
     update_alu_types(env, &in_types, &mut state.types, &state.dbm, width, op, dst, &src, state.pc);
-
-    let new_dst_type = state.types.get(dst);
-    if old_dst_type != new_dst_type {
-        match new_dst_type {
-            RegType::PtrToPacket => bind_to_anchor(&mut state.dbm, dst, Reg::AnchorData),
-            RegType::PtrToPacketMeta => bind_to_anchor(&mut state.dbm, dst, Reg::AnchorDataMeta),
-            RegType::PtrToPacketEnd => bind_to_anchor(&mut state.dbm, dst, Reg::AnchorDataEnd),
-            _ => {}
-        }
-    }
 
     if state.dbm.is_inconsistent() {
         env.fail(VerificationError::DbmInconsistent { pc: state.pc });
@@ -425,6 +413,9 @@ fn handle_mov(
                     assume_le_const(&mut state.dbm, dst, 0xFFFFFFFF);
                 }
             } else {
+                if dst == *r {
+                    return;
+                }
                 if *r == Reg::R10 {
                     assign_zero(&mut state.dbm, dst);
                 } else {

@@ -118,20 +118,20 @@ impl Dbm {
         println!("DBM [{} x {}]:", n, n);
 
         // header
-        print!("{:>5} ", "");
+        print!("{:>8} ", "");
         for v in vars {
-            print!("{:>8} ", v.name());
+            print!("{:>12} ", v.name());
         }
         println!();
 
         for (row_idx, vi) in vars.iter().enumerate() {
-            print!("{:>5} ", vi.name());
+            print!("{:>8} ", vi.name());
             for (col_idx, _vj) in vars.iter().enumerate() {
                 let v = self.data[row_idx][col_idx];
                 if v >= INF {
-                    print!("{:>8} ", "INF");
+                    print!("{:>12} ", "INF");
                 } else {
-                    print!("{:>8} ", v);
+                    print!("{:>12} ", v);
                 }
             }
             println!();
@@ -212,7 +212,7 @@ impl Dbm {
         let mut has_anchor_info = false;
         for i in 0..self.dim() {
             let Some(reg) = Reg::idx_to_reg(i) else { continue };
-            if reg == Reg::Zero || reg.is_anchor() { continue; }
+            if reg == Reg::Zero { continue; }
 
             for &anchor in &anchors {
                 let reg_minus_anchor = self.get(reg, anchor);
