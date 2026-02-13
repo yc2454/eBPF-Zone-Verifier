@@ -241,6 +241,22 @@ impl Dbm {
             }
         }
     }
+
+    /// Standard DBM widening: entries that loosen become INF.
+    /// Guarantees convergence since each step can only introduce INF entries.
+    pub fn widen(&self, newer: &Dbm) -> Dbm {
+        let n = self.num_vars();
+        let mut result = self.clone();
+        for i in 0..n {
+            for j in 0..n {
+                if newer.data[i][j] > self.data[i][j] {
+                    result.data[i][j] = INF;
+                }
+                // If newer <= self, keep self (stable/tightening)
+            }
+        }
+        result
+    }
 }
 
 impl Default for Dbm {

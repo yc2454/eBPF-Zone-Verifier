@@ -53,6 +53,25 @@ impl History {
         trace
     }
 
+    /// Collect all PCs visited on the path from `from_idx` back to (but not including)
+    /// the first occurrence of `target_pc`. These are the PCs in the loop body.
+    pub fn loop_body_pcs(&self, from_idx: usize, target_pc: usize) -> Vec<usize> {
+        let mut pcs = Vec::new();
+        let mut current = Some(from_idx);
+        while let Some(idx) = current {
+            if let Some(step) = self.steps.get(idx) {
+                if step.pc == target_pc {
+                    break;
+                }
+                pcs.push(step.pc);
+                current = step.parent_idx;
+            } else {
+                break;
+            }
+        }
+        pcs
+    }
+
     /// Check if `target_pc` was visited on the path leading to `from_idx`
     pub fn path_contains_pc(&self, from_idx: usize, target_pc: usize) -> bool {
         let mut current = Some(from_idx);

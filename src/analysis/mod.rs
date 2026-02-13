@@ -69,7 +69,7 @@ pub fn analyze_program(
     let mut prune_count: usize = 0;
 
     // 4. Main Analysis Loop
-    while let Some(state) = worklist.pop_back() {
+    while let Some(mut state) = worklist.pop_back() {
         if env.failed() {
             error!(target: "app", "[Analysis] Aborted due to previous errors.");
             break;
@@ -89,7 +89,7 @@ pub fn analyze_program(
         }
 
         // A.b PRUNING CHECK (efficiency - may skip this path)
-        if pruning::should_prune(&env, &state, config) {
+        if pruning::should_prune(&env, &mut state, config, prog) {
             info!("Pruned state at pc {}", state.pc);
             prune_count += 1;
             continue;
@@ -162,8 +162,29 @@ pub fn analyze_program(
         }
 
         // H. Push Successors
-        for mut succ in successors.into_iter().rev() {
+        // Prioritize exit-path successors over loop-back successors.
+        // In a LIFO worklist, items pushed last are processed first.
+        // Push loop-back successors first (processed later), then exit
+        // successors last (processed first). This ensures exit paths are
+        // explored before the loop converges, so convergence can verify
+        // that the exit was actually reachable.
+        let mut loop_back = Vec::new();
+        let mut other = Vec::new();
+        for mut succ in successors.into_iter() {
             succ.history_idx = current_step_idx;
+            let is_loop_back = current_step_idx
+                .map(|idx| env.history.path_contains_pc(idx, succ.pc))
+                .unwrap_or(false);
+            if is_loop_back {
+                loop_back.push(succ);
+            } else {
+                other.push(succ);
+            }
+        }
+        for succ in loop_back {
+            worklist.push_back(succ);
+        }
+        for succ in other.into_iter().rev() {
             worklist.push_back(succ);
         }
     }

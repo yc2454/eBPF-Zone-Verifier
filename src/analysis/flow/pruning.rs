@@ -5,16 +5,78 @@ use std::collections::HashSet;
 use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::state::State;
+use crate::ast::{Instr, Program};
 use crate::common::config::VerifierConfig;
 use crate::zone::dbm::Dbm;
 use crate::zone::domain::{Reg, get_simple_bounds};
 use crate::zone::tnum::Tnum;
 
+/// Check if the loop body contains a conditional branch (If instruction),
+/// which indicates the loop has a potential exit path.
+fn loop_has_conditional_exit(env: &VerifierEnv, state: &State, pc: usize, prog: &Program) -> bool {
+    if let Some(idx) = state.history_idx {
+        let body_pcs = env.history.loop_body_pcs(idx, pc);
+        for body_pc in body_pcs {
+            if body_pc < prog.instrs.len() {
+                if matches!(prog.instrs[body_pc], Instr::If { .. }) {
+                    return true;
+                }
+            }
+        }
+    }
+    // Also check the loop head itself
+    if pc < prog.instrs.len() {
+        if matches!(prog.instrs[pc], Instr::If { .. }) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Check if any conditional branch in the loop body has had its exit path
+/// actually explored (i.e., the exit PC has explored states). This detects
+/// cases where a conditional exit exists syntactically but is never feasible.
+fn loop_exit_was_explored(env: &VerifierEnv, state: &State, pc: usize, prog: &Program) -> bool {
+    // Collect loop body PCs
+    let mut body_pc_set: HashSet<usize> = HashSet::new();
+    body_pc_set.insert(pc); // loop head
+    if let Some(idx) = state.history_idx {
+        for body_pc in env.history.loop_body_pcs(idx, pc) {
+            body_pc_set.insert(body_pc);
+        }
+    }
+
+    // For each If instruction in the loop body, check if its exit successor
+    // (the one that leaves the loop) has been explored
+    for &body_pc in &body_pc_set {
+        if body_pc < prog.instrs.len() {
+            if let Instr::If { target, .. } = &prog.instrs[body_pc] {
+                let fall_through = body_pc + 1;
+                // Check if fall-through exits the loop
+                if !body_pc_set.contains(&fall_through) {
+                    if env.explored_states.contains_key(&fall_through) {
+                        return true;
+                    }
+                }
+                // Check if target exits the loop
+                if !body_pc_set.contains(target) {
+                    if env.explored_states.contains_key(target) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Check if we should prune this state (already covered by a previous exploration).
+/// For loop heads with conditional exits, applies widening to accelerate convergence.
 pub fn should_prune(
     env: &VerifierEnv,
-    state: &State,
+    state: &mut State,
     config: &VerifierConfig,
+    prog: &Program,
 ) -> bool {
     let pc = state.pc;
 
@@ -27,18 +89,70 @@ pub fn should_prune(
         return false;
     }
 
-    // Check if in a loop (don't prune loop iterations)
+    // Check if in a loop
     let in_loop = state.history_idx
         .map(|idx| env.history.path_contains_pc(idx, pc))
         .unwrap_or(false);
-    
+
+    let live_regs = &env.insn_aux_data[pc].live_regs;
+
     if in_loop {
+        // Only apply widening if the loop has a conditional exit (If instruction).
+        // Loops without conditional exits are infinite and should be rejected
+        // by the complexity limit.
+        if !loop_has_conditional_exit(env, state, pc, prog) {
+            return false;
+        }
+
+        // Loop convergence via widening:
+        // 1. Apply widening to over-approximate the state.
+        // 2. On subsequent visits, check if the current state is subsumed
+        //    by the last explored (widened) state → convergence.
+        // 3. Only allow convergence if widening actually expanded the state
+        //    (indicating the loop makes progress and the exit path was explored
+        //    with the widened state). Stagnant loops (no change) are infinite.
+        if let Some(prev_states) = env.explored_states.get(&pc) {
+            if let Some(old) = prev_states.last() {
+                // Check convergence: is current state subsumed by last explored?
+                if state_subsumed_by(state, old, live_regs, config) {
+                    // Only converge if:
+                    // 1. Widening was applied (prev_states >= 2)
+                    // 2. Widening was effective (bounds actually expanded
+                    //    compared to the first visit)
+                    // 3. An exit path from the loop was actually explored
+                    if prev_states.len() >= 2 {
+                        let first = &prev_states[0];
+                        let widening_effective = live_regs.iter().any(|&r| {
+                            let (first_min, first_max) = get_simple_bounds(&first.dbm, r);
+                            let (last_min, last_max) = get_simple_bounds(&old.dbm, r);
+                            last_min < first_min || last_max > first_max
+                        });
+                        if widening_effective
+                            && loop_exit_was_explored(env, state, pc, prog)
+                        {
+                            return true; // Converged with verified exit path
+                        }
+                    }
+                    // Widening not effective or no exit path →
+                    // loop may be infinite, let complexity limit catch it
+                    return false;
+                }
+
+                // Not converged: apply widening and continue
+                let widened_dbm = old.dbm.widen(&state.dbm);
+                state.dbm = widened_dbm;
+
+                // Widen tnums: set to UNKNOWN for all live regs
+                // to guarantee convergence (coarse but sound)
+                for &r in live_regs {
+                    state.set_tnum(r, Tnum::UNKNOWN);
+                }
+            }
+        }
         return false;
     }
 
-    // Check subsumption against all explored states at this PC
-    let live_regs = &env.insn_aux_data[pc].live_regs;
-    
+    // Non-loop: standard subsumption check
     if let Some(prev_states) = env.explored_states.get(&pc) {
         for prev in prev_states {
             if state_subsumed_by(state, prev, live_regs, config) {
