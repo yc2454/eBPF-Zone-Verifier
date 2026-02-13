@@ -13,7 +13,7 @@ use crate::zone::domain::{
     Reg, assign_eq, assume_eq_const, assume_ge_const, 
     assume_ge_var, assume_gt_var, assume_le_const, 
     assume_le_var, assume_le_var_plus_const, assume_less_than, 
-    get_bounds, get_constant_value, nonneg
+    get_bounds, get_constant_value
 };
 use crate::zone::dbm::{Dbm};
 use crate::zone::tnum::Tnum;
@@ -264,17 +264,6 @@ fn fits_in_u32(bounds: (i64, i64)) -> bool {
     bounds.0 >= 0 && bounds.1 <= 0xFFFFFFFF
 }
 
-/// Check if we can safely apply signed constraints for 32-bit comparisons.
-/// This is true when the 64-bit value fits in i32 range, so 32-bit and 64-bit
-/// signed interpretations are the same.
-fn fits_in_i32_range(dbm: &Dbm, reg: Reg) -> bool {
-    let (lo, hi) = get_bounds(dbm, reg);
-    match (lo, hi) {
-        (Some(l), Some(h)) => fits_in_i32((l, h)),
-        _ => false,
-    }
-}
-
 /// Check if value is known to be in u32 range [0, 0xFFFFFFFF]
 fn fits_in_u32_range(dbm: &Dbm, reg: Reg) -> bool {
     let (lo, hi) = get_bounds(dbm, reg);
@@ -284,9 +273,45 @@ fn fits_in_u32_range(dbm: &Dbm, reg: Reg) -> bool {
     }
 }
 
+/// Get combined signed bounds for a register using both DBM and tnum.
+/// Returns (lo, hi) as signed i64 values, using the tighter bound from each source.
+fn get_combined_signed_bounds(state: &State, reg: Reg) -> (i64, i64) {
+    let (dbm_lo, dbm_hi) = get_bounds(&state.dbm, reg);
+    let tnum = state.get_tnum(reg);
+    let tnum_min = tnum.min_value();
+    let tnum_max = tnum.max_value();
+
+    // Tnum gives unsigned bounds. We can derive signed info from it:
+    // If max_value <= i64::MAX as u64, the value is non-negative in signed terms.
+    // If min_value > i64::MAX as u64, the value is negative in signed terms.
+    let lo = if tnum_min > i64::MAX as u64 {
+        // Definitely negative: tnum_min as signed
+        let tnum_lo = tnum_min as i64;
+        match dbm_lo {
+            Some(d) => d.max(tnum_lo),
+            None => tnum_lo,
+        }
+    } else {
+        dbm_lo.unwrap_or(i64::MIN)
+    };
+
+    let hi = if tnum_max <= i64::MAX as u64 {
+        // Definitely non-negative: tnum_max as signed
+        let tnum_hi = tnum_max as i64;
+        match dbm_hi {
+            Some(d) => d.min(tnum_hi),
+            None => tnum_hi,
+        }
+    } else {
+        dbm_hi.unwrap_or(i64::MAX)
+    };
+
+    (lo, hi)
+}
+
 /// Whether it's safe to apply DBM constraints for this comparison
 fn can_apply_dbm_constraint(
-    dbm: &Dbm,
+    state: &State,
     left: Reg,
     op: CmpOp,
     width: Width,
@@ -294,24 +319,30 @@ fn can_apply_dbm_constraint(
 ) -> bool {
     let dominated_by_signed = matches!(op, CmpOp::SLt | CmpOp::SLe | CmpOp::SGt | CmpOp::SGe);
     let dominated_by_unsigned = matches!(op, CmpOp::ULt | CmpOp::ULe | CmpOp::UGt | CmpOp::UGe);
-    
+
     if width == Width::W32 {
+        let left_bounds = get_combined_signed_bounds(state, left);
         if dominated_by_signed {
-            return fits_in_i32_range(dbm, left) && fits_in_i32(right_bounds);
+            return fits_in_i32(left_bounds) && fits_in_i32(right_bounds);
         } else if dominated_by_unsigned {
-            return fits_in_u32_range(dbm, left) && fits_in_u32(right_bounds);
+            return fits_in_u32(left_bounds) && fits_in_u32(right_bounds);
         }
     }
-    
+
     if dominated_by_unsigned {
-        // For 64-bit unsigned, both sides must be non-negative for signed DBM
-        let left_nonneg = nonneg(dbm, left);
-        let (lo, _) = get_bounds(dbm, left);
-        let left_inf = lo.is_none();
+        // For 64-bit unsigned, both sides must be non-negative for signed DBM.
+        // Check both DBM and tnum for non-negativity.
+        let left_bounds = get_combined_signed_bounds(state, left);
+        let left_nonneg = left_bounds.0 >= 0;
+        let left_unbounded = {
+            let (lo, _) = get_bounds(&state.dbm, left);
+            let tnum = state.get_tnum(left);
+            lo.is_none() && tnum.max_value() > i64::MAX as u64
+        };
         let right_nonneg = right_bounds.0 >= 0;
-        return (left_nonneg || left_inf) && right_nonneg;
+        return (left_nonneg || left_unbounded) && right_nonneg;
     }
-    
+
     true
 }
 
@@ -566,7 +597,7 @@ pub fn apply_jmp_constraints(
     // Resolve operand (truncate, extract constant)
     let (resolved, right_bounds) = resolve_right_operand(&then_s.dbm, right, width, op);
     // Apply DBM constraints if safe
-    if can_apply_dbm_constraint(&then_s.dbm, left, op, width, right_bounds) {
+    if can_apply_dbm_constraint(then_s, left, op, width, right_bounds) {
         apply_cmp_to_dbm(&mut then_s.dbm, &mut else_s.dbm, left, op, resolved);
     }
     
