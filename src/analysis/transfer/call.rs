@@ -623,7 +623,19 @@ fn validate_single_arg(
 
         // ---- Map pointer ----
         ConstMapPtr => {
-            if !matches!(actual, RegType::PtrToMapObject { .. }) {
+            let is_inner_map_ptr = match actual {
+                RegType::PtrToMapValue { map_idx, offset: Some(0), .. } => {
+                    env.ctx.map_defs.get(map_idx)
+                        .map(|m| matches!(
+                            m.type_,
+                            constants::BPF_MAP_TYPE_ARRAY_OF_MAPS | constants::BPF_MAP_TYPE_HASH_OF_MAPS
+                        ))
+                        .unwrap_or(false)
+                }
+                _ => false,
+            };
+
+            if !matches!(actual, RegType::PtrToMapObject { .. }) && !is_inner_map_ptr {
                 env.fail(VerificationError::InvalidArgType { pc, reg });
                 error!("[Verifier] pc {}: R{} expected PTR_TO_MAP, got {:?}", 
                        pc, arg_index + 1, actual);
@@ -1228,7 +1240,11 @@ pub(crate) fn transfer_call(
             env.fail(VerificationError::HelperNotAllowedForProgram { pc, helper, kind: env.ctx.prog_kind });
             return vec![];
         } else {
-            if matches!(env.ctx.attach_kind, AttachKind::TraceRawTp) {
+            // Tracing d_path is allowed only in a narrow set of contexts.
+            // Selftests model this with kfunc metadata.
+            if matches!(env.ctx.prog_kind, ProgramKind::Tracing)
+                && matches!(env.ctx.kfunc.as_deref(), Some("d_path"))
+            {
                 env.fail(VerificationError::HelperNotAllowedForProgram { pc, helper, kind: env.ctx.prog_kind });
                 return vec![];
             }

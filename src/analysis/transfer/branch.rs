@@ -32,25 +32,6 @@ pub(crate) fn transfer_if(
     right: Operand,
     target: usize,
 ) -> Vec<State> {
-    // Backward jump handling:
-    // - If the target was already explored on a different path (e.g., an exit
-    //   block reachable via the else-branch), allow the jump — it's not a loop.
-    // - If the target was on the current execution path, it's a true loop back
-    //   edge — also allow (handled by pruning/convergence).
-    // - Otherwise (target never explored, not on current path), reject: this
-    //   would create a new forward exploration in a backward direction, which
-    //   likely indicates an unsupported loop structure.
-    if target < state.pc {
-        let on_path = state.history_idx
-            .map(|idx| env.history.path_contains_pc(idx, target))
-            .unwrap_or(false);
-        let already_explored = env.explored_states.contains_key(&target);
-        if !on_path && !already_explored {
-            env.fail(VerificationError::BackEdge { pc: state.pc, target });
-            return vec![];
-        }
-    }
-
     // Check operand readability
     if !check_reg_readable(env, &state, left) {
         return vec![];
@@ -79,13 +60,34 @@ pub(crate) fn transfer_if(
     refine_branch(&mut state_then, &instr, true);
     refine_branch(&mut state_else, &instr, false);
 
+    let backward_jump_forbidden = |st: &State| -> bool {
+        if target >= st.pc {
+            return false;
+        }
+        let on_path = st.history_idx
+            .map(|idx| env.history.path_contains_pc(idx, target))
+            .unwrap_or(false);
+        let already_explored = env.explored_states.contains_key(&target);
+        !on_path && !already_explored
+    };
+
     // Check for statically determined branches
     if let Some(outcome) = condition_outcome(&state, width, left, op, &right) {
         return if outcome {
-            vec![state_then]
+            if backward_jump_forbidden(&state_then) {
+                env.fail(VerificationError::BackEdge { pc: state.pc, target });
+                vec![]
+            } else {
+                vec![state_then]
+            }
         } else {
             vec![state_else]
         };
+    }
+
+    if backward_jump_forbidden(&state_then) {
+        env.fail(VerificationError::BackEdge { pc: state.pc, target });
+        return vec![];
     }
 
     // Return only consistent states

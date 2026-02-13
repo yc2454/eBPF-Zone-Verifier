@@ -166,12 +166,11 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
                 state.types.set(r, ty.to_non_null().unwrap());
             }
         }
-        for k in state.stack().slot_offsets() {
-            let ty = state.stack().get_slot_type(k);
-            if same_socket_nullable_pointer(&reg_type, &ty) {
-                state.stack_mut().set_slot_type(k, ty.to_non_null().unwrap(), None);
-            }
-        }
+        promote_stack_slots_all_frames(
+            state,
+            |ty| same_socket_nullable_pointer(&reg_type, ty),
+            |ty| ty.to_non_null().unwrap_or(RegType::ScalarValue),
+        );
     } else {
         if target_ref_id.is_some() {
             state.release_ref(target_ref_id.unwrap());
@@ -183,11 +182,8 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
             }
         }
         promote_stack_slots_all_frames(state,
-            |ty| matches!(ty, RegType::PtrToSocketOrNull { ref_id } if *ref_id == target_ref_id),
-            |ty| match ty {
-                RegType::PtrToSocketOrNull { ref_id } => RegType::PtrToSocket { ref_id: *ref_id },
-                _ => unreachable!(),
-            },
+            |ty| same_socket_nullable_pointer(&reg_type, ty),
+            |_ty| RegType::ScalarValue,
         );
     }
 }

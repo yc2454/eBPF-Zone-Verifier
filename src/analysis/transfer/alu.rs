@@ -189,6 +189,9 @@ pub(crate) fn check_ptr_arithmetic(
                 }
                 true
             },
+            // Unary negation of a pointer is accepted but scalarizes the result.
+            // Type transition is handled in update_alu_types.
+            AluOp::Neg => true,
             AluOp::Mov | AluOp::And => true, 
             _ => { false }
         }
@@ -408,10 +411,19 @@ fn handle_mov(
     // Tnum update
     match src {
         Operand::Imm(c) => {
-            state.set_tnum(dst, Tnum::constant(*c as u64));
+            let v = if width == Width::W32 {
+                (*c as u32) as u64
+            } else {
+                *c as u64
+            };
+            state.set_tnum(dst, Tnum::constant(v));
         }
         Operand::Reg(r) => {
-            let t = state.get_tnum(*r);
+            let t = if width == Width::W32 {
+                state.get_tnum(*r).trunc32()
+            } else {
+                state.get_tnum(*r)
+            };
             state.set_tnum(dst, t);
         }
     }
