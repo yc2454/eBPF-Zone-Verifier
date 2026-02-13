@@ -324,6 +324,7 @@ fn can_apply_dbm_constraint(
     op: CmpOp,
     width: Width,
     right_bounds: (i64, i64),  // (lo, hi) of right operand
+    right: Either<Reg, i64>,
 ) -> bool {
     let dominated_by_signed = matches!(op, CmpOp::SLt | CmpOp::SLe | CmpOp::SGt | CmpOp::SGe);
     let dominated_by_unsigned = matches!(op, CmpOp::ULt | CmpOp::ULe | CmpOp::UGt | CmpOp::UGe);
@@ -340,6 +341,9 @@ fn can_apply_dbm_constraint(
     if dominated_by_unsigned {
         // For 64-bit unsigned, both sides must be non-negative for signed DBM.
         // Check both DBM and tnum for non-negativity.
+        // If a side is fully unbounded (no DBM lower bound, tnum spans signed range),
+        // allow it — this covers pointer-vs-pointer comparisons where both sides
+        // lack absolute bounds but have valid relative (difference) constraints.
         let left_bounds = get_combined_signed_bounds(state, left);
         let left_nonneg = left_bounds.0 >= 0;
         let left_unbounded = {
@@ -348,7 +352,11 @@ fn can_apply_dbm_constraint(
             lo.is_none() && tnum.max_value() > i64::MAX as u64
         };
         let right_nonneg = right_bounds.0 >= 0;
-        return (left_nonneg || left_unbounded) && right_nonneg;
+        let right_is_pointer = match right {
+            Either::Left(reg) => state.types.get(reg).is_pointer(),
+            _ => false,
+        };
+        return (left_nonneg || left_unbounded) && (right_nonneg || right_is_pointer);
     }
 
     true
@@ -605,7 +613,7 @@ pub fn apply_jmp_constraints(
     // Resolve operand (truncate, extract constant)
     let (resolved, right_bounds) = resolve_right_operand(&then_s.dbm, right, width, op);
     // Apply DBM constraints if safe
-    if can_apply_dbm_constraint(then_s, left, op, width, right_bounds) {
+    if can_apply_dbm_constraint(then_s, left, op, width, right_bounds, resolved) {
         apply_cmp_to_dbm(&mut then_s.dbm, &mut else_s.dbm, left, op, resolved);
     }
     
