@@ -6,7 +6,7 @@ use crate::analysis::machine::env::{VerifierEnv, VerificationError};
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType};
 use crate::ast::{Operand, MemSize, AtomicOp};
-use crate::zone::domain::{Reg, assume_eq_const, assume_ge_const, assume_le_const, bind_to_anchor, forget, get_relative_constant};
+use crate::zone::domain::{Reg, assume_eq_const, assume_ge_const, assume_le_const, bind_to_anchor, forget, get_relative_bound, get_relative_constant};
 use crate::zone::tnum::Tnum;
 use crate::analysis::transfer::access;
 
@@ -140,8 +140,18 @@ pub(crate) fn transfer_store(
             state.update_frame_depth(off);
             update_store_types(state.stack_at_mut(frame_level), src_type, size, Some(full_offset));
         }
-        // Variable offset: skip spill (can't determine slot), but still update depth
+        // Variable offset: can't do precise spill, but must invalidate all
+        // possibly-affected slots to prevent stale fills and mark as initialized.
         else {
+            let (lo, hi) = get_relative_bound(&state.dbm, base, Reg::R10);
+            if let (Some(l), Some(h)) = (lo, hi) {
+                let min_slot = l + off as i64;
+                let max_slot = h + off as i64 + size.bytes() as i64;
+                let stack = state.stack_at_mut(frame_level);
+                for slot in min_slot..max_slot {
+                    stack.invalidate_slot(slot as i16);
+                }
+            }
             state.update_frame_depth(off);
         }
     }
