@@ -615,6 +615,11 @@ pub fn apply_jmp_constraints(
     // Apply DBM constraints if safe
     if can_apply_dbm_constraint(then_s, left, op, width, right_bounds, resolved) {
         apply_cmp_to_dbm(&mut then_s.dbm, &mut else_s.dbm, left, op, resolved);
+    } else if width == Width::W64 && matches!(op, CmpOp::UGt | CmpOp::UGe | CmpOp::ULt | CmpOp::ULe) {
+        // Fallback: derive signed constraints from unsigned 64-bit comparison
+        // when one operand is a known constant.
+        // Only for W64: 32-bit comparisons truncate, so 64-bit DBM constraints would be wrong.
+        apply_unsigned_const_fallback(then_s, else_s, left, op, resolved);
     }
     
     // Apply type/tnum refinements
@@ -623,4 +628,121 @@ pub fn apply_jmp_constraints(
         Either::Left(_) => None,
     };
     apply_eq_refinements(then_s, else_s, left, op, imm_val);
+}
+
+/// Fallback for unsigned comparisons that can't use the standard signed DBM path.
+/// When one operand is a known constant, we can still derive useful signed ranges
+/// from unsigned comparisons (e.g., `x <u 0x8000000000000000` → `x >= 0` signed).
+fn apply_unsigned_const_fallback(
+    then_s: &mut State,
+    else_s: &mut State,
+    left: Reg,
+    op: CmpOp,
+    right: Either<Reg, i64>,
+) {
+    // Try to find a known constant on either side.
+    // Check both DBM and tnum since the DBM can't represent x >= i64::MIN.
+    let left_const = get_constant_value(&then_s.dbm, left)
+        .or_else(|| {
+            let t = then_s.get_tnum(left);
+            if t.is_const() { Some(t.value as i64) } else { None }
+        });
+
+    match (left_const, right) {
+        (Some(k), Either::Left(reg)) => {
+            // left = K (known), right = reg (unknown): "K op reg"
+            // Flip to "reg flipped_op K"
+            let flipped = flip_unsigned_cmp(op);
+            apply_unsigned_range_constraint(
+                &mut then_s.dbm, &mut else_s.dbm, reg, flipped, k as u64,
+            );
+        }
+        (_, Either::Right(imm)) => {
+            // right = K (known), left = reg (unknown): "left op K"
+            apply_unsigned_range_constraint(
+                &mut then_s.dbm, &mut else_s.dbm, left, op, imm as u64,
+            );
+        }
+        _ => {} // both unknown
+    }
+}
+
+/// Flip an unsigned comparison: `a op b` ↔ `b flipped_op a`
+fn flip_unsigned_cmp(op: CmpOp) -> CmpOp {
+    match op {
+        CmpOp::UGt => CmpOp::ULt,
+        CmpOp::UGe => CmpOp::ULe,
+        CmpOp::ULt => CmpOp::UGt,
+        CmpOp::ULe => CmpOp::UGe,
+        other => other,
+    }
+}
+
+/// Apply signed DBM constraints derived from "reg op K" (unsigned),
+/// but only when the resulting range is representable as a signed interval.
+fn apply_unsigned_range_constraint(
+    then_dbm: &mut Dbm,
+    else_dbm: &mut Dbm,
+    reg: Reg,
+    op: CmpOp, // "reg op K" in unsigned
+    k: u64,
+) {
+    match op {
+        CmpOp::UGt => {
+            // Then: reg >u K → reg in [K+1, U64_MAX]
+            if k < u64::MAX {
+                apply_signed_from_unsigned_range(then_dbm, reg, k + 1, u64::MAX);
+            }
+            // Else: reg <=u K → reg in [0, K]
+            apply_signed_from_unsigned_range(else_dbm, reg, 0, k);
+        }
+        CmpOp::UGe => {
+            // Then: reg >=u K → reg in [K, U64_MAX]
+            apply_signed_from_unsigned_range(then_dbm, reg, k, u64::MAX);
+            // Else: reg <u K → reg in [0, K-1]
+            if k > 0 {
+                apply_signed_from_unsigned_range(else_dbm, reg, 0, k - 1);
+            }
+        }
+        CmpOp::ULt => {
+            // Then: reg <u K → reg in [0, K-1]
+            if k > 0 {
+                apply_signed_from_unsigned_range(then_dbm, reg, 0, k - 1);
+            }
+            // Else: reg >=u K → reg in [K, U64_MAX]
+            apply_signed_from_unsigned_range(else_dbm, reg, k, u64::MAX);
+        }
+        CmpOp::ULe => {
+            // Then: reg <=u K → reg in [0, K]
+            apply_signed_from_unsigned_range(then_dbm, reg, 0, k);
+            // Else: reg >u K → reg in [K+1, U64_MAX]
+            if k < u64::MAX {
+                apply_signed_from_unsigned_range(else_dbm, reg, k + 1, u64::MAX);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Apply signed DBM constraints for [lo_u, hi_u] unsigned, but only when
+/// the range doesn't cross the sign boundary (i.e., representable as a
+/// contiguous signed interval).
+fn apply_signed_from_unsigned_range(dbm: &mut Dbm, reg: Reg, lo_u: u64, hi_u: u64) {
+    if lo_u > hi_u {
+        return; // empty range
+    }
+
+    let lo_s = lo_u as i64;
+    let hi_s = hi_u as i64;
+
+    if hi_u <= i64::MAX as u64 {
+        // Entirely non-negative in signed: [0..i64::MAX]
+        assume_ge_const(dbm, reg, lo_s);
+        assume_le_const(dbm, reg, hi_s);
+    } else if lo_u >= 0x8000000000000000 {
+        // Entirely negative in signed: [i64::MIN..-1]
+        assume_ge_const(dbm, reg, lo_s);
+        assume_le_const(dbm, reg, hi_s);
+    }
+    // else: crosses sign boundary, can't represent as single signed interval
 }

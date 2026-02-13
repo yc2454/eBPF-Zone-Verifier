@@ -7,7 +7,7 @@ use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType, TypeState };
 use crate::ast::{AluOp, Operand, Width};
 use crate::zone::domain::{
-    REG_ENV, Reg, assign_add_imm, assign_add_reg, assign_and_mask, assign_div_imm, assign_div_reg, assign_eq, assign_mul_imm, assign_neg, assign_sub_reg, assign_zero, assume_eq_const, assume_ge_const, assume_le_const, bind_to_anchor, bit_and_const, forget, get_bounds, get_constant_value, get_relative_bound, link_regs_with_offset, set_bounds
+    REG_ENV, Reg, assign_add_imm, assign_add_reg, assign_and_mask, assign_div_imm, assign_div_reg, assign_eq, assign_mul_imm, assign_neg, assign_sub_reg, assign_zero, assume_eq_const, assume_ge_const, assume_le_const, bit_and_const, forget, get_bounds, get_constant_value, get_relative_bound, link_regs_with_offset, set_bounds
 };
 use crate::zone::dbm::{Dbm, INF};
 use crate::zone::tnum::Tnum;
@@ -52,7 +52,7 @@ pub(crate) fn transfer_alu(
     };
     let dst_type = state.types.get(dst);
 
-    if !check_ptr_arithmetic(env, &state, op, width, &dst_type, &src_type, &src) {
+    if !check_ptr_arithmetic(env, &state, op, width, dst, &dst_type, &src_type, &src) {
         env.fail(VerificationError::InvalidPointerArithmetic { pc: state.pc });
         return vec![];
     }
@@ -107,6 +107,7 @@ pub(crate) fn check_ptr_arithmetic(
     state: &State,
     op: AluOp,
     width: Width,
+    dst: Reg,
     dst_type: &RegType,
     src_type: &RegType,
     src: &Operand
@@ -135,6 +136,10 @@ pub(crate) fn check_ptr_arithmetic(
             }
         }
     };
+
+    let (dst_min, dst_max) = get_bounds(&state.dbm, dst);
+    let dst_min = dst_min.unwrap_or(-INF);
+    let dst_max = dst_max.unwrap_or(INF);
 
     // 1. Scalar <op> Scalar
     // Always allowed.
@@ -187,7 +192,22 @@ pub(crate) fn check_ptr_arithmetic(
         match op {
             // Scalar + Ptr is allowed (Commutative).
             // (Result is Ptr, handled by caller)
-            AluOp::Add => true,
+            AluOp::Add => {
+                // Keep offset sanitization symmetric with ptr += scalar.
+                // If scalar offset is too large, the resulting pointer arithmetic
+                // is considered unsafe.
+                if dst_min < -constants::MAX_VAR_OFF || dst_max > constants::MAX_VAR_OFF {
+                    return false;
+                }
+                // Packet pointers are more restrictive and must stay within
+                // verifier packet offset limits.
+                if src_type.is_packet_ptr()
+                    && (dst_min < -constants::MAX_PACKET_OFF || dst_max > constants::MAX_PACKET_OFF)
+                {
+                    return false;
+                }
+                true
+            },
             
             // Scalar - Ptr is FORBIDDEN.
             AluOp::Sub => width == Width::W32,
@@ -203,22 +223,11 @@ pub(crate) fn check_ptr_arithmetic(
 
 /// Check pointer bounds after arithmetic operations.
 pub(crate) fn check_ptr_bounds(
-    env: &mut VerifierEnv,
+    _env: &mut VerifierEnv,
     state: &mut State,
     reg: Reg,
-) {
-    let (lo, hi) = get_bounds(&state.dbm, reg);
-    
+) { 
     match state.types.get(reg) {
-        // RegType::PtrToStack { .. } => {
-        //     let in_bounds = match (lo, hi) {
-        //         (Some(l), Some(h)) => l >= constants::BPF_STACK_MIN && h <= 0,
-        //         _ => false,
-        //     };
-        //     if !in_bounds {
-        //         env.fail(VerificationError::PointerOutOfBounds { pc: state.pc });
-        //     }
-        // }
         RegType::PtrToPacket { .. } => {
             let packet_start_reg_op = REG_ENV.all().iter()
                 .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket));
