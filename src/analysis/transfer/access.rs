@@ -89,7 +89,7 @@ pub fn check_load(
         PtrToPacketMeta { .. } => {
             check_packet_meta_access(env, state, base, off, size, pc);
         }
-        PtrToBtfId { .. } => {
+        PtrToBtfId { .. } | PtrToMapObject { .. } => {
             if !mem_region_model::is_valid_mem_region_read(state.types.get(base), off, size) {
                 error!(
                     "Invalid socket access at pc {}: {:?} offset {} size {}", 

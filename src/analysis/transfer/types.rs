@@ -69,7 +69,7 @@ pub(crate) fn update_alu_types(
                                     map_idx: info.map_idx,
                                 });
                             } else {
-                                types.set(dst, RegType::PtrToMapObject { map_idx: info.map_idx });
+                                types.set(dst, RegType::ScalarValue);
                             }
                         } else {
                             types.set(dst, RegType::ScalarValue);
@@ -97,6 +97,9 @@ pub(crate) fn update_alu_types(
                             types.set(dst, RegType::PtrToMapValue { offset: None, map_idx, id });
                         }
                     },
+                    (RegType::PtrToMapObject { .. }, _) => {
+                        // No changes to the type
+                    }
                     (RegType::PtrToPacket, Operand::Imm(k)) => {
                         if *k >= constants::MAX_PACKET_OFF {
                             types.set(dst, RegType::ScalarValue);

@@ -24,7 +24,7 @@ use crate::{analysis::machine::reg_types::RegType, ast::MemSize};
 pub enum MemFieldKind {
     /// Scalar value (int, flags, etc.)
     Scalar,
-    /// Pointer to another BTF struct
+    /// Scalar to another BTF struct
     BtfPtr { type_name: &'static str, nullable: bool },
 }
 
@@ -279,6 +279,61 @@ const BPF_ITER_META_FIELDS: &[MemRegionField] = &[
     },
 ];
 
+/// struct bpf_map
+///
+/// Reference: linux/include/linux/bpf.h
+///
+/// Obtained via BPF_LD_MAP_FD instruction (PTR_TO_MAP_PTR).
+/// Direct access requires CAP_PERFMON or CAP_SYS_ADMIN.
+///
+/// struct bpf_map {
+///     const struct bpf_map_ops *ops;    // 0
+///     struct bpf_map *inner_map_meta;   // 8
+///     void *security;                   // 16 (if CONFIG_SECURITY)
+///     enum bpf_map_type map_type;       // 24
+///     u32 key_size;                     // 28
+///     u32 value_size;                   // 32
+///     u32 max_entries;                  // 36
+///     u64 map_flags;                    // 40
+///     u32 id;                           // 48
+///     u32 numa_node;                    // 52
+///     u32 btf_key_type_id;              // 56
+///     u32 btf_value_type_id;            // 60
+///     u32 btf_vmlinux_value_type_id;    // 64
+///     struct btf *btf;                  // 72
+/// };
+const BPF_MAP_FIELDS: &[MemRegionField] = &[
+    // const struct bpf_map_ops *ops
+    MemRegionField { offset: 0,  size: MemSize::U64, narrow_access: false, kind: MemFieldKind::Scalar },
+    // struct bpf_map *inner_map_meta
+    MemRegionField { offset: 8,  size: MemSize::U64, narrow_access: false, kind: MemFieldKind::Scalar },
+    // void *security (CONFIG_SECURITY)
+    MemRegionField { offset: 16, size: MemSize::U64, narrow_access: false, kind: MemFieldKind::Scalar },
+    // enum bpf_map_type map_type
+    MemRegionField { offset: 24, size: MemSize::U32, narrow_access: true,  kind: MemFieldKind::Scalar },
+    // u32 key_size
+    MemRegionField { offset: 28, size: MemSize::U32, narrow_access: true,  kind: MemFieldKind::Scalar },
+    // u32 value_size
+    MemRegionField { offset: 32, size: MemSize::U32, narrow_access: true,  kind: MemFieldKind::Scalar },
+    // u32 max_entries
+    MemRegionField { offset: 36, size: MemSize::U32, narrow_access: true,  kind: MemFieldKind::Scalar },
+    // u64 map_flags
+    MemRegionField { offset: 40, size: MemSize::U64, narrow_access: false, kind: MemFieldKind::Scalar },
+    // u32 id
+    MemRegionField { offset: 48, size: MemSize::U32, narrow_access: true,  kind: MemFieldKind::Scalar },
+    // u32 numa_node
+    MemRegionField { offset: 52, size: MemSize::U32, narrow_access: true,  kind: MemFieldKind::Scalar },
+    // u32 btf_key_type_id
+    MemRegionField { offset: 56, size: MemSize::U32, narrow_access: true,  kind: MemFieldKind::Scalar },
+    // u32 btf_value_type_id
+    MemRegionField { offset: 60, size: MemSize::U32, narrow_access: true,  kind: MemFieldKind::Scalar },
+    // u32 btf_vmlinux_value_type_id
+    MemRegionField { offset: 64, size: MemSize::U32, narrow_access: true,  kind: MemFieldKind::Scalar },
+    // (4 bytes padding for alignment)
+    // struct btf *btf
+    MemRegionField { offset: 72, size: MemSize::U64, narrow_access: false, kind: MemFieldKind::Scalar },
+];
+
 // ===========================================================================
 // Field Lookup
 // ===========================================================================
@@ -318,7 +373,9 @@ fn get_region_fields(reg_type: RegType) -> Option<&'static [MemRegionField]> {
         RegType::PtrToSockCommon { .. } => Some(BPF_SOCK_COMMON_FIELDS),
         RegType::PtrToTcpSock { .. } => Some(BPF_TCP_SOCK_FIELDS),
         RegType::PtrToSocket { .. } => Some(BPF_SOCK_FIELDS),
-        RegType::PtrToBtfId { type_name: "bpf_iter_meta", trusted: _ } => Some(BPF_ITER_META_FIELDS),
+        RegType::PtrToBtfId { type_name: "bpf_iter_meta", trusted: _ } => 
+            Some(BPF_ITER_META_FIELDS),
+        RegType::PtrToMapObject { .. } => Some(BPF_MAP_FIELDS),
         _ => None,
     }
 }
