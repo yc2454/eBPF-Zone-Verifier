@@ -6,7 +6,7 @@ use crate::analysis::machine::env::{VerifierEnv, VerificationError};
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::transfer::types::update_call_rel_types;
-use crate::ast::{ProgramKind, AttachKind};
+use crate::ast::ProgramKind;
 use crate::zone::domain::{self, Reg, assume_ge_const, assume_le_const, forget, get_bounds, get_relative_bound, get_relative_constant, get_simple_bounds, is_zero, nonneg, positive};
 use crate::zone::tnum::{Tnum};
 use crate::analysis::transfer::access::{self, AccessKind};
@@ -15,7 +15,6 @@ use crate::common::constants;
 use log::{error, info, warn};
 
 use super::types::{update_call_types, helper_invalidates_packets};
-use super::common::check_regs_readable;
 
 // ============================================================================
 // BPF Argument Types
@@ -24,6 +23,7 @@ use super::common::check_regs_readable;
 /// BPF helper function argument type constraints.
 /// Based on Linux kernel's `enum bpf_arg_type` from include/linux/bpf.h
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum BpfArgType {
     /// Unused argument in helper function
     DontCare,
@@ -134,13 +134,6 @@ pub struct HelperSignature {
 impl HelperSignature {
     const fn new(args: [BpfArgType; MAX_BPF_FUNC_ARGS]) -> Self {
         Self { args }
-    }
-
-    /// Returns the number of actual arguments (non-DontCare)
-    pub fn arg_count(&self) -> usize {
-        self.args.iter()
-            .take_while(|&&arg| arg != BpfArgType::DontCare)
-            .count()
     }
 }
 
@@ -1347,18 +1340,6 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
             assume_ge_const(&mut state.dbm, Reg::R0, -constants::MAX_ERRNO);
         }
         _ => {}
-    }
-}
-
-/// Get argument registers based on helper signature.
-fn get_arg_regs_from_signature(helper: u32) -> Vec<Reg> {
-    let arg_regs = [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
-    
-    if let Some(sig) = get_helper_signature(helper) {
-        arg_regs[..sig.arg_count()].to_vec()
-    } else {
-        // Unknown helper - conservatively check R1
-        vec![Reg::R1]
     }
 }
 

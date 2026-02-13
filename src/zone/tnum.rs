@@ -21,6 +21,7 @@ pub struct Tnum {
     pub mask: u64,   // Bits that are unknown
 }
 
+#[allow(dead_code)]
 impl Tnum {
     /// A completely unknown value (any 64-bit value is possible)
     pub const UNKNOWN: Tnum = Tnum {

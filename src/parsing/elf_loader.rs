@@ -10,6 +10,7 @@ use anyhow::Result;
 
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct BpfMapDef {
     pub type_: u32,
     pub key_size: u32,
@@ -25,6 +26,7 @@ pub struct BpfMapDef {
 /// Represents a raw BPF program extracted from the ELF symbol table.
 /// This corresponds to a single C function in the source code.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct RawBpfProgram {
     pub name: String,
     pub data: Vec<u8>,      // The raw bytecode slice

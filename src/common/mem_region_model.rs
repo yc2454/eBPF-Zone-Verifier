@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 // src/analysis/mem_region_model.rs
 //
 // Data-driven BPF memory region field definitions and access validation.

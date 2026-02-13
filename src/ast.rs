@@ -16,6 +16,7 @@ pub enum Width {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum AluOp {
     Add,
     Sub,
@@ -100,6 +101,7 @@ pub enum AtomicOp {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub enum Instr {
     /// rX = arg0
     /// (Note: only used for entry point arg0 loading)
@@ -221,6 +223,7 @@ pub enum ProgramKind {
 
 /// What matters for verification: the context structure
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ContextKind {
     XdpMd,          // struct xdp_md
     SkBuff,         // struct __sk_buff
@@ -444,7 +447,7 @@ impl fmt::Display for Instr {
                 write!(f, "*({} *)({} + {}) = {}", size_str, base.name(), off, src_str)
             },
 
-            Atomic { op, size, base, off, src, fetch } => {
+            Atomic { op, size, base, off, src, fetch: _ } => {
                 let size_str = match size {
                     MemSize::U8  => "u8",
                     MemSize::U16 => "u16",
@@ -468,7 +471,7 @@ impl fmt::Display for Instr {
             CallRel { target } =>
                 write!(f, "call {}", target),
 
-            LoadPacket { size, mode, offset_imm, src } => {
+            LoadPacket { size: _, mode: _, offset_imm: _, src: _ } => {
                 write!(f, "ld_abs or ld_ind")
             }
 

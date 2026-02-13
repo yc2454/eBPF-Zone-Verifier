@@ -45,23 +45,6 @@ pub(crate) fn check_operand_readable(
     }
 }
 
-/// Checks that all registers in a slice are readable.
-/// Returns true if all are readable, false otherwise.
-pub(crate) fn check_regs_readable(
-    env: &mut VerifierEnv,
-    state: &State,
-    regs: &[Reg],
-) -> bool {
-    let mut all_ok = true;
-    for reg in regs {
-        if !check_reg_readable(env, state, *reg) {
-            all_ok = false;
-            // Don't break early - report all errors
-        }
-    }
-    all_ok
-}
-
 pub(crate) fn check_reg_writable(
     env: &mut VerifierEnv,
     state: &State,

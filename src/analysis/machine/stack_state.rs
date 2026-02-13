@@ -65,10 +65,6 @@ impl StackState {
         self.slots.get(&offset)
     }
 
-    pub fn get_slot_mut(&mut self, offset: i16) -> Option<&mut SpilledReg> {
-        self.slots.get_mut(&offset)
-    }
-
     pub fn slot_offsets(&self) -> Vec<i16> {
         self.slots.keys().cloned().collect()
     }
@@ -103,10 +99,6 @@ impl StackState {
 
     pub fn insert(&mut self, offset: i16, spilled: SpilledReg) {
         self.slots.insert(offset, spilled);
-    }
-
-    pub fn clear_slot(&mut self, offset: i16) {
-        self.slots.remove(&offset);
     }
 
     pub fn invalidate_slot(&mut self, offset: i16) {

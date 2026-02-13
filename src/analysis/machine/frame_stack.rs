@@ -15,10 +15,6 @@ pub struct FrameLevel(usize);
 impl FrameLevel {
     /// The main function frame (always valid).
     pub const MAIN: FrameLevel = FrameLevel(0);
-
-    pub fn as_usize(self) -> usize {
-        self.0
-    }
 }
 
 impl std::fmt::Display for FrameLevel {

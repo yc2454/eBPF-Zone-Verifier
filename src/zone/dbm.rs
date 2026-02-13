@@ -140,6 +140,7 @@ impl Dbm {
         println!();
     }
 
+    #[allow(dead_code)]
     pub fn dump_matrix_full(&self) {
         let n = self.num_vars();
         println!("DBM [{} x {}] (full, with anchors):", n, n);

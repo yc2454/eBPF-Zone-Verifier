@@ -5,6 +5,7 @@ use crate::parsing::btf::BtfContext;
 use crate::ast::{ProgramKind, AttachKind};
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub enum VerificationMode {Priviledged, Unprivileged}
 
 #[derive(Clone, Debug)]

@@ -25,12 +25,13 @@ use crate::common::config::VerifierConfig;
 use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::parsing::elf_loader::{BpfMapDef, RelocInfo};
 use crate::zone::dbm::Dbm;
-use crate::zone::domain::{Reg, REG_ENV, assign_zero};
+use crate::zone::domain::{Reg, assign_zero};
 
 // ============================================================================
 // JSON Deserialization Types
 // ============================================================================
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct JsonTestCase {
     pub name: String,
@@ -90,10 +91,6 @@ pub enum TestOutcome {
 }
 
 impl TestOutcome {
-    pub fn is_pass(&self) -> bool {
-        matches!(self, TestOutcome::Pass)
-    }
-
     pub fn is_false_positive(&self) -> bool {
         matches!(self, TestOutcome::FalsePositive)
     }

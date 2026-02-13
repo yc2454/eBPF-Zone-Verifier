@@ -9,6 +9,7 @@ use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::flow::subprog::SubprogError;
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub enum VerificationError {
     StackOutOfBounds { pc: usize, off: i64, size: i64 },
     PointerOutOfBounds { pc: usize },

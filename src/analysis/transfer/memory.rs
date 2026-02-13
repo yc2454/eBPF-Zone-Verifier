@@ -131,10 +131,6 @@ pub(crate) fn transfer_store(
                 Operand::Imm(k) => {
                     state.store_imm_to_stack_at(frame_level, *k, full_offset as i16, size);
                 }
-                _ => {
-                    // Partial write — invalidate any existing spill
-                    state.stack_mut().clear_slot(full_offset as i16);
-                }
             }
             // Update frame depth
             state.update_frame_depth(off);

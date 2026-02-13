@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 // src/btf.rs
 use std::collections::HashMap;
 use std::convert::TryInto;

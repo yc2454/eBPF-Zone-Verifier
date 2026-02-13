@@ -5,7 +5,7 @@ use crate::analysis::machine::context::{default_exec_ctx};
 use crate::analysis::machine::env::VerificationError;
 use crate::common::config::VerifierConfig;
 use crate::zone::dbm::Dbm;
-use crate::zone::domain::{REG_ENV, assign_zero};
+use crate::zone::domain::assign_zero;
 use crate::common::utils::{load_program_from_elf, program_kind_for_object};
 use crate::parsing::elf_loader::{
     load_maps, load_relocations, load_data_section_maps,

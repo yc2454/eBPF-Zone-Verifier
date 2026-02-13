@@ -199,11 +199,6 @@ impl State {
         }
     }
 
-    pub fn store_imm_to_stack(&mut self, imm: i64, offset: i16, size: MemSize) {
-        let level = self.frames.current_level();
-        self.store_imm_to_stack_at(level, imm, offset, size);
-    }
-
     pub fn store_imm_to_stack_at(&mut self, level: FrameLevel, imm: i64, offset: i16, size: MemSize) {
         let is_aligned = (offset % 8) == 0;
         
@@ -367,14 +362,6 @@ impl State {
 
     pub fn stack_mut(&mut self) -> &mut StackState {
         &mut self.frames.current_mut().stack
-    }
-
-    pub fn frame_depth(&self) -> u16 {
-        self.frames.current().frame_depth
-    }
-
-    pub fn set_frame_depth(&mut self, depth: u16) {
-        self.frames.current_mut().frame_depth = depth;
     }
 
     // ── Cross-frame access (for PtrToStack with different frame_level) ──
