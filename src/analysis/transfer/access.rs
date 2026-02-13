@@ -311,6 +311,20 @@ fn check_stack_initialization(
         true
     };
 
+    let allow_privileged_partial_u64_read = |off: i64, sz: i64| -> bool {
+        if !env.ctx.is_privileged() || sz != 8 {
+            return false;
+        }
+        if off < i16::MIN as i64 || off > i16::MAX as i64 {
+            return false;
+        }
+        let off = off as i16;
+        // Kernel-compatible relaxed behavior in privileged mode:
+        // if the base byte is initialized, allow loading a full 64-bit value.
+        // The value is conservatively treated as unknown by fill_at.
+        stack.is_slot_initialized(off)
+    };
+
     // Initialization check (for reads and helper outputs)
     match kind {
         AccessKind::Read => {
@@ -325,7 +339,9 @@ fn check_stack_initialization(
             }
 
             if first_uninit.is_some() {
-                if allow_privileged_upper_half_read(actual_offset, size) {
+                if allow_privileged_upper_half_read(actual_offset, size)
+                    || allow_privileged_partial_u64_read(actual_offset, size)
+                {
                     return;
                 }
                 env.fail(VerificationError::UninitializedStackRead { pc, offset: actual_offset });
