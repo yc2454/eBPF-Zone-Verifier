@@ -138,6 +138,14 @@ pub fn get_relative_bound(dbm: &Dbm, x: Reg, y: Reg) -> (Option<i64>, Option<i64
     (lb_opt, ub_opt)
 }
 
+pub fn get_relative_constant(dbm: &Dbm, x: Reg, y: Reg) -> Option<i64> {
+    let (lo, hi) = get_relative_bound(dbm, x, y);
+    match (lo, hi) {
+        (Some(l), Some(h)) if l == h => Some(l),
+        _ => None,
+    }
+}
+
 pub fn get_constant_value(dbm: &Dbm, x: Reg) -> Option<i64> {
     if let (Some(lo), Some(hi)) = get_bounds(dbm, x) {
         if lo == hi {

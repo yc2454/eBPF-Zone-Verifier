@@ -216,9 +216,8 @@ fn transfer_exit(
         forget(&mut state.dbm, Reg::R0);
         set_bounds(&mut state.dbm, Reg::R0, ret_bounds.0, ret_bounds.1);
 
-        state.types.set(Reg::R10, RegType::PtrToStack { 
-            offset: Some(0), 
-            frame_level: state.current_frame_level() 
+        state.types.set(Reg::R10, RegType::PtrToStack {
+            frame_level: state.current_frame_level()
         });
         state.pc = return_pc;
         vec![state]

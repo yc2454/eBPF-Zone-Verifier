@@ -7,7 +7,7 @@ use crate::analysis::machine::reg_types::{RegType, TypeState, new_ptr_id};
 use crate::analysis::machine::stack_state::StackState;
 use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, MapLoadKind, MemSize, Operand, Width};
-use crate::zone::domain::{self, Reg, get_simple_bounds};
+use crate::zone::domain::{self, Reg, get_simple_bounds, get_relative_constant};
 use crate::common::ctx_model::{
     CtxFieldKind, validate_ctx_access
 };
@@ -123,11 +123,11 @@ pub(crate) fn update_alu_types(
                             types.set(dst, RegType::ScalarValue);
                         }
                     }
-                    (RegType::PtrToStack { offset, frame_level }, Operand::Imm(k)) => {
-                        types.set(dst, RegType::PtrToStack { offset: offset.map(|o| o + k), frame_level });
+                    (RegType::PtrToStack { frame_level }, Operand::Imm(_)) => {
+                        types.set(dst, RegType::PtrToStack { frame_level });
                     },
-                    (RegType::PtrToStack { offset: _, frame_level }, Operand::Reg(_)) => {
-                        types.set(dst, RegType::PtrToStack { offset: None, frame_level });
+                    (RegType::PtrToStack { frame_level }, Operand::Reg(_)) => {
+                        types.set(dst, RegType::PtrToStack { frame_level });
                     },
                     (RegType::PtrToCtx, Operand::Imm(0)) => {
                         types.set(dst, RegType::PtrToCtx);
@@ -187,11 +187,11 @@ pub(crate) fn update_alu_types(
                             types.set(dst, RegType::ScalarValue);
                         }
                     },
-                    (RegType::PtrToStack { offset, frame_level }, Operand::Imm(k)) => {
-                        types.set(dst, RegType::PtrToStack { offset: offset.map(|o| o - k), frame_level });
+                    (RegType::PtrToStack { frame_level }, Operand::Imm(_)) => {
+                        types.set(dst, RegType::PtrToStack { frame_level });
                     },
-                    (RegType::PtrToStack { offset: _, frame_level }, Operand::Reg(_)) => {
-                        types.set(dst, RegType::PtrToStack { offset: None, frame_level });
+                    (RegType::PtrToStack { frame_level }, Operand::Reg(_)) => {
+                        types.set(dst, RegType::PtrToStack { frame_level });
                     },
                     (RegType::PtrToCtx, Operand::Imm(0)) => {
                         types.set(dst, RegType::PtrToCtx);
@@ -259,14 +259,14 @@ pub(crate) fn update_load_types(
                 state.types.set(dst, RegType::ScalarValue);
             }
         }
-        RegType::PtrToStack { offset: base_offset, .. } => {
-            match base_offset {
-                Some(base) => {
-                    let actual_slot = base + (off as i64);
-                    if size == MemSize::U64.bytes() as usize { 
-                        state.types.set(dst, state.stack().get_slot_type(actual_slot as i16)); 
-                    } else { 
-                        state.types.set(dst, RegType::ScalarValue); 
+        RegType::PtrToStack { .. } => {
+            match get_relative_constant(&state.dbm, base, Reg::R10) {
+                Some(base_off) => {
+                    let actual_slot = base_off + (off as i64);
+                    if size == MemSize::U64.bytes() as usize {
+                        state.types.set(dst, state.stack().get_slot_type(actual_slot as i16));
+                    } else {
+                        state.types.set(dst, RegType::ScalarValue);
                     }
                 }
                 None => {
@@ -281,17 +281,15 @@ pub(crate) fn update_load_types(
 }
 
 /// Updates stack types after a Store operation.
+/// `resolved_stack_offset` is the already-resolved stack slot (base_offset + insn_off),
+/// or None if the base is not a stack pointer or offset is unknown.
 pub(crate) fn update_store_types(
     stack: &mut StackState,
-    src_type: RegType, 
-    size: MemSize, 
-    base_type: RegType, 
-    off: i16
+    src_type: RegType,
+    size: MemSize,
+    resolved_stack_offset: Option<i64>,
 ) {
-    let stack_slot = match base_type {
-        RegType::PtrToStack { offset, .. } => offset.map(|o| o + (off as i64)),
-        _ => None,
-    };
+    let stack_slot = resolved_stack_offset;
     
     if let Some(slot) = stack_slot {
         let slot = slot as i16;
@@ -429,13 +427,12 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
 
         constants::BPF_SKB_LOAD_BYTES => {
             let mem_ptr_ty = in_types.get(Reg::R3);
-            match mem_ptr_ty {
-                RegType::PtrToStack { offset: Some(off), .. } => {
+            if matches!(mem_ptr_ty, RegType::PtrToStack { .. }) {
+                if let Some(off) = get_relative_constant(&state.dbm, Reg::R3, Reg::R10) {
                     let slot = off as i16;
                     state.types.set(Reg::R3, RegType::ScalarValue);
                     state.spill(Reg::R3, slot, MemSize::U64);
                 }
-                _ => {} // Do nothing for the other cases for now
             }
         }
 
@@ -474,7 +471,7 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
 
 pub(crate) fn update_call_rel_types(state: &mut State) {
     state.types.set(Reg::R0, RegType::NotInit);
-    state.types.set(Reg::R10, RegType::PtrToStack { offset: Some(0), frame_level: state.current_frame_level() });
+    state.types.set(Reg::R10, RegType::PtrToStack { frame_level: state.current_frame_level() });
 }
 
 pub(crate) fn update_packet_load_types(types: &mut TypeState) {

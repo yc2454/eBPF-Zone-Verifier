@@ -281,15 +281,11 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
         (PtrToSocket { ref_id: id1 }, PtrToSocket { ref_id: id2 }) => id1 == id2,
         (PtrToSocketOrNull { ref_id: id1 }, PtrToSocketOrNull { ref_id: id2 }) => id1 == id2,
 
-        // Stack pointers
+        // Stack pointers - DBM subsumption covers the numeric relationship
         (
-            PtrToStack { offset: o1, frame_level: fl1 },
-            PtrToStack { offset: o2, frame_level: fl2 },
-        ) => match (o1, o2) {
-            (None, _) => fl1 == fl2,
-            (Some(a), Some(b)) => a == b && fl1 == fl2,
-            (Some(_), None) => false,
-        },
+            PtrToStack { frame_level: fl1 },
+            PtrToStack { frame_level: fl2 },
+        ) => fl1 == fl2,
 
         // Different types - no subsumption
         _ => false,

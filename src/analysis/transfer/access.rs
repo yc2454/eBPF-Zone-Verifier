@@ -6,7 +6,7 @@ use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::RegType;
 use crate::ast::{ProgramKind};
 use crate::parsing::elf_loader::BpfMapDef;
-use crate::zone::domain::{get_bounds, get_relative_bound, check_meta_access, check_packet_access_dbm};
+use crate::zone::domain::{get_bounds, get_relative_bound, get_relative_constant, check_meta_access, check_packet_access_dbm};
 use crate::analysis::machine::env::VerificationError;
 use crate::common::constants;
 use crate::common::ctx_model;
@@ -29,7 +29,8 @@ pub fn check_load(
     let pc = state.pc;
 
     match base_type {
-        PtrToStack { offset, frame_level } => {
+        PtrToStack { frame_level } => {
+            let offset = get_relative_constant(&state.dbm, base, Reg::R10);
             check_stack_access(env, state, base, offset, off as i64, size, pc, AccessKind::Read, None, frame_level);
         }
         PtrToPacket => {
@@ -137,9 +138,10 @@ pub fn check_store(
                 env.fail(VerificationError::MapNotFound { pc, map_idx })
             }
         }
-        PtrToStack { offset, frame_level } => {
+        PtrToStack { frame_level } => {
+            let offset = get_relative_constant(&state.dbm, base, Reg::R10);
             check_stack_access(
-                env, state, base, offset, off as i64, 
+                env, state, base, offset, off as i64,
                 size as i64, pc, AccessKind::Write, Some(src_type), frame_level);
         }
         PtrToPacket { .. } => {

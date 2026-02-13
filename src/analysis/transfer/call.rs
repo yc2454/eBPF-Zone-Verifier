@@ -7,7 +7,7 @@ use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::transfer::types::update_call_rel_types;
 use crate::ast::{ProgramKind, AttachKind};
-use crate::zone::domain::{self, Reg, assume_ge_const, assume_le_const, forget, get_bounds, get_simple_bounds, is_zero, nonneg, positive};
+use crate::zone::domain::{self, Reg, assume_ge_const, assume_le_const, forget, get_bounds, get_relative_bound, get_relative_constant, get_simple_bounds, is_zero, nonneg, positive};
 use crate::zone::tnum::{Tnum};
 use crate::analysis::transfer::access::{self, AccessKind};
 use crate::parsing::btf::SpecialFieldKind;
@@ -907,15 +907,16 @@ fn validate_single_arg(
         }
 
         PtrToLong => {
-            if let RegType::PtrToStack { offset, frame_level } = actual {
+            if let RegType::PtrToStack { frame_level } = actual {
+                let offset = get_relative_constant(&state.dbm, reg, Reg::R10);
                 access::check_stack_access(
-                    env, 
-                    state, 
-                    reg, 
-                    offset, 
-                    0, 
+                    env,
+                    state,
+                    reg,
+                    offset,
+                    0,
                     8, // PtrToLong is 8-byte access
-                    pc, 
+                    pc,
                     access::AccessKind::HelperOutput,
                     None,
                     frame_level
@@ -941,16 +942,34 @@ fn validate_readable_mem(
     size: Option<u32>,
 ) -> bool {
     match reg_type {
-        RegType::PtrToStack { offset: Some(off), .. } => {
-            if let Some(sz) = size {
-                access::check_stack_arg_readable(env, state, off, sz as i64, pc, AccessKind::Read);
+        RegType::PtrToStack { .. } => {
+            if let Some(off) = get_relative_constant(&state.dbm, reg, Reg::R10) {
+                if let Some(sz) = size {
+                    access::check_stack_arg_readable(env, state, off, sz as i64, pc, AccessKind::Read);
+                }
+                true
+            } else {
+                // Variable stack offset — use bounds check
+                if let Some(sz) = size {
+                    let (lo, hi) = get_relative_bound(&state.dbm, reg, Reg::R10);
+                    match (lo, hi) {
+                        (Some(l), Some(h)) => {
+                            // Check all possible offsets in the range
+                            for off_candidate in l..=h {
+                                access::check_stack_arg_readable(env, state, off_candidate, sz as i64, pc, AccessKind::HelperArg);
+                                if env.failed() { return false; }
+                            }
+                            true
+                        }
+                        _ => {
+                            env.fail(VerificationError::UninitializedStackRead { pc, offset: 0 });
+                            false
+                        }
+                    }
+                } else {
+                    true
+                }
             }
-            true
-        }
-        RegType::PtrToStack { offset: None, .. } => {
-            // Unknown stack offset - reject conservatively
-            env.fail(VerificationError::UninitializedStackRead { pc, offset: 0 });
-            false
         }
         // Delegate the checking for these to access.rs
         RegType::PtrToMapValue { map_idx, .. } => {
@@ -1002,15 +1021,10 @@ fn validate_writable_mem(
     _size: Option<u32>,
 ) -> bool {
     match reg_type {
-        RegType::PtrToStack { offset: Some(_), .. } => {
-            // Stack is writable
+        RegType::PtrToStack { .. } => {
+            // Stack is writable (access check done elsewhere)
             true
         }
-        // RegType::PtrToStack { offset: None, .. } => {
-        //     // Unknown stack offset
-        //     env.fail(VerificationError::UninitializedStackRead { pc, offset: 0 });
-        //     false
-        // }
         RegType::PtrToMapValue { map_idx, .. } => {
             let writable = env.ctx.map_defs.get(map_idx)
                 .map(|md| md.map_flags != constants::BPF_F_RDONLY_PROG)
@@ -1490,27 +1504,47 @@ fn check_ptr_access_size(
     pc: usize,
 ) -> bool {
     match ptr_type {
-        RegType::PtrToStack { offset: Some(off), .. } => {
-            // Stack: check [off, off + size) is within stack bounds
-            // Stack grows down, so valid range is [-512, 0)
-            let end_offset = off + size as i64;
-            if off < -512 || end_offset > 0 {
-                env.fail(VerificationError::StackOutOfBounds { pc, off, size: size.into() });
-                error!("[Verifier] pc {}: stack access [{}, {}) out of bounds",
-                       pc, off, end_offset);
-                return false;
+        RegType::PtrToStack { .. } => {
+            if let Some(off) = get_relative_constant(&state.dbm, ptr_reg, Reg::R10) {
+                // Stack: check [off, off + size) is within stack bounds
+                // Stack grows down, so valid range is [-512, 0)
+                let end_offset = off + size as i64;
+                if off < -512 || end_offset > 0 {
+                    env.fail(VerificationError::StackOutOfBounds { pc, off, size: size.into() });
+                    error!("[Verifier] pc {}: stack access [{}, {}) out of bounds",
+                           pc, off, end_offset);
+                    return false;
+                }
+                // Also check stack slots are initialized for reads
+                if !matches!(ptr_arg_type, BpfArgType::PtrToUninitMem) {
+                    access::check_stack_arg_readable(env, state, off, size as i64, pc, AccessKind::HelperArg);
+                }
+                !env.failed()
+            } else {
+                // Variable offset — use bounds for range check
+                let (lo, hi) = get_relative_bound(&state.dbm, ptr_reg, Reg::R10);
+                match (lo, hi) {
+                    (Some(l), Some(h)) => {
+                        let end_offset = h + size as i64;
+                        if l < -512 || end_offset > 0 {
+                            env.fail(VerificationError::StackOutOfBounds { pc, off: l, size: size.into() });
+                            return false;
+                        }
+                        if !matches!(ptr_arg_type, BpfArgType::PtrToUninitMem) {
+                            for off_candidate in l..=h {
+                                access::check_stack_arg_readable(env, state, off_candidate, size as i64, pc, AccessKind::HelperArg);
+                                if env.failed() { return false; }
+                            }
+                        }
+                        true
+                    }
+                    _ => {
+                        env.fail(VerificationError::InvalidArgType { pc, reg: ptr_reg });
+                        error!("[Verifier] pc {}: {:?} has unknown stack offset", pc, ptr_reg);
+                        false
+                    }
+                }
             }
-            // Also check stack slots are initialized for reads
-            if !matches!(ptr_arg_type, BpfArgType::PtrToUninitMem) {
-                access::check_stack_arg_readable(env, state, off, size as i64, pc, AccessKind::HelperArg);
-            }
-            !env.failed()
-        }
-        
-        RegType::PtrToStack { offset: None, .. } => {
-            env.fail(VerificationError::InvalidArgType { pc, reg: ptr_reg });
-            error!("[Verifier] pc {}: {:?} has unknown stack offset", pc, ptr_reg);
-            false
         }
         
         RegType::PtrToMapValue { map_idx, offset, id: _ } => {

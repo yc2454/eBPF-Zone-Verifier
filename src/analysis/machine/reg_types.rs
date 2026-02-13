@@ -9,7 +9,7 @@ pub enum RegType {
     NotInit,        
     ScalarValue,    
     PtrToCtx,       
-    PtrToStack { offset: Option<i64>, frame_level: FrameLevel },  
+    PtrToStack { frame_level: FrameLevel },
     PtrToPacket,    
     PtrToPacketEnd, 
     PtrToPacketMeta,         

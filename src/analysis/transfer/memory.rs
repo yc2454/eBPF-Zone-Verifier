@@ -6,7 +6,7 @@ use crate::analysis::machine::env::{VerifierEnv, VerificationError};
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType};
 use crate::ast::{Operand, MemSize, AtomicOp};
-use crate::zone::domain::{Reg, assume_eq_const, assume_ge_const, assume_le_const, bind_to_anchor, forget};
+use crate::zone::domain::{Reg, assume_eq_const, assume_ge_const, assume_le_const, bind_to_anchor, forget, get_relative_constant};
 use crate::zone::tnum::Tnum;
 use crate::analysis::transfer::access;
 
@@ -43,10 +43,12 @@ pub(crate) fn transfer_load(
     }
 
     // Try to reload from spilled stack slot
-    if let RegType::PtrToStack { offset, frame_level } = state.types.get(base) {
-        if state.fill_at(frame_level, dst, off+ offset.unwrap_or(0) as i16, size) {
-            state.pc += 1;
-            return vec![state];
+    if let RegType::PtrToStack { frame_level } = state.types.get(base) {
+        if let Some(base_off) = get_relative_constant(&state.dbm, base, Reg::R10) {
+            if state.fill_at(frame_level, dst, off + base_off as i16, size) {
+                state.pc += 1;
+                return vec![state];
+            }
         }
     }
     
@@ -118,24 +120,30 @@ pub(crate) fn transfer_store(
     
     // Handle spilling to stack
     let base_type = state.types.get(base);
-    if let RegType::PtrToStack { offset, frame_level } = base_type {
-        let full_offset = offset.unwrap_or(0) + off as i64;
-        match src {
-            Operand::Reg(r) => {
-                // Full 64-bit register spill — snapshot the abstract state
-                state.spill_at(frame_level, *r, full_offset as i16, size);
+    if let RegType::PtrToStack { frame_level } = base_type {
+        if let Some(base_off) = get_relative_constant(&state.dbm, base, Reg::R10) {
+            let full_offset = base_off + off as i64;
+            match src {
+                Operand::Reg(r) => {
+                    // Full 64-bit register spill — snapshot the abstract state
+                    state.spill_at(frame_level, *r, full_offset as i16, size);
+                }
+                Operand::Imm(k) => {
+                    state.store_imm_to_stack_at(frame_level, *k, full_offset as i16, size);
+                }
+                _ => {
+                    // Partial write — invalidate any existing spill
+                    state.stack_mut().clear_slot(full_offset as i16);
+                }
             }
-            Operand::Imm(k) => {
-                state.store_imm_to_stack_at(frame_level, *k, full_offset as i16, size);
-            }
-            _ => {
-                // Partial write — invalidate any existing spill
-                state.stack_mut().clear_slot(full_offset as i16);
-            }
+            // Update frame depth
+            state.update_frame_depth(off);
+            update_store_types(state.stack_at_mut(frame_level), src_type, size, Some(full_offset));
         }
-        // Update frame depth
-        state.update_frame_depth(off);
-        update_store_types(state.stack_at_mut(frame_level), src_type, size, base_type, off);
+        // Variable offset: skip spill (can't determine slot), but still update depth
+        else {
+            state.update_frame_depth(off);
+        }
     }
 
     state.pc += 1;
@@ -197,7 +205,12 @@ pub(crate) fn transfer_atomic(
     };
 
     // Update Memory State
-    update_store_types(state.stack_mut(), RegType::ScalarValue, size, base_ty, off);
+    let resolved_offset = if matches!(base_ty, RegType::PtrToStack { .. }) {
+        get_relative_constant(&state.dbm, base, Reg::R10).map(|o| o + off as i64)
+    } else {
+        None
+    };
+    update_store_types(state.stack_mut(), RegType::ScalarValue, size, resolved_offset);
     if base == Reg::R10 {
         state.stack_mut().invalidate_slot(off);
     }
