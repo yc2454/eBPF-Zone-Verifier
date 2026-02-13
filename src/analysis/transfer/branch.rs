@@ -32,14 +32,20 @@ pub(crate) fn transfer_if(
     right: Operand,
     target: usize,
 ) -> Vec<State> {
-    // Reject backward jumps that form loops (target already on current path).
-    // Backward jumps to PCs NOT on the current path are safe (e.g., jumping
-    // to an exit block that was only reachable via a different branch).
+    // Backward jump handling:
+    // - If the target was already explored on a different path (e.g., an exit
+    //   block reachable via the else-branch), allow the jump — it's not a loop.
+    // - If the target was on the current execution path, it's a true loop back
+    //   edge — also allow (handled by pruning/convergence).
+    // - Otherwise (target never explored, not on current path), reject: this
+    //   would create a new forward exploration in a backward direction, which
+    //   likely indicates an unsupported loop structure.
     if target < state.pc {
         let on_path = state.history_idx
             .map(|idx| env.history.path_contains_pc(idx, target))
             .unwrap_or(false);
-        if on_path {
+        let already_explored = env.explored_states.contains_key(&target);
+        if !on_path && !already_explored {
             env.fail(VerificationError::BackEdge { pc: state.pc, target });
             return vec![];
         }
