@@ -288,16 +288,52 @@ fn check_stack_initialization(
     size: i64,
     pc: usize,
 ) {
+    // Kernel-compatible privileged relaxation:
+    // A 32-bit load from the upper half of an aligned 8-byte stack slot
+    // can be accepted when the lower half is initialized. The value is
+    // treated as unknown scalar later (fill_at fails to preserve spill info).
+    let allow_privileged_upper_half_read = |off: i64, sz: i64| -> bool {
+        if !env.ctx.is_privileged() || sz != 4 {
+            return false;
+        }
+        if off < i16::MIN as i64 || off > i16::MAX as i64 {
+            return false;
+        }
+        let off = off as i16;
+        if off.rem_euclid(8) != 4 {
+            return false;
+        }
+        for i in 0..4 {
+            if !stack.is_slot_initialized(off - 4 + i as i16) {
+                return false;
+            }
+        }
+        true
+    };
+
     // Initialization check (for reads and helper outputs)
     match kind {
         AccessKind::Read => {
             // ALL bytes must be initialized
+            let mut first_uninit: Option<i16> = None;
             for i in 0..size {
                 let slot = (actual_offset + i) as i16;
                 if !stack.is_slot_initialized(slot) {
-                    env.fail(VerificationError::UninitializedStackRead { pc, offset: actual_offset });
+                    first_uninit = Some(slot);
+                    break;
+                }
+            }
+
+            if first_uninit.is_some() {
+                if allow_privileged_upper_half_read(actual_offset, size) {
                     return;
                 }
+                env.fail(VerificationError::UninitializedStackRead { pc, offset: actual_offset });
+                return;
+            }
+
+            for i in 0..size {
+                let slot = (actual_offset + i) as i16;
                 // The read size for a pointer must be 64-bit
                 let slot_type = stack.get_slot_type(slot);
                 if slot_type.is_pointer() && size != 8 {
