@@ -303,6 +303,20 @@ fn dbm_subsumed_by(cur: &Dbm, old: &Dbm, live_regs: &HashSet<Reg>) -> bool {
         }
     }
 
+    // Anchor-to-anchor constraints (packet bounds) must also be subsumed.
+    // These represent relationships like data_end - data >= N that are
+    // critical for packet access safety and persist across calls.
+    let anchors = [Reg::AnchorData, Reg::AnchorDataEnd, Reg::AnchorDataMeta];
+    for &a in &anchors {
+        for &b in &anchors {
+            if a == b { continue; }
+            // old must be at least as permissive: old.get(a,b) >= cur.get(a,b)
+            if old.get(a, b) < cur.get(a, b) {
+                return false;
+            }
+        }
+    }
+
     true
 }
 

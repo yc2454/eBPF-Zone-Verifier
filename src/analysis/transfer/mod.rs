@@ -196,6 +196,7 @@ fn transfer_exit(
         let ret_type = state.types.get(Reg::R0);
         let ret_tnum = state.get_tnum(Reg::R0);
         let ret_bounds = get_simple_bounds(&state.dbm, Reg::R0);
+        let ret_anchor_info = state.save_anchor_info(Reg::R0);
 
         // Save callee's anchor constraints before overwriting
         let callee_dbm = state.dbm.clone();
@@ -215,6 +216,17 @@ fn transfer_exit(
         state.set_tnum(Reg::R0, ret_tnum);
         forget(&mut state.dbm, Reg::R0);
         set_bounds(&mut state.dbm, Reg::R0, ret_bounds.0, ret_bounds.1);
+
+        // Restore R0's anchor relationship (e.g., packet pointer offset from AnchorData)
+        if let (Some(anchor), lo, hi) = ret_anchor_info {
+            if let Some(h) = hi {
+                state.dbm.add_constraint(Reg::R0, anchor, h);
+            }
+            if let Some(l) = lo {
+                state.dbm.add_constraint(anchor, Reg::R0, l);
+            }
+            state.dbm.close();
+        }
 
         state.types.set(Reg::R10, RegType::PtrToStack {
             frame_level: state.current_frame_level()

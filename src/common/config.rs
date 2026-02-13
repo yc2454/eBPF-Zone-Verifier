@@ -51,7 +51,7 @@ impl Default for VerifierConfig {
     fn default() -> Self {
         Self {
             verbosity: 1,
-            max_insn: 1_00,
+            max_insn: 1_0000,
             skip_dbm_check: false,
             use_widening: false,
             max_states_per_pc: 8,
