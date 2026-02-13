@@ -168,6 +168,12 @@ pub(crate) fn check_ptr_arithmetic(
     else if dst_is_ptr {
         match op {
             AluOp::Add | AluOp::Sub => {
+                // 32-bit ALU on pointers yields scalar semantics in this verifier.
+                // Type update later forces dst to ScalarValue for W32 ops.
+                // Do not apply 64-bit pointer-offset limits in this path.
+                if width == Width::W32 {
+                    return true;
+                }
                 if src_min < -constants::MAX_VAR_OFF || src_max > constants::MAX_VAR_OFF {
                     return false;
                 }
