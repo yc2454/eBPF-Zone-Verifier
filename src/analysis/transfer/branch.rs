@@ -32,12 +32,14 @@ pub(crate) fn transfer_if(
     right: Operand,
     target: usize,
 ) -> Vec<State> {
-    // Target cannot be a back edge
+    // Reject backward jumps that form loops (target already on current path).
+    // Backward jumps to PCs NOT on the current path are safe (e.g., jumping
+    // to an exit block that was only reachable via a different branch).
     if target < state.pc {
         let on_path = state.history_idx
             .map(|idx| env.history.path_contains_pc(idx, target))
             .unwrap_or(false);
-        if !on_path {
+        if on_path {
             env.fail(VerificationError::BackEdge { pc: state.pc, target });
             return vec![];
         }

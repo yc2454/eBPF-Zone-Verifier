@@ -999,13 +999,13 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 src: Operand::Imm((insn.imm as u32) as i64),
             },
 
-            // 0xb5: if rX >= imm goto +off (JMP | JGE | K)
+            // 0xb5: if rX <= imm goto +off (JMP | JLE | K)  (unsigned compare)
             0xb5 => {
                 let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
                 Instr::If {
                     width: Width::W64,
                     left: dst,
-                    op: CmpOp::UGe,
+                    op: CmpOp::ULe,
                     right: Operand::Imm(insn.imm as i64),
                     target,
                 }
