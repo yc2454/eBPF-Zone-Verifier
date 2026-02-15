@@ -1,9 +1,7 @@
-// src/analysis/transfer/refinement.rs
-//
-// Pointer range refinement logic for packet, memory, and null checks
+// src/analysis/transfer/branch/refinement.rs
 
 use crate::analysis::machine::state::State;
-use crate::analysis::machine::reg_types::{RegType};
+use crate::analysis::machine::reg_types::RegType;
 use crate::ast::{Instr, CmpOp, Operand};
 use crate::analysis::machine::reg::Reg;
 
@@ -26,22 +24,6 @@ fn promote_stack_slots_all_frames(
 }
 
 /// Refines register types based on the outcome of a conditional branch.
-///
-/// This function analyzes the branch condition to promote types from "Unsafe" or "Nullable"
-/// to "Safe". Specifically, it handles NULL checks for map values.
-///
-/// For example, given `if r0 != 0 goto Label`:
-/// * In the **Taken** path (`branch_taken = true`), `r0` is known to be non-zero, so it is promoted to a safe pointer.
-/// * In the **Fallthrough** path, `r0` is zero (NULL).
-///
-/// Conversely, given `if r0 == 0 goto Label`:
-/// * In the **Fallthrough** path (`branch_taken = false`), `r0` is known to be non-zero.
-///
-/// # Arguments
-///
-/// * `state` - The mutable state to update.
-/// * `instr` - The `If` instruction causing the branch.
-/// * `branch_taken` - `true` if analyzing the path where the jump occurs; `false` if analyzing the fallthrough.
 pub(crate) fn refine_branch(
     state: &mut State,
     instr: &Instr,

@@ -1,0 +1,173 @@
+// src/analysis/transfer/memory/packet.rs
+
+use crate::analysis::machine::env::VerificationError;
+use crate::analysis::machine::env::VerifierEnv;
+use crate::analysis::machine::reg::Reg;
+use crate::analysis::machine::reg_types::RegType;
+use crate::analysis::machine::state::State;
+use crate::ast::{MemSize, PacketLoadMode, ProgramKind};
+use crate::common::constants;
+use crate::zone::domain::{
+    assume_range, forget, get_distance_interval, verify_packet_bounds, verify_packet_meta_bounds,
+};
+use log::{debug, error};
+
+use super::access::AccessKind;
+use crate::analysis::transfer::common::check_reg_readable;
+
+pub fn check_packet_alignment(state: &State, base: Reg, off: i16, size: i64) -> bool {
+    if size == 1 {
+        return true;
+    }
+
+    let (min_off, max_off) = get_packet_offset_range(state, base, off);
+
+    match (min_off, max_off) {
+        (Some(lo), Some(hi)) => {
+            const NET_IP_ALIGN: i64 = 2;
+            let lo_aligned = (NET_IP_ALIGN + lo) % size == 0;
+            let hi_aligned = (NET_IP_ALIGN + hi) % size == 0;
+
+            if lo % size != hi % size {
+                return false;
+            }
+
+            lo_aligned && hi_aligned
+        }
+        _ => false,
+    }
+}
+
+fn get_packet_offset_range(state: &State, base: Reg, insn_off: i16) -> (Option<i64>, Option<i64>) {
+    let base_type = state.types.get(base);
+
+    match base_type {
+        RegType::PtrToPacket { .. } => {
+            let insn_off = insn_off as i64;
+            (Some(insn_off), Some(insn_off))
+        }
+        _ => {
+            let pkt_start_reg = crate::analysis::machine::reg::REG_ENV
+                .all()
+                .iter()
+                .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket));
+
+            if let Some(&start_reg) = pkt_start_reg {
+                let (lo, hi) = get_distance_interval(&state.dbm, base, start_reg);
+                (
+                    lo.map(|l| l + insn_off as i64),
+                    hi.map(|h| h + insn_off as i64),
+                )
+            } else {
+                (None, None)
+            }
+        }
+    }
+}
+
+pub fn prog_kind_support_direct_packet_write(prog_kind: ProgramKind) -> bool {
+    match prog_kind {
+        ProgramKind::LwtIn | ProgramKind::LwtOut => false,
+        _ => true,
+    }
+}
+
+pub fn check_packet_access(
+    env: &mut VerifierEnv,
+    state: &State,
+    base: Reg,
+    off: i16,
+    size: i64,
+    pc: usize,
+    kind: AccessKind,
+) {
+    if matches!(kind, AccessKind::Write)
+        && !prog_kind_support_direct_packet_write(env.ctx.prog_kind)
+    {
+        error!(
+            "Direct packet store at pc {} is not supported for {:?} program",
+            pc, env.ctx.prog_kind
+        );
+        env.fail(VerificationError::IllegalPacketStore { pc, off, size });
+        return;
+    }
+
+    let (start_ok, end_ok) = verify_packet_bounds(&state.dbm, base, off as i64, size as i64);
+    debug!(
+        "Packet access check at pc {}: base {} offset {} size {} => start_ok {}, end_ok {}",
+        pc,
+        base.name(),
+        off,
+        size,
+        start_ok,
+        end_ok
+    );
+    if !start_ok || !end_ok {
+        if matches!(kind, AccessKind::Read) {
+            env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
+        } else {
+            env.fail(VerificationError::UnsafePacketStore { pc, off, size });
+        }
+    }
+
+    if env.ctx.has_flag(constants::F_LOAD_WITH_STRICT_ALIGNMENT)
+        && !matches!(kind, AccessKind::HelperOutput | AccessKind::HelperArg)
+        && !check_packet_alignment(state, base, off, size)
+    {
+        env.fail(VerificationError::MisalignedPacketAccess { pc, off, size });
+        return;
+    }
+}
+
+pub fn check_packet_meta_access(
+    env: &mut VerifierEnv,
+    state: &State,
+    base: Reg,
+    off: i16,
+    size: i64,
+    pc: usize,
+) {
+    let (start_ok, end_ok) = verify_packet_meta_bounds(&state.dbm, base, off as i64, size as i64);
+    if !start_ok || !end_ok {
+        env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
+    }
+}
+
+pub(crate) fn transfer_packet_load(
+    env: &mut VerifierEnv,
+    mut state: State,
+    size: MemSize,
+    mode: PacketLoadMode,
+    _offset_imm: i32,
+    src: Option<Reg>,
+) -> Vec<State> {
+    let r6_type = state.types.get(Reg::R6);
+    if !matches!(r6_type, RegType::PtrToCtx) {
+        return vec![];
+    }
+
+    if let Some(reg) = src {
+        if !check_reg_readable(env, &state, reg) {
+            return vec![];
+        }
+    }
+
+    if state.has_active_lock() && mode == PacketLoadMode::Abs {
+        env.fail(VerificationError::LoadAbsUnderLock { pc: state.pc });
+        return vec![];
+    }
+
+    crate::analysis::transfer::types::update_packet_load_types(&mut state.types);
+
+    forget(&mut state.dbm, Reg::R0);
+
+    match size {
+        MemSize::U8 => assume_range(&mut state.dbm, Reg::R0, 0, 255),
+        MemSize::U16 => assume_range(&mut state.dbm, Reg::R0, 0, 65535),
+        MemSize::U32 => assume_range(&mut state.dbm, Reg::R0, 0, 4294967295),
+        MemSize::U64 => {}
+    }
+
+    state.pc += 1;
+    vec![state]
+}
