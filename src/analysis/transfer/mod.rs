@@ -5,7 +5,7 @@
 
 mod alu;
 mod branch;
-mod call;
+pub mod call;
 mod memory;
 mod refinement;
 mod types;
