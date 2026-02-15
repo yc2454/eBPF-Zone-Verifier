@@ -15,7 +15,7 @@ use crate::parsing::elf_loader;
 use crate::parsing::btf::{self, BtfContext};
 use crate::ast::ProgramKind;
 use std::path::Path;
-use crate::zone::domain::Reg;
+use crate::analysis::machine::reg::Reg;
 
 /// Result of analyzing a single section
 #[derive(Debug)]

@@ -1,6 +1,6 @@
 use crate::{analysis::machine::reg_types::RegType, ast::MemSize};
 use crate::zone::tnum::Tnum;
-use crate::zone::domain::Reg;
+use crate::analysis::machine::reg::Reg;
 use std::collections::{BTreeMap, HashSet};
 
 #[derive(Clone, Debug, PartialEq, Eq)]

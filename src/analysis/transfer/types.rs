@@ -7,7 +7,8 @@ use crate::analysis::machine::reg_types::{RegType, TypeState, new_ptr_id};
 use crate::analysis::machine::stack_state::StackState;
 use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, MapLoadKind, MemSize, Operand, Width};
-use crate::zone::domain::{self, Reg, get_simple_bounds, get_relative_constant};
+use crate::analysis::machine::reg::Reg;
+use crate::zone::domain::{self, get_interval_i64, get_distance_fixed};
 use crate::common::ctx_model::{
     CtxFieldKind, validate_ctx_access
 };
@@ -89,7 +90,7 @@ pub(crate) fn update_alu_types(
                         types.set(dst, RegType::PtrToMapValue { id, offset: new_off, map_idx });
                     },
                     (RegType::PtrToMapValue { id, map_idx, offset }, Operand::Reg(src_reg)) => {
-                        let src_reg_value = domain::get_constant_value(dbm, *src_reg);
+                        let src_reg_value = domain::get_fixed_value(dbm, *src_reg);
                         if src_reg_value.is_some() {
                             let src_reg_value = src_reg_value.unwrap();
                             types.set(dst, RegType::PtrToMapValue { offset: offset.map(|o| o + src_reg_value), map_idx, id });
@@ -106,7 +107,7 @@ pub(crate) fn update_alu_types(
                         }
                     },
                     (RegType::PtrToPacket, Operand::Reg(r)) => {
-                        let const_value_op = domain::get_constant_value(dbm, *r);
+                        let const_value_op = domain::get_fixed_value(dbm, *r);
                         if const_value_op.is_some() {
                             let val_to_add = const_value_op.unwrap();
                             if val_to_add >= constants::MAX_PACKET_OFF {
@@ -167,7 +168,7 @@ pub(crate) fn update_alu_types(
                         types.set(dst, RegType::PtrToMapValue { id, offset: new_off, map_idx });
                     },
                     (RegType::PtrToMapValue { id, map_idx, offset }, Operand::Reg(src_reg)) => {
-                        let src_reg_value = domain::get_constant_value(dbm, *src_reg);
+                        let src_reg_value = domain::get_fixed_value(dbm, *src_reg);
                         if src_reg_value.is_some() {
                             let src_reg_value = src_reg_value.unwrap();
                             types.set(dst, RegType::PtrToMapValue { offset: offset.map(|o| o - src_reg_value), map_idx, id });
@@ -260,7 +261,7 @@ pub(crate) fn update_load_types(
             }
         }
         RegType::PtrToStack { .. } => {
-            match get_relative_constant(&state.dbm, base, Reg::R10) {
+            match get_distance_fixed(&state.dbm, base, Reg::R10) {
                 Some(base_off) => {
                     let actual_slot = base_off + (off as i64);
                     if size == MemSize::U64.bytes() as usize {
@@ -428,7 +429,7 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
         constants::BPF_SKB_LOAD_BYTES => {
             let mem_ptr_ty = in_types.get(Reg::R3);
             if matches!(mem_ptr_ty, RegType::PtrToStack { .. }) {
-                if let Some(off) = get_relative_constant(&state.dbm, Reg::R3, Reg::R10) {
+                if let Some(off) = get_distance_fixed(&state.dbm, Reg::R3, Reg::R10) {
                     let slot = off as i16;
                     state.types.set(Reg::R3, RegType::ScalarValue);
                     state.spill(Reg::R3, slot, MemSize::U64);
@@ -437,7 +438,7 @@ pub(crate) fn update_call_types(env: &mut VerifierEnv, in_types: &TypeState, sta
         }
 
         constants::BPF_RINGBUF_RESERVE => {
-            let (_, hi) = get_simple_bounds(&state.dbm, Reg::R2);
+            let (_, hi) = get_interval_i64(&state.dbm, Reg::R2);
             state.types.set(Reg::R0, RegType::PtrToAllocMemOrNull { id: new_ptr_id(), mem_size: hi as u64 });
         }
         

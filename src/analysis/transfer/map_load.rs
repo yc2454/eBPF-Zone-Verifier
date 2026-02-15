@@ -1,7 +1,8 @@
 use crate::analysis::machine::env::{VerifierEnv, VerificationError};
 use crate::analysis::machine::state::State;
 use crate::ast::{MapLoadKind};
-use crate::zone::domain::{Reg, forget};
+use crate::analysis::machine::reg::Reg;
+use crate::zone::domain::{forget};
 use crate::analysis::transfer::types::update_map_load_types;
 
 pub(crate) fn transfer_map_load(

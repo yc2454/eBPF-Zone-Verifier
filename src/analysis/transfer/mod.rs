@@ -18,9 +18,10 @@ use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::RegType;
 use crate::ast::{EndianOp, Instr, Width};
-use crate::zone::domain::{Reg, 
-    forget, assign_and_mask, bit_and_const, get_bounds,
-    get_simple_bounds, set_bounds, preserve_anchor_constraints
+use crate::analysis::machine::reg::Reg;
+use crate::zone::domain::{
+    forget, apply_and_imm, get_interval,
+    get_interval_i64, assign_interval, preserve_anchor_constraints
 };
 use crate::analysis::machine::env::VerificationError;
 
@@ -102,8 +103,8 @@ fn transfer_endian(
         EndianOp::ToLe => {
             match size {
                 64 => { /* Identity for LE host; Keep constraints if Width::W64 */ },
-                32 => assign_and_mask(&mut state.dbm, dst, 0xFFFF_FFFF),
-                16 => assign_and_mask(&mut state.dbm, dst, 0xFFFF),
+                32 => apply_and_imm(&mut state.dbm, dst, 0xFFFF_FFFF),
+                16 => apply_and_imm(&mut state.dbm, dst, 0xFFFF),
                 _  => forget(&mut state.dbm, dst),
             }
         },
@@ -112,8 +113,8 @@ fn transfer_endian(
             // We must forget the old value.
             // However, we know the new max value based on the swap size.
             match size {
-                16 => assign_and_mask(&mut state.dbm, dst, 0xFFFF),
-                32 => assign_and_mask(&mut state.dbm, dst, 0xFFFF_FFFF),
+                16 => apply_and_imm(&mut state.dbm, dst, 0xFFFF),
+                32 => apply_and_imm(&mut state.dbm, dst, 0xFFFF_FFFF),
                 // 64-bit BE swap: Result is u64 (if Width::W64) or u32 (if Width::W32)
                 64 => forget(&mut state.dbm, dst),
                 _  => forget(&mut state.dbm, dst),
@@ -132,7 +133,7 @@ fn transfer_endian(
         
         // Simplest Sound Approach: Just enforce the mask. 
         // If we already did mask 0xFFFF above, 0xFFFF & 0xFFFFFFFF == 0xFFFF (Safe).
-        bit_and_const(&mut state.dbm, dst, 0xFFFF_FFFF);
+        apply_and_imm(&mut state.dbm, dst, 0xFFFF_FFFF);
     }
 
     state.pc += 1;
@@ -146,7 +147,7 @@ fn transfer_exit(
 ) -> Vec<State> {
     let pc = state.pc;
 
-    let (min, max) = get_bounds(&state.dbm, Reg::R0);
+    let (min, max) = get_interval(&state.dbm, Reg::R0);
     let r0_min = min.unwrap_or(i64::MIN);
     let r0_max = max.unwrap_or(i64::MAX);
 
@@ -195,7 +196,7 @@ fn transfer_exit(
         // Save callee's R0 (the return value) before restoring caller state
         let ret_type = state.types.get(Reg::R0);
         let ret_tnum = state.get_tnum(Reg::R0);
-        let ret_bounds = get_simple_bounds(&state.dbm, Reg::R0);
+        let ret_bounds = get_interval_i64(&state.dbm, Reg::R0);
         let ret_anchor_info = state.save_anchor_info(Reg::R0);
 
         // Save callee's anchor constraints before overwriting
@@ -215,7 +216,7 @@ fn transfer_exit(
         state.types.set(Reg::R0, ret_type);
         state.set_tnum(Reg::R0, ret_tnum);
         forget(&mut state.dbm, Reg::R0);
-        set_bounds(&mut state.dbm, Reg::R0, ret_bounds.0, ret_bounds.1);
+        assign_interval(&mut state.dbm, Reg::R0, ret_bounds.0, ret_bounds.1);
 
         // Restore R0's anchor relationship (e.g., packet pointer offset from AnchorData)
         if let (Some(anchor), lo, hi) = ret_anchor_info {

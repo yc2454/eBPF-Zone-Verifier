@@ -5,7 +5,8 @@ use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType};
 use crate::analysis::transfer::types::{update_call_rel_types, update_call_types, helper_invalidates_packets};
 use crate::ast::{ProgramKind};
-use crate::zone::domain::{self, Reg, assume_ge_const, assume_le_const, forget, get_simple_bounds, is_zero};
+use crate::analysis::machine::reg::Reg;
+use crate::zone::domain::{self, assume_ge_imm, assume_le_imm, forget, get_interval_i64, proven_zero};
 use crate::zone::tnum::{Tnum};
 use crate::parsing::btf::SpecialFieldKind;
 use crate::common::constants;
@@ -106,7 +107,7 @@ pub(crate) fn transfer_call(
                 }
             }
         }
-        if !is_zero(&state.dbm, Reg::R2) {
+        if !proven_zero(&state.dbm, Reg::R2) {
             env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
             return vec![];
         }
@@ -154,12 +155,12 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
     forget(&mut state.dbm, Reg::R0);
     match helper {
         constants::BPF_REDIRECT => {
-            assume_ge_const(&mut state.dbm, Reg::R0, 0);
-            assume_le_const(&mut state.dbm, Reg::R0, 7);
+            assume_ge_imm(&mut state.dbm, Reg::R0, 0);
+            assume_le_imm(&mut state.dbm, Reg::R0, 7);
         }
         constants::BPF_FIB_LOOKUP => {
-            assume_ge_const(&mut state.dbm, Reg::R0, 0);
-            assume_le_const(&mut state.dbm, Reg::R0, 8);
+            assume_ge_imm(&mut state.dbm, Reg::R0, 0);
+            assume_le_imm(&mut state.dbm, Reg::R0, 8);
         }
         constants::BPF_MAP_UPDATE_ELEM | 
         constants::BPF_MAP_DELETE_ELEM |
@@ -168,24 +169,24 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
             // Success/error - no specific bounds added for now
         }
         constants::BPF_GET_PRANDOM_U32 | constants::BPF_GET_CGROUP_CLASS_ID => {
-            assume_ge_const(&mut state.dbm, Reg::R0, 0);
-            assume_le_const(&mut state.dbm, Reg::R0, 0xFFFF_FFFF);
+            assume_ge_imm(&mut state.dbm, Reg::R0, 0);
+            assume_le_imm(&mut state.dbm, Reg::R0, 0xFFFF_FFFF);
             state.set_tnum(Reg::R0, Tnum::u32_unknown());
         }
         constants::BPF_GET_TASK_STACK => {
             let mem_size_pairs = get_mem_size_pairs(helper);
             let size_reg = mem_size_pairs[0].size_reg;
-            let (_, hi) = get_simple_bounds(&state.dbm, size_reg);
+            let (_, hi) = get_interval_i64(&state.dbm, size_reg);
             println!("Size reg {} bound: {}", size_reg.name(), hi);
-            assume_le_const(&mut state.dbm, Reg::R0, hi);
+            assume_le_imm(&mut state.dbm, Reg::R0, hi);
         }
         constants::BPF_GET_STACK => {
             let mem_size_pairs = get_mem_size_pairs(helper);
             let size_reg = mem_size_pairs[0].size_reg;
-            let (_, hi) = get_simple_bounds(&state.dbm, size_reg);
+            let (_, hi) = get_interval_i64(&state.dbm, size_reg);
             println!("Size reg {} bound: {}", size_reg.name(), hi);
-            assume_le_const(&mut state.dbm, Reg::R0, hi);
-            assume_ge_const(&mut state.dbm, Reg::R0, -constants::MAX_ERRNO);
+            assume_le_imm(&mut state.dbm, Reg::R0, hi);
+            assume_ge_imm(&mut state.dbm, Reg::R0, -constants::MAX_ERRNO);
         }
         _ => {}
     }

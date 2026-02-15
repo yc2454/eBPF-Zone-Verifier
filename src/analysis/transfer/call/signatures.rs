@@ -1,6 +1,6 @@
 // src/analysis/transfer/call/signatures.rs
 
-use crate::zone::domain::{Reg};
+use crate::analysis::machine::reg::Reg;
 use crate::common::constants;
 
 // ============================================================================

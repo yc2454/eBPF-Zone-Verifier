@@ -6,7 +6,8 @@ use crate::analysis::machine::env::{VerifierEnv, VerificationError};
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType};
 use crate::ast::{Operand, MemSize, AtomicOp};
-use crate::zone::domain::{Reg, assume_eq_const, assume_ge_const, assume_le_const, bind_to_anchor, forget, get_relative_bound, get_relative_constant};
+use crate::analysis::machine::reg::Reg;
+use crate::zone::domain::{assume_eq_imm, assume_ge_imm, assume_le_imm, bind_to_anchor, forget, get_distance_interval, get_distance_fixed};
 use crate::zone::tnum::Tnum;
 use crate::analysis::transfer::access;
 
@@ -44,7 +45,7 @@ pub(crate) fn transfer_load(
 
     // Try to reload from spilled stack slot
     if let RegType::PtrToStack { frame_level } = state.types.get(base) {
-        if let Some(base_off) = get_relative_constant(&state.dbm, base, Reg::R10) {
+        if let Some(base_off) = get_distance_fixed(&state.dbm, base, Reg::R10) {
             if state.fill_at(frame_level, dst, off + base_off as i16, size) {
                 state.pc += 1;
                 return vec![state];
@@ -58,16 +59,16 @@ pub(crate) fn transfer_load(
     // Apply upper bounds for sub-64-bit loads
     match size {
         MemSize::U8 => {
-            assume_ge_const(&mut state.dbm, dst, 0);
-            assume_le_const(&mut state.dbm, dst, 0xFF);
+            assume_ge_imm(&mut state.dbm, dst, 0);
+            assume_le_imm(&mut state.dbm, dst, 0xFF);
         }
         MemSize::U16 => {
-            assume_ge_const(&mut state.dbm, dst, 0);
-            assume_le_const(&mut state.dbm, dst, 0xFFFF);
+            assume_ge_imm(&mut state.dbm, dst, 0);
+            assume_le_imm(&mut state.dbm, dst, 0xFFFF);
         }
         MemSize::U32 => {
-            assume_ge_const(&mut state.dbm, dst, 0);
-            assume_le_const(&mut state.dbm, dst, 0xFFFFFFFF);
+            assume_ge_imm(&mut state.dbm, dst, 0);
+            assume_le_imm(&mut state.dbm, dst, 0xFFFFFFFF);
         }
         MemSize::U64 => {}
     }
@@ -121,7 +122,7 @@ pub(crate) fn transfer_store(
     // Handle spilling to stack
     let base_type = state.types.get(base);
     if let RegType::PtrToStack { frame_level } = base_type {
-        if let Some(base_off) = get_relative_constant(&state.dbm, base, Reg::R10) {
+        if let Some(base_off) = get_distance_fixed(&state.dbm, base, Reg::R10) {
             let full_offset = base_off + off as i64;
             match src {
                 Operand::Reg(r) => {
@@ -139,7 +140,7 @@ pub(crate) fn transfer_store(
         // Variable offset: can't do precise spill, but must invalidate all
         // possibly-affected slots to prevent stale fills and mark as initialized.
         else {
-            let (lo, hi) = get_relative_bound(&state.dbm, base, Reg::R10);
+            let (lo, hi) = get_distance_interval(&state.dbm, base, Reg::R10);
             if let (Some(l), Some(h)) = (lo, hi) {
                 let min_slot = l + off as i64;
                 let max_slot = h + off as i64 + size.bytes() as i64;
@@ -212,7 +213,7 @@ pub(crate) fn transfer_atomic(
 
     // Update Memory State
     let resolved_offset = if matches!(base_ty, RegType::PtrToStack { .. }) {
-        get_relative_constant(&state.dbm, base, Reg::R10).map(|o| o + off as i64)
+        get_distance_fixed(&state.dbm, base, Reg::R10).map(|o| o + off as i64)
     } else {
         None
     };
@@ -273,7 +274,7 @@ fn try_load_from_rodata(
                         }
 
                         forget(&mut state.dbm, dst);
-                        assume_eq_const(&mut state.dbm, dst, val as i64);
+                        assume_eq_imm(&mut state.dbm, dst, val as i64);
                         state.types.set(dst, RegType::ScalarValue);
 
                         return true;

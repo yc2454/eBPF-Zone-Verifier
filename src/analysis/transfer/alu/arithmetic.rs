@@ -4,7 +4,12 @@ use crate::analysis::machine::env::{VerifierEnv};
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::ast::{Operand, Width};
-use crate::zone::domain::{Reg, assign_add_imm, assign_add_reg, assign_div_imm, assign_div_reg, assign_mul_imm, assign_neg, assign_sub_reg, forget, get_bounds, get_constant_value, link_regs_with_offset, set_bounds};
+use crate::analysis::machine::reg::Reg;
+use crate::zone::domain::{
+    apply_add_imm, apply_add_reg, apply_div_imm, apply_div_reg, apply_mul_imm, 
+    apply_neg, apply_sub_reg, forget, get_interval, get_fixed_value, 
+    assign_reg_offset, assign_interval, apply_and_imm, assume_ge_imm, assume_le_imm
+};
 use crate::zone::tnum::{Tnum};
 
 use super::helpers::{apply_w32_truncation, check_ptr_bounds, sync_tnum_to_dbm};
@@ -19,7 +24,7 @@ pub(crate) fn handle_add(
 ) {
     match src {
         Operand::Imm(c) => {
-            assign_add_imm(&mut state.dbm, dst, *c);
+            apply_add_imm(&mut state.dbm, dst, *c);
         }
         Operand::Reg(r) => {
             let src_is_ptr = in_types.get(*r).is_pointer();
@@ -27,27 +32,27 @@ pub(crate) fn handle_add(
 
             if dst_is_ptr && !src_is_ptr {
                 // ptr += scalar: preserve relational info if possible
-                let (lo, hi) = get_bounds(&state.dbm, *r);
+                let (lo, hi) = get_interval(&state.dbm, *r);
                 if lo == hi && lo.is_some() {
                     // Known constant: shift all relations exactly
-                    assign_add_imm(&mut state.dbm, dst, lo.unwrap());
+                    apply_add_imm(&mut state.dbm, dst, lo.unwrap());
                 } else {
                     // Non-constant: fall back to interval
                     if let Some(off) = RegType::get_ptr_offset(&in_types.get(dst)) {
                         forget(&mut state.dbm, dst);
-                        set_bounds(&mut state.dbm, dst, off, off);
+                        assign_interval(&mut state.dbm, dst, off, off);
                     }
-                    assign_add_reg(&mut state.dbm, dst, *r);
+                    apply_add_reg(&mut state.dbm, dst, *r);
                 }
             } else if src_is_ptr && !dst_is_ptr {
                 // scalar += ptr
-                let (lo, hi) = get_bounds(&state.dbm, dst);
+                let (lo, hi) = get_interval(&state.dbm, dst);
                 if lo == hi && lo.is_some() {
-                    link_regs_with_offset(&mut state.dbm, dst, *r, lo.unwrap());
+                    assign_reg_offset(&mut state.dbm, dst, *r, lo.unwrap());
                 } else {
                     if let Some(off) = RegType::get_ptr_offset(&in_types.get(*r)) {
                         forget(&mut state.dbm, *r);
-                        set_bounds(&mut state.dbm, *r, off, off);
+                        assign_interval(&mut state.dbm, *r, off, off);
                     }
                     forget(&mut state.dbm, dst);
                     if let Some(hi) = hi {
@@ -62,7 +67,7 @@ pub(crate) fn handle_add(
                 }
             } else {
                 // scalar += scalar, ptr += ptr, etc.
-                assign_add_reg(&mut state.dbm, dst, *r);
+                apply_add_reg(&mut state.dbm, dst, *r);
             }
         }
     }
@@ -93,7 +98,7 @@ pub(crate) fn handle_sub(
 ) {
     match src {
         Operand::Imm(c) => {
-            assign_add_imm(&mut state.dbm, dst, -c);
+            apply_add_imm(&mut state.dbm, dst, -c);
         }
         Operand::Reg(r) => {
             let dst_is_ptr = in_types.get(dst).is_pointer();
@@ -101,18 +106,18 @@ pub(crate) fn handle_sub(
 
             if dst_is_ptr && !src_is_ptr {
                 // ptr -= scalar: try to preserve relational info
-                let const_value = get_constant_value(&state.dbm, *r);
+                let const_value = get_fixed_value(&state.dbm, *r);
                 
                 if const_value.is_some() {
                     // Scalar is a known constant: exact relational shift
-                    assign_add_imm(&mut state.dbm, dst, -const_value.unwrap());
+                    apply_add_imm(&mut state.dbm, dst, -const_value.unwrap());
                 } else {
                     // Bounded but not constant: fall back to interval
-                    assign_sub_reg(&mut state.dbm, dst, *r);
+                    apply_sub_reg(&mut state.dbm, dst, *r);
                 }
             } else {
                 // scalar -= scalar, scalar -= ptr, ptr -= ptr
-                assign_sub_reg(&mut state.dbm, dst, *r);
+                apply_sub_reg(&mut state.dbm, dst, *r);
             }
         }
     }
@@ -146,10 +151,10 @@ pub(crate) fn handle_neg(
     width: Width,
     dst: Reg,
 ) {
-    assign_neg(&mut state.dbm, dst);
+    apply_neg(&mut state.dbm, dst);
 
     if width == Width::W32 {
-        crate::zone::domain::bit_and_const(&mut state.dbm, dst, 0xFFFFFFFF);
+        apply_and_imm(&mut state.dbm, dst, 0xFFFFFFFF);
     }
 
     let t = state.get_tnum(dst);
@@ -169,7 +174,7 @@ pub(crate) fn handle_mul(
 ) {
     match src {
         Operand::Imm(c) => {
-            assign_mul_imm(&mut state.dbm, dst, *c);
+            apply_mul_imm(&mut state.dbm, dst, *c);
         }
         Operand::Reg(_) => {
             forget(&mut state.dbm, dst);
@@ -193,23 +198,23 @@ pub(crate) fn handle_mod(
         Operand::Imm(c) => {
             if *c > 0 {
                 forget(&mut state.dbm, dst);
-                crate::zone::domain::assume_ge_const(&mut state.dbm, dst, 0);
-                crate::zone::domain::assume_le_const(&mut state.dbm, dst, c - 1);
+                assume_ge_imm(&mut state.dbm, dst, 0);
+                assume_le_imm(&mut state.dbm, dst, c - 1);
             } else {
                 forget(&mut state.dbm, dst);
             }
         }
         Operand::Reg(r) => {
-            let (r_lo, r_hi) = get_bounds(&state.dbm, *r);
+            let (r_lo, r_hi) = get_interval(&state.dbm, *r);
             forget(&mut state.dbm, dst);
             
             match (r_lo, r_hi) {
                 (Some(lo), Some(hi)) if lo > 0 => {
-                    crate::zone::domain::assume_ge_const(&mut state.dbm, dst, 0);
-                    crate::zone::domain::assume_le_const(&mut state.dbm, dst, hi - 1);
+                    assume_ge_imm(&mut state.dbm, dst, 0);
+                    assume_le_imm(&mut state.dbm, dst, hi - 1);
                 }
                 (Some(lo), _) if lo > 0 => {
-                    crate::zone::domain::assume_ge_const(&mut state.dbm, dst, 0);
+                    assume_ge_imm(&mut state.dbm, dst, 0);
                 }
                 _ => {}
             }
@@ -230,12 +235,12 @@ pub(crate) fn handle_div(
     src: &Operand,
 ) {
     match src {
-        Operand::Imm(imm) => assign_div_imm(&mut state.dbm, dst, *imm),
-        Operand::Reg(r_src) => assign_div_reg(&mut state.dbm, dst, *r_src),
+        Operand::Imm(imm) => apply_div_imm(&mut state.dbm, dst, *imm),
+        Operand::Reg(r_src) => apply_div_reg(&mut state.dbm, dst, *r_src),
     }
 
     if width == Width::W32 {
-        crate::zone::domain::bit_and_const(&mut state.dbm, dst, 0xFFFFFFFF);
+        apply_and_imm(&mut state.dbm, dst, 0xFFFFFFFF);
     }
 
     state.set_tnum(dst, Tnum::unknown());

@@ -6,7 +6,7 @@ use crate::analysis::machine::env::{VerifierEnv, VerificationError};
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::RegType;
 use crate::ast::Operand;
-use crate::zone::domain::Reg;
+use crate::analysis::machine::reg::Reg;
 
 /// Checks if a register is readable (has been initialized).
 /// Returns true if readable, false if not (and records error).

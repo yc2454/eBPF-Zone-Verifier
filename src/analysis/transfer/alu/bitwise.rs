@@ -1,7 +1,8 @@
 // src/analysis/transfer/alu/bitwise.rs
 
 use crate::analysis::machine::state::State;
-use crate::zone::domain::{Reg, assign_and_mask, assign_eq, assign_zero, assume_eq_const, assume_ge_const, assume_le_const, forget, get_bounds};
+use crate::analysis::machine::reg::Reg;
+use crate::zone::domain::{apply_and_imm, assign_reg, assign_zero, assume_eq_imm, assume_ge_imm, assume_le_imm, forget, get_interval};
 use crate::ast::{Operand, Width};
 use crate::zone::tnum::{Tnum};
 
@@ -37,10 +38,10 @@ pub(crate) fn handle_mov(
             if width == Width::W32 {
                 forget(&mut state.dbm, dst);
                 if crate::zone::domain::proven_u32_range(&mut state.dbm, *r, Reg::Zero) {
-                    assign_eq(&mut state.dbm, dst, *r);
+                    assign_reg(&mut state.dbm, dst, *r);
                 } else {
-                    assume_ge_const(&mut state.dbm, dst, 0);
-                    assume_le_const(&mut state.dbm, dst, 0xFFFFFFFF);
+                    assume_ge_imm(&mut state.dbm, dst, 0);
+                    assume_le_imm(&mut state.dbm, dst, 0xFFFFFFFF);
                 }
             } else {
                 if dst == *r {
@@ -49,15 +50,15 @@ pub(crate) fn handle_mov(
                 if *r == Reg::R10 {
                     assign_zero(&mut state.dbm, dst);
                 } else {
-                    assign_eq(&mut state.dbm, dst, *r);
+                    assign_reg(&mut state.dbm, dst, *r);
                 }
             }
         }
         Operand::Imm(c) => {
             let c = if width == Width::W32 { (*c as u32) as i64 } else { *c };
             forget(&mut state.dbm, dst);
-            assume_le_const(&mut state.dbm, dst, c);
-            assume_ge_const(&mut state.dbm, dst, c);
+            assume_le_imm(&mut state.dbm, dst, c);
+            assume_ge_imm(&mut state.dbm, dst, c);
         }
     }
 }
@@ -68,7 +69,7 @@ pub(crate) fn handle_and(
     dst: Reg,
     src: &Operand,
 ) {
-    let (min_op, max_op) = get_bounds(&state.dbm, dst);
+    let (min_op, max_op) = get_interval(&state.dbm, dst);
     let input_nonnegative = min_op.map_or(false, |m| m >= 0);
 
     forget(&mut state.dbm, dst);
@@ -76,15 +77,15 @@ pub(crate) fn handle_and(
     if let Operand::Imm(mask) = src {
         let mask = if width == Width::W32 { (*mask as u32) as i64 } else { *mask };
         if mask >= 0 {
-            assign_and_mask(&mut state.dbm, dst, mask);
+            apply_and_imm(&mut state.dbm, dst, mask);
         } else if input_nonnegative {
-            assume_ge_const(&mut state.dbm, dst, 0);
+            assume_ge_imm(&mut state.dbm, dst, 0);
             if let Some(max) = max_op {
-                assume_le_const(&mut state.dbm, dst, max);
+                assume_le_imm(&mut state.dbm, dst, max);
             }
         }
     } else if let Operand::Reg(_) = src {
-        assume_ge_const(&mut state.dbm, dst, 0);
+        assume_ge_imm(&mut state.dbm, dst, 0);
     }
     
     let t = state.get_tnum(dst);
@@ -101,7 +102,7 @@ pub(crate) fn handle_and(
     state.set_tnum(dst, new_t);
     
     if let Some(c) = new_t.const_value() {
-        assume_eq_const(&mut state.dbm, dst, c as i64);
+        assume_eq_imm(&mut state.dbm, dst, c as i64);
     }
 }
 

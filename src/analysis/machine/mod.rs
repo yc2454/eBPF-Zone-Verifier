@@ -5,3 +5,4 @@ pub mod env;
 pub mod reg_types;
 pub mod context;
 pub mod frame_stack;
+pub mod reg;

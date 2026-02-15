@@ -6,21 +6,21 @@ use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::RegType;
 use crate::ast::{ProgramKind};
 use crate::parsing::elf_loader::BpfMapDef;
-use crate::zone::domain::{get_bounds, get_relative_bound, get_relative_constant, check_meta_access, check_packet_access_dbm};
+use crate::zone::domain::{get_interval, get_distance_interval, get_distance_fixed, verify_packet_meta_bounds, verify_packet_bounds};
 use crate::analysis::machine::env::VerificationError;
 use crate::common::constants;
 use crate::common::ctx_model;
 use crate::common::mem_region_model;
 use log::{error, debug};
 use RegType::*;
-use crate::zone::domain::{Reg};
+use crate::analysis::machine::reg::Reg;
 
 /// Validates memory load safety.
 /// Does NOT update the state (types/dbm); that happens in transfer.rs.
 pub fn check_load(
     env: &mut VerifierEnv,
     state: &State,
-    base: crate::zone::domain::Reg,
+    base: crate::analysis::machine::reg::Reg,
     size: i64,
     off: i16,
 ) {
@@ -30,7 +30,7 @@ pub fn check_load(
 
     match base_type {
         PtrToStack { frame_level } => {
-            let offset = get_relative_constant(&state.dbm, base, Reg::R10);
+            let offset = get_distance_fixed(&state.dbm, base, Reg::R10);
             check_stack_access(env, state, base, offset, off as i64, size, pc, AccessKind::Read, None, frame_level);
         }
         PtrToPacket => {
@@ -139,7 +139,7 @@ pub fn check_store(
             }
         }
         PtrToStack { frame_level } => {
-            let offset = get_relative_constant(&state.dbm, base, Reg::R10);
+            let offset = get_distance_fixed(&state.dbm, base, Reg::R10);
             check_stack_access(
                 env, state, base, offset, off as i64,
                 size as i64, pc, AccessKind::Write, Some(src_type), frame_level);
@@ -247,7 +247,7 @@ pub fn check_stack_access(
         }
         None => {
             // Unknown offset case - bounds check via DBM
-            let (lo, hi) = get_relative_bound(&state.dbm, base, Reg::R10);
+            let (lo, hi) = get_distance_interval(&state.dbm, base, Reg::R10);
             
             let safe = match (lo, hi) {
                 (Some(lower), Some(upper)) => {
@@ -454,13 +454,13 @@ fn get_packet_offset_range(
         _ => {
             // Variable offset - query DBM for bounds relative to packet start
             // Find packet start register
-            let pkt_start_reg = crate::zone::domain::REG_ENV
+            let pkt_start_reg = crate::analysis::machine::reg::REG_ENV
                 .all()
                 .iter()
                 .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket));
             
             if let Some(&start_reg) = pkt_start_reg {
-                let (lo, hi) = get_relative_bound(&state.dbm, base, start_reg);
+                let (lo, hi) = get_distance_interval(&state.dbm, base, start_reg);
                 (
                     lo.map(|l| l + insn_off as i64),
                     hi.map(|h| h + insn_off as i64),
@@ -493,8 +493,8 @@ pub fn check_packet_access(
         env.fail(VerificationError::IllegalPacketStore { pc, off, size });
         return;
     }
-
-    let (start_ok, end_ok) = check_packet_access_dbm(&state.dbm, base, off as i64, size as i64);
+    
+    let (start_ok, end_ok) = verify_packet_bounds(&state.dbm, base, off as i64, size as i64);
     debug!("Packet access check at pc {}: base {} offset {} size {} => start_ok {}, end_ok {}", 
         pc, base.name(), off, size, start_ok, end_ok);
     if !start_ok || !end_ok {
@@ -522,7 +522,7 @@ pub fn check_packet_meta_access(
     size: i64,
     pc: usize,
 ) {
-    let (start_ok, end_ok) = check_meta_access(&state.dbm, base, off as i64, size as i64);
+    let (start_ok, end_ok) = verify_packet_meta_bounds(&state.dbm, base, off as i64, size as i64);
     if !start_ok || !end_ok {
         env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
     }
@@ -567,7 +567,7 @@ pub fn check_map_access(
     pc: usize,
 ) {
     // Query the DBM for the absolute range of the register.
-    let (dbm_min, dbm_max) = get_bounds(&state.dbm, base);
+    let (dbm_min, dbm_max) = get_interval(&state.dbm, base);
     match (dbm_min, dbm_max) {
         (Some(min_val), Some(max_val)) => {
             // We treat the DBM value as the effective offset into the map

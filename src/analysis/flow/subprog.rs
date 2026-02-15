@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use crate::ast::{Instr, Program};
 use crate::common::constants;
-use crate::zone::domain::Reg;
+use crate::analysis::machine::reg::Reg;
 
 const MAX_BPF_STACK: u16 = 512;
 

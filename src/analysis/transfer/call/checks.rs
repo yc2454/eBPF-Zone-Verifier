@@ -3,7 +3,8 @@
 use crate::analysis::machine::env::{VerifierEnv, VerificationError};
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
-use crate::zone::domain::{Reg, get_relative_bound, get_relative_constant, is_zero, nonneg, positive, get_bounds};
+use crate::analysis::machine::reg::Reg;
+use crate::zone::domain::{get_distance_interval, get_distance_fixed, proven_zero, proven_nonnegative, proven_positive, get_interval};
 use crate::analysis::transfer::access::{self, AccessKind};
 use crate::common::constants;
 use log::{error, info, warn};
@@ -180,7 +181,7 @@ pub(crate) fn validate_single_arg(
 
         BpfArgType::PtrToMapValueOrNull => {
             let reg_type = types.get(reg);
-            if reg_type.is_scalar() && is_zero(&state.dbm, reg) {
+            if reg_type.is_scalar() && proven_zero(&state.dbm, reg) {
                 return true;
             } else {
                 if !matches!(reg_type, 
@@ -240,7 +241,7 @@ pub(crate) fn validate_single_arg(
         // ---- Size arguments ----
         BpfArgType::ConstSize => {
             // Must be positive
-            if !positive(&state.dbm, reg) {
+            if !proven_positive(&state.dbm, reg) {
                 env.fail(VerificationError::InvalidArgType { pc, reg });
                 error!("[Verifier] pc {}: R{} (ConstSize) must be positive", 
                        pc, arg_index + 1);
@@ -251,7 +252,7 @@ pub(crate) fn validate_single_arg(
 
         BpfArgType::ConstSizeOrZero | BpfArgType::ConstAllocSizeOrZero => {
             // Can be zero or positive
-            if !nonneg(&state.dbm, reg) {
+            if !proven_nonnegative(&state.dbm, reg) {
                 env.fail(VerificationError::InvalidArgType { pc, reg });
                 error!("[Verifier] pc {}: R{} (ConstSizeOrZero) must be non-negative", 
                        pc, arg_index + 1);
@@ -273,10 +274,10 @@ pub(crate) fn validate_single_arg(
 
         // ---- Context pointer or NULL ----
         BpfArgType::PtrToCtxOrNull => {
-            if state.types.get(reg).is_scalar() && is_zero(&state.dbm, reg) {
+            if state.types.get(reg).is_scalar() && proven_zero(&state.dbm, reg) {
                 return true;
             }
-            if !matches!(actual, RegType::PtrToCtx) && !is_zero(&state.dbm, reg) {
+            if !matches!(actual, RegType::PtrToCtx) && !proven_zero(&state.dbm, reg) {
                 env.fail(VerificationError::InvalidArgType { pc, reg });
                 error!("[Verifier] pc {}: R{} expected PTR_TO_CTX or NULL, got {:?}", 
                        pc, arg_index + 1, actual);
@@ -349,10 +350,10 @@ pub(crate) fn validate_single_arg(
         }
 
         BpfArgType::PtrToStackOrNull => {
-            if state.types.get(reg).is_scalar() && is_zero(&state.dbm, reg) {
+            if state.types.get(reg).is_scalar() && proven_zero(&state.dbm, reg) {
                 return true;
             }
-            if !matches!(actual, RegType::PtrToStack { .. }) && !is_zero(&state.dbm, reg) {
+            if !matches!(actual, RegType::PtrToStack { .. }) && !proven_zero(&state.dbm, reg) {
                 env.fail(VerificationError::InvalidArgType { pc, reg });
                 error!("[Verifier] pc {}: R{} expected PTR_TO_STACK or NULL, got {:?}", 
                        pc, arg_index + 1, actual);
@@ -362,14 +363,14 @@ pub(crate) fn validate_single_arg(
         }
 
         BpfArgType::PtrToMemOrNull => {
-            if state.types.get(reg).is_scalar() && is_zero(&state.dbm, reg) {
+            if state.types.get(reg).is_scalar() && proven_zero(&state.dbm, reg) {
                 return true;
             }
             if state.types.get(reg).is_nullable() {
                 // Pointer is NULL - check that paired size arg is also 0
                 if let Some(size_arg_idx) = get_nullable_ptr_size_pair(helper, arg_index) {
                     let size_reg = [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5][size_arg_idx];
-                    if !is_zero(&state.dbm, size_reg) {
+                    if !proven_zero(&state.dbm, size_reg) {
                         env.fail(VerificationError::InvalidArgType { pc, reg: size_reg });
                         error!("[Verifier] pc {}: R{} must be 0 when R{} is NULL", 
                                pc, size_arg_idx + 1, arg_index + 1);
@@ -383,7 +384,7 @@ pub(crate) fn validate_single_arg(
 
         BpfArgType::PtrToLong => {
             if let RegType::PtrToStack { frame_level } = actual {
-                let offset = get_relative_constant(&state.dbm, reg, Reg::R10);
+                let offset = get_distance_fixed(&state.dbm, reg, Reg::R10);
                 access::check_stack_access(
                     env,
                     state,
@@ -418,7 +419,7 @@ pub(crate) fn validate_readable_mem(
 ) -> bool {
     match reg_type {
         RegType::PtrToStack { .. } => {
-            if let Some(off) = get_relative_constant(&state.dbm, reg, Reg::R10) {
+            if let Some(off) = get_distance_fixed(&state.dbm, reg, Reg::R10) {
                 if let Some(sz) = size {
                     access::check_stack_arg_readable(env, state, off, sz as i64, pc, AccessKind::Read);
                 }
@@ -426,7 +427,7 @@ pub(crate) fn validate_readable_mem(
             } else {
                 // Variable stack offset — use bounds check
                 if let Some(sz) = size {
-                    let (lo, hi) = get_relative_bound(&state.dbm, reg, Reg::R10);
+                    let (lo, hi) = get_distance_interval(&state.dbm, reg, Reg::R10);
                     match (lo, hi) {
                         (Some(l), Some(h)) => {
                             // Check all possible offsets in the range
@@ -556,10 +557,10 @@ pub(crate) fn check_single_mem_size_pair(
     let ptr_type = state.types.get(pair.ptr_reg);
     
     // Handle NULL pointer case
-    if is_zero(&state.dbm, pair.ptr_reg) {
+    if proven_zero(&state.dbm, pair.ptr_reg) {
         if pair.allow_zero {
             // NULL ptr is OK, but size must also be 0
-            if !is_zero(&state.dbm, pair.size_reg) {
+            if !proven_zero(&state.dbm, pair.size_reg) {
                 env.fail(VerificationError::InvalidArgType { pc, reg: pair.size_reg });
                 error!("[Verifier] pc {}: {:?} must be 0 when {:?} is NULL",
                        pc, pair.size_reg, pair.ptr_reg);
@@ -575,7 +576,7 @@ pub(crate) fn check_single_mem_size_pair(
     }
     
     // Get size bounds from DBM
-    let (_, Some(max_size)) = get_bounds(&state.dbm, pair.size_reg) else {
+    let (_, Some(max_size)) = get_interval(&state.dbm, pair.size_reg) else {
         // Size is unbounded - reject
         env.fail(VerificationError::InvalidArgType { pc, reg: pair.size_reg });
         error!("[Verifier] pc {}: {:?} has unbounded size", pc, pair.size_reg);
@@ -583,7 +584,7 @@ pub(crate) fn check_single_mem_size_pair(
     };
     
     // Size must be non-negative
-    if !nonneg(&state.dbm, pair.size_reg) {
+    if !proven_nonnegative(&state.dbm, pair.size_reg) {
         env.fail(VerificationError::InvalidArgType { pc, reg: pair.size_reg });
         error!("[Verifier] pc {}: {:?} must be non-negative", pc, pair.size_reg);
         return false;
@@ -632,7 +633,7 @@ pub(crate) fn check_ptr_access_size(
 ) -> bool {
     match ptr_type {
         RegType::PtrToStack { .. } => {
-            if let Some(off) = get_relative_constant(&state.dbm, ptr_reg, Reg::R10) {
+            if let Some(off) = get_distance_fixed(&state.dbm, ptr_reg, Reg::R10) {
                 // Stack: check [off, off + size) is within stack bounds
                 // Stack grows down, so valid range is [-512, 0)
                 let end_offset = off + size as i64;
@@ -649,7 +650,7 @@ pub(crate) fn check_ptr_access_size(
                 !env.failed()
             } else {
                 // Variable offset — use bounds for range check
-                let (lo, hi) = get_relative_bound(&state.dbm, ptr_reg, Reg::R10);
+                let (lo, hi) = get_distance_interval(&state.dbm, ptr_reg, Reg::R10);
                 match (lo, hi) {
                     (Some(l), Some(h)) => {
                         let end_offset = h + size as i64;
