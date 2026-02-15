@@ -92,6 +92,43 @@ cargo run -- --project cilium --compiler clang-16 elf-analyze-benchmark ./bpf-pr
 
 ## Troubleshooting
 
-* **"Unsafe Generic Load":** Often caused by reading from a map value that the analyzer thinks is scalar (integer). Ensure map lookups and bounds checks are correct.
-* **"Complexity Limit Exceeded":** The program has too many paths. Try increasing `--max-insn`.
-* **"Unsafe ctx store":** Writing to a read-only context field. Check if the program type supports writes at that offset.
+The verifier can be strict. Below are common error patterns and how to resolve them.
+
+### 1. Complexity Limit Exceeded
+**Error:** `FAIL: Complexity limit of 1000000 exceeded`  
+**Cause:** The program has too many possible execution paths, often due to nested loops or many conditional branches.  
+**Solutions:**
+*   Increase the limit with `--max-insn <N>`.
+*   Enable **widening** with `--use-widening` to force loop convergence (may introduce unsoundness).
+*   Use `--skip-dbm` to skip relational numeric analysis, which is faster but less precise.
+
+### 2. Pointer / Stack Out of Bounds
+**Error:** `FAIL: Stack out of bounds at pc 12: offset -128, size 8`  
+**Cause:** Accessing memory outside the allocated stack frame (e.g., `r10 - 512`) or beyond a map value boundary.  
+**Example Fix:**
+```c
+// Unsafe: offset might be OOB
+val = bpf_map_lookup_elem(&my_map, &key);
+if (val) {
+    long x = *(long *)(val + offset); // Check your bounds!
+}
+```
+
+### 3. Unsafe Generic Load/Store
+**Error:** `FAIL: Unsafe generic load at pc 45: base R0, offset 0`  
+**Cause:** Attempting to dereference a pointer that might be `NULL` or is not of a memory-pointing type.  
+**Solution:** Always perform a null-check after map lookups or helper calls that return pointers.
+```c
+struct data *d = bpf_map_lookup_elem(&maps, &key);
+if (!d) return 0; // The verifier now knows R0 is a valid pointer here
+```
+
+### 4. DBM Inconsistency
+**Error:** `FAIL: DBM inconsistent at pc 80`  
+**Cause:** The analyzer found a logical contradiction in the numeric constraints (e.g., a path where `r1 < 5` AND `r1 > 10`). This often indicates unreachable code or a bug in the analyzer's pruning logic.  
+**Debugging:** Run with `-vv` to see the RELATIONAL constraints leading to the contradiction.
+
+### 5. Relocation Info Missing
+**Error:** `FAIL: Relocation info missing at pc 5`  
+**Cause:** The ELF file was compiled without relocation data for maps or global variables.  
+**Solution:** Ensure you are compiling with `-target bpf` and recent Clang/LLVM versions.
