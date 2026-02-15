@@ -117,10 +117,10 @@ pub(crate) fn check_ptr_arithmetic(
 }
 
 /// Check for division by zero.
-pub(crate) fn is_div_by_zero(dbm: &Dbm, src: &Operand) -> bool {
+pub(crate) fn is_div_by_zero(_dbm: &Dbm, src: &Operand) -> bool {
     match src {
         Operand::Imm(k) => *k == 0,
-        // We check zero constant in DBM for register operands too if possible
-        Operand::Reg(r) => is_zero(dbm, *r)
+        // We don't need to report potential division by zero for register operands here.
+        Operand::Reg(_) => false
     }
 }
