@@ -1,7 +1,8 @@
 // src/analysis/transfer/alu/shift.rs
 
 use crate::analysis::machine::state::State;
-use crate::zone::domain::{Reg, assume_eq_const, assume_ge_const, assume_le_const, forget, get_bounds};
+use crate::analysis::machine::reg::Reg;
+use crate::zone::domain::{assume_eq_const, assume_ge_const, assume_le_const, forget, get_bounds};
 use crate::ast::{Operand, Width};
 use crate::zone::tnum::{Tnum};
 

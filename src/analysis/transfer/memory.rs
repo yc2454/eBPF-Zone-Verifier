@@ -6,7 +6,8 @@ use crate::analysis::machine::env::{VerifierEnv, VerificationError};
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType};
 use crate::ast::{Operand, MemSize, AtomicOp};
-use crate::zone::domain::{Reg, assume_eq_const, assume_ge_const, assume_le_const, bind_to_anchor, forget, get_relative_bound, get_relative_constant};
+use crate::analysis::machine::reg::Reg;
+use crate::zone::domain::{assume_eq_const, assume_ge_const, assume_le_const, bind_to_anchor, forget, get_relative_bound, get_relative_constant};
 use crate::zone::tnum::Tnum;
 use crate::analysis::transfer::access;
 

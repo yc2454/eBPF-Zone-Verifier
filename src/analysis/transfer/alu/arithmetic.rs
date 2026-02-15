@@ -4,7 +4,8 @@ use crate::analysis::machine::env::{VerifierEnv};
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::ast::{Operand, Width};
-use crate::zone::domain::{Reg, assign_add_imm, assign_add_reg, assign_div_imm, assign_div_reg, assign_mul_imm, assign_neg, assign_sub_reg, forget, get_bounds, get_constant_value, link_regs_with_offset, set_bounds};
+use crate::analysis::machine::reg::Reg;
+use crate::zone::domain::{assign_add_imm, assign_add_reg, assign_div_imm, assign_div_reg, assign_mul_imm, assign_neg, assign_sub_reg, forget, get_bounds, get_constant_value, link_regs_with_offset, set_bounds};
 use crate::zone::tnum::{Tnum};
 
 use super::helpers::{apply_w32_truncation, check_ptr_bounds, sync_tnum_to_dbm};

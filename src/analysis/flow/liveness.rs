@@ -18,7 +18,7 @@
 //   4. Standard backward dataflow with reverse-iteration fixed-point computation.
 
 use crate::ast::{Instr, Operand, Program};
-use crate::zone::domain::Reg;
+use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::flow::subprog::{self, SubprogInfo};
 use std::collections::{BTreeMap, HashSet};

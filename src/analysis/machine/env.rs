@@ -4,7 +4,7 @@ use crate::ast::{Program, ProgramKind};
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::context::ExecContext;
 use std::collections::{HashMap, HashSet};
-use crate::zone::domain::Reg;
+use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::flow::subprog::SubprogError;
 

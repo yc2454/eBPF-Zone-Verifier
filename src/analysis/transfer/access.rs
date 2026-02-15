@@ -13,14 +13,14 @@ use crate::common::ctx_model;
 use crate::common::mem_region_model;
 use log::{error, debug};
 use RegType::*;
-use crate::zone::domain::{Reg};
+use crate::analysis::machine::reg::Reg;
 
 /// Validates memory load safety.
 /// Does NOT update the state (types/dbm); that happens in transfer.rs.
 pub fn check_load(
     env: &mut VerifierEnv,
     state: &State,
-    base: crate::zone::domain::Reg,
+    base: crate::analysis::machine::reg::Reg,
     size: i64,
     off: i16,
 ) {
@@ -454,7 +454,7 @@ fn get_packet_offset_range(
         _ => {
             // Variable offset - query DBM for bounds relative to packet start
             // Find packet start register
-            let pkt_start_reg = crate::zone::domain::REG_ENV
+            let pkt_start_reg = crate::analysis::machine::reg::REG_ENV
                 .all()
                 .iter()
                 .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket));

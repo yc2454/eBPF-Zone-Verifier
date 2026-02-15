@@ -2,7 +2,7 @@
 use std::fmt;
 use std::collections::HashSet;
 
-use crate::zone::domain::Reg;
+use crate::analysis::machine::reg::Reg;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Operand {
     Reg(Reg),

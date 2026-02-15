@@ -4,7 +4,7 @@ use crate::analysis::machine::reg_types::{TypeState, RegType};
 use crate::analysis::machine::stack_state::StackState;
 use crate::zone::dbm::Dbm;
 use crate::zone::tnum::Tnum;
-use crate::zone::domain::Reg;
+use crate::analysis::machine::reg::Reg;
 use std::collections::HashMap;
 
 /// A type-safe handle to a specific frame in the call stack.

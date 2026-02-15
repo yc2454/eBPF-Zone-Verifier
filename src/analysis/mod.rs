@@ -8,7 +8,8 @@ use std::collections::VecDeque;
 use crate::analysis::machine::frame_stack::FrameLevel;
 use crate::ast::Program;
 use crate::zone::dbm::Dbm;
-use crate::zone::domain::{Reg, init_packet_anchors};
+use crate::analysis::machine::reg::Reg;
+use crate::zone::domain::init_packet_anchors;
 use log::{debug, error, info};
 
 use self::machine::context::ExecContext;

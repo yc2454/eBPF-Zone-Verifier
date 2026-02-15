@@ -2,7 +2,8 @@ use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::RegType;
 use crate::ast::{MemSize, PacketLoadMode};
-use crate::zone::domain::{Reg, forget, assume_range};
+use crate::analysis::machine::reg::Reg;
+use crate::zone::domain::{forget, assume_range};
 use crate::analysis::transfer::common::check_reg_readable;
 use crate::analysis::transfer::types::update_packet_load_types;
 

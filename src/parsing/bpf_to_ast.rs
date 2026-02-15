@@ -2,7 +2,7 @@
 use crate::ast::{AluOp, CmpOp, EndianOp, Instr, MapLoadKind, 
     MemSize, Operand, PacketLoadMode, Program, Width, AtomicOp};
 use crate::parsing::bpf_insn::RawBpfInsn;
-use crate::zone::domain::Reg;
+use crate::analysis::machine::reg::Reg;
 use std::collections::HashSet;
 
 #[derive(Debug)]

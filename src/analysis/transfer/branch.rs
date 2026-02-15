@@ -9,8 +9,9 @@ use either::Either::{self, Left, Right};
 use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::state::State;
 use crate::ast::{Instr, CmpOp, Operand, Width};
+use crate::analysis::machine::reg::Reg;
 use crate::zone::domain::{
-    Reg, assign_eq, assume_eq_const, assume_ge_const, 
+    assign_eq, assume_eq_const, assume_ge_const, 
     assume_ge_var, assume_gt_var, assume_le_const, 
     assume_le_var, assume_le_var_plus_const, assume_less_than, 
     get_bounds, get_constant_value

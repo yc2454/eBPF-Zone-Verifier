@@ -25,7 +25,8 @@ use crate::common::config::VerifierConfig;
 use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::parsing::elf_loader::{BpfMapDef, RelocInfo};
 use crate::zone::dbm::Dbm;
-use crate::zone::domain::{Reg, assign_zero};
+use crate::analysis::machine::reg::Reg;
+use crate::zone::domain::assign_zero;
 
 // ============================================================================
 // JSON Deserialization Types

@@ -3,7 +3,8 @@
 use crate::analysis::machine::env::{VerifierEnv, VerificationError};
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
-use crate::zone::domain::{Reg, get_relative_bound, get_relative_constant, is_zero, nonneg, positive, get_bounds};
+use crate::analysis::machine::reg::Reg;
+use crate::zone::domain::{get_relative_bound, get_relative_constant, is_zero, nonneg, positive, get_bounds};
 use crate::analysis::transfer::access::{self, AccessKind};
 use crate::common::constants;
 use log::{error, info, warn};

@@ -2,7 +2,8 @@
 use crate::zone::dbm::{Dbm, INF};
 use crate::analysis::machine::reg_types::{TypeState, RegType};
 use crate::zone::tnum::Tnum;
-use crate::zone::domain::{self, Reg, get_simple_bounds};
+use crate::zone::domain::{self, get_simple_bounds};
+use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::stack_state::{StackState, SpilledReg, ScalarBounds};
 use crate::analysis::machine::frame_stack::{FrameStack, FrameLevel, CallFrame};
 use crate::ast::MemSize;

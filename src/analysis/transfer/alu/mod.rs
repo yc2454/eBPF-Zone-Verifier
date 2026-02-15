@@ -10,7 +10,7 @@ use crate::analysis::machine::env::{VerifierEnv, VerificationError};
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType };
 use crate::ast::{AluOp, Operand, Width};
-use crate::zone::domain::{Reg};
+use crate::analysis::machine::reg::Reg;
 use log::error;
 
 use super::types::update_alu_types;

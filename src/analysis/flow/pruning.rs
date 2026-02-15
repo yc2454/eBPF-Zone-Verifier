@@ -8,7 +8,8 @@ use crate::analysis::machine::state::State;
 use crate::ast::{Instr, Program};
 use crate::common::config::VerifierConfig;
 use crate::zone::dbm::Dbm;
-use crate::zone::domain::{Reg, get_simple_bounds};
+use crate::analysis::machine::reg::Reg;
+use crate::zone::domain::get_simple_bounds;
 use crate::zone::tnum::Tnum;
 
 /// Check if the loop body contains a conditional branch (If instruction),

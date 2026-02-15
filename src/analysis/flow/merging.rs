@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use crate::analysis::machine::env::{VerificationError, VerifierEnv};
 use crate::analysis::machine::reg_types::{RegType, TypeState, type_family};
 use crate::analysis::machine::state::State;
-use crate::zone::domain::Reg;
+use crate::analysis::machine::reg::Reg;
 
 /// Check if `state` is type-compatible with all previously explored states at the same PC.
 /// Returns Err if types conflict (different pointer kinds at join point).

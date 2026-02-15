@@ -5,7 +5,7 @@
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType};
 use crate::ast::{Instr, CmpOp, Operand};
-use crate::zone::domain::Reg;
+use crate::analysis::machine::reg::Reg;
 
 /// Promote a pointer type across all stack frames by ref/ptr id.
 /// `should_promote` checks if a slot's type matches, `promote` returns the new type.

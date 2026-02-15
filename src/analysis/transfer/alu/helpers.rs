@@ -1,7 +1,8 @@
 // src/analysis/transfer/alu/helpers.rs
 
 use crate::analysis::machine::state::State;
-use crate::zone::domain::{Reg, forget, get_bounds, assume_ge_const, assume_le_const, get_relative_bound};
+use crate::analysis::machine::reg::Reg;
+use crate::zone::domain::{forget, get_bounds, assume_ge_const, assume_le_const, get_relative_bound};
 use crate::zone::dbm::{Dbm};
 use crate::analysis::machine::reg_types::{RegType};
 use crate::common::constants;
@@ -80,7 +81,7 @@ pub(crate) fn check_ptr_bounds(
 ) { 
     match state.types.get(reg) {
         RegType::PtrToPacket { .. } => {
-            let packet_start_reg_op = crate::zone::domain::REG_ENV.all().iter()
+            let packet_start_reg_op = crate::analysis::machine::reg::REG_ENV.all().iter()
                 .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket));
             if let Some(packet_start_reg) = packet_start_reg_op {
                 if let (Some(_), Some(packet_offset)) = get_relative_bound(&state.dbm, reg, *packet_start_reg) {
@@ -91,7 +92,7 @@ pub(crate) fn check_ptr_bounds(
             }
         }
         RegType::PtrToPacketMeta { .. } => {
-            let packet_start_reg_op = crate::zone::domain::REG_ENV.all().iter()
+            let packet_start_reg_op = crate::analysis::machine::reg::REG_ENV.all().iter()
                 .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacketMeta));
             if let Some(packet_start_reg) = packet_start_reg_op {
                 if let (Some(_), Some(packet_offset)) = get_relative_bound(&state.dbm, reg, *packet_start_reg) {

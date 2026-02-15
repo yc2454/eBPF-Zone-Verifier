@@ -18,7 +18,8 @@ use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::RegType;
 use crate::ast::{EndianOp, Instr, Width};
-use crate::zone::domain::{Reg, 
+use crate::analysis::machine::reg::Reg;
+use crate::zone::domain::{
     forget, assign_and_mask, bit_and_const, get_bounds,
     get_simple_bounds, set_bounds, preserve_anchor_constraints
 };
