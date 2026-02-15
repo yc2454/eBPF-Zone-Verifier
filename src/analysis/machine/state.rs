@@ -2,7 +2,7 @@
 use crate::zone::dbm::{Dbm, INF};
 use crate::analysis::machine::reg_types::{TypeState, RegType};
 use crate::zone::tnum::Tnum;
-use crate::zone::domain::{self, get_simple_bounds};
+use crate::zone::domain::{self, get_interval_i64};
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::stack_state::{StackState, SpilledReg, ScalarBounds};
 use crate::analysis::machine::frame_stack::{FrameStack, FrameLevel, CallFrame};
@@ -163,7 +163,7 @@ impl State {
             (None, None, None)
         };
 
-        let (min, max) = get_simple_bounds(&self.dbm, reg);
+        let (min, max) = get_interval_i64(&self.dbm, reg);
         println!("At spilling, {} bounds: [{}, {}]", reg.name(), min, max);
         
         // Only track as proper spill if 8-byte aligned
@@ -295,7 +295,7 @@ impl State {
             // Preserve type and bounds
             self.types.set(dst, spilled.reg_type);
             self.tnums.insert(dst, spilled.tnum);
-            domain::set_bounds(&mut self.dbm, dst, spilled.bounds.min, spilled.bounds.max);
+            domain::assign_interval(&mut self.dbm, dst, spilled.bounds.min, spilled.bounds.max);
             
             // Only restore anchors for U64 (pointers need full 64-bit)
             if size == MemSize::U64 {
@@ -306,7 +306,7 @@ impl State {
             self.types.set(dst, RegType::ScalarValue);
             let (min, max) = size.unbounded_scalar_bounds();
             self.tnums.insert(dst, Tnum::unknown());
-            domain::set_bounds(&mut self.dbm, dst, min, max);
+            domain::assign_interval(&mut self.dbm, dst, min, max);
         }
         
         true

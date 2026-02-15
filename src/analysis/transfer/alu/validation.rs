@@ -5,7 +5,7 @@ use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType};
 use crate::ast::{AluOp, Operand, Width};
 use crate::analysis::machine::reg::Reg;
-use crate::zone::domain::{get_bounds};
+use crate::zone::domain::{get_interval};
 use crate::zone::dbm::{INF, Dbm};
 use crate::common::constants;
 use log::error;
@@ -28,7 +28,7 @@ pub(crate) fn check_ptr_arithmetic(
     let src_max = match src {
         Operand::Imm(k) => *k,
         Operand::Reg(r) => {
-            let (_, max_opt) = get_bounds(&state.dbm, *r);
+            let (_, max_opt) = get_interval(&state.dbm, *r);
             match max_opt {
                 Some(max) => max,
                 None => INF,
@@ -39,7 +39,7 @@ pub(crate) fn check_ptr_arithmetic(
     let src_min = match src {
         Operand::Imm(k) => *k,
         Operand::Reg(r) => {
-            let (min_opt, _) = get_bounds(&state.dbm, *r);
+            let (min_opt, _) = get_interval(&state.dbm, *r);
             match min_opt {
                 Some(min) => min,
                 None => -INF,
@@ -47,7 +47,7 @@ pub(crate) fn check_ptr_arithmetic(
         }
     };
 
-    let (dst_min, dst_max) = get_bounds(&state.dbm, dst);
+    let (dst_min, dst_max) = get_interval(&state.dbm, dst);
     let dst_min = dst_min.unwrap_or(-INF);
     let dst_max = dst_max.unwrap_or(INF);
 

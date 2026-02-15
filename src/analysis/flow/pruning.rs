@@ -9,7 +9,7 @@ use crate::ast::{Instr, Program};
 use crate::common::config::VerifierConfig;
 use crate::zone::dbm::Dbm;
 use crate::analysis::machine::reg::Reg;
-use crate::zone::domain::get_simple_bounds;
+use crate::zone::domain::get_interval_i64;
 use crate::zone::tnum::Tnum;
 
 /// Check if the loop body contains a conditional branch (If instruction),
@@ -124,8 +124,8 @@ pub fn should_prune(
                     if prev_states.len() >= 2 {
                         let first = &prev_states[0];
                         let widening_effective = live_regs.iter().any(|&r| {
-                            let (first_min, first_max) = get_simple_bounds(&first.dbm, r);
-                            let (last_min, last_max) = get_simple_bounds(&old.dbm, r);
+                            let (first_min, first_max) = get_interval_i64(&first.dbm, r);
+                            let (last_min, last_max) = get_interval_i64(&old.dbm, r);
                             last_min < first_min || last_max > first_max
                         });
                         if widening_effective
@@ -297,8 +297,8 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
 fn dbm_subsumed_by(cur: &Dbm, old: &Dbm, live_regs: &HashSet<Reg>) -> bool {
 
     for &r in live_regs {
-        let (old_min, old_max) = get_simple_bounds(old, r);
-        let (cur_min, cur_max) = get_simple_bounds(cur, r);
+        let (old_min, old_max) = get_interval_i64(old, r);
+        let (cur_min, cur_max) = get_interval_i64(cur, r);
         if !(old_min <= cur_min && old_max >= cur_max) {
             return false;
         }

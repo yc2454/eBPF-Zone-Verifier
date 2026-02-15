@@ -11,10 +11,10 @@ use crate::analysis::machine::state::State;
 use crate::ast::{Instr, CmpOp, Operand, Width};
 use crate::analysis::machine::reg::Reg;
 use crate::zone::domain::{
-    assign_eq, assume_eq_const, assume_ge_const, 
-    assume_ge_var, assume_gt_var, assume_le_const, 
-    assume_le_var, assume_le_var_plus_const, assume_less_than, 
-    get_bounds, get_constant_value
+    assign_reg, assume_eq_imm, assume_ge_imm, 
+    assume_ge, assume_gt, assume_le_imm, 
+    assume_le, assume_le_offset, assume_lt_imm, 
+    get_interval, get_fixed_value
 };
 use crate::zone::dbm::{Dbm};
 use crate::zone::tnum::Tnum;
@@ -228,7 +228,7 @@ fn get_combined_bounds(state: &State, reg: Reg, width: Width) -> Option<(u64, u6
     let tnum_max = tnum.max_value();
     
     // DBM bounds
-    let (dbm_lo, dbm_hi) = get_bounds(&state.dbm, reg);
+    let (dbm_lo, dbm_hi) = get_interval(&state.dbm, reg);
     
     // Combine bounds
     match (dbm_lo, dbm_hi) {
@@ -277,7 +277,7 @@ fn fits_in_u32(bounds: (i64, i64)) -> bool {
 
 /// Check if value is known to be in u32 range [0, 0xFFFFFFFF]
 fn fits_in_u32_range(dbm: &Dbm, reg: Reg) -> bool {
-    let (lo, hi) = get_bounds(dbm, reg);
+    let (lo, hi) = get_interval(dbm, reg);
     match (lo, hi) {
         (Some(l), Some(h)) => fits_in_u32((l, h)),
         _ => false,
@@ -287,7 +287,7 @@ fn fits_in_u32_range(dbm: &Dbm, reg: Reg) -> bool {
 /// Get combined signed bounds for a register using both DBM and tnum.
 /// Returns (lo, hi) as signed i64 values, using the tighter bound from each source.
 fn get_combined_signed_bounds(state: &State, reg: Reg) -> (i64, i64) {
-    let (dbm_lo, dbm_hi) = get_bounds(&state.dbm, reg);
+    let (dbm_lo, dbm_hi) = get_interval(&state.dbm, reg);
     let tnum = state.get_tnum(reg);
     let tnum_min = tnum.min_value();
     let tnum_max = tnum.max_value();
@@ -350,7 +350,7 @@ fn can_apply_dbm_constraint(
         let left_bounds = get_combined_signed_bounds(state, left);
         let left_nonneg = left_bounds.0 >= 0;
         let left_unbounded = {
-            let (lo, _) = get_bounds(&state.dbm, left);
+            let (lo, _) = get_interval(&state.dbm, left);
             let tnum = state.get_tnum(left);
             lo.is_none() && tnum.max_value() > i64::MAX as u64
         };
@@ -375,92 +375,92 @@ fn apply_cmp_to_dbm(
 ) {
     match (op, right) {
         (CmpOp::Eq, Either::Right(imm)) => {
-            assume_eq_const(then_dbm, left, imm);
+            assume_eq_imm(then_dbm, left, imm);
         }
         (CmpOp::Eq, Either::Left(reg)) => {
-            assign_eq(then_dbm, left, reg);
+            assign_reg(then_dbm, left, reg);
         }
         (CmpOp::Ne, Either::Right(imm)) => {
-            assume_eq_const(else_dbm, left, imm);
+            assume_eq_imm(else_dbm, left, imm);
         }
         (CmpOp::Ne, Either::Left(reg)) => {
-            assign_eq(else_dbm, left, reg);
+            assign_reg(else_dbm, left, reg);
         }
         (CmpOp::UGe, Either::Right(imm)) => {
-            assume_ge_const(then_dbm, left, imm);
-            assume_less_than(else_dbm, left, imm);
+            assume_ge_imm(then_dbm, left, imm);
+            assume_lt_imm(else_dbm, left, imm);
             if imm > 0 {
-                assume_ge_const(else_dbm, left, 0);
+                assume_ge_imm(else_dbm, left, 0);
             }
         }
         (CmpOp::SGe, Either::Right(imm)) => {
-            assume_ge_const(then_dbm, left, imm);
-            assume_less_than(else_dbm, left, imm);
+            assume_ge_imm(then_dbm, left, imm);
+            assume_lt_imm(else_dbm, left, imm);
         }
         (CmpOp::UGe, Either::Left(reg)) => {
-            assume_ge_var(then_dbm, left, reg);
-            assume_le_var_plus_const(else_dbm, left, reg, -1);
-            assume_ge_const(else_dbm, left, 0);
+            assume_ge(then_dbm, left, reg);
+            assume_le_offset(else_dbm, left, reg, -1);
+            assume_ge_imm(else_dbm, left, 0);
         }
         (CmpOp::SGe, Either::Left(reg)) => {
-            assume_ge_var(then_dbm, left, reg);
-            assume_le_var_plus_const(else_dbm, left, reg, -1);
+            assume_ge(then_dbm, left, reg);
+            assume_le_offset(else_dbm, left, reg, -1);
         }
         (CmpOp::UGt, Either::Right(imm)) => {
-            assume_ge_const(then_dbm, left, imm + 1);
-            assume_le_const(else_dbm, left, imm);
-            assume_ge_const(else_dbm, left, 0);
+            assume_ge_imm(then_dbm, left, imm + 1);
+            assume_le_imm(else_dbm, left, imm);
+            assume_ge_imm(else_dbm, left, 0);
         }
         (CmpOp::SGt, Either::Right(imm)) => {
-            assume_ge_const(then_dbm, left, imm + 1);
-            assume_le_const(else_dbm, left, imm);
+            assume_ge_imm(then_dbm, left, imm + 1);
+            assume_le_imm(else_dbm, left, imm);
         }
         (CmpOp::UGt, Either::Left(reg)) => {
-            assume_gt_var(then_dbm, left, reg);
-            assume_le_var(else_dbm, left, reg);
-            assume_ge_const(else_dbm, left, 0);
+            assume_gt(then_dbm, left, reg);
+            assume_le(else_dbm, left, reg);
+            assume_ge_imm(else_dbm, left, 0);
         }
         (CmpOp::SGt, Either::Left(reg)) => {
-            assume_gt_var(then_dbm, left, reg);
-            assume_le_var(else_dbm, left, reg);
+            assume_gt(then_dbm, left, reg);
+            assume_le(else_dbm, left, reg);
         }
         (CmpOp::ULe, Either::Right(imm)) => {
-            assume_le_const(then_dbm, left, imm);
-            assume_ge_const(then_dbm, left, 0);
-            assume_ge_const(else_dbm, left, imm + 1);
+            assume_le_imm(then_dbm, left, imm);
+            assume_ge_imm(then_dbm, left, 0);
+            assume_ge_imm(else_dbm, left, imm + 1);
         }
         (CmpOp::SLe, Either::Right(imm)) => {
-            assume_le_const(then_dbm, left, imm);
-            assume_ge_const(else_dbm, left, imm + 1);
+            assume_le_imm(then_dbm, left, imm);
+            assume_ge_imm(else_dbm, left, imm + 1);
         }
         (CmpOp::ULe, Either::Left(reg)) => {
-            assume_le_var(then_dbm, left, reg);
-            assume_ge_const(then_dbm, left, 0);
-            assume_gt_var(else_dbm, left, reg);
+            assume_le(then_dbm, left, reg);
+            assume_ge_imm(then_dbm, left, 0);
+            assume_gt(else_dbm, left, reg);
         }
         (CmpOp::SLe, Either::Left(reg)) => {
-            assume_le_var(then_dbm, left, reg);
-            assume_gt_var(else_dbm, left, reg);
+            assume_le(then_dbm, left, reg);
+            assume_gt(else_dbm, left, reg);
         }
         (CmpOp::ULt, Either::Right(imm)) => {
-            assume_less_than(then_dbm, left, imm);
+            assume_lt_imm(then_dbm, left, imm);
             if imm > 0 {
-                assume_ge_const(then_dbm, left, 0);
+                assume_ge_imm(then_dbm, left, 0);
             }
-            assume_ge_const(else_dbm, left, imm);
+            assume_ge_imm(else_dbm, left, imm);
         }
         (CmpOp::SLt, Either::Right(imm)) => {
-            assume_less_than(then_dbm, left, imm);
-            assume_ge_const(else_dbm, left, imm);
+            assume_lt_imm(then_dbm, left, imm);
+            assume_ge_imm(else_dbm, left, imm);
         }
         (CmpOp::ULt, Either::Left(reg)) => {
-            assume_le_var_plus_const(then_dbm, left, reg, -1);
-            assume_ge_const(then_dbm, left, 0);
-            assume_ge_var(else_dbm, left, reg);
+            assume_le_offset(then_dbm, left, reg, -1);
+            assume_ge_imm(then_dbm, left, 0);
+            assume_ge(else_dbm, left, reg);
         }
         (CmpOp::SLt, Either::Left(reg)) => {
-            assume_le_var_plus_const(then_dbm, left, reg, -1);
-            assume_ge_var(else_dbm, left, reg);
+            assume_le_offset(then_dbm, left, reg, -1);
+            assume_ge(else_dbm, left, reg);
         }
         (CmpOp::Test, _) => {}
     }
@@ -502,7 +502,7 @@ fn apply_test_constraints(
         }
         Either::Left(reg) => {
             // If right is a register, check if it's a known constant
-            if let Some(val) = get_constant_value(&then_s.dbm, reg) {
+            if let Some(val) = get_fixed_value(&then_s.dbm, reg) {
                 if width == Width::W32 {
                     (val as u32) as u64
                 } else {
@@ -545,16 +545,16 @@ fn apply_test_constraints(
             // Testing 32-bit sign bit
             if fits_in_u32_range(&then_s.dbm, left) {
                 // Taken: bit 31 set -> value in [0x80000000, 0xFFFFFFFF]
-                assume_ge_const(&mut then_s.dbm, left, 0x80000000);
+                assume_ge_imm(&mut then_s.dbm, left, 0x80000000);
                 // Not taken: bit 31 clear -> value in [0, 0x7FFFFFFF]
-                assume_le_const(&mut else_s.dbm, left, 0x7FFFFFFF);
+                assume_le_imm(&mut else_s.dbm, left, 0x7FFFFFFF);
             }
         } else if width == Width::W64 && bit_pos == 63 {
             // Testing 64-bit sign bit
             // Taken: negative (in signed terms)
             // Not taken: non-negative
-            assume_less_than(&mut then_s.dbm, left, 0);
-            assume_ge_const(&mut else_s.dbm, left, 0);
+            assume_lt_imm(&mut then_s.dbm, left, 0);
+            assume_ge_imm(&mut else_s.dbm, left, 0);
         }
     }
 }
@@ -586,11 +586,11 @@ fn resolve_right_operand(
             (Either::Right(eff), (eff, eff))
         }
         Either::Left(reg) => {
-            if let Some(val) = get_constant_value(dbm, reg) {
+            if let Some(val) = get_fixed_value(dbm, reg) {
                 let eff = truncate(val);
                 (Either::Right(eff), (eff, eff))
             } else {
-                let bounds = get_bounds(dbm, reg);
+                let bounds = get_interval(dbm, reg);
                 let bounds = (bounds.0.unwrap_or(i64::MIN), bounds.1.unwrap_or(i64::MAX));
                 (Either::Left(reg), bounds)
             }
@@ -645,7 +645,7 @@ fn apply_unsigned_const_fallback(
 ) {
     // Try to find a known constant on either side.
     // Check both DBM and tnum since the DBM can't represent x >= i64::MIN.
-    let left_const = get_constant_value(&then_s.dbm, left)
+    let left_const = get_fixed_value(&then_s.dbm, left)
         .or_else(|| {
             let t = then_s.get_tnum(left);
             if t.is_const() { Some(t.value as i64) } else { None }
@@ -740,12 +740,12 @@ fn apply_signed_from_unsigned_range(dbm: &mut Dbm, reg: Reg, lo_u: u64, hi_u: u6
 
     if hi_u <= i64::MAX as u64 {
         // Entirely non-negative in signed: [0..i64::MAX]
-        assume_ge_const(dbm, reg, lo_s);
-        assume_le_const(dbm, reg, hi_s);
+        assume_ge_imm(dbm, reg, lo_s);
+        assume_le_imm(dbm, reg, hi_s);
     } else if lo_u >= 0x8000000000000000 {
         // Entirely negative in signed: [i64::MIN..-1]
-        assume_ge_const(dbm, reg, lo_s);
-        assume_le_const(dbm, reg, hi_s);
+        assume_ge_imm(dbm, reg, lo_s);
+        assume_le_imm(dbm, reg, hi_s);
     }
     // else: crosses sign boundary, can't represent as single signed interval
 }

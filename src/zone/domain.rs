@@ -7,7 +7,7 @@ use crate::analysis::machine::reg::{Reg, REG_ENV};
 // Extract bounds if finite.
 // ub from: x - 0 <= ub
 // lb from: 0 - x <= -lb  => lb = - (0 - x bound)
-pub fn get_bounds(dbm: &Dbm, x: Reg) -> (Option<i64>, Option<i64>) {
+pub fn get_interval(dbm: &Dbm, x: Reg) -> (Option<i64>, Option<i64>) {
     let ub = dbm.get(x, Reg::Zero);
     let lb_neg = dbm.get(Reg::Zero, x);
 
@@ -17,14 +17,14 @@ pub fn get_bounds(dbm: &Dbm, x: Reg) -> (Option<i64>, Option<i64>) {
     (lb_opt, ub_opt)
 }
 
-pub fn get_simple_bounds(dbm: &Dbm, x: Reg) -> (i64, i64) {
-    let (lo_opt, hi_opt) = get_bounds(dbm, x);
+pub fn get_interval_i64(dbm: &Dbm, x: Reg) -> (i64, i64) {
+    let (lo_opt, hi_opt) = get_interval(dbm, x);
     let lo = lo_opt.unwrap_or(i64::MIN);
     let hi = hi_opt.unwrap_or(i64::MAX);
     (lo, hi)
 }
 
-pub fn get_relative_bound(dbm: &Dbm, x: Reg, y: Reg) -> (Option<i64>, Option<i64>) {
+pub fn get_distance_interval(dbm: &Dbm, x: Reg, y: Reg) -> (Option<i64>, Option<i64>) {
     let x_minus_y = dbm.get(x, y);
     let y_minus_x = dbm.get(y, x);
 
@@ -34,16 +34,16 @@ pub fn get_relative_bound(dbm: &Dbm, x: Reg, y: Reg) -> (Option<i64>, Option<i64
     (lb_opt, ub_opt)
 }
 
-pub fn get_relative_constant(dbm: &Dbm, x: Reg, y: Reg) -> Option<i64> {
-    let (lo, hi) = get_relative_bound(dbm, x, y);
+pub fn get_distance_fixed(dbm: &Dbm, x: Reg, y: Reg) -> Option<i64> {
+    let (lo, hi) = get_distance_interval(dbm, x, y);
     match (lo, hi) {
         (Some(l), Some(h)) if l == h => Some(l),
         _ => None,
     }
 }
 
-pub fn get_constant_value(dbm: &Dbm, x: Reg) -> Option<i64> {
-    if let (Some(lo), Some(hi)) = get_bounds(dbm, x) {
+pub fn get_fixed_value(dbm: &Dbm, x: Reg) -> Option<i64> {
+    if let (Some(lo), Some(hi)) = get_interval(dbm, x) {
         if lo == hi {
             return Some(lo);
         }
@@ -51,27 +51,27 @@ pub fn get_constant_value(dbm: &Dbm, x: Reg) -> Option<i64> {
     None
 }
 
-pub fn is_zero(dbm: &Dbm, x: Reg) -> bool {
-    if let (Some(l), Some(u)) = get_bounds(dbm, x) {
+pub fn proven_zero(dbm: &Dbm, x: Reg) -> bool {
+    if let (Some(l), Some(u)) = get_interval(dbm, x) {
         return l == u && l == 0;
     } else {
         return false;
     }
 }
 
-pub fn nonneg(dbm: &Dbm, x: Reg) -> bool {
-    let (lo, _) = get_bounds(dbm, x);
+pub fn proven_nonnegative(dbm: &Dbm, x: Reg) -> bool {
+    let (lo, _) = get_interval(dbm, x);
     lo.map_or(false, |l| l >= 0)
 }
 
-pub fn positive(dbm: &Dbm, x: Reg) -> bool {
-    let (lo, _) = get_bounds(dbm, x);
+pub fn proven_positive(dbm: &Dbm, x: Reg) -> bool {
+    let (lo, _) = get_interval(dbm, x);
     lo.map_or(false, |l| l > 0)
 }
 
-pub fn set_bounds(dbm: &mut Dbm, r: Reg, min: i64, max: i64) {
-    assume_ge_const(dbm, r, min);
-    assume_le_const(dbm, r, max);
+pub fn assign_interval(dbm: &mut Dbm, r: Reg, min: i64, max: i64) {
+    assume_ge_imm(dbm, r, min);
+    assume_le_imm(dbm, r, max);
 }
 
 // --- transfer functions ---
@@ -81,9 +81,13 @@ pub fn forget(dbm: &mut Dbm, x: Reg) {
     dbm.close(); // keep the "always closed" invariant
 }
 
+pub fn assign_zero(dbm: &mut Dbm, x: Reg) {
+    assign_imm(dbm, x, 0);
+}
+
 /// Establishes the relationship dst = src + imm (i.e., dst - src = imm)
 /// This records the exact difference between two registers in the DBM.
-pub fn link_regs_with_offset(dbm: &mut Dbm, dst: Reg, src: Reg, imm: i64) {
+pub fn assign_reg_offset(dbm: &mut Dbm, dst: Reg, src: Reg, imm: i64) {
     // 1. Clear any old information about the destination register
     dbm.forget_var(dst);
 
@@ -103,13 +107,13 @@ pub fn link_regs_with_offset(dbm: &mut Dbm, dst: Reg, src: Reg, imm: i64) {
 }
 
 // dst += imm
-pub fn assign_add_imm(dbm: &mut Dbm, dst: Reg, imm: i64) {
+pub fn apply_add_imm(dbm: &mut Dbm, dst: Reg, imm: i64) {
     add_imm(dbm, dst, imm);
 }
 
 // dst += src
-pub fn assign_add_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
-    let (src_lo, src_hi) = get_bounds(dbm, src);
+pub fn apply_add_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
+    let (src_lo, src_hi) = get_interval(dbm, src);
 
     match (src_lo, src_hi) {
         (Some(lo), Some(hi)) => {
@@ -137,13 +141,13 @@ pub fn assign_add_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
         }
         _ => {
             // src is unbounded — no choice but to lose relational info
-            let (dst_lo, dst_hi) = get_bounds(dbm, dst);
+            let (dst_lo, dst_hi) = get_interval(dbm, dst);
             dbm.forget_var(dst);
             if let (Some(dl), Some(sl)) = (dst_lo, src_lo) {
-                assume_ge_const(dbm, dst, dl.saturating_add(sl));
+                assume_ge_imm(dbm, dst, dl.saturating_add(sl));
             }
             if let (Some(dh), Some(sh)) = (dst_hi, src_hi) {
-                assume_le_const(dbm, dst, dh.saturating_add(sh));
+                assume_le_imm(dbm, dst, dh.saturating_add(sh));
             }
             dbm.close();
         }
@@ -151,8 +155,8 @@ pub fn assign_add_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
 }
 
 /// Handle: dst = dst - src
-pub fn assign_sub_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
-    let (src_lo, src_hi) = get_bounds(dbm, src);
+pub fn apply_sub_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
+    let (src_lo, src_hi) = get_interval(dbm, src);
 
     match (src_lo, src_hi) {
         (Some(lo), Some(hi)) => {
@@ -179,13 +183,13 @@ pub fn assign_sub_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
             dbm.close();
         }
         _ => {
-            let (dst_lo, dst_hi) = get_bounds(dbm, dst);
+            let (dst_lo, dst_hi) = get_interval(dbm, dst);
             dbm.forget_var(dst);
             if let (Some(dl), Some(sh)) = (dst_lo, src_hi) {
-                assume_ge_const(dbm, dst, dl.saturating_sub(sh));
+                assume_ge_imm(dbm, dst, dl.saturating_sub(sh));
             }
             if let (Some(dh), Some(sl)) = (dst_hi, src_lo) {
-                assume_le_const(dbm, dst, dh.saturating_sub(sl));
+                assume_le_imm(dbm, dst, dh.saturating_sub(sl));
             }
             dbm.close();
         }
@@ -193,7 +197,7 @@ pub fn assign_sub_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
 }
 
 // dst &= mask
-pub fn assign_and_mask(dbm: &mut Dbm, dst: Reg, mask: i64) {
+pub fn apply_and_imm(dbm: &mut Dbm, dst: Reg, mask: i64) {
     dbm.forget_var(dst);
     
     // 0 <= dst <= mask
@@ -204,41 +208,43 @@ pub fn assign_and_mask(dbm: &mut Dbm, dst: Reg, mask: i64) {
 }
 
 // x <= y  encoded as: x - y <= 0
-pub fn assume_le_var(dbm: &mut Dbm, x: Reg, y: Reg) {
+pub fn assume_le(dbm: &mut Dbm, x: Reg, y: Reg) {
     dbm.add_constraint(x, y, 0);
     dbm.close();
 }
 
 // x >= y  encoded as: y - x <= 0
-pub fn assume_ge_var(dbm: &mut Dbm, x: Reg, y: Reg) {
+pub fn assume_ge(dbm: &mut Dbm, x: Reg, y: Reg) {
     dbm.add_constraint(y, x, 0);
     dbm.close();
 }
 
 // x > y  encoded as: y - x <= -1
-pub fn assume_gt_var(dbm: &mut Dbm, x: Reg, y: Reg) {
+pub fn assume_gt(dbm: &mut Dbm, x: Reg, y: Reg) {
     dbm.add_constraint(y, x, -1);
     dbm.close();
 }
 
 // x <= y + c  encoded as: x - y <= c
-pub fn assume_le_var_plus_const(dbm: &mut Dbm, x: Reg, y: Reg, c: i64) {
+pub fn assume_le_offset(dbm: &mut Dbm, x: Reg, y: Reg, c: i64) {
     dbm.add_constraint(x, y, c);
     dbm.close();
 }
 
-pub fn assign_zero(dbm: &mut Dbm, x: Reg) {
+pub fn assign_imm(dbm: &mut Dbm, x: Reg, imm: i64) {
     // Overwrite x: kill all old info about x
     dbm.forget_var(x);
 
-    // Now enforce x == 0 (relative to `zero` var)
-    dbm.add_constraint(x, Reg::Zero, 0);   // x - 0 ≤ 0  ⇒ x ≤ 0
-    dbm.add_constraint(Reg::Zero, x, 0);   // 0 - x ≤ 0  ⇒ x ≥ 0
+    // Now enforce x == imm (relative to `zero` var)
+    dbm.add_constraint(x, Reg::Zero, imm);
+    if imm > i64::MIN {
+        dbm.add_constraint(Reg::Zero, x, -imm);
+    }
 
     dbm.close();
 }
 
-pub fn assign_eq(dbm: &mut Dbm, x: Reg, y: Reg) {
+pub fn assign_reg(dbm: &mut Dbm, x: Reg, y: Reg) {
     dbm.forget_var(x);
     dbm.add_constraint(x, y, 0);
     dbm.add_constraint(y, x, 0);
@@ -246,13 +252,13 @@ pub fn assign_eq(dbm: &mut Dbm, x: Reg, y: Reg) {
 }
 
 // x <= c   encoded as: x - 0 <= c
-pub fn assume_le_const(dbm: &mut Dbm, x: Reg, c: i64) {
+pub fn assume_le_imm(dbm: &mut Dbm, x: Reg, c: i64) {
     dbm.add_constraint(x, Reg::Zero, c);
     dbm.close();
 }
 
 // x >= c   encoded as: 0 - x <= -c
-pub fn assume_ge_const(dbm: &mut Dbm, x: Reg, c: i64) {
+pub fn assume_ge_imm(dbm: &mut Dbm, x: Reg, c: i64) {
     // Since x is an i64, x >= i64::MIN is always true (tautology).
     // Attempting -c would panic, so we simply skip adding the constraint.
     if c == i64::MIN {
@@ -264,13 +270,18 @@ pub fn assume_ge_const(dbm: &mut Dbm, x: Reg, c: i64) {
 }
 
 // lo <= x <= hi
-pub fn assume_range(dbm: &mut Dbm, x: Reg, lo: i64, hi: i64) {
-    assume_ge_const(dbm, x, lo);
-    assume_le_const(dbm, x, hi);
+pub fn assume_in_interval(dbm: &mut Dbm, x: Reg, lo: i64, hi: i64) {
+    assume_ge_imm(dbm, x, lo);
+    assume_le_imm(dbm, x, hi);
+}
+
+pub fn assume_range(dbm: &mut Dbm, x: Reg, min: i64, max: i64) {
+    assume_ge_imm(dbm, x, min);
+    assume_le_imm(dbm, x, max);
 }
 
 // x == c   encoded as: x <= c AND x >= c
-pub fn assume_eq_const(dbm: &mut Dbm, x: Reg, c: i64) {
+pub fn assume_eq_imm(dbm: &mut Dbm, x: Reg, c: i64) {
     dbm.add_constraint(x, Reg::Zero, c);
     if c > i64::MIN {
         dbm.add_constraint(Reg::Zero, x, -c);
@@ -278,7 +289,7 @@ pub fn assume_eq_const(dbm: &mut Dbm, x: Reg, c: i64) {
     dbm.close();
 }
 
-pub fn assume_less_than(d: &mut Dbm, x: Reg, c: i64) {
+pub fn assume_lt_imm(d: &mut Dbm, x: Reg, c: i64) {
     // Handle edge case where c is i64::MIN.
     // x < i64::MIN is impossible (contradiction).
     // In a DBM, we represent "impossible" by setting the matrix to an inconsistent state.
@@ -318,7 +329,7 @@ pub fn add_imm(d: &mut Dbm, x: Reg, c: i64) {
 }
 
 // dst *= imm
-pub fn assign_mul_imm(dbm: &mut Dbm, dst: Reg, imm: i64) {
+pub fn apply_mul_imm(dbm: &mut Dbm, dst: Reg, imm: i64) {
     // Handle easy special cases first.
     if imm == 0 {
         // dst = 0
@@ -340,18 +351,18 @@ pub fn assign_mul_imm(dbm: &mut Dbm, dst: Reg, imm: i64) {
     }
 
     // imm > 0: monotone scaling, so we can scale bounds.
-    let (ld_opt, ud_opt) = get_bounds(dbm, dst);
+    let (ld_opt, ud_opt) = get_interval(dbm, dst);
 
     // Kill old relational info about dst.
     dbm.forget_var(dst);
 
     if let Some(ld) = ld_opt {
         let new_lb = ld.saturating_mul(imm);
-        assume_ge_const(dbm, dst, new_lb);
+        assume_ge_imm(dbm, dst, new_lb);
     }
     if let Some(ud) = ud_opt {
         let new_ub = ud.saturating_mul(imm);
-        assume_le_const(dbm, dst, new_ub);
+        assume_le_imm(dbm, dst, new_ub);
     }
 
     // If we had no bounds, dst just becomes unconstrained.
@@ -359,7 +370,7 @@ pub fn assign_mul_imm(dbm: &mut Dbm, dst: Reg, imm: i64) {
 }
 
 /// Handle: dst = dst / imm
-pub fn assign_div_imm(dbm: &mut Dbm, reg: Reg, imm: i64) {
+pub fn apply_div_imm(dbm: &mut Dbm, reg: Reg, imm: i64) {
     if imm == 0 {
         // Technically this is a runtime crash. 
         // We leave the state as is (or top) and let the verifier fail logic handle it.
@@ -367,7 +378,7 @@ pub fn assign_div_imm(dbm: &mut Dbm, reg: Reg, imm: i64) {
     }
 
     // 1. Get current concrete bounds (Interval Analysis)
-    let (lo, hi) = get_bounds(dbm, reg);
+    let (lo, hi) = get_interval(dbm, reg);
 
     // 2. Division breaks linear relationships. We must FORGET the register.
     forget(dbm, reg);
@@ -384,8 +395,8 @@ pub fn assign_div_imm(dbm: &mut Dbm, reg: Reg, imm: i64) {
             // 4. Constrain with new bounds
             // dst >= new_lo  =>  0 - dst <= -new_lo
             // dst <= new_hi  =>  dst - 0 <= new_hi
-            assume_ge_const(dbm, reg, new_lo);
-            assume_le_const(dbm, reg, new_hi);
+            assume_ge_imm(dbm, reg, new_lo);
+            assume_le_imm(dbm, reg, new_hi);
         }
     } else {
         // If we didn't know the bounds, or they were "negative",
@@ -395,7 +406,7 @@ pub fn assign_div_imm(dbm: &mut Dbm, reg: Reg, imm: i64) {
 }
 
 /// Handle: dst = dst / src
-pub fn assign_div_reg(dbm: &mut Dbm, dst: Reg, _src: Reg) {
+pub fn apply_div_reg(dbm: &mut Dbm, dst: Reg, _src: Reg) {
     // We know very little about division by a variable.
     // dst / src results in a value smaller than dst (if src > 1).
     
@@ -406,28 +417,10 @@ pub fn assign_div_reg(dbm: &mut Dbm, dst: Reg, _src: Reg) {
     // but for now, "Unknown" is the safest sound approximation.
 }
 
-/// Simulates `reg &= imm`.
-/// Since bitwise AND is non-linear, we forget precise relationships but 
-/// deduce that the result is in the range [0, imm].
-pub fn bit_and_const(dbm: &mut Dbm, reg: Reg, imm: i64) {
-    // 1. Bitwise operations destroy linear relationships (e.g. x < y).
-    // We must remove 'reg' from the matrix to avoid unsound conclusions.
-    forget(dbm, reg);
 
-    // 2. Apply new bounds derived from the mask.
-    // The result of (x & imm) is treated as unsigned, so it is >= 0.
-    assume_ge_const(dbm, reg, 0);
-
-    // The result cannot be larger than the mask itself (if mask is positive).
-    // e.g. (x & 0xFF) <= 255.
-    if imm >= 0 {
-        assume_le_const(dbm, reg, imm);
-    }
-}
-
-pub fn assign_neg(dbm: &mut Dbm, reg: Reg) {
+pub fn apply_neg(dbm: &mut Dbm, reg: Reg) {
     // 1. Get current concrete bounds [lo, hi]
-    let (lo, hi) = get_bounds(dbm, reg); // r10/zero
+    let (lo, hi) = get_interval(dbm, reg); // r10/zero
     
     // 2. Forget existing relationships (destroy x - y <= c)
     forget(dbm, reg);
@@ -440,8 +433,8 @@ pub fn assign_neg(dbm: &mut Dbm, reg: Reg) {
         let new_lo = h.wrapping_neg();
         let new_hi = l.wrapping_neg();
         
-        assume_ge_const(dbm, reg, new_lo);
-        assume_le_const(dbm, reg, new_hi);
+        assume_ge_imm(dbm, reg, new_lo);
+        assume_le_imm(dbm, reg, new_hi);
     }
 }
 
@@ -511,12 +504,12 @@ pub fn check_region_access(
 }
 
 /// Convenience: check access into the metadata region [data_meta, data).
-pub fn check_meta_access(dbm: &Dbm, base: Reg, off: i64, size: i64) -> (bool, bool) {
+pub fn verify_packet_meta_bounds(dbm: &Dbm, base: Reg, off: i64, size: i64) -> (bool, bool) {
     check_region_access(dbm, base, off, size, Reg::AnchorDataMeta, Reg::AnchorData)
 }
 
 /// Convenience: check access into the packet region [data, data_end).
-pub fn check_packet_access_dbm(dbm: &Dbm, base: Reg, off: i64, size: i64) -> (bool, bool) {
+pub fn verify_packet_bounds(dbm: &Dbm, base: Reg, off: i64, size: i64) -> (bool, bool) {
     check_region_access(dbm, base, off, size, Reg::AnchorData, Reg::AnchorDataEnd)
 }
 
