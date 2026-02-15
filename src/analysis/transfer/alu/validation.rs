@@ -4,7 +4,7 @@ use crate::analysis::machine::env::{VerifierEnv};
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType};
 use crate::ast::{AluOp, Operand, Width};
-use crate::zone::domain::{Reg, get_bounds, is_zero};
+use crate::zone::domain::{Reg, get_bounds};
 use crate::zone::dbm::{INF, Dbm};
 use crate::common::constants;
 use log::error;
