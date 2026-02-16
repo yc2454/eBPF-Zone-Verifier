@@ -1,4 +1,4 @@
-use crate::{ast::Instr};
+use crate::ast::Instr;
 
 /// A lightweight record of a single step in the execution path.
 pub struct Breadcrumb {
@@ -8,6 +8,7 @@ pub struct Breadcrumb {
     /// The index of the previous step in the `History` vector
     pub parent_idx: Option<usize>,
     pub reg_types_str: String,
+    pub depth: usize,
 }
 
 pub struct History {
@@ -18,17 +19,25 @@ impl History {
     pub fn new() -> Self {
         Self {
             // Pre-allocate space to avoid frequent reallocations during analysis
-            steps: Vec::with_capacity(10_000), 
+            steps: Vec::with_capacity(10_000),
         }
     }
 
     /// Record a step and return its index (which acts as the ID).
-    pub fn record(&mut self, pc: usize, instr: &Instr, reg_types_str: String, parent_idx: Option<usize>) -> usize {
+    pub fn record(
+        &mut self,
+        pc: usize,
+        instr: &Instr,
+        reg_types_str: String,
+        depth: usize,
+        parent_idx: Option<usize>,
+    ) -> usize {
         let idx = self.steps.len();
         self.steps.push(Breadcrumb {
             pc,
             instr_str: format!("{:?}", instr),
             reg_types_str,
+            depth,
             parent_idx,
         });
         idx
@@ -72,12 +81,33 @@ impl History {
         pcs
     }
 
-    /// Check if `target_pc` was visited on the path leading to `from_idx`
-    pub fn path_contains_pc(&self, from_idx: usize, target_pc: usize) -> bool {
+    /// Check if `target_pc` was visited ANYWHERE on the path leading to `from_idx`.
+    pub fn is_on_path(&self, from_idx: usize, target_pc: usize) -> bool {
         let mut current = Some(from_idx);
         while let Some(idx) = current {
             if let Some(step) = self.steps.get(idx) {
                 if step.pc == target_pc {
+                    return true;
+                }
+                current = step.parent_idx;
+            } else {
+                break;
+            }
+        }
+        false
+    }
+
+    /// Check if `target_pc` was visited at the SAME stack depth on the path leading to `from_idx`.
+    /// A PC is considered a back-edge only if the depth never dropped below current_depth.
+    pub fn is_back_edge(&self, from_idx: usize, target_pc: usize, current_depth: usize) -> bool {
+        let mut current = Some(from_idx);
+        while let Some(idx) = current {
+            if let Some(step) = self.steps.get(idx) {
+                if step.depth < current_depth {
+                    // We returned to a caller, so any PC further back is not a same-frame back-edge
+                    return false;
+                }
+                if step.pc == target_pc && step.depth == current_depth {
                     return true;
                 }
                 current = step.parent_idx;
