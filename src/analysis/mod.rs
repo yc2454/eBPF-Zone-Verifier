@@ -132,11 +132,13 @@ pub fn analyze_program(
 
         // If history is enabled, record this step using the parent index from the state.
         let reg_types_str = state.types.reg_types_str();
-        let current_step_idx =
-            Some(
-                env.history
-                    .record(state.pc, instr, reg_types_str, state.history_idx),
-            );
+        let current_step_idx = Some(env.history.record(
+            state.pc,
+            instr,
+            reg_types_str,
+            state.num_frames(),
+            state.history_idx,
+        ));
 
         // E. Logging (Delegated to Global Logger)
         // We output the raw data following the protocol. The Logger filters it.
@@ -192,7 +194,7 @@ pub fn analyze_program(
         for mut succ in successors.into_iter() {
             succ.history_idx = current_step_idx;
             let is_loop_back = current_step_idx
-                .map(|idx| env.history.path_contains_pc(idx, succ.pc))
+                .map(|idx| env.history.is_back_edge(idx, succ.pc, succ.num_frames()))
                 .unwrap_or(false);
             if is_loop_back {
                 loop_back.push(succ);

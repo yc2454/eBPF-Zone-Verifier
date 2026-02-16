@@ -90,11 +90,24 @@ pub fn should_prune(
         return false;
     }
 
-    // Check if in a loop
+    // Check if on path (safety)
+    let is_on_path = state
+        .history_idx
+        .map(|idx| env.history.is_on_path(idx, pc))
+        .unwrap_or(false);
+
+    // Check if in a real loop back-edge (widening)
     let in_loop = state
         .history_idx
-        .map(|idx| env.history.path_contains_pc(idx, pc))
+        .map(|idx| env.history.is_back_edge(idx, pc, state.num_frames()))
         .unwrap_or(false);
+
+    if is_on_path && !in_loop {
+        // Re-entry to a PC from a different depth (e.g. repeated call in a loop).
+        // Must continue analysis to reach the actual loop back-edge.
+        // Do NOT prune via subsumption here as it might close a caller's loop unsoundly.
+        return false;
+    }
 
     let live_regs = &env.insn_aux_data[pc].live_regs;
 
