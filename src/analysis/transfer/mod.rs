@@ -7,12 +7,8 @@ mod alu;
 mod branch;
 mod call;
 mod memory;
-mod refinement;
 mod types;
 mod common;
-mod packet_load;
-mod map_load;
-mod access;
 
 use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::state::State;
@@ -56,10 +52,10 @@ pub fn transfer(
             memory::transfer_store(env, state, *size, *base, *off, src),
 
         Instr::LoadPacket { size, mode, offset_imm, src } => 
-            packet_load::transfer_packet_load(env, state, *size, *mode, *offset_imm, *src),
+            memory::transfer_packet_load(env, state, *size, *mode, *offset_imm, *src),
 
         Instr::LoadMap { dst, kind, map_fd, off: _ } => 
-            map_load::transfer_map_load(env, state, *dst, *kind, *map_fd),
+            memory::transfer_map_load(env, state, *dst, *kind, *map_fd),
         
         Instr::Atomic { op, size, fetch, base, off, src } => 
             memory::transfer_atomic(env, state, *op, *fetch, *size, *base, *off, *src),
