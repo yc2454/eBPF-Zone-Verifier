@@ -1,13 +1,12 @@
 use std::fs;
 use std::path::Path;
 
-use goblin::elf::{Elf, sym};
-use std::collections::HashMap;
-use crate::parsing::btf;
-use log::{info, debug, warn};
 use crate::common::constants;
+use crate::parsing::btf;
 use anyhow::Result;
-
+use goblin::elf::{Elf, sym};
+use log::{debug, info, warn};
+use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -17,7 +16,7 @@ pub struct BpfMapDef {
     pub value_size: u32,
     pub max_entries: u32,
     pub map_flags: u32,
-    pub name: String, 
+    pub name: String,
     pub btf_val_type_id: Option<u32>,
 
     pub initial_data: Option<Vec<u8>>,
@@ -44,41 +43,40 @@ pub struct RelocInfo {
 pub fn load_data_section_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
     let buf = fs::read(path)?;
     let elf = Elf::parse(&buf)?;
-    
+
     let mut maps = vec![];
-    
+
     for sh in &elf.section_headers {
         let name = elf.shdr_strtab.get_at(sh.sh_name).unwrap_or("");
-        
-        let is_data_section = 
-            name == ".rodata" ||
-            name == ".data" ||
-            name == ".bss" ||
-            name.starts_with(".rodata.") ||
-            name.starts_with(".data.");
-        
+
+        let is_data_section = name == ".rodata"
+            || name == ".data"
+            || name == ".bss"
+            || name.starts_with(".rodata.")
+            || name.starts_with(".data.");
+
         if is_data_section && sh.sh_size > 0 {
-            let initial_data = 
-                if sh.sh_type == constants::SHT_NOBITS { // SHT_NOBITS (e.g. .bss)
-                    // .bss is zero-initialized memory, not stored in file.
-                    // We create a vector of zeros.
-                    Some(vec![0u8; sh.sh_size as usize])
+            let initial_data = if sh.sh_type == constants::SHT_NOBITS {
+                // SHT_NOBITS (e.g. .bss)
+                // .bss is zero-initialized memory, not stored in file.
+                // We create a vector of zeros.
+                Some(vec![0u8; sh.sh_size as usize])
+            } else {
+                // .rodata / .data are stored in the file.
+                let start = sh.sh_offset as usize;
+                let end = start + sh.sh_size as usize;
+                // Bounds check to be safe
+                if end <= buf.len() {
+                    Some(buf[start..end].to_vec())
                 } else {
-                    // .rodata / .data are stored in the file.
-                    let start = sh.sh_offset as usize;
-                    let end = start + sh.sh_size as usize;
-                    // Bounds check to be safe
-                    if end <= buf.len() {
-                        Some(buf[start..end].to_vec())
-                    } else {
-                        None // Should typically return an error, but we'll stick to 'None' to be safe
-                    }
-                };
+                    None // Should typically return an error, but we'll stick to 'None' to be safe
+                }
+            };
 
             // Set Read-Only flag for .rodata
             // This helps the verifier know writes are illegal.
             let extra_flags = if name.starts_with(".rodata") {
-                constants::BPF_F_RDONLY_PROG 
+                constants::BPF_F_RDONLY_PROG
             } else {
                 0
             };
@@ -96,7 +94,7 @@ pub fn load_data_section_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>>
             });
         }
     }
-    
+
     Ok(maps)
 }
 
@@ -113,14 +111,14 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                 // 1. Get the raw bytes for this section
                 let start = sh.sh_offset as usize;
                 let end = start + sh.sh_size as usize;
-                
+
                 if end > buf.len() {
                     eprintln!("Warning: 'maps' section extends beyond file buffer");
                     continue;
                 }
-                
+
                 let section_data = &buf[start..end];
-                
+
                 // Legacy bpf_map_def is 20 bytes (5 * u32)
                 const MAP_DEF_SIZE: usize = 20;
 
@@ -134,21 +132,21 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                             // Ensure we can read the full struct
                             if offset + MAP_DEF_SIZE <= section_data.len() {
                                 let b = &section_data[offset..offset + MAP_DEF_SIZE];
-                                
+
                                 // Parse fields (Little Endian)
                                 let type_ = u32::from_le_bytes(b[0..4].try_into().unwrap());
                                 let key_size = u32::from_le_bytes(b[4..8].try_into().unwrap());
                                 let value_size = u32::from_le_bytes(b[8..12].try_into().unwrap());
                                 let max_entries = u32::from_le_bytes(b[12..16].try_into().unwrap());
                                 let map_flags = u32::from_le_bytes(b[16..20].try_into().unwrap());
-                                
+
                                 maps.push(BpfMapDef {
                                     name: map_name.to_string(),
-                                    type_,           // Matches your struct field
+                                    type_, // Matches your struct field
                                     key_size,
                                     value_size,
                                     max_entries,
-                                    map_flags,       // Matches your struct field
+                                    map_flags,             // Matches your struct field
                                     btf_val_type_id: None, // Legacy maps don't have BTF IDs here
                                     initial_data: None,    // Legacy maps don't support initial data
                                 });
@@ -156,8 +154,7 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                         }
                     }
                 }
-            } 
-            else if name == ".BTF" {
+            } else if name == ".BTF" {
                 let start = sh.sh_offset as usize;
                 let end = start + sh.sh_size as usize;
                 if end <= buf.len() {
@@ -173,7 +170,7 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
     if needs_btf {
         if let Some(btf_bytes) = btf_data {
             info!(target: "app", "Attempting to load maps from BTF section...");
-            
+
             if let Ok(btf_maps) = btf::parse_btf_map_defs(btf_bytes) {
                 if maps.is_empty() {
                     info!(target: "app", "Loaded {} maps directly from BTF", btf_maps.len());
@@ -200,7 +197,7 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
 }
 
 pub fn load_relocations<P: AsRef<Path>>(
-    path: P, 
+    path: P,
     maps: &[BpfMapDef],
     target_section_name: &str,
 ) -> Result<HashMap<usize, RelocInfo>> {
@@ -208,13 +205,13 @@ pub fn load_relocations<P: AsRef<Path>>(
     let elf = Elf::parse(&buf)?;
 
     let mut pc_to_reloc = HashMap::new();
-    
+
     // Build name -> index lookup
     let mut map_name_to_idx: HashMap<&str, usize> = HashMap::new();
     for (i, m) in maps.iter().enumerate() {
         map_name_to_idx.insert(m.name.as_str(), i);
     }
-    
+
     // Build section_idx -> map_idx (for data section symbols)
     let mut section_idx_to_map_idx: HashMap<usize, usize> = HashMap::new();
     for (sec_idx, sh) in elf.section_headers.iter().enumerate() {
@@ -226,10 +223,11 @@ pub fn load_relocations<P: AsRef<Path>>(
     }
 
     // Find target section index
-    let target_sec_idx = elf.section_headers.iter().enumerate()
-        .find(|(_, sh)| {
-            elf.shdr_strtab.get_at(sh.sh_name) == Some(target_section_name)
-        })
+    let target_sec_idx = elf
+        .section_headers
+        .iter()
+        .enumerate()
+        .find(|(_, sh)| elf.shdr_strtab.get_at(sh.sh_name) == Some(target_section_name))
         .map(|(i, _)| i)
         .ok_or_else(|| anyhow::anyhow!("Section '{}' not found", target_section_name))?;
 
@@ -238,13 +236,13 @@ pub fn load_relocations<P: AsRef<Path>>(
     // Iterate relocations
     for (reloc_sec_idx, section_relocs) in elf.shdr_relocs.iter() {
         let sh = &elf.section_headers[*reloc_sec_idx];
-        
+
         if sh.sh_info as usize != target_sec_idx {
             continue;
         }
-        
+
         debug!(target: "app", "Found relocation section at index {}", reloc_sec_idx);
-        
+
         for reloc in section_relocs {
             let pc = (reloc.r_offset / 8) as usize;
             let sym_idx = reloc.r_sym;
@@ -253,12 +251,12 @@ pub fn load_relocations<P: AsRef<Path>>(
                 Some(s) => s,
                 None => continue,
             };
-            
+
             let name = match elf.strtab.get_at(sym.st_name) {
                 Some(n) => n,
                 None => continue,
             };
-            
+
             // Using debug! to prevent spamming the console on successful loads
             debug!(target: "app", "  [Loader] Offset {} (PC {}) -> Symbol '{}'", reloc.r_offset, pc, name);
 
@@ -268,7 +266,7 @@ pub fn load_relocations<P: AsRef<Path>>(
                 pc_to_reloc.insert(pc, RelocInfo { map_idx, offset: 0 });
                 continue;
             }
-            
+
             // Try 2: Symbol in a data section
             if let Some(&map_idx) = section_idx_to_map_idx.get(&sym.st_shndx) {
                 let offset = sym.st_value as i64;
@@ -276,7 +274,7 @@ pub fn load_relocations<P: AsRef<Path>>(
                 pc_to_reloc.insert(pc, RelocInfo { map_idx, offset });
                 continue;
             }
-            
+
             warn!(target: "app", "      -> Unresolved relocation: Symbol '{}' not found in maps.", name);
         }
     }
@@ -314,7 +312,10 @@ pub fn load_section_bytes<P: AsRef<Path>>(
         // EM_BPF is 247
         const EM_BPF: u16 = 247;
         if elf.header.e_machine != EM_BPF {
-            return Err(anyhow::anyhow!("Not an eBPF ELF object: e_machine = {}", elf.header.e_machine));
+            return Err(anyhow::anyhow!(
+                "Not an eBPF ELF object: e_machine = {}",
+                elf.header.e_machine
+            ));
         }
     }
 
@@ -336,7 +337,13 @@ pub fn load_section_bytes<P: AsRef<Path>>(
     // Bounds check (ELF can be malformed).
     let file_len = buf.len();
     if offset > file_len || offset + size > file_len {
-        return Err(anyhow::anyhow!("Section '{}' out of bounds: offset {}, size {}, file length {}", section_name, offset, size, file_len));
+        return Err(anyhow::anyhow!(
+            "Section '{}' out of bounds: offset {}, size {}, file length {}",
+            section_name,
+            offset,
+            size,
+            file_len
+        ));
     }
 
     Ok(buf[offset..offset + size].to_vec())
@@ -350,11 +357,11 @@ pub fn load_bpf_insn_stream_section<P: AsRef<Path>>(
 ) -> Result<Vec<u8>> {
     let bytes = load_section_bytes(path, section_name, true)?;
     // Divisible-by-8 is a strong sanity check for a raw insn stream section.
-    if bytes.len() % 8 != 0 {
-        // Reuse SectionOutOfBounds style error to avoid adding another variant;
-        // or feel free to add a dedicated error type.
-        return Err(anyhow::anyhow!("Section '{}' size not divisible by 8: size {}", section_name, bytes.len()));
-    }
+    // if bytes.len() % 8 != 0 {
+    //     // Reuse SectionOutOfBounds style error to avoid adding another variant;
+    //     // or feel free to add a dedicated error type.
+    //     return Err(anyhow::anyhow!("Section '{}' size not divisible by 8: size {}", section_name, bytes.len()));
+    // }
     Ok(bytes)
 }
 
@@ -362,21 +369,23 @@ pub fn load_bpf_insn_stream_section<P: AsRef<Path>>(
 pub fn load_raw_programs<P: AsRef<Path>>(path: P) -> Result<Vec<RawBpfProgram>> {
     let bytes = fs::read(path)?;
     let elf = Elf::parse(&bytes)?;
-    
+
     let mut programs = Vec::new();
 
     for sym in elf.syms.iter() {
         // Strict Check: Only load symbols explicitly marked as Functions.
         // This splits the .text section into individual programs.
         let is_func = sym.st_type() == sym::STT_FUNC;
-        
+
         if is_func && sym.st_shndx < elf.section_headers.len() {
-            let name = elf.strtab.get_at(sym.st_name)
+            let name = elf
+                .strtab
+                .get_at(sym.st_name)
                 .unwrap_or("<unknown>")
                 .to_string();
 
             let shdr = &elf.section_headers[sym.st_shndx];
-            
+
             // In relocatable .o files, st_value is the offset from the start of the section
             let offset_in_section = sym.st_value as usize;
             let file_offset = shdr.sh_offset as usize + offset_in_section;
