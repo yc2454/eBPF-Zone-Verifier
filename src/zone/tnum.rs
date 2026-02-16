@@ -17,8 +17,8 @@
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tnum {
-    pub value: u64,  // Bits known to be 1
-    pub mask: u64,   // Bits that are unknown
+    pub value: u64, // Bits known to be 1
+    pub mask: u64,  // Bits that are unknown
 }
 
 #[allow(dead_code)]
@@ -107,10 +107,10 @@ impl Tnum {
         // - 1 & ? = ? (unknown)
         // - ? & ? = ? (unknown)
         let value = self.value & other.value;
-        let alpha = self.value | self.mask;  // bits that could be 1 in self
+        let alpha = self.value | self.mask; // bits that could be 1 in self
         let beta = other.value | other.mask; // bits that could be 1 in other
         let mask = (alpha & beta) & !value;
-        
+
         Tnum { value, mask }
     }
 
@@ -127,10 +127,10 @@ impl Tnum {
         // - 0 | 0 = 0 (known)
         // - 0 | ? = ? (unknown)
         // - ? | ? = ? (unknown)
-        
+
         // Known-1 if either input is known-1
         let value = self.value | other.value;
-        
+
         // Unknown if: not known-1 AND (either input is unknown OR inputs differ)
         // Bits that are known-0 in self: !(self.value | self.mask)
         // Bits that are known-0 in other: !(other.value | other.mask)
@@ -138,10 +138,10 @@ impl Tnum {
         let self_known_0 = !(self.value | self.mask);
         let other_known_0 = !(other.value | other.mask);
         let result_known_0 = self_known_0 & other_known_0;
-        
+
         // mask = bits that are neither known-1 nor known-0
         let mask = !value & !result_known_0;
-        
+
         Tnum { value, mask }
     }
 
@@ -156,7 +156,10 @@ impl Tnum {
         // XOR: result is known only if both inputs are known (both known-0 or both known-1)
         let value = self.value ^ other.value;
         let mask = self.mask | other.mask;
-        Tnum { value: value & !mask, mask }
+        Tnum {
+            value: value & !mask,
+            mask,
+        }
     }
 
     #[inline]
@@ -173,7 +176,7 @@ impl Tnum {
         let sigma = sm.wrapping_add(sv);
         let chi = sigma ^ sv;
         let mu = chi | self.mask | other.mask;
-        
+
         Tnum {
             value: sv & !mu,
             mask: mu,
@@ -194,14 +197,14 @@ impl Tnum {
         let sigma = sm.wrapping_sub(sv);
         let chi = sigma ^ sv;
         let mu = chi | self.mask | other.mask;
-        
+
         Tnum {
             value: sv & !mu,
             mask: mu,
         }
     }
 
-      /// Subtract immediate
+    /// Subtract immediate
     #[inline]
     pub fn sub_imm(self, imm: i64) -> Tnum {
         self.sub(Tnum::constant(imm as u64))
@@ -260,7 +263,7 @@ impl Tnum {
             if (self.value & 0x8000_0000_0000_0000) != 0 {
                 return Tnum::constant(u64::MAX); // All 1s
             } else {
-                return Tnum::constant(0);        // All 0s
+                return Tnum::constant(0); // All 0s
             }
         }
 
@@ -270,8 +273,12 @@ impl Tnum {
 
         // Calculate value as if we perform a standard arith shift
         // (If sign is unknown, value is 0, so we shift in 0s. We will mask them out later).
-        let shifted_value = (self.value >> shift) | 
-                            (if sign_bit != 0 { u64::MAX << (64 - shift) } else { 0 });
+        let shifted_value = (self.value >> shift)
+            | (if sign_bit != 0 {
+                u64::MAX << (64 - shift)
+            } else {
+                0
+            });
 
         // Calculate mask
         let mut shifted_mask = self.mask >> shift;
@@ -291,7 +298,7 @@ impl Tnum {
     pub fn rsh_imm(self, shift: u64) -> Tnum {
         self.shr_imm(shift)
     }
-    
+
     /// Fully unknown 32-bit value
     pub fn u32_unknown() -> Tnum {
         Tnum {
@@ -309,6 +316,16 @@ impl Tnum {
         }
     }
 
+    /// Bitwise widening: finds the smallest tnum that covers both self and newer.
+    /// Guarantees convergence since mask bits only ever increase.
+    pub fn widen(self, newer: Tnum) -> Tnum {
+        let mask = self.mask | newer.mask | (self.value ^ newer.value);
+        Tnum {
+            value: self.value & newer.value & !mask,
+            mask,
+        }
+    }
+
     /// Intersect with another tnum (refine knowledge)
     /// Returns None if the intersection is empty (contradiction)
     pub fn intersect(self, other: Tnum) -> Option<Tnum> {
@@ -316,20 +333,20 @@ impl Tnum {
         // A bit is known-1 if either says it's known-1
         // A bit is known-0 if either says it's known-0
         // Contradiction if one says known-1 and other says known-0
-        
+
         let self_known = !self.mask;
         let other_known = !other.mask;
-        
+
         // Check for contradictions: both known but different values
         let both_known = self_known & other_known;
         if (self.value ^ other.value) & both_known != 0 {
             return None; // Contradiction!
         }
-        
+
         // Merge: known bits from either, value from whichever knows it
         let mask = self.mask & other.mask;
         let value = (self.value & self_known) | (other.value & other_known);
-        
+
         Some(Tnum { value, mask })
     }
 

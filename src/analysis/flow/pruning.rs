@@ -3,12 +3,12 @@
 use std::collections::HashSet;
 
 use crate::analysis::machine::env::VerifierEnv;
+use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::state::State;
 use crate::ast::{Instr, Program};
 use crate::common::config::VerifierConfig;
 use crate::zone::dbm::Dbm;
-use crate::analysis::machine::reg::Reg;
 use crate::zone::domain::get_interval_i64;
 use crate::zone::tnum::Tnum;
 
@@ -91,7 +91,8 @@ pub fn should_prune(
     }
 
     // Check if in a loop
-    let in_loop = state.history_idx
+    let in_loop = state
+        .history_idx
         .map(|idx| env.history.path_contains_pc(idx, pc))
         .unwrap_or(false);
 
@@ -128,9 +129,7 @@ pub fn should_prune(
                             let (last_min, last_max) = get_interval_i64(&old.dbm, r);
                             last_min < first_min || last_max > first_max
                         });
-                        if widening_effective
-                            && loop_exit_was_explored(env, state, pc, prog)
-                        {
+                        if widening_effective && loop_exit_was_explored(env, state, pc, prog) {
                             return true; // Converged with verified exit path
                         }
                     }
@@ -143,10 +142,11 @@ pub fn should_prune(
                 let widened_dbm = old.dbm.widen(&state.dbm);
                 state.dbm = widened_dbm;
 
-                // Widen tnums: set to UNKNOWN for all live regs
-                // to guarantee convergence (coarse but sound)
+                // Widen Tnums for all live registers to guarantee convergence
                 for &r in live_regs {
-                    state.set_tnum(r, Tnum::UNKNOWN);
+                    let old_t = old.get_tnum(r);
+                    let cur_t = state.get_tnum(r);
+                    state.set_tnum(r, old_t.widen(cur_t));
                 }
             }
         }
@@ -180,9 +180,11 @@ fn state_subsumed_by(
 ) -> bool {
     // Check current frame
     if config.skip_dbm_check {
-        println!("Pruning check (skip DBM): type: {}, Stack: {}", 
+        println!(
+            "Pruning check (skip DBM): type: {}, Stack: {}",
             types_subsumed_by(&cur.types, &old.types, live_regs),
-            stack_subsumed_by(cur, old));
+            stack_subsumed_by(cur, old)
+        );
         if !(types_subsumed_by(&cur.types, &old.types, live_regs)
             && stack_subsumed_by(cur, old)
             && tnum_subsumed_by(cur, old, live_regs))
@@ -190,9 +192,11 @@ fn state_subsumed_by(
             return false;
         }
     } else {
-        println!("Pruning check: type: {}, Stack: {}", 
+        println!(
+            "Pruning check: type: {}, Stack: {}",
             types_subsumed_by(&cur.types, &old.types, live_regs),
-            stack_subsumed_by(cur, old));
+            stack_subsumed_by(cur, old)
+        );
         if !(types_subsumed_by(&cur.types, &old.types, live_regs)
             && dbm_subsumed_by(&cur.dbm, &old.dbm, live_regs)
             && stack_subsumed_by(cur, old)
@@ -207,9 +211,7 @@ fn state_subsumed_by(
     // two states that differ only in caller-frame r6-r9 values get pruned
     // against each other, hiding bugs that manifest after return.
     let saved = callee_saved_regs();
-    for (cur_frame, old_frame) in cur.frames.iter()
-        .zip(old.frames.iter())
-    {
+    for (cur_frame, old_frame) in cur.frames.iter().zip(old.frames.iter()) {
         if !types_subsumed_by(&cur_frame.caller_types, &old_frame.caller_types, &saved) {
             return false;
         }
@@ -227,11 +229,7 @@ fn state_subsumed_by(
 }
 
 /// Check if cur types are subsumed by old types.
-fn types_subsumed_by(
-    cur: &TypeState,
-    old: &TypeState,
-    live_regs: &HashSet<Reg>,
-) -> bool {
+fn types_subsumed_by(cur: &TypeState, old: &TypeState, live_regs: &HashSet<Reg>) -> bool {
     for &r in live_regs {
         if !type_subsumed_by(&cur.get(r), &old.get(r)) {
             return false;
@@ -255,27 +253,39 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
         (NotInit, _) => true,
 
         // Packet pointers: old must have >= range
-        (
-            PtrToPacket,
-            PtrToPacket,
-        ) => true,
+        (PtrToPacket, PtrToPacket) => true,
 
         // Map value pointers
         (
-            PtrToMapValue { offset: o1, map_idx: m1, .. },
-            PtrToMapValue { offset: o2, map_idx: m2, .. },
+            PtrToMapValue {
+                offset: o1,
+                map_idx: m1,
+                ..
+            },
+            PtrToMapValue {
+                offset: o2,
+                map_idx: m2,
+                ..
+            },
         ) => {
-            m1 == m2 && match (o1, o2) {
-                (None, _) => true,
-                (Some(a), Some(b)) => a == b,
-                (Some(_), None) => false,
-            }
+            m1 == m2
+                && match (o1, o2) {
+                    (None, _) => true,
+                    (Some(a), Some(b)) => a == b,
+                    (Some(_), None) => false,
+                }
         }
 
         // Map value or null
         (
-            PtrToMapValueOrNull { id: id1, map_idx: m1 },
-            PtrToMapValueOrNull { id: id2, map_idx: m2 },
+            PtrToMapValueOrNull {
+                id: id1,
+                map_idx: m1,
+            },
+            PtrToMapValueOrNull {
+                id: id2,
+                map_idx: m2,
+            },
         ) => m1 == m2 && id1 == id2,
 
         // Socket pointers
@@ -283,10 +293,7 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
         (PtrToSocketOrNull { ref_id: id1 }, PtrToSocketOrNull { ref_id: id2 }) => id1 == id2,
 
         // Stack pointers - DBM subsumption covers the numeric relationship
-        (
-            PtrToStack { frame_level: fl1 },
-            PtrToStack { frame_level: fl2 },
-        ) => fl1 == fl2,
+        (PtrToStack { frame_level: fl1 }, PtrToStack { frame_level: fl2 }) => fl1 == fl2,
 
         // Different types - no subsumption
         _ => false,
@@ -295,7 +302,6 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
 
 /// Check if cur DBM is subsumed by old DBM.
 fn dbm_subsumed_by(cur: &Dbm, old: &Dbm, live_regs: &HashSet<Reg>) -> bool {
-
     for &r in live_regs {
         let (old_min, old_max) = get_interval_i64(old, r);
         let (cur_min, cur_max) = get_interval_i64(cur, r);
@@ -310,7 +316,9 @@ fn dbm_subsumed_by(cur: &Dbm, old: &Dbm, live_regs: &HashSet<Reg>) -> bool {
     let anchors = [Reg::AnchorData, Reg::AnchorDataEnd, Reg::AnchorDataMeta];
     for &a in &anchors {
         for &b in &anchors {
-            if a == b { continue; }
+            if a == b {
+                continue;
+            }
             // old must be at least as permissive: old.get(a,b) >= cur.get(a,b)
             if old.get(a, b) < cur.get(a, b) {
                 return false;
@@ -322,17 +330,21 @@ fn dbm_subsumed_by(cur: &Dbm, old: &Dbm, live_regs: &HashSet<Reg>) -> bool {
 }
 
 fn stack_subsumed_by(cur: &State, old: &State) -> bool {
-    for (old_frame, new_frame) in old.frames.iter()
-        .zip(cur.frames.iter())
-    {
-        let all_offsets: HashSet<i16> = old_frame.stack.slot_offsets().into_iter()
+    for (old_frame, new_frame) in old.frames.iter().zip(cur.frames.iter()) {
+        let all_offsets: HashSet<i16> = old_frame
+            .stack
+            .slot_offsets()
+            .into_iter()
             .chain(new_frame.stack.slot_offsets())
             .collect();
 
         for offset in all_offsets {
             let old_ty = old_frame.stack.get_slot_type(offset);
             let new_ty = new_frame.stack.get_slot_type(offset);
-            println!("[State subsumption check] Checking offset {}: {:?} vs {:?}", offset, old_ty, new_ty);
+            println!(
+                "[State subsumption check] Checking offset {}: {:?} vs {:?}",
+                offset, old_ty, new_ty
+            );
             if !type_subsumed_by(&new_ty, &old_ty) {
                 return false;
             }
@@ -370,8 +382,16 @@ fn caller_tnum_subsumed_by(
     regs: &HashSet<Reg>,
 ) -> bool {
     for &r in regs {
-        let cur = cur_frame.caller_tnums.get(&r).copied().unwrap_or(Tnum::UNKNOWN);
-        let old = old_frame.caller_tnums.get(&r).copied().unwrap_or(Tnum::UNKNOWN);
+        let cur = cur_frame
+            .caller_tnums
+            .get(&r)
+            .copied()
+            .unwrap_or(Tnum::UNKNOWN);
+        let old = old_frame
+            .caller_tnums
+            .get(&r)
+            .copied()
+            .unwrap_or(Tnum::UNKNOWN);
         if !tnum_covers(&cur, &old) {
             return false;
         }
