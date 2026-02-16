@@ -1,12 +1,12 @@
-use crate::zone::dbm::{INF};
-use crate::parsing::bpf_to_ast;
-use crate::parsing::bpf_insn;
 use crate::ast::{Program, ProgramKind};
+use crate::parsing::bpf_insn;
+use crate::parsing::bpf_to_ast;
 use crate::parsing::elf_loader;
-use std::collections::HashMap;
-use std::path::Path;
-use std::fs;
+use crate::zone::dbm::INF;
 use anyhow::{Context, Result};
+use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
 
 // Bounds for finite constraints inside the DBM.
 // We never store anything > POS_BOUND or < NEG_BOUND.
@@ -43,11 +43,10 @@ pub fn clamped_add(a: i64, b: i64) -> i64 {
 /// Load a Program from an ELF section by:
 ///   ELF -> bytes -> RawBpfInsn -> Program (via bpf_to_ast).
 pub fn load_program_from_elf(path: &str, section: &str) -> Program {
-    let bytes = elf_loader::load_bpf_insn_stream_section(path, section)
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to load ELF section '{}': {e:?}", section);
-            std::process::exit(1);
-        });
+    let bytes = elf_loader::load_bpf_insn_stream_section(path, section).unwrap_or_else(|e| {
+        eprintln!("Failed to load ELF section '{}': {e:?}", section);
+        std::process::exit(1);
+    });
 
     let raw_insns = bpf_insn::decode_insns(&bytes);
     println!(
@@ -57,7 +56,7 @@ pub fn load_program_from_elf(path: &str, section: &str) -> Program {
         bytes.len(),
         raw_insns.len()
     );
-    
+
     match bpf_to_ast::lower_raw_to_program(&raw_insns) {
         Ok(prog) => prog,
         Err(e) => {
@@ -81,8 +80,8 @@ pub fn program_kind_for_object(obj_path: &Path) -> Result<ProgramKind> {
     let json_str = fs::read_to_string(OBJ_PROG_TYPE_JSON)
         .with_context(|| format!("failed to read {}", OBJ_PROG_TYPE_JSON))?;
 
-    let raw: RawJsonMap = serde_json::from_str(&json_str)
-        .context("failed to parse obj_prog_type.json")?;
+    let raw: RawJsonMap =
+        serde_json::from_str(&json_str).context("failed to parse obj_prog_type.json")?;
 
     let key_exact = obj_path.to_string_lossy();
     let key_base = obj_path
@@ -92,10 +91,20 @@ pub fn program_kind_for_object(obj_path: &Path) -> Result<ProgramKind> {
 
     let opt_label = raw
         .get(key_exact.as_ref())
-        .or_else(|| raw.get(key_base.as_ref()));
+        .or_else(|| raw.get(key_base.as_ref()))
+        .or_else(|| {
+            // Fuzzy match: if an entry ends with key_base, use it.
+            // This handles clang-18_-O1_bpf_lxc.o vs bpf_lxc.o
+            raw.iter()
+                .find(|(k, _)| k.ends_with(key_base.as_ref()))
+                .map(|(_, v)| v)
+        });
 
     match opt_label {
         Some(Some(label)) => Ok(ProgramKind::from_section(label)),
-        _ => Err(anyhow::anyhow!("program kind not found for object {:?}", obj_path)),
+        _ => Err(anyhow::anyhow!(
+            "program kind not found for object {:?}",
+            obj_path
+        )),
     }
 }

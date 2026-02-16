@@ -62,6 +62,8 @@ impl ProgramKind {
             || s.starts_with("tc/")
             || s.starts_with("classifier/")
             || s == "sched_cls"
+            || s == "action"
+            || s.starts_with("action/")
         {
             return ProgramKind::SchedCls;
         }
@@ -83,8 +85,23 @@ impl ProgramKind {
         {
             return ProgramKind::CgroupSockAddr;
         }
+        if s.starts_with("cgroup/skb") {
+            return ProgramKind::CgroupSkb;
+        }
+        if s.starts_with("cgroup/sock") {
+            return ProgramKind::CgroupSock;
+        }
         if s == "kprobe" || s.starts_with("kprobe/") || s.starts_with("kretprobe/") {
             return ProgramKind::Kprobe;
+        }
+        if s == "tracepoint" || s.starts_with("tracepoint/") {
+            return ProgramKind::Tracepoint;
+        }
+        if s == "raw_tracepoint" || s.starts_with("raw_tracepoint/") {
+            return ProgramKind::RawTracepoint;
+        }
+        if s == "perf_event" || s.starts_with("perf_event/") {
+            return ProgramKind::PerfEvent;
         }
         ProgramKind::Unknown
     }

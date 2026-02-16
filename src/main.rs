@@ -1,18 +1,21 @@
 // src/main.rs - With configurable verifier options
 
-mod ast;
 mod analysis;
-mod parsing;
-mod zone;
+mod ast;
 mod common;
+mod parsing;
 mod testing;
+mod zone;
 
+use crate::ast::ProgramKind;
 use crate::common::config::VerifierConfig;
-use crate::parsing::elf_loader::{load_maps, load_raw_programs, list_section_names};
-use crate::testing::logging;
-use crate::testing::runner::{Analyzer, AnalysisResult, find_section_for_func, is_code_section};
+use crate::common::utils::program_kind_for_object;
+use crate::parsing::elf_loader::{list_section_names, load_maps, load_raw_programs};
 use crate::testing::benchmark::analyze_benchmark;
-use crate::testing::selftest::{selftest_run, selftest_suite, selftest_list, selftest_single};
+use crate::testing::logging;
+use crate::testing::runner::{AnalysisResult, Analyzer, find_section_for_func, is_code_section};
+use crate::testing::selftest::{selftest_list, selftest_run, selftest_single, selftest_suite};
+use std::path::Path;
 
 fn usage() {
     eprintln!("Usage:");
@@ -60,7 +63,7 @@ fn main() {
         };
         logging::VerifierLogger::set_config(filter);
     }
-    
+
     if remaining.is_empty() {
         usage();
         return;
@@ -86,7 +89,11 @@ fn main() {
                 Ok(sections) => {
                     for (i, name) in sections.iter().enumerate() {
                         if is_code_section(name) {
-                            println!("  [{}] {}", i, name);
+                            let kind = match program_kind_for_object(Path::new(path)) {
+                                Ok(k) => k,
+                                Err(_) => ProgramKind::from_section(name),
+                            };
+                            println!("  [{}] {} (Kind: {:?})", i, name, kind);
                         }
                     }
                 }
@@ -95,8 +102,28 @@ fn main() {
             println!("\n--- BPF PROGRAMS ---");
             match load_raw_programs(path) {
                 Ok(progs) => {
+                    let mut sections = Vec::new();
+                    if let Ok(s) = list_section_names(path) {
+                        sections = s;
+                    }
+
                     for (i, p) in progs.iter().enumerate() {
-                        println!("  [{}] {} ({} insns)", i, p.name, p.data.len() / 8);
+                        let section_name = sections
+                            .get(p.section_idx)
+                            .map(|s| s.as_str())
+                            .unwrap_or("");
+                        let kind = match program_kind_for_object(Path::new(path)) {
+                            Ok(k) => k,
+                            Err(_) => ProgramKind::from_section(section_name),
+                        };
+                        println!(
+                            "  [{}] {} ({} insns) [Section: {}, Kind: {:?}]",
+                            i,
+                            p.name,
+                            p.data.len() / 8,
+                            section_name,
+                            kind
+                        );
                     }
                 }
                 Err(e) => eprintln!("  Error: {:?}", e),
@@ -105,7 +132,10 @@ fn main() {
             match load_maps(path) {
                 Ok(maps) => {
                     for (i, m) in maps.iter().enumerate() {
-                        println!("  [{}] {} (k:{}, v:{})", i, m.name, m.key_size, m.value_size);
+                        println!(
+                            "  [{}] {} (k:{}, v:{})",
+                            i, m.name, m.key_size, m.value_size
+                        );
                     }
                 }
                 Err(e) => eprintln!("  Error: {:?}", e),
@@ -125,10 +155,10 @@ fn main() {
             let section = &remaining[2];
 
             println!("=== Analyzing: '{}' section '{}' ===", path, section);
-            
+
             let analyzer = Analyzer::new(path, config);
             let result = analyzer.analyze_section(section);
-            
+
             match result {
                 AnalysisResult::Pass => println!("\n=== PASS ==="),
                 AnalysisResult::Fail(e) => println!("\n=== FAIL: {} ===", e.description()),
@@ -154,15 +184,20 @@ fn main() {
             if let Some(section_name) = find_section_for_func(path, func_name) {
                 let analyzer = Analyzer::new(path, config);
                 let result = analyzer.analyze_section(&section_name);
-                
+
                 match result {
                     AnalysisResult::Pass => println!("\n=== PASS ==="),
                     AnalysisResult::Fail(e) => println!("\n=== FAIL: {} ===", e.description()),
-                    AnalysisResult::Timeout => println!("\n=== TIMEOUT: Complexity limit reached ==="),
+                    AnalysisResult::Timeout => {
+                        println!("\n=== TIMEOUT: Complexity limit reached ===")
+                    }
                     AnalysisResult::LoadError(e) => println!("\n=== LOAD ERROR: {} ===", e),
                 }
             } else {
-                eprintln!("Function '{}' not found or section lookup failed.", func_name);
+                eprintln!(
+                    "Function '{}' not found or section lookup failed.",
+                    func_name
+                );
             }
         }
 
@@ -178,8 +213,10 @@ fn main() {
             let path = &remaining[1];
 
             println!("=== Batch Analysis: '{}' ===\n", path);
-            println!("Config: max_insn={}, skip_dbm={}, verbosity={}", 
-                     config.max_insn, config.skip_dbm_check, config.verbosity);
+            println!(
+                "Config: max_insn={}, skip_dbm={}, verbosity={}",
+                config.max_insn, config.skip_dbm_check, config.verbosity
+            );
 
             let analyzer = Analyzer::new(path, config);
             let (_, results) = analyzer.analyze_all();
@@ -195,15 +232,15 @@ fn main() {
                     AnalysisResult::Pass => {
                         println!("PASS");
                         pass_count += 1;
-                    },
+                    }
                     AnalysisResult::Fail(_) => {
                         println!("FAIL");
                         fail_count += 1;
-                    },
+                    }
                     AnalysisResult::Timeout => {
                         println!("TIMEOUT");
                         timeout_count += 1;
-                    },
+                    }
                     AnalysisResult::LoadError(e) => {
                         println!("ERROR ({})", e);
                         error_count += 1;
@@ -216,7 +253,11 @@ fn main() {
             println!("========================================");
             println!("Total:  {}", results.len());
             if !results.is_empty() {
-                println!("Pass:   {} ({:.1}%)", pass_count, 100.0 * pass_count as f64 / results.len() as f64);
+                println!(
+                    "Pass:   {} ({:.1}%)",
+                    pass_count,
+                    100.0 * pass_count as f64 / results.len() as f64
+                );
             }
             println!("Fail:   {}", fail_count);
             println!("Timeout: {}", timeout_count);
@@ -257,7 +298,7 @@ fn main() {
             }
             let json_path = &remaining[1];
             let output_dir = Some("./results/selftest");
-            
+
             selftest_run(json_path, &config, output_dir);
         }
 
@@ -272,7 +313,7 @@ fn main() {
             }
             let json_dir = &remaining[1];
             let output_dir = Some("./results/selftest");
-            
+
             selftest_suite(json_dir, &config, output_dir);
         }
 
@@ -286,7 +327,7 @@ fn main() {
                 return;
             }
             let json_path = &remaining[1];
-            
+
             selftest_list(json_path);
         }
 
@@ -301,7 +342,7 @@ fn main() {
             }
             let json_path = &remaining[1];
             let test_name = &remaining[2];
-            
+
             selftest_single(json_path, test_name, &config);
         }
 
