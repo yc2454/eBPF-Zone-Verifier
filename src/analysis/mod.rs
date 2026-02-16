@@ -1,23 +1,23 @@
 // src/analysis.rs
 
-pub mod transfer;
-pub mod machine;
 pub mod flow;
+pub mod machine;
+pub mod transfer;
 
-use std::collections::VecDeque;
 use crate::analysis::machine::frame_stack::FrameLevel;
+use crate::analysis::machine::reg::Reg;
 use crate::ast::Program;
 use crate::zone::dbm::Dbm;
-use crate::analysis::machine::reg::Reg;
 use crate::zone::domain::init_packet_anchors;
 use log::{debug, error, info};
+use std::collections::VecDeque;
 
+use self::flow::{cfg, liveness, merging, pruning, subprog};
 use self::machine::context::ExecContext;
-use self::machine::env::{VerifierEnv, VerificationError};
-use self::machine::state::State;
+use self::machine::env::{VerificationError, VerifierEnv};
 use self::machine::reg_types::RegType;
+use self::machine::state::State;
 use crate::common::config::VerifierConfig;
-use self::flow::{cfg, liveness, pruning, merging, subprog};
 
 pub fn analyze_program(
     ctx: &ExecContext,
@@ -28,8 +28,8 @@ pub fn analyze_program(
     // 1. Initialize Verifier Environment
     let mut env = VerifierEnv::new(ctx, prog);
 
-    if config.verbosity >= 1 { 
-        info!(target: "app", "[Analysis] Running Static Analysis Passes..."); 
+    if config.verbosity >= 1 {
+        info!(target: "app", "[Analysis] Running Static Analysis Passes...");
         if config.skip_dbm_check {
             info!(target: "app", "[Analysis] DBM comparison disabled (--skip-dbm)");
         }
@@ -42,7 +42,7 @@ pub fn analyze_program(
 
     if let Err(e) = subprog::check_stack_overflow(prog) {
         error!(target: "app", "[Analysis] Stack Error: {}", e);
-        return Err(VerificationError::SubprogError{e});
+        return Err(VerificationError::SubprogError { e });
     }
 
     if let Err(e) = cfg::check_cfg(prog, &mut env) {
@@ -55,15 +55,20 @@ pub fn analyze_program(
     // 2. Initialize Entry State
     let mut initial_state = State::new(entry_dbm, 0);
     initial_state.types.set(Reg::R1, RegType::PtrToCtx);
-    initial_state.types.set(Reg::R10, RegType::PtrToStack { frame_level: FrameLevel::MAIN });
+    initial_state.types.set(
+        Reg::R10,
+        RegType::PtrToStack {
+            frame_level: FrameLevel::MAIN,
+        },
+    );
     init_packet_anchors(&mut initial_state.dbm);
 
     // 3. Setup Worklist
     let mut worklist = VecDeque::new();
     worklist.push_back(initial_state);
 
-    if config.verbosity >= 1 { 
-        info!(target: "app", "[Analysis] Starting Abstract Interpretation..."); 
+    if config.verbosity >= 1 {
+        info!(target: "app", "[Analysis] Starting Abstract Interpretation...");
     }
 
     // Track pruning statistics
@@ -84,7 +89,8 @@ pub fn analyze_program(
 
         // A.a TYPE COMPATIBILITY CHECK (safety - may reject program)
         if state.pc < prog.instrs.len() - 1 // No need to check last instruction
-            && let Err(e) = merging::check_compatibility(&env, &state) {
+            && let Err(e) = merging::check_compatibility(&env, &state)
+        {
             env.fail(e);
             break;
         }
@@ -106,7 +112,9 @@ pub fn analyze_program(
             error!(target: "analysis", "[Verifier] Hit complexity limit ({} instructions). Aborting.", config.max_insn);
             info!(target: "app", "[Verifier] (Pruned {} states before limit)", prune_count);
             info!(target: "app", "[Verifier] Tip: Try --skip-dbm or --max-insn N to increase limit");
-            env.fail(VerificationError::ComplexityLimitExceeded { limit: config.max_insn });
+            env.fail(VerificationError::ComplexityLimitExceeded {
+                limit: config.max_insn,
+            });
             break;
         }
 
@@ -117,15 +125,19 @@ pub fn analyze_program(
         }
 
         // D. Instruction Fetch
-        if state.pc >= prog.instrs.len() { continue; }
+        if state.pc >= prog.instrs.len() {
+            continue;
+        }
         let instr = &prog.instrs[state.pc];
 
         // If history is enabled, record this step using the parent index from the state.
         let reg_types_str = state.types.reg_types_str();
-        let current_step_idx = Some(
-            env.history.record(state.pc, instr, reg_types_str, state.history_idx)
-        );
-        
+        let current_step_idx =
+            Some(
+                env.history
+                    .record(state.pc, instr, reg_types_str, state.history_idx),
+            );
+
         // E. Logging (Delegated to Global Logger)
         // We output the raw data following the protocol. The Logger filters it.
         if config.verbosity >= 2 {
@@ -133,11 +145,11 @@ pub fn analyze_program(
         }
         debug!(target: "app", "|PC:{}| Instr: [[{}]]\nRegs: {:?}\nTnums: {:?}\n", 
                state.pc, instr, state.types.reg_types_str(), state.tnums_to_string());
-        // debug!(target: "app", "|PC:{}| Instr: [[{}]]\n", 
+        // debug!(target: "app", "|PC:{}| Instr: [[{}]]\n",
         //        state.pc, instr);
-        for cf in state.frames.iter() {
-            println!("{}: {}", cf, cf.stack);
-        }
+        // for cf in state.frames.iter() {
+        //     println!("{}: {}", cf, cf.stack);
+        // }
 
         // F. Transfer Function
         let successors = transfer::transfer(&mut env, state, instr);
@@ -152,9 +164,15 @@ pub fn analyze_program(
                 if let Some(crash_idx) = current_step_idx {
                     let trace = env.history.get_trace(crash_idx);
                     // Print directly to stdout (or error log) so it stands out
-                    println!("\n=== CRASH PATH RECONSTRUCTION ({} Steps) ===", trace.len());
+                    println!(
+                        "\n=== CRASH PATH RECONSTRUCTION ({} Steps) ===",
+                        trace.len()
+                    );
                     for (i, step) in trace.iter().enumerate() {
-                        println!("[{:03}] PC {:<4} | {}\nReg Types: {}", i, step.pc, step.instr_str, step.reg_types_str);
+                        println!(
+                            "[{:03}] PC {:<4} | {}\nReg Types: {}",
+                            i, step.pc, step.instr_str, step.reg_types_str
+                        );
                     }
                     println!("=============================================\n");
                 }
@@ -193,23 +211,23 @@ pub fn analyze_program(
     // --- FINAL REPORT ---
     if let Some(err) = &env.error {
         info!(target: "app", "\n[Verifier] FAILURE: {}", err.description());
-        if config.verbosity >= 1 { 
-            info!(target: "app", "[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count); 
+        if config.verbosity >= 1 {
+            info!(target: "app", "[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count);
         }
         return Err(err.clone());
     }
-    
+
     info!(target: "app", "\n[Verifier] Success! Verified {} instructions (pruned {} states).", 
              env.insn_processed, prune_count);
 
-    if config.verbosity >= 1 { 
-        info!(target: "app", "[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count); 
+    if config.verbosity >= 1 {
+        info!(target: "app", "[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count);
     }
 
     // 5. Return Results
     let n = prog.instrs.len();
     let mut results = Vec::with_capacity(n);
-    
+
     for i in 0..n {
         if let Some(states) = env.explored_states.get(&i) {
             if !states.is_empty() {

@@ -6,28 +6,23 @@
 mod alu;
 mod branch;
 mod call;
+mod common;
 mod memory;
 mod types;
-mod common;
 
-use crate::analysis::machine::env::VerifierEnv;
-use crate::analysis::machine::state::State;
-use crate::analysis::machine::reg_types::RegType;
-use crate::ast::{EndianOp, Instr, Width};
-use crate::analysis::machine::reg::Reg;
-use crate::zone::domain::{
-    forget, apply_and_imm, get_interval,
-    get_interval_i64, assign_interval, preserve_anchor_constraints
-};
 use crate::analysis::machine::env::VerificationError;
+use crate::analysis::machine::env::VerifierEnv;
+use crate::analysis::machine::reg::Reg;
+use crate::analysis::machine::reg_types::RegType;
+use crate::analysis::machine::state::State;
+use crate::ast::{EndianOp, Instr, Width};
+use crate::zone::domain::{
+    apply_and_imm, assign_interval, forget, get_interval, get_interval_i64,
+    preserve_anchor_constraints,
+};
 
 /// Main transfer function - dispatches to appropriate handler based on instruction type.
-pub fn transfer(
-    env: &mut VerifierEnv,
-    mut state: State,
-    instr: &Instr,
-) -> Vec<State> {
-    
+pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<State> {
     // 1. Mark as Seen
     if state.pc < env.insn_aux_data.len() {
         env.insn_aux_data[state.pc].seen = true;
@@ -35,43 +30,76 @@ pub fn transfer(
 
     match instr {
         Instr::MovArg0 { dst } => transfer_mov_arg0(state, *dst),
-        
-        Instr::Alu { width, op, dst, src } => 
-            alu::transfer_alu(env, state, *width, *op, *dst, src.clone()),
-        
-        Instr::Endian { dst, op, size, width } => 
-            transfer_endian(env, state, *dst, *op, *size, *width),
-        
-        Instr::If { width, left, op, right, target } => 
-            branch::transfer_if(env, state, *width, *left, *op, right.clone(), *target),
-        
-        Instr::Load { size, dst, base, off } => 
-            memory::transfer_load(env, state, *size, *dst, *base, *off),
-        
-        Instr::Store { size, base, off, src } => 
-            memory::transfer_store(env, state, *size, *base, *off, src),
 
-        Instr::LoadPacket { size, mode, offset_imm, src } => 
-            memory::transfer_packet_load(env, state, *size, *mode, *offset_imm, *src),
+        Instr::Alu {
+            width,
+            op,
+            dst,
+            src,
+        } => alu::transfer_alu(env, state, *width, *op, *dst, src.clone()),
 
-        Instr::LoadMap { dst, kind, map_fd, off: _ } => 
-            memory::transfer_map_load(env, state, *dst, *kind, *map_fd),
-        
-        Instr::Atomic { op, size, fetch, base, off, src } => 
-            memory::transfer_atomic(env, state, *op, *fetch, *size, *base, *off, *src),
-        
-        Instr::Call { helper } => 
-            call::transfer_call(env, state, *helper),
-        
-        Instr::CallRel { target } => 
-            call::transfer_call_rel(env, state, *target),
-        
+        Instr::Endian {
+            dst,
+            op,
+            size,
+            width,
+        } => transfer_endian(env, state, *dst, *op, *size, *width),
+
+        Instr::If {
+            width,
+            left,
+            op,
+            right,
+            target,
+        } => branch::transfer_if(env, state, *width, *left, *op, right.clone(), *target),
+
+        Instr::Load {
+            size,
+            dst,
+            base,
+            off,
+        } => memory::transfer_load(env, state, *size, *dst, *base, *off),
+
+        Instr::Store {
+            size,
+            base,
+            off,
+            src,
+        } => memory::transfer_store(env, state, *size, *base, *off, src),
+
+        Instr::LoadPacket {
+            size,
+            mode,
+            offset_imm,
+            src,
+        } => memory::transfer_packet_load(env, state, *size, *mode, *offset_imm, *src),
+
+        Instr::LoadMap {
+            dst,
+            kind,
+            map_fd,
+            off: _,
+        } => memory::transfer_map_load(env, state, *dst, *kind, *map_fd),
+
+        Instr::Atomic {
+            op,
+            size,
+            fetch,
+            base,
+            off,
+            src,
+        } => memory::transfer_atomic(env, state, *op, *fetch, *size, *base, *off, *src),
+
+        Instr::Call { helper } => call::transfer_call(env, state, *helper),
+
+        Instr::CallRel { target } => call::transfer_call_rel(env, state, *target),
+
         Instr::Jmp { target } => {
             state.pc = *target;
             vec![state]
-        },
-        
-        Instr::Exit => transfer_exit(env, state)
+        }
+
+        Instr::Exit => transfer_exit(env, state),
     }
 }
 
@@ -90,7 +118,7 @@ fn transfer_endian(
     dst: Reg,
     op: EndianOp,
     size: u32,
-    width: Width
+    width: Width,
 ) -> Vec<State> {
     // 1. Types: Endian ops destroy pointers -> Scalar
     state.types.set(dst, RegType::ScalarValue);
@@ -98,12 +126,12 @@ fn transfer_endian(
     match op {
         EndianOp::ToLe => {
             match size {
-                64 => { /* Identity for LE host; Keep constraints if Width::W64 */ },
+                64 => { /* Identity for LE host; Keep constraints if Width::W64 */ }
                 32 => apply_and_imm(&mut state.dbm, dst, 0xFFFF_FFFF),
                 16 => apply_and_imm(&mut state.dbm, dst, 0xFFFF),
-                _  => forget(&mut state.dbm, dst),
+                _ => forget(&mut state.dbm, dst),
             }
-        },
+        }
         EndianOp::ToBe => {
             // Big Endian always swaps on LE host -> Value changes non-linearly
             // We must forget the old value.
@@ -113,7 +141,7 @@ fn transfer_endian(
                 32 => apply_and_imm(&mut state.dbm, dst, 0xFFFF_FFFF),
                 // 64-bit BE swap: Result is u64 (if Width::W64) or u32 (if Width::W32)
                 64 => forget(&mut state.dbm, dst),
-                _  => forget(&mut state.dbm, dst),
+                _ => forget(&mut state.dbm, dst),
             }
         }
     }
@@ -123,11 +151,11 @@ fn transfer_endian(
     // This provides a tighter bound [0, U32_MAX] even if the operation was "Unknown".
     if width == Width::W32 {
         // Safe intersection: intersect current bounds with [0, 0xFFFFFFFF]
-        // domain::assign_and_mask effectively does 'forget + bound', 
+        // domain::assign_and_mask effectively does 'forget + bound',
         // but since we might have just set tighter bounds (like 0xFFFF) above,
         // we use 'bit_and_const' or manual bounds to preserve them.
-        
-        // Simplest Sound Approach: Just enforce the mask. 
+
+        // Simplest Sound Approach: Just enforce the mask.
         // If we already did mask 0xFFFF above, 0xFFFF & 0xFFFFFFFF == 0xFFFF (Safe).
         apply_and_imm(&mut state.dbm, dst, 0xFFFF_FFFF);
     }
@@ -137,10 +165,7 @@ fn transfer_endian(
 }
 
 /// Transfer function for Exit instruction.
-fn transfer_exit(
-    env: &mut VerifierEnv,
-    mut state: State,
-) -> Vec<State> {
+fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     let pc = state.pc;
 
     let (min, max) = get_interval(&state.dbm, Reg::R0);
@@ -150,9 +175,7 @@ fn transfer_exit(
     // Use the helper method on the ProgramKind stored in env
     if env.ctx.prog_kind.requires_strict_return_code() {
         if r0_min < 0 || r0_max > 1 {
-            env.fail(VerificationError::InvalidReturnCode {
-                pc: state.pc,
-            });
+            env.fail(VerificationError::InvalidReturnCode { pc: state.pc });
             return vec![];
         }
     }
@@ -180,7 +203,7 @@ fn transfer_exit(
         env.fail(VerificationError::MaxCallDepthExceeded { pc: state.pc });
         return vec![];
     }
-    
+
     if !state.at_main_frame() {
         if matches!(state.types.get(Reg::R0), RegType::PtrToStack { .. }) {
             env.fail(VerificationError::CannotReturnStackPointer { pc: state.pc });
@@ -225,9 +248,12 @@ fn transfer_exit(
             state.dbm.close();
         }
 
-        state.types.set(Reg::R10, RegType::PtrToStack {
-            frame_level: state.current_frame_level()
-        });
+        state.types.set(
+            Reg::R10,
+            RegType::PtrToStack {
+                frame_level: state.current_frame_level(),
+            },
+        );
         state.pc = return_pc;
         vec![state]
     } else {
