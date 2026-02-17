@@ -1,8 +1,10 @@
 // src/bpf_to_ast.rs
-use crate::ast::{AluOp, CmpOp, EndianOp, Instr, MapLoadKind, 
-    MemSize, Operand, PacketLoadMode, Program, Width, AtomicOp};
-use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::analysis::machine::reg::Reg;
+use crate::ast::{
+    AluOp, AtomicOp, CmpOp, EndianOp, Instr, MapLoadKind, MemSize, Operand, PacketLoadMode,
+    Program, Width,
+};
+use crate::parsing::bpf_insn::RawBpfInsn;
 use std::collections::HashSet;
 
 #[derive(Debug)]
@@ -14,7 +16,7 @@ pub enum LowerErrorKind {
     InvalidSrcReg,
     UnknownAtomicOp,
     CallUsedReservedFields,
-    InvalidRegister
+    InvalidRegister,
 }
 
 #[derive(Debug)]
@@ -22,7 +24,7 @@ pub struct LowerError {
     pub pc: usize,
     pub code: u8,
     pub msg: String,
-    pub kind: LowerErrorKind
+    pub kind: LowerErrorKind,
 }
 
 fn reg_to_var(insn: &RawBpfInsn, r: u8, pc: usize) -> Result<Reg, LowerError> {
@@ -38,7 +40,12 @@ fn reg_to_var(insn: &RawBpfInsn, r: u8, pc: usize) -> Result<Reg, LowerError> {
         8 => Ok(Reg::R8),
         9 => Ok(Reg::R9),
         10 => Ok(Reg::R10),
-        _ => Err(LowerError { pc, code: insn.code, msg: "invalid register".to_string(), kind: LowerErrorKind::InvalidRegister })
+        _ => Err(LowerError {
+            pc,
+            code: insn.code,
+            msg: "invalid register".to_string(),
+            kind: LowerErrorKind::InvalidRegister,
+        }),
     }
 }
 
@@ -50,7 +57,7 @@ fn branch_target(pc: usize, off: i16, len: usize, code: u8) -> Result<usize, Low
             pc,
             code,
             msg: format!("branch target out of range: {}", t),
-            kind: LowerErrorKind::BranchTargetOutOfRange
+            kind: LowerErrorKind::BranchTargetOutOfRange,
         });
     }
     Ok(t as usize)
@@ -68,37 +75,36 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
 
         if insn.code == 0x18 {
             if (src != Reg::R0 && src != Reg::R1) || insn.off != 0 {
-                return Err(
-                    LowerError { 
-                        pc, 
-                        code: insn.code, 
-                        msg: "invalid BPF_LD_IMM insn: src_reg or off must be 0".to_string(), 
-                        kind: LowerErrorKind::InvalidLDIMM64 
-                    });
+                return Err(LowerError {
+                    pc,
+                    code: insn.code,
+                    msg: "invalid BPF_LD_IMM insn: src_reg or off must be 0".to_string(),
+                    kind: LowerErrorKind::InvalidLDIMM64,
+                });
             }
-            if pc + 1 >= raw.len() { 
+            if pc + 1 >= raw.len() {
                 return Err(LowerError {
                     pc,
                     code: insn.code,
                     msg: "unexpected end of instructions after LDDW".to_string(),
-                    kind: LowerErrorKind::InvalidLDIMM64
+                    kind: LowerErrorKind::InvalidLDIMM64,
                 });
             }
             let cont = &raw[pc + 1];
-            if cont.code != 0x00 { 
+            if cont.code != 0x00 {
                 return Err(LowerError {
                     pc,
                     code: cont.code,
                     msg: "expected continuation instruction after LDDW".to_string(),
-                    kind: LowerErrorKind::InvalidLDIMM64
+                    kind: LowerErrorKind::InvalidLDIMM64,
                 });
             }
-            if cont.code != 0 || cont.dst != 0 || cont.src != 0 || cont.off != 0 { 
+            if cont.code != 0 || cont.dst != 0 || cont.src != 0 || cont.off != 0 {
                 return Err(LowerError {
                     pc,
                     code: cont.code,
                     msg: "invalid BPF_LD_IMM insn: next insn fields must be 0".to_string(),
-                    kind: LowerErrorKind::InvalidLDIMM64
+                    kind: LowerErrorKind::InvalidLDIMM64,
                 });
             }
 
@@ -116,39 +122,46 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                         dst,
                         src: Operand::Imm(imm_i64),
                     });
-                },
+                }
                 Reg::R1 => {
                     if cont.imm != 0 {
                         return Err(LowerError {
                             pc,
                             code: insn.code,
                             msg: "invalid BPF_LD_IMM insn: imm must be 0".to_string(),
-                            kind: LowerErrorKind::InvalidLDIMM64
+                            kind: LowerErrorKind::InvalidLDIMM64,
                         });
                     }
-                    instrs.push(Instr::LoadMap { 
-                        dst, 
-                        kind: MapLoadKind::MapPtr, 
-                        map_fd: imm_i64 as i32, 
-                        off: 0 
+                    instrs.push(Instr::LoadMap {
+                        dst,
+                        kind: MapLoadKind::MapPtr,
+                        map_fd: imm_i64 as i32,
+                        off: 0,
                     });
-                },
+                }
                 Reg::R2 => {
-                    instrs.push(Instr::LoadMap { 
-                        dst, 
-                        kind: MapLoadKind::MapValue, 
-                        map_fd: imm_i64 as i32, 
-                        off: 0 
+                    let off = if pc + 1 < raw.len() {
+                        raw[pc + 1].imm
+                    } else {
+                        0
+                    };
+                    instrs.push(Instr::LoadMap {
+                        dst,
+                        kind: MapLoadKind::MapValue,
+                        map_fd: imm_i64 as i32,
+                        off: off,
                     });
-                },
-                _ => return Err(LowerError {
-                    pc,
-                    code: cont.code,
-                    msg: "invalid BPF_LD_IMM insn: invalid source reg".to_string(),
-                    kind: LowerErrorKind::InvalidLDIMM64
-                })
+                }
+                _ => {
+                    return Err(LowerError {
+                        pc,
+                        code: cont.code,
+                        msg: "invalid BPF_LD_IMM insn: invalid source reg".to_string(),
+                        kind: LowerErrorKind::InvalidLDIMM64,
+                    });
+                }
             }
-            
+
             // AST 2: The No-Op (Maps to 'pc + 1')
             // We record this PC. If we reach here later, it's an error
             invalid_pc_set.insert(pc + 1);
@@ -571,7 +584,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             },
 
             // 0xdc: BPF_END: endian conversion on dst.
-            0xdc => Instr::Endian { 
+            0xdc => Instr::Endian {
                 width: Width::W32,
                 dst: dst,
                 op: EndianOp::ToBe,
@@ -601,7 +614,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Imm(insn.imm as i64),
                     target,
                 }
-            },
+            }
 
             // 0x1d: JEQ_X (if dst == src goto target, 64-bit)
             0x1d => {
@@ -613,7 +626,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0x1e: JEQ32_X (if (u32)dst == (u32)src goto target)
             0x1e => {
@@ -625,7 +638,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0x25: JGT_K (if dst > imm, 64-bit)
             0x25 => {
@@ -637,7 +650,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Imm(insn.imm as i64),
                     target,
                 }
-            },
+            }
 
             // 0x26: JGT32_K  (if (u32)dst > (u32)imm goto target)
             //
@@ -653,7 +666,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Imm(insn.imm as u32 as i64),
                     target,
                 }
-            },
+            }
 
             // 0x2d: JGT_X (if dst > src goto target)
             0x2d => {
@@ -665,7 +678,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0x2e: JGT_X (if dst > (u32)src goto target)
             0x2e => {
@@ -677,7 +690,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0x35: JGE_K (if u64(dst) >= u64(imm) goto target)
             0x35 => {
@@ -686,12 +699,12 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     width: Width::W64,
                     left: dst,
                     op: CmpOp::UGe,
-                    // The immediate is sign-extended from i32 to i64, 
+                    // The immediate is sign-extended from i32 to i64,
                     // but the comparison treats the bits as unsigned.
                     right: Operand::Imm(insn.imm as i64),
                     target,
                 }
-            },
+            }
 
             // 0x36: JGE_K_32 (if (u32)dst >= imm32)
             0x36 => {
@@ -703,7 +716,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Imm(insn.imm as i64),
                     target,
                 }
-            },
+            }
 
             // 0x3d: JGE_X (if dst >= src goto target, 64-bit)
             0x3d => {
@@ -715,7 +728,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0x3e: JGE32_X (if (u32)dst >= (u32)src goto target)
             0x3e => {
@@ -727,7 +740,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0x45: JSET_K (if (u64)dst & imm)
             0x45 => {
@@ -739,7 +752,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Imm(insn.imm as i64),
                     target,
                 }
-            },
+            }
 
             // 0x46: JSET_K_32 (if (u32)dst & imm32)
             0x46 => {
@@ -750,8 +763,8 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     op: CmpOp::Test,
                     right: Operand::Imm(insn.imm as i64),
                     target,
-                } 
-            },
+                }
+            }
 
             // 0x4d: JSET_X_64 (if (u64)dst & (u64)src)
             // Class: BPF_JMP (0x05) | Op: BPF_JSET (0x40) | Src: BPF_X (0x08)
@@ -764,7 +777,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0x4e: JSET_X_32 (if (u32)dst & (u32)src)
             0x4e => {
@@ -772,11 +785,11 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 Instr::If {
                     width: Width::W32,
                     left: dst,
-                    op: CmpOp::Test, 
+                    op: CmpOp::Test,
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0x55: JNE imm (if dst != imm goto target)
             0x55 => {
@@ -788,7 +801,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Imm(insn.imm as i64),
                     target,
                 }
-            },
+            }
 
             // 0x56: JNE32 imm  (if (u32)dst != (u32)imm goto target)
             0x56 => {
@@ -812,7 +825,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0x5e: JNE32_X  (if (u32)dst != (u32)src goto target)
             0x5e => {
@@ -824,7 +837,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0x65: JSGT_K (if s64(dst) > s64(imm) goto target)
             0x65 => {
@@ -837,7 +850,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Imm(insn.imm as i64),
                     target,
                 }
-            },
+            }
 
             // 0x66: JSGT32_K  (if (s32)dst > (s32)imm goto target)
             0x66 => {
@@ -845,11 +858,11 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 Instr::If {
                     width: Width::W32,
                     left: dst,
-                    op: CmpOp::UGt,                    // “no-refinement” bucket
+                    op: CmpOp::UGt, // “no-refinement” bucket
                     right: Operand::Imm(insn.imm as i32 as i64),
                     target,
                 }
-            },
+            }
 
             // 0x6d: JSGT_X (if s64(dst) > s64(src) goto target)
             0x6d => {
@@ -861,7 +874,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0x6e: JSGT32_X (if (s32)dst > (s32)src goto target)
             0x6e => {
@@ -873,7 +886,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0x75: JSGE_K_64 (if (s64)dst >= imm)
             // Class: BPF_JMP (0x05) | Op: BPF_JSGE (0x70) | Src: BPF_K (0x00)
@@ -886,7 +899,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Imm(insn.imm as i64),
                     target,
                 }
-            },
+            }
 
             // 0x76: JSGE_K_32 (if (s32)dst >= imm32)
             0x76 => {
@@ -898,7 +911,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Imm(insn.imm as i64),
                     target,
                 }
-            },
+            }
 
             // 0x7d: JSGE_X_64 (if (s64)dst >= (s64)src)
             0x7d => {
@@ -910,7 +923,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0x7e: JSGE_X_32 (if (s32)dst >= (s32)src)
             0x7e => {
@@ -922,7 +935,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0xa5: JLT_K (if dst < imm goto target, unsigned 64-bit)
             0xa5 => {
@@ -936,7 +949,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Imm(insn.imm as i64),
                     target,
                 }
-            },
+            }
 
             // 0xa6: JLT32_K  (if (u32)dst < (u32)imm goto target)
             0xa6 => {
@@ -948,7 +961,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Imm((insn.imm as u32) as i64),
                     target,
                 }
-            },
+            }
 
             // 0xad: JLT_X (if dst < src goto target)
             0xad => {
@@ -960,7 +973,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0xae: JLT32_X  (if (u32)dst < (u32)src goto target)
             //
@@ -976,7 +989,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0xbd: if rX <= rY goto +off (JMP | JLE | X)  (unsigned compare)
             0xbd => {
@@ -988,7 +1001,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0xb4: wX = imm  (ALU32 | MOV | K)  == mov32 imm (zero-extend)
             0xb4 => Instr::Alu {
@@ -1022,7 +1035,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Imm((insn.imm as u32) as i64),
                     target,
                 }
-            },
+            }
 
             // 0xbe: JLE32_X (if (u32)dst <= (u32)src goto target)
             0xbe => {
@@ -1034,7 +1047,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0xc5: JSLT_K_64 (if (s64)dst < imm)
             0xc5 => {
@@ -1046,7 +1059,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Imm(insn.imm as i64),
                     target,
                 }
-            },
+            }
 
             // 0xc6: JSLT32_K (if (s32)dst < (s32)imm goto target)
             0xc6 => {
@@ -1059,7 +1072,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Imm(insn.imm as i64),
                     target,
                 }
-            },
+            }
 
             // 0xcd: JSLT_X_64 (if (s64)dst < (s64)src goto target)
             0xcd => {
@@ -1071,7 +1084,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0xce: JSLT32_X (if (s32)dst < (s32)src goto target)
             0xce => {
@@ -1083,7 +1096,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0xd5: JSLE_K_64 (if (s64)dst <= imm)
             0xd5 => {
@@ -1095,7 +1108,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Imm(insn.imm as i64),
                     target,
                 }
-            },
+            }
 
             // 0xd6: JSLE32_K (if (s32)dst <= (s32)imm goto target)
             0xd6 => {
@@ -1107,7 +1120,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Imm(insn.imm as i64),
                     target,
                 }
-            },
+            }
 
             // 0xde: JSLE32_X (if (s32)dst <= (s32)src goto target)
             0xde => {
@@ -1119,7 +1132,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     right: Operand::Reg(src),
                     target,
                 }
-            },
+            }
 
             // 0x16: JEQ32 imm  if (u32)dst == (u32)imm goto target
             0x16 => {
@@ -1185,9 +1198,9 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             // 0x63: STXW *(u32 *)(dst + off) = src
             0x63 => Instr::Store {
                 size: MemSize::U32,
-                base: dst,        // dst field is the base register for stores
+                base: dst, // dst field is the base register for stores
                 off: insn.off,
-                src: Operand::Reg(src),              // src field is the value register
+                src: Operand::Reg(src), // src field is the value register
             },
 
             // 0x6a: BPF_ST | BPF_MEM | BPF_H ( *(u16 *)(dst + off) = imm )
@@ -1201,9 +1214,9 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             // 0x6b: STXH *(u16 *)(dst + off) = src
             0x6b => Instr::Store {
                 size: MemSize::U16,
-                base: dst,               // for stores, dst is the base register
+                base: dst, // for stores, dst is the base register
                 off: insn.off,
-                src: Operand::Reg(src),                     // value comes from src register
+                src: Operand::Reg(src), // value comes from src register
             },
 
             // 0x72: BPF_ST | BPF_MEM | BPF_B ( *(u8 *)(dst + off) = imm )
@@ -1217,17 +1230,17 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             // 0x73: STXB *(u8 *)(dst + off) = src
             0x73 => Instr::Store {
                 size: MemSize::U8,
-                base: dst,           // dst field is the base register for stores
+                base: dst, // dst field is the base register for stores
                 off: insn.off as i16,
-                src: Operand::Reg(src),                 // src field is the value register
+                src: Operand::Reg(src), // src field is the value register
             },
 
             // 0x7a: ST_MEM_DW ( *(u64 *)(dst + off) = imm32 )
             0x7a => Instr::Store {
                 size: MemSize::U64,
-                base: dst,                         // Base address register (e.g., r10)
-                off: insn.off as i16,                          // Offset (e.g., -8)
-                src: Operand::Imm(insn.imm as i64) // The value to write (sign-extended to 64-bit)
+                base: dst,                          // Base address register (e.g., r10)
+                off: insn.off as i16,               // Offset (e.g., -8)
+                src: Operand::Imm(insn.imm as i64), // The value to write (sign-extended to 64-bit)
             },
 
             // 0x7b: STXDW *(u64 *)(dst + off) = src
@@ -1245,8 +1258,8 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                         pc,
                         code: insn.code,
                         // "BPF_CALL uses reserved fields" is the exact kernel error
-                        msg: "BPF_CALL uses reserved fields".to_string(), 
-                        kind: LowerErrorKind::CallUsedReservedFields
+                        msg: "BPF_CALL uses reserved fields".to_string(),
+                        kind: LowerErrorKind::CallUsedReservedFields,
                     });
                 }
                 if src == Reg::R0 {
@@ -1263,36 +1276,42 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
 
                     // Verify bounds
                     if target < 0 || target >= raw.len() as i64 {
-                        return Err(LowerError { 
-                            pc, 
-                            code: 0x85, 
-                            msg: "Call target out of bounds".to_string() ,
-                            kind: LowerErrorKind::CallTargetOutOfBounds
-                        })
+                        return Err(LowerError {
+                            pc,
+                            code: 0x85,
+                            msg: "Call target out of bounds".to_string(),
+                            kind: LowerErrorKind::CallTargetOutOfBounds,
+                        });
                     }
 
-                    Instr::CallRel { target: target as usize }
+                    Instr::CallRel {
+                        target: target as usize,
+                    }
                 } else {
-                    return Err(LowerError { 
-                        pc, 
-                        code: 0x85, 
+                    return Err(LowerError {
+                        pc,
+                        code: 0x85,
                         msg: "Invalid src register for call".to_string(),
-                        kind: LowerErrorKind::InvalidSrcReg
-                    })
+                        kind: LowerErrorKind::InvalidSrcReg,
+                    });
                 }
             }
 
             // 0xDB (64-bit) and 0xC3 (32-bit)
             0xDB | 0xC3 => {
-                let size = if insn.code == 0xDB { MemSize::U64 } else { MemSize::U32 };
-                
+                let size = if insn.code == 0xDB {
+                    MemSize::U64
+                } else {
+                    MemSize::U32
+                };
+
                 // 1. Check for Complex Ops (XCHG, CMPXCHG)
                 // These specific values are hardcoded in the kernel spec.
                 let (op, fetch) = match insn.imm {
                     // BPF_ADD (0x00) with/without Fetch (0x01)
                     0x00 => (AtomicOp::Add, false),
                     0x01 => (AtomicOp::Add, true),
-                    
+
                     // BPF_OR (0x40)
                     0x40 => (AtomicOp::Or, false),
                     0x41 => (AtomicOp::Or, true),
@@ -1311,49 +1330,74 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     // BPF_CMPXCHG (0xF1) - Always implies Fetch
                     0xF1 => (AtomicOp::CmpXchg, true),
 
-                    _ => return Err(
-                        LowerError { 
-                            pc, 
-                            code: insn.code, 
-                            msg: format!("unknown atomic opcode imm: 0x{:x}", insn.imm), 
-                            kind: LowerErrorKind::UnknownAtomicOp
-                        }
-                    ),
+                    _ => {
+                        return Err(LowerError {
+                            pc,
+                            code: insn.code,
+                            msg: format!("unknown atomic opcode imm: 0x{:x}", insn.imm),
+                            kind: LowerErrorKind::UnknownAtomicOp,
+                        });
+                    }
                 };
 
                 Instr::Atomic {
                     op,
                     size,
                     fetch,
-                    base: dst,     // In BPF STX, 'dst' is the memory pointer
+                    base: dst, // In BPF STX, 'dst' is the memory pointer
                     off: insn.off,
-                    src,           // In BPF STX, 'src' is the value
+                    src, // In BPF STX, 'src' is the value
                 }
             }
 
             // --- LEGACY PACKET LOADS (LD_ABS) ---
-            0x20 => Instr::LoadPacket { 
-                size: MemSize::U32, mode: PacketLoadMode::Abs, offset_imm: insn.imm, src: None },
-            0x28 => Instr::LoadPacket { 
-                size: MemSize::U16, mode: PacketLoadMode::Abs, offset_imm: insn.imm, src: None },
-            0x30 => Instr::LoadPacket { 
-                size: MemSize::U8,  mode: PacketLoadMode::Abs, offset_imm: insn.imm, src: None },
+            0x20 => Instr::LoadPacket {
+                size: MemSize::U32,
+                mode: PacketLoadMode::Abs,
+                offset_imm: insn.imm,
+                src: None,
+            },
+            0x28 => Instr::LoadPacket {
+                size: MemSize::U16,
+                mode: PacketLoadMode::Abs,
+                offset_imm: insn.imm,
+                src: None,
+            },
+            0x30 => Instr::LoadPacket {
+                size: MemSize::U8,
+                mode: PacketLoadMode::Abs,
+                offset_imm: insn.imm,
+                src: None,
+            },
 
             // --- LEGACY PACKET LOADS (LD_IND) ---
-            0x40 => Instr::LoadPacket { 
-                size: MemSize::U32, mode: PacketLoadMode::Ind, offset_imm: insn.imm, src: Some(src) },
-            0x48 => Instr::LoadPacket { 
-                size: MemSize::U16, mode: PacketLoadMode::Ind, offset_imm: insn.imm, src: Some(src) },
-            0x50 => Instr::LoadPacket { 
-                size: MemSize::U8,  mode: PacketLoadMode::Ind, offset_imm: insn.imm, src: Some(src) },
+            0x40 => Instr::LoadPacket {
+                size: MemSize::U32,
+                mode: PacketLoadMode::Ind,
+                offset_imm: insn.imm,
+                src: Some(src),
+            },
+            0x48 => Instr::LoadPacket {
+                size: MemSize::U16,
+                mode: PacketLoadMode::Ind,
+                offset_imm: insn.imm,
+                src: Some(src),
+            },
+            0x50 => Instr::LoadPacket {
+                size: MemSize::U8,
+                mode: PacketLoadMode::Ind,
+                offset_imm: insn.imm,
+                src: Some(src),
+            },
 
             // Guard against stray continuation opcodes outside 0x18
             0x00 => {
                 return Err(LowerError {
                     pc,
                     code: insn.code,
-                    msg: "unexpected opcode 0x00 (LDIMM64 continuation without prefix?)".to_string(),
-                    kind: LowerErrorKind::InvalidLDIMM64
+                    msg: "unexpected opcode 0x00 (LDIMM64 continuation without prefix?)"
+                        .to_string(),
+                    kind: LowerErrorKind::InvalidLDIMM64,
                 });
             }
 
@@ -1362,7 +1406,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     pc,
                     code: other,
                     msg: format!("unsupported opcode 0x{:02x} at pc {}", other, pc),
-                    kind: LowerErrorKind::UnknownOpcode
+                    kind: LowerErrorKind::UnknownOpcode,
                 });
             }
         };
@@ -1371,5 +1415,8 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
         pc += 1;
     }
 
-    Ok(Program { instrs, invalid_pc_set })
+    Ok(Program {
+        instrs,
+        invalid_pc_set,
+    })
 }

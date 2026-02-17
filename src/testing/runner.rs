@@ -8,8 +8,8 @@ use crate::ast::ProgramKind;
 use crate::common::config::VerifierConfig;
 use crate::common::utils::{load_program_from_elf, program_kind_for_object};
 use crate::parsing::btf::{self, BtfContext};
-use crate::parsing::elf_loader;
-use crate::parsing::elf_loader::{
+use crate::parsing::elf;
+use crate::parsing::elf::{
     BpfMapDef, list_section_names, load_data_section_maps, load_maps, load_raw_programs,
     load_relocations,
 };
@@ -69,7 +69,7 @@ impl Analyzer {
         }
 
         // Load BTF
-        let btf_bytes = elf_loader::load_section_bytes(path, ".BTF", false).unwrap_or_default();
+        let btf_bytes = elf::prog::load_section_bytes(path, ".BTF", false).unwrap_or_default();
         let btf = if !btf_bytes.is_empty() {
             btf::parse_btf(&btf_bytes).unwrap_or_else(|e| {
                 if config.verbosity > 0 {
@@ -91,8 +91,11 @@ impl Analyzer {
 
     /// Analyze a single section by name
     pub fn analyze_section(&self, section: &str) -> AnalysisResult {
-        // Load program
-        let prog = load_program_from_elf(&self.path, section);
+        // Load relocations specific to this section
+        let pc_to_reloc = load_relocations(&self.path, &self.maps, section).unwrap_or_default();
+
+        // Load program with relocations
+        let prog = load_program_from_elf(&self.path, section, Some(&pc_to_reloc));
         if prog.instrs.is_empty() {
             return AnalysisResult::LoadError("Empty program or section not found".to_string());
         }
@@ -116,9 +119,7 @@ impl Analyzer {
         let mut ctx = default_exec_ctx();
         ctx.map_defs = self.maps.clone();
         ctx.btf = self.btf.clone();
-
-        // Load relocations specific to this section
-        ctx.pc_to_reloc = load_relocations(&self.path, &self.maps, section).unwrap_or_default();
+        ctx.pc_to_reloc = pc_to_reloc;
 
         // Determine program kind
         ctx.prog_kind = match program_kind_for_object(Path::new(&self.path)) {
@@ -159,7 +160,7 @@ impl Analyzer {
             }
 
             // Skip loading if program is empty (optimization)
-            let prog_check = load_program_from_elf(&self.path, &section);
+            let prog_check = load_program_from_elf(&self.path, &section, None);
             if prog_check.instrs.is_empty() {
                 continue;
             }
@@ -169,7 +170,7 @@ impl Analyzer {
             if !result.is_pass() {
                 all_pass = false;
             }
-            results.push((section, result));
+            results.push((section.to_string(), result));
         }
         (all_pass, results)
     }

@@ -1,7 +1,5 @@
 use crate::ast::{Program, ProgramKind};
-use crate::parsing::bpf_insn;
 use crate::parsing::bpf_to_ast;
-use crate::parsing::elf_loader;
 use crate::zone::dbm::INF;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -42,13 +40,24 @@ pub fn clamped_add(a: i64, b: i64) -> i64 {
 
 /// Load a Program from an ELF section by:
 ///   ELF -> bytes -> RawBpfInsn -> Program (via bpf_to_ast).
-pub fn load_program_from_elf(path: &str, section: &str) -> Program {
-    let bytes = elf_loader::load_bpf_insn_stream_section(path, section).unwrap_or_else(|e| {
-        eprintln!("Failed to load ELF section '{}': {e:?}", section);
-        std::process::exit(1);
-    });
+pub fn load_program_from_elf(
+    path: &str,
+    section: &str,
+    pc_to_reloc: Option<&HashMap<usize, crate::parsing::elf::RelocInfo>>,
+) -> Program {
+    let bytes = crate::parsing::elf::prog::load_bpf_insn_stream_section(path, section)
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to load ELF section '{}': {e:?}", section);
+            std::process::exit(1);
+        });
 
-    let raw_insns = bpf_insn::decode_insns(&bytes);
+    let mut raw_insns = crate::parsing::bpf_insn::decode_insns(&bytes);
+
+    // Apply relocations if provided
+    if let Some(relocs) = pc_to_reloc {
+        crate::parsing::elf::reloc::apply_relocs(&mut raw_insns, relocs);
+    }
+
     println!(
         "Loaded section '{}' from '{}': {} bytes, {} instructions",
         section,

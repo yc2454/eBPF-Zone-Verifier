@@ -10,7 +10,7 @@ mod zone;
 use crate::ast::ProgramKind;
 use crate::common::config::VerifierConfig;
 use crate::common::utils::program_kind_for_object;
-use crate::parsing::elf_loader::{list_section_names, load_maps, load_raw_programs};
+use crate::parsing::elf::{list_section_names, load_maps, load_raw_programs};
 use crate::testing::benchmark::analyze_benchmark;
 use crate::testing::logging;
 use crate::testing::runner::{AnalysisResult, Analyzer, find_section_for_func, is_code_section};
