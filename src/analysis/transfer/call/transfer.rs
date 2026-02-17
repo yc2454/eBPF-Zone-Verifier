@@ -131,9 +131,10 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     // 2. Apply return value bounds for specific helpers
     apply_return_bounds(&mut state, helper);
 
-    // 3. Update DBM - forget caller-saved registers
+    // 3. Update DBM - forget caller-saved registers and reset Tnums
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
         forget(&mut state.dbm, r);
+        state.set_tnum(r, Tnum::unknown());
     }
 
     // 4. Forget packet pointer DBM entries if they were invalidated
@@ -159,6 +160,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
 /// Apply return value bounds based on helper semantics.
 fn apply_return_bounds(state: &mut State, helper: u32) {
     forget(&mut state.dbm, Reg::R0);
+    state.set_tnum(Reg::R0, Tnum::unknown());
     match helper {
         constants::BPF_REDIRECT => {
             assume_ge_imm(&mut state.dbm, Reg::R0, 0);
