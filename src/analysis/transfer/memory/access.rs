@@ -20,8 +20,8 @@ use super::stack::check_stack_access;
 pub enum AccessKind {
     Read,
     Write,
-    HelperOutput,
-    HelperArg,
+    HelperBuffer,
+    HelperPrimitive,
 }
 
 /// Validates memory load safety.

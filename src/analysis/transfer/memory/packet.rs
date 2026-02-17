@@ -111,7 +111,7 @@ pub fn check_packet_access(
     }
 
     if env.ctx.has_flag(constants::F_LOAD_WITH_STRICT_ALIGNMENT)
-        && !matches!(kind, AccessKind::HelperOutput | AccessKind::HelperArg)
+        && !matches!(kind, AccessKind::HelperBuffer)
         && !check_packet_alignment(state, base, off, size)
     {
         env.fail(VerificationError::MisalignedPacketAccess { pc, off, size });

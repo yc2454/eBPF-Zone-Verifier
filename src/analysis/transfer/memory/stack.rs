@@ -43,7 +43,7 @@ pub fn check_stack_access(
             let actual_offset = base_off + instruction_offset;
             let access_end = current_frame_depth + actual_offset + size;
 
-            if !matches!(kind, AccessKind::HelperArg) && actual_offset % size != 0 {
+            if !matches!(kind, AccessKind::HelperBuffer) && actual_offset % size != 0 {
                 env.fail(VerificationError::MisalignedAccess {
                     pc,
                     off: actual_offset,
@@ -183,7 +183,7 @@ pub(crate) fn check_stack_initialization(
                 }
             }
         }
-        AccessKind::HelperOutput | AccessKind::HelperArg => {
+        AccessKind::HelperBuffer | AccessKind::HelperPrimitive => {
             let any_initialized =
                 (0..size).any(|i| stack.is_slot_initialized((actual_offset + i) as i16));
 

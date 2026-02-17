@@ -530,7 +530,7 @@ pub(crate) fn validate_single_arg(
                     0,
                     8, // PtrToLong is 8-byte access
                     pc,
-                    AccessKind::HelperOutput,
+                    AccessKind::HelperPrimitive,
                     None,
                     frame_level,
                 );
@@ -562,7 +562,14 @@ pub(crate) fn validate_readable_mem(
         RegType::PtrToStack { .. } => {
             if let Some(off) = get_distance_fixed(&state.dbm, reg, Reg::R10) {
                 if let Some(sz) = size {
-                    check_stack_arg_readable(env, state, off, sz as i64, pc, AccessKind::Read);
+                    check_stack_arg_readable(
+                        env,
+                        state,
+                        off,
+                        sz as i64,
+                        pc,
+                        AccessKind::HelperBuffer,
+                    );
                 }
                 true
             } else {
@@ -579,7 +586,7 @@ pub(crate) fn validate_readable_mem(
                                     off_candidate,
                                     sz as i64,
                                     pc,
-                                    AccessKind::HelperArg,
+                                    AccessKind::HelperBuffer,
                                 );
                                 if env.failed() {
                                     return false;
@@ -639,16 +646,31 @@ pub(crate) fn validate_readable_mem(
 /// Validates that a register points to writable memory.
 pub(crate) fn validate_writable_mem(
     env: &mut VerifierEnv,
-    _state: &State,
+    state: &State,
     _types: &TypeState,
     pc: usize,
     reg: Reg,
     reg_type: RegType,
-    _size: Option<u32>,
+    size: Option<u32>,
 ) -> bool {
     match reg_type {
-        RegType::PtrToStack { .. } => {
-            // Stack is writable (access check done elsewhere)
+        RegType::PtrToStack { frame_level } => {
+            if let Some(off) = get_distance_fixed(&state.dbm, reg, Reg::R10) {
+                if let Some(sz) = size {
+                    check_stack_access(
+                        env,
+                        state,
+                        reg,
+                        Some(off),
+                        0,
+                        sz as i64,
+                        pc,
+                        AccessKind::HelperBuffer,
+                        None,
+                        frame_level,
+                    );
+                }
+            }
             true
         }
         RegType::PtrToMapValue { map_idx, .. } => {
@@ -844,7 +866,7 @@ pub(crate) fn check_ptr_access_size(
                         off,
                         size as i64,
                         pc,
-                        AccessKind::HelperArg,
+                        AccessKind::HelperBuffer,
                     );
                 }
                 !env.failed()
@@ -870,7 +892,7 @@ pub(crate) fn check_ptr_access_size(
                                     off_candidate,
                                     size as i64,
                                     pc,
-                                    AccessKind::HelperArg,
+                                    AccessKind::HelperBuffer,
                                 );
                                 if env.failed() {
                                     return false;
@@ -928,7 +950,7 @@ pub(crate) fn check_ptr_access_size(
                 0,
                 size as i64,
                 pc,
-                AccessKind::HelperArg,
+                AccessKind::HelperBuffer,
             );
             !env.failed()
         }
