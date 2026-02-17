@@ -53,7 +53,7 @@ pub enum BpfArgType {
     /// pointer to bpf_sock (fullsock)
     PtrToSocket,
     /// pointer to in-kernel sock_common or bpf-mirrored bpf_sock
-    PtrToBTFIdSockCommon, 
+    PtrToBTFIdSockCommon,
 
     // ---- BTF ID types ----
     PtrToBtfId,
@@ -92,11 +92,19 @@ pub struct MemSizePair {
 
 impl MemSizePair {
     pub(crate) const fn new(ptr_reg: Reg, size_reg: Reg) -> Self {
-        Self { ptr_reg, size_reg, allow_zero: false }
+        Self {
+            ptr_reg,
+            size_reg,
+            allow_zero: false,
+        }
     }
-    
+
     pub(crate) const fn new_nullable(ptr_reg: Reg, size_reg: Reg) -> Self {
-        Self { ptr_reg, size_reg, allow_zero: true }
+        Self {
+            ptr_reg,
+            size_reg,
+            allow_zero: true,
+        }
     }
 }
 
@@ -129,32 +137,32 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
     Some(match helper {
         // ---- Map operations ----
         constants::BPF_MAP_LOOKUP_ELEM => HelperSignature::new([
-            ConstMapPtr,    // R1: map
-            PtrToMapKey,    // R2: key
+            ConstMapPtr, // R1: map
+            PtrToMapKey, // R2: key
             DontCare,
             DontCare,
             DontCare,
         ]),
 
         constants::BPF_MAP_UPDATE_ELEM => HelperSignature::new([
-            ConstMapPtr,    // R1: map
-            PtrToMapKey,    // R2: key
-            PtrToMapValue,  // R3: value
-            Anything,       // R4: flags
+            ConstMapPtr,   // R1: map
+            PtrToMapKey,   // R2: key
+            PtrToMapValue, // R3: value
+            Anything,      // R4: flags
             DontCare,
         ]),
 
         constants::BPF_MAP_DELETE_ELEM => HelperSignature::new([
-            ConstMapPtr,    // R1: map
-            PtrToMapKey,    // R2: key
+            ConstMapPtr, // R1: map
+            PtrToMapKey, // R2: key
             DontCare,
             DontCare,
             DontCare,
         ]),
 
         constants::BPF_GET_LOCAL_STORAGE => HelperSignature::new([
-            ConstMapPtr,    // R1: map
-            Anything,       // R2: index
+            ConstMapPtr, // R1: map
+            Anything,    // R2: index
             DontCare,
             DontCare,
             DontCare,
@@ -166,41 +174,35 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             PtrToUninitMem,
             ConstSizeOrZero,
             Anything,
-            DontCare
+            DontCare,
         ]),
 
         // ---- Tail call ----
         constants::BPF_TAIL_CALL => HelperSignature::new([
-            PtrToCtx,       // R1: ctx
-            ConstMapPtr,    // R2: prog_array_map
-            Anything,       // R3: index
+            PtrToCtx,    // R1: ctx
+            ConstMapPtr, // R2: prog_array_map
+            Anything,    // R3: index
             DontCare,
             DontCare,
         ]),
 
         // ---- Socket/context helpers ----
         constants::BPF_GET_SOCKET_COOKIE => HelperSignature::new([
-            PtrToCtx,       // R1: ctx
-            DontCare,
-            DontCare,
-            DontCare,
-            DontCare,
+            PtrToCtx, // R1: ctx
+            DontCare, DontCare, DontCare, DontCare,
         ]),
 
         constants::BPF_CSUM_UPDATE => HelperSignature::new([
-            PtrToCtx,       // R1: skb
-            DontCare,
-            DontCare,
-            DontCare,
-            DontCare,
+            PtrToCtx, // R1: skb
+            DontCare, DontCare, DontCare, DontCare,
         ]),
 
         constants::BPF_CSUM_DIFF => HelperSignature::new([
-            PtrToMemOrNull,     // R1: from
-            ConstSizeOrZero,    // R2: from_size
-            PtrToMemOrNull,     // R3: to
-            ConstSizeOrZero,    // R4: to_size
-            Anything,           // R5: seed
+            PtrToMemOrNull,  // R1: from
+            ConstSizeOrZero, // R2: from_size
+            PtrToMemOrNull,  // R3: to
+            ConstSizeOrZero, // R4: to_size
+            Anything,        // R5: seed
         ]),
 
         constants::BPF_SKB_ECN_SET_CE => HelperSignature::new([
@@ -212,11 +214,8 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
         ]),
 
         constants::BPF_GET_HASH_RECALC => HelperSignature::new([
-            PtrToCtx,       // R1: ctx
-            DontCare,
-            DontCare,
-            DontCare,
-            DontCare,
+            PtrToCtx, // R1: ctx
+            DontCare, DontCare, DontCare, DontCare,
         ]),
 
         // ---- SKB data access ----
@@ -229,58 +228,53 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
         ]),
 
         constants::BPF_SKB_STORE_BYTES => HelperSignature::new([
-            PtrToCtx,       // R1: skb
-            Anything,       // R2: offset
-            PtrToMem,       // R3: from (source buffer)
-            ConstSize,      // R4: len
+            PtrToCtx,  // R1: skb
+            Anything,  // R2: offset
+            PtrToMem,  // R3: from (source buffer)
+            ConstSize, // R4: len
             DontCare,
         ]),
 
         // ---- Redirect ----
         constants::BPF_REDIRECT => HelperSignature::new([
-            Anything,       // R1: ifindex
-            Anything,       // R2: flags
-            DontCare,
-            DontCare,
-            DontCare,
+            Anything, // R1: ifindex
+            Anything, // R2: flags
+            DontCare, DontCare, DontCare,
         ]),
 
         // ---- XDP helpers ----
         constants::BPF_XDP_ADJUST_HEAD => HelperSignature::new([
-            PtrToCtx,       // R1: xdp_md
-            Anything,       // R2: delta
-            DontCare,
-            DontCare,
-            DontCare,
+            PtrToCtx, // R1: xdp_md
+            Anything, // R2: delta
+            DontCare, DontCare, DontCare,
         ]),
 
         // ---- Socket lookup ----
         constants::BPF_SKC_LOOKUP_TCP => HelperSignature::new([
-            PtrToCtx,       // R1: ctx
-            PtrToMem,       // R2: tuple
-            Anything,       // R3: tuple_size
-            DontCare,
-            DontCare,
+            PtrToCtx, // R1: ctx
+            PtrToMem, // R2: tuple
+            Anything, // R3: tuple_size
+            DontCare, DontCare,
         ]),
 
         constants::BPF_SK_LOOKUP_TCP => HelperSignature::new([
-            PtrToCtx,       // R1: ctx
-            PtrToMem,       // R2: tuple
-            ConstSize,       // R3: tuple_size
-            Anything,       // R4: netns
-            Anything,       // R5: flags
+            PtrToCtx,  // R1: ctx
+            PtrToMem,  // R2: tuple
+            ConstSize, // R3: tuple_size
+            Anything,  // R4: netns
+            Anything,  // R5: flags
         ]),
 
         constants::BPF_SK_LOOKUP_UDP => HelperSignature::new([
-            PtrToCtx,       // R1: ctx
-            PtrToMem,       // R2: tuple
-            ConstSize,       // R3: tuple_size
-            Anything,       // R4: netns
-            Anything,       // R5: flags
+            PtrToCtx,  // R1: ctx
+            PtrToMem,  // R2: tuple
+            ConstSize, // R3: tuple_size
+            Anything,  // R4: netns
+            Anything,  // R5: flags
         ]),
 
         constants::BPF_SK_RELEASE => HelperSignature::new([
-            PtrToSocket,       // R1: socket
+            PtrToSocket, // R1: socket
             DontCare,
             DontCare,
             DontCare,
@@ -288,7 +282,7 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
         ]),
 
         constants::BPF_SKC_TO_UDP6_SOCK => HelperSignature::new([
-            PtrToSocket,       // R1: socket
+            PtrToSocket, // R1: socket
             DontCare,
             DontCare,
             DontCare,
@@ -296,21 +290,17 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
         ]),
 
         constants::BPF_SK_FULLSOCK => HelperSignature::new([
-            PtrToSockCommon,       // R1: sock_common
+            PtrToSockCommon, // R1: sock_common
             DontCare,
             DontCare,
             DontCare,
             DontCare,
         ]),
 
-        constants::BPF_TCP_SOCK => HelperSignature::new([
-            PtrToSockCommon,
-            DontCare,
-            DontCare,
-            DontCare,
-            DontCare,
-        ]),
-        
+        constants::BPF_TCP_SOCK => {
+            HelperSignature::new([PtrToSockCommon, DontCare, DontCare, DontCare, DontCare])
+        }
+
         // ---- Socket storage helpers ----
         constants::BPF_SK_STORAGE_GET => HelperSignature::new([
             ConstMapPtr,
@@ -320,55 +310,43 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
-        constants::BPF_GET_SOCKOPT => HelperSignature::new([
-            PtrToCtx,
-            Anything,
-            Anything,
-            PtrToUninitMem,
-            ConstSize,
-        ]),
+        constants::BPF_GET_SOCKOPT => {
+            HelperSignature::new([PtrToCtx, Anything, Anything, PtrToUninitMem, ConstSize])
+        }
 
         // ---- FIB lookup ----
         constants::BPF_FIB_LOOKUP => HelperSignature::new([
-            PtrToCtx,       // R1: ctx
-            PtrToMem,       // R2: params (bpf_fib_lookup struct)
-            Anything,       // R3: plen
-            Anything,       // R4: flags
+            PtrToCtx, // R1: ctx
+            PtrToMem, // R2: params (bpf_fib_lookup struct)
+            Anything, // R3: plen
+            Anything, // R4: flags
             DontCare,
         ]),
 
         constants::BPF_PROBE_READ_USER => HelperSignature::new([
-            PtrToUninitMem,     // R1: dst
-            ConstSizeOrZero,    // R2: size
-            Anything,           // R3: unsafe_ptr (user address)
+            PtrToUninitMem,  // R1: dst
+            ConstSizeOrZero, // R2: size
+            Anything,        // R3: unsafe_ptr (user address)
             DontCare,
             DontCare,
         ]),
 
         constants::BPF_PROBE_READ_KERNEL => HelperSignature::new([
-            PtrToUninitMem,     // R1: dst (output buffer)
-            ConstSizeOrZero,    // R2: size
-            Anything,           // R3: unsafe_ptr (kernel address, not validated)
+            PtrToUninitMem,  // R1: dst (output buffer)
+            ConstSizeOrZero, // R2: size
+            Anything,        // R3: unsafe_ptr (kernel address, not validated)
             DontCare,
             DontCare,
         ]),
 
-        // ---- Spin lock related ---- 
-        constants::BPF_SPIN_LOCK => HelperSignature::new([
-            Anything,
-            DontCare,
-            DontCare,
-            DontCare,
-            DontCare,
-        ]),
+        // ---- Spin lock related ----
+        constants::BPF_SPIN_LOCK => {
+            HelperSignature::new([Anything, DontCare, DontCare, DontCare, DontCare])
+        }
 
-        constants::BPF_SPIN_UNLOCK => HelperSignature::new([
-            Anything,
-            DontCare,
-            DontCare,
-            DontCare,
-            DontCare,
-        ]),
+        constants::BPF_SPIN_UNLOCK => {
+            HelperSignature::new([Anything, DontCare, DontCare, DontCare, DontCare])
+        }
 
         // ---- Ringbuf helpers ----
         constants::BPF_RINGBUF_RESERVE => HelperSignature::new([
@@ -379,22 +357,14 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
-        constants::BPF_RINGBUF_SUBMIT => HelperSignature::new([
-            PtrToAllocMem,
-            Anything,
-            DontCare,
-            DontCare,
-            DontCare,
-        ]),
+        constants::BPF_RINGBUF_SUBMIT => {
+            HelperSignature::new([PtrToAllocMem, Anything, DontCare, DontCare, DontCare])
+        }
 
         // ---- Information helpers ----
-        constants::BPF_KTIME_GET_NS => HelperSignature::new([
-            DontCare,
-            DontCare,
-            DontCare,
-            DontCare,
-            DontCare,
-        ]),
+        constants::BPF_KTIME_GET_NS => {
+            HelperSignature::new([DontCare, DontCare, DontCare, DontCare, DontCare])
+        }
 
         // ---- Process info helpers ----
         constants::BPF_GET_TASK_STACK => HelperSignature::new([
@@ -402,40 +372,52 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             PtrToUninitMem,
             ConstSizeOrZero,
             Anything,
-            DontCare
+            DontCare,
         ]),
 
         // ---- Miscellaneous ----
-        constants::BPF_GET_PRANDOM_U32 => HelperSignature::new([
-            DontCare,
-            DontCare,
-            DontCare,
-            DontCare,
-            DontCare,
-        ]),
+        constants::BPF_GET_PRANDOM_U32 => {
+            HelperSignature::new([DontCare, DontCare, DontCare, DontCare, DontCare])
+        }
 
         constants::BPF_TRACE_PRINTK => HelperSignature::new([
-            PtrToMem,    // R1: fmt string
-            ConstSize,   // R2: fmt_size (MUST BE > 0)
-            Anything,    // R3: arg1
-            Anything,    // R4: arg2
-            Anything,    // R5: arg3
+            PtrToMem,  // R1: fmt string
+            ConstSize, // R2: fmt_size (MUST BE > 0)
+            Anything,  // R3: arg1
+            Anything,  // R4: arg2
+            Anything,  // R5: arg3
         ]),
 
-        constants::BPF_STRTOUL => HelperSignature::new([
-            PtrToMem,
-            ConstSize,
-            Anything,
-            PtrToLong,
-            DontCare,
+        constants::BPF_STRTOUL => {
+            HelperSignature::new([PtrToMem, ConstSize, Anything, PtrToLong, DontCare])
+        }
+
+        constants::BPF_GET_CGROUP_CLASS_ID => {
+            HelperSignature::new([PtrToCtx, DontCare, DontCare, DontCare, DontCare])
+        }
+
+        constants::BPF_PERF_EVENT_OUTPUT => HelperSignature::new([
+            PtrToCtx,    // R1: ctx
+            ConstMapPtr, // R2: map
+            Anything,    // R3: flags
+            PtrToMem,    // R4: data
+            ConstSize,   // R5: size
         ]),
 
-        constants::BPF_GET_CGROUP_CLASS_ID => HelperSignature::new([
-            PtrToCtx,
-            DontCare,
-            DontCare,
-            DontCare,
-            DontCare,
+        constants::BPF_L3_CSUM_REPLACE => HelperSignature::new([
+            PtrToCtx, // R1: skb
+            Anything, // R2: offset
+            Anything, // R3: from
+            Anything, // R4: to
+            Anything, // R5: flags
+        ]),
+
+        constants::BPF_L4_CSUM_REPLACE => HelperSignature::new([
+            PtrToCtx, // R1: skb
+            Anything, // R2: offset
+            Anything, // R3: from
+            Anything, // R4: to
+            Anything, // R5: flags
         ]),
 
         _ => return None,
@@ -446,59 +428,44 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
 /// Returns empty slice if helper has no such pairs (e.g., map ops use fixed sizes).
 pub fn get_mem_size_pairs(helper: u32) -> &'static [MemSizePair] {
     use Reg::*;
-    
+
     // Define static arrays for each helper pattern
-    static PROBE_READ: [MemSizePair; 1] = [
-        MemSizePair::new_nullable(R1, R2),
-    ];
-    
-    static SKB_LOAD_BYTES: [MemSizePair; 1] = [
-        MemSizePair::new(R3, R4),
-    ];
-    
-    static SKB_STORE_BYTES: [MemSizePair; 1] = [
-        MemSizePair::new(R3, R4),
-    ];
-    
+    static PROBE_READ: [MemSizePair; 1] = [MemSizePair::new_nullable(R1, R2)];
+
+    static SKB_LOAD_BYTES: [MemSizePair; 1] = [MemSizePair::new(R3, R4)];
+
+    static SKB_STORE_BYTES: [MemSizePair; 1] = [MemSizePair::new(R3, R4)];
+
     static CSUM_DIFF: [MemSizePair; 2] = [
         MemSizePair::new_nullable(R1, R2),
         MemSizePair::new_nullable(R3, R4),
     ];
 
-    static SK_LOOKUP_TCP: [MemSizePair; 1] = [
-        MemSizePair::new(R2, R3)
-    ];
-    
-    static SK_LOOKUP_UDP: [MemSizePair; 1] = [
-        MemSizePair::new(R2, R3)
-    ];
+    static SK_LOOKUP_TCP: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
 
-    static GET_SOCKOPT: [MemSizePair; 1] = [
-        MemSizePair::new(R4, R5)
-    ];
+    static SK_LOOKUP_UDP: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
 
-    static GET_TASK_STACK: [MemSizePair; 1] = [
-        MemSizePair::new(R2, R3)
-    ];
+    static GET_SOCKOPT: [MemSizePair; 1] = [MemSizePair::new(R4, R5)];
 
-    static GET_STACK: [MemSizePair; 1] = [
-        MemSizePair::new(R2, R3)
-    ];
-    
+    static GET_TASK_STACK: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
+
+    static GET_STACK: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
+
+    static PERF_EVENT_OUTPUT: [MemSizePair; 1] = [MemSizePair::new(R4, R5)];
+
     static EMPTY: [MemSizePair; 0] = [];
-    
+
     match helper {
-        constants::BPF_PROBE_READ_USER |
-        constants::BPF_PROBE_READ_KERNEL => &PROBE_READ,
-        
+        constants::BPF_PROBE_READ_USER | constants::BPF_PROBE_READ_KERNEL => &PROBE_READ,
+
         constants::BPF_SKB_LOAD_BYTES => &SKB_LOAD_BYTES,
-        
+
         constants::BPF_SKB_STORE_BYTES => &SKB_STORE_BYTES,
-        
+
         constants::BPF_CSUM_DIFF => &CSUM_DIFF,
 
         constants::BPF_SK_LOOKUP_TCP => &SK_LOOKUP_TCP,
-        
+
         constants::BPF_SK_LOOKUP_UDP => &SK_LOOKUP_UDP,
 
         constants::BPF_GET_SOCKOPT => &GET_SOCKOPT,
@@ -506,7 +473,9 @@ pub fn get_mem_size_pairs(helper: u32) -> &'static [MemSizePair] {
         constants::BPF_GET_TASK_STACK => &GET_TASK_STACK,
 
         constants::BPF_GET_STACK => &GET_STACK,
-        
+
+        constants::BPF_PERF_EVENT_OUTPUT => &PERF_EVENT_OUTPUT,
+
         _ => &EMPTY,
     }
 }
@@ -517,7 +486,7 @@ pub(crate) fn helper_rejects_packet_for_arg(helper: u32, arg_index: usize) -> bo
         // bpf_skb_store_bytes: R3 (from buffer) cannot be packet pointer
         // because the helper modifies packet data, causing pointer invalidation
         constants::BPF_SKB_STORE_BYTES => arg_index == 2,
-        
+
         // Add other helpers with similar restrictions here
         _ => false,
     }
@@ -529,8 +498,8 @@ pub(crate) fn get_nullable_ptr_size_pair(helper: u32, ptr_arg_index: usize) -> O
         // bpf_csum_diff: R1=from (PTR_OR_NULL) paired with R2=from_size,
         //                R3=to (PTR_OR_NULL) paired with R4=to_size
         constants::BPF_CSUM_DIFF => match ptr_arg_index {
-            0 => Some(1),  // R1's size is R2
-            2 => Some(3),  // R3's size is R4
+            0 => Some(1), // R1's size is R2
+            2 => Some(3), // R3's size is R4
             _ => None,
         },
         // Add other helpers with PTR_OR_NULL + SIZE_OR_ZERO pairs

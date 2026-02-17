@@ -158,6 +158,32 @@ pub(crate) fn validate_single_arg(
                     }
                     _ => return true,
                 }
+            } else if helper == constants::BPF_TAIL_CALL {
+                if let RegType::PtrToMapObject { map_idx } = actual {
+                    if let Some(map_def) = env.ctx.map_defs.get(map_idx) {
+                        if map_def.type_ != constants::BPF_MAP_TYPE_PROG_ARRAY {
+                            env.fail(VerificationError::InvalidArgType { pc, reg });
+                            error!(
+                                "[Verifier] pc {}: bpf_tail_call requires PROG_ARRAY map, got type {}",
+                                pc, map_def.type_
+                            );
+                            return false;
+                        }
+                    }
+                }
+            } else if helper == constants::BPF_PERF_EVENT_OUTPUT {
+                if let RegType::PtrToMapObject { map_idx } = actual {
+                    if let Some(map_def) = env.ctx.map_defs.get(map_idx) {
+                        if map_def.type_ != constants::BPF_MAP_TYPE_PERF_EVENT_ARRAY {
+                            env.fail(VerificationError::InvalidArgType { pc, reg });
+                            error!(
+                                "[Verifier] pc {}: bpf_perf_event_output requires PERF_EVENT_ARRAY map, got type {}",
+                                pc, map_def.type_
+                            );
+                            return false;
+                        }
+                    }
+                }
             }
             true
         }
