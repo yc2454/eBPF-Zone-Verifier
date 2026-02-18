@@ -6,7 +6,7 @@ use crate::analysis::machine::env::VerificationError;
 use crate::analysis::machine::reg::Reg;
 use crate::ast::ProgramKind;
 use crate::common::config::VerifierConfig;
-use crate::common::utils::{load_program_from_elf, program_kind_for_object};
+use crate::common::utils::{try_load_program_from_elf, program_kind_for_object};
 use crate::parsing::btf::{self, BtfContext};
 use crate::parsing::elf;
 use crate::parsing::elf::{
@@ -94,8 +94,11 @@ impl Analyzer {
         // Load relocations specific to this section
         let pc_to_reloc = load_relocations(&self.path, &self.maps, section).unwrap_or_default();
 
-        // Load program with relocations
-        let prog = load_program_from_elf(&self.path, section, Some(&pc_to_reloc));
+        // Load program with relocations (using try_ variant to avoid exit on error)
+        let prog = match try_load_program_from_elf(&self.path, section, Some(&pc_to_reloc)) {
+            Ok(p) => p,
+            Err(e) => return AnalysisResult::LoadError(e),
+        };
         if prog.instrs.is_empty() {
             return AnalysisResult::LoadError("Empty program or section not found".to_string());
         }
@@ -159,8 +162,11 @@ impl Analyzer {
                 continue;
             }
 
-            // Skip loading if program is empty (optimization)
-            let prog_check = load_program_from_elf(&self.path, &section, None);
+            // Skip loading if program is empty or fails to load (optimization)
+            let prog_check = match try_load_program_from_elf(&self.path, &section, None) {
+                Ok(p) => p,
+                Err(_) => continue, // Skip sections that fail to load
+            };
             if prog_check.instrs.is_empty() {
                 continue;
             }

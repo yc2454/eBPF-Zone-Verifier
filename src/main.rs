@@ -15,6 +15,7 @@ use crate::testing::benchmark::analyze_benchmark;
 use crate::testing::logging;
 use crate::testing::runner::{AnalysisResult, Analyzer, find_section_for_func, is_code_section};
 use crate::testing::selftest::{selftest_list, selftest_run, selftest_single, selftest_suite};
+use crate::testing::prevail::{prevail_list, prevail_run, prevail_single};
 use std::path::Path;
 
 fn usage() {
@@ -28,6 +29,9 @@ fn usage() {
     eprintln!("  cargo run -- [flags] selftest-single <json_file> <test_name>");
     eprintln!("  cargo run -- [flags] selftest-run    <json_file>");
     eprintln!("  cargo run -- [flags] selftest-suite  <json_dir>");
+    eprintln!("  cargo run -- [flags] prevail-list    <catalogue.json>");
+    eprintln!("  cargo run -- [flags] prevail-run     <catalogue.json>");
+    eprintln!("  cargo run -- [flags] prevail-single  <catalogue.json> <test_name>");
     eprintln!("");
     VerifierConfig::print_help();
     eprintln!("");
@@ -344,6 +348,49 @@ fn main() {
             let test_name = &remaining[2];
 
             selftest_single(json_path, test_name, &config);
+        }
+
+        // ============================================================
+        // PREVAIL: List all tests in catalogue
+        // ============================================================
+        "prevail-list" => {
+            if remaining.len() < 2 {
+                eprintln!("Error: Missing catalogue path");
+                usage();
+                return;
+            }
+            let catalogue_path = &remaining[1];
+            prevail_list(catalogue_path);
+        }
+
+        // ============================================================
+        // PREVAIL: Run all tests in catalogue
+        // ============================================================
+        "prevail-run" => {
+            if remaining.len() < 2 {
+                eprintln!("Error: Missing catalogue path");
+                usage();
+                return;
+            }
+            let catalogue_path = &remaining[1];
+            let output_dir = Some("./results/prevail");
+
+            prevail_run(catalogue_path, &config, output_dir);
+        }
+
+        // ============================================================
+        // PREVAIL: Run a single test by name
+        // ============================================================
+        "prevail-single" => {
+            if remaining.len() < 3 {
+                eprintln!("Error: Missing arguments");
+                eprintln!("Usage: prevail-single <catalogue.json> <test_name>");
+                return;
+            }
+            let catalogue_path = &remaining[1];
+            let test_name = &remaining[2];
+
+            prevail_single(catalogue_path, test_name, &config);
         }
 
         _ => {

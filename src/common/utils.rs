@@ -40,16 +40,14 @@ pub fn clamped_add(a: i64, b: i64) -> i64 {
 
 /// Load a Program from an ELF section by:
 ///   ELF -> bytes -> RawBpfInsn -> Program (via bpf_to_ast).
-pub fn load_program_from_elf(
+/// Returns Ok(Program) on success, Err(String) on failure.
+pub fn try_load_program_from_elf(
     path: &str,
     section: &str,
     pc_to_reloc: Option<&HashMap<usize, crate::parsing::elf::RelocInfo>>,
-) -> Program {
+) -> Result<Program, String> {
     let bytes = crate::parsing::elf::prog::load_bpf_insn_stream_section(path, section)
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to load ELF section '{}': {e:?}", section);
-            std::process::exit(1);
-        });
+        .map_err(|e| format!("Failed to load ELF section '{}': {:?}", section, e))?;
 
     let mut raw_insns = crate::parsing::bpf_insn::decode_insns(&bytes);
 
@@ -66,16 +64,12 @@ pub fn load_program_from_elf(
         raw_insns.len()
     );
 
-    match bpf_to_ast::lower_raw_to_program(&raw_insns) {
-        Ok(prog) => prog,
-        Err(e) => {
-            eprintln!(
-                "Lowering ELF → AST failed at pc {} (opcode 0x{:02x}): {}",
-                e.pc, e.code, e.msg
-            );
-            std::process::exit(1);
-        }
-    }
+    bpf_to_ast::lower_raw_to_program(&raw_insns).map_err(|e| {
+        format!(
+            "Lowering ELF → AST failed at pc {} (opcode 0x{:02x}): {}",
+            e.pc, e.code, e.msg
+        )
+    })
 }
 
 pub const OBJ_PROG_TYPE_JSON: &str = "./obj_prog_type.json";

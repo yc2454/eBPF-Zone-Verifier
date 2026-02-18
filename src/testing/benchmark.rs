@@ -247,7 +247,7 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
     let duration = start_time.elapsed();
 
     // Construct dynamic filename
-    let mut base_name = String::from("benchmark");
+    let mut base_name = String::from("bcf-benchmark");
     if config.bench_input_file.is_some() {
         base_name.push_str("_custom_list");
     }
