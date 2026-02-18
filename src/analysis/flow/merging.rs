@@ -1,20 +1,33 @@
 // src/analysis/merging.rs
+//
+// Handles type conflict resolution at control flow merge points.
+//
+// When different paths reach the same PC with different pointer types for
+// the same register, we use "deferred checking":
+//   1. Instead of failing immediately, demote conflicting registers to ScalarValue
+//   2. Continue exploration
+//   3. If the register is later used as a pointer (load/store base), validation fails
+//   4. If it's just returned or used arithmetically, it's fine
+//
+// This matches kernel verifier behavior more closely and handles cases like
+// function return values that have different types on different paths but
+// are never used as pointers after the merge.
 
 use std::collections::HashSet;
 
-use crate::analysis::machine::env::{VerificationError, VerifierEnv};
-use crate::analysis::machine::reg_types::{RegType, TypeState, type_family};
+use crate::analysis::machine::env::VerifierEnv;
+use crate::analysis::machine::reg_types::{RegType, type_family};
 use crate::analysis::machine::state::State;
-use crate::analysis::machine::reg::Reg;
 
-/// Check if `state` is type-compatible with all previously explored states at the same PC.
-/// Returns Err if types conflict (different pointer kinds at join point).
-pub fn check_compatibility(
+/// Resolve type conflicts at a merge point by demoting conflicting registers to ScalarValue.
+/// This implements "deferred checking" - we don't fail here, but the demoted register
+/// will cause failures if later used as a pointer.
+pub fn resolve_type_conflicts(
     env: &VerifierEnv,
-    state: &State,
-) -> Result<(), VerificationError> {
+    state: &mut State,
+) {
     let pc = state.pc;
-    
+
     let live_regs = env.insn_aux_data
         .get(pc)
         .map(|aux| &aux.live_regs)
@@ -23,14 +36,33 @@ pub fn check_compatibility(
 
     if let Some(prev_states) = env.explored_states.get(&pc) {
         for prev in prev_states {
-            if let Some((reg, old_ty, new_ty)) = 
-                find_type_conflict(&prev.types, &state.types, prev, state, &live_regs) {
-                return Err(VerificationError::RegisterTypeConflict { pc, reg, old: old_ty, new: new_ty });
+            // Find conflicting registers and demote them
+            for &r in &live_regs {
+                let old_ty = prev.types.get(r);
+                let new_ty = state.types.get(r);
+                if !types_compatible(&old_ty, &new_ty) {
+                    // Demote to ScalarValue - this will cause failure if used as pointer
+                    state.types.set(r, RegType::ScalarValue);
+                }
+            }
+
+            // Also check stack slots and demote conflicting ones
+            for (prev_frame, cur_frame) in prev.frames.iter().zip(state.frames.iter_mut()) {
+                let live_offsets: HashSet<i16> = prev_frame.stack.live_slot_offsets(&live_regs).into_iter()
+                    .chain(cur_frame.stack.live_slot_offsets(&live_regs))
+                    .collect();
+
+                for offset in live_offsets {
+                    let old_ty = prev_frame.stack.get_slot_type(offset);
+                    let new_ty = cur_frame.stack.get_slot_type(offset);
+                    if !types_compatible(&old_ty, &new_ty) {
+                        // Demote stack slot to ScalarValue
+                        cur_frame.stack.demote_slot_to_scalar(offset);
+                    }
+                }
             }
         }
     }
-
-    Ok(())
 }
 
 /// Record a state as explored at its PC.
@@ -39,51 +71,6 @@ pub fn record_state(env: &mut VerifierEnv, state: State) {
         .entry(state.pc)
         .or_default()
         .push(state);
-}
-
-/// Find the first type conflict between two type states.
-/// Returns Some((reg, old_type, new_type)) if conflict found.
-fn find_type_conflict(
-    old: &TypeState,
-    new: &TypeState,
-    old_state: &State,
-    new_state: &State,
-    live_regs: &HashSet<Reg>,
-) -> Option<(Reg, RegType, RegType)> {
-    // Existing register check
-    for &r in live_regs {
-        let old_ty = old.get(r);
-        let new_ty = new.get(r);
-        if !types_compatible(&old_ty, &new_ty) {
-            return Some((r, old_ty, new_ty));
-        }
-    }
-
-    // Check stack slots across all frames
-    for (_frame_idx, (old_frame, new_frame)) in old_state.frames.iter()
-        .zip(new_state.frames.iter())
-        .enumerate()
-    {
-        // println!("Live regs: {:?}", live_regs);
-        let live_offsets: HashSet<i16> = old_frame.stack.live_slot_offsets(live_regs).into_iter()
-            .chain(new_frame.stack.live_slot_offsets(live_regs))
-            .collect();
-
-        for offset in live_offsets {
-            let old_ty = old_frame.stack.get_slot_type(offset);
-            let new_ty = new_frame.stack.get_slot_type(offset);
-            if !types_compatible(&old_ty, &new_ty) {
-                // Can recover the actual reg from either side
-                let reg = old_frame.stack.get_slot(offset)
-                    .or_else(|| new_frame.stack.get_slot(offset))
-                    .and_then(|s| s.source_reg)
-                    .unwrap_or(Reg::R0);
-                return Some((reg, old_ty, new_ty));
-            }
-        }
-    }
-
-    None
 }
 
 /// Check if two types are compatible at a join point.

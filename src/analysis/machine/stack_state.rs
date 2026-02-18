@@ -114,6 +114,14 @@ impl StackState {
             });
     }
 
+    /// Demote a stack slot's type to ScalarValue while preserving bounds/tnum.
+    /// Used at merge points where different paths have incompatible pointer types.
+    pub fn demote_slot_to_scalar(&mut self, offset: i16) {
+        if let Some(spilled) = self.slots.get_mut(&offset) {
+            spilled.reg_type = RegType::ScalarValue;
+        }
+    }
+
     pub fn live_slot_offsets(&self, live_regs: &HashSet<Reg>) -> Vec<i16> {
         self.slots.iter()
             .filter(|(_, spilled)| {
