@@ -176,7 +176,8 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
         | constants::BPF_SKB_LOAD_BYTES
         | constants::BPF_XDP_ADJUST_HEAD
         | constants::BPF_L3_CSUM_REPLACE
-        | constants::BPF_L4_CSUM_REPLACE => {
+        | constants::BPF_L4_CSUM_REPLACE
+        | constants::BPF_GET_CURRENT_COMM => {
             // Returns 0 on success, or -errno
             assume_le_imm(&mut state.dbm, Reg::R0, 0);
             assume_ge_imm(&mut state.dbm, Reg::R0, -constants::MAX_ERRNO);

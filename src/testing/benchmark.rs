@@ -247,7 +247,7 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
     let duration = start_time.elapsed();
 
     // Construct dynamic filename
-    let mut base_name = String::from("bcf-benchmark");
+    let mut base_name = String::from("benchmark");
     if config.bench_input_file.is_some() {
         base_name.push_str("_custom_list");
     }
@@ -269,7 +269,7 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
     base_name.push_str(&format!("_{}", timestamp));
 
     // Ensure 'results' directory exists
-    let results_dir = "results";
+    let results_dir = "results/bcf";
     if let Err(e) = fs::create_dir_all(results_dir) {
         eprintln!("Error: Could not create 'results' directory: {}", e);
         return;

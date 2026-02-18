@@ -26,6 +26,7 @@ pub const BPF_L3_CSUM_REPLACE: u32 = 10;
 pub const BPF_L4_CSUM_REPLACE: u32 = 11;
 pub const BPF_TAIL_CALL: u32 = 12;
 pub const BPF_CLONE_REDIRECT: u32 = 13;
+pub const BPF_GET_CURRENT_COMM: u32 = 16;
 pub const BPF_GET_CGROUP_CLASS_ID: u32 = 17;
 pub const BPF_REDIRECT: u32 = 23;
 pub const BPF_PERF_EVENT_OUTPUT: u32 = 25;
