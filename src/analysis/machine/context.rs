@@ -1,12 +1,15 @@
 // src/analysis/context.rs
-use crate::parsing::elf_loader::{BpfMapDef, RelocInfo};
-use std::collections::HashMap;
+use crate::ast::{AttachKind, ProgramKind};
 use crate::parsing::btf::BtfContext;
-use crate::ast::{ProgramKind, AttachKind};
+use crate::parsing::elf::{BpfMapDef, RelocInfo};
+use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
-pub enum VerificationMode {Priviledged, Unprivileged}
+pub enum VerificationMode {
+    Priviledged,
+    Unprivileged,
+}
 
 #[derive(Clone, Debug)]
 pub struct ExecContext {
@@ -17,7 +20,7 @@ pub struct ExecContext {
     pub attach_kind: AttachKind,
     pub flags: u32,
     pub mode: VerificationMode,
-    pub kfunc: Option<String>
+    pub kfunc: Option<String>,
 }
 
 pub fn default_exec_ctx() -> ExecContext {
@@ -29,7 +32,7 @@ pub fn default_exec_ctx() -> ExecContext {
         attach_kind: AttachKind::Unknown,
         flags: 0,
         mode: VerificationMode::Priviledged,
-        kfunc: None
+        kfunc: None,
     }
 }
 

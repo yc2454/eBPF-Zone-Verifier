@@ -193,11 +193,6 @@ fn state_subsumed_by(
 ) -> bool {
     // Check current frame
     if config.skip_dbm_check {
-        println!(
-            "Pruning check (skip DBM): type: {}, Stack: {}",
-            types_subsumed_by(&cur.types, &old.types, live_regs),
-            stack_subsumed_by(cur, old)
-        );
         if !(types_subsumed_by(&cur.types, &old.types, live_regs)
             && stack_subsumed_by(cur, old)
             && tnum_subsumed_by(cur, old, live_regs))
@@ -205,11 +200,6 @@ fn state_subsumed_by(
             return false;
         }
     } else {
-        println!(
-            "Pruning check: type: {}, Stack: {}",
-            types_subsumed_by(&cur.types, &old.types, live_regs),
-            stack_subsumed_by(cur, old)
-        );
         if !(types_subsumed_by(&cur.types, &old.types, live_regs)
             && dbm_subsumed_by(&cur.dbm, &old.dbm, live_regs)
             && stack_subsumed_by(cur, old)

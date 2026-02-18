@@ -1,20 +1,15 @@
 // src/analysis/transfer/memory/map.rs
 
-use crate::analysis::machine::env::{VerifierEnv, VerificationError};
-use crate::analysis::machine::state::State;
-use crate::ast::{MapLoadKind};
+use crate::analysis::machine::env::{VerificationError, VerifierEnv};
 use crate::analysis::machine::reg::Reg;
-use crate::zone::domain::{forget, get_interval};
-use crate::parsing::elf_loader::BpfMapDef;
+use crate::analysis::machine::state::State;
+use crate::ast::MapLoadKind;
 use crate::common::constants;
+use crate::parsing::elf::BpfMapDef;
+use crate::zone::domain::{forget, get_interval};
 use log::error;
 
-pub fn check_map_rw(
-    env: &mut VerifierEnv,
-    map_idx: usize,
-    pc: usize,
-    is_write: bool
-) {
+pub fn check_map_rw(env: &mut VerifierEnv, map_idx: usize, pc: usize, is_write: bool) {
     let flag_to_check = if is_write {
         constants::BPF_F_RDONLY_PROG
     } else {
@@ -44,14 +39,14 @@ pub fn check_btf_fields_access(
     let btf_fields = env.ctx.btf.find_special_fields(btf_id);
     for field in btf_fields {
         let field_end = field.offset + field.size;
-        
+
         if final_offset < field_end.into() && access_end > field.offset.into() {
             error!("Cannot access BTF field");
-            env.fail(VerificationError::UnsafeMapLoad { 
-                pc, 
-                off: final_offset, 
+            env.fail(VerificationError::UnsafeMapLoad {
+                pc,
+                off: final_offset,
                 size,
-                limit: map_limit
+                limit: map_limit,
             });
         }
     }
@@ -76,45 +71,65 @@ pub fn check_map_access(
             let access_end = max_val + (insn_off as i64) + (size as i64);
 
             if let Some(btf_id) = map_def.btf_val_type_id {
-                check_btf_fields_access(env, pc, insn_off.into(), access_end, size, map_limit, btf_id);
+                check_btf_fields_access(
+                    env,
+                    pc,
+                    insn_off.into(),
+                    access_end,
+                    size,
+                    map_limit,
+                    btf_id,
+                );
                 return;
             }
 
             if access_start >= 0 && access_end <= map_limit {
             } else {
-                error!("Unsafe variable map access at pc {}: range [{}, {}], limit {}", 
-                    pc, access_start, access_end, map_limit);
-                env.fail(VerificationError::UnsafeMapLoad { 
-                    pc, 
-                    off: access_start, 
+                error!(
+                    "Unsafe variable map access at pc {}: range [{}, {}], limit {}",
+                    pc, access_start, access_end, map_limit
+                );
+                env.fail(VerificationError::UnsafeMapLoad {
+                    pc,
+                    off: access_start,
                     size,
-                    limit: map_limit 
+                    limit: map_limit,
                 });
             }
-        },
+        }
         _ => {
             if let Some(fixed_off) = map_off_opt {
                 let final_offset = fixed_off + (insn_off as i64);
                 let access_end = final_offset + size;
 
                 if let Some(btf_id) = map_def.btf_val_type_id {
-                    check_btf_fields_access(env, pc, final_offset, access_end, size, map_limit, btf_id);
+                    check_btf_fields_access(
+                        env,
+                        pc,
+                        final_offset,
+                        access_end,
+                        size,
+                        map_limit,
+                        btf_id,
+                    );
                     return;
                 }
 
                 if final_offset >= 0 && access_end <= map_limit {
                 } else {
-                    error!("Unsafe map access at pc {}: off {} limit {}", pc, final_offset, map_limit);
-                    env.fail(VerificationError::UnsafeMapAccess { 
-                        pc, 
-                        size,
-                        map_idx
-                    });
+                    error!(
+                        "Unsafe map access at pc {}: off {} limit {}",
+                        pc, final_offset, map_limit
+                    );
+                    env.fail(VerificationError::UnsafeMapAccess { pc, size, map_idx });
                 }
             } else {
                 error!("Unbounded variable map access at pc {}", pc);
-                env.fail(VerificationError::UnsafeMapLoad { 
-                    pc, off: insn_off.into(), size, limit: map_limit 
+                env.fail(VerificationError::UnsafeMapLoad {
+                    pc,
+                    off: insn_off.into(),
+                    size,
+                    limit: map_limit,
                 });
             }
         }
@@ -126,16 +141,21 @@ pub(crate) fn transfer_map_load(
     mut state: State,
     dst: Reg,
     kind: MapLoadKind,
-    _map_fd: i32
+    _map_fd: i32,
 ) -> Vec<State> {
     let reloc_info = env.ctx.pc_to_reloc.get(&state.pc);
     if let Some(reloc) = reloc_info {
-        crate::analysis::transfer::types::update_map_load_types(&mut state.types, kind, reloc.map_idx as usize, dst);
+        crate::analysis::transfer::types::update_map_load_types(
+            &mut state.types,
+            kind,
+            reloc.map_idx as usize,
+            dst,
+        );
         forget(&mut state.dbm, dst);
         state.pc += 2;
         return vec![state];
     } else {
         env.fail(VerificationError::RelocationInfoMissing { pc: state.pc });
-        return vec![]
+        return vec![];
     }
 }

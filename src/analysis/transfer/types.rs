@@ -417,6 +417,7 @@ pub(crate) fn helper_invalidates_packets(helper: u32) -> bool {
             | constants::BPF_SKB_CHANGE_TAIL
             | constants::BPF_SKB_CHANGE_PROTO
             | constants::BPF_SKB_ADJUST_ROOM
+            | constants::BPF_SKB_STORE_BYTES
     )
 }
 
@@ -427,6 +428,9 @@ pub(crate) fn update_call_types(
     state: &mut State,
     helper: u32,
 ) {
+    // Default to scalar value
+    state.types.set(Reg::R0, RegType::ScalarValue);
+
     // Release socket reference
     if helper == constants::BPF_SK_RELEASE {
         if let Some(ref_id) = state.types.get(Reg::R1).get_ref_id() {
@@ -548,11 +552,20 @@ pub(crate) fn update_call_types(
 
         constants::BPF_SKB_LOAD_BYTES => {
             let mem_ptr_ty = in_types.get(Reg::R3);
-            if matches!(mem_ptr_ty, RegType::PtrToStack { .. }) {
+            if let RegType::PtrToStack { frame_level } = mem_ptr_ty {
                 if let Some(off) = get_distance_fixed(&state.dbm, Reg::R3, Reg::R10) {
-                    let slot = off as i16;
-                    state.types.set(Reg::R3, RegType::ScalarValue);
-                    state.spill(Reg::R3, slot, MemSize::U64);
+                    let (_, hi) = get_interval_i64(&state.dbm, Reg::R4);
+                    let len = if hi <= 0xFFFF { hi as i16 } else { 0 };
+                    if len > 0 {
+                        // Mark the stack range as initialized scalars
+                        for i in 0..len {
+                            state.stack_at_mut(frame_level).set_slot_type(
+                                (off + i as i64) as i16,
+                                RegType::ScalarValue,
+                                None,
+                            );
+                        }
+                    }
                 }
             }
         }

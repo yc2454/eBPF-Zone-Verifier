@@ -1,26 +1,26 @@
 // src/analysis/transfer/call/transfer.rs
 
-use crate::analysis::machine::env::{VerifierEnv, VerificationError};
-use crate::analysis::machine::state::State;
-use crate::analysis::machine::reg_types::{RegType};
-use crate::analysis::transfer::types::{update_call_rel_types, update_call_types, helper_invalidates_packets};
-use crate::ast::{ProgramKind};
+use crate::analysis::machine::env::{VerificationError, VerifierEnv};
 use crate::analysis::machine::reg::Reg;
-use crate::zone::domain::{self, assume_ge_imm, assume_le_imm, forget, get_interval_i64, proven_zero};
-use crate::zone::tnum::{Tnum};
-use crate::parsing::btf::SpecialFieldKind;
+use crate::analysis::machine::reg_types::RegType;
+use crate::analysis::machine::state::State;
+use crate::analysis::transfer::types::{
+    helper_invalidates_packets, update_call_rel_types, update_call_types,
+};
+use crate::ast::ProgramKind;
 use crate::common::constants;
+use crate::parsing::btf::SpecialFieldKind;
+use crate::zone::domain::{
+    self, assume_ge_imm, assume_le_imm, forget, get_interval_i64, proven_zero,
+};
+use crate::zone::tnum::Tnum;
 use log::{error, info};
 
-use super::checks::{validate_helper_args, check_mem_size_pairs};
-use super::signatures::{get_mem_size_pairs};
+use super::checks::{check_mem_size_pairs, validate_helper_args};
+use super::signatures::get_mem_size_pairs;
 
 /// Transfer function for helper Call instructions.
-pub(crate) fn transfer_call(
-    env: &mut VerifierEnv,
-    mut state: State,
-    helper: u32,
-) -> Vec<State> {
+pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32) -> Vec<State> {
     let in_types = state.types.clone();
     let pc = state.pc;
 
@@ -45,7 +45,7 @@ pub(crate) fn transfer_call(
     // ========================================================================
     println!("[Verifier] pc {}: validating helper arguments", pc);
     validate_helper_args(env, &state, helper, &in_types, pc);
-    
+
     // ========================================================================
     // SPECIAL CASES
     // ========================================================================
@@ -58,11 +58,11 @@ pub(crate) fn transfer_call(
             return vec![];
         }
         update_call_types(env, &in_types, &mut state, helper);
-        
+
         for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
             forget(&mut state.dbm, r);
         }
-        
+
         state.pc += 1;
         return vec![state];
     }
@@ -85,13 +85,21 @@ pub(crate) fn transfer_call(
     // bpf_d_path is restrictive
     if helper == constants::BPF_D_PATH {
         if !matches!(env.ctx.prog_kind, ProgramKind::Tracing | ProgramKind::Lsm) {
-            env.fail(VerificationError::HelperNotAllowedForProgram { pc, helper, kind: env.ctx.prog_kind });
+            env.fail(VerificationError::HelperNotAllowedForProgram {
+                pc,
+                helper,
+                kind: env.ctx.prog_kind,
+            });
             return vec![];
         } else {
             if matches!(env.ctx.prog_kind, ProgramKind::Tracing)
                 && matches!(env.ctx.kfunc.as_deref(), Some("d_path"))
             {
-                env.fail(VerificationError::HelperNotAllowedForProgram { pc, helper, kind: env.ctx.prog_kind });
+                env.fail(VerificationError::HelperNotAllowedForProgram {
+                    pc,
+                    helper,
+                    kind: env.ctx.prog_kind,
+                });
                 return vec![];
             }
         }
@@ -112,7 +120,7 @@ pub(crate) fn transfer_call(
             return vec![];
         }
     }
-    
+
     // ========================================================================
     // Normal helper handling
     // ========================================================================
@@ -122,20 +130,19 @@ pub(crate) fn transfer_call(
 
     // 2. Apply return value bounds for specific helpers
     apply_return_bounds(&mut state, helper);
-    
-    // 3. Update DBM - forget caller-saved registers
+
+    // 3. Update DBM - forget caller-saved registers and reset Tnums
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
         forget(&mut state.dbm, r);
+        state.set_tnum(r, Tnum::unknown());
     }
-    
+
     // 4. Forget packet pointer DBM entries if they were invalidated
     if helper_invalidates_packets(helper) {
         for r in Reg::ALL {
             if r != Reg::R10 {
                 match in_types.get(r) {
-                    RegType::PtrToPacket
-                    | RegType::PtrToPacketEnd
-                    | RegType::PtrToPacketMeta => {
+                    RegType::PtrToPacket | RegType::PtrToPacketEnd | RegType::PtrToPacketMeta => {
                         forget(&mut state.dbm, r);
                     }
                     _ => {}
@@ -144,7 +151,7 @@ pub(crate) fn transfer_call(
         }
         domain::reset_packet_anchors(&mut state.dbm);
     }
-    
+
     // 5. Advance PC and return
     state.pc += 1;
     vec![state]
@@ -153,6 +160,7 @@ pub(crate) fn transfer_call(
 /// Apply return value bounds based on helper semantics.
 fn apply_return_bounds(state: &mut State, helper: u32) {
     forget(&mut state.dbm, Reg::R0);
+    state.set_tnum(Reg::R0, Tnum::unknown());
     match helper {
         constants::BPF_REDIRECT => {
             assume_ge_imm(&mut state.dbm, Reg::R0, 0);
@@ -162,14 +170,28 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
             assume_ge_imm(&mut state.dbm, Reg::R0, 0);
             assume_le_imm(&mut state.dbm, Reg::R0, 8);
         }
-        constants::BPF_MAP_UPDATE_ELEM | 
-        constants::BPF_MAP_DELETE_ELEM |
-        constants::BPF_SKB_STORE_BYTES |
-        constants::BPF_XDP_ADJUST_HEAD => {
-            // Success/error - no specific bounds added for now
+        constants::BPF_MAP_UPDATE_ELEM
+        | constants::BPF_MAP_DELETE_ELEM
+        | constants::BPF_SKB_STORE_BYTES
+        | constants::BPF_SKB_LOAD_BYTES
+        | constants::BPF_XDP_ADJUST_HEAD
+        | constants::BPF_L3_CSUM_REPLACE
+        | constants::BPF_L4_CSUM_REPLACE => {
+            // Returns 0 on success, or -errno
+            assume_le_imm(&mut state.dbm, Reg::R0, 0);
+            assume_ge_imm(&mut state.dbm, Reg::R0, -constants::MAX_ERRNO);
         }
-        constants::BPF_GET_PRANDOM_U32 | constants::BPF_GET_CGROUP_CLASS_ID => {
+        constants::BPF_GET_PRANDOM_U32
+        | constants::BPF_GET_CGROUP_CLASS_ID
+        | constants::BPF_GET_HASH_RECALC => {
+            // Returns a positive u32
             assume_ge_imm(&mut state.dbm, Reg::R0, 0);
+            assume_le_imm(&mut state.dbm, Reg::R0, 0xFFFF_FFFF);
+            state.set_tnum(Reg::R0, Tnum::u32_unknown());
+        }
+        constants::BPF_CSUM_DIFF => {
+            // Returns a positive u32 (checksum) or negative error
+            assume_ge_imm(&mut state.dbm, Reg::R0, -constants::MAX_ERRNO);
             assume_le_imm(&mut state.dbm, Reg::R0, 0xFFFF_FFFF);
             state.set_tnum(Reg::R0, Tnum::u32_unknown());
         }
@@ -206,7 +228,11 @@ pub(crate) fn transfer_call_rel(
     target: usize,
 ) -> Vec<State> {
     let pc = state.pc;
-    info!("[Verifier] pc {}: current call depth = {}", pc, state.num_frames());
+    info!(
+        "[Verifier] pc {}: current call depth = {}",
+        pc,
+        state.num_frames()
+    );
     if state.num_frames() >= 8 {
         env.fail(VerificationError::MaxCallDepthExceeded { pc });
         return vec![];
@@ -219,58 +245,56 @@ pub(crate) fn transfer_call_rel(
     vec![state]
 }
 
-fn check_and_handle_spin_lock(
-    env: &mut VerifierEnv,
-    state: &mut State,
-    helper: u32
-) -> bool {
+fn check_and_handle_spin_lock(env: &mut VerifierEnv, state: &mut State, helper: u32) -> bool {
     let pc = state.pc;
     match state.types.get(Reg::R1) {
-        RegType::PtrToMapValue { offset: _, map_idx, id } => {
-            match env.ctx.map_defs.get(map_idx) {
-                Some(map_def) => {
-                    if let Some(val_type_id) = map_def.btf_val_type_id {
-                        if helper == constants::BPF_SPIN_LOCK {
-                            if state.has_active_lock() {
-                                env.fail(VerificationError::LockAlreadyHeld { pc });
-                                return false;
-                            }
-                            let special_fields = env.ctx.btf.find_special_fields(val_type_id);
-                            let lock_offset_op = 
-                                special_fields.iter().find(
-                                    |f| f.kind == SpecialFieldKind::SpinLock)
-                                    .map(|f| f.offset);
-                            if lock_offset_op.is_none() {
-                                env.fail(VerificationError::InvalidBtfType);
-                                return false;
-                            } else {
-                                let lock_offset = lock_offset_op.unwrap();
-                                state.acquire_lock(id, lock_offset);
-                            }
+        RegType::PtrToMapValue {
+            offset: _,
+            map_idx,
+            id,
+        } => match env.ctx.map_defs.get(map_idx) {
+            Some(map_def) => {
+                if let Some(val_type_id) = map_def.btf_val_type_id {
+                    if helper == constants::BPF_SPIN_LOCK {
+                        if state.has_active_lock() {
+                            env.fail(VerificationError::LockAlreadyHeld { pc });
+                            return false;
+                        }
+                        let special_fields = env.ctx.btf.find_special_fields(val_type_id);
+                        let lock_offset_op = special_fields
+                            .iter()
+                            .find(|f| f.kind == SpecialFieldKind::SpinLock)
+                            .map(|f| f.offset);
+                        if lock_offset_op.is_none() {
+                            env.fail(VerificationError::InvalidBtfType);
+                            return false;
                         } else {
-                            if !state.has_active_lock() {
-                                env.fail(VerificationError::LockNotHeld { pc });
-                                return false;
-                            } else {
-                                let lock = state.get_active_lock().unwrap();
-                                if lock.ptr_id != id {
-                                    env.fail(VerificationError::LockNotHeld { pc });
-                                    return false;
-                                }
-                            }
-                            state.release_lock();
+                            let lock_offset = lock_offset_op.unwrap();
+                            state.acquire_lock(id, lock_offset);
                         }
                     } else {
-                        env.fail(VerificationError::InvalidBtfType);
-                        return false;
+                        if !state.has_active_lock() {
+                            env.fail(VerificationError::LockNotHeld { pc });
+                            return false;
+                        } else {
+                            let lock = state.get_active_lock().unwrap();
+                            if lock.ptr_id != id {
+                                env.fail(VerificationError::LockNotHeld { pc });
+                                return false;
+                            }
+                        }
+                        state.release_lock();
                     }
-                }
-                _ => {
-                    env.fail(VerificationError::MapNotFound { pc, map_idx });
+                } else {
+                    env.fail(VerificationError::InvalidBtfType);
                     return false;
                 }
             }
-        }
+            _ => {
+                env.fail(VerificationError::MapNotFound { pc, map_idx });
+                return false;
+            }
+        },
         _ => {
             env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
             return false;

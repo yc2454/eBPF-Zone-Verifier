@@ -16,16 +16,16 @@ use log::info;
 use serde::{Deserialize, Serialize};
 
 use crate::analysis;
-use crate::analysis::machine::context::{default_exec_ctx};
-use crate::common::constants;
-use crate::ast::{AttachKind, ProgramKind};
-use crate::parsing::bpf_to_ast::{lower_raw_to_program, LowerErrorKind};
-use crate::parsing::btf::{BtfContext, BtfMember, BtfType};
-use crate::common::config::VerifierConfig;
-use crate::parsing::bpf_insn::RawBpfInsn;
-use crate::parsing::elf_loader::{BpfMapDef, RelocInfo};
-use crate::zone::dbm::Dbm;
+use crate::analysis::machine::context::default_exec_ctx;
 use crate::analysis::machine::reg::Reg;
+use crate::ast::{AttachKind, ProgramKind};
+use crate::common::config::VerifierConfig;
+use crate::common::constants;
+use crate::parsing::bpf_insn::RawBpfInsn;
+use crate::parsing::bpf_to_ast::{LowerErrorKind, lower_raw_to_program};
+use crate::parsing::btf::{BtfContext, BtfMember, BtfType};
+use crate::parsing::elf::{BpfMapDef, RelocInfo, RelocKind};
+use crate::zone::dbm::Dbm;
 use crate::zone::domain::assign_zero;
 
 // ============================================================================
@@ -82,13 +82,9 @@ pub enum TestOutcome {
     /// Expected REJECT but we ACCEPT - SOUNDNESS issue (too permissive - BAD!)
     FalseNegative,
     /// Test couldn't be run (parse error, unsupported feature, etc.)
-    Skipped {
-        reason: String,
-    },
+    Skipped { reason: String },
     /// Internal error during analysis
-    Error {
-        message: String,
-    },
+    Error { message: String },
 }
 
 impl TestOutcome {
@@ -115,8 +111,8 @@ pub struct FileResult {
     pub file: String,
     pub total: usize,
     pub passed: usize,
-    pub false_positives: usize,  // Expected ACCEPT, got REJECT (precision)
-    pub false_negatives: usize,  // Expected REJECT, got ACCEPT (SOUNDNESS!)
+    pub false_positives: usize, // Expected ACCEPT, got REJECT (precision)
+    pub false_negatives: usize, // Expected REJECT, got ACCEPT (SOUNDNESS!)
     pub skipped: usize,
     pub errors: usize,
     pub time_ms: u64,
@@ -128,8 +124,8 @@ pub struct SuiteResult {
     pub total_files: usize,
     pub total_tests: usize,
     pub passed: usize,
-    pub false_positives: usize,  // Precision issues
-    pub false_negatives: usize,  // SOUNDNESS issues
+    pub false_positives: usize, // Precision issues
+    pub false_negatives: usize, // SOUNDNESS issues
     pub skipped: usize,
     pub errors: usize,
     pub time_ms: u64,
@@ -246,18 +242,18 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
         }),
         "fixup_cgroup_storage" => Some(BpfMapDef {
-            type_: BPF_MAP_TYPE_CGROUP_STORAGE,  // 19
-            key_size: 16,  // struct bpf_cgroup_storage_key
+            type_: BPF_MAP_TYPE_CGROUP_STORAGE, // 19
+            key_size: 16,                       // struct bpf_cgroup_storage_key
             value_size: 64,
-            max_entries: 0,  // cgroup storage doesn't use max_entries
+            max_entries: 0, // cgroup storage doesn't use max_entries
             map_flags: 0,
             name: "test_cgroup_storage".to_string(),
             btf_val_type_id: None,
             initial_data: None,
         }),
         "fixup_percpu_cgroup_storage" => Some(BpfMapDef {
-            type_: BPF_MAP_TYPE_PERCPU_CGROUP_STORAGE,  // 21
-            key_size: 16,  // struct bpf_cgroup_storage_key
+            type_: BPF_MAP_TYPE_PERCPU_CGROUP_STORAGE, // 21
+            key_size: 16,                              // struct bpf_cgroup_storage_key
             value_size: 64,
             max_entries: 0,
             map_flags: 0,
@@ -266,7 +262,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
         }),
         "fixup_map_event_output" => Some(BpfMapDef {
-            type_: BPF_MAP_TYPE_PERF_EVENT_ARRAY,  // 4
+            type_: BPF_MAP_TYPE_PERF_EVENT_ARRAY, // 4
             key_size: 4,
             value_size: 4,
             max_entries: 1,
@@ -276,7 +272,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
         }),
         "fixup_map_ringbuf" => Some(BpfMapDef {
-            type_: BPF_MAP_TYPE_RINGBUF,  // 16
+            type_: BPF_MAP_TYPE_RINGBUF, // 16
             key_size: 4,
             value_size: 4,
             max_entries: 1,
@@ -286,7 +282,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
         }),
         "fixup_map_in_map" => Some(BpfMapDef {
-            type_: BPF_MAP_TYPE_ARRAY_OF_MAPS,  // 12
+            type_: BPF_MAP_TYPE_ARRAY_OF_MAPS, // 12
             key_size: 4,
             value_size: 4,
             max_entries: 1,
@@ -296,9 +292,9 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
         }),
         "fixup_map_stacktrace" => Some(BpfMapDef {
-            type_: BPF_MAP_TYPE_STACK_TRACE,  // 7
+            type_: BPF_MAP_TYPE_STACK_TRACE, // 7
             key_size: 4,
-            value_size: 1016,  // sizeof(__u64) * 127 (PERF_MAX_STACK_DEPTH)
+            value_size: 1016, // sizeof(__u64) * 127 (PERF_MAX_STACK_DEPTH)
             max_entries: 1,
             map_flags: 0,
             name: "test_stacktrace".to_string(),
@@ -306,17 +302,17 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
         }),
         "fixup_sk_storage_map" => Some(BpfMapDef {
-            type_: BPF_MAP_TYPE_SK_STORAGE,  // 24
+            type_: BPF_MAP_TYPE_SK_STORAGE, // 24
             key_size: 4,
             value_size: 8,
             max_entries: 0,
-            map_flags: 0x400,  // BPF_F_NO_PREALLOC (required for sk_storage)
+            map_flags: 0x400, // BPF_F_NO_PREALLOC (required for sk_storage)
             name: "test_sk_storage".to_string(),
             btf_val_type_id: None,
             initial_data: None,
         }),
         "fixup_map_sockmap" => Some(BpfMapDef {
-            type_: BPF_MAP_TYPE_SOCKMAP,  // 15
+            type_: BPF_MAP_TYPE_SOCKMAP, // 15
             key_size: 4,
             value_size: 4,
             max_entries: 1,
@@ -326,7 +322,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
         }),
         "fixup_map_sockhash" => Some(BpfMapDef {
-            type_: BPF_MAP_TYPE_SOCKHASH,  // 18
+            type_: BPF_MAP_TYPE_SOCKHASH, // 18
             key_size: 4,
             value_size: 4,
             max_entries: 1,
@@ -336,7 +332,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
         }),
         "fixup_map_xskmap" => Some(BpfMapDef {
-            type_: BPF_MAP_TYPE_XSKMAP,  // 17
+            type_: BPF_MAP_TYPE_XSKMAP, // 17
             key_size: 4,
             value_size: 4,
             max_entries: 1,
@@ -346,7 +342,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
         }),
         "fixup_map_reuseport_array" => Some(BpfMapDef {
-            type_: BPF_MAP_TYPE_REUSEPORT_SOCKARRAY,  // 22
+            type_: BPF_MAP_TYPE_REUSEPORT_SOCKARRAY, // 22
             key_size: 4,
             value_size: 8,
             max_entries: 1,
@@ -362,7 +358,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             max_entries: 1,
             map_flags: 0,
             name: "spin_lock_map".to_string(),
-            btf_val_type_id: Some(3),  // points to struct val
+            btf_val_type_id: Some(3), // points to struct val
             initial_data: None,
         }),
         // Add more fixup types as needed
@@ -376,45 +372,66 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
 
 pub fn create_spin_lock_btf() -> BtfContext {
     let strings = b"\0bpf_spin_lock\0val\0cnt\0l".to_vec();
-    
+
     let mut types = HashMap::new();
-    
+
     // Type 1: int
-    types.insert(1, BtfType {
-        id: 1,
-        name_off: 0,
-        info: 1 << 24,  // BTF_KIND_INT
-        size_or_type: 4,
-        members: vec![],
-    });
-    
+    types.insert(
+        1,
+        BtfType {
+            id: 1,
+            name_off: 0,
+            info: 1 << 24, // BTF_KIND_INT
+            size_or_type: 4,
+            members: vec![],
+        },
+    );
+
     // Type 2: struct bpf_spin_lock
-    types.insert(2, BtfType {
-        id: 2,
-        name_off: 1,  // "bpf_spin_lock"
-        info: (4 << 24) | 1,  // BTF_KIND_STRUCT, 1 member
-        size_or_type: 4,
-        members: vec![
-            BtfMember { name_off: 15, type_id: 1, offset: 0 },
-        ],
-    });
-    
+    types.insert(
+        2,
+        BtfType {
+            id: 2,
+            name_off: 1,         // "bpf_spin_lock"
+            info: (4 << 24) | 1, // BTF_KIND_STRUCT, 1 member
+            size_or_type: 4,
+            members: vec![BtfMember {
+                name_off: 15,
+                type_id: 1,
+                offset: 0,
+            }],
+        },
+    );
+
     // Type 3: struct val (the map value type)
-    types.insert(3, BtfType {
-        id: 3,
-        name_off: 15,  // "val"
-        info: (4 << 24) | 2,  // BTF_KIND_STRUCT, 2 members
-        size_or_type: 8,
-        members: vec![
-            BtfMember { name_off: 19, type_id: 1, offset: 0 },   // cnt @ byte 0
-            BtfMember { name_off: 23, type_id: 2, offset: 32 },  // lock @ byte 4
-        ],
-    });
-    
+    types.insert(
+        3,
+        BtfType {
+            id: 3,
+            name_off: 15,        // "val"
+            info: (4 << 24) | 2, // BTF_KIND_STRUCT, 2 members
+            size_or_type: 8,
+            members: vec![
+                BtfMember {
+                    name_off: 19,
+                    type_id: 1,
+                    offset: 0,
+                }, // cnt @ byte 0
+                BtfMember {
+                    name_off: 23,
+                    type_id: 2,
+                    offset: 32,
+                }, // lock @ byte 4
+            ],
+        },
+    );
+
     BtfContext { types, strings }
 }
 
-fn build_exec_context(test: &JsonTestCase) -> (crate::analysis::machine::context::ExecContext, bool) {
+fn build_exec_context(
+    test: &JsonTestCase,
+) -> (crate::analysis::machine::context::ExecContext, bool) {
     let mut ctx = default_exec_ctx();
     let mut has_unsupported_fixup = false;
 
@@ -432,6 +449,7 @@ fn build_exec_context(test: &JsonTestCase) -> (crate::analysis::machine::context
                         RelocInfo {
                             map_idx,
                             offset: 0,
+                            kind: RelocKind::MapPtr,
                         },
                     );
                 }
@@ -467,10 +485,12 @@ fn build_exec_context(test: &JsonTestCase) -> (crate::analysis::machine::context
         Some(constants::BPF_PROG_TYPE_CGROUP_SOCK_ADDR) => ProgramKind::CgroupSockAddr,
         Some(constants::BPF_PROG_TYPE_LSM) => ProgramKind::Lsm,
         Some(constants::BPF_PROG_TYPE_SK_LOOKUP) => ProgramKind::SkLookup,
-        Some(constants::BPF_PROG_TYPE_RAW_TRACEPOINT_WRITABLE) => ProgramKind::RawTracepointWritable,
+        Some(constants::BPF_PROG_TYPE_RAW_TRACEPOINT_WRITABLE) => {
+            ProgramKind::RawTracepointWritable
+        }
         Some(constants::BPF_PROG_TYPE_TRACING) => ProgramKind::Tracing,
         // Default fallback (usually SocketFilter is the safe default for tests)
-        _ => ProgramKind::SocketFilter, 
+        _ => ProgramKind::SocketFilter,
     };
     println!("Program Type: {:?}", ctx.prog_kind);
 
@@ -512,7 +532,7 @@ pub fn run_test(test: &JsonTestCase, config: &VerifierConfig) -> TestResult {
     let raw_insns: Vec<RawBpfInsn> = test.insns.iter().map(|j| j.into()).collect();
 
     // Lower to Program AST
-    
+
     let program = match lower_raw_to_program(&raw_insns) {
         Ok(p) => p,
         Err(e) => {
@@ -525,23 +545,37 @@ pub fn run_test(test: &JsonTestCase, config: &VerifierConfig) -> TestResult {
                     // In this case, the lowering is meant to fail, so PASS
                     if s.contains("unknown op") && matches!(e.kind, LowerErrorKind::UnknownOpcode) {
                         outcome = TestOutcome::Pass
-                    } else if (s.contains("invalid bpf_ld_imm64 insn") || 
-                                s.contains("expected continuation instruction after LDDW") || 
-                                s.contains("uses reserved fields") ||
-                                s.contains("unrecognized bpf_ld_imm64 insn")) && 
-                                matches!(e.kind, LowerErrorKind::InvalidLDIMM64) {
+                    } else if (s.contains("invalid bpf_ld_imm64 insn")
+                        || s.contains("expected continuation instruction after LDDW")
+                        || s.contains("uses reserved fields")
+                        || s.contains("unrecognized bpf_ld_imm64 insn"))
+                        && matches!(e.kind, LowerErrorKind::InvalidLDIMM64)
+                    {
                         outcome = TestOutcome::Pass
-                    } else if s.contains("invalid destination") && matches!(e.kind, LowerErrorKind::CallTargetOutOfBounds) {
+                    } else if s.contains("invalid destination")
+                        && matches!(e.kind, LowerErrorKind::CallTargetOutOfBounds)
+                    {
                         outcome = TestOutcome::Pass
-                    } else if s.contains("reserved fields") && matches!(e.kind, LowerErrorKind::CallUsedReservedFields | LowerErrorKind::InvalidSrcReg) {
+                    } else if s.contains("reserved fields")
+                        && matches!(
+                            e.kind,
+                            LowerErrorKind::CallUsedReservedFields | LowerErrorKind::InvalidSrcReg
+                        )
+                    {
                         outcome = TestOutcome::Pass
-                    } else if s.contains("jump out of range") && matches!(e.kind, LowerErrorKind::BranchTargetOutOfRange) {
+                    } else if s.contains("jump out of range")
+                        && matches!(e.kind, LowerErrorKind::BranchTargetOutOfRange)
+                    {
                         outcome = TestOutcome::Pass
-                    } else if s.contains("R15") && matches!(e.kind, LowerErrorKind::InvalidRegister) {
+                    } else if s.contains("R15") && matches!(e.kind, LowerErrorKind::InvalidRegister)
+                    {
                         outcome = TestOutcome::Pass
-                    } else if s.contains("arg#0") && matches!(e.kind, LowerErrorKind::InvalidSrcReg) {
+                    } else if s.contains("arg#0") && matches!(e.kind, LowerErrorKind::InvalidSrcReg)
+                    {
                         outcome = TestOutcome::Pass
-                    } else if s.contains("unknown opcode 00") && matches!(e.kind, LowerErrorKind::InvalidLDIMM64) {
+                    } else if s.contains("unknown opcode 00")
+                        && matches!(e.kind, LowerErrorKind::InvalidLDIMM64)
+                    {
                         outcome = TestOutcome::Pass
                     } else if matches!(e.kind, LowerErrorKind::InvalidRegister) {
                         outcome = TestOutcome::Pass
@@ -584,7 +618,11 @@ pub fn run_test(test: &JsonTestCase, config: &VerifierConfig) -> TestResult {
     let result = analysis::analyze_program(&ctx, &program, entry, config);
 
     let actual = if result.is_ok() { "ACCEPT" } else { "REJECT" };
-    let expected = if test.result == "VERBOSE_ACCEPT" { "ACCEPT" } else {&test.result};
+    let expected = if test.result == "VERBOSE_ACCEPT" {
+        "ACCEPT"
+    } else {
+        &test.result
+    };
 
     let outcome = if actual == expected {
         TestOutcome::Pass
@@ -613,11 +651,11 @@ pub fn run_test_file(path: &str, config: &VerifierConfig) -> Result<FileResult, 
     let start = Instant::now();
 
     // Load JSON
-    let content = fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read {}: {}", path, e))?;
+    let content =
+        fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {}", path, e))?;
 
-    let tests: Vec<JsonTestCase> = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse {}: {}", path, e))?;
+    let tests: Vec<JsonTestCase> =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse {}: {}", path, e))?;
 
     let mut results = Vec::new();
     let mut passed = 0;
@@ -663,8 +701,8 @@ pub fn run_test_suite(dir: &str, config: &VerifierConfig) -> Result<SuiteResult,
     let mut files = Vec::new();
 
     // Find all .json files
-    let entries = fs::read_dir(dir)
-        .map_err(|e| format!("Failed to read directory {}: {}", dir, e))?;
+    let entries =
+        fs::read_dir(dir).map_err(|e| format!("Failed to read directory {}: {}", dir, e))?;
 
     let mut json_files: Vec<_> = entries
         .filter_map(|e| e.ok())
@@ -716,8 +754,7 @@ pub fn run_test_suite(dir: &str, config: &VerifierConfig) -> Result<SuiteResult,
 // ============================================================================
 
 pub fn write_txt_report(result: &SuiteResult, path: &str) -> Result<(), String> {
-    let mut f = fs::File::create(path)
-        .map_err(|e| format!("Failed to create {}: {}", path, e))?;
+    let mut f = fs::File::create(path).map_err(|e| format!("Failed to create {}: {}", path, e))?;
 
     writeln!(f, "BPF Verifier Selftest Report").unwrap();
     writeln!(f, "============================\n").unwrap();
@@ -725,11 +762,25 @@ pub fn write_txt_report(result: &SuiteResult, path: &str) -> Result<(), String> 
     writeln!(f, "Summary:").unwrap();
     writeln!(f, "  Files:            {}", result.total_files).unwrap();
     writeln!(f, "  Tests:            {}", result.total_tests).unwrap();
-    writeln!(f, "  Passed:           {} ({:.1}%)", 
-             result.passed, 
-             100.0 * result.passed as f64 / result.total_tests.max(1) as f64).unwrap();
-    writeln!(f, "  SOUNDNESS ISSUES: {} (expected REJECT, got ACCEPT) <<<", result.false_negatives).unwrap();
-    writeln!(f, "  Precision issues: {} (expected ACCEPT, got REJECT)", result.false_positives).unwrap();
+    writeln!(
+        f,
+        "  Passed:           {} ({:.1}%)",
+        result.passed,
+        100.0 * result.passed as f64 / result.total_tests.max(1) as f64
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "  SOUNDNESS ISSUES: {} (expected REJECT, got ACCEPT) <<<",
+        result.false_negatives
+    )
+    .unwrap();
+    writeln!(
+        f,
+        "  Precision issues: {} (expected ACCEPT, got REJECT)",
+        result.false_positives
+    )
+    .unwrap();
     writeln!(f, "  Skipped:          {}", result.skipped).unwrap();
     writeln!(f, "  Errors:           {}", result.errors).unwrap();
     writeln!(f, "  Time:             {} ms\n", result.time_ms).unwrap();
@@ -745,28 +796,44 @@ pub fn write_txt_report(result: &SuiteResult, path: &str) -> Result<(), String> 
         } else {
             "IMPRECISE"
         };
-        writeln!(f, "  {:8} {} ({}/{} passed, {} soundness, {} precision) [{}ms]",
-                 status,
-                 Path::new(&file.file).file_name().unwrap().to_string_lossy(),
-                 file.passed,
-                 file.total,
-                 file.false_negatives,
-                 file.false_positives,
-                 file.time_ms).unwrap();
+        writeln!(
+            f,
+            "  {:8} {} ({}/{} passed, {} soundness, {} precision) [{}ms]",
+            status,
+            Path::new(&file.file).file_name().unwrap().to_string_lossy(),
+            file.passed,
+            file.total,
+            file.false_negatives,
+            file.false_positives,
+            file.time_ms
+        )
+        .unwrap();
     }
 
     // SOUNDNESS ISSUES (most important - show first!)
     let has_soundness = result.files.iter().any(|f| f.false_negatives > 0);
     if has_soundness {
         writeln!(f, "\n").unwrap();
-        writeln!(f, "!!! SOUNDNESS ISSUES !!! (expected REJECT, we ACCEPT - DANGEROUS)").unwrap();
-        writeln!(f, "================================================================").unwrap();
+        writeln!(
+            f,
+            "!!! SOUNDNESS ISSUES !!! (expected REJECT, we ACCEPT - DANGEROUS)"
+        )
+        .unwrap();
+        writeln!(
+            f,
+            "================================================================"
+        )
+        .unwrap();
         for file in &result.files {
             for test in &file.tests {
                 if test.outcome.is_false_negative() {
-                    writeln!(f, "  [{}] {}", 
-                             Path::new(&file.file).file_name().unwrap().to_string_lossy(),
-                             test.name).unwrap();
+                    writeln!(
+                        f,
+                        "  [{}] {}",
+                        Path::new(&file.file).file_name().unwrap().to_string_lossy(),
+                        test.name
+                    )
+                    .unwrap();
                     writeln!(f, "    Expected: REJECT, Got: ACCEPT").unwrap();
                 }
             }
@@ -776,14 +843,26 @@ pub fn write_txt_report(result: &SuiteResult, path: &str) -> Result<(), String> 
     // Precision issues (less critical)
     let has_precision = result.files.iter().any(|f| f.false_positives > 0);
     if has_precision {
-        writeln!(f, "\nPrecision Issues (expected ACCEPT, we REJECT - too conservative):").unwrap();
-        writeln!(f, "----------------------------------------------------------------").unwrap();
+        writeln!(
+            f,
+            "\nPrecision Issues (expected ACCEPT, we REJECT - too conservative):"
+        )
+        .unwrap();
+        writeln!(
+            f,
+            "----------------------------------------------------------------"
+        )
+        .unwrap();
         for file in &result.files {
             for test in &file.tests {
                 if test.outcome.is_false_positive() {
-                    writeln!(f, "  [{}] {}", 
-                             Path::new(&file.file).file_name().unwrap().to_string_lossy(),
-                             test.name).unwrap();
+                    writeln!(
+                        f,
+                        "  [{}] {}",
+                        Path::new(&file.file).file_name().unwrap().to_string_lossy(),
+                        test.name
+                    )
+                    .unwrap();
                     writeln!(f, "    Expected: ACCEPT, Got: REJECT").unwrap();
                 }
             }
@@ -798,9 +877,13 @@ pub fn write_txt_report(result: &SuiteResult, path: &str) -> Result<(), String> 
         for file in &result.files {
             for test in &file.tests {
                 if let TestOutcome::Error { message } = &test.outcome {
-                    writeln!(f, "  [{}] {}", 
-                             Path::new(&file.file).file_name().unwrap().to_string_lossy(),
-                             test.name).unwrap();
+                    writeln!(
+                        f,
+                        "  [{}] {}",
+                        Path::new(&file.file).file_name().unwrap().to_string_lossy(),
+                        test.name
+                    )
+                    .unwrap();
                     writeln!(f, "    {}", message).unwrap();
                 }
             }
@@ -811,11 +894,10 @@ pub fn write_txt_report(result: &SuiteResult, path: &str) -> Result<(), String> 
 }
 
 pub fn write_json_report(result: &SuiteResult, path: &str) -> Result<(), String> {
-    let json = serde_json::to_string_pretty(result)
-        .map_err(|e| format!("Failed to serialize: {}", e))?;
+    let json =
+        serde_json::to_string_pretty(result).map_err(|e| format!("Failed to serialize: {}", e))?;
 
-    fs::write(path, json)
-        .map_err(|e| format!("Failed to write {}: {}", path, e))?;
+    fs::write(path, json).map_err(|e| format!("Failed to write {}: {}", path, e))?;
 
     Ok(())
 }
@@ -831,15 +913,24 @@ pub fn selftest_run(json_path: &str, config: &VerifierConfig, output_dir: Option
     match run_test_file(json_path, config) {
         Ok(result) => {
             // Print summary
-            println!("Results: {}/{} passed ({} soundness, {} precision, {} skipped, {} errors) in {}ms",
-                     result.passed, result.total, 
-                     result.false_negatives, result.false_positives,
-                     result.skipped, result.errors, result.time_ms);
+            println!(
+                "Results: {}/{} passed ({} soundness, {} precision, {} skipped, {} errors) in {}ms",
+                result.passed,
+                result.total,
+                result.false_negatives,
+                result.false_positives,
+                result.skipped,
+                result.errors,
+                result.time_ms
+            );
 
             // Print soundness issues first (most important!)
             for test in &result.tests {
                 if test.outcome.is_false_negative() {
-                    println!("  !!! SOUNDNESS: {} (expected REJECT, got ACCEPT)", test.name);
+                    println!(
+                        "  !!! SOUNDNESS: {} (expected REJECT, got ACCEPT)",
+                        test.name
+                    );
                 }
             }
 
@@ -872,10 +963,7 @@ pub fn selftest_run(json_path: &str, config: &VerifierConfig, output_dir: Option
 
             // Write reports if output_dir specified
             if let Some(dir) = output_dir {
-                let base = Path::new(json_path)
-                    .file_stem()
-                    .unwrap()
-                    .to_string_lossy();
+                let base = Path::new(json_path).file_stem().unwrap().to_string_lossy();
 
                 let suite = SuiteResult {
                     total_files: 1,
@@ -933,8 +1021,10 @@ pub fn selftest_single(json_path: &str, test_name: &str, config: &VerifierConfig
     // Find the test by name (case-insensitive substring match)
     let matching: Vec<_> = tests
         .iter()
-        .filter(|t| t.name.to_lowercase().contains(&test_name.to_lowercase()) 
-            && t.name.len() == test_name.len() )
+        .filter(|t| {
+            t.name.to_lowercase().contains(&test_name.to_lowercase())
+                && t.name.len() == test_name.len()
+        })
         .collect();
 
     if matching.is_empty() {
@@ -1037,9 +1127,11 @@ pub fn selftest_suite(dir: &str, config: &VerifierConfig, output_dir: Option<&st
             println!("========================================");
             println!("Files:            {}", result.total_files);
             println!("Tests:            {}", result.total_tests);
-            println!("Passed:           {} ({:.1}%)",
-                     result.passed,
-                     100.0 * result.passed as f64 / result.total_tests.max(1) as f64);
+            println!(
+                "Passed:           {} ({:.1}%)",
+                result.passed,
+                100.0 * result.passed as f64 / result.total_tests.max(1) as f64
+            );
             if result.false_negatives > 0 {
                 println!("SOUNDNESS ISSUES: {} <<<", result.false_negatives);
             } else {
@@ -1054,7 +1146,7 @@ pub fn selftest_suite(dir: &str, config: &VerifierConfig, output_dir: Option<&st
             // Per-file summary
             println!("Per-file results:");
             let mut soundness = Vec::new(); // ⚠
-            let mut clean = Vec::new();     // ✓
+            let mut clean = Vec::new(); // ✓
             let mut precision = Vec::new(); // ○
 
             for file in &result.files {
@@ -1072,10 +1164,7 @@ pub fn selftest_suite(dir: &str, config: &VerifierConfig, output_dir: Option<&st
                     println!(
                         "  {} {} ({}/{} passed, {} soundness, {} precision)",
                         status,
-                        Path::new(&file.file)
-                            .file_name()
-                            .unwrap()
-                            .to_string_lossy(),
+                        Path::new(&file.file).file_name().unwrap().to_string_lossy(),
                         file.passed,
                         file.total,
                         file.false_negatives,
@@ -1087,7 +1176,7 @@ pub fn selftest_suite(dir: &str, config: &VerifierConfig, output_dir: Option<&st
             print_group("⚠", soundness);
             print_group("○", precision);
             print_group("✓", clean);
-            
+
             // Write reports
             let out = output_dir.unwrap_or(".");
             let txt_path = format!("{}/selftest_report.txt", out);
