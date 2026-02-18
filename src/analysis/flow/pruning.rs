@@ -344,10 +344,6 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
         for offset in all_offsets {
             let old_ty = old_frame.stack.get_slot_type(offset);
             let new_ty = new_frame.stack.get_slot_type(offset);
-            println!(
-                "[State subsumption check] Checking offset {}: {:?} vs {:?}",
-                offset, old_ty, new_ty
-            );
             if !type_subsumed_by(&new_ty, &old_ty) {
                 return false;
             }
@@ -360,7 +356,7 @@ fn tnum_subsumed_by(cur_state: &State, old_state: &State, live_regs: &HashSet<Re
     for &r in live_regs {
         let cur = cur_state.get_tnum(r);
         let old = old_state.get_tnum(r);
-        if !tnum_covers(&cur, &old) {
+        if !tnum_covers(&old, &cur) {
             return false;
         }
     }
@@ -395,7 +391,7 @@ fn caller_tnum_subsumed_by(
             .get(&r)
             .copied()
             .unwrap_or(Tnum::UNKNOWN);
-        if !tnum_covers(&cur, &old) {
+        if !tnum_covers(&old, &cur) {
             return false;
         }
     }
