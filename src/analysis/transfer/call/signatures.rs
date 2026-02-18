@@ -375,6 +375,15 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
+        // ---- Sockmap operations ----
+        constants::BPF_SOCK_MAP_UPDATE => HelperSignature::new([
+            PtrToCtx,    // R1: bpf_sock_ops context (SockOps only)
+            ConstMapPtr, // R2: sockmap
+            PtrToMapKey, // R3: key
+            Anything,    // R4: flags
+            DontCare,
+        ]),
+
         // ---- Miscellaneous ----
         constants::BPF_GET_PRANDOM_U32 => {
             HelperSignature::new([DontCare, DontCare, DontCare, DontCare, DontCare])

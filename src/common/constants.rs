@@ -41,6 +41,7 @@ pub const BPF_SKB_CHANGE_HEAD: u32 = 43;
 pub const BPF_XDP_ADJUST_HEAD: u32 = 44;
 pub const BPF_GET_SOCKET_COOKIE: u32 = 46;
 pub const BPF_SKB_ADJUST_ROOM: u32 = 50;
+pub const BPF_SOCK_MAP_UPDATE: u32 = 53;
 pub const BPF_XDP_ADJUST_META: u32 = 54;
 pub const BPF_GET_SOCKOPT:u32 = 57;
 pub const BPF_GET_STACK:u32 = 67;
