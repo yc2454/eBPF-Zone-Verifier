@@ -356,7 +356,7 @@ fn tnum_subsumed_by(cur_state: &State, old_state: &State, live_regs: &HashSet<Re
     for &r in live_regs {
         let cur = cur_state.get_tnum(r);
         let old = old_state.get_tnum(r);
-        if !tnum_covers(&old, &cur) {
+        if !tnum_covers(&cur, &old) {
             return false;
         }
     }
@@ -391,7 +391,7 @@ fn caller_tnum_subsumed_by(
             .get(&r)
             .copied()
             .unwrap_or(Tnum::UNKNOWN);
-        if !tnum_covers(&old, &cur) {
+        if !tnum_covers(&cur, &old) {
             return false;
         }
     }
