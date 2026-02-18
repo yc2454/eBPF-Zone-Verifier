@@ -428,6 +428,9 @@ pub(crate) fn update_call_types(
     state: &mut State,
     helper: u32,
 ) {
+    // Default to scalar value
+    state.types.set(Reg::R0, RegType::ScalarValue);
+
     // Release socket reference
     if helper == constants::BPF_SK_RELEASE {
         if let Some(ref_id) = state.types.get(Reg::R1).get_ref_id() {
