@@ -188,6 +188,21 @@ pub(crate) fn validate_single_arg(
                         }
                     }
                 }
+            } else if helper == constants::BPF_RINGBUF_OUTPUT
+                || helper == constants::BPF_RINGBUF_RESERVE
+            {
+                if let RegType::PtrToMapObject { map_idx } = actual {
+                    if let Some(map_def) = env.ctx.map_defs.get(map_idx) {
+                        if map_def.type_ != constants::BPF_MAP_TYPE_RINGBUF {
+                            env.fail(VerificationError::InvalidArgType { pc, reg });
+                            error!(
+                                "[Verifier] pc {}: bpf_ringbuf_* requires RINGBUF map, got type {}",
+                                pc, map_def.type_
+                            );
+                            return false;
+                        }
+                    }
+                }
             }
             true
         }

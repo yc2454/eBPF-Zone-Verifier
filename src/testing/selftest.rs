@@ -142,7 +142,7 @@ const BPF_MAP_TYPE_PROG_ARRAY: u32 = 3;
 const BPF_MAP_TYPE_PERF_EVENT_ARRAY: u32 = 4;
 const BPF_MAP_TYPE_CGROUP_STORAGE: u32 = 19;
 const BPF_MAP_TYPE_PERCPU_CGROUP_STORAGE: u32 = 21;
-const BPF_MAP_TYPE_RINGBUF: u32 = 16;
+const BPF_MAP_TYPE_RINGBUF: u32 = 27;
 const BPF_MAP_TYPE_ARRAY_OF_MAPS: u32 = 12;
 const BPF_MAP_TYPE_STACK_TRACE: u32 = 7;
 const BPF_MAP_TYPE_SK_STORAGE: u32 = 24;
@@ -272,7 +272,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
         }),
         "fixup_map_ringbuf" => Some(BpfMapDef {
-            type_: BPF_MAP_TYPE_RINGBUF, // 16
+            type_: BPF_MAP_TYPE_RINGBUF, // 27
             key_size: 4,
             value_size: 4,
             max_entries: 1,
