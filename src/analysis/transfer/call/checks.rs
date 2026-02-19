@@ -7,7 +7,7 @@ use crate::analysis::machine::state::State;
 use crate::analysis::transfer::memory::access::{self, AccessKind};
 use crate::analysis::transfer::memory::{
     check_map_access, check_map_rw, check_packet_access, check_stack_access,
-    check_stack_arg_readable,
+    check_stack_arg_readable, check_stack_no_pointers,
 };
 use crate::common::constants;
 use crate::zone::domain::{
@@ -217,6 +217,23 @@ pub(crate) fn validate_single_arg(
                 }
             }
 
+            // For stack pointers, check that the memory doesn't contain pointers
+            // that would be leaked to the map
+            if let RegType::PtrToStack { .. } = actual {
+                if let Some(off) = get_distance_fixed(&state.dbm, reg, Reg::R10) {
+                    check_stack_no_pointers(
+                        env,
+                        state,
+                        off,
+                        target_info.key_size as i64,
+                        pc,
+                    );
+                    if env.failed() {
+                        return false;
+                    }
+                }
+            }
+
             validate_readable_mem(env, state, pc, reg, actual, Some(target_info.key_size))
         }
 
@@ -226,12 +243,25 @@ pub(crate) fn validate_single_arg(
                 return true;
             };
 
+            if !matches!(
+                actual,
+                RegType::PtrToMapValue { .. }
+                    | RegType::PtrToStack { .. }
+                    | RegType::PtrToPacket
+                    | RegType::PtrToPacketMeta
+            ) {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!(
+                    "[Verifier] pc {}: R{} expected PTR_TO_MAP_VALUE, got {:?}",
+                    pc,
+                    arg_index + 1,
+                    actual
+                );
+                return false;
+            }
+
             if let RegType::PtrToMapValue { map_idx, .. } = actual {
                 if let Some(map_def) = env.ctx.map_defs.get(map_idx) {
-                    println!(
-                        "Validating map value size: expected {}, got {}",
-                        target_info.value_size, map_def.value_size
-                    );
                     if map_def.value_size != target_info.value_size {
                         env.fail(VerificationError::InvalidArgType { pc, reg });
                         error!(
@@ -246,6 +276,23 @@ pub(crate) fn validate_single_arg(
                 } else {
                     env.fail(VerificationError::MapNotFound { pc, map_idx });
                     return false;
+                }
+            }
+
+            // For stack pointers, check that the memory doesn't contain pointers
+            // that would be leaked to the map
+            if let RegType::PtrToStack { .. } = actual {
+                if let Some(off) = get_distance_fixed(&state.dbm, reg, Reg::R10) {
+                    check_stack_no_pointers(
+                        env,
+                        state,
+                        off,
+                        target_info.value_size as i64,
+                        pc,
+                    );
+                    if env.failed() {
+                        return false;
+                    }
                 }
             }
 
