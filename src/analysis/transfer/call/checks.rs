@@ -217,19 +217,23 @@ pub(crate) fn validate_single_arg(
                 }
             }
 
-            // For stack pointers, check that the memory doesn't contain pointers
-            // that would be leaked to the map
-            if let RegType::PtrToStack { .. } = actual {
-                if let Some(off) = get_distance_fixed(&state.dbm, reg, Reg::R10) {
-                    check_stack_no_pointers(
-                        env,
-                        state,
-                        off,
-                        target_info.key_size as i64,
-                        pc,
-                    );
-                    if env.failed() {
-                        return false;
+            // For stack pointers used as keys in bpf_map_update_elem, check that
+            // the memory doesn't contain pointers that would be leaked to the map.
+            // Note: bpf_map_lookup_elem only reads the key for comparison, so it's
+            // okay to have pointers in the key for lookup operations.
+            if helper == constants::BPF_MAP_UPDATE_ELEM {
+                if let RegType::PtrToStack { .. } = actual {
+                    if let Some(off) = get_distance_fixed(&state.dbm, reg, Reg::R10) {
+                        check_stack_no_pointers(
+                            env,
+                            state,
+                            off,
+                            target_info.key_size as i64,
+                            pc,
+                        );
+                        if env.failed() {
+                            return false;
+                        }
                     }
                 }
             }
