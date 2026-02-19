@@ -133,8 +133,20 @@ pub(crate) fn update_alu_types(
                             );
                         }
                     }
-                    (RegType::PtrToMapObject { .. }, _) => {
-                        // No changes to the type
+                    (RegType::PtrToMapObject { .. }, Operand::Imm(k)) => {
+                        // Adding 0 preserves the type, otherwise convert to scalar
+                        if *k != 0 {
+                            types.set(dst, RegType::ScalarValue);
+                        }
+                        // else: type unchanged (adding 0 is a no-op)
+                    }
+                    (RegType::PtrToMapObject { .. }, Operand::Reg(r)) => {
+                        // Check if the register value is known to be 0
+                        let val = domain::get_fixed_value(dbm, *r);
+                        if val != Some(0) {
+                            types.set(dst, RegType::ScalarValue);
+                        }
+                        // else: type unchanged (adding 0 is a no-op)
                     }
                     (RegType::PtrToPacket, Operand::Imm(k)) => {
                         if *k >= constants::MAX_PACKET_OFF {

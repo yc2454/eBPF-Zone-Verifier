@@ -77,6 +77,18 @@ pub(crate) fn check_ptr_arithmetic(
                 if width == Width::W32 {
                     return true;
                 }
+                // Arithmetic on const map pointer is prohibited (unless adding 0)
+                if matches!(dst_type, RegType::PtrToMapObject { .. }) {
+                    // Allow adding 0 (it's a no-op)
+                    if src_min == 0 && src_max == 0 {
+                        return true;
+                    }
+                    error!(
+                        "[Verifier] pc {}: {} pointer arithmetic on const map pointer prohibited",
+                        state.pc, dst.name()
+                    );
+                    return false;
+                }
                 if src_min < -constants::MAX_VAR_OFF || src_max > constants::MAX_VAR_OFF {
                     return false;
                 }
@@ -100,6 +112,18 @@ pub(crate) fn check_ptr_arithmetic(
     else {
         match op {
             AluOp::Add => {
+                // Arithmetic on const map pointer is prohibited (unless adding 0)
+                if matches!(src_type, RegType::PtrToMapObject { .. }) {
+                    // Allow adding 0 (it's a no-op)
+                    if dst_min == 0 && dst_max == 0 {
+                        return true;
+                    }
+                    error!(
+                        "[Verifier] pc {}: pointer arithmetic on const map pointer prohibited",
+                        state.pc
+                    );
+                    return false;
+                }
                 if dst_min < -constants::MAX_VAR_OFF || dst_max > constants::MAX_VAR_OFF {
                     return false;
                 }
