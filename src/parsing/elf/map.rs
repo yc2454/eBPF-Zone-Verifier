@@ -117,10 +117,17 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                     maps = btf_maps;
                 } else {
                     for m in &mut maps {
-                        if m.value_size == 0 {
-                            if let Some(btf_m) = btf_maps.iter().find(|bm| bm.name == m.name) {
+                        if let Some(btf_m) = btf_maps.iter().find(|bm| bm.name == m.name) {
+                            // Always update type_ and max_entries from BTF when available
+                            if m.value_size == 0 {
                                 m.value_size = btf_m.value_size;
                                 m.key_size = btf_m.key_size;
+                            }
+                            if m.type_ == 0 {
+                                m.type_ = btf_m.type_;
+                            }
+                            if m.max_entries == 0 {
+                                m.max_entries = btf_m.max_entries;
                             }
                         }
                     }

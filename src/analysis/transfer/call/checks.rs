@@ -26,6 +26,8 @@ use super::signatures::{
 pub(crate) struct MapInfo {
     pub(crate) key_size: u32,
     pub(crate) value_size: u32,
+    pub(crate) map_type: u32,
+    pub(crate) max_entries: u32,
 }
 
 pub(crate) fn get_map_info(map_type: RegType, env: &VerifierEnv) -> Option<MapInfo> {
@@ -33,6 +35,8 @@ pub(crate) fn get_map_info(map_type: RegType, env: &VerifierEnv) -> Option<MapIn
         RegType::PtrToMapObject { map_idx } => env.ctx.map_defs.get(map_idx).map(|md| MapInfo {
             key_size: md.key_size,
             value_size: md.value_size,
+            map_type: md.type_,
+            max_entries: md.max_entries,
         }),
         _ => None,
     }
@@ -233,6 +237,45 @@ pub(crate) fn validate_single_arg(
                         );
                         if env.failed() {
                             return false;
+                        }
+                    }
+                }
+            }
+
+            // For BPF_MAP_TYPE_ARRAY maps, the key is an array index that must be
+            // within [0, max_entries). Check the key bounds from the stack slot.
+            if target_info.map_type == constants::BPF_MAP_TYPE_ARRAY {
+                if let RegType::PtrToStack { .. } = actual {
+                    if let Some(off) = get_distance_fixed(&state.dbm, reg, Reg::R10) {
+                        let stack = state.stack_at(state.current_frame_level());
+                        if let Some(spilled) = stack.get_slot(off as i16) {
+                            // Check key bounds: must be non-negative and < max_entries
+                            if spilled.bounds.min < 0 {
+                                env.fail(VerificationError::MapKeyOutOfBounds {
+                                    pc,
+                                    key_min: spilled.bounds.min,
+                                    key_max: spilled.bounds.max,
+                                    max_entries: target_info.max_entries,
+                                });
+                                error!(
+                                    "[Verifier] pc {}: array map key may be negative (min={})",
+                                    pc, spilled.bounds.min
+                                );
+                                return false;
+                            }
+                            if spilled.bounds.max >= target_info.max_entries as i64 {
+                                env.fail(VerificationError::MapKeyOutOfBounds {
+                                    pc,
+                                    key_min: spilled.bounds.min,
+                                    key_max: spilled.bounds.max,
+                                    max_entries: target_info.max_entries,
+                                });
+                                error!(
+                                    "[Verifier] pc {}: array map key out of bounds (max={}, max_entries={})",
+                                    pc, spilled.bounds.max, target_info.max_entries
+                                );
+                                return false;
+                            }
                         }
                     }
                 }
