@@ -1,4 +1,7 @@
 // src/analysis/transfer/call/checks.rs
+//
+// Argument validation for BPF helper functions.
+// Uses table-driven type compatibility and modular validators.
 
 use crate::analysis::machine::env::{VerificationError, VerifierEnv};
 use crate::analysis::machine::reg::Reg;
@@ -7,25 +10,29 @@ use crate::analysis::machine::state::State;
 use crate::analysis::transfer::memory::access::{self, AccessKind};
 use crate::analysis::transfer::memory::{
     check_map_access, check_map_rw, check_packet_access, check_stack_access,
-    check_stack_arg_readable, check_stack_no_pointers,
+    check_stack_arg_readable,
 };
 use crate::common::constants;
 use crate::zone::domain::{
-    get_distance_fixed, get_distance_interval, get_interval, proven_nonnegative, proven_positive,
-    proven_zero,
+    get_distance_fixed, get_distance_interval, get_interval, proven_nonnegative, proven_zero,
 };
 use log::{error, info, warn};
 
-use super::signatures::{
-    BpfArgType, get_helper_signature, get_mem_size_pairs, get_nullable_ptr_size_pair,
-    helper_rejects_packet_for_arg,
-};
+use super::compat::is_nullable_arg_type;
+use super::signatures::{get_helper_signature, get_mem_size_pairs, BpfArgType};
+use super::validators;
+
+// ============================================================================
+// MapInfo
+// ============================================================================
 
 /// Information about a BPF map needed for validation.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct MapInfo {
     pub(crate) key_size: u32,
     pub(crate) value_size: u32,
+    pub(crate) map_type: u32,
+    pub(crate) max_entries: u32,
 }
 
 pub(crate) fn get_map_info(map_type: RegType, env: &VerifierEnv) -> Option<MapInfo> {
@@ -33,10 +40,69 @@ pub(crate) fn get_map_info(map_type: RegType, env: &VerifierEnv) -> Option<MapIn
         RegType::PtrToMapObject { map_idx } => env.ctx.map_defs.get(map_idx).map(|md| MapInfo {
             key_size: md.key_size,
             value_size: md.value_size,
+            map_type: md.type_,
+            max_entries: md.max_entries,
         }),
         _ => None,
     }
 }
+
+// ============================================================================
+// ValidationContext
+// ============================================================================
+
+/// Context for validating a single helper argument.
+/// Provides consistent access to validation state and error handling.
+pub(crate) struct ValidationContext<'a, 'b> {
+    pub env: &'a mut VerifierEnv<'b>,
+    pub state: &'a State,
+    pub types: &'a TypeState,
+    pub helper: u32,
+    pub pc: usize,
+    pub reg: Reg,
+    pub arg_index: usize,
+    pub map_info: &'a Option<MapInfo>,
+    pub actual: RegType,
+}
+
+impl<'a, 'b> ValidationContext<'a, 'b> {
+    /// Create a new validation context.
+    pub fn new(
+        env: &'a mut VerifierEnv<'b>,
+        state: &'a State,
+        types: &'a TypeState,
+        helper: u32,
+        pc: usize,
+        reg: Reg,
+        arg_index: usize,
+        map_info: &'a Option<MapInfo>,
+        actual: RegType,
+    ) -> Self {
+        Self {
+            env,
+            state,
+            types,
+            helper,
+            pc,
+            reg,
+            arg_index,
+            map_info,
+            actual,
+        }
+    }
+
+    /// Report a failure with logging.
+    /// Returns false for convenient use in validation functions.
+    pub fn fail_with_log(&mut self, error: VerificationError, msg: &str) -> bool {
+        error!("{}", msg);
+        self.env.fail(error);
+        false
+    }
+}
+
+// ============================================================================
+// Main Entry Points
+// ============================================================================
 
 /// Validates all arguments for a helper function based on its signature.
 pub(crate) fn validate_helper_args(
@@ -88,6 +154,8 @@ pub(crate) fn validate_helper_args(
 
 /// Validates a single argument against its expected type.
 /// Returns true if valid, false if invalid (error already reported).
+///
+/// This is the main dispatcher that routes to category-specific validators.
 pub(crate) fn validate_single_arg(
     env: &mut VerifierEnv,
     state: &State,
@@ -100,505 +168,171 @@ pub(crate) fn validate_single_arg(
     map_info: &Option<MapInfo>,
     arg_index: usize,
 ) -> bool {
+    // Create validation context
+    let mut ctx = ValidationContext::new(
+        env, state, types, helper, pc, reg, arg_index, map_info, actual,
+    );
+
+    // Handle nullable types first (unified pattern)
+    if is_nullable_arg_type(expected) {
+        return validators::validate_nullable(&mut ctx, expected);
+    }
+
+    // Dispatch to category-specific validators
     match expected {
         BpfArgType::DontCare => true,
 
-        // ---- Map pointer ----
-        BpfArgType::ConstMapPtr => {
-            let is_inner_map_ptr = match actual {
-                RegType::PtrToMapValue {
-                    map_idx,
-                    offset: Some(0),
-                    ..
-                } => env
-                    .ctx
-                    .map_defs
-                    .get(map_idx)
-                    .map(|m| {
-                        matches!(
-                            m.type_,
-                            constants::BPF_MAP_TYPE_ARRAY_OF_MAPS
-                                | constants::BPF_MAP_TYPE_HASH_OF_MAPS
-                        )
-                    })
-                    .unwrap_or(false),
-                _ => false,
-            };
+        // ---- Map-related types ----
+        BpfArgType::ConstMapPtr => validators::validate_const_map_ptr(&mut ctx),
+        BpfArgType::PtrToMapKey => validators::validate_ptr_to_map_key(&mut ctx),
+        BpfArgType::PtrToMapValue => validators::validate_ptr_to_map_value(&mut ctx),
+        BpfArgType::PtrToUninitMapValue => validators::map::validate_ptr_to_uninit_map_value(&mut ctx),
 
-            if !matches!(actual, RegType::PtrToMapObject { .. }) && !is_inner_map_ptr {
-                env.fail(VerificationError::InvalidArgType { pc, reg });
-                error!(
-                    "[Verifier] pc {}: R{} expected PTR_TO_MAP, got {:?}",
-                    pc,
-                    arg_index + 1,
-                    actual
-                );
-                return false;
-            }
-            // There are special requirements for bpf_map_lookup_elem
-            else if helper == constants::BPF_MAP_LOOKUP_ELEM {
-                match actual {
-                    RegType::PtrToMapObject { map_idx } => {
-                        let map_def = env.ctx.map_defs.get(map_idx);
-                        if map_def.is_none() {
-                            env.fail(VerificationError::InvalidArgType { pc, reg });
-                            return false;
-                        } else {
-                            let map_def = map_def.unwrap();
-                            if matches!(
-                                map_def.type_,
-                                constants::BPF_MAP_TYPE_STACK_TRACE
-                                    | constants::BPF_MAP_TYPE_PROG_ARRAY
-                                    | constants::BPF_MAP_TYPE_SK_STORAGE
-                            ) {
-                                env.fail(VerificationError::InvalidArgType { pc, reg });
-                                return false;
-                            }
-                        }
-                    }
-                    _ => return true,
-                }
-            } else if helper == constants::BPF_TAIL_CALL {
-                if let RegType::PtrToMapObject { map_idx } = actual {
-                    if let Some(map_def) = env.ctx.map_defs.get(map_idx) {
-                        if map_def.type_ != constants::BPF_MAP_TYPE_PROG_ARRAY {
-                            env.fail(VerificationError::InvalidArgType { pc, reg });
-                            error!(
-                                "[Verifier] pc {}: bpf_tail_call requires PROG_ARRAY map, got type {}",
-                                pc, map_def.type_
-                            );
-                            return false;
-                        }
-                    }
-                }
-            } else if helper == constants::BPF_PERF_EVENT_OUTPUT {
-                if let RegType::PtrToMapObject { map_idx } = actual {
-                    if let Some(map_def) = env.ctx.map_defs.get(map_idx) {
-                        if map_def.type_ != constants::BPF_MAP_TYPE_PERF_EVENT_ARRAY {
-                            env.fail(VerificationError::InvalidArgType { pc, reg });
-                            error!(
-                                "[Verifier] pc {}: bpf_perf_event_output requires PERF_EVENT_ARRAY map, got type {}",
-                                pc, map_def.type_
-                            );
-                            return false;
-                        }
-                    }
-                }
-            }
-            true
-        }
-
-        // ---- Map key pointer ----
-        BpfArgType::PtrToMapKey => {
-            let Some(target_info) = map_info else {
-                return true;
-            };
-
-            if let RegType::PtrToMapValue { map_idx, .. } = actual {
-                if let Some(map_def) = env.ctx.map_defs.get(map_idx) {
-                    println!(
-                        "Validating map value size: expected {}, got {}",
-                        target_info.value_size, map_def.value_size
-                    );
-                    if map_def.value_size != target_info.value_size {
-                        env.fail(VerificationError::InvalidArgType { pc, reg });
-                        error!(
-                            "[Verifier] pc {}: R{} map value size mismatch: expected {}, got {}",
-                            pc,
-                            arg_index + 1,
-                            target_info.value_size,
-                            map_def.key_size
-                        );
-                        return false;
-                    }
-                } else {
-                    env.fail(VerificationError::MapNotFound { pc, map_idx });
-                    return false;
-                }
-            }
-
-            // For stack pointers used as keys in bpf_map_update_elem, check that
-            // the memory doesn't contain pointers that would be leaked to the map.
-            // Note: bpf_map_lookup_elem only reads the key for comparison, so it's
-            // okay to have pointers in the key for lookup operations.
-            if helper == constants::BPF_MAP_UPDATE_ELEM {
-                if let RegType::PtrToStack { .. } = actual {
-                    if let Some(off) = get_distance_fixed(&state.dbm, reg, Reg::R10) {
-                        check_stack_no_pointers(
-                            env,
-                            state,
-                            off,
-                            target_info.key_size as i64,
-                            pc,
-                        );
-                        if env.failed() {
-                            return false;
-                        }
-                    }
-                }
-            }
-
-            validate_readable_mem(env, state, pc, reg, actual, Some(target_info.key_size))
-        }
-
-        // ---- Map value pointer ----
-        BpfArgType::PtrToMapValue => {
-            let Some(target_info) = map_info else {
-                return true;
-            };
-
-            if !matches!(
-                actual,
-                RegType::PtrToMapValue { .. }
-                    | RegType::PtrToStack { .. }
-                    | RegType::PtrToPacket
-                    | RegType::PtrToPacketMeta
-            ) {
-                env.fail(VerificationError::InvalidArgType { pc, reg });
-                error!(
-                    "[Verifier] pc {}: R{} expected PTR_TO_MAP_VALUE, got {:?}",
-                    pc,
-                    arg_index + 1,
-                    actual
-                );
-                return false;
-            }
-
-            if let RegType::PtrToMapValue { map_idx, .. } = actual {
-                if let Some(map_def) = env.ctx.map_defs.get(map_idx) {
-                    if map_def.value_size != target_info.value_size {
-                        env.fail(VerificationError::InvalidArgType { pc, reg });
-                        error!(
-                            "[Verifier] pc {}: R{} map value size mismatch: expected {}, got {}",
-                            pc,
-                            arg_index + 1,
-                            target_info.value_size,
-                            map_def.value_size
-                        );
-                        return false;
-                    }
-                } else {
-                    env.fail(VerificationError::MapNotFound { pc, map_idx });
-                    return false;
-                }
-            }
-
-            // For stack pointers, check that the memory doesn't contain pointers
-            // that would be leaked to the map
-            if let RegType::PtrToStack { .. } = actual {
-                if let Some(off) = get_distance_fixed(&state.dbm, reg, Reg::R10) {
-                    check_stack_no_pointers(
-                        env,
-                        state,
-                        off,
-                        target_info.value_size as i64,
-                        pc,
-                    );
-                    if env.failed() {
-                        return false;
-                    }
-                }
-            }
-
-            validate_readable_mem(env, state, pc, reg, actual, Some(target_info.value_size))
-        }
-
-        BpfArgType::PtrToMapValueOrNull => {
-            let reg_type = types.get(reg);
-            if reg_type.is_scalar() && proven_zero(&state.dbm, reg) {
-                return true;
-            } else {
-                if !matches!(
-                    reg_type,
-                    RegType::PtrToMapValue { .. }
-                        | RegType::PtrToMapValueOrNull { .. }
-                        | RegType::PtrToStack { .. }
-                        | RegType::PtrToPacket { .. }
-                        | RegType::PtrToPacketMeta { .. }
-                ) {
-                    env.fail(VerificationError::InvalidArgType { pc, reg });
-                    error!(
-                        "[Verifier] pc {}: R{} expected PTR_TO_MAP_VALUE or NULL, got {:?}",
-                        pc,
-                        arg_index + 1,
-                        actual
-                    );
-                    return false;
-                }
-                true
-            }
-        }
-
-        // ---- Uninitialized map value (output buffer) ----
-        BpfArgType::PtrToUninitMapValue => {
-            let Some(info) = map_info else {
-                return true;
-            };
-            validate_writable_mem(env, state, types, pc, reg, actual, Some(info.value_size))
-        }
-
-        // ---- Generic memory pointer ----
-        BpfArgType::PtrToMem => {
-            if checked_by_mem_size_pairs(helper, reg) {
-                return true;
-            }
-            // Some helpers reject packet pointers for specific args
-            if matches!(actual, RegType::PtrToPacket { .. })
-                && helper_rejects_packet_for_arg(helper, arg_index)
-            {
-                env.fail(VerificationError::InvalidArgType { pc, reg });
-                error!(
-                    "[Verifier] pc {}: helper {} does not accept packet pointer for R{}",
-                    pc,
-                    helper,
-                    arg_index + 1
-                );
-                return false;
-            }
-            validate_readable_mem(env, state, pc, reg, actual, None)
-        }
-
-        // ---- Uninitialized memory (output buffer) ----
-        BpfArgType::PtrToUninitMem => {
-            validate_writable_mem(env, state, types, pc, reg, actual, None)
-        }
-
-        // ---- Allocated memory (by bpf_ringbuf_reserve for example) ----
-        BpfArgType::PtrToAllocMem => {
-            if !matches!(actual, RegType::PtrToAllocMem { .. }) {
-                env.fail(VerificationError::InvalidArgType { pc, reg });
-                return false;
-            }
-            true
-        }
-
-        // ---- Size arguments ----
-        BpfArgType::ConstSize => {
-            // Must be positive
-            if !proven_positive(&state.dbm, reg) {
-                env.fail(VerificationError::InvalidArgType { pc, reg });
-                error!(
-                    "[Verifier] pc {}: R{} (ConstSize) must be positive",
-                    pc,
-                    arg_index + 1
-                );
-                return false;
-            }
-            true
-        }
-
-        BpfArgType::ConstSizeOrZero | BpfArgType::ConstAllocSizeOrZero => {
-            // Can be zero or positive
-            if !proven_nonnegative(&state.dbm, reg) {
-                env.fail(VerificationError::InvalidArgType { pc, reg });
-                error!(
-                    "[Verifier] pc {}: R{} (ConstSizeOrZero) must be non-negative",
-                    pc,
-                    arg_index + 1
-                );
-                return false;
-            }
-            true
-        }
-
-        // ---- Context pointer ----
-        BpfArgType::PtrToCtx => {
-            if !matches!(actual, RegType::PtrToCtx) {
-                env.fail(VerificationError::InvalidArgType { pc, reg });
-                error!(
-                    "[Verifier] pc {}: R{} expected PTR_TO_CTX, got {:?}",
-                    pc,
-                    arg_index + 1,
-                    actual
-                );
-                return false;
-            }
-            true
-        }
-
-        // ---- Context pointer or NULL ----
-        BpfArgType::PtrToCtxOrNull => {
-            if state.types.get(reg).is_scalar() && proven_zero(&state.dbm, reg) {
-                return true;
-            }
-            if !matches!(actual, RegType::PtrToCtx) && !proven_zero(&state.dbm, reg) {
-                env.fail(VerificationError::InvalidArgType { pc, reg });
-                error!(
-                    "[Verifier] pc {}: R{} expected PTR_TO_CTX or NULL, got {:?}",
-                    pc,
-                    arg_index + 1,
-                    actual
-                );
-                return false;
-            }
-            true
-        }
-
-        // ---- Any initialized value ----
-        BpfArgType::Anything => {
-            // Just needs to be readable (not uninitialized)
-            // The check_regs_readable at the start of transfer_call handles this
-            true
-        }
+        // ---- Memory types ----
+        BpfArgType::PtrToMem => validators::validate_ptr_to_mem(&mut ctx),
+        BpfArgType::PtrToUninitMem => validators::validate_ptr_to_uninit_mem(&mut ctx),
+        BpfArgType::PtrToAllocMem => validators::validate_ptr_to_alloc_mem(&mut ctx),
 
         // ---- Socket types ----
-        BpfArgType::PtrToSocket => {
-            if !matches!(
-                actual,
-                RegType::PtrToSocket { .. }
-                    | RegType::PtrToSockCommon { .. }
-                    | RegType::PtrToStack { .. }
-            ) {
-                env.fail(VerificationError::InvalidArgType { pc, reg });
-                error!(
-                    "[Verifier] pc {}: R{} expected PTR_TO_SOCKET, got {:?}",
-                    pc,
-                    arg_index + 1,
-                    actual
-                );
-                return false;
-            }
+        BpfArgType::PtrToSocket
+        | BpfArgType::PtrToSockCommon
+        | BpfArgType::PtrToBTFIdSockCommon => validators::validate_socket_arg(&mut ctx, expected),
+
+        // ---- Scalar/size types ----
+        BpfArgType::ConstSize => validators::validate_const_size(&mut ctx),
+        BpfArgType::ConstSizeOrZero | BpfArgType::ConstAllocSizeOrZero => {
+            validators::validate_const_size_or_zero(&mut ctx)
+        }
+
+        // ---- Simple pointer types (inline validation) ----
+        BpfArgType::PtrToCtx => validate_ptr_to_ctx(&mut ctx),
+        BpfArgType::PtrToBtfId => validate_ptr_to_btf_id(&mut ctx),
+        BpfArgType::PtrToStack => validate_ptr_to_stack(&mut ctx),
+        BpfArgType::PtrToLong => validate_ptr_to_long(&mut ctx),
+
+        // ---- Anything (just needs to be readable) ----
+        BpfArgType::Anything => true,
+
+        // Nullable variants are handled above
+        BpfArgType::PtrToCtxOrNull
+        | BpfArgType::PtrToMemOrNull
+        | BpfArgType::PtrToStackOrNull
+        | BpfArgType::PtrToMapValueOrNull => {
+            // Should not reach here due to is_nullable_arg_type check
             true
-        }
-
-        BpfArgType::PtrToSockCommon => {
-            if !matches!(
-                actual,
-                RegType::PtrToSockCommon { .. }
-                    | RegType::PtrToSocket { .. }
-                    | RegType::PtrToTcpSock { .. }
-            ) {
-                env.fail(VerificationError::InvalidArgType { pc, reg });
-                error!(
-                    "[Verifier] pc {}: R{} expected PTR_TO_SOCK_COMMON, got {:?}",
-                    pc,
-                    arg_index + 1,
-                    actual
-                );
-                return false;
-            }
-            true
-        }
-
-        BpfArgType::PtrToBTFIdSockCommon => {
-            if !matches!(
-                actual,
-                RegType::PtrToSockCommon { .. }
-                    | RegType::PtrToSocket { .. }
-                    | RegType::PtrToTcpSock { .. }
-            ) {
-                env.fail(VerificationError::InvalidArgType { pc, reg });
-                error!(
-                    "[Verifier] pc {}: R{} expected PTR_TO_BTF_ID_SOCK_COMMON, got {:?}",
-                    pc,
-                    arg_index + 1,
-                    actual
-                );
-                return false;
-            }
-            true
-        }
-
-        // ---- BTF ID pointer ----
-        BpfArgType::PtrToBtfId => {
-            if !matches!(actual, RegType::PtrToBtfId { .. }) {
-                env.fail(VerificationError::InvalidArgType { pc, reg });
-                error!(
-                    "[Verifier] pc {}: R{} expected PTR_TO_BTF_ID, got {:?}",
-                    pc,
-                    arg_index + 1,
-                    actual
-                );
-                return false;
-            }
-            true
-        }
-
-        // ---- Stack pointer ----
-        BpfArgType::PtrToStack => {
-            if !matches!(actual, RegType::PtrToStack { .. }) {
-                env.fail(VerificationError::InvalidArgType { pc, reg });
-                error!(
-                    "[Verifier] pc {}: R{} expected PTR_TO_STACK, got {:?}",
-                    pc,
-                    arg_index + 1,
-                    actual
-                );
-                return false;
-            }
-            true
-        }
-
-        BpfArgType::PtrToStackOrNull => {
-            if state.types.get(reg).is_scalar() && proven_zero(&state.dbm, reg) {
-                return true;
-            }
-            if !matches!(actual, RegType::PtrToStack { .. }) && !proven_zero(&state.dbm, reg) {
-                env.fail(VerificationError::InvalidArgType { pc, reg });
-                error!(
-                    "[Verifier] pc {}: R{} expected PTR_TO_STACK or NULL, got {:?}",
-                    pc,
-                    arg_index + 1,
-                    actual
-                );
-                return false;
-            }
-            true
-        }
-
-        BpfArgType::PtrToMemOrNull => {
-            if state.types.get(reg).is_scalar() && proven_zero(&state.dbm, reg) {
-                return true;
-            }
-            if state.types.get(reg).is_nullable() {
-                // Pointer is NULL - check that paired size arg is also 0
-                if let Some(size_arg_idx) = get_nullable_ptr_size_pair(helper, arg_index) {
-                    let size_reg = [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5][size_arg_idx];
-                    if !proven_zero(&state.dbm, size_reg) {
-                        env.fail(VerificationError::InvalidArgType { pc, reg: size_reg });
-                        error!(
-                            "[Verifier] pc {}: R{} must be 0 when R{} is NULL",
-                            pc,
-                            size_arg_idx + 1,
-                            arg_index + 1
-                        );
-                        return false;
-                    }
-                }
-                return validate_readable_mem(env, state, pc, reg, actual, None);
-            }
-            validate_readable_mem(env, state, pc, reg, actual, None)
-        }
-
-        BpfArgType::PtrToLong => {
-            if let RegType::PtrToStack { frame_level } = actual {
-                let offset = get_distance_fixed(&state.dbm, reg, Reg::R10);
-                check_stack_access(
-                    env,
-                    state,
-                    reg,
-                    offset,
-                    0,
-                    8, // PtrToLong is 8-byte access
-                    pc,
-                    AccessKind::HelperPrimitive,
-                    None,
-                    frame_level,
-                );
-                !env.failed()
-            } else {
-                env.fail(VerificationError::InvalidArgType { pc, reg });
-                error!(
-                    "[Verifier] pc {}: R{} expected PTR_TO_LONG, got {:?}",
-                    pc,
-                    arg_index + 1,
-                    actual
-                );
-                false
-            }
         }
     }
 }
+
+/// Internal validation that can be called from nullable validator
+pub(crate) fn validate_single_arg_inner(
+    env: &mut VerifierEnv,
+    state: &State,
+    types: &TypeState,
+    helper: u32,
+    pc: usize,
+    reg: Reg,
+    expected: BpfArgType,
+    actual: RegType,
+    map_info: &Option<MapInfo>,
+    arg_index: usize,
+) -> bool {
+    validate_single_arg(env, state, types, helper, pc, reg, expected, actual, map_info, arg_index)
+}
+
+// ============================================================================
+// Simple Pointer Type Validators (inline for brevity)
+// ============================================================================
+
+fn validate_ptr_to_ctx(ctx: &mut ValidationContext) -> bool {
+    if !matches!(ctx.actual, RegType::PtrToCtx) {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} expected PTR_TO_CTX, got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                ctx.actual
+            ),
+        );
+    }
+    true
+}
+
+fn validate_ptr_to_btf_id(ctx: &mut ValidationContext) -> bool {
+    if !matches!(ctx.actual, RegType::PtrToBtfId { .. }) {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} expected PTR_TO_BTF_ID, got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                ctx.actual
+            ),
+        );
+    }
+    true
+}
+
+fn validate_ptr_to_stack(ctx: &mut ValidationContext) -> bool {
+    if !matches!(ctx.actual, RegType::PtrToStack { .. }) {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} expected PTR_TO_STACK, got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                ctx.actual
+            ),
+        );
+    }
+    true
+}
+
+fn validate_ptr_to_long(ctx: &mut ValidationContext) -> bool {
+    if let RegType::PtrToStack { frame_level } = ctx.actual {
+        let offset = get_distance_fixed(&ctx.state.dbm, ctx.reg, Reg::R10);
+        check_stack_access(
+            ctx.env,
+            ctx.state,
+            ctx.reg,
+            offset,
+            0,
+            8, // PtrToLong is 8-byte access
+            ctx.pc,
+            AccessKind::HelperPrimitive,
+            None,
+            frame_level,
+        );
+        !ctx.env.failed()
+    } else {
+        ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} expected PTR_TO_LONG, got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                ctx.actual
+            ),
+        )
+    }
+}
+
+// ============================================================================
+// Memory Validation Helpers
+// ============================================================================
 
 /// Validates that a register points to readable memory.
 pub(crate) fn validate_readable_mem(
@@ -759,6 +493,10 @@ pub(crate) fn validate_writable_mem(
     }
 }
 
+// ============================================================================
+// Pointer-Size Pair Validation
+// ============================================================================
+
 /// Validates all pointer-size pairs for a helper call.
 /// Returns true if all pairs are valid, false otherwise (error reported).
 pub(crate) fn check_mem_size_pairs(
@@ -855,6 +593,7 @@ pub(crate) fn check_single_mem_size_pair(
             return false;
         }
     }
+
     // Validate pointer can accommodate the access
     let sig = get_helper_signature(helper).unwrap();
     let ptr_arg_type = sig.args.get(pair.ptr_reg.idx() - 2).unwrap();
@@ -992,8 +731,6 @@ pub(crate) fn check_ptr_access_size(
 
         RegType::PtrToPacket { .. } => {
             // Packet: need to verify against packet bounds (data_end - data)
-            // This requires range analysis between packet_data and packet_end
-            // access::check_load(env, state, ptr_reg, size as i64, 0);
             check_packet_access(
                 env,
                 state,

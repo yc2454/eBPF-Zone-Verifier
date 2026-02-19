@@ -220,20 +220,17 @@ impl State {
             MemSize::U64 => imm,
         };
 
-        // Only track bounds if aligned
-        let (tnum, bounds, _source_reg) = if is_aligned {
-            (
-                Tnum::constant(masked_imm as u64),
-                ScalarBounds {
-                    min: masked_imm,
-                    max: masked_imm,
-                },
-                None::<Reg>, // immediates don't have a source reg, but we use Some(dummy) to indicate trackable?
-            )
-        } else {
-            let (min, max) = size.unbounded_scalar_bounds();
-            (Tnum::unknown(), ScalarBounds { min, max }, None)
-        };
+        // For immediate stores, always track exact bounds since we know the value.
+        // The alignment check only affects whether we can reliably fill/restore,
+        // but we should still track the bounds for validation purposes.
+        let (tnum, bounds, _source_reg) = (
+            Tnum::constant(masked_imm as u64),
+            ScalarBounds {
+                min: masked_imm,
+                max: masked_imm,
+            },
+            if is_aligned { Some(Reg::R0) } else { None },
+        );
 
         let slot_content = SpilledReg {
             source_reg: if is_aligned { Some(Reg::R0) } else { None }, // Use dummy reg to indicate "trackable"

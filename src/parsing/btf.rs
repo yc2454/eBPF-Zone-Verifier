@@ -388,6 +388,37 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
             .collect()
     };
 
+    // Helper to extract __uint values from BTF map definitions
+    // __uint(name, val) creates a pointer to an array[val] in BTF
+    fn extract_btf_uint(types: &[BtfTypeRaw], type_id: u32) -> Option<u32> {
+        let mut curr_id = type_id;
+        let mut depth = 0;
+
+        while depth < 5 && (curr_id as usize) < types.len() {
+            let t = &types[curr_id as usize];
+            match t.kind() {
+                BTF_KIND_PTR => {
+                    // Follow the pointer
+                    curr_id = t.size_or_type;
+                }
+                BTF_KIND_ARRAY => {
+                    // The value is encoded in nelems
+                    if t.data.len() >= 12 {
+                        let nelems = u32::from_le_bytes(t.data[8..12].try_into().unwrap());
+                        return Some(nelems);
+                    }
+                    return None;
+                }
+                BTF_KIND_TYPEDEF | BTF_KIND_CONST | BTF_KIND_VOLATILE | BTF_KIND_RESTRICT => {
+                    curr_id = t.size_or_type;
+                }
+                _ => return None,
+            }
+            depth += 1;
+        }
+        None
+    }
+
     fn get_resolved_size(types: &[BtfTypeRaw], type_id: u32, depth: u32) -> u32 {
         if depth > 5 || type_id == 0 || (type_id as usize) >= types.len() {
             return 0;
@@ -429,7 +460,8 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                     let mut is_map = false;
                     let mut value_size = 0;
                     let mut key_size = 0;
-                    let max_entries = 0;
+                    let mut max_entries = 0;
+                    let mut map_type = 0u32;
                     let mut btf_val_type_id = None; // STORE THIS!
 
                     let members = def_t.vlen() as usize;
@@ -466,16 +498,26 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                             } else {
                                 key_size = size;
                             }
+                        } else if m_name == "type" {
+                            // Extract map type from the BTF
+                            // The member type might be a PTR to an ARRAY where nelems encodes the value
+                            if let Some(val) = extract_btf_uint(&types, m_type_id) {
+                                map_type = val;
+                            }
                         } else if m_name == "max_entries" {
-                            // Extract max_entries (maybe in the future)
+                            // Extract max_entries - similar encoding as type
+                            if let Some(val) = extract_btf_uint(&types, m_type_id) {
+                                max_entries = val;
+                            }
                         }
                     }
 
                     if is_map && value_size > 0 {
-                        info!(target: "app", "[BTF] Found Map: '{}' (ValSize: {}, TypeID: {:?})", name, value_size, btf_val_type_id);
+                        info!(target: "app", "[BTF] Found Map: '{}' (Type: {}, ValSize: {}, MaxEntries: {}, TypeID: {:?})",
+                            name, map_type, value_size, max_entries, btf_val_type_id);
                         map_defs.push(BpfMapDef {
                             name: name.clone(),
-                            type_: 0,
+                            type_: map_type,
                             key_size,
                             value_size,
                             max_entries,

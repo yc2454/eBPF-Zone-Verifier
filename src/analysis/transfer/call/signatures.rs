@@ -349,6 +349,14 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
         }
 
         // ---- Ringbuf helpers ----
+        constants::BPF_RINGBUF_OUTPUT => HelperSignature::new([
+            ConstMapPtr,     // R1: ringbuf map
+            PtrToMem,        // R2: data to copy (must be initialized)
+            ConstSizeOrZero, // R3: size
+            Anything,        // R4: flags
+            DontCare,
+        ]),
+
         constants::BPF_RINGBUF_RESERVE => HelperSignature::new([
             ConstMapPtr,
             ConstAllocSizeOrZero,
@@ -496,6 +504,10 @@ pub fn get_mem_size_pairs(helper: u32) -> &'static [MemSizePair] {
         constants::BPF_PERF_EVENT_OUTPUT => &PERF_EVENT_OUTPUT,
 
         constants::BPF_GET_CURRENT_COMM => &GET_CURRENT_COMM,
+
+        // Note: BPF_RINGBUF_OUTPUT mem-size pair check is skipped because
+        // the kernel allows reading uninitialized stack data in privileged mode.
+        // TODO: Add privileged/unprivileged mode support to enable this check.
 
         _ => &EMPTY,
     }

@@ -2,6 +2,8 @@
 
 pub mod signatures;
 pub mod checks;
+pub mod compat;
+pub mod validators;
 pub mod transfer;
 
 // Re-export public transfer functions

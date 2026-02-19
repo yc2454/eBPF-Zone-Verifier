@@ -58,6 +58,7 @@ pub enum VerificationError {
     SpillToCaller{ pc: usize },
     HelperNotAllowedForProgram { pc: usize, helper: u32, kind: ProgramKind },
     PointerLeakage { pc: usize, offset: i64 },
+    MapKeyOutOfBounds { pc: usize, key_min: i64, key_max: i64, max_entries: u32 },
 }
 
 impl VerificationError {
@@ -203,6 +204,9 @@ impl VerificationError {
             }
             VerificationError::PointerLeakage { pc, offset } => {
                 format!("Pointer leakage at pc {}: stack slot {} contains pointer that cannot be exposed to map", pc, offset)
+            }
+            VerificationError::MapKeyOutOfBounds { pc, key_min, key_max, max_entries } => {
+                format!("Map key out of bounds at pc {}: key range [{}, {}], max_entries={}", pc, key_min, key_max, max_entries)
             }
         }
     }
