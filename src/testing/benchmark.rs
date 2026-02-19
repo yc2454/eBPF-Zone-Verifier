@@ -269,7 +269,7 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
     base_name.push_str(&format!("_{}", timestamp));
 
     // Ensure 'results' directory exists
-    let results_dir = "results";
+    let results_dir = "results/bcf";
     if let Err(e) = fs::create_dir_all(results_dir) {
         eprintln!("Error: Could not create 'results' directory: {}", e);
         return;

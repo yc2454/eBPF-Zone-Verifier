@@ -57,6 +57,7 @@ pub enum VerificationError {
     CannotReturnStackPointer { pc: usize },
     SpillToCaller{ pc: usize },
     HelperNotAllowedForProgram { pc: usize, helper: u32, kind: ProgramKind },
+    PointerLeakage { pc: usize, offset: i64 },
 }
 
 impl VerificationError {
@@ -199,6 +200,9 @@ impl VerificationError {
             }
             VerificationError::UnsafeMemoryStore { pc, base, off, size } => {
                 format!("Unsafe memory store at pc {}: base {:?}, offset {}, size {}", pc, base, off, size)
+            }
+            VerificationError::PointerLeakage { pc, offset } => {
+                format!("Pointer leakage at pc {}: stack slot {} contains pointer that cannot be exposed to map", pc, offset)
             }
         }
     }

@@ -87,12 +87,11 @@ pub fn analyze_program(
             break;
         }
 
-        // A.a TYPE COMPATIBILITY CHECK (safety - may reject program)
-        if state.pc < prog.instrs.len() - 1 // No need to check last instruction
-            && let Err(e) = merging::check_compatibility(&env, &state)
-        {
-            env.fail(e);
-            break;
+        // A.a TYPE CONFLICT RESOLUTION (deferred checking approach)
+        // Demote conflicting registers to ScalarValue. 
+        // If they're later used as pointers, that will fail.
+        if state.pc < prog.instrs.len() - 1 {
+            merging::resolve_type_conflicts(&env, &mut state);
         }
 
         // A.b PRUNING CHECK (efficiency - may skip this path)

@@ -82,6 +82,18 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
         }
     }
 
+    // bpf_sock_map_update: only allowed in BPF_PROG_TYPE_SOCK_OPS programs
+    if helper == constants::BPF_SOCK_MAP_UPDATE {
+        if !matches!(env.ctx.prog_kind, ProgramKind::SockOps) {
+            env.fail(VerificationError::HelperNotAllowedForProgram {
+                pc,
+                helper,
+                kind: env.ctx.prog_kind,
+            });
+            return vec![];
+        }
+    }
+
     // bpf_d_path is restrictive
     if helper == constants::BPF_D_PATH {
         if !matches!(env.ctx.prog_kind, ProgramKind::Tracing | ProgramKind::Lsm) {
@@ -176,7 +188,9 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
         | constants::BPF_SKB_LOAD_BYTES
         | constants::BPF_XDP_ADJUST_HEAD
         | constants::BPF_L3_CSUM_REPLACE
-        | constants::BPF_L4_CSUM_REPLACE => {
+        | constants::BPF_L4_CSUM_REPLACE
+        | constants::BPF_GET_CURRENT_COMM
+        | constants::BPF_SOCK_MAP_UPDATE => {
             // Returns 0 on success, or -errno
             assume_le_imm(&mut state.dbm, Reg::R0, 0);
             assume_ge_imm(&mut state.dbm, Reg::R0, -constants::MAX_ERRNO);

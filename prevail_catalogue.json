@@ -1,0 +1,242 @@
+{
+  "description": "PREVAIL benchmark test catalogue - ELF files from ebpf-samples/build",
+  "base_path": "~/ebpf-samples/build",
+  "tests": [
+    {
+      "name": "badhelpercall",
+      "file": "badhelpercall.o",
+      "expected": "REJECT",
+      "reason": "Helper writes past end of stack buffer"
+    },
+    {
+      "name": "badmapptr",
+      "file": "badmapptr.o",
+      "section": "test",
+      "expected": "REJECT",
+      "reason": "Passes incorrect map pointer (map + 1)"
+    },
+    {
+      "name": "badrelo",
+      "file": "badrelo.o",
+      "expected": "REJECT",
+      "reason": "Unresolved external symbol"
+    },
+    {
+      "name": "bpf2bpf",
+      "file": "bpf2bpf.o",
+      "expected": "ACCEPT",
+      "reason": "BPF-to-BPF function calls"
+    },
+    {
+      "name": "byteswap",
+      "file": "byteswap.o",
+      "expected": "ACCEPT",
+      "reason": "Byte swap operations (le/be)"
+    },
+    {
+      "name": "correlated_branch",
+      "file": "correlated_branch.o",
+      "section": "xdp",
+      "expected": "ACCEPT",
+      "reason": "Correlated branch tracking"
+    },
+    {
+      "name": "correlated_branch2",
+      "file": "correlated_branch2.o",
+      "section": "socket_filter",
+      "expected": "ACCEPT",
+      "reason": "Correlated branch tracking with IPv6"
+    },
+    {
+      "name": "ctxoffset",
+      "file": "ctxoffset.o",
+      "section": "sockops",
+      "expected": "REJECT",
+      "reason": "Uses offset ctx pointer in helper call"
+    },
+    {
+      "name": "dependent_read",
+      "file": "dependent_read.o",
+      "section": "xdp",
+      "expected": "ACCEPT",
+      "reason": "Dependent read with correlated branches"
+    },
+    {
+      "name": "exposeptr",
+      "file": "exposeptr.o",
+      "expected": "REJECT",
+      "reason": "Stores pointer (ctx) in shared map memory"
+    },
+    {
+      "name": "exposeptr2",
+      "file": "exposeptr2.o",
+      "expected": "REJECT",
+      "reason": "Stores pointer as map key"
+    },
+    {
+      "name": "externalfunction",
+      "file": "externalfunction.o",
+      "expected": "ACCEPT",
+      "reason": "External function resolution by name"
+    },
+    {
+      "name": "global_variable",
+      "file": "global_variable.o",
+      "expected": "ACCEPT",
+      "reason": "Global variables in .bss/.rodata/.data"
+    },
+    {
+      "name": "global_variable_2",
+      "file": "global_variable_2.o",
+      "expected": "ACCEPT",
+      "reason": "Global config variables"
+    },
+    {
+      "name": "loop",
+      "file": "loop.o",
+      "section": "test_md",
+      "expected": "ACCEPT",
+      "reason": "Bounded loop with packet access"
+    },
+    {
+      "name": "map_in_map",
+      "file": "map_in_map.o",
+      "expected": "ACCEPT",
+      "reason": "Map-in-map lookup"
+    },
+    {
+      "name": "map_in_map_anonymous",
+      "file": "map_in_map_anonymous.o",
+      "expected": "ACCEPT",
+      "reason": "Anonymous inner map type"
+    },
+    {
+      "name": "map_in_map_typedef",
+      "file": "map_in_map_typedef.o",
+      "expected": "ACCEPT",
+      "reason": "Typedef for map types"
+    },
+    {
+      "name": "mapoverflow",
+      "file": "mapoverflow.o",
+      "expected": "REJECT",
+      "reason": "Map key out of bounds (key=10, max_entries=1)"
+    },
+    {
+      "name": "mapunderflow",
+      "file": "mapunderflow.o",
+      "expected": "REJECT",
+      "reason": "Negative map key"
+    },
+    {
+      "name": "mapvalue-overrun",
+      "file": "mapvalue-overrun.o",
+      "expected": "REJECT",
+      "reason": "Reads uint64 from uint32 value"
+    },
+    {
+      "name": "nullmapref",
+      "file": "nullmapref.o",
+      "section": "test",
+      "expected": "REJECT",
+      "reason": "Unchecked null dereference after map lookup"
+    },
+    {
+      "name": "packet_access",
+      "file": "packet_access.o",
+      "section": "xdp",
+      "expected": "ACCEPT",
+      "reason": "Proper packet bounds check"
+    },
+    {
+      "name": "packet_overflow",
+      "file": "packet_overflow.o",
+      "section": "xdp",
+      "expected": "REJECT",
+      "reason": "Missing +sizeof(int) in bounds check"
+    },
+    {
+      "name": "packet_reallocate",
+      "file": "packet_reallocate.o",
+      "section": "socket_filter",
+      "expected": "REJECT",
+      "reason": "Uses invalidated pointers after skb_change_head"
+    },
+    {
+      "name": "packet_start_ok",
+      "file": "packet_start_ok.o",
+      "section": "xdp",
+      "expected": "ACCEPT",
+      "reason": "Proper packet bounds check with sizeof"
+    },
+    {
+      "name": "prog_array",
+      "file": "prog_array.o",
+      "expected": "ACCEPT",
+      "reason": "Program array map"
+    },
+    {
+      "name": "ringbuf_in_map",
+      "file": "ringbuf_in_map.o",
+      "expected": "ACCEPT",
+      "reason": "Ringbuf inside array-of-maps"
+    },
+    {
+      "name": "ringbuf_uninit",
+      "file": "ringbuf_uninit.o",
+      "expected": "REJECT",
+      "reason": "Passes uninitialized variable to ringbuf_output"
+    },
+    {
+      "name": "stackok",
+      "file": "stackok.o",
+      "expected": "ACCEPT",
+      "reason": "Safe bounded stack access"
+    },
+    {
+      "name": "store_map_value_in_map",
+      "file": "store_map_value_in_map.o",
+      "expected": "ACCEPT",
+      "reason": "Store value from one map into another"
+    },
+    {
+      "name": "tail_call",
+      "file": "tail_call.o",
+      "section": "xdp_prog",
+      "expected": "ACCEPT",
+      "reason": "Proper tail call with PROG_ARRAY map"
+    },
+    {
+      "name": "tail_call_bad",
+      "file": "tail_call_bad.o",
+      "section": "xdp_prog",
+      "expected": "REJECT",
+      "reason": "Tail call with wrong map type (ARRAY instead of PROG_ARRAY)"
+    },
+    {
+      "name": "twomaps",
+      "file": "twomaps.o",
+      "expected": "ACCEPT",
+      "reason": "Two maps with different sizes"
+    },
+    {
+      "name": "twostackvars",
+      "file": "twostackvars.o",
+      "expected": "ACCEPT",
+      "reason": "Two stack variable regions"
+    },
+    {
+      "name": "twotypes",
+      "file": "twotypes.o",
+      "expected": "ACCEPT",
+      "reason": "Pointer to map value or stack"
+    },
+    {
+      "name": "wronghelper",
+      "file": "wronghelper.o",
+      "section": "xdp",
+      "expected": "REJECT",
+      "reason": "Wrong context type for sock_map_update helper"
+    }
+  ]
+}

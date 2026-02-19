@@ -375,6 +375,15 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
+        // ---- Sockmap operations ----
+        constants::BPF_SOCK_MAP_UPDATE => HelperSignature::new([
+            PtrToCtx,    // R1: bpf_sock_ops context (SockOps only)
+            ConstMapPtr, // R2: sockmap
+            PtrToMapKey, // R3: key
+            Anything,    // R4: flags
+            DontCare,
+        ]),
+
         // ---- Miscellaneous ----
         constants::BPF_GET_PRANDOM_U32 => {
             HelperSignature::new([DontCare, DontCare, DontCare, DontCare, DontCare])
@@ -395,6 +404,14 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
         constants::BPF_GET_CGROUP_CLASS_ID => {
             HelperSignature::new([PtrToCtx, DontCare, DontCare, DontCare, DontCare])
         }
+
+        constants::BPF_GET_CURRENT_COMM => HelperSignature::new([
+            PtrToUninitMem, // R1: buf (output buffer for comm string)
+            ConstSize,      // R2: size_of_buf
+            DontCare,
+            DontCare,
+            DontCare,
+        ]),
 
         constants::BPF_PERF_EVENT_OUTPUT => HelperSignature::new([
             PtrToCtx,    // R1: ctx
@@ -453,6 +470,8 @@ pub fn get_mem_size_pairs(helper: u32) -> &'static [MemSizePair] {
 
     static PERF_EVENT_OUTPUT: [MemSizePair; 1] = [MemSizePair::new(R4, R5)];
 
+    static GET_CURRENT_COMM: [MemSizePair; 1] = [MemSizePair::new(R1, R2)];
+
     static EMPTY: [MemSizePair; 0] = [];
 
     match helper {
@@ -475,6 +494,8 @@ pub fn get_mem_size_pairs(helper: u32) -> &'static [MemSizePair] {
         constants::BPF_GET_STACK => &GET_STACK,
 
         constants::BPF_PERF_EVENT_OUTPUT => &PERF_EVENT_OUTPUT,
+
+        constants::BPF_GET_CURRENT_COMM => &GET_CURRENT_COMM,
 
         _ => &EMPTY,
     }
