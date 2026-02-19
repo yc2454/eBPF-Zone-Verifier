@@ -23,6 +23,116 @@ fn update_packet_ptr_type_after_alu(types: &mut TypeState, dbm: &Dbm, dst: Reg) 
     }
 }
 
+/// Extracts a fixed i64 value from an operand (immediate or register with known value)
+fn get_operand_fixed_value(dbm: &Dbm, src: &Operand) -> Option<i64> {
+    match src {
+        Operand::Imm(k) => Some(*k),
+        Operand::Reg(r) => domain::get_fixed_value(dbm, *r),
+    }
+}
+
+/// Updates PtrToMapValue offset by delta, returning new type
+fn adjust_map_value_offset(ty: RegType, delta: Option<i64>) -> RegType {
+    match ty {
+        RegType::PtrToMapValue { id, offset, map_idx } => {
+            let new_offset = match (offset, delta) {
+                (Some(o), Some(d)) => Some(o + d),
+                _ => None, // Unknown if either is unknown
+            };
+            RegType::PtrToMapValue { id, offset: new_offset, map_idx }
+        }
+        other => other,
+    }
+}
+
+/// Unified handler for pointer arithmetic (Add/Sub) type updates
+fn update_ptr_arithmetic_type(
+    types: &mut TypeState,
+    dbm: &Dbm,
+    dst: Reg,
+    dst_ty: RegType,
+    src: &Operand,
+    is_add: bool, // true = Add, false = Sub
+) {
+    let delta = get_operand_fixed_value(dbm, src);
+    let signed_delta = if is_add { delta } else { delta.map(|d| -d) };
+
+    match dst_ty {
+        RegType::PtrToMapValue { .. } => {
+            types.set(dst, adjust_map_value_offset(dst_ty, signed_delta));
+        }
+        RegType::PtrToMapObject { .. } => {
+            // Only allow adding/subtracting 0
+            if signed_delta != Some(0) {
+                types.set(dst, RegType::ScalarValue);
+            }
+            // else: type unchanged (adding 0 is a no-op)
+        }
+        RegType::PtrToStack { frame_level } => {
+            types.set(dst, RegType::PtrToStack { frame_level });
+        }
+        RegType::PtrToCtx => {
+            if signed_delta == Some(0) {
+                types.set(dst, RegType::PtrToCtx);
+            } else {
+                types.set(dst, RegType::ScalarValue);
+            }
+        }
+        RegType::PtrToPacket => {
+            if is_add {
+                // For Add: check if immediate exceeds max offset
+                if let Some(d) = delta {
+                    if d >= constants::MAX_PACKET_OFF {
+                        types.set(dst, RegType::ScalarValue);
+                    }
+                    // else: type unchanged, still PtrToPacket
+                }
+                // For Add with register: check if known value exceeds max
+                else if let Operand::Reg(_) = src {
+                    // delta is None means unknown - keep type unchanged
+                }
+            } else {
+                // For Sub: use anchor-based bounds check
+                update_packet_ptr_type_after_alu(types, dbm, dst);
+            }
+        }
+        RegType::PtrToPacketMeta => {
+            let offset_from_meta = dbm.get(dst, Reg::AnchorDataMeta);
+            if offset_from_meta < INF && offset_from_meta <= constants::MAX_PACKET_OFF as i64 {
+                types.set(dst, RegType::PtrToPacketMeta);
+            } else {
+                types.set(dst, RegType::ScalarValue);
+            }
+        }
+        _ => types.set(dst, RegType::ScalarValue),
+    }
+}
+
+/// Handles scalar + pointer/scalar arithmetic type updates
+fn handle_scalar_arithmetic_type(
+    in_types: &TypeState,
+    types: &mut TypeState,
+    dst: Reg,
+    src: &Operand,
+    is_add: bool,
+) {
+    match src {
+        Operand::Imm(_) => {
+            types.set(dst, RegType::ScalarValue);
+        }
+        Operand::Reg(src_reg) => {
+            let src_ty = in_types.get(*src_reg);
+            if is_add {
+                // scalar + pointer => pointer type (commutative)
+                types.set(dst, src_ty);
+            } else {
+                // scalar - pointer => scalar (subtraction from scalar)
+                types.set(dst, src_ty);
+            }
+        }
+    }
+}
+
 /// Updates register types after an ALU operation.
 pub(crate) fn update_alu_types(
     env: &VerifierEnv,
@@ -81,225 +191,14 @@ pub(crate) fn update_alu_types(
                 }
             }
         }
-        AluOp::Add => {
+        AluOp::Add | AluOp::Sub => {
             let dst_ty = in_types.get(dst);
+            let is_add = op == AluOp::Add;
+
             if dst_ty.is_pointer() {
-                match (dst_ty, src) {
-                    (
-                        RegType::PtrToMapValue {
-                            id,
-                            offset,
-                            map_idx,
-                        },
-                        Operand::Imm(k),
-                    ) => {
-                        let new_off = offset.map(|o| o + k);
-                        types.set(
-                            dst,
-                            RegType::PtrToMapValue {
-                                id,
-                                offset: new_off,
-                                map_idx,
-                            },
-                        );
-                    }
-                    (
-                        RegType::PtrToMapValue {
-                            id,
-                            map_idx,
-                            offset,
-                        },
-                        Operand::Reg(src_reg),
-                    ) => {
-                        let src_reg_value = domain::get_fixed_value(dbm, *src_reg);
-                        if src_reg_value.is_some() {
-                            let src_reg_value = src_reg_value.unwrap();
-                            types.set(
-                                dst,
-                                RegType::PtrToMapValue {
-                                    offset: offset.map(|o| o + src_reg_value),
-                                    map_idx,
-                                    id,
-                                },
-                            );
-                        } else {
-                            types.set(
-                                dst,
-                                RegType::PtrToMapValue {
-                                    offset: None,
-                                    map_idx,
-                                    id,
-                                },
-                            );
-                        }
-                    }
-                    (RegType::PtrToMapObject { .. }, Operand::Imm(k)) => {
-                        // Adding 0 preserves the type, otherwise convert to scalar
-                        if *k != 0 {
-                            types.set(dst, RegType::ScalarValue);
-                        }
-                        // else: type unchanged (adding 0 is a no-op)
-                    }
-                    (RegType::PtrToMapObject { .. }, Operand::Reg(r)) => {
-                        // Check if the register value is known to be 0
-                        let val = domain::get_fixed_value(dbm, *r);
-                        if val != Some(0) {
-                            types.set(dst, RegType::ScalarValue);
-                        }
-                        // else: type unchanged (adding 0 is a no-op)
-                    }
-                    (RegType::PtrToPacket, Operand::Imm(k)) => {
-                        if *k >= constants::MAX_PACKET_OFF {
-                            types.set(dst, RegType::ScalarValue);
-                        }
-                    }
-                    (RegType::PtrToPacket, Operand::Reg(r)) => {
-                        let const_value_op = domain::get_fixed_value(dbm, *r);
-                        if const_value_op.is_some() {
-                            let val_to_add = const_value_op.unwrap();
-                            if val_to_add >= constants::MAX_PACKET_OFF {
-                                types.set(dst, RegType::ScalarValue);
-                            }
-                        }
-                    }
-                    (RegType::PtrToPacketMeta, Operand::Imm(_))
-                    | (RegType::PtrToPacketMeta, Operand::Reg(_)) => {
-                        let offset_from_meta = dbm.get(dst, Reg::AnchorDataMeta);
-                        if offset_from_meta < INF
-                            && offset_from_meta <= constants::MAX_PACKET_OFF as i64
-                        {
-                            types.set(dst, RegType::PtrToPacketMeta);
-                        } else {
-                            types.set(dst, RegType::ScalarValue);
-                        }
-                    }
-                    (RegType::PtrToStack { frame_level }, Operand::Imm(_)) => {
-                        types.set(dst, RegType::PtrToStack { frame_level });
-                    }
-                    (RegType::PtrToStack { frame_level }, Operand::Reg(_)) => {
-                        types.set(dst, RegType::PtrToStack { frame_level });
-                    }
-                    (RegType::PtrToCtx, Operand::Imm(0)) => {
-                        types.set(dst, RegType::PtrToCtx);
-                    }
-                    (RegType::PtrToCtx, Operand::Imm(_)) => {
-                        // PtrToCtx should not be altered. If it is, we invalidate the type
-                        // by setting it to ScalarValue
-                        types.set(dst, RegType::ScalarValue);
-                    }
-                    _ => types.set(dst, RegType::ScalarValue),
-                }
+                update_ptr_arithmetic_type(types, dbm, dst, dst_ty, src, is_add);
             } else {
-                match src {
-                    Operand::Imm(_) => {
-                        types.set(dst, RegType::ScalarValue);
-                    }
-                    Operand::Reg(src_reg) => {
-                        let src_ty = in_types.get(*src_reg);
-                        match src_ty {
-                            RegType::PtrToPacket => {
-                                types.set(dst, RegType::PtrToPacket);
-                            }
-                            _ => {
-                                types.set(dst, src_ty);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        AluOp::Sub => {
-            let dst_ty = in_types.get(dst);
-            if dst_ty.is_pointer() {
-                match (dst_ty, src) {
-                    (
-                        RegType::PtrToMapValue {
-                            id,
-                            offset,
-                            map_idx,
-                        },
-                        Operand::Imm(k),
-                    ) => {
-                        let new_off = offset.map(|o| o - k);
-                        types.set(
-                            dst,
-                            RegType::PtrToMapValue {
-                                id,
-                                offset: new_off,
-                                map_idx,
-                            },
-                        );
-                    }
-                    (
-                        RegType::PtrToMapValue {
-                            id,
-                            map_idx,
-                            offset,
-                        },
-                        Operand::Reg(src_reg),
-                    ) => {
-                        let src_reg_value = domain::get_fixed_value(dbm, *src_reg);
-                        if src_reg_value.is_some() {
-                            let src_reg_value = src_reg_value.unwrap();
-                            types.set(
-                                dst,
-                                RegType::PtrToMapValue {
-                                    offset: offset.map(|o| o - src_reg_value),
-                                    map_idx,
-                                    id,
-                                },
-                            );
-                        } else {
-                            types.set(
-                                dst,
-                                RegType::PtrToMapValue {
-                                    offset: None,
-                                    map_idx,
-                                    id,
-                                },
-                            );
-                        }
-                    }
-                    (RegType::PtrToPacket, Operand::Imm(_)) => {
-                        update_packet_ptr_type_after_alu(types, dbm, dst);
-                    }
-                    (RegType::PtrToPacketMeta, Operand::Imm(_))
-                    | (RegType::PtrToPacketMeta, Operand::Reg(_)) => {
-                        let offset_from_meta = dbm.get(dst, Reg::AnchorDataMeta);
-                        if offset_from_meta < INF
-                            && offset_from_meta <= constants::MAX_PACKET_OFF as i64
-                        {
-                            types.set(dst, RegType::PtrToPacketMeta);
-                        } else {
-                            types.set(dst, RegType::ScalarValue);
-                        }
-                    }
-                    (RegType::PtrToStack { frame_level }, Operand::Imm(_)) => {
-                        types.set(dst, RegType::PtrToStack { frame_level });
-                    }
-                    (RegType::PtrToStack { frame_level }, Operand::Reg(_)) => {
-                        types.set(dst, RegType::PtrToStack { frame_level });
-                    }
-                    (RegType::PtrToCtx, Operand::Imm(0)) => {
-                        types.set(dst, RegType::PtrToCtx);
-                    }
-                    (RegType::PtrToCtx, Operand::Imm(_)) => {
-                        // PtrToCtx should not be altered. If it is, we invalidate the type
-                        // by setting it to ScalarValue
-                        types.set(dst, RegType::ScalarValue);
-                    }
-                    _ => types.set(dst, RegType::ScalarValue),
-                }
-            } else {
-                match src {
-                    Operand::Imm(_) => {
-                        types.set(dst, RegType::ScalarValue);
-                    }
-                    Operand::Reg(src_reg) => {
-                        let src_ty = in_types.get(*src_reg);
-                        types.set(dst, src_ty);
-                    }
-                }
+                handle_scalar_arithmetic_type(in_types, types, dst, src, is_add);
             }
         }
         _ => types.set(dst, RegType::ScalarValue),
