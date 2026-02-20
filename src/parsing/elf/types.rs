@@ -25,11 +25,17 @@ pub struct RawBpfProgram {
 pub enum RelocKind {
     MapPtr,
     MapValue,
+    /// Helper function call - resolve helper name to ID
+    HelperCall,
 }
 
 #[derive(Clone, Debug)]
 pub struct RelocInfo {
+    /// Map index (for MapPtr/MapValue)
     pub map_idx: usize,
+    /// Offset within map value (for MapValue)
     pub offset: i64,
+    /// Helper function ID (for HelperCall)
+    pub helper_id: u32,
     pub kind: RelocKind,
 }
