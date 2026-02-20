@@ -195,3 +195,9 @@ pub const BTF_KIND_STRUCT: u8 = 4;
 // ==================================================
 pub const F_NEEDS_EFFICIENT_UNALIGNED_ACCESS: u32 = 1 << 0;
 pub const F_LOAD_WITH_STRICT_ALIGNMENT: u32 = 1 << 1;
+
+// ==================================================
+// BPF ELF Relocation Types
+// ==================================================
+pub const R_BPF_64_64: u32 = 1;   // 64-bit load (ld_imm64) - used for map pointers
+pub const R_BPF_64_32: u32 = 10;  // 32-bit call (call insn) - used for function calls

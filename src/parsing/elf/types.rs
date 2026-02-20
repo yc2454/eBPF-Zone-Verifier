@@ -25,11 +25,34 @@ pub struct RawBpfProgram {
 pub enum RelocKind {
     MapPtr,
     MapValue,
+    /// Helper function call - resolve helper name to ID
+    HelperCall,
+    /// BPF-to-BPF function call - cross-section call
+    BpfCall,
+}
+
+/// Target information for a BPF-to-BPF function call
+#[derive(Clone, Debug)]
+pub struct BpfCallTarget {
+    /// Name of the target function
+    pub func_name: String,
+    /// Section containing the target function
+    pub section: String,
+    /// Offset of the function within its section (in bytes)
+    pub offset_in_section: usize,
+    /// Size of the function (in bytes)
+    pub size: usize,
 }
 
 #[derive(Clone, Debug)]
 pub struct RelocInfo {
+    /// Map index (for MapPtr/MapValue)
     pub map_idx: usize,
+    /// Offset within map value (for MapValue)
     pub offset: i64,
+    /// Helper function ID (for HelperCall)
+    pub helper_id: u32,
     pub kind: RelocKind,
+    /// BPF call target info (for BpfCall)
+    pub bpf_call_target: Option<BpfCallTarget>,
 }
