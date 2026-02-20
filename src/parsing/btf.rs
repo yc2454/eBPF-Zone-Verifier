@@ -456,10 +456,9 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
 
             if (def_id as usize) < types.len() {
                 // Follow typedef chain to get to the underlying type
-                let mut resolved_id = def_id;
                 let mut resolved_t = &types[def_id as usize];
                 while resolved_t.kind() == BTF_KIND_TYPEDEF && (resolved_t.size_or_type as usize) < types.len() {
-                    resolved_id = resolved_t.size_or_type;
+                    let resolved_id = resolved_t.size_or_type;
                     resolved_t = &types[resolved_id as usize];
                 }
                 let def_t = resolved_t;
@@ -519,6 +518,18 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                             // Extract max_entries - similar encoding as type
                             if let Some(val) = extract_btf_uint(&types, m_type_id) {
                                 max_entries = val;
+                            }
+                        } else if m_name == "value_size" {
+                            // Alternative way to specify value size using __uint
+                            is_map = true;
+                            if let Some(val) = extract_btf_uint(&types, m_type_id) {
+                                value_size = val;
+                            }
+                        } else if m_name == "key_size" {
+                            // Alternative way to specify key size using __uint
+                            is_map = true;
+                            if let Some(val) = extract_btf_uint(&types, m_type_id) {
+                                key_size = val;
                             }
                         }
                     }
