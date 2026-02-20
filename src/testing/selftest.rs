@@ -451,6 +451,7 @@ fn build_exec_context(
                             offset: 0,
                             helper_id: 0,
                             kind: RelocKind::MapPtr,
+                            bpf_call_target: None,
                         },
                     );
                 }

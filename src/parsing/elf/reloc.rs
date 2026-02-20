@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use super::types::{BpfMapDef, RelocInfo, RelocKind};
+use super::types::{BpfCallTarget, BpfMapDef, RelocInfo, RelocKind};
 use crate::common::constants::{self, R_BPF_64_64, R_BPF_64_32};
 use crate::parsing::bpf_insn::RawBpfInsn;
 
@@ -217,10 +217,27 @@ pub fn load_relocations<P: AsRef<Path>>(
                             offset: 0,
                             helper_id,
                             kind: RelocKind::HelperCall,
+                            bpf_call_target: None,
+                        },
+                    );
+                } else if let Some((sec_name, offset, size)) = resolve_symbol_location(&elf, &buf, name) {
+                    // BPF-to-BPF call
+                    pc_to_reloc.insert(
+                        pc,
+                        RelocInfo {
+                            map_idx: 0,
+                            offset: 0,
+                            helper_id: 0,
+                            kind: RelocKind::BpfCall,
+                            bpf_call_target: Some(BpfCallTarget {
+                                func_name: name.to_string(),
+                                section: sec_name,
+                                offset_in_section: offset,
+                                size,
+                            }),
                         },
                     );
                 }
-                // TODO: handle BPF-to-BPF calls (non-helper functions)
             } else if reloc.r_type == R_BPF_64_64 {
                 // Map pointer/value relocation
                 if let Some(&map_idx) = map_name_to_idx.get(name) {
@@ -231,6 +248,7 @@ pub fn load_relocations<P: AsRef<Path>>(
                             offset: 0,
                             helper_id: 0,
                             kind: RelocKind::MapPtr,
+                            bpf_call_target: None,
                         },
                     );
                 } else if let Some(&map_idx) = section_idx_to_map_idx.get(&sym.st_shndx) {
@@ -241,6 +259,7 @@ pub fn load_relocations<P: AsRef<Path>>(
                             offset: sym.st_value as i64,
                             helper_id: 0,
                             kind: RelocKind::MapValue,
+                            bpf_call_target: None,
                         },
                     );
                 }
@@ -248,6 +267,41 @@ pub fn load_relocations<P: AsRef<Path>>(
         }
     }
     Ok(pc_to_reloc)
+}
+
+/// Resolve a symbol name to its location (section name, offset within section, size).
+/// Returns None if the symbol is not found or is not a function symbol in a valid section.
+fn resolve_symbol_location(elf: &Elf, _buf: &[u8], symbol_name: &str) -> Option<(String, usize, usize)> {
+    use goblin::elf::sym::STT_FUNC;
+
+    // Find the symbol by name
+    for sym in elf.syms.iter() {
+        let name = elf.strtab.get_at(sym.st_name).unwrap_or("");
+        if name != symbol_name {
+            continue;
+        }
+
+        // Must be a function symbol
+        if sym.st_type() != STT_FUNC {
+            continue;
+        }
+
+        // Get the section name from section index
+        if sym.st_shndx >= elf.section_headers.len() {
+            continue;
+        }
+
+        let sh = &elf.section_headers[sym.st_shndx];
+        let sec_name = elf.shdr_strtab.get_at(sh.sh_name)?;
+
+        return Some((
+            sec_name.to_string(),
+            sym.st_value as usize,
+            sym.st_size as usize,
+        ));
+    }
+
+    None
 }
 
 /// Load relocations for a specific function within a section.
@@ -323,10 +377,27 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                             offset: 0,
                             helper_id,
                             kind: RelocKind::HelperCall,
+                            bpf_call_target: None,
+                        },
+                    );
+                } else if let Some((sec_name, offset, size)) = resolve_symbol_location(&elf, &buf, name) {
+                    // BPF-to-BPF call
+                    pc_to_reloc.insert(
+                        func_pc,
+                        RelocInfo {
+                            map_idx: 0,
+                            offset: 0,
+                            helper_id: 0,
+                            kind: RelocKind::BpfCall,
+                            bpf_call_target: Some(BpfCallTarget {
+                                func_name: name.to_string(),
+                                section: sec_name,
+                                offset_in_section: offset,
+                                size,
+                            }),
                         },
                     );
                 }
-                // TODO: handle BPF-to-BPF calls (non-helper functions)
             } else if reloc.r_type == R_BPF_64_64 {
                 // Map pointer/value relocation
                 if let Some(&map_idx) = map_name_to_idx.get(name) {
@@ -337,6 +408,7 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                             offset: 0,
                             helper_id: 0,
                             kind: RelocKind::MapPtr,
+                            bpf_call_target: None,
                         },
                     );
                 } else if let Some(&map_idx) = section_idx_to_map_idx.get(&sym.st_shndx) {
@@ -347,6 +419,7 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                             offset: sym.st_value as i64,
                             helper_id: 0,
                             kind: RelocKind::MapValue,
+                            bpf_call_target: None,
                         },
                     );
                 }
@@ -392,7 +465,191 @@ pub fn apply_relocs(insns: &mut [RawBpfInsn], pc_to_reloc: &HashMap<usize, Reloc
                         insn.imm = reloc.helper_id as i32;
                     }
                 }
+                RelocKind::BpfCall => {
+                    // BPF-to-BPF call - the imm field will be fixed by combine_program_with_subprogs
+                    // Here we just ensure src=1 (BPF_PSEUDO_CALL) is set for proper lowering
+                    if insn.code == 0x85 {
+                        insn.src = 1; // BPF_PSEUDO_CALL
+                    }
+                }
             }
         }
     }
+}
+
+/// Discover all BPF-to-BPF call targets for a given section.
+pub fn discover_bpf_call_targets<P: AsRef<Path>>(
+    path: P,
+    target_section_name: &str,
+) -> Result<Vec<BpfCallTarget>> {
+    let buf = fs::read(&path)?;
+    let elf = Elf::parse(&buf)?;
+    let mut targets = Vec::new();
+
+    let target_sec_idx = elf
+        .section_headers
+        .iter()
+        .enumerate()
+        .find(|(_, sh)| elf.shdr_strtab.get_at(sh.sh_name) == Some(target_section_name))
+        .map(|(i, _)| i);
+
+    let target_sec_idx = match target_sec_idx {
+        Some(idx) => idx,
+        None => return Ok(Vec::new()),
+    };
+
+    for (reloc_sec_idx, section_relocs) in elf.shdr_relocs.iter() {
+        let sh = &elf.section_headers[*reloc_sec_idx];
+        if sh.sh_info as usize != target_sec_idx {
+            continue;
+        }
+
+        for reloc in section_relocs {
+            if reloc.r_type != R_BPF_64_32 {
+                continue;
+            }
+
+            let sym = match elf.syms.get(reloc.r_sym) {
+                Some(s) => s,
+                None => continue,
+            };
+            let name = elf.strtab.get_at(sym.st_name).unwrap_or("");
+
+            // Skip helper functions
+            if helper_id_by_name(name).is_some() {
+                continue;
+            }
+
+            // Try to resolve as BPF function
+            if let Some((sec_name, offset, size)) = resolve_symbol_location(&elf, &buf, name) {
+                // Check if this is a cross-section call (target is in a different section)
+                if sec_name != target_section_name {
+                    targets.push(BpfCallTarget {
+                        func_name: name.to_string(),
+                        section: sec_name,
+                        offset_in_section: offset,
+                        size,
+                    });
+                }
+            }
+        }
+    }
+
+    // Remove duplicates (same function may be called multiple times)
+    targets.sort_by(|a, b| (&a.section, &a.func_name).cmp(&(&b.section, &b.func_name)));
+    targets.dedup_by(|a, b| a.func_name == b.func_name && a.section == b.section);
+
+    Ok(targets)
+}
+
+/// Combined program with all subprograms appended
+#[derive(Debug)]
+pub struct CombinedProgram {
+    pub raw_insns: Vec<RawBpfInsn>,
+    pub pc_to_reloc: HashMap<usize, RelocInfo>,
+    /// Maps function name to its start PC in the combined program
+    pub func_offsets: HashMap<String, usize>,
+}
+
+/// Collect all sections referenced by cross-section calls, transitively.
+fn collect_referenced_sections<P: AsRef<Path> + Clone>(
+    path: P,
+    main_section: &str,
+) -> Result<Vec<String>> {
+    let mut referenced = Vec::new();
+    let mut visited = std::collections::HashSet::new();
+    visited.insert(main_section.to_string());
+
+    let mut to_process = vec![main_section.to_string()];
+
+    while let Some(section) = to_process.pop() {
+        let targets = discover_bpf_call_targets(&path, &section)?;
+
+        for target in targets {
+            if !visited.contains(&target.section) {
+                visited.insert(target.section.clone());
+                referenced.push(target.section.clone());
+                to_process.push(target.section);
+            }
+        }
+    }
+
+    Ok(referenced)
+}
+
+/// Combine a program section with all its subprograms.
+/// This follows libbpf's model: when a cross-section call is detected,
+/// append ALL functions from the referenced section(s) and fix call targets.
+pub fn combine_program_with_subprogs<P: AsRef<Path> + Clone>(
+    path: P,
+    maps: &[BpfMapDef],
+    main_section: &str,
+) -> Result<CombinedProgram> {
+    use super::prog::{load_bpf_insn_stream_section, get_functions_in_section};
+    use crate::parsing::bpf_insn::decode_insns;
+
+    // Load main section instructions
+    let main_bytes = load_bpf_insn_stream_section(&path, main_section)?;
+    let mut combined_insns = decode_insns(&main_bytes);
+    let mut func_offsets: HashMap<String, usize> = HashMap::new();
+
+    // Load main section relocations
+    let main_relocs = load_relocations(&path, maps, main_section)?;
+    let mut combined_relocs = main_relocs;
+
+    // Collect all sections that are referenced (transitively)
+    let referenced_sections = collect_referenced_sections(&path, main_section)?;
+
+    // For each referenced section, load ALL functions
+    for ref_section in &referenced_sections {
+        // Load the entire section's bytes
+        let section_bytes = load_bpf_insn_stream_section(&path, ref_section)?;
+        let section_start_pc = combined_insns.len();
+
+        // Get all functions in this section to record their offsets
+        let functions = get_functions_in_section(&path, ref_section)?;
+        for func in &functions {
+            // Compute the PC of this function in the combined program
+            let func_pc = section_start_pc + (func.offset / 8);
+            func_offsets.insert(func.name.clone(), func_pc);
+        }
+
+        // Decode and append all instructions from this section
+        let section_insns = decode_insns(&section_bytes);
+
+        // Load relocations for this entire section and adjust PCs
+        let section_relocs = load_relocations(&path, maps, ref_section)?;
+        for (sec_pc, reloc) in section_relocs {
+            let combined_pc = section_start_pc + sec_pc;
+            combined_relocs.insert(combined_pc, reloc);
+        }
+
+        combined_insns.extend(section_insns);
+    }
+
+    // Now fix all BPF call targets
+    // For each BpfCall relocation, compute: imm = target_pc - (call_pc + 1)
+    for (&call_pc, reloc) in combined_relocs.iter() {
+        if reloc.kind == RelocKind::BpfCall {
+            if let Some(ref target) = reloc.bpf_call_target {
+                if let Some(&target_pc) = func_offsets.get(&target.func_name) {
+                    // Fix the imm field in the call instruction
+                    if call_pc < combined_insns.len() {
+                        let relative_offset = (target_pc as i32) - (call_pc as i32 + 1);
+                        combined_insns[call_pc].imm = relative_offset;
+                        combined_insns[call_pc].src = 1; // BPF_PSEUDO_CALL
+                    }
+                }
+            }
+        }
+    }
+
+    // Apply other relocations (maps, helpers)
+    apply_relocs(&mut combined_insns, &combined_relocs);
+
+    Ok(CombinedProgram {
+        raw_insns: combined_insns,
+        pc_to_reloc: combined_relocs,
+        func_offsets,
+    })
 }

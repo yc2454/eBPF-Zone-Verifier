@@ -1,5 +1,6 @@
 use crate::ast::{Program, ProgramKind};
 use crate::parsing::bpf_to_ast;
+use crate::parsing::elf::{BpfMapDef, RelocInfo, discover_bpf_call_targets, combine_program_with_subprogs};
 use crate::zone::dbm::INF;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -105,6 +106,61 @@ pub fn try_load_function_from_elf(
             e.pc, e.code, e.msg
         )
     })
+}
+
+/// Load a Program from an ELF section, combining with any cross-section subprograms.
+/// If the section has cross-section calls, subprograms are appended and call targets fixed.
+/// Returns (Program, relocations) on success.
+pub fn try_load_combined_program_from_elf(
+    path: &str,
+    section: &str,
+    maps: &[BpfMapDef],
+) -> Result<(Program, HashMap<usize, RelocInfo>), String> {
+    // Check if section has cross-section calls
+    let cross_section_targets = discover_bpf_call_targets(path, section)
+        .map_err(|e| format!("Failed to discover BPF call targets: {:?}", e))?;
+
+    if cross_section_targets.is_empty() {
+        // No cross-section calls - use existing behavior
+        let pc_to_reloc = crate::parsing::elf::reloc::load_relocations(path, maps, section)
+            .unwrap_or_default();
+        let prog = try_load_program_from_elf(path, section, Some(&pc_to_reloc))?;
+        return Ok((prog, pc_to_reloc));
+    }
+
+    // Has cross-section calls - combine program with subprograms
+    println!(
+        "Section '{}' has {} cross-section call target(s), combining with subprograms",
+        section,
+        cross_section_targets.len()
+    );
+    for target in &cross_section_targets {
+        println!(
+            "  -> {}::{} (offset {}, size {})",
+            target.section, target.func_name, target.offset_in_section, target.size
+        );
+    }
+
+    let combined = combine_program_with_subprogs(path, maps, section)
+        .map_err(|e| format!("Failed to combine program with subprogs: {:?}", e))?;
+
+    println!(
+        "Combined program: {} instructions, {} subprograms appended",
+        combined.raw_insns.len(),
+        combined.func_offsets.len()
+    );
+    for (name, pc) in &combined.func_offsets {
+        println!("  Function '{}' at PC {}", name, pc);
+    }
+
+    let prog = bpf_to_ast::lower_raw_to_program(&combined.raw_insns).map_err(|e| {
+        format!(
+            "Lowering combined ELF → AST failed at pc {} (opcode 0x{:02x}): {}",
+            e.pc, e.code, e.msg
+        )
+    })?;
+
+    Ok((prog, combined.pc_to_reloc))
 }
 
 pub const OBJ_PROG_TYPE_JSON: &str = "./obj_prog_type.json";

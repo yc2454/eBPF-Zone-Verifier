@@ -6,12 +6,12 @@ use crate::analysis::machine::env::VerificationError;
 use crate::analysis::machine::reg::Reg;
 use crate::ast::ProgramKind;
 use crate::common::config::VerifierConfig;
-use crate::common::utils::{try_load_program_from_elf, try_load_function_from_elf, program_kind_for_object};
+use crate::common::utils::{try_load_program_from_elf, try_load_function_from_elf, try_load_combined_program_from_elf, program_kind_for_object};
 use crate::parsing::btf::{self, BtfContext};
 use crate::parsing::elf;
 use crate::parsing::elf::{
     BpfMapDef, list_section_names, load_data_section_maps, load_maps, load_raw_programs,
-    load_relocations, load_relocations_for_function, get_functions_in_section, BpfFuncInfo,
+    load_relocations_for_function, get_functions_in_section, BpfFuncInfo,
 };
 use crate::zone::dbm::Dbm;
 use crate::zone::domain::assign_zero;
@@ -192,13 +192,11 @@ impl Analyzer {
     }
 
     /// Section analysis - treats entire section as one program
+    /// If the section has cross-section BPF calls, subprograms are combined.
     fn analyze_section_as_single_program(&self, section: &str) -> AnalysisResult {
-        // Load relocations specific to this section
-        let pc_to_reloc = load_relocations(&self.path, &self.maps, section).unwrap_or_default();
-
-        // Load program with relocations (using try_ variant to avoid exit on error)
-        let prog = match try_load_program_from_elf(&self.path, section, Some(&pc_to_reloc)) {
-            Ok(p) => p,
+        // Load program with combined subprograms if needed
+        let (prog, pc_to_reloc) = match try_load_combined_program_from_elf(&self.path, section, &self.maps) {
+            Ok((p, r)) => (p, r),
             Err(e) => return AnalysisResult::LoadError(e),
         };
         if prog.instrs.is_empty() {
