@@ -455,7 +455,14 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
             let def_id = t.size_or_type;
 
             if (def_id as usize) < types.len() {
-                let def_t = &types[def_id as usize];
+                // Follow typedef chain to get to the underlying type
+                let mut resolved_id = def_id;
+                let mut resolved_t = &types[def_id as usize];
+                while resolved_t.kind() == BTF_KIND_TYPEDEF && (resolved_t.size_or_type as usize) < types.len() {
+                    resolved_id = resolved_t.size_or_type;
+                    resolved_t = &types[resolved_id as usize];
+                }
+                let def_t = resolved_t;
                 if def_t.kind() == BTF_KIND_STRUCT {
                     let mut is_map = false;
                     let mut value_size = 0;
@@ -480,7 +487,7 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                         m_cursor += 12;
 
                         let m_name = get_str(m_name_off);
-                        if m_name == "key" || m_name == "value" {
+                        if m_name == "key" || m_name == "value" || m_name == "values" {
                             is_map = true;
 
                             let mut actual_type_id = m_type_id;
@@ -495,6 +502,10 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                             if m_name == "value" {
                                 value_size = size;
                                 btf_val_type_id = Some(actual_type_id);
+                            } else if m_name == "values" {
+                                // For map-in-map (ARRAY_OF_MAPS/HASH_OF_MAPS), the "values" field
+                                // points to inner maps. The value_size is the size of a map pointer (4 bytes).
+                                value_size = 4;
                             } else {
                                 key_size = size;
                             }
@@ -513,8 +524,8 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                     }
 
                     if is_map && value_size > 0 {
-                        info!(target: "app", "[BTF] Found Map: '{}' (Type: {}, ValSize: {}, MaxEntries: {}, TypeID: {:?})",
-                            name, map_type, value_size, max_entries, btf_val_type_id);
+                        info!(target: "app", "[BTF] Found Map: '{}' (Type: {}, KeySize: {}, ValSize: {}, MaxEntries: {}, TypeID: {:?})",
+                            name, map_type, key_size, value_size, max_entries, btf_val_type_id);
                         map_defs.push(BpfMapDef {
                             name: name.clone(),
                             type_: map_type,
