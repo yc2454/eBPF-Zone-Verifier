@@ -72,6 +72,41 @@ pub fn try_load_program_from_elf(
     })
 }
 
+/// Load a Program for a specific function within an ELF section.
+/// Uses STT_FUNC symbol information to extract only that function's bytes.
+pub fn try_load_function_from_elf(
+    path: &str,
+    section: &str,
+    func_name: &str,
+    pc_to_reloc: Option<&HashMap<usize, crate::parsing::elf::RelocInfo>>,
+) -> Result<Program, String> {
+    let bytes = crate::parsing::elf::prog::load_function_bytes(path, section, func_name)
+        .map_err(|e| format!("Failed to load function '{}' from '{}': {:?}", func_name, section, e))?;
+
+    let mut raw_insns = crate::parsing::bpf_insn::decode_insns(&bytes);
+
+    // Apply relocations if provided
+    // Note: relocations need to be adjusted for function offset
+    if let Some(relocs) = pc_to_reloc {
+        crate::parsing::elf::reloc::apply_relocs(&mut raw_insns, relocs);
+    }
+
+    println!(
+        "Loaded function '{}' from section '{}': {} bytes, {} instructions",
+        func_name,
+        section,
+        bytes.len(),
+        raw_insns.len()
+    );
+
+    bpf_to_ast::lower_raw_to_program(&raw_insns).map_err(|e| {
+        format!(
+            "Lowering ELF → AST failed at pc {} (opcode 0x{:02x}): {}",
+            e.pc, e.code, e.msg
+        )
+    })
+}
+
 pub const OBJ_PROG_TYPE_JSON: &str = "./obj_prog_type.json";
 
 type RawJsonMap = HashMap<String, Option<String>>;

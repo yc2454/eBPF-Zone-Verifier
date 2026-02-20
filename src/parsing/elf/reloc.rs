@@ -76,6 +76,92 @@ pub fn load_relocations<P: AsRef<Path>>(
     Ok(pc_to_reloc)
 }
 
+/// Load relocations for a specific function within a section.
+/// Adjusts PC values by subtracting the function's byte offset within the section.
+pub fn load_relocations_for_function<P: AsRef<Path>>(
+    path: P,
+    maps: &[BpfMapDef],
+    target_section_name: &str,
+    func_byte_offset: usize,
+    func_byte_size: usize,
+) -> Result<HashMap<usize, RelocInfo>> {
+    let buf = fs::read(path)?;
+    let elf = Elf::parse(&buf)?;
+    let mut pc_to_reloc = HashMap::new();
+
+    let mut map_name_to_idx: HashMap<&str, usize> = HashMap::new();
+    for (i, m) in maps.iter().enumerate() {
+        map_name_to_idx.insert(m.name.as_str(), i);
+    }
+
+    let mut section_idx_to_map_idx: HashMap<usize, usize> = HashMap::new();
+    for (sec_idx, sh) in elf.section_headers.iter().enumerate() {
+        if let Some(name) = elf.shdr_strtab.get_at(sh.sh_name) {
+            if let Some(&map_idx) = map_name_to_idx.get(name) {
+                section_idx_to_map_idx.insert(sec_idx, map_idx);
+            }
+        }
+    }
+
+    let target_sec_idx = elf
+        .section_headers
+        .iter()
+        .enumerate()
+        .find(|(_, sh)| elf.shdr_strtab.get_at(sh.sh_name) == Some(target_section_name))
+        .map(|(i, _)| i)
+        .ok_or_else(|| anyhow::anyhow!("Section '{}' not found", target_section_name))?;
+
+    // Calculate PC range for this function
+    let func_start_pc = func_byte_offset / 8;
+    let func_end_pc = (func_byte_offset + func_byte_size) / 8;
+
+    for (reloc_sec_idx, section_relocs) in elf.shdr_relocs.iter() {
+        let sh = &elf.section_headers[*reloc_sec_idx];
+        if sh.sh_info as usize != target_sec_idx {
+            continue;
+        }
+
+        for reloc in section_relocs {
+            let section_pc = (reloc.r_offset / 8) as usize;
+
+            // Only include relocations within this function's range
+            if section_pc < func_start_pc || section_pc >= func_end_pc {
+                continue;
+            }
+
+            // Adjust PC to be relative to function start
+            let func_pc = section_pc - func_start_pc;
+
+            let sym = match elf.syms.get(reloc.r_sym) {
+                Some(s) => s,
+                None => continue,
+            };
+            let name = elf.strtab.get_at(sym.st_name).unwrap_or("");
+
+            if let Some(&map_idx) = map_name_to_idx.get(name) {
+                pc_to_reloc.insert(
+                    func_pc,
+                    RelocInfo {
+                        map_idx,
+                        offset: 0,
+                        kind: RelocKind::MapPtr,
+                    },
+                );
+            } else if let Some(&map_idx) = section_idx_to_map_idx.get(&sym.st_shndx) {
+                pc_to_reloc.insert(
+                    func_pc,
+                    RelocInfo {
+                        map_idx,
+                        offset: sym.st_value as i64,
+                        kind: RelocKind::MapValue,
+                    },
+                );
+            }
+        }
+    }
+    Ok(pc_to_reloc)
+}
+
 /// Patch raw BPF instructions with relocation info.
 /// This allows the lowerer (bpf_to_ast) to identify map pointers/values correctly.
 pub fn apply_relocs(insns: &mut [RawBpfInsn], pc_to_reloc: &HashMap<usize, RelocInfo>) {

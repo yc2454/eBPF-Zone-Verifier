@@ -6,12 +6,12 @@ use crate::analysis::machine::env::VerificationError;
 use crate::analysis::machine::reg::Reg;
 use crate::ast::ProgramKind;
 use crate::common::config::VerifierConfig;
-use crate::common::utils::{try_load_program_from_elf, program_kind_for_object};
+use crate::common::utils::{try_load_program_from_elf, try_load_function_from_elf, program_kind_for_object};
 use crate::parsing::btf::{self, BtfContext};
 use crate::parsing::elf;
 use crate::parsing::elf::{
     BpfMapDef, list_section_names, load_data_section_maps, load_maps, load_raw_programs,
-    load_relocations,
+    load_relocations, load_relocations_for_function, get_functions_in_section, BpfFuncInfo,
 };
 use crate::zone::dbm::Dbm;
 use crate::zone::domain::assign_zero;
@@ -89,8 +89,110 @@ impl Analyzer {
         }
     }
 
-    /// Analyze a single section by name
+    /// Analyze a single section by name.
+    /// If the section contains multiple independent functions (detected via STT_FUNC symbols),
+    /// each function is verified independently.
     pub fn analyze_section(&self, section: &str) -> AnalysisResult {
+        // Check if section has multiple functions
+        let functions = get_functions_in_section(&self.path, section).unwrap_or_default();
+
+        if functions.len() > 1 {
+            // Multiple functions in section - verify each independently
+            if self.config.verbosity > 0 {
+                println!(
+                    "Section '{}' contains {} functions, verifying each independently",
+                    section,
+                    functions.len()
+                );
+            }
+
+            for func in &functions {
+                if self.config.verbosity > 0 {
+                    println!("  Analyzing function '{}' ({} bytes)", func.name, func.size);
+                }
+                let result = self.analyze_function_with_info(section, func);
+                if !result.is_pass() {
+                    return result;
+                }
+            }
+            return AnalysisResult::Pass;
+        }
+
+        // Single function or no symbol info - use original behavior
+        self.analyze_section_as_single_program(section)
+    }
+
+    /// Analyze a specific function within a section, using pre-computed function info
+    fn analyze_function_with_info(&self, section: &str, func: &BpfFuncInfo) -> AnalysisResult {
+        // Load relocations adjusted for this function's offset within the section
+        let pc_to_reloc = load_relocations_for_function(
+            &self.path,
+            &self.maps,
+            section,
+            func.offset,
+            func.size,
+        )
+        .unwrap_or_default();
+
+        // Load only this function's bytes
+        let prog = match try_load_function_from_elf(&self.path, section, &func.name, Some(&pc_to_reloc)) {
+            Ok(p) => p,
+            Err(e) => return AnalysisResult::LoadError(e),
+        };
+        if prog.instrs.is_empty() {
+            return AnalysisResult::LoadError(format!("Empty function '{}'", func.name));
+        }
+
+        println!(
+            "Test 'prog: {}, section: {}, func: {}': Lowered Program AST:",
+            self.path, section, func.name
+        );
+        for (instr, idx) in prog.instrs.iter().zip(0..) {
+            println!("  {:04}: {:?}", idx, instr);
+        }
+
+        if self.config.verbosity > 0 {
+            println!(
+                "Analyzing Function: '{}' ({} insns)",
+                func.name,
+                prog.instrs.len()
+            );
+        }
+
+        // Build context
+        let mut ctx = default_exec_ctx();
+        ctx.map_defs = self.maps.clone();
+        ctx.btf = self.btf.clone();
+        ctx.pc_to_reloc = pc_to_reloc;
+
+        // Determine program kind
+        ctx.prog_kind = match program_kind_for_object(Path::new(&self.path)) {
+            Ok(kind) => kind,
+            Err(_) => ProgramKind::from_section(section),
+        };
+
+        if self.config.verbosity > 0 {
+            println!("  Program kind: {:?}", ctx.prog_kind);
+        }
+
+        // Run analysis
+        let entry = make_entry_state();
+        let result = analysis::analyze_program(&ctx, &prog, entry, &self.config);
+
+        match result {
+            Ok(_) => AnalysisResult::Pass,
+            Err(e) => {
+                if e.description().contains("Complexity limit") {
+                    AnalysisResult::Timeout
+                } else {
+                    AnalysisResult::Fail(e)
+                }
+            }
+        }
+    }
+
+    /// Section analysis - treats entire section as one program
+    fn analyze_section_as_single_program(&self, section: &str) -> AnalysisResult {
         // Load relocations specific to this section
         let pc_to_reloc = load_relocations(&self.path, &self.maps, section).unwrap_or_default();
 
