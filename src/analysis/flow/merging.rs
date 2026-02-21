@@ -88,4 +88,26 @@ fn types_compatible(a: &RegType, b: &RegType) -> bool {
     // Same family is always compatible (e.g. PtrToMapValue with
     // PtrToMapValueOrNull, PtrToSocket with PtrToSocketOrNull)
     || type_family(a) == type_family(b)
+    // Different readable pointer types are compatible - each path will be
+    // validated independently. This handles cases like `twotypes` where a
+    // register can be either PtrToStack or PtrToMapValue depending on the path.
+    // We don't demote to ScalarValue because both are valid for memory access.
+    || (is_readable_ptr(a) && is_readable_ptr(b))
+}
+
+/// Check if a type is a general-purpose readable pointer that can safely merge
+/// with other readable pointers at join points.
+///
+/// NOTE: PtrToCtx is intentionally EXCLUDED because ctx pointers have special
+/// field-based access rules that differ from regular memory pointers. Merging
+/// a ctx pointer with a map value pointer could allow unsafe ctx field access.
+fn is_readable_ptr(ty: &RegType) -> bool {
+    use RegType::*;
+    matches!(ty,
+        PtrToStack { .. } |
+        PtrToMapValue { .. } |
+        PtrToPacket |
+        PtrToPacketMeta |
+        PtrToAllocMem { .. }
+    )
 }
