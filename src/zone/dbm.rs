@@ -258,6 +258,21 @@ impl Dbm {
         }
         result
     }
+
+    /// Narrowing: intersect constraints from two DBMs.
+    /// Takes the tighter (smaller) constraint for each entry.
+    /// Used after widening to recover precision from the actual loop state.
+    pub fn narrow(&self, other: &Dbm) -> Dbm {
+        let n = self.num_vars();
+        let mut result = self.clone();
+        for i in 0..n {
+            for j in 0..n {
+                // Take the tighter constraint (smaller value = tighter bound)
+                result.data[i][j] = self.data[i][j].min(other.data[i][j]);
+            }
+        }
+        result
+    }
 }
 
 impl Default for Dbm {

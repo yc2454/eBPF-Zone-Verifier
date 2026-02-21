@@ -6,10 +6,10 @@ use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::state::State;
-use crate::ast::{Instr, Program};
+use crate::ast::{CmpOp, Instr, Operand, Program};
 use crate::common::config::VerifierConfig;
 use crate::zone::dbm::Dbm;
-use crate::zone::domain::get_interval_i64;
+use crate::zone::domain::{assume_le_imm, assume_ge_imm, get_interval_i64};
 use crate::zone::tnum::Tnum;
 
 /// Check if the loop body contains a conditional branch (If instruction),
@@ -32,6 +32,52 @@ fn loop_has_conditional_exit(env: &VerifierEnv, state: &State, pc: usize, prog: 
         }
     }
     false
+}
+
+/// Extract loop bound from a `!= K` condition on the back-edge.
+///
+/// For bounded loops like `for (i = 0; i < 40; i++)`, the compiler often generates:
+///   `if r != 40 goto loop_head`
+///
+/// On the back-edge (taken path), we know `r != K`. For an incrementing loop counter
+/// starting from 0 or a small value, this means `r < K` (we haven't reached K yet).
+///
+/// Returns (reg, upper_bound) if a bounded loop pattern is detected.
+fn detect_loop_bound(
+    env: &VerifierEnv,
+    state: &State,
+    loop_head_pc: usize,
+    prog: &Program,
+) -> Option<(Reg, i64)> {
+    // Find the instruction that branched to this loop head
+    // Walk back through history to find the previous PC
+    let history_idx = state.history_idx?;
+
+    // Get the PC that branched to this loop head
+    // The parent in history is the state BEFORE we arrived here
+    let parent_idx = env.history.get(history_idx)?.parent_idx?;
+    let parent_step = env.history.get(parent_idx)?;
+    let branch_pc = parent_step.pc;
+
+    // Check if it's a `!= K` branch targeting this loop head
+    if branch_pc >= prog.instrs.len() {
+        return None;
+    }
+
+    if let Instr::If { op: CmpOp::Ne, left, right: Operand::Imm(k), target, .. } = &prog.instrs[branch_pc] {
+        // The branch target should be the loop head
+        if *target == loop_head_pc {
+            // Check if the register is incrementing (has a lower bound >= 0)
+            let (lo, _hi) = get_interval_i64(&state.dbm, *left);
+            if lo >= 0 && *k > 0 {
+                // This looks like a bounded incrementing loop
+                // On the back-edge, r != k means r < k (since we're incrementing toward k)
+                return Some((*left, *k - 1)); // r <= k - 1
+            }
+        }
+    }
+
+    None
 }
 
 /// Check if any conditional branch in the loop body has had its exit path
@@ -119,11 +165,22 @@ pub fn should_prune(
             return false;
         }
 
-        // Loop convergence via widening:
-        // 1. Apply widening to over-approximate the state.
-        // 2. On subsequent visits, check if the current state is subsumed
-        //    by the last explored (widened) state → convergence.
-        // 3. Only allow convergence if widening actually expanded the state
+        // Bounded loop detection: extract upper bound from `!= K` condition
+        // This must happen BEFORE widening so the bound is applied to the state
+        let loop_bound = detect_loop_bound(env, state, pc, prog);
+        if let Some((reg, upper_bound)) = loop_bound {
+            // Apply the detected upper bound to the current state
+            assume_le_imm(&mut state.dbm, reg, upper_bound);
+            // Also constrain the lower bound for incrementing loops
+            assume_ge_imm(&mut state.dbm, reg, 0);
+        }
+
+        // Loop convergence via widening + narrowing:
+        // 1. Apply widening to over-approximate the state (ensures termination).
+        // 2. Apply narrowing to recover precision from the current state.
+        // 3. On subsequent visits, check if the current state is subsumed
+        //    by the last explored (widened+narrowed) state → convergence.
+        // 4. Only allow convergence if widening actually expanded the state
         //    (indicating the loop makes progress and the exit path was explored
         //    with the widened state). Stagnant loops (no change) are infinite.
         if let Some(prev_states) = env.explored_states.get(&pc) {
@@ -151,15 +208,28 @@ pub fn should_prune(
                     return false;
                 }
 
-                // Not converged: apply widening and continue
+                // Not converged: apply widening then narrowing
+                // Step 1: Widen (ensures termination by losing precision)
                 let widened_dbm = old.dbm.widen(&state.dbm);
-                state.dbm = widened_dbm;
+
+                // Step 2: Narrow (recover precision from current state's constraints)
+                // The current state has branch constraints and loop bound applied,
+                // so narrowing recovers these bounds.
+                let narrowed_dbm = widened_dbm.narrow(&state.dbm);
+                state.dbm = narrowed_dbm;
 
                 // Widen Tnums for all live registers to guarantee convergence
+                // Then narrow to recover precision
                 for &r in live_regs {
                     let old_t = old.get_tnum(r);
                     let cur_t = state.get_tnum(r);
-                    state.set_tnum(r, old_t.widen(cur_t));
+                    let widened_t = old_t.widen(cur_t);
+                    // Narrow: intersect widened with current to recover known bits
+                    if let Some(narrowed_t) = widened_t.intersect(cur_t) {
+                        state.set_tnum(r, narrowed_t);
+                    } else {
+                        state.set_tnum(r, widened_t);
+                    }
                 }
             }
         }
