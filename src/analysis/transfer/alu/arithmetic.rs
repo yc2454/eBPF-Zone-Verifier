@@ -6,10 +6,11 @@ use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::ast::{Operand, Width};
 use crate::analysis::machine::reg::Reg;
 use crate::zone::domain::{
-    apply_add_imm, apply_add_reg, apply_div_imm, apply_div_reg, apply_mul_imm, 
-    apply_neg, apply_sub_reg, forget, get_interval, get_fixed_value, 
+    apply_add_imm, apply_add_reg, apply_div_imm, apply_div_reg, apply_mul_imm,
+    apply_neg, apply_sub_reg, forget, get_interval, get_fixed_value,
     assign_reg_offset, assign_interval, apply_and_imm, assume_ge_imm, assume_le_imm
 };
+use log::debug;
 use crate::zone::tnum::{Tnum};
 
 use super::helpers::{apply_w32_truncation, check_ptr_bounds, sync_tnum_to_dbm};
@@ -101,13 +102,15 @@ pub(crate) fn handle_sub(
             apply_add_imm(&mut state.dbm, dst, -c);
         }
         Operand::Reg(r) => {
-            let dst_is_ptr = in_types.get(dst).is_pointer();
-            let src_is_ptr = in_types.get(*r).is_pointer();
+            let dst_type = in_types.get(dst);
+            let src_type = in_types.get(*r);
+            let dst_is_ptr = dst_type.is_pointer();
+            let src_is_ptr = src_type.is_pointer();
 
             if dst_is_ptr && !src_is_ptr {
                 // ptr -= scalar: try to preserve relational info
                 let const_value = get_fixed_value(&state.dbm, *r);
-                
+
                 if const_value.is_some() {
                     // Scalar is a known constant: exact relational shift
                     apply_add_imm(&mut state.dbm, dst, -const_value.unwrap());
@@ -115,8 +118,36 @@ pub(crate) fn handle_sub(
                     // Bounded but not constant: fall back to interval
                     apply_sub_reg(&mut state.dbm, dst, *r);
                 }
+            } else if is_packet_ptr_subtraction(&dst_type, &src_type) {
+                // ══════════════════════════════════════════════════════════════════
+                // SPECIAL CASE: Packet Pointer Subtraction (Correlated Branch Support)
+                // ══════════════════════════════════════════════════════════════════
+                //
+                // When computing `dst = packet_end - packet`, the result is a scalar
+                // representing the packet length (i.e., @data_end - @data).
+                //
+                // PROBLEM: Standard DBM subtraction computes interval bounds but loses
+                // the relationship between the scalar result and the anchor difference.
+                // Later, when a branch constrains this scalar (e.g., `if (14 > length)`),
+                // the constraint doesn't propagate to the anchor relationship, so packet
+                // bounds checks fail even when they should succeed.
+                //
+                // SOLUTION: Link the scalar result to @data_end by copying the src
+                // register's anchor constraints. This enables DBM closure to propagate
+                // scalar constraints to anchor constraints:
+                //
+                //   1. Set D[dst, @data_end] = D[src, @data_end]  (typically 0)
+                //   2. Set D[@data_end, dst] = D[@data_end, src]  (packet length bound)
+                //
+                // Then when we constrain `dst >= 14`:
+                //   - Closure computes: D[@data, @data_end] = min(old, D[@data, dst] + D[dst, @data_end])
+                //   - With D[@data, dst] = -14 and D[dst, @data_end] = 0, we get D[@data, @data_end] = -14
+                //   - This means @data_end >= @data + 14, enabling the packet bounds check!
+                //
+                // ══════════════════════════════════════════════════════════════════
+                handle_packet_ptr_subtraction(state, dst, *r);
             } else {
-                // scalar -= scalar, scalar -= ptr, ptr -= ptr
+                // scalar -= scalar, scalar -= ptr, other ptr -= ptr
                 apply_sub_reg(&mut state.dbm, dst, *r);
             }
         }
@@ -244,4 +275,93 @@ pub(crate) fn handle_div(
     }
 
     state.set_tnum(dst, Tnum::unknown());
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  Packet Pointer Subtraction Helpers
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Checks if this is a packet pointer subtraction that produces a packet length scalar.
+///
+/// Valid patterns:
+///   - PtrToPacketEnd - PtrToPacket      → packet length (@data_end - @data)
+///   - PtrToPacket - PtrToPacketMeta     → metadata length (@data - @data_meta)
+///   - PtrToPacketEnd - PtrToPacketMeta  → total length (@data_end - @data_meta)
+fn is_packet_ptr_subtraction(dst_type: &RegType, src_type: &RegType) -> bool {
+    matches!(
+        (dst_type, src_type),
+        (RegType::PtrToPacketEnd, RegType::PtrToPacket)
+            | (RegType::PtrToPacketEnd, RegType::PtrToPacketMeta)
+            | (RegType::PtrToPacket, RegType::PtrToPacketMeta)
+    )
+}
+
+/// Handles the special case of packet pointer subtraction.
+///
+/// When computing `dst = packet_end - packet`, we need to link the scalar result
+/// to the anchor system so that future constraints on dst propagate to anchor
+/// relationships via DBM closure.
+///
+/// # The Problem
+///
+/// After `dst = @data_end - @data`, the scalar `dst` represents the packet length.
+/// When a branch establishes `dst >= 14`:
+///   - This sets D[Zero, dst] = -14 (absolute bound)
+///   - But packet bounds checks use D[base, @data_end] where base is at @data
+///   - Without proper linkage, the constraint doesn't propagate
+///
+/// # DBM Constraint Setup
+///
+/// The key insight is that `dst = @data_end - @data` means:
+///   - `dst == @data_end - @data`
+///   - So `@data + dst == @data_end`
+///   - Or: `@data - @data_end == -dst`
+///
+/// We establish this by linking both the scalar and @data to Zero:
+///   1. D[dst, @data_end] = 0            (dst <= @data_end, from src at @data)
+///   2. D[@data, Zero] = 0, D[Zero, @data] = 0  (link @data to Zero reference)
+///
+/// With these constraints, when `dst >= 14` is established:
+///   - D[Zero, dst] = -14 (from assume_ge_imm)
+///   - Closure: D[@data, dst] = min(old, D[@data, Zero] + D[Zero, dst]) = min(old, 0 + (-14)) = -14
+///   - Closure: D[@data, @data_end] = min(old, D[@data, dst] + D[dst, @data_end]) = min(0, -14 + 0) = -14
+///   - This means @data_end >= @data + 14 ✓
+fn handle_packet_ptr_subtraction(state: &mut State, dst: Reg, src: Reg) {
+    // First, perform standard subtraction to compute interval bounds
+    apply_sub_reg(&mut state.dbm, dst, src);
+
+    let start_anchor = Reg::AnchorData;
+    let end_anchor = Reg::AnchorDataEnd;
+
+    // Link dst to @data_end (dst <= @data_end)
+    // Copy from src since src is at @data, and @data <= @data_end
+    let dst_to_end = state.dbm.get(src, end_anchor);
+    state.dbm.add_constraint(dst, end_anchor, dst_to_end);
+
+    // Link dst to @data_end in reverse (@data_end - dst relationship)
+    let end_to_dst = state.dbm.get(end_anchor, src);
+    state.dbm.add_constraint(end_anchor, dst, end_to_dst);
+
+    // KEY FIX: Link @data to Zero so that absolute constraints on dst
+    // (like `dst >= 14`) propagate through to anchor relationships.
+    //
+    // The closure path is: @data → Zero → dst → @data_end
+    //   D[@data, dst] = D[@data, Zero] + D[Zero, dst]
+    //   D[@data, @data_end] = D[@data, dst] + D[dst, @data_end]
+    //
+    // By linking @data to Zero (both directions at 0), we ensure:
+    //   - D[@data, Zero] = 0 and D[Zero, @data] = 0
+    //   - When D[Zero, dst] = -14, then D[@data, dst] = -14
+    //   - Then D[@data, @data_end] = -14 + 0 = -14
+    state.dbm.add_constraint(start_anchor, Reg::Zero, 0);
+    state.dbm.add_constraint(Reg::Zero, start_anchor, 0);
+
+    state.dbm.close();
+
+    debug!(
+        "Packet ptr subtraction: linked {} to anchors (D[dst,end]={}, D[end,dst]={})",
+        dst.name(),
+        dst_to_end,
+        end_to_dst
+    );
 }
