@@ -130,8 +130,12 @@ pub fn validate_ptr_to_map_key(ctx: &mut ValidationContext) -> bool {
         }
     }
 
-    // For BPF_MAP_TYPE_ARRAY maps, check key bounds
-    if target_info.map_type == constants::BPF_MAP_TYPE_ARRAY {
+    // For BPF_MAP_TYPE_ARRAY maps, check key bounds for update operations.
+    // Note: For bpf_map_lookup_elem, out-of-bounds keys simply return NULL (not a safety violation).
+    // But for bpf_map_update_elem, we reject out-of-bounds keys as the operation would fail.
+    if ctx.helper == constants::BPF_MAP_UPDATE_ELEM
+        && target_info.map_type == constants::BPF_MAP_TYPE_ARRAY
+    {
         if !validate_array_key_bounds(ctx, target_info) {
             return false;
         }
@@ -148,6 +152,7 @@ pub fn validate_ptr_to_map_key(ctx: &mut ValidationContext) -> bool {
 }
 
 /// Validates array map key bounds from stack slot.
+/// Only used for bpf_map_update_elem where out-of-bounds keys would fail.
 fn validate_array_key_bounds(ctx: &mut ValidationContext, target_info: &MapInfo) -> bool {
     let actual = ctx.actual;
 

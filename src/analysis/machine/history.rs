@@ -117,4 +117,9 @@ impl History {
         }
         false
     }
+
+    /// Get a step by index.
+    pub fn get(&self, idx: usize) -> Option<&Breadcrumb> {
+        self.steps.get(idx)
+    }
 }
