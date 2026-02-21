@@ -74,11 +74,15 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
         let src = reg_to_var(insn, insn.src, pc)?;
 
         if insn.code == 0x18 {
-            if (src != Reg::R0 && src != Reg::R1) || insn.off != 0 {
+            // src_reg encoding:
+            //   0 = immediate value
+            //   1 = BPF_PSEUDO_MAP_FD (map pointer)
+            //   2 = BPF_PSEUDO_MAP_VALUE (map value pointer, e.g., for .bss/.data/.rodata)
+            if (src != Reg::R0 && src != Reg::R1 && src != Reg::R2) || insn.off != 0 {
                 return Err(LowerError {
                     pc,
                     code: insn.code,
-                    msg: "invalid BPF_LD_IMM insn: src_reg or off must be 0".to_string(),
+                    msg: format!("invalid BPF_LD_IMM insn: src_reg={} off={} (expected src 0/1/2 and off 0)", insn.src, insn.off),
                     kind: LowerErrorKind::InvalidLDIMM64,
                 });
             }
