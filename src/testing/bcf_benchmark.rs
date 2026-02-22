@@ -1,6 +1,10 @@
-// src/benchmark.rs
+//! BCF (BPF Complexity Framework) Benchmark
+//!
+//! Benchmark runner for ELF files from the BCF project.
+//! These files follow the naming pattern: clang-<VER>_-<OPT>_<SOURCE>.o
 
 use crate::common::config::VerifierConfig;
+use crate::testing::benchmark_common::{is_elf_file, visit_dirs};
 use crate::testing::runner::{AnalysisResult, Analyzer};
 use chrono::Local;
 use std::collections::BTreeMap;
@@ -9,7 +13,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-struct FileResult {
+/// BCF-specific file result with compiler/opt metadata
+struct BcfFileResult {
     file_name: String,
     project: String,
     compiler: String,
@@ -20,8 +25,8 @@ struct FileResult {
     details: Vec<(String, AnalysisResult)>,
 }
 
+/// Parse BCF benchmark filename format: clang-<VER>_-<OPT>_<SOURCE>.o
 fn parse_benchmark_filename(name: &str) -> (String, String, String) {
-    // Expected format: clang-<VER>_-<OPT>_<SOURCE>.o
     let fallback = (
         "[unknown compiler]".to_string(),
         "[unknown optimization level]".to_string(),
@@ -45,21 +50,6 @@ fn parse_benchmark_filename(name: &str) -> (String, String, String) {
         .to_string();
 
     (compiler, opt, source_prog)
-}
-
-fn visit_dirs(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
-    if dir.is_dir() {
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                visit_dirs(&path, files)?;
-            } else {
-                files.push(path);
-            }
-        }
-    }
-    Ok(())
 }
 
 pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
@@ -108,7 +98,7 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
     // 1. Identify all ELF files
     let all_elf_files: Vec<&PathBuf> = files
         .iter()
-        .filter(|p| p.extension().map_or(false, |ext| ext == "o"))
+        .filter(|p| is_elf_file(p))
         .collect();
 
     // 2. Pre-Calculate Metadata & Apply Filters
@@ -159,7 +149,7 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
         return;
     }
 
-    let mut grouped_results: BTreeMap<String, Vec<FileResult>> = BTreeMap::new();
+    let mut grouped_results: BTreeMap<String, Vec<BcfFileResult>> = BTreeMap::new();
 
     // Statistics Counters
     let mut total_files_processed = 0;
@@ -227,7 +217,7 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
         total_sections_processed += file_sections;
         total_sections_passed += file_passed_sections;
 
-        let res = FileResult {
+        let res = BcfFileResult {
             file_name: filename.to_string(),
             project,
             compiler,
@@ -352,7 +342,7 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
 
     for (source, runs) in &grouped_results {
         writeln!(report, "\nSource: {}", source).unwrap();
-        let mut sorted_runs: Vec<&FileResult> = runs.iter().collect();
+        let mut sorted_runs: Vec<&BcfFileResult> = runs.iter().collect();
         sorted_runs.sort_by_key(|r| (&r.project, &r.compiler, &r.opt));
 
         for run in sorted_runs {

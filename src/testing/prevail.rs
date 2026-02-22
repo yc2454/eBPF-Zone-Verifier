@@ -8,7 +8,9 @@
 //!   cargo run -- prevail-list <catalogue.json>
 //!   cargo run -- prevail-run <catalogue.json>
 //!   cargo run -- prevail-single <catalogue.json> <test_name>
+//!   cargo run -- prevail-benchmark ~/ebpf-samples [--project <name>]
 
+use chrono::Local;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
@@ -16,6 +18,11 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::common::config::VerifierConfig;
+use crate::testing::benchmark_common::{
+    self,
+    expand_path, extract_project, is_elf_file, visit_dirs,
+    BenchmarkStats, FileResult,
+};
 use crate::testing::runner::{AnalysisResult, Analyzer};
 
 // ============================================================================
@@ -83,16 +90,6 @@ pub struct SuiteResult {
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-/// Expand ~ in paths
-fn expand_path(path: &str) -> PathBuf {
-    if path.starts_with("~/") {
-        let home = std::env::var("HOME").expect("HOME not set");
-        PathBuf::from(home).join(&path[2..])
-    } else {
-        PathBuf::from(path)
-    }
-}
 
 /// Load the test catalogue from JSON
 pub fn load_catalogue(path: &str) -> Result<TestCatalogue, String> {
@@ -513,6 +510,272 @@ pub fn prevail_single(catalogue_path: &str, test_name: &str, config: &VerifierCo
         }
         Err(e) => {
             eprintln!("Error: {}", e);
+        }
+    }
+}
+
+// ============================================================================
+// Prevail Benchmark (Full ebpf-samples scan)
+// ============================================================================
+
+/// Run benchmark on all ELF files in ~/ebpf-samples
+///
+/// - Files in `invalid/` directory are expected to be REJECTED
+/// - All other files are expected to be ACCEPTED
+pub fn prevail_benchmark(dir_path: &str, config: &VerifierConfig, output_dir: Option<&str>) {
+    println!("=== PREVAIL Benchmark ===\n");
+
+    let root_path = expand_path(dir_path);
+    let start_time = Instant::now();
+
+    println!("Root Directory: {}", root_path.display());
+    if let Some(p) = &config.bench_project {
+        println!("Filter [Project]: {}", p);
+    }
+
+    if !root_path.exists() || !root_path.is_dir() {
+        eprintln!("Error: Directory does not exist: {:?}", root_path);
+        return;
+    }
+
+    // Collect all files
+    let mut files = Vec::new();
+    if let Err(e) = visit_dirs(&root_path, &mut files) {
+        eprintln!("Error reading directory: {}", e);
+        return;
+    }
+
+    // Filter to ELF files and apply project filter
+    let mut tasks: Vec<(PathBuf, String, String, bool)> = Vec::new(); // (path, filename, project, expected_accept)
+
+    for path in files {
+        if !is_elf_file(&path) {
+            continue;
+        }
+
+        let filename = path.file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+
+        let project = extract_project(&path, &root_path);
+
+        // Apply project filter
+        if let Some(filter_proj) = &config.bench_project {
+            if &project != filter_proj {
+                continue;
+            }
+        }
+
+        // Skip build directory (that's for catalogue-based tests)
+        if project == "build" {
+            continue;
+        }
+
+        // Determine expected outcome: invalid/ should be rejected, others accepted
+        let expected_accept = project != "invalid";
+
+        tasks.push((path, filename, project, expected_accept));
+    }
+
+    // Sort by project, then filename
+    tasks.sort_by(|a, b| (&a.2, &a.1).cmp(&(&b.2, &b.1)));
+
+    let total_count = tasks.len();
+    println!("Found {} files matching filters.\n", total_count);
+
+    if total_count == 0 {
+        return;
+    }
+
+    // Statistics
+    let mut stats = BenchmarkStats::default();
+    let mut results: Vec<FileResult> = Vec::new();
+
+    // Main analysis loop
+    for (i, (path, filename, project, expected_accept)) in tasks.into_iter().enumerate() {
+        let path_str = path.to_str().unwrap();
+
+        // Progress
+        print!(
+            "[{}/{}] [{}] {} ... ",
+            i + 1,
+            total_count,
+            project,
+            filename
+        );
+        std::io::stdout().flush().unwrap();
+
+        let analyzer = Analyzer::new(path_str, config.clone());
+        let (_passed, section_results) = analyzer.analyze_all();
+
+        // Analyze results
+        let mut all_pass = true;
+        let mut has_timeout = false;
+        let mut has_failure = false;
+
+        for (_, res) in &section_results {
+            match res {
+                AnalysisResult::Pass => {}
+                AnalysisResult::Timeout => {
+                    all_pass = false;
+                    has_timeout = true;
+                    stats.sections_timeout += 1;
+                }
+                _ => {
+                    all_pass = false;
+                    has_failure = true;
+                }
+            }
+        }
+
+        // File-level pass means all sections pass
+        let file_passed = all_pass && !section_results.is_empty();
+        let file_timeout = has_timeout && !has_failure;
+
+        // Update stats
+        stats.total_files += 1;
+        stats.total_sections += section_results.len();
+        stats.sections_passed += section_results.iter().filter(|(_, r)| r.is_pass()).count();
+
+        if expected_accept {
+            stats.expected_accept += 1;
+        } else {
+            stats.expected_reject += 1;
+        }
+
+        if file_passed {
+            stats.files_passed += 1;
+            if expected_accept {
+                println!("PASS");
+            } else {
+                println!("PASS (expected REJECT - SOUNDNESS ISSUE!)");
+                stats.false_negatives += 1;
+            }
+        } else if file_timeout {
+            stats.files_timeout += 1;
+            println!("TIMEOUT");
+        } else {
+            stats.files_failed += 1;
+            if expected_accept {
+                println!("FAIL (expected ACCEPT - precision issue)");
+                stats.false_positives += 1;
+            } else {
+                println!("FAIL (expected)");
+            }
+        }
+
+        results.push(FileResult {
+            file_name: filename,
+            file_path: path_str.to_string(),
+            project,
+            passed: file_passed,
+            timeout: file_timeout,
+            expected_accept,
+            details: section_results,
+        });
+    }
+
+    let duration = start_time.elapsed();
+
+    // Print summary
+    println!("\n========================================");
+    println!("       PREVAIL Benchmark Results");
+    println!("========================================");
+    println!("Total Files:      {}", stats.total_files);
+    println!("Files Passed:     {} ({:.1}%)", stats.files_passed, stats.file_pass_rate());
+    println!("Files Failed:     {}", stats.files_failed);
+    println!("Files Timeout:    {}", stats.files_timeout);
+    println!();
+    println!("Expected ACCEPT:  {}", stats.expected_accept);
+    println!("Expected REJECT:  {}", stats.expected_reject);
+    if stats.false_negatives > 0 {
+        println!("SOUNDNESS ISSUES: {} (expected REJECT, got ACCEPT) <<<", stats.false_negatives);
+    } else {
+        println!("Soundness issues: 0 (good!)");
+    }
+    println!("Precision issues: {} (expected ACCEPT, got REJECT)", stats.false_positives);
+    println!();
+    println!("Correctness:      {:.1}%", stats.correctness_rate());
+    println!("Duration:         {:.2}s", duration.as_secs_f64());
+    println!("========================================\n");
+
+    // Print soundness issues
+    for r in &results {
+        if !r.expected_accept && r.passed {
+            println!("  !!! SOUNDNESS: [{}] {} (expected REJECT, got ACCEPT)", r.project, r.file_name);
+        }
+    }
+
+    // Print precision issues
+    for r in &results {
+        if r.expected_accept && !r.passed && !r.timeout {
+            println!("  PRECISION: [{}] {}", r.project, r.file_name);
+            for (sec, res) in &r.details {
+                if !res.is_pass() {
+                    let msg = match res {
+                        AnalysisResult::Fail(e) => e.description(),
+                        AnalysisResult::LoadError(s) => s.clone(),
+                        _ => String::new(),
+                    };
+                    if !msg.is_empty() {
+                        println!("      - {}: {}", sec, msg);
+                    }
+                }
+            }
+        }
+    }
+
+    // Write reports
+    if let Some(dir) = output_dir {
+        let _ = fs::create_dir_all(dir);
+
+        // Construct filename
+        let mut base_name = String::from("prevail_benchmark");
+        if let Some(p) = &config.bench_project {
+            base_name.push_str(&format!("_{}", p));
+        }
+        let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+        base_name.push_str(&format!("_{}", timestamp));
+
+        let txt_path = format!("{}/{}_report.txt", dir, base_name);
+        let json_path = format!("{}/{}_results.json", dir, base_name);
+
+        // Build filter list
+        let mut filters_str: Vec<(&str, &str)> = Vec::new();
+        if let Some(p) = &config.bench_project {
+            filters_str.push(("project", p.as_str()));
+        }
+
+        if let Err(e) = benchmark_common::write_text_report(
+            &txt_path,
+            "PREVAIL Benchmark Report",
+            &stats,
+            &results,
+            duration.as_secs_f64(),
+            &filters_str,
+        ) {
+            eprintln!("Warning: {}", e);
+        } else {
+            println!("\nText report:  {}", txt_path);
+        }
+
+        // For JSON, we need owned strings
+        let filters_owned: Vec<(&str, String)> = filters_str
+            .iter()
+            .map(|(k, v)| (*k, v.to_string()))
+            .collect();
+
+        if let Err(e) = benchmark_common::write_json_report(
+            &json_path,
+            &stats,
+            &results,
+            duration.as_secs_f64(),
+            &filters_owned,
+        ) {
+            eprintln!("Warning: {}", e);
+        } else {
+            println!("JSON report:  {}", json_path);
         }
     }
 }

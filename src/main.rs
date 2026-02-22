@@ -11,11 +11,11 @@ use crate::ast::ProgramKind;
 use crate::common::config::VerifierConfig;
 use crate::common::utils::program_kind_for_object;
 use crate::parsing::elf::{list_section_names, load_maps, load_raw_programs};
-use crate::testing::benchmark::analyze_benchmark;
+use crate::testing::bcf_benchmark::analyze_benchmark;
 use crate::testing::logging;
 use crate::testing::runner::{AnalysisResult, Analyzer, find_section_for_func, is_code_section};
 use crate::testing::selftest::{selftest_list, selftest_run, selftest_single, selftest_suite};
-use crate::testing::prevail::{prevail_list, prevail_run, prevail_single};
+use crate::testing::prevail::{prevail_list, prevail_run, prevail_single, prevail_benchmark};
 use std::path::Path;
 
 fn usage() {
@@ -24,7 +24,7 @@ fn usage() {
     eprintln!("  cargo run -- [flags] elf-analyze     <elf_path> <section_name>");
     eprintln!("  cargo run -- [flags] elf-analyze-func <elf_path> <func_name>");
     eprintln!("  cargo run -- [flags] elf-analyze-prog <elf_path>");
-    eprintln!("  cargo run -- [flags] elf-analyze-benchmark <dir_path>");
+    eprintln!("  cargo run -- [flags] bcf-benchmark   <dir_path>");
     eprintln!("  cargo run -- [flags] selftest-list   <json_file>");
     eprintln!("  cargo run -- [flags] selftest-single <json_file> <test_name>");
     eprintln!("  cargo run -- [flags] selftest-run    <json_file>");
@@ -32,13 +32,15 @@ fn usage() {
     eprintln!("  cargo run -- [flags] prevail-list    <catalogue.json>");
     eprintln!("  cargo run -- [flags] prevail-run     <catalogue.json>");
     eprintln!("  cargo run -- [flags] prevail-single  <catalogue.json> <test_name>");
+    eprintln!("  cargo run -- [flags] prevail-benchmark <dir_path>");
     eprintln!("");
     VerifierConfig::print_help();
     eprintln!("");
     eprintln!("Examples:");
     eprintln!("  cargo run -- elf-list ./bpf_host.o");
     eprintln!("  cargo run -- elf-analyze ./bpf_host.o tc");
-    eprintln!("  cargo run -- elf-analyze-benchmark ./bpf-progs --project cilium");
+    eprintln!("  cargo run -- bcf-benchmark ./bpf-progs --project cilium");
+    eprintln!("  cargo run -- prevail-benchmark ~/ebpf-samples --project cilium");
     eprintln!("  cargo run -- selftest-list <json_file>");
     eprintln!("  cargo run -- selftest-single <json_file> <test_name>");
     eprintln!("  cargo run -- selftest-run <json_file>");
@@ -279,9 +281,9 @@ fn main() {
         }
 
         // ============================================================
-        // BENCHMARK COMMAND (Recursive directory analysis)
+        // BCF BENCHMARK COMMAND (Recursive directory analysis)
         // ============================================================
-        "elf-analyze-benchmark" => {
+        "bcf-benchmark" | "elf-analyze-benchmark" => {
             if remaining.len() < 2 {
                 eprintln!("Error: Missing benchmark directory path");
                 usage();
@@ -391,6 +393,21 @@ fn main() {
             let test_name = &remaining[2];
 
             prevail_single(catalogue_path, test_name, &config);
+        }
+
+        // ============================================================
+        // PREVAIL: Run benchmark on all ELF files in a directory
+        // ============================================================
+        "prevail-benchmark" => {
+            if remaining.len() < 2 {
+                eprintln!("Error: Missing directory path");
+                eprintln!("Usage: prevail-benchmark <dir_path> [--project <name>]");
+                return;
+            }
+            let dir_path = &remaining[1];
+            let output_dir = Some("./results/prevail");
+
+            prevail_benchmark(dir_path, &config, output_dir);
         }
 
         _ => {
