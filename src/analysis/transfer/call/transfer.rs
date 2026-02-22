@@ -144,6 +144,9 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     // 2. Apply return value bounds for specific helpers
     apply_return_bounds(&mut state, helper);
 
+    // 2.5 Initialize memory buffers for PtrToUninitMem arguments
+    initialize_uninit_mem_args(&mut state, &in_types, helper);
+
     // 3. Update DBM - forget caller-saved registers and reset Tnums
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
         forget(&mut state.dbm, r);
@@ -168,6 +171,71 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     // 5. Advance PC and return
     state.pc += 1;
     vec![state]
+}
+
+/// Initializes stack slots that were passed as PtrToUninitMem helper arguments.
+fn initialize_uninit_mem_args(
+    state: &mut State,
+    in_types: &crate::analysis::machine::reg_types::TypeState,
+    helper: u32,
+) {
+    use super::signatures::{BpfArgType, get_helper_signature, get_mem_size_pairs};
+    use crate::analysis::transfer::types::update_store_types;
+    use crate::ast::MemSize;
+
+    if let Some(sig) = get_helper_signature(helper) {
+        for pair in get_mem_size_pairs(helper) {
+            if let Some(ptr_arg_type) = sig.args.get(pair.ptr_reg.idx().saturating_sub(2)) {
+                if matches!(ptr_arg_type, BpfArgType::PtrToUninitMem) {
+                    println!(
+                        "Found PtrToUninitMem argument for helper {} (reg {:?})",
+                        helper, pair.ptr_reg
+                    );
+                    if let RegType::PtrToStack { frame_level } = in_types.get(pair.ptr_reg) {
+                        println!("Arg is PtrToStack");
+                        if let Some(off) =
+                            domain::get_distance_fixed(&state.dbm, pair.ptr_reg, Reg::R10)
+                        {
+                            println!("Offset from R10 is {}", off);
+                            if let (_, Some(max_size)) =
+                                domain::get_interval(&state.dbm, pair.size_reg)
+                            {
+                                println!("Max size for {:?} is {}", pair.size_reg, max_size);
+                                if max_size > 0 {
+                                    let max_bytes = (max_size as usize).min(512); // Bound to max stack size just in case
+                                    let stack = state.stack_at_mut(frame_level);
+                                    for i in 0..max_bytes {
+                                        if let Ok(slot) = i16::try_from(off + i as i64) {
+                                            update_store_types(
+                                                stack,
+                                                RegType::ScalarValue,
+                                                MemSize::U8,
+                                                Some(slot as i64),
+                                            );
+                                        }
+                                    }
+                                    println!(
+                                        "Initialized stack slots [{}, {})",
+                                        off,
+                                        off + max_size as i64
+                                    );
+                                }
+                            } else {
+                                println!("Could not get interval for size reg {:?}", pair.size_reg);
+                            }
+                        } else {
+                            println!("Could not get fixed distance to R10");
+                        }
+                    } else {
+                        println!(
+                            "Arg is NOT PtrToStack, it is {:?}",
+                            state.types.get(pair.ptr_reg)
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Apply return value bounds based on helper semantics.

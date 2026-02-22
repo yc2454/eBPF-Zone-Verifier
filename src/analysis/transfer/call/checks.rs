@@ -20,7 +20,7 @@ use crate::zone::domain::{
 use log::{error, info, warn};
 
 use super::compat::is_nullable_arg_type;
-use super::signatures::{get_helper_signature, get_mem_size_pairs, BpfArgType};
+use super::signatures::{BpfArgType, get_helper_signature, get_mem_size_pairs};
 use super::validators;
 
 // ============================================================================
@@ -187,7 +187,9 @@ pub(crate) fn validate_single_arg(
         BpfArgType::ConstMapPtr => validators::validate_const_map_ptr(&mut ctx),
         BpfArgType::PtrToMapKey => validators::validate_ptr_to_map_key(&mut ctx),
         BpfArgType::PtrToMapValue => validators::validate_ptr_to_map_value(&mut ctx),
-        BpfArgType::PtrToUninitMapValue => validators::map::validate_ptr_to_uninit_map_value(&mut ctx),
+        BpfArgType::PtrToUninitMapValue => {
+            validators::map::validate_ptr_to_uninit_map_value(&mut ctx)
+        }
 
         // ---- Memory types ----
         BpfArgType::PtrToMem => validators::validate_ptr_to_mem(&mut ctx),
@@ -238,7 +240,9 @@ pub(crate) fn validate_single_arg_inner(
     map_info: &Option<MapInfo>,
     arg_index: usize,
 ) -> bool {
-    validate_single_arg(env, state, types, helper, pc, reg, expected, actual, map_info, arg_index)
+    validate_single_arg(
+        env, state, types, helper, pc, reg, expected, actual, map_info, arg_index,
+    )
 }
 
 // ============================================================================

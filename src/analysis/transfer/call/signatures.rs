@@ -323,7 +323,9 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
-        constants::BPF_PROBE_READ_USER => HelperSignature::new([
+        constants::BPF_PROBE_READ
+        | constants::BPF_PROBE_READ_STR
+        | constants::BPF_PROBE_READ_USER => HelperSignature::new([
             PtrToUninitMem,  // R1: dst
             ConstSizeOrZero, // R2: size
             Anything,        // R3: unsafe_ptr (user address)
@@ -336,6 +338,22 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             ConstSizeOrZero, // R2: size
             Anything,        // R3: unsafe_ptr (kernel address, not validated)
             DontCare,
+            DontCare,
+        ]),
+
+        constants::BPF_PERF_EVENT_READ_VALUE => HelperSignature::new([
+            ConstMapPtr,     // R1: map
+            Anything,        // R2: flags
+            PtrToUninitMem,  // R3: buf
+            ConstSizeOrZero, // R4: buf_size
+            DontCare,
+        ]),
+
+        constants::BPF_PERF_PROG_READ_VALUE => HelperSignature::new([
+            PtrToCtx,        // R1: ctx
+            PtrToUninitMem,  // R2: buf
+            ConstSizeOrZero, // R3: buf_size
+            DontCare,        // R4: flags (not verified here)
             DontCare,
         ]),
 
@@ -480,10 +498,17 @@ pub fn get_mem_size_pairs(helper: u32) -> &'static [MemSizePair] {
 
     static GET_CURRENT_COMM: [MemSizePair; 1] = [MemSizePair::new(R1, R2)];
 
+    static PERF_EVENT_READ_VALUE: [MemSizePair; 1] = [MemSizePair::new(R3, R4)];
+
+    static PERF_PROG_READ_VALUE: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
+
     static EMPTY: [MemSizePair; 0] = [];
 
     match helper {
-        constants::BPF_PROBE_READ_USER | constants::BPF_PROBE_READ_KERNEL => &PROBE_READ,
+        constants::BPF_PROBE_READ
+        | constants::BPF_PROBE_READ_STR
+        | constants::BPF_PROBE_READ_USER
+        | constants::BPF_PROBE_READ_KERNEL => &PROBE_READ,
 
         constants::BPF_SKB_LOAD_BYTES => &SKB_LOAD_BYTES,
 
@@ -503,12 +528,15 @@ pub fn get_mem_size_pairs(helper: u32) -> &'static [MemSizePair] {
 
         constants::BPF_PERF_EVENT_OUTPUT => &PERF_EVENT_OUTPUT,
 
+        constants::BPF_PERF_EVENT_READ_VALUE => &PERF_EVENT_READ_VALUE,
+
+        constants::BPF_PERF_PROG_READ_VALUE => &PERF_PROG_READ_VALUE,
+
         constants::BPF_GET_CURRENT_COMM => &GET_CURRENT_COMM,
 
         // Note: BPF_RINGBUF_OUTPUT mem-size pair check is skipped because
         // the kernel allows reading uninitialized stack data in privileged mode.
         // TODO: Add privileged/unprivileged mode support to enable this check.
-
         _ => &EMPTY,
     }
 }

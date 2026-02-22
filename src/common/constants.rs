@@ -39,12 +39,15 @@ pub const BPF_SKB_PULL_DATA: u32 = 39;
 pub const BPF_CSUM_UPDATE: u32 = 40;
 pub const BPF_SKB_CHANGE_HEAD: u32 = 43;
 pub const BPF_XDP_ADJUST_HEAD: u32 = 44;
+pub const BPF_PROBE_READ_STR: u32 = 45;
 pub const BPF_GET_SOCKET_COOKIE: u32 = 46;
 pub const BPF_SKB_ADJUST_ROOM: u32 = 50;
 pub const BPF_SOCK_MAP_UPDATE: u32 = 53;
 pub const BPF_XDP_ADJUST_META: u32 = 54;
-pub const BPF_GET_SOCKOPT:u32 = 57;
-pub const BPF_GET_STACK:u32 = 67;
+pub const BPF_PERF_EVENT_READ_VALUE: u32 = 55;
+pub const BPF_PERF_PROG_READ_VALUE: u32 = 56;
+pub const BPF_GET_SOCKOPT: u32 = 57;
+pub const BPF_GET_STACK: u32 = 67;
 pub const BPF_FIB_LOOKUP: u32 = 69;
 pub const BPF_GET_LOCAL_STORAGE: u32 = 81;
 pub const BPF_SK_LOOKUP_TCP: u32 = 84;
@@ -70,7 +73,7 @@ pub const BPF_RINGBUF_OUTPUT: u32 = 130;
 pub const BPF_RINGBUF_RESERVE: u32 = 131;
 pub const BPF_RINGBUF_SUBMIT: u32 = 132;
 pub const BPF_SKC_TO_UDP6_SOCK: u32 = 140;
-pub const BPF_GET_TASK_STACK:u32 = 141;
+pub const BPF_GET_TASK_STACK: u32 = 141;
 pub const BPF_D_PATH: u32 = 147;
 pub const BPF_SKC_TO_UNIX_SOCK: u32 = 178;
 
@@ -131,9 +134,9 @@ pub const SHT_NOBITS: u32 = 8;
 
 // Map Flags
 // Program access permissions
-pub const BPF_F_RDONLY_PROG: u32      = 1 << 7;  // 0x0080
-pub const BPF_F_WRONLY_PROG: u32      = 1 << 8;  // 0x0100
-pub const BPF_F_RDWR_PROG: u32        = 1 << 9;  // 0x0200
+pub const BPF_F_RDONLY_PROG: u32 = 1 << 7; // 0x0080
+pub const BPF_F_WRONLY_PROG: u32 = 1 << 8; // 0x0100
+pub const BPF_F_RDWR_PROG: u32 = 1 << 9; // 0x0200
 
 // ===========================================================================
 // BPF Program Types
@@ -199,5 +202,5 @@ pub const F_LOAD_WITH_STRICT_ALIGNMENT: u32 = 1 << 1;
 // ==================================================
 // BPF ELF Relocation Types
 // ==================================================
-pub const R_BPF_64_64: u32 = 1;   // 64-bit load (ld_imm64) - used for map pointers
-pub const R_BPF_64_32: u32 = 10;  // 32-bit call (call insn) - used for function calls
+pub const R_BPF_64_64: u32 = 1; // 64-bit load (ld_imm64) - used for map pointers
+pub const R_BPF_64_32: u32 = 10; // 32-bit call (call insn) - used for function calls
