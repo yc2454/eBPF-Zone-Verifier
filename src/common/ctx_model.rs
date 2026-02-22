@@ -281,6 +281,28 @@ const SK_LOOKUP_FIELDS: &[CtxField] = &[
                writable: false, readable: true, narrow_access: true },
 ];
 
+/// struct bpf_sock_ops (SOCK_OPS context)
+///
+/// Reference: linux/include/uapi/linux/bpf.h
+///
+/// The verifier allows writes to `reply` (offset 4); the remaining fields are read-only.
+const SOCK_OPS_FIELDS: &[CtxField] = &[
+    // __u32 op
+    CtxField { offset: 0, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },
+    // __u32 reply
+    CtxField { offset: 4, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true, readable: true, narrow_access: true },
+    // __u32 family
+    CtxField { offset: 20, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },
+    // __u32 remote_port
+    CtxField { offset: 32, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },
+    // __u32 local_port
+    CtxField { offset: 36, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },
+    // __u32 local_ip4
+    CtxField { offset: 48, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },
+    // __u32 remote_ip4
+    CtxField { offset: 52, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },
+];
+
 /// struct sk_msg_md (SK_MSG context)
 ///
 /// Reference: linux/include/uapi/linux/bpf.h
@@ -457,6 +479,7 @@ fn get_field_tables(ctx_kind: ContextKind, prog_kind: ProgramKind) -> Option<(&'
         ContextKind::XdpMd => Some((XDP_MD_FIELDS, &[])),
         ContextKind::BpfSockAddr => Some((SOCK_ADDR_FIELDS, &[])),
         ContextKind::SkLookup => Some((SK_LOOKUP_FIELDS, &[])),
+        ContextKind::SockOps => Some((SOCK_OPS_FIELDS, &[])),
         ContextKind::SkMsgMd => Some((SK_MSG_MD_FIELDS, &[])),
         ContextKind::PtRegs => Some((PT_REGS_FIELDS, &[])),
         ContextKind::IterTask => Some((TRACE_ITER_TASK_FIELDS, &[])),

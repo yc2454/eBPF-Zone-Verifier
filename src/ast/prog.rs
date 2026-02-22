@@ -54,6 +54,21 @@ impl ProgramKind {
     pub fn from_section(s: &str) -> Self {
         let s = s.to_lowercase();
         let s = s.trim();
+        // Common tc section aliases used by Cilium/Suricata-style objects.
+        if matches!(
+            s,
+            "from-netdev"
+                | "to-netdev"
+                | "from-container"
+                | "to-container"
+                | "filter"
+                | "bypass_filter"
+                | "loadbalancer"
+                | "lb"
+                | "vlan_filter"
+        ) {
+            return ProgramKind::SchedCls;
+        }
         if s == "xdp" || s.starts_with("xdp/") {
             return ProgramKind::Xdp;
         }
