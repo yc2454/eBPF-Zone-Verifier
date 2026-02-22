@@ -1,6 +1,6 @@
 // src/analysis/transfer/memory/access.rs
 
-use crate::analysis::machine::env::VerificationError;
+use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
@@ -122,7 +122,12 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
                 "Load from nullable socket at pc {}: base {:?}+{} requires null check",
                 pc, base, off
             );
-            env.fail(VerificationError::UnsafeGenericLoad { pc, base, off });
+            env.fail(VerificationError::UnsafeGenericLoad {
+                pc,
+                base,
+                off,
+                base_type: base_type.clone(),
+            });
         }
         PtrToPacketMeta { .. } => {
             check_packet_meta_access(env, state, base, off, size, pc);
@@ -141,14 +146,24 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
                 "Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})",
                 pc, base, off, base_type
             );
-            env.fail(VerificationError::UnsafeGenericLoad { pc, base, off });
+            env.fail(VerificationError::UnsafeGenericLoad {
+                pc,
+                base,
+                off,
+                base_type: base_type.clone(),
+            });
         }
         _ => {
             error!(
                 "Non-stack, non-ctx load at pc {} from base {:?}+{}",
                 pc, base, off
             );
-            env.fail(VerificationError::UnsafeGenericLoad { pc, base, off });
+            env.fail(VerificationError::UnsafeGenericLoad {
+                pc,
+                base,
+                off,
+                base_type: base_type.clone(),
+            });
         }
     }
 }
@@ -224,11 +239,21 @@ pub fn check_store(
         }
         PtrToSocket { .. } | PtrToSockCommon { .. } | PtrToTcpSock { .. } => {
             error!("Cannot write to socket struct at pc {}", pc);
-            env.fail(VerificationError::UnsafeGenericStore { pc, base, off });
+            env.fail(VerificationError::UnsafeGenericStore {
+                pc,
+                base,
+                off,
+                base_type: base_ty.clone(),
+            });
         }
         PtrToSocketOrNull { .. } | PtrToSockCommonOrNull { .. } | PtrToTcpSockOrNull { .. } => {
             error!("Cannot write to nullable socket at pc {}", pc);
-            env.fail(VerificationError::UnsafeGenericStore { pc, base, off });
+            env.fail(VerificationError::UnsafeGenericStore {
+                pc,
+                base,
+                off,
+                base_type: base_ty.clone(),
+            });
         }
         PtrToAllocMem { id: _, mem_size } => {
             let access_end = off as i64 + size;
@@ -250,7 +275,12 @@ pub fn check_store(
                 "Unsafe store at pc {}: base {:?}+{} has non-pointer type {:?}",
                 pc, base, off, base_ty
             );
-            env.fail(VerificationError::UnsafeGenericStore { pc, base, off });
+            env.fail(VerificationError::UnsafeGenericStore {
+                pc,
+                base,
+                off,
+                base_type: base_ty.clone(),
+            });
         }
     }
 }

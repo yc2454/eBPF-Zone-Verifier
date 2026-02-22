@@ -1,8 +1,9 @@
+use crate::analysis::machine::error::VerificationError;
 // src/analysis/transfer/common.rs
 //
 // Common validation utilities shared across transfer functions
 
-use crate::analysis::machine::env::{VerificationError, VerifierEnv};
+use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;

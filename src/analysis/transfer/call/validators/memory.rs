@@ -2,7 +2,7 @@
 //
 // Validators for memory-related argument types: PtrToMem, PtrToUninitMem, PtrToAllocMem
 
-use crate::analysis::machine::env::VerificationError;
+use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg_types::RegType;
 
 use super::super::checks::{

@@ -70,26 +70,27 @@ impl ProgramKind {
         ) {
             return ProgramKind::SchedCls;
         }
-        if s == "xdp" || s.starts_with("xdp/") {
+        if s.starts_with("xdp") {
             return ProgramKind::Xdp;
         }
-        if s == "classifier"
-            || s == "tc"
-            || s.starts_with("tc/")
-            || s.starts_with("classifier/")
-            || s == "sched_cls"
-            || s == "action"
-            || s.starts_with("action/")
+        if s.starts_with("classifier")
+            || s.starts_with("tc")
+            || s.starts_with("sched_cls")
+            || s.starts_with("action")
+            || s.starts_with("ingress")
+            || s.starts_with("egress")
+            || s.starts_with("l2_")
+            || s.starts_with("drop_")
         {
             return ProgramKind::SchedCls;
         }
-        if s == "socket" || s.starts_with("socket/") {
+        if s.starts_with("socket") {
             return ProgramKind::SocketFilter;
         }
-        if s == "sockops" || s.starts_with("sockops/") {
+        if s.starts_with("sockops") {
             return ProgramKind::SockOps;
         }
-        if s == "sk_msg" || s.starts_with("sk_msg/") {
+        if s.starts_with("sk_msg") {
             return ProgramKind::SkMsg;
         }
         if s.starts_with("cgroup/bind")
@@ -107,16 +108,16 @@ impl ProgramKind {
         if s.starts_with("cgroup/sock") {
             return ProgramKind::CgroupSock;
         }
-        if s == "kprobe" || s.starts_with("kprobe/") || s.starts_with("kretprobe/") {
+        if s.starts_with("kprobe") || s.starts_with("kretprobe") {
             return ProgramKind::Kprobe;
         }
-        if s == "tracepoint" || s.starts_with("tracepoint/") {
+        if s.starts_with("tracepoint") {
             return ProgramKind::Tracepoint;
         }
-        if s == "raw_tracepoint" || s.starts_with("raw_tracepoint/") {
+        if s.starts_with("raw_tracepoint") {
             return ProgramKind::RawTracepoint;
         }
-        if s == "perf_event" || s.starts_with("perf_event/") {
+        if s.starts_with("perf_event") {
             return ProgramKind::PerfEvent;
         }
         ProgramKind::Unknown

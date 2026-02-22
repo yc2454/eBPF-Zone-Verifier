@@ -2,7 +2,7 @@
 //
 // Unified handling for *OrNull argument types
 
-use crate::analysis::machine::env::VerificationError;
+use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::zone::domain::proven_zero;

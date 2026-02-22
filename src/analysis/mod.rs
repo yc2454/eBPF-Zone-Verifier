@@ -1,3 +1,4 @@
+use crate::analysis::machine::error::VerificationError;
 // src/analysis.rs
 
 pub mod flow;
@@ -14,7 +15,7 @@ use std::collections::VecDeque;
 
 use self::flow::{cfg, liveness, merging, pruning, subprog};
 use self::machine::context::ExecContext;
-use self::machine::env::{VerificationError, VerifierEnv};
+use self::machine::env::VerifierEnv;
 use self::machine::reg_types::RegType;
 use self::machine::state::State;
 use crate::common::config::VerifierConfig;

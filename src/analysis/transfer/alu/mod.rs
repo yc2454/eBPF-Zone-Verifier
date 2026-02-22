@@ -1,3 +1,4 @@
+use crate::analysis::machine::error::VerificationError;
 // src/analysis/transfer/alu/mod.rs
 
 pub mod arithmetic;
@@ -6,7 +7,7 @@ pub mod shift;
 pub mod validation;
 pub mod helpers;
 
-use crate::analysis::machine::env::{VerifierEnv, VerificationError};
+use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::state::State;
 use crate::analysis::machine::reg_types::{RegType };
 use crate::ast::{AluOp, Operand, Width};
