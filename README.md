@@ -21,6 +21,118 @@ Ensure you have Rust installed (via `rustup`). Clone the repository and build:
 cargo build --release
 ```
 
+## Architecture Overview
+
+### Loading and Parsing Pipeline
+
+The verifier processes eBPF programs through a multi-stage pipeline:
+
+```
+ELF File (.o)
+    │
+    ├─► ELF Parsing (goblin)
+    │   ├── Extract section headers and names
+    │   ├── Load BPF maps from .maps section
+    │   ├── Parse BTF (BPF Type Format) if present
+    │   └── Process relocations for map references
+    │
+    ├─► Raw Instruction Extraction
+    │   ├── Locate code sections (e.g., "tc", "xdp", "kprobe/...")
+    │   ├── Extract 8-byte BPF instructions
+    │   └── Identify function boundaries via symbols
+    │
+    ├─► AST Lowering (bpf_to_ast)
+    │   ├── Decode opcodes into typed instructions
+    │   ├── Handle 64-bit immediates (LD_IMM64)
+    │   ├── Resolve branch targets
+    │   └── Validate instruction encoding
+    │
+    └─► Control Flow Graph Construction
+        ├── Identify basic blocks
+        ├── Build predecessor/successor edges
+        ├── Detect loops (back-edges)
+        └── Compute liveness information
+```
+
+**Key Modules:**
+- `parsing/elf/` - ELF file handling: sections, symbols, relocations
+- `parsing/bpf_insn.rs` - Raw BPF instruction representation
+- `parsing/bpf_to_ast.rs` - Instruction decoding to typed AST
+- `parsing/btf.rs` - BPF Type Format parsing
+- `analysis/flow/cfg.rs` - Control flow graph construction
+- `analysis/flow/liveness.rs` - Register liveness analysis
+
+### Abstract Domain
+
+The verifier tracks program state using two complementary abstract domains:
+
+**1. Difference Bound Matrix (DBM) - Zone Domain**
+- Represents constraints of the form `xi - xj <= c`
+- Tracks relational bounds between registers (e.g., `r1 <= r2 + 10`)
+- Enables precise reasoning about pointer arithmetic and array bounds
+- Implemented with Floyd-Warshall closure for constraint propagation
+
+**2. Tri-state Numbers (Tnum)**
+- Each bit is classified as: known-0, known-1, or unknown
+- Enables precise bitwise operation analysis (AND, OR, XOR, shifts)
+- Complements DBM for non-relational reasoning
+
+### Pruning Strategy
+
+State-space exploration can explode exponentially. The verifier employs sophisticated pruning to ensure termination while maintaining soundness:
+
+#### 1. State Subsumption
+At designated prune points (merge points in the CFG), the verifier checks if the current state is *subsumed* by a previously explored state. State `A` subsumes state `B` if `A` covers all possible behaviors of `B`:
+
+- **Type Subsumption:** Register types must be compatible (e.g., `PtrToMapValue` subsumes itself with matching map index)
+- **DBM Subsumption:** For each live register, old bounds must be at least as permissive: `old_min <= cur_min && old_max >= cur_max`
+- **Tnum Subsumption:** Old tnum's unknown bits must be a superset of current's unknown bits
+- **Stack Subsumption:** Stack slot types must be compatible across frames
+- **Caller Frame Subsumption:** Callee-saved registers (r6-r9) in caller frames must also be subsumed
+
+```
+If old_state subsumes cur_state:
+    → Prune cur_state (already covered)
+Else:
+    → Continue exploration, save state for future comparisons
+```
+
+#### 2. Loop Handling with Widening
+Loops require special treatment to ensure termination. The verifier detects loops via back-edges and applies widening:
+
+**Loop Detection:**
+- A back-edge is identified when a branch target is at a lower PC than the branch instruction
+- The verifier tracks execution history to distinguish true loops from re-entry via different call paths
+
+**Widening Strategy:**
+1. On first loop iteration: record the state at the loop head
+2. On subsequent iterations: apply widening to accelerate convergence
+   - DBM widening: if a bound increased, set it to infinity
+   - Tnum widening: if a tnum changed, set to fully unknown
+3. Check for convergence: if widened state subsumes current state, the loop is verified
+
+**Bounded Loop Optimization:**
+For loops with compile-time bounds (e.g., `for (i = 0; i < 40; i++)`), the verifier detects the pattern:
+```c
+if (r != K) goto loop_head  // K is the bound
+```
+And applies the constraint `r < K` to enable faster convergence without losing precision.
+
+**Loop Exit Verification:**
+The verifier ensures loops have feasible exit paths:
+- Loops must contain conditional branches (potential exits)
+- Exit paths must be actually explored (not just syntactically present)
+- Loops without verified exits are rejected via complexity limit
+
+#### 3. Liveness-Based Pruning
+Only live registers (those that may be read before being overwritten) are considered in subsumption checks. This significantly reduces false negatives in pruning:
+
+```
+At PC 50, if only r0, r1, r6 are live:
+    → Compare only these registers for subsumption
+    → Differences in r2-r5, r7-r10 are ignored
+```
+
 ## Usage
 
 The tool is run via `cargo run -- [flags] <subcommand> [args]`.
@@ -32,13 +144,21 @@ The tool is run via `cargo run -- [flags] <subcommand> [args]`.
 * **`elf-analyze <elf_path> <section_name>`**: Analyzes a specific BPF program in a section.
 * **`elf-analyze-func <elf_path> <func_name>`**: Analyzes a specific program by its function name.
 * **`elf-analyze-prog <elf_path>`**: Batch analyzes all code sections in the ELF file.
-* **`elf-analyze-benchmark <dir_path>`**: Recursively scans a directory for `.o` files and runs analysis.
+
+#### Benchmarks
+* **`bcf-benchmark <dir_path>`**: Runs the BCF (BPF Complexity Framework) benchmark suite. Recursively scans for `.o` files with naming pattern `clang-<VER>_-<OPT>_<SOURCE>.o`.
+* **`prevail-benchmark <dir_path>`**: Runs the PREVAIL benchmark suite on real-world eBPF programs. Files in `invalid/` subdirectory are expected to be rejected; all others should be accepted.
 
 #### Selftests
 * **`selftest-list <json_file>`**: Lists all tests contained in a JSON test file.
 * **`selftest-run <json_file>`**: Runs all tests in a specific JSON file.
 * **`selftest-single <json_file> <test_name>`**: Runs a single test by name from a JSON file.
 * **`selftest-suite <json_dir>`**: Runs all JSON test files found in a directory.
+
+#### PREVAIL Catalogue Tests
+* **`prevail-list <catalogue.json>`**: Lists all tests in a PREVAIL catalogue.
+* **`prevail-run <catalogue.json>`**: Runs all tests in a catalogue (with expected outcomes).
+* **`prevail-single <catalogue.json> <test_name>`**: Runs a single test by name.
 
 ### Configuration Flags
 
@@ -63,9 +183,9 @@ Flags must be placed *before* the subcommand.
 | Flag | Description | Example |
 | --- | --- | --- |
 | `--project <NAME>` | Filter by project subdirectory. | `--project cilium` |
-| `--compiler <NAME>` | Filter by compiler version. | `--compiler clang-16` |
-| `--opt <LEVEL>` | Filter by optimization level. | `--opt -O2` |
-| `--source <NAME>` | Filter by original source file name. | `--source bpf_host` |
+| `--compiler <NAME>` | Filter by compiler version (BCF only). | `--compiler clang-16` |
+| `--opt <LEVEL>` | Filter by optimization level (BCF only). | `--opt -O2` |
+| `--source <NAME>` | Filter by original source file name (BCF only). | `--source bpf_host` |
 | `--input-list <FILE>` | Use a specific file containing a list of ELF paths. | `--input-list files.txt` |
 
 ## Examples
@@ -85,9 +205,21 @@ cargo run -- elf-analyze ./bpf_host.o tc
 cargo run -- selftest-run ./selftests/calls.json
 ```
 
-**4. Run a benchmark with filters:**
+**4. Run the BCF benchmark with filters:**
 ```bash
-cargo run -- --project cilium --compiler clang-16 elf-analyze-benchmark ./bpf-progs
+cargo run -- --project cilium --compiler clang-16 bcf-benchmark ./bpf-progs
+```
+
+**5. Run the PREVAIL benchmark on real-world programs:**
+```bash
+# Run on all projects
+cargo run -- prevail-benchmark ~/ebpf-samples
+
+# Filter to a specific project
+cargo run -- prevail-benchmark ~/ebpf-samples --project cilium
+
+# Test the invalid programs (expected rejections)
+cargo run -- prevail-benchmark ~/ebpf-samples --project invalid
 ```
 
 ## Troubleshooting
@@ -95,16 +227,16 @@ cargo run -- --project cilium --compiler clang-16 elf-analyze-benchmark ./bpf-pr
 The verifier can be strict. Below are common error patterns and how to resolve them.
 
 ### 1. Complexity Limit Exceeded
-**Error:** `FAIL: Complexity limit of 1000000 exceeded`  
-**Cause:** The program has too many possible execution paths, often due to nested loops or many conditional branches.  
+**Error:** `FAIL: Complexity limit of 1000000 exceeded`
+**Cause:** The program has too many possible execution paths, often due to nested loops or many conditional branches.
 **Solutions:**
 *   Increase the limit with `--max-insn <N>`.
 *   Enable **widening** with `--use-widening` to force loop convergence (may introduce unsoundness).
 *   Use `--skip-dbm` to skip relational numeric analysis, which is faster but less precise.
 
 ### 2. Pointer / Stack Out of Bounds
-**Error:** `FAIL: Stack out of bounds at pc 12: offset -128, size 8`  
-**Cause:** Accessing memory outside the allocated stack frame (e.g., `r10 - 512`) or beyond a map value boundary.  
+**Error:** `FAIL: Stack out of bounds at pc 12: offset -128, size 8`
+**Cause:** Accessing memory outside the allocated stack frame (e.g., `r10 - 512`) or beyond a map value boundary.
 **Example Fix:**
 ```c
 // Unsafe: offset might be OOB
@@ -115,8 +247,8 @@ if (val) {
 ```
 
 ### 3. Unsafe Generic Load/Store
-**Error:** `FAIL: Unsafe generic load at pc 45: base R0, offset 0`  
-**Cause:** Attempting to dereference a pointer that might be `NULL` or is not of a memory-pointing type.  
+**Error:** `FAIL: Unsafe generic load at pc 45: base R0, offset 0`
+**Cause:** Attempting to dereference a pointer that might be `NULL` or is not of a memory-pointing type.
 **Solution:** Always perform a null-check after map lookups or helper calls that return pointers.
 ```c
 struct data *d = bpf_map_lookup_elem(&maps, &key);
@@ -124,11 +256,39 @@ if (!d) return 0; // The verifier now knows R0 is a valid pointer here
 ```
 
 ### 4. DBM Inconsistency
-**Error:** `FAIL: DBM inconsistent at pc 80`  
-**Cause:** The analyzer found a logical contradiction in the numeric constraints (e.g., a path where `r1 < 5` AND `r1 > 10`). This often indicates unreachable code or a bug in the analyzer's pruning logic.  
+**Error:** `FAIL: DBM inconsistent at pc 80`
+**Cause:** The analyzer found a logical contradiction in the numeric constraints (e.g., a path where `r1 < 5` AND `r1 > 10`). This often indicates unreachable code or a bug in the analyzer's pruning logic.
 **Debugging:** Run with `-vv` to see the RELATIONAL constraints leading to the contradiction.
 
 ### 5. Relocation Info Missing
-**Error:** `FAIL: Relocation info missing at pc 5`  
-**Cause:** The ELF file was compiled without relocation data for maps or global variables.  
+**Error:** `FAIL: Relocation info missing at pc 5`
+**Cause:** The ELF file was compiled without relocation data for maps or global variables.
 **Solution:** Ensure you are compiling with `-target bpf` and recent Clang/LLVM versions.
+
+## Project Structure
+
+```
+src/
+├── analysis/
+│   ├── flow/           # CFG, liveness, pruning, subprogram handling
+│   ├── machine/        # Abstract state: registers, stack, frames
+│   └── transfer/       # Transfer functions for each instruction type
+│       ├── alu/        # Arithmetic and bitwise operations
+│       ├── branch/     # Conditional branches and refinement
+│       ├── call/       # BPF helper calls and validation
+│       └── memory/     # Load/store, packet access, map access
+├── ast/                # Typed instruction representation
+├── common/             # Configuration, utilities
+├── parsing/            # ELF loading, instruction decoding, BTF
+│   └── elf/            # ELF-specific: maps, programs, relocations
+├── testing/            # Test runners and benchmarks
+│   ├── bcf_benchmark.rs    # BCF benchmark runner
+│   ├── benchmark_common.rs # Shared benchmark utilities
+│   ├── prevail.rs          # PREVAIL tests and benchmark
+│   ├── selftest.rs         # JSON-based test runner
+│   └── runner.rs           # Core analysis driver
+└── zone/               # Abstract domains
+    ├── dbm.rs          # Difference Bound Matrix implementation
+    ├── domain.rs       # Domain operations (assume, refine, etc.)
+    └── tnum.rs         # Tri-state number implementation
+```
