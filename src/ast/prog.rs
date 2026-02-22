@@ -36,6 +36,7 @@ pub enum ContextKind {
     SkBuff,
     SkLookup,
     SockOps,
+    BpfSock,
     SkMsgMd,
     BpfSockAddr,
     PtRegs,
@@ -138,7 +139,7 @@ impl ProgramKind {
             ProgramKind::SkLookup => ContextKind::SkLookup,
             ProgramKind::SkMsg => ContextKind::SkMsgMd,
             ProgramKind::CgroupSockAddr => ContextKind::BpfSockAddr,
-            ProgramKind::CgroupSock => ContextKind::SockOps,
+            ProgramKind::CgroupSock => ContextKind::BpfSock,
             _ => ContextKind::Unknown,
         }
     }

@@ -46,6 +46,40 @@ pub struct Analyzer {
 }
 
 impl Analyzer {
+    fn derive_program_kind(&self, section: &str) -> ProgramKind {
+        if let Ok(kind) = program_kind_for_object(Path::new(&self.path)) {
+            return kind;
+        }
+
+        let direct = ProgramKind::from_section(section);
+        if direct != ProgramKind::Unknown {
+            return direct;
+        }
+
+        // Fallback for numeric/anonymous sections (e.g., "2/3"):
+        // infer from other code sections in the same object.
+        let mut inferred: Option<ProgramKind> = None;
+        if let Ok(sections) = list_section_names(&self.path) {
+            for s in sections {
+                if !is_code_section(&s) {
+                    continue;
+                }
+                let k = ProgramKind::from_section(&s);
+                if k == ProgramKind::Unknown {
+                    continue;
+                }
+                inferred = match inferred {
+                    None => Some(k),
+                    Some(prev) if prev == k => Some(prev),
+                    // Mixed program kinds in one object: keep conservative behavior.
+                    Some(_) => return ProgramKind::Unknown,
+                };
+            }
+        }
+
+        inferred.unwrap_or(ProgramKind::Unknown)
+    }
+
     /// Initialize analyzer for a specific ELF file.
     /// Loads shared resources (Maps, BTF) once.
     pub fn new(path: &str, config: VerifierConfig) -> Self {
@@ -166,10 +200,7 @@ impl Analyzer {
         ctx.pc_to_reloc = pc_to_reloc;
 
         // Determine program kind
-        ctx.prog_kind = match program_kind_for_object(Path::new(&self.path)) {
-            Ok(kind) => kind,
-            Err(_) => ProgramKind::from_section(section),
-        };
+        ctx.prog_kind = self.derive_program_kind(section);
 
         if self.config.verbosity > 0 {
             println!("  Program kind: {:?}", ctx.prog_kind);
@@ -225,10 +256,7 @@ impl Analyzer {
         ctx.pc_to_reloc = pc_to_reloc;
 
         // Determine program kind
-        ctx.prog_kind = match program_kind_for_object(Path::new(&self.path)) {
-            Ok(kind) => kind,
-            Err(_) => ProgramKind::from_section(section),
-        };
+        ctx.prog_kind = self.derive_program_kind(section);
 
         if self.config.verbosity > 0 {
             println!("  Program kind: {:?}", ctx.prog_kind);
