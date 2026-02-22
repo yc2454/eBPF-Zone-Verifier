@@ -262,6 +262,7 @@ impl Dbm {
     /// Narrowing: intersect constraints from two DBMs.
     /// Takes the tighter (smaller) constraint for each entry.
     /// Used after widening to recover precision from the actual loop state.
+    #[allow(dead_code)]
     pub fn narrow(&self, other: &Dbm) -> Dbm {
         let n = self.num_vars();
         let mut result = self.clone();

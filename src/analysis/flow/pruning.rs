@@ -243,11 +243,6 @@ pub fn should_prune(
         //    with the widened state). Stagnant loops (no change) are infinite.
         if let Some(prev_states) = env.explored_states.get(&pc) {
             if let Some(old) = prev_states.last() {
-                // Check convergence: is current state subsumed by last explored?
-                let types_ok = types_subsumed_by(&state.types, &old.types, live_regs);
-                let dbm_ok = config.skip_dbm_check || dbm_subsumed_by(&state.dbm, &old.dbm, live_regs);
-                let stack_ok = stack_subsumed_by(state, old);
-                let tnum_ok = tnum_subsumed_by(state, old, live_regs);
                 if state_subsumed_by(state, old, live_regs, config) {
                     // Only converge if:
                     // 1. Widening was applied (prev_states >= 2)
