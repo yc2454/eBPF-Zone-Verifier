@@ -1,6 +1,7 @@
+use crate::analysis::machine::error::VerificationError;
 // src/analysis/transfer/memory/map.rs
 
-use crate::analysis::machine::env::{VerificationError, VerifierEnv};
+use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
 use crate::ast::MapLoadKind;

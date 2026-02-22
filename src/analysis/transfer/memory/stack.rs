@@ -1,7 +1,8 @@
+use crate::analysis::machine::error::VerificationError;
 // src/analysis/transfer/memory/stack.rs
 
 use super::access::AccessKind;
-use crate::analysis::machine::env::{VerificationError, VerifierEnv};
+use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::frame_stack::FrameLevel;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;

@@ -1,9 +1,10 @@
+use crate::analysis::machine::error::VerificationError;
 // src/analysis/transfer/call/checks.rs
 //
 // Argument validation for BPF helper functions.
 // Uses table-driven type compatibility and modular validators.
 
-use crate::analysis::machine::env::{VerificationError, VerifierEnv};
+use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::state::State;

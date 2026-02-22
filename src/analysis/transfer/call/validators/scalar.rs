@@ -2,7 +2,7 @@
 //
 // Validators for scalar argument types: ConstSize, ConstSizeOrZero, ConstAllocSizeOrZero
 
-use crate::analysis::machine::env::VerificationError;
+use crate::analysis::machine::error::VerificationError;
 use crate::zone::domain::{proven_nonnegative, proven_positive};
 
 use super::super::checks::ValidationContext;

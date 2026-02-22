@@ -2,7 +2,7 @@
 //
 // Validators for map-related argument types: ConstMapPtr, PtrToMapKey, PtrToMapValue
 
-use crate::analysis::machine::env::VerificationError;
+use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::common::constants;

@@ -2,7 +2,7 @@
 
 use crate::analysis;
 use crate::analysis::machine::context::default_exec_ctx;
-use crate::analysis::machine::env::VerificationError;
+use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg::Reg;
 use crate::ast::ProgramKind;
 use crate::common::config::VerifierConfig;

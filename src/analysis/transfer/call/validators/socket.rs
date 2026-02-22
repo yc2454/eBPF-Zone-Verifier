@@ -2,7 +2,7 @@
 //
 // Validators for socket-related argument types: PtrToSocket, PtrToSockCommon, PtrToBTFIdSockCommon
 
-use crate::analysis::machine::env::VerificationError;
+use crate::analysis::machine::error::VerificationError;
 
 use super::super::checks::ValidationContext;
 use super::super::compat::{
