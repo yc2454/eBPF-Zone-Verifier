@@ -1,7 +1,7 @@
 // src/analysis/transfer/memory/access.rs
 
-use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::env::VerifierEnv;
+use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
@@ -218,6 +218,9 @@ pub fn check_store(
         }
         PtrToPacket { .. } => {
             check_packet_access(env, state, base, off, size, pc, AccessKind::Write);
+        }
+        PtrToPacketMeta { .. } => {
+            check_packet_meta_access(env, state, base, off, size, pc);
         }
         PtrToMapValueOrNull { map_idx, .. } => {
             error!("Unsafe nullable map store at pc {}", pc);

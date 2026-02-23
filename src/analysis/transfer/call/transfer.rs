@@ -15,7 +15,7 @@ use crate::zone::domain::{
     self, assume_ge_imm, assume_le_imm, forget, get_interval_i64, proven_zero,
 };
 use crate::zone::tnum::Tnum;
-use log::{error, info};
+use log::error;
 
 use super::checks::{check_mem_size_pairs, validate_helper_args};
 use super::signatures::get_mem_size_pairs;
@@ -259,6 +259,8 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
         | constants::BPF_L3_CSUM_REPLACE
         | constants::BPF_L4_CSUM_REPLACE
         | constants::BPF_GET_CURRENT_COMM
+        | constants::BPF_SKB_VLAN_PUSH
+        | constants::BPF_SKB_VLAN_POP
         | constants::BPF_SOCK_MAP_UPDATE => {
             // Returns 0 on success, or -errno
             assume_le_imm(&mut state.dbm, Reg::R0, 0);
@@ -311,11 +313,6 @@ pub(crate) fn transfer_call_rel(
     target: usize,
 ) -> Vec<State> {
     let pc = state.pc;
-    info!(
-        "[Verifier] pc {}: current call depth = {}",
-        pc,
-        state.num_frames()
-    );
     if state.num_frames() >= 8 {
         env.fail(VerificationError::MaxCallDepthExceeded { pc });
         return vec![];

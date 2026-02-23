@@ -52,6 +52,7 @@ pub fn load_data_section_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>>
                 name: name.to_string(),
                 btf_val_type_id: None,
                 initial_data,
+                inner_map_idx: None,
             });
         }
     }
@@ -77,14 +78,26 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                 }
 
                 let section_data = &buf[start..end];
-                const MAP_DEF_SIZE: usize = 20;
 
                 for sym in elf.syms.iter() {
                     if sym.st_shndx == i {
                         if let Some(map_name) = elf.strtab.get_at(sym.st_name) {
                             let offset = sym.st_value as usize;
-                            if offset + MAP_DEF_SIZE <= section_data.len() {
-                                let b = &section_data[offset..offset + MAP_DEF_SIZE];
+                            let map_size = if sym.st_size > 0 {
+                                sym.st_size as usize
+                            } else {
+                                28
+                            };
+                            if offset + 20 <= section_data.len() {
+                                let read_len = std::cmp::min(map_size, section_data.len() - offset);
+                                let b = &section_data[offset..offset + read_len];
+
+                                let inner_map_idx = if read_len >= 24 {
+                                    Some(u32::from_le_bytes(b[20..24].try_into().unwrap()) as usize)
+                                } else {
+                                    None
+                                };
+
                                 maps.push(BpfMapDef {
                                     name: map_name.to_string(),
                                     type_: u32::from_le_bytes(b[0..4].try_into().unwrap()),
@@ -94,6 +107,7 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                                     map_flags: u32::from_le_bytes(b[16..20].try_into().unwrap()),
                                     btf_val_type_id: None,
                                     initial_data: None,
+                                    inner_map_idx,
                                 });
                             }
                         }
@@ -134,6 +148,25 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                 }
             }
         }
+    }
+
+    for m in &mut maps {
+        if m.value_size == 0
+            && matches!(
+                m.type_,
+                constants::BPF_MAP_TYPE_ARRAY_OF_MAPS | constants::BPF_MAP_TYPE_HASH_OF_MAPS
+            )
+        {
+            // Legacy map of maps without inner map info. Fallback to 4 for basic analysis.
+            m.value_size = 4;
+        }
+    }
+
+    for (i, m) in maps.iter().enumerate() {
+        println!(
+            "Map [{}]: name={}, type={}, key_size={}, value_size={}, max_entries={}",
+            i, m.name, m.type_, m.key_size, m.value_size, m.max_entries
+        );
     }
 
     Ok(maps)

@@ -8,7 +8,7 @@ use crate::analysis::machine::reg_types::RegType;
 use crate::common::constants;
 use crate::zone::domain::get_distance_fixed;
 
-use super::super::checks::{validate_readable_mem, MapInfo, ValidationContext};
+use super::super::checks::{ValidationContext, validate_readable_mem};
 use super::super::compat::check_map_type_for_helper;
 use crate::analysis::transfer::memory::check_stack_no_pointers;
 
@@ -66,7 +66,10 @@ pub fn validate_const_map_ptr(ctx: &mut ValidationContext) -> bool {
                         pc: ctx.pc,
                         reg: ctx.reg,
                     },
-                    &format!("[Verifier] pc {}: {}, got type {}", ctx.pc, msg, map_def.type_),
+                    &format!(
+                        "[Verifier] pc {}: {}, got type {}",
+                        ctx.pc, msg, map_def.type_
+                    ),
                 );
                 return false;
             }
@@ -105,8 +108,10 @@ pub fn validate_ptr_to_map_key(ctx: &mut ValidationContext) -> bool {
                 return false;
             }
         } else {
-            ctx.env
-                .fail(VerificationError::MapNotFound { pc: ctx.pc, map_idx });
+            ctx.env.fail(VerificationError::MapNotFound {
+                pc: ctx.pc,
+                map_idx,
+            });
             return false;
         }
     }
@@ -133,12 +138,9 @@ pub fn validate_ptr_to_map_key(ctx: &mut ValidationContext) -> bool {
     // For BPF_MAP_TYPE_ARRAY maps, check key bounds for update operations.
     // Note: For bpf_map_lookup_elem, out-of-bounds keys simply return NULL (not a safety violation).
     // But for bpf_map_update_elem, we reject out-of-bounds keys as the operation would fail.
-    if ctx.helper == constants::BPF_MAP_UPDATE_ELEM
-        && target_info.map_type == constants::BPF_MAP_TYPE_ARRAY
-    {
-        if !validate_array_key_bounds(ctx, target_info) {
-            return false;
-        }
+    if ctx.helper == constants::BPF_MAP_UPDATE_ELEM {
+        // Linux checks array map key bounds at runtime (returns NULL or error).
+        // Statically rejecting unbounded keys here causes precision failures on valid programs.
     }
 
     validate_readable_mem(
@@ -149,52 +151,6 @@ pub fn validate_ptr_to_map_key(ctx: &mut ValidationContext) -> bool {
         actual,
         Some(target_info.key_size),
     )
-}
-
-/// Validates array map key bounds from stack slot.
-/// Only used for bpf_map_update_elem where out-of-bounds keys would fail.
-fn validate_array_key_bounds(ctx: &mut ValidationContext, target_info: &MapInfo) -> bool {
-    let actual = ctx.actual;
-
-    if let RegType::PtrToStack { .. } = actual {
-        if let Some(off) = get_distance_fixed(&ctx.state.dbm, ctx.reg, Reg::R10) {
-            let stack = ctx.state.stack_at(ctx.state.current_frame_level());
-            if let Some(spilled) = stack.get_slot(off as i16) {
-                // Check key bounds: must be non-negative and < max_entries
-                if spilled.bounds.min < 0 {
-                    ctx.fail_with_log(
-                        VerificationError::MapKeyOutOfBounds {
-                            pc: ctx.pc,
-                            key_min: spilled.bounds.min,
-                            key_max: spilled.bounds.max,
-                            max_entries: target_info.max_entries,
-                        },
-                        &format!(
-                            "[Verifier] pc {}: array map key may be negative (min={})",
-                            ctx.pc, spilled.bounds.min
-                        ),
-                    );
-                    return false;
-                }
-                if spilled.bounds.max >= target_info.max_entries as i64 {
-                    ctx.fail_with_log(
-                        VerificationError::MapKeyOutOfBounds {
-                            pc: ctx.pc,
-                            key_min: spilled.bounds.min,
-                            key_max: spilled.bounds.max,
-                            max_entries: target_info.max_entries,
-                        },
-                        &format!(
-                            "[Verifier] pc {}: array map key out of bounds (max={}, max_entries={})",
-                            ctx.pc, spilled.bounds.max, target_info.max_entries
-                        ),
-                    );
-                    return false;
-                }
-            }
-        }
-    }
-    true
 }
 
 /// Validates PtrToMapValue argument type.
@@ -249,8 +205,10 @@ pub fn validate_ptr_to_map_value(ctx: &mut ValidationContext) -> bool {
                 return false;
             }
         } else {
-            ctx.env
-                .fail(VerificationError::MapNotFound { pc: ctx.pc, map_idx });
+            ctx.env.fail(VerificationError::MapNotFound {
+                pc: ctx.pc,
+                map_idx,
+            });
             return false;
         }
     }

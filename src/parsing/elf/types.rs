@@ -9,6 +9,7 @@ pub struct BpfMapDef {
     pub name: String,
     pub btf_val_type_id: Option<u32>,
     pub initial_data: Option<Vec<u8>>,
+    pub inner_map_idx: Option<usize>,
 }
 
 /// Represents a raw BPF program extracted from the ELF symbol table.
