@@ -1,7 +1,7 @@
 // src/analysis/transfer/memory/packet.rs
 
-use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::env::VerifierEnv;
+use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
@@ -159,13 +159,36 @@ pub(crate) fn transfer_packet_load(
 
     crate::analysis::transfer::types::update_packet_load_types(&mut state.types);
 
-    forget(&mut state.dbm, Reg::R0);
+    // Clobber R1 - R5 in DBM and Tnums as well
+    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+        forget(&mut state.dbm, r);
+        state.set_tnum(r, crate::zone::tnum::Tnum::unknown());
+    }
 
+    forget(&mut state.dbm, Reg::R0);
+    // Reset R0's Tnum based on size
     match size {
-        MemSize::U8 => assume_range(&mut state.dbm, Reg::R0, 0, 255),
-        MemSize::U16 => assume_range(&mut state.dbm, Reg::R0, 0, 65535),
-        MemSize::U32 => assume_range(&mut state.dbm, Reg::R0, 0, 4294967295),
-        MemSize::U64 => {}
+        MemSize::U8 => {
+            assume_range(&mut state.dbm, Reg::R0, 0, 255);
+            let mut t = crate::zone::tnum::Tnum::unknown();
+            t.value = 0;
+            t.mask = 0xFF;
+            state.set_tnum(Reg::R0, t);
+        }
+        MemSize::U16 => {
+            assume_range(&mut state.dbm, Reg::R0, 0, 65535);
+            let mut t = crate::zone::tnum::Tnum::unknown();
+            t.value = 0;
+            t.mask = 0xFFFF;
+            state.set_tnum(Reg::R0, t);
+        }
+        MemSize::U32 => {
+            assume_range(&mut state.dbm, Reg::R0, 0, 4294967295);
+            state.set_tnum(Reg::R0, crate::zone::tnum::Tnum::u32_unknown());
+        }
+        MemSize::U64 => {
+            state.set_tnum(Reg::R0, crate::zone::tnum::Tnum::unknown());
+        }
     }
 
     state.pc += 1;

@@ -34,12 +34,20 @@ fn get_operand_fixed_value(dbm: &Dbm, src: &Operand) -> Option<i64> {
 /// Updates PtrToMapValue offset by delta, returning new type
 fn adjust_map_value_offset(ty: RegType, delta: Option<i64>) -> RegType {
     match ty {
-        RegType::PtrToMapValue { id, offset, map_idx } => {
+        RegType::PtrToMapValue {
+            id,
+            offset,
+            map_idx,
+        } => {
             let new_offset = match (offset, delta) {
                 (Some(o), Some(d)) => Some(o + d),
                 _ => None, // Unknown if either is unknown
             };
-            RegType::PtrToMapValue { id, offset: new_offset, map_idx }
+            RegType::PtrToMapValue {
+                id,
+                offset: new_offset,
+                map_idx,
+            }
         }
         other => other,
     }
@@ -355,6 +363,7 @@ pub(crate) fn update_call_types(
         constants::BPF_MAP_LOOKUP_ELEM | constants::BPF_GET_LOCAL_STORAGE => {
             let map_idx = match in_types.get(Reg::R1) {
                 RegType::PtrToMapObject { map_idx } => map_idx,
+                RegType::PtrToMapValue { map_idx, .. } => map_idx, // Handles map-in-map lookups
                 _ => 0,
             };
             let map_def_opt = env.ctx.map_defs.get(map_idx);

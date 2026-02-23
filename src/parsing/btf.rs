@@ -457,7 +457,9 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
             if (def_id as usize) < types.len() {
                 // Follow typedef chain to get to the underlying type
                 let mut resolved_t = &types[def_id as usize];
-                while resolved_t.kind() == BTF_KIND_TYPEDEF && (resolved_t.size_or_type as usize) < types.len() {
+                while resolved_t.kind() == BTF_KIND_TYPEDEF
+                    && (resolved_t.size_or_type as usize) < types.len()
+                {
                     let resolved_id = resolved_t.size_or_type;
                     resolved_t = &types[resolved_id as usize];
                 }
@@ -546,6 +548,7 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                             map_flags: 0,
                             btf_val_type_id,
                             initial_data: None, // No initial data here
+                            inner_map_idx: None,
                         });
                     }
                 }

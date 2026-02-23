@@ -170,6 +170,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             name: "test_map".to_string(),
             btf_val_type_id: None,
             initial_data: None,
+            inner_map_idx: None,
         }),
         "fixup_map_hash_16b" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_HASH,
@@ -180,6 +181,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             name: "test_map".to_string(),
             btf_val_type_id: None,
             initial_data: None,
+            inner_map_idx: None,
         }),
         "fixup_map_hash_48b" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_HASH,
@@ -190,6 +192,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             name: "test_map".to_string(),
             btf_val_type_id: None,
             initial_data: None,
+            inner_map_idx: None,
         }),
         "fixup_map_array_48b" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_ARRAY,
@@ -200,6 +203,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             name: "test_map".to_string(),
             btf_val_type_id: None,
             initial_data: None,
+            inner_map_idx: None,
         }),
         "fixup_map_array_ro" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_ARRAY,
@@ -210,6 +214,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             name: "test_map_ro".to_string(),
             btf_val_type_id: None,
             initial_data: None,
+            inner_map_idx: None,
         }),
         "fixup_map_array_wo" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_ARRAY,
@@ -220,6 +225,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             name: "test_map_wo".to_string(),
             btf_val_type_id: None,
             initial_data: None,
+            inner_map_idx: None,
         }),
         "fixup_map_array_small" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_ARRAY,
@@ -230,6 +236,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             name: "test_map".to_string(),
             btf_val_type_id: None,
             initial_data: None,
+            inner_map_idx: None,
         }),
         "fixup_prog1" | "fixup_prog2" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_PROG_ARRAY,
@@ -240,6 +247,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             name: "test_prog_array".to_string(),
             btf_val_type_id: None,
             initial_data: None,
+            inner_map_idx: None,
         }),
         "fixup_cgroup_storage" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_CGROUP_STORAGE, // 19
@@ -250,6 +258,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             name: "test_cgroup_storage".to_string(),
             btf_val_type_id: None,
             initial_data: None,
+            inner_map_idx: None,
         }),
         "fixup_percpu_cgroup_storage" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_PERCPU_CGROUP_STORAGE, // 21
@@ -260,6 +269,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             name: "test_percpu_cgroup_storage".to_string(),
             btf_val_type_id: None,
             initial_data: None,
+            inner_map_idx: None,
         }),
         "fixup_map_event_output" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_PERF_EVENT_ARRAY, // 4
@@ -270,6 +280,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             name: "test_event_output".to_string(),
             btf_val_type_id: None,
             initial_data: None,
+            inner_map_idx: None,
         }),
         "fixup_map_ringbuf" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_RINGBUF, // 27
@@ -280,6 +291,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             name: "test_ringbuf".to_string(),
             btf_val_type_id: None,
             initial_data: None,
+            inner_map_idx: None,
         }),
         "fixup_map_in_map" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_ARRAY_OF_MAPS, // 12
@@ -290,6 +302,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             name: "test_map_in_map".to_string(),
             btf_val_type_id: None,
             initial_data: None,
+            inner_map_idx: None,
         }),
         "fixup_map_stacktrace" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_STACK_TRACE, // 7
@@ -300,6 +313,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             name: "test_stacktrace".to_string(),
             btf_val_type_id: None,
             initial_data: None,
+            inner_map_idx: None,
         }),
         "fixup_sk_storage_map" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_SK_STORAGE, // 24
@@ -310,6 +324,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             name: "test_sk_storage".to_string(),
             btf_val_type_id: None,
             initial_data: None,
+            inner_map_idx: None,
         }),
         "fixup_map_sockmap" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_SOCKMAP, // 15
@@ -320,6 +335,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             name: "test_sockmap".to_string(),
             btf_val_type_id: None,
             initial_data: None,
+            inner_map_idx: None,
         }),
         "fixup_map_sockhash" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_SOCKHASH, // 18
@@ -330,6 +346,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             name: "test_sockhash".to_string(),
             btf_val_type_id: None,
             initial_data: None,
+            inner_map_idx: None,
         }),
         "fixup_map_xskmap" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_XSKMAP, // 17
@@ -340,6 +357,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             name: "test_xskmap".to_string(),
             btf_val_type_id: None,
             initial_data: None,
+            inner_map_idx: None,
         }),
         "fixup_map_reuseport_array" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_REUSEPORT_SOCKARRAY, // 22
@@ -350,6 +368,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             name: "test_reuseport_array".to_string(),
             btf_val_type_id: None,
             initial_data: None,
+            inner_map_idx: None,
         }),
         "fixup_map_spin_lock" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_ARRAY,
@@ -360,6 +379,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             name: "spin_lock_map".to_string(),
             btf_val_type_id: Some(3), // points to struct val
             initial_data: None,
+            inner_map_idx: None,
         }),
         // Add more fixup types as needed
         _ => None,

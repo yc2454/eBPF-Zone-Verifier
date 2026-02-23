@@ -22,13 +22,11 @@ use crate::analysis::machine::state::State;
 /// Resolve type conflicts at a merge point by demoting conflicting registers to ScalarValue.
 /// This implements "deferred checking" - we don't fail here, but the demoted register
 /// will cause failures if later used as a pointer.
-pub fn resolve_type_conflicts(
-    env: &VerifierEnv,
-    state: &mut State,
-) {
+pub fn resolve_type_conflicts(env: &VerifierEnv, state: &mut State) {
     let pc = state.pc;
 
-    let live_regs = env.insn_aux_data
+    let live_regs = env
+        .insn_aux_data
         .get(pc)
         .map(|aux| &aux.live_regs)
         .cloned()
@@ -48,7 +46,10 @@ pub fn resolve_type_conflicts(
 
             // Also check stack slots and demote conflicting ones
             for (prev_frame, cur_frame) in prev.frames.iter().zip(state.frames.iter_mut()) {
-                let live_offsets: HashSet<i16> = prev_frame.stack.live_slot_offsets(&live_regs).into_iter()
+                let live_offsets: HashSet<i16> = prev_frame
+                    .stack
+                    .live_slot_offsets(&live_regs)
+                    .into_iter()
                     .chain(cur_frame.stack.live_slot_offsets(&live_regs))
                     .collect();
 
@@ -67,10 +68,7 @@ pub fn resolve_type_conflicts(
 
 /// Record a state as explored at its PC.
 pub fn record_state(env: &mut VerifierEnv, state: State) {
-    env.explored_states
-        .entry(state.pc)
-        .or_default()
-        .push(state);
+    env.explored_states.entry(state.pc).or_default().push(state);
 }
 
 /// Check if two types are compatible at a join point.
@@ -93,6 +91,9 @@ fn types_compatible(a: &RegType, b: &RegType) -> bool {
     // register can be either PtrToStack or PtrToMapValue depending on the path.
     // We don't demote to ScalarValue because both are valid for memory access.
     || (is_readable_ptr(a) && is_readable_ptr(b))
+    // Map objects and inner map pointers (represented as PtrToMapValue) are both
+    // valid map pointer arguments, so they shouldn't demote each other to Scalar.
+    || (is_map_ptr(a) && is_map_ptr(b))
 }
 
 /// Check if a type is a general-purpose readable pointer that can safely merge
@@ -103,11 +104,19 @@ fn types_compatible(a: &RegType, b: &RegType) -> bool {
 /// a ctx pointer with a map value pointer could allow unsafe ctx field access.
 fn is_readable_ptr(ty: &RegType) -> bool {
     use RegType::*;
-    matches!(ty,
-        PtrToStack { .. } |
-        PtrToMapValue { .. } |
-        PtrToPacket |
-        PtrToPacketMeta |
-        PtrToAllocMem { .. }
+    matches!(
+        ty,
+        PtrToStack { .. }
+            | PtrToMapValue { .. }
+            | PtrToPacket
+            | PtrToPacketMeta
+            | PtrToAllocMem { .. }
     )
+}
+
+/// Check if a type can be used as a map pointer. PtrToMapValue is included because
+/// it can represent a pointer to an inner map in an array-of-maps or hash-of-maps.
+fn is_map_ptr(ty: &RegType) -> bool {
+    use RegType::*;
+    matches!(ty, PtrToMapObject { .. } | PtrToMapValue { .. })
 }
