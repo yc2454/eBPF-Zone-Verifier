@@ -337,6 +337,8 @@ pub(crate) fn helper_invalidates_packets(helper: u32) -> bool {
             | constants::BPF_SKB_CHANGE_PROTO
             | constants::BPF_SKB_ADJUST_ROOM
             | constants::BPF_SKB_STORE_BYTES
+            | constants::BPF_SKB_VLAN_PUSH
+            | constants::BPF_SKB_VLAN_POP
     )
 }
 

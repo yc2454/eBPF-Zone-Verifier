@@ -8,7 +8,7 @@ use crate::analysis::machine::reg_types::RegType;
 use crate::common::constants;
 use crate::zone::domain::get_distance_fixed;
 
-use super::super::checks::{MapInfo, ValidationContext, validate_readable_mem};
+use super::super::checks::{ValidationContext, validate_readable_mem};
 use super::super::compat::check_map_type_for_helper;
 use crate::analysis::transfer::memory::check_stack_no_pointers;
 
@@ -141,13 +141,6 @@ pub fn validate_ptr_to_map_key(ctx: &mut ValidationContext) -> bool {
     if ctx.helper == constants::BPF_MAP_UPDATE_ELEM {
         // Linux checks array map key bounds at runtime (returns NULL or error).
         // Statically rejecting unbounded keys here causes precision failures on valid programs.
-        /*
-        if target_info.map_type == constants::BPF_MAP_TYPE_ARRAY {
-            if !validate_array_key_bounds(ctx, target_info) {
-                return false;
-            }
-        }
-        */
     }
 
     validate_readable_mem(
@@ -158,52 +151,6 @@ pub fn validate_ptr_to_map_key(ctx: &mut ValidationContext) -> bool {
         actual,
         Some(target_info.key_size),
     )
-}
-
-/// Validates array map key bounds from stack slot.
-/// Only used for bpf_map_update_elem where out-of-bounds keys would fail.
-fn validate_array_key_bounds(ctx: &mut ValidationContext, target_info: &MapInfo) -> bool {
-    let actual = ctx.actual;
-
-    if let RegType::PtrToStack { .. } = actual {
-        if let Some(off) = get_distance_fixed(&ctx.state.dbm, ctx.reg, Reg::R10) {
-            let stack = ctx.state.stack_at(ctx.state.current_frame_level());
-            if let Some(spilled) = stack.get_slot(off as i16) {
-                // Check key bounds: must be non-negative and < max_entries
-                if spilled.bounds.min < 0 {
-                    ctx.fail_with_log(
-                        VerificationError::MapKeyOutOfBounds {
-                            pc: ctx.pc,
-                            key_min: spilled.bounds.min,
-                            key_max: spilled.bounds.max,
-                            max_entries: target_info.max_entries,
-                        },
-                        &format!(
-                            "[Verifier] pc {}: array map key may be negative (min={})",
-                            ctx.pc, spilled.bounds.min
-                        ),
-                    );
-                    return false;
-                }
-                if spilled.bounds.max >= target_info.max_entries as i64 {
-                    ctx.fail_with_log(
-                        VerificationError::MapKeyOutOfBounds {
-                            pc: ctx.pc,
-                            key_min: spilled.bounds.min,
-                            key_max: spilled.bounds.max,
-                            max_entries: target_info.max_entries,
-                        },
-                        &format!(
-                            "[Verifier] pc {}: array map key out of bounds (max={}, max_entries={})",
-                            ctx.pc, spilled.bounds.max, target_info.max_entries
-                        ),
-                    );
-                    return false;
-                }
-            }
-        }
-    }
-    true
 }
 
 /// Validates PtrToMapValue argument type.

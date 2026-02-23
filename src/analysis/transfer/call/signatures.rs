@@ -227,6 +227,18 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
+        constants::BPF_SKB_VLAN_PUSH => HelperSignature::new([
+            PtrToCtx, // R1: skb
+            Anything, // R2: vlan_proto
+            Anything, // R3: vlan_tci
+            DontCare, DontCare,
+        ]),
+
+        constants::BPF_SKB_VLAN_POP => HelperSignature::new([
+            PtrToCtx, // R1: skb
+            DontCare, DontCare, DontCare, DontCare,
+        ]),
+
         constants::BPF_SKB_STORE_BYTES => HelperSignature::new([
             PtrToCtx,  // R1: skb
             Anything,  // R2: offset

@@ -78,7 +78,6 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                 }
 
                 let section_data = &buf[start..end];
-                const MAP_DEF_SIZE: usize = 20;
 
                 for sym in elf.syms.iter() {
                     if sym.st_shndx == i {
