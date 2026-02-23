@@ -88,23 +88,37 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                             } else {
                                 28
                             };
-                            if offset + 20 <= section_data.len() {
+                            if offset + 16 <= section_data.len() {
                                 let read_len = std::cmp::min(map_size, section_data.len() - offset);
                                 let b = &section_data[offset..offset + read_len];
 
-                                let inner_map_idx = if read_len >= 24 {
-                                    Some(u32::from_le_bytes(b[20..24].try_into().unwrap()) as usize)
+                                let read_u32 = |off: usize| -> u32 {
+                                    if off + 4 <= b.len() {
+                                        u32::from_le_bytes(b[off..off + 4].try_into().unwrap())
+                                    } else {
+                                        0
+                                    }
+                                };
+
+                                let type_ = read_u32(0);
+                                let key_size = read_u32(4);
+                                let value_size = read_u32(8);
+                                let max_entries = read_u32(12);
+                                let map_flags = read_u32(16);
+
+                                let inner_map_idx = if b.len() >= 24 {
+                                    Some(read_u32(20) as usize)
                                 } else {
                                     None
                                 };
 
                                 maps.push(BpfMapDef {
                                     name: map_name.to_string(),
-                                    type_: u32::from_le_bytes(b[0..4].try_into().unwrap()),
-                                    key_size: u32::from_le_bytes(b[4..8].try_into().unwrap()),
-                                    value_size: u32::from_le_bytes(b[8..12].try_into().unwrap()),
-                                    max_entries: u32::from_le_bytes(b[12..16].try_into().unwrap()),
-                                    map_flags: u32::from_le_bytes(b[16..20].try_into().unwrap()),
+                                    type_,
+                                    key_size,
+                                    value_size,
+                                    max_entries,
+                                    map_flags,
                                     btf_val_type_id: None,
                                     initial_data: None,
                                     inner_map_idx,

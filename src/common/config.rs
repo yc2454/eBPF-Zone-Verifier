@@ -51,7 +51,7 @@ impl Default for VerifierConfig {
     fn default() -> Self {
         Self {
             verbosity: 1,
-            max_insn: 1_000_000, // 1 million instructions to match modern kernel limits
+            max_insn: 1_000_0, // 1 million instructions to match modern kernel limits
             skip_dbm_check: false,
             use_widening: false,
             max_states_per_pc: 8,

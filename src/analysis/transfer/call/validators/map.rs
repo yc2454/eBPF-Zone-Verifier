@@ -139,8 +139,35 @@ pub fn validate_ptr_to_map_key(ctx: &mut ValidationContext) -> bool {
     // Note: For bpf_map_lookup_elem, out-of-bounds keys simply return NULL (not a safety violation).
     // But for bpf_map_update_elem, we reject out-of-bounds keys as the operation would fail.
     if ctx.helper == constants::BPF_MAP_UPDATE_ELEM {
-        // Linux checks array map key bounds at runtime (returns NULL or error).
-        // Statically rejecting unbounded keys here causes precision failures on valid programs.
+        if let Some(RegType::PtrToMapObject { map_idx }) = ctx.types.get(Reg::R1).into() {
+            if let Some(map_def) = ctx.env.ctx.map_defs.get(map_idx) {
+                if map_def.type_ == constants::BPF_MAP_TYPE_ARRAY {
+                    if let RegType::PtrToStack { .. } = actual {
+                        if let Some(off) = get_distance_fixed(&ctx.state.dbm, ctx.reg, Reg::R10) {
+                            let stack = ctx.state.stack_at(ctx.state.current_frame_level());
+                            if let Some(spilled) = stack.get_slot(off as i16) {
+                                // If the spilled key is fully initialized, check bounds against max_entries
+                                if spilled.size.bytes() as u32 == map_def.key_size {
+                                    let key_min = spilled.bounds.min;
+
+                                    // BPF keys are unsigned 32-bit (for array)
+                                    // Reject if statically known to be out of bounds
+                                    if key_min < 0 || key_min >= map_def.max_entries as i64 {
+                                        ctx.env.fail(VerificationError::MapKeyOutOfBounds {
+                                            pc: ctx.pc,
+                                            key_min,
+                                            key_max: spilled.bounds.max,
+                                            max_entries: map_def.max_entries,
+                                        });
+                                        return false;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     validate_readable_mem(
