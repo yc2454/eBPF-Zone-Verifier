@@ -55,8 +55,16 @@ fn get_packet_offset_range(state: &State, base: Reg, insn_off: i16) -> (Option<i
             if let Some(&start_reg) = pkt_start_reg {
                 let (lo, hi) = get_distance_interval(&state.dbm, base, start_reg);
                 (
-                    lo.map(|l| l + insn_off as i64),
-                    hi.map(|h| h + insn_off as i64),
+                    if lo != i64::MIN {
+                        Some(lo + insn_off as i64)
+                    } else {
+                        None
+                    },
+                    if hi != i64::MAX {
+                        Some(hi + insn_off as i64)
+                    } else {
+                        None
+                    },
                 )
             } else {
                 (None, None)

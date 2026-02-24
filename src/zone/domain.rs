@@ -23,30 +23,31 @@ pub fn get_interval(dbm: &Dbm, x: Reg) -> (i64, i64) {
 }
 
 /// Returns the interval of the distance between two registers: [lo, hi] such that lo <= x - y <= hi.
-pub fn get_distance_interval(dbm: &Dbm, x: Reg, y: Reg) -> (Option<i64>, Option<i64>) {
+pub fn get_distance_interval(dbm: &Dbm, x: Reg, y: Reg) -> (i64, i64) {
     let x_minus_y = dbm.get(x, y);
     let y_minus_x = dbm.get(y, x);
 
-    let ub_opt = if x_minus_y >= INF {
-        None
+    let ub_val = if x_minus_y >= INF {
+        i64::MAX
     } else {
-        Some(x_minus_y)
+        x_minus_y
     };
-    let lb_opt = if y_minus_x >= INF {
-        None
+    let lb_val = if y_minus_x >= INF {
+        i64::MIN
     } else {
-        Some(-y_minus_x)
+        -y_minus_x
     };
 
-    (lb_opt, ub_opt)
+    (lb_val, ub_val)
 }
 
 /// Returns the exact distance between two registers if it is constant (lo == hi).
 pub fn get_distance_fixed(dbm: &Dbm, x: Reg, y: Reg) -> Option<i64> {
     let (lo, hi) = get_distance_interval(dbm, x, y);
-    match (lo, hi) {
-        (Some(l), Some(h)) if l == h => Some(l),
-        _ => None,
+    if lo == hi && lo != i64::MIN && lo != i64::MAX {
+        Some(lo)
+    } else {
+        None
     }
 }
 

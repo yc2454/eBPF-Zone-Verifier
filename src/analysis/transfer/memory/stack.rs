@@ -67,15 +67,14 @@ pub fn check_stack_access(
         None => {
             let (lo, hi) = get_distance_interval(&state.dbm, base, Reg::R10);
 
-            let safe = match (lo, hi) {
-                (Some(lower), Some(upper)) => {
-                    let min_offset = lower + instruction_offset;
-                    let max_access_end =
-                        current_frame_depth as i64 + upper + instruction_offset + size;
-                    min_offset >= constants::BPF_STACK_MIN
-                        && max_access_end <= constants::BPF_STACK_MAX
-                }
-                _ => false,
+            let safe = if lo != i64::MIN && hi != i64::MAX {
+                let lower = lo;
+                let upper = hi;
+                let min_offset = lower + instruction_offset;
+                let max_access_end = current_frame_depth as i64 + upper + instruction_offset + size;
+                min_offset >= constants::BPF_STACK_MIN && max_access_end <= constants::BPF_STACK_MAX
+            } else {
+                false
             };
 
             if !safe {
@@ -88,23 +87,20 @@ pub fn check_stack_access(
                 return;
             }
 
-            match (lo, hi) {
-                (Some(lower), Some(upper)) => {
-                    for off_candidate in lower..=upper {
-                        let actual_offset = off_candidate + instruction_offset;
-                        check_stack_initialization(
-                            env,
-                            stack_being_accessed,
-                            kind,
-                            actual_offset,
-                            size,
-                            pc,
-                        );
-                    }
+            if lo != i64::MIN && hi != i64::MAX {
+                for off_candidate in lo..=hi {
+                    let actual_offset = off_candidate + instruction_offset;
+                    check_stack_initialization(
+                        env,
+                        stack_being_accessed,
+                        kind,
+                        actual_offset,
+                        size,
+                        pc,
+                    );
                 }
-                _ => {
-                    env.fail(VerificationError::UninitializedStackRead { pc, offset: 0 });
-                }
+            } else {
+                env.fail(VerificationError::UninitializedStackRead { pc, offset: 0 });
             }
         }
     }
@@ -241,7 +237,10 @@ pub fn check_stack_no_pointers(
                     "[Verifier] pc {}: stack slot {} contains pointer {:?}, cannot expose to map",
                     pc, slot, spilled.reg_type
                 );
-                env.fail(VerificationError::PointerLeakage { pc, offset: slot as i64 });
+                env.fail(VerificationError::PointerLeakage {
+                    pc,
+                    offset: slot as i64,
+                });
                 return;
             }
         }

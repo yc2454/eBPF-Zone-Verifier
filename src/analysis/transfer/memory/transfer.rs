@@ -131,9 +131,9 @@ pub(crate) fn transfer_store(
             );
         } else {
             let (lo, hi) = get_distance_interval(&state.dbm, base, Reg::R10);
-            if let (Some(l), Some(h)) = (lo, hi) {
-                let min_slot = l + off as i64;
-                let max_slot = h + off as i64 + size.bytes() as i64;
+            if lo != i64::MIN && hi != i64::MAX {
+                let min_slot = lo + off as i64;
+                let max_slot = hi + off as i64 + size.bytes() as i64;
                 let stack = state.stack_at_mut(frame_level);
                 for slot in min_slot..max_slot {
                     stack.invalidate_slot(slot as i16);

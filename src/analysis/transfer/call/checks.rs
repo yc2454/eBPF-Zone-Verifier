@@ -372,28 +372,25 @@ pub(crate) fn validate_readable_mem(
                 // Variable stack offset — use bounds check
                 if let Some(sz) = size {
                     let (lo, hi) = get_distance_interval(&state.dbm, reg, Reg::R10);
-                    match (lo, hi) {
-                        (Some(l), Some(h)) => {
-                            // Check all possible offsets in the range
-                            for off_candidate in l..=h {
-                                check_stack_arg_readable(
-                                    env,
-                                    state,
-                                    off_candidate,
-                                    sz as i64,
-                                    pc,
-                                    AccessKind::HelperBuffer,
-                                );
-                                if env.failed() {
-                                    return false;
-                                }
+                    if lo != i64::MIN && hi != i64::MAX {
+                        // Check all possible offsets in the range
+                        for off_candidate in lo..=hi {
+                            check_stack_arg_readable(
+                                env,
+                                state,
+                                off_candidate,
+                                sz as i64,
+                                pc,
+                                AccessKind::HelperBuffer,
+                            );
+                            if env.failed() {
+                                return false;
                             }
-                            true
                         }
-                        _ => {
-                            env.fail(VerificationError::UninitializedStackRead { pc, offset: 0 });
-                            false
-                        }
+                        true
+                    } else {
+                        env.fail(VerificationError::UninitializedStackRead { pc, offset: 0 });
+                        false
                     }
                 } else {
                     true
@@ -675,42 +672,39 @@ pub(crate) fn check_ptr_access_size(
             } else {
                 // Variable offset — use bounds for range check
                 let (lo, hi) = get_distance_interval(&state.dbm, ptr_reg, Reg::R10);
-                match (lo, hi) {
-                    (Some(l), Some(h)) => {
-                        let end_offset = h + size as i64;
-                        if l < -512 || end_offset > 0 {
-                            env.fail(VerificationError::StackOutOfBounds {
+                if lo != i64::MIN && hi != i64::MAX {
+                    let end_offset = hi + size as i64;
+                    if lo < -512 || end_offset > 0 {
+                        env.fail(VerificationError::StackOutOfBounds {
+                            pc,
+                            off: lo,
+                            size: size.into(),
+                        });
+                        return false;
+                    }
+                    if !matches!(ptr_arg_type, BpfArgType::PtrToUninitMem) {
+                        for off_candidate in lo..=hi {
+                            check_stack_arg_readable(
+                                env,
+                                state,
+                                off_candidate,
+                                size as i64,
                                 pc,
-                                off: l,
-                                size: size.into(),
-                            });
-                            return false;
-                        }
-                        if !matches!(ptr_arg_type, BpfArgType::PtrToUninitMem) {
-                            for off_candidate in l..=h {
-                                check_stack_arg_readable(
-                                    env,
-                                    state,
-                                    off_candidate,
-                                    size as i64,
-                                    pc,
-                                    AccessKind::HelperBuffer,
-                                );
-                                if env.failed() {
-                                    return false;
-                                }
+                                AccessKind::HelperBuffer,
+                            );
+                            if env.failed() {
+                                return false;
                             }
                         }
-                        true
                     }
-                    _ => {
-                        env.fail(VerificationError::InvalidArgType { pc, reg: ptr_reg });
-                        error!(
-                            "[Verifier] pc {}: {:?} has unknown stack offset",
-                            pc, ptr_reg
-                        );
-                        false
-                    }
+                    true
+                } else {
+                    env.fail(VerificationError::InvalidArgType { pc, reg: ptr_reg });
+                    error!(
+                        "[Verifier] pc {}: {:?} has unknown stack offset",
+                        pc, ptr_reg
+                    );
+                    false
                 }
             }
         }
