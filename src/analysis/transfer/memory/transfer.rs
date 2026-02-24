@@ -43,10 +43,11 @@ pub(crate) fn transfer_load(
 
     if let RegType::PtrToStack { frame_level } = state.types.get(base)
         && let Some(base_off) = get_distance_fixed(&state.dbm, base, Reg::R10)
-            && state.fill_at(frame_level, dst, off + base_off as i16, size) {
-                state.pc += 1;
-                return vec![state];
-            }
+        && state.fill_at(frame_level, dst, off + base_off as i16, size)
+    {
+        state.pc += 1;
+        return vec![state];
+    }
 
     update_load_types(env, &mut state, access_size as usize, dst, base, off);
     forget(&mut state.dbm, dst);
@@ -169,19 +170,17 @@ pub(crate) fn transfer_atomic(
     if !check_reg_readable(env, &state, src) {
         return vec![];
     }
-    if op == AtomicOp::CmpXchg
-        && !check_reg_readable(env, &state, Reg::R0) {
-            return vec![];
-        }
+    if op == AtomicOp::CmpXchg && !check_reg_readable(env, &state, Reg::R0) {
+        return vec![];
+    }
 
     if op == AtomicOp::CmpXchg {
         if !check_reg_writable(env, &state, Reg::R0) {
             return vec![];
         }
-    } else if fetch
-        && !check_reg_writable(env, &state, src) {
-            return vec![];
-        }
+    } else if fetch && !check_reg_writable(env, &state, src) {
+        return vec![];
+    }
 
     let base_ty = state.types.get(base);
     if matches!(base_ty, RegType::PtrToCtx) {
@@ -227,11 +226,10 @@ pub(crate) fn transfer_atomic(
             forget(&mut state.dbm, Reg::R0);
             state.set_tnum(Reg::R0, Tnum::unknown());
         }
-    } else if fetch
-        && !reloaded {
-            forget(&mut state.dbm, src);
-            state.set_tnum(src, Tnum::unknown());
-        }
+    } else if fetch && !reloaded {
+        forget(&mut state.dbm, src);
+        state.set_tnum(src, Tnum::unknown());
+    }
 
     if base == Reg::R10 {
         state.update_frame_depth(off);
@@ -254,32 +252,33 @@ pub fn try_load_from_rodata(
         map_idx,
         offset: base_offset,
     } = state.types.get(base)
-        && let Some(ptr_val) = base_offset {
-            let map = &env.ctx.map_defs[map_idx];
+        && let Some(ptr_val) = base_offset
+    {
+        let map = &env.ctx.map_defs[map_idx];
 
-            if let Some(data) = &map.initial_data {
-                let abs_off = ptr_val + insn_off as i64;
+        if let Some(data) = &map.initial_data {
+            let abs_off = ptr_val + insn_off as i64;
 
-                if abs_off >= 0 {
-                    let start = abs_off as usize;
-                    let len = size.bytes();
+            if abs_off >= 0 {
+                let start = abs_off as usize;
+                let len = size.bytes();
 
-                    if start + len <= data.len() {
-                        let bytes = &data[start..start + len];
+                if start + len <= data.len() {
+                    let bytes = &data[start..start + len];
 
-                        let mut val: u64 = 0;
-                        for (i, &b) in bytes.iter().enumerate() {
-                            val |= (b as u64) << (i * 8);
-                        }
-
-                        forget(&mut state.dbm, dst);
-                        assume_eq_imm(&mut state.dbm, dst, val as i64);
-                        state.types.set(dst, RegType::ScalarValue);
-
-                        return true;
+                    let mut val: u64 = 0;
+                    for (i, &b) in bytes.iter().enumerate() {
+                        val |= (b as u64) << (i * 8);
                     }
+
+                    forget(&mut state.dbm, dst);
+                    assume_eq_imm(&mut state.dbm, dst, val as i64);
+                    state.types.set(dst, RegType::ScalarValue);
+
+                    return true;
                 }
             }
         }
+    }
     false
 }

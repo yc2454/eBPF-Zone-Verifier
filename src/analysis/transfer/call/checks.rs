@@ -449,20 +449,21 @@ pub(crate) fn validate_writable_mem(
     match reg_type {
         RegType::PtrToStack { frame_level } => {
             if let Some(off) = get_distance_fixed(&state.dbm, reg, Reg::R10)
-                && let Some(sz) = size {
-                    check_stack_access(
-                        env,
-                        state,
-                        reg,
-                        Some(off),
-                        0,
-                        sz as i64,
-                        pc,
-                        AccessKind::HelperBuffer,
-                        None,
-                        frame_level,
-                    );
-                }
+                && let Some(sz) = size
+            {
+                check_stack_access(
+                    env,
+                    state,
+                    reg,
+                    Some(off),
+                    0,
+                    sz as i64,
+                    pc,
+                    AccessKind::HelperBuffer,
+                    None,
+                    frame_level,
+                );
+            }
             true
         }
         RegType::PtrToMapValue { map_idx, .. } => {

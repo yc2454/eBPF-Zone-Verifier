@@ -1246,7 +1246,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             0x7a => Instr::Store {
                 size: MemSize::U64,
                 base: dst,                          // Base address register (e.g., r10)
-                off: insn.off,               // Offset (e.g., -8)
+                off: insn.off,                      // Offset (e.g., -8)
                 src: Operand::Imm(insn.imm as i64), // The value to write (sign-extended to 64-bit)
             },
 

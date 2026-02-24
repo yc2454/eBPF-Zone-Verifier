@@ -6,7 +6,7 @@ use std::path::Path;
 use super::types::BpfMapDef;
 use crate::common::constants;
 use crate::parsing::btf;
-use log::warn;
+use log::{debug, warn};
 
 /// Load data sections as synthetic maps
 pub fn load_data_section_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
@@ -81,36 +81,37 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
 
                 for sym in elf.syms.iter() {
                     if sym.st_shndx == i
-                        && let Some(map_name) = elf.strtab.get_at(sym.st_name) {
-                            let offset = sym.st_value as usize;
-                            let map_size = if sym.st_size > 0 {
-                                sym.st_size as usize
+                        && let Some(map_name) = elf.strtab.get_at(sym.st_name)
+                    {
+                        let offset = sym.st_value as usize;
+                        let map_size = if sym.st_size > 0 {
+                            sym.st_size as usize
+                        } else {
+                            28
+                        };
+                        if offset + 20 <= section_data.len() {
+                            let read_len = std::cmp::min(map_size, section_data.len() - offset);
+                            let b = &section_data[offset..offset + read_len];
+
+                            let inner_map_idx = if read_len >= 24 {
+                                Some(u32::from_le_bytes(b[20..24].try_into().unwrap()) as usize)
                             } else {
-                                28
+                                None
                             };
-                            if offset + 20 <= section_data.len() {
-                                let read_len = std::cmp::min(map_size, section_data.len() - offset);
-                                let b = &section_data[offset..offset + read_len];
 
-                                let inner_map_idx = if read_len >= 24 {
-                                    Some(u32::from_le_bytes(b[20..24].try_into().unwrap()) as usize)
-                                } else {
-                                    None
-                                };
-
-                                maps.push(BpfMapDef {
-                                    name: map_name.to_string(),
-                                    type_: u32::from_le_bytes(b[0..4].try_into().unwrap()),
-                                    key_size: u32::from_le_bytes(b[4..8].try_into().unwrap()),
-                                    value_size: u32::from_le_bytes(b[8..12].try_into().unwrap()),
-                                    max_entries: u32::from_le_bytes(b[12..16].try_into().unwrap()),
-                                    map_flags: u32::from_le_bytes(b[16..20].try_into().unwrap()),
-                                    btf_val_type_id: None,
-                                    initial_data: None,
-                                    inner_map_idx,
-                                });
-                            }
+                            maps.push(BpfMapDef {
+                                name: map_name.to_string(),
+                                type_: u32::from_le_bytes(b[0..4].try_into().unwrap()),
+                                key_size: u32::from_le_bytes(b[4..8].try_into().unwrap()),
+                                value_size: u32::from_le_bytes(b[8..12].try_into().unwrap()),
+                                max_entries: u32::from_le_bytes(b[12..16].try_into().unwrap()),
+                                map_flags: u32::from_le_bytes(b[16..20].try_into().unwrap()),
+                                btf_val_type_id: None,
+                                initial_data: None,
+                                inner_map_idx,
+                            });
                         }
+                    }
                 }
             } else if name == ".BTF" {
                 let start = sh.sh_offset as usize;
@@ -125,27 +126,28 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
     let needs_btf = maps.is_empty() || maps.iter().any(|m| m.value_size == 0);
     if needs_btf
         && let Some(btf_bytes) = btf_data
-            && let Ok(btf_maps) = btf::parse_btf_map_defs(btf_bytes) {
-                if maps.is_empty() {
-                    maps = btf_maps;
-                } else {
-                    for m in &mut maps {
-                        if let Some(btf_m) = btf_maps.iter().find(|bm| bm.name == m.name) {
-                            // Always update type_ and max_entries from BTF when available
-                            if m.value_size == 0 {
-                                m.value_size = btf_m.value_size;
-                                m.key_size = btf_m.key_size;
-                            }
-                            if m.type_ == 0 {
-                                m.type_ = btf_m.type_;
-                            }
-                            if m.max_entries == 0 {
-                                m.max_entries = btf_m.max_entries;
-                            }
-                        }
+        && let Ok(btf_maps) = btf::parse_btf_map_defs(btf_bytes)
+    {
+        if maps.is_empty() {
+            maps = btf_maps;
+        } else {
+            for m in &mut maps {
+                if let Some(btf_m) = btf_maps.iter().find(|bm| bm.name == m.name) {
+                    // Always update type_ and max_entries from BTF when available
+                    if m.value_size == 0 {
+                        m.value_size = btf_m.value_size;
+                        m.key_size = btf_m.key_size;
+                    }
+                    if m.type_ == 0 {
+                        m.type_ = btf_m.type_;
+                    }
+                    if m.max_entries == 0 {
+                        m.max_entries = btf_m.max_entries;
                     }
                 }
             }
+        }
+    }
 
     for m in &mut maps {
         if m.value_size == 0
@@ -160,7 +162,7 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
     }
 
     for (i, m) in maps.iter().enumerate() {
-        println!(
+        debug!(
             "Map [{}]: name={}, type={}, key_size={}, value_size={}, max_entries={}",
             i, m.name, m.type_, m.key_size, m.value_size, m.max_entries
         );

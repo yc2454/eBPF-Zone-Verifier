@@ -13,7 +13,7 @@ use crate::common::constants;
 use crate::parsing::btf::SpecialFieldKind;
 use crate::zone::domain::{self, assume_ge_imm, assume_le_imm, forget, get_interval, proven_zero};
 use crate::zone::tnum::Tnum;
-use log::error;
+use log::{debug, error, trace};
 
 use super::checks::{check_mem_size_pairs, validate_helper_args};
 use super::signatures::get_mem_size_pairs;
@@ -34,7 +34,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     // ========================================================================
     // Validate pointer-size pairs
     // ========================================================================
-    println!("[Verifier] pc {}: checking mem size pairs", pc);
+    debug!("[Verifier] pc {}: checking mem size pairs", pc);
     if !check_mem_size_pairs(env, &state, helper, pc) {
         return vec![];
     }
@@ -42,7 +42,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     // ========================================================================
     // Validate helper arguments BEFORE executing
     // ========================================================================
-    println!("[Verifier] pc {}: validating helper arguments", pc);
+    debug!("[Verifier] pc {}: validating helper arguments", pc);
     validate_helper_args(env, &state, helper, &in_types, pc);
 
     // ========================================================================
@@ -67,28 +67,29 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     }
 
     // Special check for sk_release: R1 must have a reference
-    if helper == constants::BPF_SK_RELEASE
-        && state.types.get(Reg::R1).get_ref_id().is_none() {
-            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
-            return vec![];
-        }
+    if helper == constants::BPF_SK_RELEASE && state.types.get(Reg::R1).get_ref_id().is_none() {
+        env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+        return vec![];
+    }
 
     // bpf_spin_lock and bpf_spin_unlock
     if (helper == constants::BPF_SPIN_LOCK || helper == constants::BPF_SPIN_UNLOCK)
-        && !check_and_handle_spin_lock(env, &mut state, helper) {
-            return vec![];
-        }
+        && !check_and_handle_spin_lock(env, &mut state, helper)
+    {
+        return vec![];
+    }
 
     // bpf_sock_map_update: only allowed in BPF_PROG_TYPE_SOCK_OPS programs
     if helper == constants::BPF_SOCK_MAP_UPDATE
-        && !matches!(env.ctx.prog_kind, ProgramKind::SockOps) {
-            env.fail(VerificationError::HelperNotAllowedForProgram {
-                pc,
-                helper,
-                kind: env.ctx.prog_kind,
-            });
-            return vec![];
-        }
+        && !matches!(env.ctx.prog_kind, ProgramKind::SockOps)
+    {
+        env.fail(VerificationError::HelperNotAllowedForProgram {
+            pc,
+            helper,
+            kind: env.ctx.prog_kind,
+        });
+        return vec![];
+    }
 
     // bpf_d_path is restrictive
     if helper == constants::BPF_D_PATH {
@@ -115,10 +116,11 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     if helper == constants::BPF_GET_LOCAL_STORAGE {
         if let RegType::PtrToMapObject { map_idx } = state.types.get(Reg::R1)
             && let Some(map_def) = env.ctx.map_defs.get(map_idx)
-                && map_def.type_ == constants::BPF_MAP_TYPE_HASH {
-                    env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
-                    return vec![];
-                }
+            && map_def.type_ == constants::BPF_MAP_TYPE_HASH
+        {
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            return vec![];
+        }
         if !proven_zero(&state.dbm, Reg::R2) {
             env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
             return vec![];
@@ -177,50 +179,39 @@ fn initialize_uninit_mem_args(
     if let Some(sig) = get_helper_signature(helper) {
         for pair in get_mem_size_pairs(helper) {
             if let Some(ptr_arg_type) = sig.args.get(pair.ptr_reg.idx().saturating_sub(2))
-                && matches!(ptr_arg_type, BpfArgType::PtrToUninitMem) {
-                    println!(
-                        "Found PtrToUninitMem argument for helper {} (reg {:?})",
-                        helper, pair.ptr_reg
-                    );
-                    if let RegType::PtrToStack { frame_level } = in_types.get(pair.ptr_reg) {
-                        println!("Arg is PtrToStack");
-                        if let Some(off) =
-                            domain::get_distance_fixed(&state.dbm, pair.ptr_reg, Reg::R10)
+                && matches!(ptr_arg_type, BpfArgType::PtrToUninitMem)
+            {
+                if let RegType::PtrToStack { frame_level } = in_types.get(pair.ptr_reg) {
+                    if let Some(off) =
+                        domain::get_distance_fixed(&state.dbm, pair.ptr_reg, Reg::R10)
+                    {
+                        let (_, max_size) = domain::get_interval(&state.dbm, pair.size_reg);
                         {
-                            println!("Offset from R10 is {}", off);
-                            let (_, max_size) = domain::get_interval(&state.dbm, pair.size_reg);
-                            {
-                                println!("Max size for {:?} is {}", pair.size_reg, max_size);
-                                if max_size != i64::MAX && max_size > 0 {
-                                    let max_bytes = (max_size as usize).min(512); // Bound to max stack size just in case
-                                    let stack = state.stack_at_mut(frame_level);
-                                    for i in 0..max_bytes {
-                                        if let Ok(slot) = i16::try_from(off + i as i64) {
-                                            update_store_types(
-                                                stack,
-                                                RegType::ScalarValue,
-                                                MemSize::U8,
-                                                Some(slot as i64),
-                                            );
-                                        }
+                            if max_size != i64::MAX && max_size > 0 {
+                                let max_bytes = (max_size as usize).min(512); // Bound to max stack size just in case
+                                let stack = state.stack_at_mut(frame_level);
+                                for i in 0..max_bytes {
+                                    if let Ok(slot) = i16::try_from(off + i as i64) {
+                                        update_store_types(
+                                            stack,
+                                            RegType::ScalarValue,
+                                            MemSize::U8,
+                                            Some(slot as i64),
+                                        );
                                     }
-                                    println!(
-                                        "Initialized stack slots [{}, {})",
-                                        off,
-                                        off + max_size
-                                    );
                                 }
                             }
-                        } else {
-                            println!("Could not get fixed distance to R10");
                         }
                     } else {
-                        println!(
-                            "Arg is NOT PtrToStack, it is {:?}",
-                            state.types.get(pair.ptr_reg)
-                        );
+                        trace!("Could not get fixed distance to R10");
                     }
+                } else {
+                    trace!(
+                        "Arg is NOT PtrToStack, it is {:?}",
+                        state.types.get(pair.ptr_reg)
+                    );
                 }
+            }
         }
     }
 }
@@ -271,14 +262,12 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
             let mem_size_pairs = get_mem_size_pairs(helper);
             let size_reg = mem_size_pairs[0].size_reg;
             let (_, hi) = get_interval(&state.dbm, size_reg);
-            println!("Size reg {} bound: {}", size_reg.name(), hi);
             assume_le_imm(&mut state.dbm, Reg::R0, hi);
         }
         constants::BPF_GET_STACK => {
             let mem_size_pairs = get_mem_size_pairs(helper);
             let size_reg = mem_size_pairs[0].size_reg;
             let (_, hi) = get_interval(&state.dbm, size_reg);
-            println!("Size reg {} bound: {}", size_reg.name(), hi);
             assume_le_imm(&mut state.dbm, Reg::R0, hi);
             assume_ge_imm(&mut state.dbm, Reg::R0, -constants::MAX_ERRNO);
         }

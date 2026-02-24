@@ -93,9 +93,10 @@ pub fn analyze_subprograms(instrs: &[Instr]) -> BTreeMap<usize, SubprogInfo> {
 
     for insn in instrs {
         if let Instr::CallRel { target } = insn
-            && !entries.contains(target) {
-                entries.push(*target);
-            }
+            && !entries.contains(target)
+        {
+            entries.push(*target);
+        }
     }
     entries.sort();
 

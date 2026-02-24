@@ -26,11 +26,12 @@ fn promote_stack_slots_all_frames(
 /// Refines register types based on the outcome of a conditional branch.
 pub(crate) fn refine_branch(state: &mut State, instr: &Instr, branch_taken: bool) {
     if let Instr::If {
-            op,
-            left,
-            right: Operand::Imm(0),
-            ..
-        } = instr {
+        op,
+        left,
+        right: Operand::Imm(0),
+        ..
+    } = instr
+    {
         // Determine if this path implies reg is non-null
         let is_non_null = match op {
             CmpOp::Ne => branch_taken,  // if (reg != 0) goto => taken means non-null
@@ -60,16 +61,17 @@ fn maybe_promote_map_val(state: &mut State, reg: Reg) {
     };
     for r in Reg::ALL {
         if let RegType::PtrToMapValueOrNull { id, map_idx } = state.types.get(r)
-            && id == target_id {
-                state.types.set(
-                    r,
-                    RegType::PtrToMapValue {
-                        id,
-                        offset: Some(0),
-                        map_idx,
-                    },
-                );
-            }
+            && id == target_id
+        {
+            state.types.set(
+                r,
+                RegType::PtrToMapValue {
+                    id,
+                    offset: Some(0),
+                    map_idx,
+                },
+            );
+        }
     }
     promote_stack_slots_all_frames(
         state,
@@ -96,11 +98,12 @@ fn maybe_promote_btf_id(state: &mut State, reg: Reg) {
             type_name,
             trusted,
         } = state.types.get(r)
-            && id == target_id {
-                state
-                    .types
-                    .set(r, RegType::PtrToBtfId { type_name, trusted });
-            }
+            && id == target_id
+        {
+            state
+                .types
+                .set(r, RegType::PtrToBtfId { type_name, trusted });
+        }
     }
     promote_stack_slots_all_frames(
         state,
@@ -126,9 +129,10 @@ fn maybe_promote_mem(state: &mut State, reg: Reg) {
     };
     for r in Reg::ALL {
         if let RegType::PtrToAllocMemOrNull { id, mem_size } = state.types.get(r)
-            && id == target_id {
-                state.types.set(r, RegType::PtrToAllocMem { id, mem_size });
-            }
+            && id == target_id
+        {
+            state.types.set(r, RegType::PtrToAllocMem { id, mem_size });
+        }
     }
     promote_stack_slots_all_frames(
         state,

@@ -376,15 +376,9 @@ impl VerificationError {
                     new
                 )
             }
-            VerificationError::UnreleasedReference => {
-                "Unreleased reference in program".to_string()
-            }
-            VerificationError::UnreleasedLock => {
-                "Unreleased lock in program".to_string()
-            }
-            VerificationError::InvalidBtfType => {
-                "Invalid BTF type".to_string()
-            }
+            VerificationError::UnreleasedReference => "Unreleased reference in program".to_string(),
+            VerificationError::UnreleasedLock => "Unreleased lock in program".to_string(),
+            VerificationError::InvalidBtfType => "Invalid BTF type".to_string(),
             VerificationError::LockAlreadyHeld { pc } => {
                 format!("Lock already held at pc {}, cannot acquire again", pc)
             }

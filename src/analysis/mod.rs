@@ -163,21 +163,22 @@ pub fn analyze_program(
                    env.error.as_ref().unwrap().description());
             // Additionally, if we have history tracking, reconstruct and print the crash trace
             if config.enable_path_trace
-                && let Some(crash_idx) = current_step_idx {
-                    let trace = env.history.get_trace(crash_idx);
-                    // Print directly to stdout (or error log) so it stands out
+                && let Some(crash_idx) = current_step_idx
+            {
+                let trace = env.history.get_trace(crash_idx);
+                // Print directly to stdout (or error log) so it stands out
+                println!(
+                    "\n=== CRASH PATH RECONSTRUCTION ({} Steps) ===",
+                    trace.len()
+                );
+                for (i, step) in trace.iter().enumerate() {
                     println!(
-                        "\n=== CRASH PATH RECONSTRUCTION ({} Steps) ===",
-                        trace.len()
+                        "[{:03}] PC {:<4} | {}\nReg Types: {}",
+                        i, step.pc, step.instr_str, step.reg_types_str
                     );
-                    for (i, step) in trace.iter().enumerate() {
-                        println!(
-                            "[{:03}] PC {:<4} | {}\nReg Types: {}",
-                            i, step.pc, step.instr_str, step.reg_types_str
-                        );
-                    }
-                    println!("=============================================\n");
                 }
+                println!("=============================================\n");
+            }
             break;
         }
 

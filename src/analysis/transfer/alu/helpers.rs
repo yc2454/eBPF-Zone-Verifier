@@ -74,10 +74,9 @@ pub(crate) fn check_ptr_bounds(state: &mut State, reg: Reg) {
                 .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket));
             if let Some(packet_start_reg) = packet_start_reg_op {
                 let (_, hi) = get_distance_interval(&state.dbm, reg, *packet_start_reg);
-                if hi != i64::MAX
-                    && hi > constants::MAX_PACKET_OFF {
-                        forget(&mut state.dbm, reg);
-                    }
+                if hi != i64::MAX && hi > constants::MAX_PACKET_OFF {
+                    forget(&mut state.dbm, reg);
+                }
             }
         }
         RegType::PtrToPacketMeta => {
@@ -87,10 +86,9 @@ pub(crate) fn check_ptr_bounds(state: &mut State, reg: Reg) {
                 .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacketMeta));
             if let Some(packet_start_reg) = packet_start_reg_op {
                 let (_, hi) = get_distance_interval(&state.dbm, reg, *packet_start_reg);
-                if hi != i64::MAX
-                    && hi > constants::MAX_PACKET_OFF {
-                        forget(&mut state.dbm, reg);
-                    }
+                if hi != i64::MAX && hi > constants::MAX_PACKET_OFF {
+                    forget(&mut state.dbm, reg);
+                }
             }
         }
         _ => {}
