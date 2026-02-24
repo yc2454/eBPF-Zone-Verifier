@@ -76,25 +76,16 @@ pub fn is_ptr_to_btf_id(t: &RegType) -> bool {
 // ============================================================================
 
 /// Types compatible with PtrToSocket argument
-pub static SOCKET_COMPAT: &[fn(&RegType) -> bool] = &[
-    is_ptr_to_socket,
-    is_ptr_to_sock_common,
-    is_ptr_to_stack,
-];
+pub static SOCKET_COMPAT: &[fn(&RegType) -> bool] =
+    &[is_ptr_to_socket, is_ptr_to_sock_common, is_ptr_to_stack];
 
 /// Types compatible with PtrToSockCommon argument
-pub static SOCK_COMMON_COMPAT: &[fn(&RegType) -> bool] = &[
-    is_ptr_to_sock_common,
-    is_ptr_to_socket,
-    is_ptr_to_tcp_sock,
-];
+pub static SOCK_COMMON_COMPAT: &[fn(&RegType) -> bool] =
+    &[is_ptr_to_sock_common, is_ptr_to_socket, is_ptr_to_tcp_sock];
 
 /// Types compatible with PtrToBTFIdSockCommon argument
-pub static BTF_SOCK_COMMON_COMPAT: &[fn(&RegType) -> bool] = &[
-    is_ptr_to_sock_common,
-    is_ptr_to_socket,
-    is_ptr_to_tcp_sock,
-];
+pub static BTF_SOCK_COMMON_COMPAT: &[fn(&RegType) -> bool] =
+    &[is_ptr_to_sock_common, is_ptr_to_socket, is_ptr_to_tcp_sock];
 
 /// Types compatible with generic memory pointers (PtrToMem)
 #[allow(dead_code)]
@@ -186,18 +177,19 @@ pub fn get_helper_map_requirement(helper: u32) -> Option<&'static HelperMapRequi
 pub fn check_map_type_for_helper(helper: u32, map_type: u32) -> Result<(), &'static str> {
     if let Some(req) = get_helper_map_requirement(helper) {
         // Check required type
-        if let Some(required) = req.required_type {
-            if map_type != required {
+        if let Some(required) = req.required_type
+            && map_type != required {
                 return Err(match helper {
                     constants::BPF_TAIL_CALL => "bpf_tail_call requires PROG_ARRAY map",
-                    constants::BPF_PERF_EVENT_OUTPUT => "bpf_perf_event_output requires PERF_EVENT_ARRAY map",
+                    constants::BPF_PERF_EVENT_OUTPUT => {
+                        "bpf_perf_event_output requires PERF_EVENT_ARRAY map"
+                    }
                     constants::BPF_RINGBUF_OUTPUT | constants::BPF_RINGBUF_RESERVE => {
                         "bpf_ringbuf_* requires RINGBUF map"
                     }
                     _ => "invalid map type for helper",
                 });
             }
-        }
 
         // Check rejected types
         if req.rejected_types.contains(&map_type) {
@@ -244,7 +236,9 @@ mod tests {
     fn test_socket_compat() {
         let socket = RegType::PtrToSocket { ref_id: None };
         let sock_common = RegType::PtrToSockCommon { ref_id: None };
-        let stack = RegType::PtrToStack { frame_level: FrameLevel::MAIN };
+        let stack = RegType::PtrToStack {
+            frame_level: FrameLevel::MAIN,
+        };
         let packet = RegType::PtrToPacket;
 
         assert!(is_compatible(&socket, SOCKET_COMPAT));
@@ -256,23 +250,26 @@ mod tests {
     #[test]
     fn test_helper_map_requirements() {
         // tail_call requires PROG_ARRAY
-        assert!(check_map_type_for_helper(
-            constants::BPF_TAIL_CALL,
-            constants::BPF_MAP_TYPE_PROG_ARRAY
-        ).is_ok());
-        assert!(check_map_type_for_helper(
-            constants::BPF_TAIL_CALL,
-            constants::BPF_MAP_TYPE_HASH
-        ).is_err());
+        assert!(
+            check_map_type_for_helper(constants::BPF_TAIL_CALL, constants::BPF_MAP_TYPE_PROG_ARRAY)
+                .is_ok()
+        );
+        assert!(
+            check_map_type_for_helper(constants::BPF_TAIL_CALL, constants::BPF_MAP_TYPE_HASH)
+                .is_err()
+        );
 
         // lookup_elem rejects certain types
-        assert!(check_map_type_for_helper(
-            constants::BPF_MAP_LOOKUP_ELEM,
-            constants::BPF_MAP_TYPE_HASH
-        ).is_ok());
-        assert!(check_map_type_for_helper(
-            constants::BPF_MAP_LOOKUP_ELEM,
-            constants::BPF_MAP_TYPE_STACK_TRACE
-        ).is_err());
+        assert!(
+            check_map_type_for_helper(constants::BPF_MAP_LOOKUP_ELEM, constants::BPF_MAP_TYPE_HASH)
+                .is_ok()
+        );
+        assert!(
+            check_map_type_for_helper(
+                constants::BPF_MAP_LOOKUP_ELEM,
+                constants::BPF_MAP_TYPE_STACK_TRACE
+            )
+            .is_err()
+        );
     }
 }

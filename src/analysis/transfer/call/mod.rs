@@ -1,10 +1,10 @@
 // src/analysis/transfer/call/mod.rs
 
-pub mod signatures;
 pub mod checks;
 pub mod compat;
-pub mod validators;
+pub mod signatures;
 pub mod transfer;
+pub mod validators;
 
 // Re-export public transfer functions
 pub(crate) use transfer::transfer_call;

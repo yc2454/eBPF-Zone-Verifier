@@ -1,9 +1,9 @@
 // src/analysis/transfer/branch/refinement.rs
 
-use crate::analysis::machine::state::State;
-use crate::analysis::machine::reg_types::RegType;
-use crate::ast::{Instr, CmpOp, Operand};
 use crate::analysis::machine::reg::Reg;
+use crate::analysis::machine::reg_types::RegType;
+use crate::analysis::machine::state::State;
+use crate::ast::{CmpOp, Instr, Operand};
 
 /// Promote a pointer type across all stack frames by ref/ptr id.
 /// `should_promote` checks if a slot's type matches, `promote` returns the new type.
@@ -24,33 +24,31 @@ fn promote_stack_slots_all_frames(
 }
 
 /// Refines register types based on the outcome of a conditional branch.
-pub(crate) fn refine_branch(
-    state: &mut State,
-    instr: &Instr,
-    branch_taken: bool,
-) {
-    match instr {
-        Instr::If { op, left, right: Operand::Imm(0), .. } => {
-            // Determine if this path implies reg is non-null
-            let is_non_null = match op {
-                CmpOp::Ne      => branch_taken,   // if (reg != 0) goto => taken means non-null
-                CmpOp::Eq      => !branch_taken,  // if (reg == 0) goto => fallthrough means non-null
-                CmpOp::SGe | CmpOp::UGe | CmpOp::SGt | CmpOp::UGt => branch_taken,
-                CmpOp::SLe | CmpOp::ULe | CmpOp::SLt | CmpOp::ULt => !branch_taken,
-                CmpOp::Test    => branch_taken,
-            };
+pub(crate) fn refine_branch(state: &mut State, instr: &Instr, branch_taken: bool) {
+    if let Instr::If {
+            op,
+            left,
+            right: Operand::Imm(0),
+            ..
+        } = instr {
+        // Determine if this path implies reg is non-null
+        let is_non_null = match op {
+            CmpOp::Ne => branch_taken,  // if (reg != 0) goto => taken means non-null
+            CmpOp::Eq => !branch_taken, // if (reg == 0) goto => fallthrough means non-null
+            CmpOp::SGe | CmpOp::UGe | CmpOp::SGt | CmpOp::UGt => branch_taken,
+            CmpOp::SLe | CmpOp::ULe | CmpOp::SLt | CmpOp::ULt => !branch_taken,
+            CmpOp::Test => branch_taken,
+        };
 
-            // Existing map value promotion
-            if is_non_null {
-                maybe_promote_map_val(state, *left);
-                maybe_promote_btf_id(state, *left);
-                maybe_promote_mem(state, *left);
-            }
+        // Existing map value promotion
+        if is_non_null {
+            maybe_promote_map_val(state, *left);
+            maybe_promote_btf_id(state, *left);
+            maybe_promote_mem(state, *left);
+        }
 
-            // refine acquired references (handles both paths)
-            maybe_refine_acquired_ref(state, *left, is_non_null);
-        },
-        _ => {}
+        // refine acquired references (handles both paths)
+        maybe_refine_acquired_ref(state, *left, is_non_null);
     }
 }
 
@@ -61,17 +59,27 @@ fn maybe_promote_map_val(state: &mut State, reg: Reg) {
         _ => return,
     };
     for r in Reg::ALL {
-        if let RegType::PtrToMapValueOrNull { id, map_idx } = state.types.get(r) {
-            if id == target_id {
-                state.types.set(r, RegType::PtrToMapValue { id, offset: Some(0), map_idx });
+        if let RegType::PtrToMapValueOrNull { id, map_idx } = state.types.get(r)
+            && id == target_id {
+                state.types.set(
+                    r,
+                    RegType::PtrToMapValue {
+                        id,
+                        offset: Some(0),
+                        map_idx,
+                    },
+                );
             }
-        }
     }
-    promote_stack_slots_all_frames(state,
+    promote_stack_slots_all_frames(
+        state,
         |ty| matches!(ty, RegType::PtrToMapValueOrNull { id, .. } if *id == target_id),
         |ty| match ty {
-            RegType::PtrToMapValueOrNull { id, map_idx } => 
-                RegType::PtrToMapValue { id: *id, offset: Some(0), map_idx: *map_idx },
+            RegType::PtrToMapValueOrNull { id, map_idx } => RegType::PtrToMapValue {
+                id: *id,
+                offset: Some(0),
+                map_idx: *map_idx,
+            },
             _ => unreachable!(),
         },
     );
@@ -83,17 +91,29 @@ fn maybe_promote_btf_id(state: &mut State, reg: Reg) {
         _ => return,
     };
     for r in Reg::ALL {
-        if let RegType::PtrToBtfIdOrNull { id, type_name, trusted } = state.types.get(r) {
-            if id == target_id {
-                state.types.set(r, RegType::PtrToBtfId { type_name, trusted });
+        if let RegType::PtrToBtfIdOrNull {
+            id,
+            type_name,
+            trusted,
+        } = state.types.get(r)
+            && id == target_id {
+                state
+                    .types
+                    .set(r, RegType::PtrToBtfId { type_name, trusted });
             }
-        }
     }
-    promote_stack_slots_all_frames(state,
+    promote_stack_slots_all_frames(
+        state,
         |ty| matches!(ty, RegType::PtrToBtfIdOrNull { id, .. } if *id == target_id),
         |ty| match ty {
-            RegType::PtrToBtfIdOrNull { id: _, type_name, trusted } => 
-                RegType::PtrToBtfId { type_name, trusted: *trusted },
+            RegType::PtrToBtfIdOrNull {
+                id: _,
+                type_name,
+                trusted,
+            } => RegType::PtrToBtfId {
+                type_name,
+                trusted: *trusted,
+            },
             _ => unreachable!(),
         },
     );
@@ -105,17 +125,19 @@ fn maybe_promote_mem(state: &mut State, reg: Reg) {
         _ => return,
     };
     for r in Reg::ALL {
-        if let RegType::PtrToAllocMemOrNull { id, mem_size } = state.types.get(r) {
-            if id == target_id {
+        if let RegType::PtrToAllocMemOrNull { id, mem_size } = state.types.get(r)
+            && id == target_id {
                 state.types.set(r, RegType::PtrToAllocMem { id, mem_size });
             }
-        }
     }
-    promote_stack_slots_all_frames(state,
+    promote_stack_slots_all_frames(
+        state,
         |ty| matches!(ty, RegType::PtrToAllocMemOrNull { id, .. } if *id == target_id),
         |ty| match ty {
-            RegType::PtrToAllocMemOrNull { id, mem_size } => 
-                RegType::PtrToAllocMem { id: *id, mem_size: *mem_size },
+            RegType::PtrToAllocMemOrNull { id, mem_size } => RegType::PtrToAllocMem {
+                id: *id,
+                mem_size: *mem_size,
+            },
             _ => unreachable!(),
         },
     );
@@ -123,10 +145,18 @@ fn maybe_promote_mem(state: &mut State, reg: Reg) {
 
 fn same_socket_nullable_pointer(t1: &RegType, t2: &RegType) -> bool {
     match (t1, t2) {
-        (RegType::PtrToSocketOrNull { ref_id: id1 }, RegType::PtrToSocketOrNull { ref_id: id2 }) => id1 == id2,
-        (RegType::PtrToSockCommonOrNull { ref_id: id1 }, RegType::PtrToSockCommonOrNull { ref_id: id2 }) => id1 == id2,
-        (RegType::PtrToTcpSockOrNull { id: id1 }, RegType::PtrToTcpSockOrNull { id: id2 }) => id1 == id2,
-        _ =>false 
+        (
+            RegType::PtrToSocketOrNull { ref_id: id1 },
+            RegType::PtrToSocketOrNull { ref_id: id2 },
+        ) => id1 == id2,
+        (
+            RegType::PtrToSockCommonOrNull { ref_id: id1 },
+            RegType::PtrToSockCommonOrNull { ref_id: id2 },
+        ) => id1 == id2,
+        (RegType::PtrToTcpSockOrNull { id: id1 }, RegType::PtrToTcpSockOrNull { id: id2 }) => {
+            id1 == id2
+        }
+        _ => false,
     }
 }
 
@@ -135,8 +165,8 @@ fn same_socket_nullable_pointer(t1: &RegType, t2: &RegType) -> bool {
 fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
     let reg_type = state.types.get(reg);
     let target_ref_id = match reg_type {
-        RegType::PtrToSocketOrNull { ref_id } 
-        | RegType::PtrToSockCommonOrNull { ref_id } 
+        RegType::PtrToSocketOrNull { ref_id }
+        | RegType::PtrToSockCommonOrNull { ref_id }
         | RegType::PtrToTcpSockOrNull { id: ref_id } => ref_id,
         _ => return,
     };
@@ -163,7 +193,8 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
                 state.types.set(r, RegType::ScalarValue);
             }
         }
-        promote_stack_slots_all_frames(state,
+        promote_stack_slots_all_frames(
+            state,
             |ty| same_socket_nullable_pointer(&reg_type, ty),
             |_ty| RegType::ScalarValue,
         );

@@ -89,7 +89,7 @@ pub fn analyze_program(
         }
 
         // A.a TYPE CONFLICT RESOLUTION (deferred checking approach)
-        // Demote conflicting registers to ScalarValue. 
+        // Demote conflicting registers to ScalarValue.
         // If they're later used as pointers, that will fail.
         if state.pc < prog.instrs.len() - 1 {
             merging::resolve_type_conflicts(&env, &mut state);
@@ -119,7 +119,7 @@ pub fn analyze_program(
         }
 
         // C. Heartbeat Logging (Level 1+)
-        if config.verbosity >= 1 && env.insn_processed % config.log_interval == 0 {
+        if config.verbosity >= 1 && env.insn_processed.is_multiple_of(config.log_interval) {
             info!(target: "app", "[Verifier] Processed {} instructions (pruned {}). Worklist size: {}", 
                      env.insn_processed, prune_count, worklist.len());
         }
@@ -162,8 +162,8 @@ pub fn analyze_program(
             error!(target: "analysis", "[Verifier] Analysis halted due to critical error: {}", 
                    env.error.as_ref().unwrap().description());
             // Additionally, if we have history tracking, reconstruct and print the crash trace
-            if config.enable_path_trace {
-                if let Some(crash_idx) = current_step_idx {
+            if config.enable_path_trace
+                && let Some(crash_idx) = current_step_idx {
                     let trace = env.history.get_trace(crash_idx);
                     // Print directly to stdout (or error log) so it stands out
                     println!(
@@ -178,7 +178,6 @@ pub fn analyze_program(
                     }
                     println!("=============================================\n");
                 }
-            }
             break;
         }
 

@@ -59,11 +59,10 @@ pub(crate) fn handle_add(
                     if hi != i64::MAX {
                         state.dbm.add_constraint(dst, *r, hi);
                     }
-                    if lo != i64::MIN {
-                        if lo > i64::MIN {
+                    if lo != i64::MIN
+                        && lo > i64::MIN {
                             state.dbm.add_constraint(*r, dst, -lo);
                         }
-                    }
                     state.dbm.close();
                 }
             } else {

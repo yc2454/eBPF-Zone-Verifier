@@ -82,7 +82,10 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 return Err(LowerError {
                     pc,
                     code: insn.code,
-                    msg: format!("invalid BPF_LD_IMM insn: src_reg={} off={} (expected src 0/1/2 and off 0)", insn.src, insn.off),
+                    msg: format!(
+                        "invalid BPF_LD_IMM insn: src_reg={} off={} (expected src 0/1/2 and off 0)",
+                        insn.src, insn.off
+                    ),
                     kind: LowerErrorKind::InvalidLDIMM64,
                 });
             }
@@ -153,7 +156,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                         dst,
                         kind: MapLoadKind::MapValue,
                         map_fd: imm_i64 as i32,
-                        off: off,
+                        off,
                     });
                 }
                 _ => {
@@ -479,7 +482,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             0x87 => Instr::Alu {
                 width: Width::W64,
                 op: AluOp::Neg,
-                dst: dst,
+                dst,
                 src: Operand::Imm(0), // Unary op, src is ignored
             },
 
@@ -582,7 +585,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             // 0xd4: BPF_END: endian conversion on dst.
             0xd4 => Instr::Endian {
                 width: Width::W32,
-                dst: dst,
+                dst,
                 op: EndianOp::ToLe,
                 size: insn.imm as u32,
             },
@@ -590,7 +593,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             // 0xdc: BPF_END: endian conversion on dst.
             0xdc => Instr::Endian {
                 width: Width::W32,
-                dst: dst,
+                dst,
                 op: EndianOp::ToBe,
                 size: insn.imm as u32,
             },
@@ -863,7 +866,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     width: Width::W32,
                     left: dst,
                     op: CmpOp::UGt, // “no-refinement” bucket
-                    right: Operand::Imm(insn.imm as i32 as i64),
+                    right: Operand::Imm(insn.imm as i64),
                     target,
                 }
             }
@@ -1164,7 +1167,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 size: MemSize::U32,
                 dst,
                 base: src,
-                off: insn.off as i16,
+                off: insn.off,
             },
 
             // 0x69: LDXH dst = *(u16 *)(src + off)
@@ -1172,7 +1175,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 size: MemSize::U16,
                 dst,
                 base: src,
-                off: insn.off as i16,
+                off: insn.off,
             },
 
             // 0x71: LDXB dst = *(u8 *)(src + off)
@@ -1180,7 +1183,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 size: MemSize::U8,
                 dst,
                 base: src,
-                off: insn.off as i16,
+                off: insn.off,
             },
 
             // 0x79: LDXDW dst = *(u64 *)(src + off)
@@ -1188,14 +1191,14 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 size: MemSize::U64,
                 dst,
                 base: src,
-                off: insn.off as i16,
+                off: insn.off,
             },
 
             // 0x62: BPF_ST | BPF_MEM | BPF_W ( *(u32 *)(dst + off) = imm )
             0x62 => Instr::Store {
                 size: MemSize::U32,
                 base: dst,
-                off: insn.off as i16,
+                off: insn.off,
                 src: Operand::Imm(insn.imm as i64),
             },
 
@@ -1211,7 +1214,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             0x6a => Instr::Store {
                 size: MemSize::U16,
                 base: dst,
-                off: insn.off as i16,
+                off: insn.off,
                 src: Operand::Imm(insn.imm as i64),
             },
 
@@ -1227,7 +1230,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             0x72 => Instr::Store {
                 size: MemSize::U8,
                 base: dst,
-                off: insn.off as i16,
+                off: insn.off,
                 src: Operand::Imm(insn.imm as i64),
             },
 
@@ -1235,7 +1238,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             0x73 => Instr::Store {
                 size: MemSize::U8,
                 base: dst, // dst field is the base register for stores
-                off: insn.off as i16,
+                off: insn.off,
                 src: Operand::Reg(src), // src field is the value register
             },
 
@@ -1243,7 +1246,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             0x7a => Instr::Store {
                 size: MemSize::U64,
                 base: dst,                          // Base address register (e.g., r10)
-                off: insn.off as i16,               // Offset (e.g., -8)
+                off: insn.off,               // Offset (e.g., -8)
                 src: Operand::Imm(insn.imm as i64), // The value to write (sign-extended to 64-bit)
             },
 

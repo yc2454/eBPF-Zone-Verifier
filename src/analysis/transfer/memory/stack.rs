@@ -26,16 +26,13 @@ pub fn check_stack_access(
     src_type_op: Option<RegType>,
     pointer_frame_lv: FrameLevel,
 ) {
-    if state.current_frame_level() > pointer_frame_lv {
-        if matches!(kind, AccessKind::Write) && src_type_op.is_some() {
-            if let Some(ty) = src_type_op {
-                if matches!(ty, RegType::PtrToStack { .. }) {
+    if state.current_frame_level() > pointer_frame_lv
+        && matches!(kind, AccessKind::Write) && src_type_op.is_some()
+            && let Some(ty) = src_type_op
+                && matches!(ty, RegType::PtrToStack { .. }) {
                     env.fail(VerificationError::SpillToCaller { pc });
                     return;
                 }
-            }
-        }
-    }
     let current_frame_depth = -(state.total_stack_depth() as i64);
     let stack_being_accessed = state.stack_at(pointer_frame_lv);
 
@@ -71,7 +68,7 @@ pub fn check_stack_access(
                 let lower = lo;
                 let upper = hi;
                 let min_offset = lower + instruction_offset;
-                let max_access_end = current_frame_depth as i64 + upper + instruction_offset + size;
+                let max_access_end = current_frame_depth + upper + instruction_offset + size;
                 min_offset >= constants::BPF_STACK_MIN && max_access_end <= constants::BPF_STACK_MAX
             } else {
                 false
@@ -189,7 +186,6 @@ pub(crate) fn check_stack_initialization(
                     pc,
                     offset: actual_offset,
                 });
-                return;
             }
         }
         AccessKind::Write => {}
@@ -231,8 +227,8 @@ pub fn check_stack_no_pointers(
 
     for i in 0..size {
         let slot = (stack_offset + i) as i16;
-        if let Some(spilled) = stack.get_slot(slot) {
-            if spilled.reg_type.is_pointer() {
+        if let Some(spilled) = stack.get_slot(slot)
+            && spilled.reg_type.is_pointer() {
                 error!(
                     "[Verifier] pc {}: stack slot {} contains pointer {:?}, cannot expose to map",
                     pc, slot, spilled.reg_type
@@ -243,6 +239,5 @@ pub fn check_stack_no_pointers(
                 });
                 return;
             }
-        }
     }
 }

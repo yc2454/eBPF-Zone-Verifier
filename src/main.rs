@@ -13,9 +13,9 @@ use crate::common::utils::program_kind_for_object;
 use crate::parsing::elf::{list_section_names, load_maps, load_raw_programs};
 use crate::testing::bcf_benchmark::analyze_benchmark;
 use crate::testing::logging;
+use crate::testing::prevail::{prevail_benchmark, prevail_list, prevail_run, prevail_single};
 use crate::testing::runner::{AnalysisResult, Analyzer, find_section_for_func, is_code_section};
 use crate::testing::selftest::{selftest_list, selftest_run, selftest_single, selftest_suite};
-use crate::testing::prevail::{prevail_list, prevail_run, prevail_single, prevail_benchmark};
 use std::path::Path;
 
 fn usage() {
@@ -33,9 +33,9 @@ fn usage() {
     eprintln!("  cargo run -- [flags] prevail-run     <catalogue.json>");
     eprintln!("  cargo run -- [flags] prevail-single  <catalogue.json> <test_name>");
     eprintln!("  cargo run -- [flags] prevail-benchmark <dir_path>");
-    eprintln!("");
+    eprintln!();
     VerifierConfig::print_help();
-    eprintln!("");
+    eprintln!();
     eprintln!("Examples:");
     eprintln!("  cargo run -- elf-list ./bpf_host.o");
     eprintln!("  cargo run -- elf-analyze ./bpf_host.o tc");

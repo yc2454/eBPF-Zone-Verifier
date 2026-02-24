@@ -10,13 +10,13 @@ use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, MapLoadKind, MemSize, Operand, Width};
 use crate::common::constants;
 use crate::common::ctx_model::{CtxFieldKind, validate_ctx_access};
-use crate::zone::dbm::{Dbm, INF};
+use crate::zone::dbm::Dbm;
 use crate::zone::domain::{self, get_distance_fixed, get_interval};
 
 fn update_packet_ptr_type_after_alu(types: &mut TypeState, dbm: &Dbm, dst: Reg) {
     // Check offset from anchor: dst - @data
     let offset_from_data = dbm.get(dst, Reg::AnchorData);
-    if offset_from_data < INF && offset_from_data <= constants::MAX_PACKET_OFF as i64 {
+    if offset_from_data <= constants::MAX_PACKET_OFF {
         types.set(dst, RegType::PtrToPacket);
     } else {
         types.set(dst, RegType::ScalarValue);
@@ -106,7 +106,7 @@ fn update_ptr_arithmetic_type(
         }
         RegType::PtrToPacketMeta => {
             let offset_from_meta = dbm.get(dst, Reg::AnchorDataMeta);
-            if offset_from_meta < INF && offset_from_meta <= constants::MAX_PACKET_OFF as i64 {
+            if offset_from_meta <= constants::MAX_PACKET_OFF {
                 types.set(dst, RegType::PtrToPacketMeta);
             } else {
                 types.set(dst, RegType::ScalarValue);
@@ -275,7 +275,7 @@ pub(crate) fn update_load_types(
             match get_distance_fixed(&state.dbm, base, Reg::R10) {
                 Some(base_off) => {
                     let actual_slot = base_off + (off as i64);
-                    if size == MemSize::U64.bytes() as usize {
+                    if size == MemSize::U64.bytes() {
                         state
                             .types
                             .set(dst, state.stack().get_slot_type(actual_slot as i16));
@@ -353,11 +353,11 @@ pub(crate) fn update_call_types(
     state.types.set(Reg::R0, RegType::ScalarValue);
 
     // Release socket reference
-    if helper == constants::BPF_SK_RELEASE {
-        if let Some(ref_id) = state.types.get(Reg::R1).get_ref_id() {
-            state.release_ref(ref_id);
-            state.invalidate_ref(ref_id);
-        }
+    if helper == constants::BPF_SK_RELEASE
+        && let Some(ref_id) = state.types.get(Reg::R1).get_ref_id()
+    {
+        state.release_ref(ref_id);
+        state.invalidate_ref(ref_id);
     }
 
     // Set R0 based on helper return type
@@ -369,10 +369,7 @@ pub(crate) fn update_call_types(
                 _ => 0,
             };
             let map_def_opt = env.ctx.map_defs.get(map_idx);
-            if map_def_opt.is_none() {
-                state.types.set(Reg::R0, RegType::ScalarValue);
-            } else {
-                let map_def = map_def_opt.unwrap();
+            if let Some(map_def) = map_def_opt {
                 match map_def.type_ {
                     constants::BPF_MAP_TYPE_SOCKMAP | constants::BPF_MAP_TYPE_SOCKHASH => {
                         let id = state.acquire_ref();
@@ -387,6 +384,8 @@ pub(crate) fn update_call_types(
                             .set(Reg::R0, RegType::PtrToMapValueOrNull { id, map_idx });
                     }
                 }
+            } else {
+                state.types.set(Reg::R0, RegType::ScalarValue);
             }
         }
 
@@ -474,19 +473,19 @@ pub(crate) fn update_call_types(
 
         constants::BPF_SKB_LOAD_BYTES => {
             let mem_ptr_ty = in_types.get(Reg::R3);
-            if let RegType::PtrToStack { frame_level } = mem_ptr_ty {
-                if let Some(off) = get_distance_fixed(&state.dbm, Reg::R3, Reg::R10) {
-                    let (_, hi) = get_interval(&state.dbm, Reg::R4);
-                    let len = if hi <= 0xFFFF { hi as i16 } else { 0 };
-                    if len > 0 {
-                        // Mark the stack range as initialized scalars
-                        for i in 0..len {
-                            state.stack_at_mut(frame_level).set_slot_type(
-                                (off + i as i64) as i16,
-                                RegType::ScalarValue,
-                                None,
-                            );
-                        }
+            if let RegType::PtrToStack { frame_level } = mem_ptr_ty
+                && let Some(off) = get_distance_fixed(&state.dbm, Reg::R3, Reg::R10)
+            {
+                let (_, hi) = get_interval(&state.dbm, Reg::R4);
+                let len = if hi <= 0xFFFF { hi as i16 } else { 0 };
+                if len > 0 {
+                    // Mark the stack range as initialized scalars
+                    for i in 0..len {
+                        state.stack_at_mut(frame_level).set_slot_type(
+                            (off + i as i64) as i16,
+                            RegType::ScalarValue,
+                            None,
+                        );
                     }
                 }
             }
@@ -517,7 +516,7 @@ pub(crate) fn update_call_types(
     if helper_invalidates_packets(helper) {
         for r in Reg::ALL {
             match state.types.get(r) {
-                RegType::PtrToPacket { .. } | RegType::PtrToPacketEnd => {
+                RegType::PtrToPacket | RegType::PtrToPacketEnd => {
                     state.types.set(r, RegType::ScalarValue);
                 }
                 _ => {}
@@ -558,12 +557,10 @@ pub(crate) fn update_map_load_types(
     dst: Reg,
 ) {
     let new_type = match kind {
-        MapLoadKind::MapPtr => RegType::PtrToMapObject {
-            map_idx: map_fd as usize,
-        },
+        MapLoadKind::MapPtr => RegType::PtrToMapObject { map_idx: map_fd },
         MapLoadKind::MapValue => RegType::PtrToMapValue {
             id: new_ptr_id(),
-            map_idx: map_fd as usize,
+            map_idx: map_fd,
             offset: Some(0),
         },
     };

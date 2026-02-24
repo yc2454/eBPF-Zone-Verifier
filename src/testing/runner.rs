@@ -6,12 +6,15 @@ use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg::Reg;
 use crate::ast::ProgramKind;
 use crate::common::config::VerifierConfig;
-use crate::common::utils::{try_load_program_from_elf, try_load_function_from_elf, try_load_combined_program_from_elf, program_kind_for_object};
+use crate::common::utils::{
+    program_kind_for_object, try_load_combined_program_from_elf, try_load_function_from_elf,
+    try_load_program_from_elf,
+};
 use crate::parsing::btf::{self, BtfContext};
 use crate::parsing::elf;
 use crate::parsing::elf::{
-    BpfMapDef, list_section_names, load_data_section_maps, load_maps, load_raw_programs,
-    load_relocations_for_function, get_functions_in_section, BpfFuncInfo,
+    BpfFuncInfo, BpfMapDef, get_functions_in_section, list_section_names, load_data_section_maps,
+    load_maps, load_raw_programs, load_relocations_for_function,
 };
 use crate::zone::dbm::Dbm;
 use crate::zone::domain::assign_zero;
@@ -159,20 +162,16 @@ impl Analyzer {
     /// Analyze a specific function within a section, using pre-computed function info
     fn analyze_function_with_info(&self, section: &str, func: &BpfFuncInfo) -> AnalysisResult {
         // Load relocations adjusted for this function's offset within the section
-        let pc_to_reloc = load_relocations_for_function(
-            &self.path,
-            &self.maps,
-            section,
-            func.offset,
-            func.size,
-        )
-        .unwrap_or_default();
+        let pc_to_reloc =
+            load_relocations_for_function(&self.path, &self.maps, section, func.offset, func.size)
+                .unwrap_or_default();
 
         // Load only this function's bytes
-        let prog = match try_load_function_from_elf(&self.path, section, &func.name, Some(&pc_to_reloc)) {
-            Ok(p) => p,
-            Err(e) => return AnalysisResult::LoadError(e),
-        };
+        let prog =
+            match try_load_function_from_elf(&self.path, section, &func.name, Some(&pc_to_reloc)) {
+                Ok(p) => p,
+                Err(e) => return AnalysisResult::LoadError(e),
+            };
         if prog.instrs.is_empty() {
             return AnalysisResult::LoadError(format!("Empty function '{}'", func.name));
         }
@@ -226,10 +225,11 @@ impl Analyzer {
     /// If the section has cross-section BPF calls, subprograms are combined.
     fn analyze_section_as_single_program(&self, section: &str) -> AnalysisResult {
         // Load program with combined subprograms if needed
-        let (prog, pc_to_reloc) = match try_load_combined_program_from_elf(&self.path, section, &self.maps) {
-            Ok((p, r)) => (p, r),
-            Err(e) => return AnalysisResult::LoadError(e),
-        };
+        let (prog, pc_to_reloc) =
+            match try_load_combined_program_from_elf(&self.path, section, &self.maps) {
+                Ok((p, r)) => (p, r),
+                Err(e) => return AnalysisResult::LoadError(e),
+            };
         if prog.instrs.is_empty() {
             return AnalysisResult::LoadError("Empty program or section not found".to_string());
         }

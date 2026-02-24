@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 
 use super::types::{BpfCallTarget, BpfMapDef, RelocInfo, RelocKind};
-use crate::common::constants::{self, R_BPF_64_64, R_BPF_64_32};
+use crate::common::constants::{self, R_BPF_64_32, R_BPF_64_64};
 use crate::parsing::bpf_insn::RawBpfInsn;
 
 /// Look up BPF helper ID by name.
@@ -177,11 +177,10 @@ pub fn load_relocations<P: AsRef<Path>>(
 
     let mut section_idx_to_map_idx: HashMap<usize, usize> = HashMap::new();
     for (sec_idx, sh) in elf.section_headers.iter().enumerate() {
-        if let Some(name) = elf.shdr_strtab.get_at(sh.sh_name) {
-            if let Some(&map_idx) = map_name_to_idx.get(name) {
+        if let Some(name) = elf.shdr_strtab.get_at(sh.sh_name)
+            && let Some(&map_idx) = map_name_to_idx.get(name) {
                 section_idx_to_map_idx.insert(sec_idx, map_idx);
             }
-        }
     }
 
     let target_sec_idx = elf
@@ -220,7 +219,9 @@ pub fn load_relocations<P: AsRef<Path>>(
                             bpf_call_target: None,
                         },
                     );
-                } else if let Some((sec_name, offset, size)) = resolve_symbol_location(&elf, &buf, name) {
+                } else if let Some((sec_name, offset, size)) =
+                    resolve_symbol_location(&elf, &buf, name)
+                {
                     // BPF-to-BPF call
                     pc_to_reloc.insert(
                         pc,
@@ -271,7 +272,11 @@ pub fn load_relocations<P: AsRef<Path>>(
 
 /// Resolve a symbol name to its location (section name, offset within section, size).
 /// Returns None if the symbol is not found or is not a function symbol in a valid section.
-fn resolve_symbol_location(elf: &Elf, _buf: &[u8], symbol_name: &str) -> Option<(String, usize, usize)> {
+fn resolve_symbol_location(
+    elf: &Elf,
+    _buf: &[u8],
+    symbol_name: &str,
+) -> Option<(String, usize, usize)> {
     use goblin::elf::sym::STT_FUNC;
 
     // Find the symbol by name
@@ -324,11 +329,10 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
 
     let mut section_idx_to_map_idx: HashMap<usize, usize> = HashMap::new();
     for (sec_idx, sh) in elf.section_headers.iter().enumerate() {
-        if let Some(name) = elf.shdr_strtab.get_at(sh.sh_name) {
-            if let Some(&map_idx) = map_name_to_idx.get(name) {
+        if let Some(name) = elf.shdr_strtab.get_at(sh.sh_name)
+            && let Some(&map_idx) = map_name_to_idx.get(name) {
                 section_idx_to_map_idx.insert(sec_idx, map_idx);
             }
-        }
     }
 
     let target_sec_idx = elf
@@ -380,7 +384,9 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                             bpf_call_target: None,
                         },
                     );
-                } else if let Some((sec_name, offset, size)) = resolve_symbol_location(&elf, &buf, name) {
+                } else if let Some((sec_name, offset, size)) =
+                    resolve_symbol_location(&elf, &buf, name)
+                {
                     // BPF-to-BPF call
                     pc_to_reloc.insert(
                         func_pc,
@@ -585,7 +591,7 @@ pub fn combine_program_with_subprogs<P: AsRef<Path> + Clone>(
     maps: &[BpfMapDef],
     main_section: &str,
 ) -> Result<CombinedProgram> {
-    use super::prog::{load_bpf_insn_stream_section, get_functions_in_section};
+    use super::prog::{get_functions_in_section, load_bpf_insn_stream_section};
     use crate::parsing::bpf_insn::decode_insns;
 
     // Load main section instructions
@@ -630,9 +636,9 @@ pub fn combine_program_with_subprogs<P: AsRef<Path> + Clone>(
     // Now fix all BPF call targets
     // For each BpfCall relocation, compute: imm = target_pc - (call_pc + 1)
     for (&call_pc, reloc) in combined_relocs.iter() {
-        if reloc.kind == RelocKind::BpfCall {
-            if let Some(ref target) = reloc.bpf_call_target {
-                if let Some(&target_pc) = func_offsets.get(&target.func_name) {
+        if reloc.kind == RelocKind::BpfCall
+            && let Some(ref target) = reloc.bpf_call_target
+                && let Some(&target_pc) = func_offsets.get(&target.func_name) {
                     // Fix the imm field in the call instruction
                     if call_pc < combined_insns.len() {
                         let relative_offset = (target_pc as i32) - (call_pc as i32 + 1);
@@ -640,8 +646,6 @@ pub fn combine_program_with_subprogs<P: AsRef<Path> + Clone>(
                         combined_insns[call_pc].src = 1; // BPF_PSEUDO_CALL
                     }
                 }
-            }
-        }
     }
 
     // Apply other relocations (maps, helpers)

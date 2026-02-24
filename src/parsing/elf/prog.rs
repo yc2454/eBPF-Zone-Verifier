@@ -154,8 +154,7 @@ pub fn load_function_bytes<P: AsRef<Path>>(
         .section_headers
         .iter()
         .enumerate()
-        .find(|(_, sh)| elf.shdr_strtab.get_at(sh.sh_name) == Some(section_name))
-        .map(|(idx, sh)| (idx, sh));
+        .find(|(_, sh)| elf.shdr_strtab.get_at(sh.sh_name) == Some(section_name));
 
     let (sec_idx, sh) = match sh {
         Some(s) => s,
@@ -163,14 +162,11 @@ pub fn load_function_bytes<P: AsRef<Path>>(
     };
 
     // Find the function symbol
-    let func_sym = elf
-        .syms
-        .iter()
-        .find(|sym| {
-            sym.st_type() == sym::STT_FUNC
-                && sym.st_shndx == sec_idx
-                && elf.strtab.get_at(sym.st_name) == Some(func_name)
-        });
+    let func_sym = elf.syms.iter().find(|sym| {
+        sym.st_type() == sym::STT_FUNC
+            && sym.st_shndx == sec_idx
+            && elf.strtab.get_at(sym.st_name) == Some(func_name)
+    });
 
     let func_sym = match func_sym {
         Some(s) => s,
@@ -179,7 +175,7 @@ pub fn load_function_bytes<P: AsRef<Path>>(
                 "Function '{}' not found in section '{}'",
                 func_name,
                 section_name
-            ))
+            ));
         }
     };
 

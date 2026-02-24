@@ -1,6 +1,6 @@
-use log::{Record, Level, Metadata, Log, LevelFilter};
-use std::sync::{Mutex, Once, RwLock}; // RwLock for config (read often, write once)
+use log::{Level, LevelFilter, Log, Metadata, Record};
 use std::collections::VecDeque;
+use std::sync::{Mutex, Once, RwLock}; // RwLock for config (read often, write once)
 
 // --- 1. Configuration Structures ---
 
@@ -20,11 +20,11 @@ impl FilterConfig {
             // Scan for tag "|PC:123|"
             if let Some(start) = log_msg.find("|PC:") {
                 let rest = &log_msg[start + 4..];
-                if let Some(end) = rest.find('|') {
-                    if let Ok(pc) = rest[..end].parse::<usize>() {
-                        if !range.contains(&pc) { return false; }
-                    }
-                }
+                if let Some(end) = rest.find('|')
+                    && let Ok(pc) = rest[..end].parse::<usize>()
+                        && !range.contains(&pc) {
+                            return false;
+                        }
             }
         }
 
@@ -42,7 +42,9 @@ impl FilterConfig {
                     break;
                 }
             }
-            if !found { return false; }
+            if !found {
+                return false;
+            }
         }
 
         true
@@ -53,7 +55,10 @@ impl FilterConfig {
 
 static INSTANCE: VerifierLogger = VerifierLogger {
     buffer: Mutex::new(VecDeque::new()),
-    config: RwLock::new(FilterConfig { pc_range: None, interesting_regs: vec![] }),
+    config: RwLock::new(FilterConfig {
+        pc_range: None,
+        interesting_regs: vec![],
+    }),
 };
 
 static INIT: Once = Once::new();
@@ -87,7 +92,10 @@ impl VerifierLogger {
 
     fn dump_buffer(&self) {
         let buffer = self.buffer.lock().unwrap();
-        println!("\n=== CRASH TRACE (Last {} Relevant Steps) ===", buffer.len());
+        println!(
+            "\n=== CRASH TRACE (Last {} Relevant Steps) ===",
+            buffer.len()
+        );
         for line in buffer.iter() {
             print!("{}", line);
         }
@@ -101,7 +109,9 @@ impl Log for VerifierLogger {
     }
 
     fn log(&self, record: &Record) {
-        if !self.enabled(record.metadata()) { return; }
+        if !self.enabled(record.metadata()) {
+            return;
+        }
 
         if record.target() == "analysis" {
             let msg_str = format!("{}", record.args());
@@ -121,7 +131,7 @@ impl Log for VerifierLogger {
 
             // --- BUFFERING LOGIC ---
             let mut buffer = self.buffer.lock().unwrap();
-            
+
             // Keep last 100 *matching* lines
             if buffer.len() >= 100 {
                 buffer.pop_front();

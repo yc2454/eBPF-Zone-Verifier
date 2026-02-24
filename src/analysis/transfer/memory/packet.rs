@@ -42,7 +42,7 @@ fn get_packet_offset_range(state: &State, base: Reg, insn_off: i16) -> (Option<i
     let base_type = state.types.get(base);
 
     match base_type {
-        RegType::PtrToPacket { .. } => {
+        RegType::PtrToPacket => {
             let insn_off = insn_off as i64;
             (Some(insn_off), Some(insn_off))
         }
@@ -100,7 +100,7 @@ pub fn check_packet_access(
         return;
     }
 
-    let (start_ok, end_ok) = verify_packet_bounds(&state.dbm, base, off as i64, size as i64);
+    let (start_ok, end_ok) = verify_packet_bounds(&state.dbm, base, off as i64, size);
     debug!(
         "Packet access check at pc {}: base {} offset {} size {} => start_ok {}, end_ok {}",
         pc,
@@ -123,7 +123,6 @@ pub fn check_packet_access(
         && !check_packet_alignment(state, base, off, size)
     {
         env.fail(VerificationError::MisalignedPacketAccess { pc, off, size });
-        return;
     }
 }
 
@@ -135,7 +134,7 @@ pub fn check_packet_meta_access(
     size: i64,
     pc: usize,
 ) {
-    let (start_ok, end_ok) = verify_packet_meta_bounds(&state.dbm, base, off as i64, size as i64);
+    let (start_ok, end_ok) = verify_packet_meta_bounds(&state.dbm, base, off as i64, size);
     if !start_ok || !end_ok {
         env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
     }
@@ -154,11 +153,10 @@ pub(crate) fn transfer_packet_load(
         return vec![];
     }
 
-    if let Some(reg) = src {
-        if !check_reg_readable(env, &state, reg) {
+    if let Some(reg) = src
+        && !check_reg_readable(env, &state, reg) {
             return vec![];
         }
-    }
 
     if state.has_active_lock() && mode == PacketLoadMode::Abs {
         env.fail(VerificationError::LoadAbsUnderLock { pc: state.pc });

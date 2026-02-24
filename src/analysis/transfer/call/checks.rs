@@ -413,7 +413,7 @@ pub(crate) fn validate_readable_mem(
                 true
             }
         }
-        RegType::PtrToPacket { .. } => {
+        RegType::PtrToPacket => {
             if let Some(size) = size {
                 access::check_load(env, state, reg, size as i64, 0);
                 if env.failed() {
@@ -448,8 +448,8 @@ pub(crate) fn validate_writable_mem(
 ) -> bool {
     match reg_type {
         RegType::PtrToStack { frame_level } => {
-            if let Some(off) = get_distance_fixed(&state.dbm, reg, Reg::R10) {
-                if let Some(sz) = size {
+            if let Some(off) = get_distance_fixed(&state.dbm, reg, Reg::R10)
+                && let Some(sz) = size {
                     check_stack_access(
                         env,
                         state,
@@ -463,7 +463,6 @@ pub(crate) fn validate_writable_mem(
                         frame_level,
                     );
                 }
-            }
             true
         }
         RegType::PtrToMapValue { map_idx, .. } => {
@@ -480,7 +479,7 @@ pub(crate) fn validate_writable_mem(
                 false
             }
         }
-        RegType::PtrToPacket { .. } => {
+        RegType::PtrToPacket => {
             // Packet pointers are NOT valid for uninit_mem arguments
             // (helper would write to packet, which is not allowed this way)
             env.fail(VerificationError::InvalidArgType { pc, reg });
@@ -735,7 +734,7 @@ pub(crate) fn check_ptr_access_size(
             !env.failed()
         }
 
-        RegType::PtrToPacket { .. } => {
+        RegType::PtrToPacket => {
             // Packet: need to verify against packet bounds (data_end - data)
             check_packet_access(
                 env,

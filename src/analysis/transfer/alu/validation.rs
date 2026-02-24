@@ -59,7 +59,7 @@ pub(crate) fn check_ptr_arithmetic(
                 }
                 RegType::is_same_pointer_type(dst_type, src_type)
                     || (matches!(dst_type, RegType::PtrToPacketEnd)
-                        && matches!(src_type, RegType::PtrToPacket { .. }))
+                        && matches!(src_type, RegType::PtrToPacket))
             }
             AluOp::Mov => true,
             _ => false,
@@ -88,12 +88,11 @@ pub(crate) fn check_ptr_arithmetic(
                 if src_min < -constants::MAX_VAR_OFF || src_max > constants::MAX_VAR_OFF {
                     return false;
                 }
-                if matches!(dst_type, RegType::PtrToMapValue { .. }) {
-                    if src_max > i32::MAX as i64 {
+                if matches!(dst_type, RegType::PtrToMapValue { .. })
+                    && src_max > i32::MAX as i64 {
                         error!("Forbidden offset {}", src_max);
                         return false;
                     }
-                }
                 if op == AluOp::Sub && matches!(dst_type, RegType::PtrToStack { .. }) {
                     return false;
                 }

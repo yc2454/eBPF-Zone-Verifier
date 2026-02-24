@@ -17,10 +17,10 @@
 //      registers the caller depends on after the call returns.
 //   4. Standard backward dataflow with reverse-iteration fixed-point computation.
 
-use crate::ast::{Instr, Operand, Program};
-use crate::analysis::machine::reg::Reg;
-use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::flow::subprog::{self, SubprogInfo};
+use crate::analysis::machine::env::VerifierEnv;
+use crate::analysis::machine::reg::Reg;
+use crate::ast::{Instr, Operand, Program};
 use std::collections::{BTreeMap, HashSet};
 
 // ---------- Internal Live-Set Representation ----------
@@ -52,7 +52,7 @@ pub fn compute_liveness(prog: &Program, env: &mut VerifierEnv) {
 
     // Phase 1: Compute per-subprogram local liveness.
     // Each subprogram is analyzed in isolation. CallRel → PC+1 only.
-    for (_entry, info) in &subprogs {
+    for info in subprogs.values() {
         compute_subprog_liveness(prog, env, info.start_pc, info.end_pc);
     }
 
@@ -125,12 +125,7 @@ fn propagate_cross_frame_liveness(
 
 // ---------- Phase 1: Per-Subprogram Fixed-Point Solver ----------
 
-fn compute_subprog_liveness(
-    prog: &Program,
-    env: &mut VerifierEnv,
-    start: usize,
-    end: usize,
-) {
+fn compute_subprog_liveness(prog: &Program, env: &mut VerifierEnv, start: usize, end: usize) {
     let len = end - start;
     if len == 0 {
         return;
@@ -193,12 +188,7 @@ fn compute_subprog_liveness(
 
 /// Returns successors of `pc` that are WITHIN the same subprogram [start, end).
 /// CallRel is NOT followed into the callee — it returns to pc+1.
-fn get_local_successors(
-    pc: usize,
-    instr: &Instr,
-    start: usize,
-    end: usize,
-) -> Vec<usize> {
+fn get_local_successors(pc: usize, instr: &Instr, start: usize, end: usize) -> Vec<usize> {
     let mut succs = Vec::new();
     let next = pc + 1;
     let is_local = |t: usize| t >= start && t < end;
@@ -271,8 +261,8 @@ fn get_use_def(instr: &Instr) -> UseDef {
             // `Mov X, X` is a NOP — no use, no def for liveness purposes.
             // Without this, `Mov R0, R0` would make R0 live even though its
             // value is unchanged, preventing valid pruning at merge points.
-            let is_self_mov = matches!(op, AluOp::Mov)
-                && matches!(src, Operand::Reg(r) if *r == *dst);
+            let is_self_mov =
+                matches!(op, AluOp::Mov) && matches!(src, Operand::Reg(r) if *r == *dst);
 
             if is_self_mov {
                 // Skip — NOP
@@ -308,7 +298,12 @@ fn get_use_def(instr: &Instr) -> UseDef {
             // No register use/def.
         }
 
-        Instr::Load { size, dst, base, off } => {
+        Instr::Load {
+            size,
+            dst,
+            base,
+            off,
+        } => {
             ud.use_regs.insert(*base);
             ud.def_regs.insert(*dst);
             // If loading from stack (R10-based), the slot is "used" (read).
@@ -320,7 +315,12 @@ fn get_use_def(instr: &Instr) -> UseDef {
             }
         }
 
-        Instr::Store { size, base, off, src } => {
+        Instr::Store {
+            size,
+            base,
+            off,
+            src,
+        } => {
             ud.use_regs.insert(*base);
             if let Operand::Reg(r) = src {
                 ud.use_regs.insert(*r);
@@ -334,7 +334,13 @@ fn get_use_def(instr: &Instr) -> UseDef {
             }
         }
 
-        Instr::Atomic { base, src, off, size, .. } => {
+        Instr::Atomic {
+            base,
+            src,
+            off,
+            size,
+            ..
+        } => {
             ud.use_regs.insert(*base);
             ud.use_regs.insert(*src);
             // Atomic ops read-modify-write the memory location.

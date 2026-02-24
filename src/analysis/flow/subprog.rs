@@ -2,10 +2,10 @@
 //
 // Subprogram analysis: structure validation and stack overflow checking
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use crate::analysis::machine::reg::Reg;
 use crate::ast::{Instr, Program};
 use crate::common::constants;
-use crate::analysis::machine::reg::Reg;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 const MAX_BPF_STACK: u16 = 512;
 
@@ -18,19 +18,47 @@ pub struct SubprogInfo {
 
 #[derive(Debug, Clone)]
 pub enum SubprogError {
-    JumpOutOfRange { pc: usize, target: usize, start: usize, end: usize },
-    CallOutOfBounds { pc: usize, target: usize },
-    InvalidTerminator { pc: usize },
-    StackOverflow { pc: usize, combined: u16 },
-    CallDepthExceeded { pc: usize, depth: usize },
-    RecursiveCall { pc: usize, target: usize },
+    JumpOutOfRange {
+        pc: usize,
+        target: usize,
+        start: usize,
+        end: usize,
+    },
+    CallOutOfBounds {
+        pc: usize,
+        target: usize,
+    },
+    InvalidTerminator {
+        pc: usize,
+    },
+    StackOverflow {
+        pc: usize,
+        combined: u16,
+    },
+    CallDepthExceeded {
+        pc: usize,
+        depth: usize,
+    },
+    RecursiveCall {
+        pc: usize,
+        target: usize,
+    },
 }
 
 impl std::fmt::Display for SubprogError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SubprogError::JumpOutOfRange { pc, target, start, end } => {
-                write!(f, "jump out of range at pc {}: target {} is outside function scope [{}, {})", pc, target, start, end)
+            SubprogError::JumpOutOfRange {
+                pc,
+                target,
+                start,
+                end,
+            } => {
+                write!(
+                    f,
+                    "jump out of range at pc {}: target {} is outside function scope [{}, {})",
+                    pc, target, start, end
+                )
             }
             SubprogError::CallOutOfBounds { pc, target } => {
                 write!(f, "call out of bounds at pc {}: target {}", pc, target)
@@ -39,10 +67,18 @@ impl std::fmt::Display for SubprogError {
                 write!(f, "last insn at pc {} is not an exit or jmp", pc)
             }
             SubprogError::StackOverflow { pc, combined } => {
-                write!(f, "combined stack size of {} at pc {} exceeds {}", combined, pc, MAX_BPF_STACK)
+                write!(
+                    f,
+                    "combined stack size of {} at pc {} exceeds {}",
+                    combined, pc, MAX_BPF_STACK
+                )
             }
             SubprogError::CallDepthExceeded { pc, depth } => {
-                write!(f, "call depth of {} at pc {} exceeds maximum of 8", depth, pc)
+                write!(
+                    f,
+                    "call depth of {} at pc {} exceeds maximum of 8",
+                    depth, pc
+                )
             }
             SubprogError::RecursiveCall { pc, target } => {
                 write!(f, "back-edge from insn {} to {}", pc, target)
@@ -56,11 +92,10 @@ pub fn analyze_subprograms(instrs: &[Instr]) -> BTreeMap<usize, SubprogInfo> {
     let mut entries: Vec<usize> = vec![0];
 
     for insn in instrs {
-        if let Instr::CallRel { target } = insn {
-            if !entries.contains(target) {
+        if let Instr::CallRel { target } = insn
+            && !entries.contains(target) {
                 entries.push(*target);
             }
-        }
     }
     entries.sort();
 
@@ -70,11 +105,14 @@ pub fn analyze_subprograms(instrs: &[Instr]) -> BTreeMap<usize, SubprogInfo> {
         let end_pc = entries.get(i + 1).copied().unwrap_or(instrs.len());
         let max_stack_depth = compute_max_stack_depth(&instrs[start_pc..end_pc]);
 
-        subprogs.insert(start_pc, SubprogInfo {
+        subprogs.insert(
             start_pc,
-            end_pc,
-            max_stack_depth,
-        });
+            SubprogInfo {
+                start_pc,
+                end_pc,
+                max_stack_depth,
+            },
+        );
     }
 
     subprogs
@@ -129,21 +167,28 @@ pub fn check_subprogs(prog: &Program) -> Result<(), SubprogError> {
                 Instr::Jmp { target } => {
                     if !is_local(*target) {
                         return Err(SubprogError::JumpOutOfRange {
-                            pc, target: *target, start, end,
+                            pc,
+                            target: *target,
+                            start,
+                            end,
                         });
                     }
                 }
                 Instr::If { target, .. } => {
                     if !is_local(*target) {
                         return Err(SubprogError::JumpOutOfRange {
-                            pc, target: *target, start, end,
+                            pc,
+                            target: *target,
+                            start,
+                            end,
                         });
                     }
                 }
                 Instr::CallRel { target } => {
                     if *target >= prog.instrs.len() {
                         return Err(SubprogError::CallOutOfBounds {
-                            pc, target: *target,
+                            pc,
+                            target: *target,
                         });
                     }
                 }
@@ -156,10 +201,7 @@ pub fn check_subprogs(prog: &Program) -> Result<(), SubprogError> {
             let last_pc = end - 1;
             let last_insn = &prog.instrs[last_pc];
 
-            let is_terminator = matches!(
-                last_insn,
-                Instr::Jmp { .. } | Instr::Exit
-            );
+            let is_terminator = matches!(last_insn, Instr::Jmp { .. } | Instr::Exit);
 
             if !is_terminator {
                 return Err(SubprogError::InvalidTerminator { pc: last_pc });
@@ -186,8 +228,8 @@ fn check_call_chain(
     subprogs: &BTreeMap<usize, SubprogInfo>,
     entry_pc: usize,
     depth_so_far: u16,
-    call_depth: usize,  // number of frames
-    caller_pc: Option<usize>,  // PC of the CallRel that invoked us (None for root)
+    call_depth: usize,        // number of frames
+    caller_pc: Option<usize>, // PC of the CallRel that invoked us (None for root)
     visiting: &mut HashSet<usize>,
 ) -> Result<(), SubprogError> {
     // Check call depth first
@@ -226,7 +268,15 @@ fn check_call_chain(
 
     for pc in info.start_pc..info.end_pc {
         if let Instr::CallRel { target } = &prog.instrs[pc] {
-            check_call_chain(prog, subprogs, *target, new_depth, call_depth + 1, Some(pc), visiting)?;
+            check_call_chain(
+                prog,
+                subprogs,
+                *target,
+                new_depth,
+                call_depth + 1,
+                Some(pc),
+                visiting,
+            )?;
         }
     }
 

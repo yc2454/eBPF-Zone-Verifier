@@ -41,14 +41,12 @@ pub(crate) fn transfer_load(
         return vec![state];
     }
 
-    if let RegType::PtrToStack { frame_level } = state.types.get(base) {
-        if let Some(base_off) = get_distance_fixed(&state.dbm, base, Reg::R10) {
-            if state.fill_at(frame_level, dst, off + base_off as i16, size) {
+    if let RegType::PtrToStack { frame_level } = state.types.get(base)
+        && let Some(base_off) = get_distance_fixed(&state.dbm, base, Reg::R10)
+            && state.fill_at(frame_level, dst, off + base_off as i16, size) {
                 state.pc += 1;
                 return vec![state];
             }
-        }
-    }
 
     update_load_types(env, &mut state, access_size as usize, dst, base, off);
     forget(&mut state.dbm, dst);
@@ -70,13 +68,13 @@ pub(crate) fn transfer_load(
     }
 
     match state.types.get(dst) {
-        RegType::PtrToPacket { .. } => {
+        RegType::PtrToPacket => {
             bind_to_anchor(&mut state.dbm, dst, Reg::AnchorData);
         }
-        RegType::PtrToPacketMeta { .. } => {
+        RegType::PtrToPacketMeta => {
             bind_to_anchor(&mut state.dbm, dst, Reg::AnchorDataMeta);
         }
-        RegType::PtrToPacketEnd { .. } => {
+        RegType::PtrToPacketEnd => {
             bind_to_anchor(&mut state.dbm, dst, Reg::AnchorDataEnd);
         }
         _ => {}
@@ -171,21 +169,19 @@ pub(crate) fn transfer_atomic(
     if !check_reg_readable(env, &state, src) {
         return vec![];
     }
-    if op == AtomicOp::CmpXchg {
-        if !check_reg_readable(env, &state, Reg::R0) {
+    if op == AtomicOp::CmpXchg
+        && !check_reg_readable(env, &state, Reg::R0) {
             return vec![];
         }
-    }
 
     if op == AtomicOp::CmpXchg {
         if !check_reg_writable(env, &state, Reg::R0) {
             return vec![];
         }
-    } else if fetch {
-        if !check_reg_writable(env, &state, src) {
+    } else if fetch
+        && !check_reg_writable(env, &state, src) {
             return vec![];
         }
-    }
 
     let base_ty = state.types.get(base);
     if matches!(base_ty, RegType::PtrToCtx) {
@@ -231,12 +227,11 @@ pub(crate) fn transfer_atomic(
             forget(&mut state.dbm, Reg::R0);
             state.set_tnum(Reg::R0, Tnum::unknown());
         }
-    } else if fetch {
-        if !reloaded {
+    } else if fetch
+        && !reloaded {
             forget(&mut state.dbm, src);
             state.set_tnum(src, Tnum::unknown());
         }
-    }
 
     if base == Reg::R10 {
         state.update_frame_depth(off);
@@ -259,8 +254,7 @@ pub fn try_load_from_rodata(
         map_idx,
         offset: base_offset,
     } = state.types.get(base)
-    {
-        if let Some(ptr_val) = base_offset {
+        && let Some(ptr_val) = base_offset {
             let map = &env.ctx.map_defs[map_idx];
 
             if let Some(data) = &map.initial_data {
@@ -287,6 +281,5 @@ pub fn try_load_from_rodata(
                 }
             }
         }
-    }
     false
 }

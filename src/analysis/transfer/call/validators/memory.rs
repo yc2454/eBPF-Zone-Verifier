@@ -6,7 +6,7 @@ use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg_types::RegType;
 
 use super::super::checks::{
-    checked_by_mem_size_pairs, validate_readable_mem, validate_writable_mem, ValidationContext,
+    ValidationContext, checked_by_mem_size_pairs, validate_readable_mem, validate_writable_mem,
 };
 use super::super::signatures::helper_rejects_packet_for_arg;
 
@@ -21,7 +21,7 @@ pub fn validate_ptr_to_mem(ctx: &mut ValidationContext) -> bool {
     }
 
     // Some helpers reject packet pointers for specific args
-    if matches!(actual, RegType::PtrToPacket { .. })
+    if matches!(actual, RegType::PtrToPacket)
         && helper_rejects_packet_for_arg(ctx.helper, ctx.arg_index)
     {
         ctx.fail_with_log(
@@ -46,13 +46,7 @@ pub fn validate_ptr_to_mem(ctx: &mut ValidationContext) -> bool {
 /// A PtrToUninitMem is a pointer to writable memory (helper will fill it).
 pub fn validate_ptr_to_uninit_mem(ctx: &mut ValidationContext) -> bool {
     validate_writable_mem(
-        ctx.env,
-        ctx.state,
-        ctx.types,
-        ctx.pc,
-        ctx.reg,
-        ctx.actual,
-        None,
+        ctx.env, ctx.state, ctx.types, ctx.pc, ctx.reg, ctx.actual, None,
     )
 }
 

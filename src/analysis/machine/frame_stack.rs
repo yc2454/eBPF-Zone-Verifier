@@ -1,10 +1,10 @@
 // src/analysis/machine/frame_stack.rs
 
-use crate::analysis::machine::reg_types::{TypeState, RegType};
+use crate::analysis::machine::reg::Reg;
+use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::stack_state::StackState;
 use crate::zone::dbm::Dbm;
 use crate::zone::tnum::Tnum;
-use crate::analysis::machine::reg::Reg;
 use std::collections::HashMap;
 
 /// A type-safe handle to a specific frame in the call stack.
@@ -40,7 +40,11 @@ pub struct CallFrame {
 
 impl std::fmt::Display for CallFrame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "CallFrame(return_pc={}, frame_depth={})", self.return_pc, self.frame_depth)
+        write!(
+            f,
+            "CallFrame(return_pc={}, frame_depth={})",
+            self.return_pc, self.frame_depth
+        )
     }
 }
 
@@ -170,7 +174,7 @@ impl FrameStack {
         for frame in self.frames.iter_mut() {
             for r in Reg::ALL {
                 if should_invalidate(&frame.caller_types.get(r)) {
-                    frame.caller_types.set(r, replacement.clone());
+                    frame.caller_types.set(r, replacement);
                 }
             }
         }

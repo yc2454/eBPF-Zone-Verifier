@@ -1,6 +1,6 @@
-use crate::{analysis::machine::reg_types::RegType, ast::MemSize};
-use crate::zone::tnum::Tnum;
 use crate::analysis::machine::reg::Reg;
+use crate::zone::tnum::Tnum;
+use crate::{analysis::machine::reg_types::RegType, ast::MemSize};
 use std::collections::{BTreeMap, HashSet};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -18,9 +18,9 @@ pub struct SpilledReg {
     pub bounds: ScalarBounds,
     pub size: MemSize,
     // NEW: saved anchor offsets for packet pointers
-    pub anchor_lo: Option<i64>,  // anchor - reg <= ? (i.e., reg >= anchor + lo)
-    pub anchor_hi: Option<i64>,  // reg - anchor <= ? (i.e., reg <= anchor + hi)
-    pub anchor: Option<Reg>,     // which anchor this relates to
+    pub anchor_lo: Option<i64>, // anchor - reg <= ? (i.e., reg >= anchor + lo)
+    pub anchor_hi: Option<i64>, // reg - anchor <= ? (i.e., reg <= anchor + hi)
+    pub anchor: Option<Reg>,    // which anchor this relates to
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -73,26 +73,29 @@ impl StackState {
         if let Some(spilled) = self.slots.get_mut(&offset) {
             spilled.reg_type = reg_type;
         } else {
-            self.slots.insert(offset, SpilledReg {
-                source_reg,
-                reg_type,
-                tnum: Tnum::unknown(),
-                bounds: ScalarBounds { min: i64::MIN, max: i64::MAX },
-                size: MemSize::U64,
-                anchor: None,
-                anchor_hi: None,
-                anchor_lo: None
-            });
+            self.slots.insert(
+                offset,
+                SpilledReg {
+                    source_reg,
+                    reg_type,
+                    tnum: Tnum::unknown(),
+                    bounds: ScalarBounds {
+                        min: i64::MIN,
+                        max: i64::MAX,
+                    },
+                    size: MemSize::U64,
+                    anchor: None,
+                    anchor_hi: None,
+                    anchor_lo: None,
+                },
+            );
         }
     }
 
     pub fn invalidate_packet_pointers(&mut self) {
         for (_, spilled) in self.slots.iter_mut() {
-            match spilled.reg_type {
-                RegType::PtrToPacket { .. } => {
-                    spilled.reg_type = RegType::ScalarValue;
-                }
-                _ => {}
+            if spilled.reg_type == RegType::PtrToPacket {
+                spilled.reg_type = RegType::ScalarValue;
             }
         }
     }
@@ -102,16 +105,22 @@ impl StackState {
     }
 
     pub fn invalidate_slot(&mut self, offset: i16) {
-        self.slots.insert(offset, SpilledReg {
+        self.slots.insert(
+            offset,
+            SpilledReg {
                 source_reg: None,
                 reg_type: RegType::ScalarValue,
                 tnum: Tnum::unknown(),
-                bounds: ScalarBounds { min: i64::MIN, max: i64::MAX },
+                bounds: ScalarBounds {
+                    min: i64::MIN,
+                    max: i64::MAX,
+                },
                 size: MemSize::U64,
                 anchor: None,
                 anchor_hi: None,
-                anchor_lo: None
-            });
+                anchor_lo: None,
+            },
+        );
     }
 
     /// Demote a stack slot's type to ScalarValue while preserving bounds/tnum.
@@ -123,10 +132,9 @@ impl StackState {
     }
 
     pub fn live_slot_offsets(&self, live_regs: &HashSet<Reg>) -> Vec<i16> {
-        self.slots.iter()
-            .filter(|(_, spilled)| {
-                spilled.source_reg.map_or(false, |r| live_regs.contains(&r))
-            })
+        self.slots
+            .iter()
+            .filter(|(_, spilled)| spilled.source_reg.is_some_and(|r| live_regs.contains(&r)))
             .map(|(offset, _)| *offset)
             .collect()
     }

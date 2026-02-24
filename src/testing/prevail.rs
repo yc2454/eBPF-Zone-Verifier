@@ -19,9 +19,7 @@ use std::time::Instant;
 
 use crate::common::config::VerifierConfig;
 use crate::testing::benchmark_common::{
-    self,
-    expand_path, extract_project, is_elf_file, visit_dirs,
-    BenchmarkStats, FileResult,
+    self, BenchmarkStats, FileResult, expand_path, extract_project, is_elf_file, visit_dirs,
 };
 use crate::testing::runner::{AnalysisResult, Analyzer};
 
@@ -331,10 +329,16 @@ pub fn prevail_list(catalogue_path: &str) {
             println!("Description: {}", catalogue.description);
             println!("Base path:   {}\n", catalogue.base_path);
 
-            let accept_tests: Vec<_> =
-                catalogue.tests.iter().filter(|t| t.expected == "ACCEPT").collect();
-            let reject_tests: Vec<_> =
-                catalogue.tests.iter().filter(|t| t.expected == "REJECT").collect();
+            let accept_tests: Vec<_> = catalogue
+                .tests
+                .iter()
+                .filter(|t| t.expected == "ACCEPT")
+                .collect();
+            let reject_tests: Vec<_> = catalogue
+                .tests
+                .iter()
+                .filter(|t| t.expected == "REJECT")
+                .collect();
 
             println!("Tests expecting ACCEPT ({}):", accept_tests.len());
             for t in &accept_tests {
@@ -388,10 +392,7 @@ pub fn prevail_run(catalogue_path: &str, config: &VerifierConfig, output_dir: Op
             // Print soundness issues first
             for t in &result.tests {
                 if matches!(t.outcome, TestOutcome::FalseNegative) {
-                    println!(
-                        "  !!! SOUNDNESS: {} (expected REJECT, got ACCEPT)",
-                        t.name
-                    );
+                    println!("  !!! SOUNDNESS: {} (expected REJECT, got ACCEPT)", t.name);
                 }
             }
 
@@ -457,10 +458,7 @@ pub fn prevail_single(catalogue_path: &str, test_name: &str, config: &VerifierCo
             let base_path = expand_path(&catalogue.base_path);
 
             // Find test by name
-            let entry = catalogue
-                .tests
-                .iter()
-                .find(|t| t.name == test_name);
+            let entry = catalogue.tests.iter().find(|t| t.name == test_name);
 
             match entry {
                 Some(entry) => {
@@ -553,7 +551,8 @@ pub fn prevail_benchmark(dir_path: &str, config: &VerifierConfig, output_dir: Op
             continue;
         }
 
-        let filename = path.file_name()
+        let filename = path
+            .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_string();
@@ -561,11 +560,10 @@ pub fn prevail_benchmark(dir_path: &str, config: &VerifierConfig, output_dir: Op
         let project = extract_project(&path, &root_path);
 
         // Apply project filter
-        if let Some(filter_proj) = &config.bench_project {
-            if &project != filter_proj {
+        if let Some(filter_proj) = &config.bench_project
+            && &project != filter_proj {
                 continue;
             }
-        }
 
         // Skip build directory (that's for catalogue-based tests)
         if project == "build" {
@@ -683,18 +681,28 @@ pub fn prevail_benchmark(dir_path: &str, config: &VerifierConfig, output_dir: Op
     println!("       PREVAIL Benchmark Results");
     println!("========================================");
     println!("Total Files:      {}", stats.total_files);
-    println!("Files Passed:     {} ({:.1}%)", stats.files_passed, stats.file_pass_rate());
+    println!(
+        "Files Passed:     {} ({:.1}%)",
+        stats.files_passed,
+        stats.file_pass_rate()
+    );
     println!("Files Failed:     {}", stats.files_failed);
     println!("Files Timeout:    {}", stats.files_timeout);
     println!();
     println!("Expected ACCEPT:  {}", stats.expected_accept);
     println!("Expected REJECT:  {}", stats.expected_reject);
     if stats.false_negatives > 0 {
-        println!("SOUNDNESS ISSUES: {} (expected REJECT, got ACCEPT) <<<", stats.false_negatives);
+        println!(
+            "SOUNDNESS ISSUES: {} (expected REJECT, got ACCEPT) <<<",
+            stats.false_negatives
+        );
     } else {
         println!("Soundness issues: 0 (good!)");
     }
-    println!("Precision issues: {} (expected ACCEPT, got REJECT)", stats.false_positives);
+    println!(
+        "Precision issues: {} (expected ACCEPT, got REJECT)",
+        stats.false_positives
+    );
     println!();
     println!("Correctness:      {:.1}%", stats.correctness_rate());
     println!("Duration:         {:.2}s", duration.as_secs_f64());
@@ -703,7 +711,10 @@ pub fn prevail_benchmark(dir_path: &str, config: &VerifierConfig, output_dir: Op
     // Print soundness issues
     for r in &results {
         if !r.expected_accept && r.passed {
-            println!("  !!! SOUNDNESS: [{}] {} (expected REJECT, got ACCEPT)", r.project, r.file_name);
+            println!(
+                "  !!! SOUNDNESS: [{}] {} (expected REJECT, got ACCEPT)",
+                r.project, r.file_name
+            );
         }
     }
 

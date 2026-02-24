@@ -6,7 +6,7 @@ use log::info;
 use std::collections::HashMap;
 use std::convert::TryInto;
 
-const BTF_MAGIC: u16 = 0xeB9F;
+const BTF_MAGIC: u16 = 0xEB9F;
 
 // Kinds
 pub const BTF_KIND_INT: u8 = 1;
@@ -449,7 +449,7 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
     let mut map_defs = Vec::new();
     info!(target: "app", "Scanning {} BTF types for Maps...", types.len());
 
-    for (_i, t) in types.iter().enumerate() {
+    for t in types.iter() {
         if t.kind() == BTF_KIND_VAR {
             let name = get_str(t.name_off);
             let def_id = t.size_or_type;

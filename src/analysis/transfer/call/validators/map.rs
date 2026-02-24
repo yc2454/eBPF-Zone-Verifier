@@ -58,9 +58,9 @@ pub fn validate_const_map_ptr(ctx: &mut ValidationContext) -> bool {
     }
 
     // Check helper-specific map type requirements
-    if let RegType::PtrToMapObject { map_idx } = actual {
-        if let Some(map_def) = ctx.env.ctx.map_defs.get(map_idx) {
-            if let Err(msg) = check_map_type_for_helper(ctx.helper, map_def.type_) {
+    if let RegType::PtrToMapObject { map_idx } = actual
+        && let Some(map_def) = ctx.env.ctx.map_defs.get(map_idx)
+            && let Err(msg) = check_map_type_for_helper(ctx.helper, map_def.type_) {
                 ctx.fail_with_log(
                     VerificationError::InvalidArgType {
                         pc: ctx.pc,
@@ -73,8 +73,6 @@ pub fn validate_const_map_ptr(ctx: &mut ValidationContext) -> bool {
                 );
                 return false;
             }
-        }
-    }
 
     true
 }
@@ -118,9 +116,9 @@ pub fn validate_ptr_to_map_key(ctx: &mut ValidationContext) -> bool {
 
     // For stack pointers used as keys in bpf_map_update_elem, check that
     // the memory doesn't contain pointers that would be leaked to the map.
-    if ctx.helper == constants::BPF_MAP_UPDATE_ELEM {
-        if let RegType::PtrToStack { .. } = actual {
-            if let Some(off) = get_distance_fixed(&ctx.state.dbm, ctx.reg, Reg::R10) {
+    if ctx.helper == constants::BPF_MAP_UPDATE_ELEM
+        && let RegType::PtrToStack { .. } = actual
+            && let Some(off) = get_distance_fixed(&ctx.state.dbm, ctx.reg, Reg::R10) {
                 check_stack_no_pointers(
                     ctx.env,
                     ctx.state,
@@ -132,8 +130,6 @@ pub fn validate_ptr_to_map_key(ctx: &mut ValidationContext) -> bool {
                     return false;
                 }
             }
-        }
-    }
 
     // For BPF_MAP_TYPE_ARRAY maps, check key bounds for update operations.
     // Note: For bpf_map_lookup_elem, out-of-bounds keys simply return NULL (not a safety violation).
@@ -214,8 +210,8 @@ pub fn validate_ptr_to_map_value(ctx: &mut ValidationContext) -> bool {
     }
 
     // For stack pointers, check that the memory doesn't contain pointers
-    if let RegType::PtrToStack { .. } = actual {
-        if let Some(off) = get_distance_fixed(&ctx.state.dbm, ctx.reg, Reg::R10) {
+    if let RegType::PtrToStack { .. } = actual
+        && let Some(off) = get_distance_fixed(&ctx.state.dbm, ctx.reg, Reg::R10) {
             check_stack_no_pointers(
                 ctx.env,
                 ctx.state,
@@ -227,7 +223,6 @@ pub fn validate_ptr_to_map_value(ctx: &mut ValidationContext) -> bool {
                 return false;
             }
         }
-    }
 
     validate_readable_mem(
         ctx.env,

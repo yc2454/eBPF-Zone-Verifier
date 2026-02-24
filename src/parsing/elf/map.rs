@@ -80,8 +80,8 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                 let section_data = &buf[start..end];
 
                 for sym in elf.syms.iter() {
-                    if sym.st_shndx == i {
-                        if let Some(map_name) = elf.strtab.get_at(sym.st_name) {
+                    if sym.st_shndx == i
+                        && let Some(map_name) = elf.strtab.get_at(sym.st_name) {
                             let offset = sym.st_value as usize;
                             let map_size = if sym.st_size > 0 {
                                 sym.st_size as usize
@@ -111,7 +111,6 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                                 });
                             }
                         }
-                    }
                 }
             } else if name == ".BTF" {
                 let start = sh.sh_offset as usize;
@@ -124,9 +123,9 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
     }
 
     let needs_btf = maps.is_empty() || maps.iter().any(|m| m.value_size == 0);
-    if needs_btf {
-        if let Some(btf_bytes) = btf_data {
-            if let Ok(btf_maps) = btf::parse_btf_map_defs(btf_bytes) {
+    if needs_btf
+        && let Some(btf_bytes) = btf_data
+            && let Ok(btf_maps) = btf::parse_btf_map_defs(btf_bytes) {
                 if maps.is_empty() {
                     maps = btf_maps;
                 } else {
@@ -147,8 +146,6 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                     }
                 }
             }
-        }
-    }
 
     for m in &mut maps {
         if m.value_size == 0

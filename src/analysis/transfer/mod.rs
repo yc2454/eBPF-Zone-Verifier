@@ -35,7 +35,7 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
             op,
             dst,
             src,
-        } => alu::transfer_alu(env, state, *width, *op, *dst, src.clone()),
+        } => alu::transfer_alu(env, state, *width, *op, *dst, *src),
 
         Instr::Endian {
             dst,
@@ -50,7 +50,7 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
             op,
             right,
             target,
-        } => branch::transfer_if(env, state, *width, *left, *op, right.clone(), *target),
+        } => branch::transfer_if(env, state, *width, *left, *op, *right, *target),
 
         Instr::Load {
             size,
@@ -170,12 +170,11 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     let (r0_min, r0_max) = get_interval(&state.dbm, Reg::R0);
 
     // Use the helper method on the ProgramKind stored in env
-    if env.ctx.prog_kind.requires_strict_return_code() {
-        if r0_min < 0 || r0_max > 1 {
+    if env.ctx.prog_kind.requires_strict_return_code()
+        && (r0_min < 0 || r0_max > 1) {
             env.fail(VerificationError::InvalidReturnCode { pc: state.pc });
             return vec![];
         }
-    }
 
     // R0 must be readable at the main frame (it's the return value)
     if state.at_main_frame() && state.types.get(Reg::R0) == RegType::NotInit {
@@ -201,12 +200,11 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         return vec![];
     }
 
-    if !state.at_main_frame() {
-        if matches!(state.types.get(Reg::R0), RegType::PtrToStack { .. }) {
+    if !state.at_main_frame()
+        && matches!(state.types.get(Reg::R0), RegType::PtrToStack { .. }) {
             env.fail(VerificationError::CannotReturnStackPointer { pc: state.pc });
             return vec![];
         }
-    }
 
     if let Some(frame) = state.pop_frame() {
         // Save callee's R0 (the return value) before restoring caller state

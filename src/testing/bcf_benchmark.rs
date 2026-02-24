@@ -96,10 +96,7 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
     }
 
     // 1. Identify all ELF files
-    let all_elf_files: Vec<&PathBuf> = files
-        .iter()
-        .filter(|p| is_elf_file(p))
-        .collect();
+    let all_elf_files: Vec<&PathBuf> = files.iter().filter(|p| is_elf_file(p)).collect();
 
     // 2. Pre-Calculate Metadata & Apply Filters
     // We map to a tuple (path, project, compiler, opt, source) to avoid re-parsing later
@@ -118,26 +115,22 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
             .unwrap_or_else(|| "unknown".to_string());
 
         // Apply Filters HERE
-        if let Some(f_proj) = &config.bench_project {
-            if &project != f_proj {
+        if let Some(f_proj) = &config.bench_project
+            && &project != f_proj {
                 continue;
             }
-        }
-        if let Some(f_comp) = &config.bench_compiler {
-            if &compiler != f_comp {
+        if let Some(f_comp) = &config.bench_compiler
+            && &compiler != f_comp {
                 continue;
             }
-        }
-        if let Some(f_opt) = &config.bench_opt {
-            if &opt != f_opt {
+        if let Some(f_opt) = &config.bench_opt
+            && &opt != f_opt {
                 continue;
             }
-        }
-        if let Some(f_src) = &config.bench_source {
-            if &source_prog != f_src {
+        if let Some(f_src) = &config.bench_source
+            && &source_prog != f_src {
                 continue;
             }
-        }
 
         tasks.push((path, filename, project, compiler, opt, source_prog));
     }
@@ -385,74 +378,74 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
     let json_path = format!("{}/{}_results.json", results_dir, base_name);
     let mut json_file = File::create(&json_path).expect("Could not create JSON file");
 
-    write!(json_file, "{{\n").unwrap();
-    write!(json_file, "  \"summary\": {{\n").unwrap();
-    write!(json_file, "    \"filters\": {{\n").unwrap();
+    writeln!(json_file, "{{").unwrap();
+    writeln!(json_file, "  \"summary\": {{").unwrap();
+    writeln!(json_file, "    \"filters\": {{").unwrap();
     if let Some(p) = &config.bench_project {
-        write!(json_file, "      \"project\": \"{}\",\n", p).unwrap();
+        writeln!(json_file, "      \"project\": \"{}\",", p).unwrap();
     }
     if let Some(c) = &config.bench_compiler {
-        write!(json_file, "      \"compiler\": \"{}\",\n", c).unwrap();
+        writeln!(json_file, "      \"compiler\": \"{}\",", c).unwrap();
     }
     if let Some(o) = &config.bench_opt {
-        write!(json_file, "      \"opt\": \"{}\",\n", o).unwrap();
+        writeln!(json_file, "      \"opt\": \"{}\",", o).unwrap();
     }
     if let Some(s) = &config.bench_source {
-        write!(json_file, "      \"source\": \"{}\"\n", s).unwrap();
+        writeln!(json_file, "      \"source\": \"{}\"", s).unwrap();
     }
-    write!(json_file, "    }},\n").unwrap();
-    write!(
+    writeln!(json_file, "    }},").unwrap();
+    writeln!(
         json_file,
-        "    \"files_processed\": {},\n",
+        "    \"files_processed\": {},",
         total_files_processed
     )
     .unwrap();
-    write!(json_file, "    \"files_passed\": {},\n", total_files_passed).unwrap();
-    write!(
+    writeln!(json_file, "    \"files_passed\": {},", total_files_passed).unwrap();
+    writeln!(
         json_file,
-        "    \"sections_processed\": {},\n",
+        "    \"sections_processed\": {},",
         total_sections_processed
     )
     .unwrap();
-    write!(
+    writeln!(
         json_file,
-        "    \"sections_passed\": {},\n",
+        "    \"sections_passed\": {},",
         total_sections_passed
     )
     .unwrap();
-    write!(
+    writeln!(
         json_file,
-        "    \"duration_secs\": {:.2}\n",
+        "    \"duration_secs\": {:.2}",
         duration.as_secs_f64()
     )
     .unwrap();
-    write!(json_file, "  }},\n").unwrap();
-    write!(json_file, "  \"results_by_source\": {{\n").unwrap();
+    writeln!(json_file, "  }},").unwrap();
+    writeln!(json_file, "  \"results_by_source\": {{").unwrap();
 
     for (i, (source, runs)) in grouped_results.iter().enumerate() {
-        write!(json_file, "    \"{}\": [\n", source).unwrap();
+        writeln!(json_file, "    \"{}\": [", source).unwrap();
         for (j, run) in runs.iter().enumerate() {
-            write!(json_file, "      {{\n").unwrap();
-            write!(json_file, "        \"project\": \"{}\",\n", run.project).unwrap();
-            write!(json_file, "        \"compiler\": \"{}\",\n", run.compiler).unwrap();
-            write!(json_file, "        \"opt\": \"{}\",\n", run.opt).unwrap();
-            write!(json_file, "        \"passed\": {},\n", run.passed).unwrap();
-            write!(json_file, "        \"timeout\": {},\n", run.timeout).unwrap();
-            write!(json_file, "        \"file\": \"{}\"\n", run.file_name).unwrap();
+            writeln!(json_file, "      {{").unwrap();
+            writeln!(json_file, "        \"project\": \"{}\",", run.project).unwrap();
+            writeln!(json_file, "        \"compiler\": \"{}\",", run.compiler).unwrap();
+            writeln!(json_file, "        \"opt\": \"{}\",", run.opt).unwrap();
+            writeln!(json_file, "        \"passed\": {},", run.passed).unwrap();
+            writeln!(json_file, "        \"timeout\": {},", run.timeout).unwrap();
+            writeln!(json_file, "        \"file\": \"{}\"", run.file_name).unwrap();
             write!(json_file, "      }}").unwrap();
             if j < runs.len() - 1 {
                 write!(json_file, ",").unwrap();
             }
-            write!(json_file, "\n").unwrap();
+            writeln!(json_file).unwrap();
         }
         write!(json_file, "    ]").unwrap();
         if i < grouped_results.len() - 1 {
             write!(json_file, ",").unwrap();
         }
-        write!(json_file, "\n").unwrap();
+        writeln!(json_file).unwrap();
     }
-    write!(json_file, "  }}\n").unwrap();
-    write!(json_file, "}}\n").unwrap();
+    writeln!(json_file, "  }}").unwrap();
+    writeln!(json_file, "}}").unwrap();
 
     println!("JSON data written to '{}'", json_path);
 }

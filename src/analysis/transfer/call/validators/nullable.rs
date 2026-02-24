@@ -7,9 +7,9 @@ use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::zone::domain::proven_zero;
 
-use super::super::checks::{validate_readable_mem, ValidationContext};
-use super::super::compat::{base_arg_type, is_compatible, MAP_VALUE_OR_NULL_COMPAT};
-use super::super::signatures::{get_nullable_ptr_size_pair, BpfArgType};
+use super::super::checks::{ValidationContext, validate_readable_mem};
+use super::super::compat::{MAP_VALUE_OR_NULL_COMPAT, base_arg_type, is_compatible};
+use super::super::signatures::{BpfArgType, get_nullable_ptr_size_pair};
 
 /// Validates a nullable argument type (*OrNull variants).
 /// If the register is provably NULL, validation passes.

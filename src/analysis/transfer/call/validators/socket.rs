@@ -6,7 +6,7 @@ use crate::analysis::machine::error::VerificationError;
 
 use super::super::checks::ValidationContext;
 use super::super::compat::{
-    is_compatible, BTF_SOCK_COMMON_COMPAT, SOCKET_COMPAT, SOCK_COMMON_COMPAT,
+    BTF_SOCK_COMMON_COMPAT, SOCK_COMMON_COMPAT, SOCKET_COMPAT, is_compatible,
 };
 use super::super::signatures::BpfArgType;
 

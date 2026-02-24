@@ -54,8 +54,8 @@ pub struct BenchmarkStats {
     // For tests with expected outcomes
     pub expected_accept: usize,
     pub expected_reject: usize,
-    pub false_positives: usize,  // Expected ACCEPT, got REJECT
-    pub false_negatives: usize,  // Expected REJECT, got ACCEPT (soundness issue!)
+    pub false_positives: usize, // Expected ACCEPT, got REJECT
+    pub false_negatives: usize, // Expected REJECT, got ACCEPT (soundness issue!)
 }
 
 impl BenchmarkStats {
@@ -108,9 +108,9 @@ pub fn visit_dirs(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
 
 /// Expand ~ in paths to home directory
 pub fn expand_path(path: &str) -> PathBuf {
-    if path.starts_with("~/") {
+    if let Some(stripped) = path.strip_prefix("~/") {
         let home = std::env::var("HOME").expect("HOME not set");
-        PathBuf::from(home).join(&path[2..])
+        PathBuf::from(home).join(stripped)
     } else {
         PathBuf::from(path)
     }
@@ -127,7 +127,7 @@ pub fn extract_project(path: &Path, root: &Path) -> String {
 
 /// Filter to only ELF object files
 pub fn is_elf_file(path: &Path) -> bool {
-    path.extension().map_or(false, |ext| ext == "o")
+    path.extension().is_some_and(|ext| ext == "o")
 }
 
 // ============================================================================
@@ -137,10 +137,7 @@ pub fn is_elf_file(path: &Path) -> bool {
 /// Print progress indicator
 #[allow(dead_code)]
 pub fn print_progress(current: usize, total: usize, project: &str, file: &str) {
-    print!(
-        "[{}/{}] [{}] {} ... ",
-        current, total, project, file
-    );
+    print!("[{}/{}] [{}] {} ... ", current, total, project, file);
     std::io::stdout().flush().unwrap();
 }
 
@@ -193,13 +190,25 @@ pub fn write_text_report(
     // Summary statistics
     writeln!(f, "--- File Statistics ---").unwrap();
     writeln!(f, "Total Files:    {}", stats.total_files).unwrap();
-    writeln!(f, "Files Passed:   {} ({:.1}%)", stats.files_passed, stats.file_pass_rate()).unwrap();
+    writeln!(
+        f,
+        "Files Passed:   {} ({:.1}%)",
+        stats.files_passed,
+        stats.file_pass_rate()
+    )
+    .unwrap();
     writeln!(f, "Files Failed:   {}", stats.files_failed).unwrap();
     writeln!(f, "Files Timeout:  {}", stats.files_timeout).unwrap();
 
     writeln!(f, "\n--- Section Statistics ---").unwrap();
     writeln!(f, "Total Sections:   {}", stats.total_sections).unwrap();
-    writeln!(f, "Sections Passed:  {} ({:.1}%)", stats.sections_passed, stats.section_pass_rate()).unwrap();
+    writeln!(
+        f,
+        "Sections Passed:  {} ({:.1}%)",
+        stats.sections_passed,
+        stats.section_pass_rate()
+    )
+    .unwrap();
     writeln!(f, "Sections Timeout: {}", stats.sections_timeout).unwrap();
 
     // Expectation-based stats if applicable
@@ -207,25 +216,42 @@ pub fn write_text_report(
         writeln!(f, "\n--- Correctness ---").unwrap();
         writeln!(f, "Expected ACCEPT:  {}", stats.expected_accept).unwrap();
         writeln!(f, "Expected REJECT:  {}", stats.expected_reject).unwrap();
-        writeln!(f, "False Positives:  {} (expected ACCEPT, got REJECT)", stats.false_positives).unwrap();
-        writeln!(f, "False Negatives:  {} (expected REJECT, got ACCEPT) <<<", stats.false_negatives).unwrap();
+        writeln!(
+            f,
+            "False Positives:  {} (expected ACCEPT, got REJECT)",
+            stats.false_positives
+        )
+        .unwrap();
+        writeln!(
+            f,
+            "False Negatives:  {} (expected REJECT, got ACCEPT) <<<",
+            stats.false_negatives
+        )
+        .unwrap();
         writeln!(f, "Correctness:      {:.1}%", stats.correctness_rate()).unwrap();
     }
 
     // Soundness issues first
-    let soundness_issues: Vec<_> = results.iter()
+    let soundness_issues: Vec<_> = results
+        .iter()
         .filter(|r| !r.expected_accept && r.passed)
         .collect();
     if !soundness_issues.is_empty() {
         writeln!(f, "\n!!! SOUNDNESS ISSUES !!!").unwrap();
         writeln!(f, "========================").unwrap();
         for r in &soundness_issues {
-            writeln!(f, "  [{}] {} (expected REJECT, got ACCEPT)", r.project, r.file_name).unwrap();
+            writeln!(
+                f,
+                "  [{}] {} (expected REJECT, got ACCEPT)",
+                r.project, r.file_name
+            )
+            .unwrap();
         }
     }
 
     // Precision issues
-    let precision_issues: Vec<_> = results.iter()
+    let precision_issues: Vec<_> = results
+        .iter()
         .filter(|r| r.expected_accept && !r.passed && !r.timeout)
         .collect();
     if !precision_issues.is_empty() {
@@ -249,13 +275,17 @@ pub fn write_text_report(
 
     // Group results by project
     writeln!(f, "\n--- Results by Project ---").unwrap();
-    let mut by_project: std::collections::BTreeMap<&str, Vec<&FileResult>> = std::collections::BTreeMap::new();
+    let mut by_project: std::collections::BTreeMap<&str, Vec<&FileResult>> =
+        std::collections::BTreeMap::new();
     for r in results {
         by_project.entry(&r.project).or_default().push(r);
     }
 
     for (project, proj_results) in &by_project {
-        let passed = proj_results.iter().filter(|r| r.matches_expectation()).count();
+        let passed = proj_results
+            .iter()
+            .filter(|r| r.matches_expectation())
+            .count();
         let total = proj_results.len();
         writeln!(f, "\n[{}] {}/{} correct", project, passed, total).unwrap();
 
@@ -286,47 +316,54 @@ pub fn write_json_report(
 ) -> Result<(), String> {
     let mut f = File::create(path).map_err(|e| format!("Failed to create {}: {}", path, e))?;
 
-    write!(f, "{{\n").unwrap();
-    write!(f, "  \"summary\": {{\n").unwrap();
+    writeln!(f, "{{").unwrap();
+    writeln!(f, "  \"summary\": {{").unwrap();
 
     // Filters
     write!(f, "    \"filters\": {{").unwrap();
     for (i, (name, value)) in filters.iter().enumerate() {
-        if i > 0 { write!(f, ",").unwrap(); }
+        if i > 0 {
+            write!(f, ",").unwrap();
+        }
         write!(f, "\n      \"{}\": \"{}\"", name, value).unwrap();
     }
     write!(f, "\n    }},\n").unwrap();
 
     // Stats
-    write!(f, "    \"duration_secs\": {:.2},\n", duration_secs).unwrap();
-    write!(f, "    \"total_files\": {},\n", stats.total_files).unwrap();
-    write!(f, "    \"files_passed\": {},\n", stats.files_passed).unwrap();
-    write!(f, "    \"files_failed\": {},\n", stats.files_failed).unwrap();
-    write!(f, "    \"files_timeout\": {},\n", stats.files_timeout).unwrap();
-    write!(f, "    \"total_sections\": {},\n", stats.total_sections).unwrap();
-    write!(f, "    \"sections_passed\": {},\n", stats.sections_passed).unwrap();
-    write!(f, "    \"false_positives\": {},\n", stats.false_positives).unwrap();
-    write!(f, "    \"false_negatives\": {}\n", stats.false_negatives).unwrap();
-    write!(f, "  }},\n").unwrap();
+    writeln!(f, "    \"duration_secs\": {:.2},", duration_secs).unwrap();
+    writeln!(f, "    \"total_files\": {},", stats.total_files).unwrap();
+    writeln!(f, "    \"files_passed\": {},", stats.files_passed).unwrap();
+    writeln!(f, "    \"files_failed\": {},", stats.files_failed).unwrap();
+    writeln!(f, "    \"files_timeout\": {},", stats.files_timeout).unwrap();
+    writeln!(f, "    \"total_sections\": {},", stats.total_sections).unwrap();
+    writeln!(f, "    \"sections_passed\": {},", stats.sections_passed).unwrap();
+    writeln!(f, "    \"false_positives\": {},", stats.false_positives).unwrap();
+    writeln!(f, "    \"false_negatives\": {}", stats.false_negatives).unwrap();
+    writeln!(f, "  }},").unwrap();
 
     // Results by project
-    write!(f, "  \"results\": [\n").unwrap();
+    writeln!(f, "  \"results\": [").unwrap();
     for (i, r) in results.iter().enumerate() {
-        write!(f, "    {{\n").unwrap();
-        write!(f, "      \"file\": \"{}\",\n", r.file_name).unwrap();
-        write!(f, "      \"project\": \"{}\",\n", r.project).unwrap();
-        write!(f, "      \"expected_accept\": {},\n", r.expected_accept).unwrap();
-        write!(f, "      \"passed\": {},\n", r.passed).unwrap();
-        write!(f, "      \"timeout\": {},\n", r.timeout).unwrap();
-        write!(f, "      \"matches_expectation\": {}\n", r.matches_expectation()).unwrap();
+        writeln!(f, "    {{").unwrap();
+        writeln!(f, "      \"file\": \"{}\",", r.file_name).unwrap();
+        writeln!(f, "      \"project\": \"{}\",", r.project).unwrap();
+        writeln!(f, "      \"expected_accept\": {},", r.expected_accept).unwrap();
+        writeln!(f, "      \"passed\": {},", r.passed).unwrap();
+        writeln!(f, "      \"timeout\": {},", r.timeout).unwrap();
+        writeln!(
+            f,
+            "      \"matches_expectation\": {}",
+            r.matches_expectation()
+        )
+        .unwrap();
         write!(f, "    }}").unwrap();
         if i < results.len() - 1 {
             write!(f, ",").unwrap();
         }
-        write!(f, "\n").unwrap();
+        writeln!(f).unwrap();
     }
-    write!(f, "  ]\n").unwrap();
-    write!(f, "}}\n").unwrap();
+    writeln!(f, "  ]").unwrap();
+    writeln!(f, "}}").unwrap();
 
     Ok(())
 }

@@ -368,8 +368,10 @@ impl Tnum {
             }
         }
     }
+}
 
-    pub fn to_string(&self) -> String {
+impl std::fmt::Display for Tnum {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = String::new();
         for i in (0..64).rev() {
             let bit_mask = 1u64 << i;
@@ -381,7 +383,7 @@ impl Tnum {
                 s.push('0'); // known 0
             }
         }
-        s
+        write!(f, "{}", s)
     }
 }
 

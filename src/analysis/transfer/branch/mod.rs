@@ -63,7 +63,7 @@ pub(crate) fn transfer_if(
         width,
         left,
         op,
-        right: right.clone(),
+        right,
         target,
     };
     refine_branch(&mut state_then, &instr, true);

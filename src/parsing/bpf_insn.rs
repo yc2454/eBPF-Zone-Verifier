@@ -17,7 +17,13 @@ pub fn decode_insns(bytes: &[u8]) -> Vec<RawBpfInsn> {
         let src = reg >> 4;
         let off = i16::from_le_bytes([bytes[i + 2], bytes[i + 3]]);
         let imm = i32::from_le_bytes([bytes[i + 4], bytes[i + 5], bytes[i + 6], bytes[i + 7]]);
-        insns.push(RawBpfInsn { code, dst, src, off, imm });
+        insns.push(RawBpfInsn {
+            code,
+            dst,
+            src,
+            off,
+            imm,
+        });
         i += 8;
     }
     insns

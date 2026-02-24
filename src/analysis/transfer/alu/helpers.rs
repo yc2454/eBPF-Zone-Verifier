@@ -67,32 +67,30 @@ pub(crate) fn sync_tnum_to_dbm(state: &mut State, reg: Reg) {
 /// Check pointer bounds after arithmetic operations.
 pub(crate) fn check_ptr_bounds(state: &mut State, reg: Reg) {
     match state.types.get(reg) {
-        RegType::PtrToPacket { .. } => {
+        RegType::PtrToPacket => {
             let packet_start_reg_op = crate::analysis::machine::reg::REG_ENV
                 .all()
                 .iter()
                 .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket));
             if let Some(packet_start_reg) = packet_start_reg_op {
                 let (_, hi) = get_distance_interval(&state.dbm, reg, *packet_start_reg);
-                if hi != i64::MAX {
-                    if hi > constants::MAX_PACKET_OFF as i64 {
+                if hi != i64::MAX
+                    && hi > constants::MAX_PACKET_OFF {
                         forget(&mut state.dbm, reg);
                     }
-                }
             }
         }
-        RegType::PtrToPacketMeta { .. } => {
+        RegType::PtrToPacketMeta => {
             let packet_start_reg_op = crate::analysis::machine::reg::REG_ENV
                 .all()
                 .iter()
                 .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacketMeta));
             if let Some(packet_start_reg) = packet_start_reg_op {
                 let (_, hi) = get_distance_interval(&state.dbm, reg, *packet_start_reg);
-                if hi != i64::MAX {
-                    if hi > constants::MAX_PACKET_OFF as i64 {
+                if hi != i64::MAX
+                    && hi > constants::MAX_PACKET_OFF {
                         forget(&mut state.dbm, reg);
                     }
-                }
             }
         }
         _ => {}

@@ -1,5 +1,5 @@
 // src/dbm.rs
-use crate::analysis::machine::reg::{Reg, REG_ENV};
+use crate::analysis::machine::reg::{REG_ENV, Reg};
 use crate::common::utils::{clamp_upper_bound, clamped_add};
 
 pub const INF: i64 = i64::MAX / 4;
@@ -13,8 +13,8 @@ impl Dbm {
     pub fn new() -> Self {
         let n = Reg::DBM_DIM;
         let mut data = vec![vec![INF; n]; n];
-        for i in 0..n {
-            data[i][i] = 0;
+        for (i, row) in data.iter_mut().enumerate() {
+            row[i] = 0;
         }
         Self { data }
     }
@@ -70,12 +70,18 @@ impl Dbm {
         let i = x.idx();
         let n = self.num_vars();
         for j in 0..n {
-            if i == j { self.data[i][j] = 0; }
-            else      { self.data[i][j] = INF; }
+            if i == j {
+                self.data[i][j] = 0;
+            } else {
+                self.data[i][j] = INF;
+            }
         }
         for k in 0..n {
-            if k == i { self.data[k][i] = 0; }
-            else      { self.data[k][i] = INF; }
+            if k == i {
+                self.data[k][i] = 0;
+            } else {
+                self.data[k][i] = INF;
+            }
         }
     }
 
@@ -148,17 +154,13 @@ impl Dbm {
         // header
         print!("{:>12} ", "");
         for j in 0..n {
-            let name = Reg::idx_to_reg(j)
-                .map(|r| r.name())
-                .unwrap_or("???");
+            let name = Reg::idx_to_reg(j).map(|r| r.name()).unwrap_or("???");
             print!("{:>12} ", name);
         }
         println!();
 
         for i in 0..n {
-            let name = Reg::idx_to_reg(i)
-                .map(|r| r.name())
-                .unwrap_or("???");
+            let name = Reg::idx_to_reg(i).map(|r| r.name()).unwrap_or("???");
             print!("{:>12} ", name);
             for j in 0..n {
                 let v = self.data[i][j];
@@ -177,43 +179,63 @@ impl Dbm {
         let zero = Reg::Zero;
         println!("  Bounds:");
         for i in 0..self.dim() {
-            let Some(i) = Reg::idx_to_reg(i) else { continue; };
-            if i == zero || i.is_anchor() { continue; }
-            
-            let ub = self.get(i, zero);      // x - 0 ≤ ub  →  x ≤ ub
-            let lb_neg = self.get(zero, i);  // 0 - x ≤ lb_neg  →  x ≥ -lb_neg
-            
+            let Some(i) = Reg::idx_to_reg(i) else {
+                continue;
+            };
+            if i == zero || i.is_anchor() {
+                continue;
+            }
+
+            let ub = self.get(i, zero); // x - 0 ≤ ub  →  x ≤ ub
+            let lb_neg = self.get(zero, i); // 0 - x ≤ lb_neg  →  x ≥ -lb_neg
+
             // let min_str = if lb_neg >= INF { "-INF".to_string() } else { format!("{:#x}", -lb_neg) };
             // let max_str = if ub >= INF { "+INF".to_string() } else { format!("{:#x}", ub) };
-            let min_str = if lb_neg >= INF { "-INF".to_string() } else { (-lb_neg).to_string() };
-            let max_str = if ub >= INF { "+INF".to_string() } else { ub.to_string() };
+            let min_str = if lb_neg >= INF {
+                "-INF".to_string()
+            } else {
+                (-lb_neg).to_string()
+            };
+            let max_str = if ub >= INF {
+                "+INF".to_string()
+            } else {
+                ub.to_string()
+            };
 
             if min_str != "-INF" || max_str != "+INF" {
                 println!("    {}: [{}, {}]", i.name(), min_str, max_str);
             }
 
             for j in 1..self.dim() {
-                let Some(j) = Reg::idx_to_reg(j) else { continue; };
-                if j == zero || j == i { continue; }
-                
+                let Some(j) = Reg::idx_to_reg(j) else {
+                    continue;
+                };
+                if j == zero || j == i {
+                    continue;
+                }
+
                 let val = self.get(i, j);
                 // let diff_str = if val >= INF || val <= -INF { "INF".to_string() } else { format!("{:#x}", val) };
-                let diff_str = if val >= INF || val <= -INF { "INF".to_string() } else { val.to_string() };
+                let diff_str = if val >= INF || val <= -INF {
+                    "INF".to_string()
+                } else {
+                    val.to_string()
+                };
                 if diff_str != "INF" {
                     println!("    {} - {} <= {}", i.name(), j.name(), diff_str);
                 }
             }
         }
-        let anchors = [
-            Reg::AnchorDataMeta,
-            Reg::AnchorData,
-            Reg::AnchorDataEnd,
-        ];
+        let anchors = [Reg::AnchorDataMeta, Reg::AnchorData, Reg::AnchorDataEnd];
 
         let mut has_anchor_info = false;
         for i in 0..self.dim() {
-            let Some(reg) = Reg::idx_to_reg(i) else { continue };
-            if reg == Reg::Zero { continue; }
+            let Some(reg) = Reg::idx_to_reg(i) else {
+                continue;
+            };
+            if reg == Reg::Zero {
+                continue;
+            }
 
             for &anchor in &anchors {
                 let reg_minus_anchor = self.get(reg, anchor);
@@ -234,9 +256,19 @@ impl Dbm {
                             println!("    {} - {} in [{}, {}]", reg.name(), anchor.name(), lo, hi);
                         }
                     } else if reg_minus_anchor < INF {
-                        println!("    {} - {} <= {}", reg.name(), anchor.name(), reg_minus_anchor);
+                        println!(
+                            "    {} - {} <= {}",
+                            reg.name(),
+                            anchor.name(),
+                            reg_minus_anchor
+                        );
                     } else {
-                        println!("    {} - {} >= {}", reg.name(), anchor.name(), -anchor_minus_reg);
+                        println!(
+                            "    {} - {} >= {}",
+                            reg.name(),
+                            anchor.name(),
+                            -anchor_minus_reg
+                        );
                     }
                 }
             }

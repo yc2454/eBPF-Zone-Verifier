@@ -325,7 +325,7 @@ impl State {
 
     pub fn save_anchor_info(&self, reg: Reg) -> (Option<Reg>, Option<i64>, Option<i64>) {
         let anchor = match self.types.get(reg) {
-            RegType::PtrToPacket { .. } => Some(Reg::AnchorData),
+            RegType::PtrToPacket => Some(Reg::AnchorData),
             RegType::PtrToPacketMeta => Some(Reg::AnchorDataMeta),
             RegType::PtrToPacketEnd => Some(Reg::AnchorDataEnd),
             _ => None,

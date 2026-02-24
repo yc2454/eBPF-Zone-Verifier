@@ -1,6 +1,8 @@
 use crate::ast::{Program, ProgramKind};
 use crate::parsing::bpf_to_ast;
-use crate::parsing::elf::{BpfMapDef, RelocInfo, discover_bpf_call_targets, combine_program_with_subprogs};
+use crate::parsing::elf::{
+    BpfMapDef, RelocInfo, combine_program_with_subprogs, discover_bpf_call_targets,
+};
 use crate::zone::dbm::INF;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -81,8 +83,13 @@ pub fn try_load_function_from_elf(
     func_name: &str,
     pc_to_reloc: Option<&HashMap<usize, crate::parsing::elf::RelocInfo>>,
 ) -> Result<Program, String> {
-    let bytes = crate::parsing::elf::prog::load_function_bytes(path, section, func_name)
-        .map_err(|e| format!("Failed to load function '{}' from '{}': {:?}", func_name, section, e))?;
+    let bytes =
+        crate::parsing::elf::prog::load_function_bytes(path, section, func_name).map_err(|e| {
+            format!(
+                "Failed to load function '{}' from '{}': {:?}",
+                func_name, section, e
+            )
+        })?;
 
     let mut raw_insns = crate::parsing::bpf_insn::decode_insns(&bytes);
 
@@ -122,8 +129,8 @@ pub fn try_load_combined_program_from_elf(
 
     if cross_section_targets.is_empty() {
         // No cross-section calls - use existing behavior
-        let pc_to_reloc = crate::parsing::elf::reloc::load_relocations(path, maps, section)
-            .unwrap_or_default();
+        let pc_to_reloc =
+            crate::parsing::elf::reloc::load_relocations(path, maps, section).unwrap_or_default();
         let prog = try_load_program_from_elf(path, section, Some(&pc_to_reloc))?;
         return Ok((prog, pc_to_reloc));
     }

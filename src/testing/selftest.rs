@@ -562,48 +562,35 @@ pub fn run_test(test: &JsonTestCase, config: &VerifierConfig) -> TestResult {
                 message: format!("Failed to lower program: {:?}", e),
             };
             let errstr = test.errstr.clone();
-            match errstr {
-                Some(s) => {
-                    // In this case, the lowering is meant to fail, so PASS
-                    if s.contains("unknown op") && matches!(e.kind, LowerErrorKind::UnknownOpcode) {
-                        outcome = TestOutcome::Pass
-                    } else if (s.contains("invalid bpf_ld_imm64 insn")
+            if let Some(s) = errstr {
+                // In this case, the lowering is meant to fail, so PASS
+                let should_pass = (s.contains("unknown op")
+                    && matches!(e.kind, LowerErrorKind::UnknownOpcode))
+                    || ((s.contains("invalid bpf_ld_imm64 insn")
                         || s.contains("expected continuation instruction after LDDW")
                         || s.contains("uses reserved fields")
-                        || s.contains("unrecognized bpf_ld_imm64 insn"))
-                        && matches!(e.kind, LowerErrorKind::InvalidLDIMM64)
-                    {
-                        outcome = TestOutcome::Pass
-                    } else if s.contains("invalid destination")
-                        && matches!(e.kind, LowerErrorKind::CallTargetOutOfBounds)
-                    {
-                        outcome = TestOutcome::Pass
-                    } else if s.contains("reserved fields")
+                        || s.contains("unrecognized bpf_ld_imm64 insn")
+                        || s.contains("unknown opcode 00"))
+                        && matches!(e.kind, LowerErrorKind::InvalidLDIMM64))
+                    || (s.contains("invalid destination")
+                        && matches!(e.kind, LowerErrorKind::CallTargetOutOfBounds))
+                    || (s.contains("reserved fields")
                         && matches!(
                             e.kind,
                             LowerErrorKind::CallUsedReservedFields | LowerErrorKind::InvalidSrcReg
-                        )
-                    {
-                        outcome = TestOutcome::Pass
-                    } else if s.contains("jump out of range")
-                        && matches!(e.kind, LowerErrorKind::BranchTargetOutOfRange)
-                    {
-                        outcome = TestOutcome::Pass
-                    } else if s.contains("R15") && matches!(e.kind, LowerErrorKind::InvalidRegister)
-                    {
-                        outcome = TestOutcome::Pass
-                    } else if s.contains("arg#0") && matches!(e.kind, LowerErrorKind::InvalidSrcReg)
-                    {
-                        outcome = TestOutcome::Pass
-                    } else if s.contains("unknown opcode 00")
-                        && matches!(e.kind, LowerErrorKind::InvalidLDIMM64)
-                    {
-                        outcome = TestOutcome::Pass
-                    } else if matches!(e.kind, LowerErrorKind::InvalidRegister) {
-                        outcome = TestOutcome::Pass
-                    }
+                        ))
+                    || (s.contains("jump out of range")
+                        && matches!(e.kind, LowerErrorKind::BranchTargetOutOfRange))
+                    || ((s.contains("R15") || s.contains("arg#0"))
+                        && matches!(
+                            e.kind,
+                            LowerErrorKind::InvalidRegister | LowerErrorKind::InvalidSrcReg
+                        ))
+                    || matches!(e.kind, LowerErrorKind::InvalidRegister);
+
+                if should_pass {
+                    outcome = TestOutcome::Pass;
                 }
-                None => {}
             }
             return TestResult {
                 name: test.name.clone(),

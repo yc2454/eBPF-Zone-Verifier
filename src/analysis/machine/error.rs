@@ -377,13 +377,13 @@ impl VerificationError {
                 )
             }
             VerificationError::UnreleasedReference => {
-                format!("Unreleased reference in program")
+                "Unreleased reference in program".to_string()
             }
             VerificationError::UnreleasedLock => {
-                format!("Unreleased lock in program")
+                "Unreleased lock in program".to_string()
             }
             VerificationError::InvalidBtfType => {
-                format!("Invalid BTF type")
+                "Invalid BTF type".to_string()
             }
             VerificationError::LockAlreadyHeld { pc } => {
                 format!("Lock already held at pc {}, cannot acquire again", pc)

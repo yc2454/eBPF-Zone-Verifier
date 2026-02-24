@@ -92,7 +92,7 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) {
                 def.value_size as i64
             } else {
-                constants::DEFAULT_MAP_VALUE_SIZE as i64
+                constants::DEFAULT_MAP_VALUE_SIZE
             };
 
             if !(final_offset >= 0 && access_end <= map_limit) {
@@ -126,10 +126,10 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
                 pc,
                 base,
                 off,
-                base_type: base_type.clone(),
+                base_type,
             });
         }
-        PtrToPacketMeta { .. } => {
+        PtrToPacketMeta => {
             check_packet_meta_access(env, state, base, off, size, pc);
         }
         PtrToBtfId { .. } | PtrToMapObject { .. } => {
@@ -150,7 +150,7 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
                 pc,
                 base,
                 off,
-                base_type: base_type.clone(),
+                base_type,
             });
         }
         _ => {
@@ -162,7 +162,7 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
                 pc,
                 base,
                 off,
-                base_type: base_type.clone(),
+                base_type,
             });
         }
     }
@@ -209,17 +209,17 @@ pub fn check_store(
                 base,
                 offset,
                 off as i64,
-                size as i64,
+                size,
                 pc,
                 AccessKind::Write,
                 Some(src_type),
                 frame_level,
             );
         }
-        PtrToPacket { .. } => {
+        PtrToPacket => {
             check_packet_access(env, state, base, off, size, pc, AccessKind::Write);
         }
-        PtrToPacketMeta { .. } => {
+        PtrToPacketMeta => {
             check_packet_meta_access(env, state, base, off, size, pc);
         }
         PtrToMapValueOrNull { map_idx, .. } => {
@@ -246,7 +246,7 @@ pub fn check_store(
                 pc,
                 base,
                 off,
-                base_type: base_ty.clone(),
+                base_type: base_ty,
             });
         }
         PtrToSocketOrNull { .. } | PtrToSockCommonOrNull { .. } | PtrToTcpSockOrNull { .. } => {
@@ -255,7 +255,7 @@ pub fn check_store(
                 pc,
                 base,
                 off,
-                base_type: base_ty.clone(),
+                base_type: base_ty,
             });
         }
         PtrToAllocMem { id: _, mem_size } => {
@@ -282,7 +282,7 @@ pub fn check_store(
                 pc,
                 base,
                 off,
-                base_type: base_ty.clone(),
+                base_type: base_ty,
             });
         }
     }

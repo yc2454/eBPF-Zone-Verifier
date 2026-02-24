@@ -3,19 +3,19 @@ use crate::analysis::machine::error::VerificationError;
 
 pub mod arithmetic;
 pub mod bitwise;
+pub mod helpers;
 pub mod shift;
 pub mod validation;
-pub mod helpers;
 
 use crate::analysis::machine::env::VerifierEnv;
-use crate::analysis::machine::state::State;
-use crate::analysis::machine::reg_types::{RegType };
-use crate::ast::{AluOp, Operand, Width};
 use crate::analysis::machine::reg::Reg;
+use crate::analysis::machine::reg_types::RegType;
+use crate::analysis::machine::state::State;
+use crate::ast::{AluOp, Operand, Width};
 use log::error;
 
+use super::common::{check_operand_readable, check_reg_readable, check_reg_writable};
 use super::types::update_alu_types;
-use super::common::{check_reg_readable, check_operand_readable, check_reg_writable};
 
 // Re-export public transfer function
 pub(crate) fn transfer_alu(
@@ -27,11 +27,10 @@ pub(crate) fn transfer_alu(
     src: Operand,
 ) -> Vec<State> {
     // 1. Check readability
-    if op != AluOp::Mov {
-        if !check_reg_readable(env, &state, dst) {
+    if op != AluOp::Mov
+        && !check_reg_readable(env, &state, dst) {
             return vec![];
         }
-    }
     if !check_operand_readable(env, &state, &src) {
         return vec![];
     }
@@ -46,7 +45,7 @@ pub(crate) fn transfer_alu(
     // 3. Pointer arithmetic validation
     let src_type = match src {
         Operand::Imm(_) => RegType::ScalarValue,
-        Operand::Reg(r) => state.types.get(r).clone()
+        Operand::Reg(r) => state.types.get(r),
     };
     let dst_type = state.types.get(dst);
 
@@ -81,7 +80,17 @@ pub(crate) fn transfer_alu(
     }
 
     // 6. Update types
-    update_alu_types(env, &in_types, &mut state.types, &state.dbm, width, op, dst, &src, state.pc);
+    update_alu_types(
+        env,
+        &in_types,
+        &mut state.types,
+        &state.dbm,
+        width,
+        op,
+        dst,
+        &src,
+        state.pc,
+    );
 
     // 7. Post-operation consistency check
     if state.dbm.is_inconsistent() {

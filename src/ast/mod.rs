@@ -4,7 +4,7 @@ pub mod instr;
 pub mod prog;
 
 pub use self::instr::{Instr, Program};
-pub use self::prog::{ProgramKind, ContextKind, AttachKind};
+pub use self::prog::{AttachKind, ContextKind, ProgramKind};
 
 use crate::analysis::machine::reg::Reg;
 
@@ -23,30 +23,56 @@ pub enum Width {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum AluOp {
-    Add, Sub, And, Or, Xor, Mov, Shl, Shr, Arsh, Mul, Mod, Div, Neg, Rsh, Lsh,
+    Add,
+    Sub,
+    And,
+    Or,
+    Xor,
+    Mov,
+    Shl,
+    Shr,
+    Arsh,
+    Mul,
+    Mod,
+    Div,
+    Neg,
+    Rsh,
+    Lsh,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CmpOp {
-    UGe, ULe, UGt, ULt,
-    Eq, Ne, SLt, SGt, SLe, SGe,
+    UGe,
+    ULe,
+    UGt,
+    ULt,
+    Eq,
+    Ne,
+    SLt,
+    SGt,
+    SLe,
+    SGe,
     Test, // BPF_JSET
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EndianOp {
-    ToBe, ToLe,
+    ToBe,
+    ToLe,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MemSize {
-    U8, U16, U32, U64,
+    U8,
+    U16,
+    U32,
+    U64,
 }
 
 impl MemSize {
     pub fn bytes(&self) -> usize {
         match self {
-            MemSize::U8  => 1,
+            MemSize::U8 => 1,
             MemSize::U16 => 2,
             MemSize::U32 => 4,
             MemSize::U64 => 8,
@@ -65,15 +91,22 @@ impl MemSize {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PacketLoadMode {
-    Abs, Ind,
+    Abs,
+    Ind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapLoadKind {
-    MapPtr, MapValue,
+    MapPtr,
+    MapValue,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AtomicOp {
-    Add, Or, And, Xor, Xchg, CmpXchg,
+    Add,
+    Or,
+    And,
+    Xor,
+    Xchg,
+    CmpXchg,
 }

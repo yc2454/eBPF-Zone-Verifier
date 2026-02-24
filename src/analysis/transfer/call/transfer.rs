@@ -67,23 +67,21 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     }
 
     // Special check for sk_release: R1 must have a reference
-    if helper == constants::BPF_SK_RELEASE {
-        if state.types.get(Reg::R1).get_ref_id().is_none() {
+    if helper == constants::BPF_SK_RELEASE
+        && state.types.get(Reg::R1).get_ref_id().is_none() {
             env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
             return vec![];
         }
-    }
 
     // bpf_spin_lock and bpf_spin_unlock
-    if helper == constants::BPF_SPIN_LOCK || helper == constants::BPF_SPIN_UNLOCK {
-        if !check_and_handle_spin_lock(env, &mut state, helper) {
+    if (helper == constants::BPF_SPIN_LOCK || helper == constants::BPF_SPIN_UNLOCK)
+        && !check_and_handle_spin_lock(env, &mut state, helper) {
             return vec![];
         }
-    }
 
     // bpf_sock_map_update: only allowed in BPF_PROG_TYPE_SOCK_OPS programs
-    if helper == constants::BPF_SOCK_MAP_UPDATE {
-        if !matches!(env.ctx.prog_kind, ProgramKind::SockOps) {
+    if helper == constants::BPF_SOCK_MAP_UPDATE
+        && !matches!(env.ctx.prog_kind, ProgramKind::SockOps) {
             env.fail(VerificationError::HelperNotAllowedForProgram {
                 pc,
                 helper,
@@ -91,7 +89,6 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             });
             return vec![];
         }
-    }
 
     // bpf_d_path is restrictive
     if helper == constants::BPF_D_PATH {
@@ -102,30 +99,26 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
                 kind: env.ctx.prog_kind,
             });
             return vec![];
-        } else {
-            if matches!(env.ctx.prog_kind, ProgramKind::Tracing)
-                && matches!(env.ctx.kfunc.as_deref(), Some("d_path"))
-            {
-                env.fail(VerificationError::HelperNotAllowedForProgram {
-                    pc,
-                    helper,
-                    kind: env.ctx.prog_kind,
-                });
-                return vec![];
-            }
+        } else if matches!(env.ctx.prog_kind, ProgramKind::Tracing)
+            && matches!(env.ctx.kfunc.as_deref(), Some("d_path"))
+        {
+            env.fail(VerificationError::HelperNotAllowedForProgram {
+                pc,
+                helper,
+                kind: env.ctx.prog_kind,
+            });
+            return vec![];
         }
     }
 
     // bpf_get_local_storage doesn't not support type 1 map and flag must be 0
     if helper == constants::BPF_GET_LOCAL_STORAGE {
-        if let RegType::PtrToMapObject { map_idx } = state.types.get(Reg::R1) {
-            if let Some(map_def) = env.ctx.map_defs.get(map_idx) {
-                if map_def.type_ == constants::BPF_MAP_TYPE_HASH {
+        if let RegType::PtrToMapObject { map_idx } = state.types.get(Reg::R1)
+            && let Some(map_def) = env.ctx.map_defs.get(map_idx)
+                && map_def.type_ == constants::BPF_MAP_TYPE_HASH {
                     env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
                     return vec![];
                 }
-            }
-        }
         if !proven_zero(&state.dbm, Reg::R2) {
             env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
             return vec![];
@@ -183,8 +176,8 @@ fn initialize_uninit_mem_args(
 
     if let Some(sig) = get_helper_signature(helper) {
         for pair in get_mem_size_pairs(helper) {
-            if let Some(ptr_arg_type) = sig.args.get(pair.ptr_reg.idx().saturating_sub(2)) {
-                if matches!(ptr_arg_type, BpfArgType::PtrToUninitMem) {
+            if let Some(ptr_arg_type) = sig.args.get(pair.ptr_reg.idx().saturating_sub(2))
+                && matches!(ptr_arg_type, BpfArgType::PtrToUninitMem) {
                     println!(
                         "Found PtrToUninitMem argument for helper {} (reg {:?})",
                         helper, pair.ptr_reg
@@ -214,7 +207,7 @@ fn initialize_uninit_mem_args(
                                     println!(
                                         "Initialized stack slots [{}, {})",
                                         off,
-                                        off + max_size as i64
+                                        off + max_size
                                     );
                                 }
                             }
@@ -228,7 +221,6 @@ fn initialize_uninit_mem_args(
                         );
                     }
                 }
-            }
         }
     }
 }
@@ -375,5 +367,5 @@ fn check_and_handle_spin_lock(env: &mut VerifierEnv, state: &mut State, helper: 
             return false;
         }
     }
-    return true;
+    true
 }
