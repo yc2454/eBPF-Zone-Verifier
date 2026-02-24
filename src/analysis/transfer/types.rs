@@ -11,7 +11,7 @@ use crate::ast::{AluOp, MapLoadKind, MemSize, Operand, Width};
 use crate::common::constants;
 use crate::common::ctx_model::{CtxFieldKind, validate_ctx_access};
 use crate::zone::dbm::{Dbm, INF};
-use crate::zone::domain::{self, get_distance_fixed, get_interval_i64};
+use crate::zone::domain::{self, get_distance_fixed, get_interval};
 
 fn update_packet_ptr_type_after_alu(types: &mut TypeState, dbm: &Dbm, dst: Reg) {
     // Check offset from anchor: dst - @data
@@ -476,7 +476,7 @@ pub(crate) fn update_call_types(
             let mem_ptr_ty = in_types.get(Reg::R3);
             if let RegType::PtrToStack { frame_level } = mem_ptr_ty {
                 if let Some(off) = get_distance_fixed(&state.dbm, Reg::R3, Reg::R10) {
-                    let (_, hi) = get_interval_i64(&state.dbm, Reg::R4);
+                    let (_, hi) = get_interval(&state.dbm, Reg::R4);
                     let len = if hi <= 0xFFFF { hi as i16 } else { 0 };
                     if len > 0 {
                         // Mark the stack range as initialized scalars
@@ -493,7 +493,7 @@ pub(crate) fn update_call_types(
         }
 
         constants::BPF_RINGBUF_RESERVE => {
-            let (_, hi) = get_interval_i64(&state.dbm, Reg::R2);
+            let (_, hi) = get_interval(&state.dbm, Reg::R2);
             state.types.set(
                 Reg::R0,
                 RegType::PtrToAllocMemOrNull {

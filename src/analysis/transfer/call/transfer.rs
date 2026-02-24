@@ -11,9 +11,7 @@ use crate::analysis::transfer::types::{
 use crate::ast::ProgramKind;
 use crate::common::constants;
 use crate::parsing::btf::SpecialFieldKind;
-use crate::zone::domain::{
-    self, assume_ge_imm, assume_le_imm, forget, get_interval_i64, proven_zero,
-};
+use crate::zone::domain::{self, assume_ge_imm, assume_le_imm, forget, get_interval, proven_zero};
 use crate::zone::tnum::Tnum;
 use log::error;
 
@@ -197,11 +195,10 @@ fn initialize_uninit_mem_args(
                             domain::get_distance_fixed(&state.dbm, pair.ptr_reg, Reg::R10)
                         {
                             println!("Offset from R10 is {}", off);
-                            if let (_, Some(max_size)) =
-                                domain::get_interval(&state.dbm, pair.size_reg)
+                            let (_, max_size) = domain::get_interval(&state.dbm, pair.size_reg);
                             {
                                 println!("Max size for {:?} is {}", pair.size_reg, max_size);
-                                if max_size > 0 {
+                                if max_size != i64::MAX && max_size > 0 {
                                     let max_bytes = (max_size as usize).min(512); // Bound to max stack size just in case
                                     let stack = state.stack_at_mut(frame_level);
                                     for i in 0..max_bytes {
@@ -220,8 +217,6 @@ fn initialize_uninit_mem_args(
                                         off + max_size as i64
                                     );
                                 }
-                            } else {
-                                println!("Could not get interval for size reg {:?}", pair.size_reg);
                             }
                         } else {
                             println!("Could not get fixed distance to R10");
@@ -283,14 +278,14 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
         constants::BPF_GET_TASK_STACK => {
             let mem_size_pairs = get_mem_size_pairs(helper);
             let size_reg = mem_size_pairs[0].size_reg;
-            let (_, hi) = get_interval_i64(&state.dbm, size_reg);
+            let (_, hi) = get_interval(&state.dbm, size_reg);
             println!("Size reg {} bound: {}", size_reg.name(), hi);
             assume_le_imm(&mut state.dbm, Reg::R0, hi);
         }
         constants::BPF_GET_STACK => {
             let mem_size_pairs = get_mem_size_pairs(helper);
             let size_reg = mem_size_pairs[0].size_reg;
-            let (_, hi) = get_interval_i64(&state.dbm, size_reg);
+            let (_, hi) = get_interval(&state.dbm, size_reg);
             println!("Size reg {} bound: {}", size_reg.name(), hi);
             assume_le_imm(&mut state.dbm, Reg::R0, hi);
             assume_ge_imm(&mut state.dbm, Reg::R0, -constants::MAX_ERRNO);

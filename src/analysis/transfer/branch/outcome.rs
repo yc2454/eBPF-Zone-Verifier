@@ -1,8 +1,8 @@
 // src/analysis/transfer/branch/outcome.rs
 
+use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
 use crate::ast::{CmpOp, Operand, Width};
-use crate::analysis::machine::reg::Reg;
 use crate::zone::domain::get_interval;
 
 /// Check if a branch condition can be determined at analysis time.
@@ -29,47 +29,75 @@ pub(crate) fn condition_outcome(
     if state.types.get(left).is_pointer() {
         return None;
     }
-    
+
     // Get combined bounds from tnum and DBM
     let (min, max) = get_combined_bounds(state, left, width)?;
-    
+
     match right {
         Operand::Imm(imm) => {
             let imm_val = match width {
                 Width::W32 => (*imm as u32) as u64,
                 Width::W64 => *imm as u64,
             };
-            
+
             match op {
                 CmpOp::ULt => {
-                    if max < imm_val { Some(true) }      // always true
-                    else if min >= imm_val { Some(false) } // always false
-                    else { None }
+                    if max < imm_val {
+                        Some(true)
+                    }
+                    // always true
+                    else if min >= imm_val {
+                        Some(false)
+                    }
+                    // always false
+                    else {
+                        None
+                    }
                 }
                 CmpOp::UGe => {
-                    if min >= imm_val { Some(true) }
-                    else if max < imm_val { Some(false) }
-                    else { None }
+                    if min >= imm_val {
+                        Some(true)
+                    } else if max < imm_val {
+                        Some(false)
+                    } else {
+                        None
+                    }
                 }
                 CmpOp::ULe => {
-                    if max <= imm_val { Some(true) }
-                    else if min > imm_val { Some(false) }
-                    else { None }
+                    if max <= imm_val {
+                        Some(true)
+                    } else if min > imm_val {
+                        Some(false)
+                    } else {
+                        None
+                    }
                 }
                 CmpOp::UGt => {
-                    if min > imm_val { Some(true) }
-                    else if max <= imm_val { Some(false) }
-                    else { None }
+                    if min > imm_val {
+                        Some(true)
+                    } else if max <= imm_val {
+                        Some(false)
+                    } else {
+                        None
+                    }
                 }
                 CmpOp::Eq => {
-                    if min == max && min == imm_val { Some(true) }
-                    else if min > imm_val || max < imm_val { Some(false) }
-                    else { None }
+                    if min == max && min == imm_val {
+                        Some(true)
+                    } else if min > imm_val || max < imm_val {
+                        Some(false)
+                    } else {
+                        None
+                    }
                 }
                 CmpOp::Ne => {
-                    if min > imm_val || max < imm_val { Some(true) }
-                    else if min == max && min == imm_val { Some(false) }
-                    else { None }
+                    if min > imm_val || max < imm_val {
+                        Some(true)
+                    } else if min == max && min == imm_val {
+                        Some(false)
+                    } else {
+                        None
+                    }
                 }
                 // Signed comparisons - only if we can trust the bounds
                 CmpOp::SLt | CmpOp::SLe | CmpOp::SGt | CmpOp::SGe => {
@@ -85,25 +113,21 @@ pub(crate) fn condition_outcome(
                     // 2. Handle 32-bit Width
                     // If this is a W32 check, we must ignore the upper 32 bits of the register.
                     if width == Width::W32 {
-                        tnum = tnum.trunc32(); 
+                        tnum = tnum.trunc32();
                     }
 
                     // 3. Check for Definite Outcomes
                     if (tnum.value & imm_val) != 0 {
                         Some(true)
-                    }
-                    else if ((tnum.value | tnum.mask) & imm_val) == 0 {
+                    } else if ((tnum.value | tnum.mask) & imm_val) == 0 {
                         Some(false)
-                    }
-                    else {
+                    } else {
                         None
                     }
                 }
             }
         }
-        Operand::Reg(_r) => {
-            None
-        }
+        Operand::Reg(_r) => None,
     }
 }
 
@@ -117,40 +141,39 @@ pub(crate) fn get_combined_bounds(state: &State, reg: Reg, width: Width) -> Opti
     };
     let tnum_min = tnum.min_value();
     let tnum_max = tnum.max_value();
-    
+
     // DBM bounds
     let (dbm_lo, dbm_hi) = get_interval(&state.dbm, reg);
-    
+
     // Combine bounds
-    match (dbm_lo, dbm_hi) {
-        (Some(lo), Some(hi)) => {
-            // For unsigned comparison, DBM bounds only useful if non-negative
-            if lo >= 0 {
-                let dbm_min = lo as u64;
-                let dbm_max = hi as u64;
-                
-                // For W32, also check DBM is in u32 range
-                if width == Width::W32 && dbm_max > 0xFFFFFFFF {
-                    return Some((tnum_min, tnum_max));
-                }
-                
-                // Intersect the ranges
-                let combined_min = tnum_min.max(dbm_min);
-                let combined_max = tnum_max.min(dbm_max);
-                
-                // Sanity check - ranges should overlap
-                if combined_min <= combined_max {
-                    Some((combined_min, combined_max))
-                } else {
-                    Some((tnum_min, tnum_max))
-                }
+    if dbm_lo != i64::MIN && dbm_hi != i64::MAX {
+        let lo = dbm_lo;
+        let hi = dbm_hi;
+        // For unsigned comparison, DBM bounds only useful if non-negative
+        if lo >= 0 {
+            let dbm_min = lo as u64;
+            let dbm_max = hi as u64;
+
+            // For W32, also check DBM is in u32 range
+            if width == Width::W32 && dbm_max > 0xFFFFFFFF {
+                return Some((tnum_min, tnum_max));
+            }
+
+            // Intersect the ranges
+            let combined_min = tnum_min.max(dbm_min);
+            let combined_max = tnum_max.min(dbm_max);
+
+            // Sanity check - ranges should overlap
+            if combined_min <= combined_max {
+                Some((combined_min, combined_max))
             } else {
                 Some((tnum_min, tnum_max))
             }
-        }
-        _ => {
+        } else {
             Some((tnum_min, tnum_max))
         }
+    } else {
+        Some((tnum_min, tnum_max))
     }
 }
 
@@ -165,9 +188,10 @@ pub(crate) fn fits_in_u32(bounds: (i64, i64)) -> bool {
 /// Check if value is known to be in u32 range [0, 0xFFFFFFFF]
 pub(crate) fn fits_in_u32_range(dbm: &crate::zone::dbm::Dbm, reg: Reg) -> bool {
     let (lo, hi) = get_interval(dbm, reg);
-    match (lo, hi) {
-        (Some(l), Some(h)) => fits_in_u32((l, h)),
-        _ => false,
+    if lo != i64::MIN && hi != i64::MAX {
+        fits_in_u32((lo, hi))
+    } else {
+        false
     }
 }
 
@@ -181,22 +205,24 @@ pub(crate) fn get_combined_signed_bounds(state: &State, reg: Reg) -> (i64, i64) 
 
     let lo = if tnum_min > i64::MAX as u64 {
         let tnum_lo = tnum_min as i64;
-        match dbm_lo {
-            Some(d) => d.max(tnum_lo),
-            None => tnum_lo,
+        if dbm_lo != i64::MIN {
+            dbm_lo.max(tnum_lo)
+        } else {
+            tnum_lo
         }
     } else {
-        dbm_lo.unwrap_or(i64::MIN)
+        dbm_lo
     };
 
     let hi = if tnum_max <= i64::MAX as u64 {
         let tnum_hi = tnum_max as i64;
-        match dbm_hi {
-            Some(d) => d.min(tnum_hi),
-            None => tnum_hi,
+        if dbm_hi != i64::MAX {
+            dbm_hi.min(tnum_hi)
+        } else {
+            tnum_hi
         }
     } else {
-        dbm_hi.unwrap_or(i64::MAX)
+        dbm_hi
     };
 
     (lo, hi)

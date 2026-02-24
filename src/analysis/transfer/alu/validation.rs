@@ -1,13 +1,13 @@
 // src/analysis/transfer/alu/validation.rs
 
-use crate::analysis::machine::env::{VerifierEnv};
-use crate::analysis::machine::state::State;
-use crate::analysis::machine::reg_types::{RegType};
-use crate::ast::{AluOp, Operand, Width};
+use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg::Reg;
-use crate::zone::domain::{get_interval};
-use crate::zone::dbm::{INF, Dbm};
+use crate::analysis::machine::reg_types::RegType;
+use crate::analysis::machine::state::State;
+use crate::ast::{AluOp, Operand, Width};
 use crate::common::constants;
+use crate::zone::dbm::{Dbm, INF};
+use crate::zone::domain::get_interval;
 use log::error;
 
 /// Pure validation of pointer arithmetic rules.
@@ -20,7 +20,7 @@ pub(crate) fn check_ptr_arithmetic(
     dst: Reg,
     dst_type: &RegType,
     src_type: &RegType,
-    src: &Operand
+    src: &Operand,
 ) -> bool {
     let dst_is_ptr = dst_type.is_pointer();
     let src_is_ptr = src_type.is_pointer();
@@ -28,28 +28,22 @@ pub(crate) fn check_ptr_arithmetic(
     let src_max = match src {
         Operand::Imm(k) => *k,
         Operand::Reg(r) => {
-            let (_, max_opt) = get_interval(&state.dbm, *r);
-            match max_opt {
-                Some(max) => max,
-                None => INF,
-            }
+            let (_, max) = get_interval(&state.dbm, *r);
+            if max == i64::MAX { INF } else { max }
         }
     };
 
     let src_min = match src {
         Operand::Imm(k) => *k,
         Operand::Reg(r) => {
-            let (min_opt, _) = get_interval(&state.dbm, *r);
-            match min_opt {
-                Some(min) => min,
-                None => -INF,
-            }
+            let (min, _) = get_interval(&state.dbm, *r);
+            if min == i64::MIN { -INF } else { min }
         }
     };
 
     let (dst_min, dst_max) = get_interval(&state.dbm, dst);
-    let dst_min = dst_min.unwrap_or(-INF);
-    let dst_max = dst_max.unwrap_or(INF);
+    let dst_min = if dst_min == i64::MIN { -INF } else { dst_min };
+    let dst_max = if dst_max == i64::MAX { INF } else { dst_max };
 
     // 1. Scalar <op> Scalar
     if !dst_is_ptr && !src_is_ptr {
@@ -63,11 +57,12 @@ pub(crate) fn check_ptr_arithmetic(
                 if env.ctx.is_privileged() {
                     return true;
                 }
-                RegType::is_same_pointer_type(dst_type, src_type) || 
-                (matches!(dst_type, RegType::PtrToPacketEnd) && matches!(src_type, RegType::PtrToPacket { .. }))
-            },
+                RegType::is_same_pointer_type(dst_type, src_type)
+                    || (matches!(dst_type, RegType::PtrToPacketEnd)
+                        && matches!(src_type, RegType::PtrToPacket { .. }))
+            }
             AluOp::Mov => true,
-            _ => false
+            _ => false,
         }
     }
     // 3. Pointer <op> Scalar (dst=Ptr, src=Scalar)
@@ -85,7 +80,8 @@ pub(crate) fn check_ptr_arithmetic(
                     }
                     error!(
                         "[Verifier] pc {}: {} pointer arithmetic on const map pointer prohibited",
-                        state.pc, dst.name()
+                        state.pc,
+                        dst.name()
                     );
                     return false;
                 }
@@ -102,10 +98,10 @@ pub(crate) fn check_ptr_arithmetic(
                     return false;
                 }
                 true
-            },
+            }
             AluOp::Neg => true,
-            AluOp::Mov | AluOp::And => true, 
-            _ => false
+            AluOp::Mov | AluOp::And => true,
+            _ => false,
         }
     }
     // 4. Scalar <op> Pointer (dst=Scalar, src=Ptr)
@@ -133,10 +129,10 @@ pub(crate) fn check_ptr_arithmetic(
                     return false;
                 }
                 true
-            },
+            }
             AluOp::Sub => width == Width::W32,
             AluOp::Mov => true,
-            _ => false
+            _ => false,
         }
     }
 }
@@ -146,6 +142,6 @@ pub(crate) fn is_div_by_zero(_dbm: &Dbm, src: &Operand) -> bool {
     match src {
         Operand::Imm(k) => *k == 0,
         // We don't need to report potential division by zero for register operands here.
-        Operand::Reg(_) => false
+        Operand::Reg(_) => false,
     }
 }

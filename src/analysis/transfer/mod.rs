@@ -10,15 +10,14 @@ mod common;
 mod memory;
 mod types;
 
-use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::env::VerifierEnv;
+use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
 use crate::ast::{EndianOp, Instr, Width};
 use crate::zone::domain::{
-    apply_and_imm, assign_interval, forget, get_interval, get_interval_i64,
-    preserve_anchor_constraints,
+    apply_and_imm, assign_interval, forget, get_interval, preserve_anchor_constraints,
 };
 
 /// Main transfer function - dispatches to appropriate handler based on instruction type.
@@ -168,9 +167,7 @@ fn transfer_endian(
 fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     let pc = state.pc;
 
-    let (min, max) = get_interval(&state.dbm, Reg::R0);
-    let r0_min = min.unwrap_or(i64::MIN);
-    let r0_max = max.unwrap_or(i64::MAX);
+    let (r0_min, r0_max) = get_interval(&state.dbm, Reg::R0);
 
     // Use the helper method on the ProgramKind stored in env
     if env.ctx.prog_kind.requires_strict_return_code() {
@@ -215,7 +212,7 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         // Save callee's R0 (the return value) before restoring caller state
         let ret_type = state.types.get(Reg::R0);
         let ret_tnum = state.get_tnum(Reg::R0);
-        let ret_bounds = get_interval_i64(&state.dbm, Reg::R0);
+        let ret_bounds = get_interval(&state.dbm, Reg::R0);
         let ret_anchor_info = state.save_anchor_info(Reg::R0);
 
         // Save callee's anchor constraints before overwriting
