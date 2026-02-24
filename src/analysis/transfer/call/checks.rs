@@ -565,7 +565,8 @@ pub(crate) fn check_single_mem_size_pair(
     }
 
     // Get size bounds from DBM
-    let (_, Some(max_size)) = get_interval(&state.dbm, pair.size_reg) else {
+    let (_, max_size) = get_interval(&state.dbm, pair.size_reg);
+    if max_size == i64::MAX {
         // Size is unbounded - reject
         env.fail(VerificationError::InvalidArgType {
             pc,
@@ -576,7 +577,7 @@ pub(crate) fn check_single_mem_size_pair(
             pc, pair.size_reg
         );
         return false;
-    };
+    }
 
     // Size must be non-negative
     if !proven_nonnegative(&state.dbm, pair.size_reg) {

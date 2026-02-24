@@ -5,7 +5,7 @@ use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::stack_state::{ScalarBounds, SpilledReg, StackState};
 use crate::ast::MemSize;
 use crate::zone::dbm::{Dbm, INF};
-use crate::zone::domain::{self, get_interval_i64};
+use crate::zone::domain::{self, get_interval};
 use crate::zone::tnum::Tnum;
 use std::collections::{HashMap, HashSet};
 
@@ -160,7 +160,7 @@ impl State {
             (None, None, None)
         };
 
-        let (min, max) = get_interval_i64(&self.dbm, reg);
+        let (min, max) = get_interval(&self.dbm, reg);
         println!("At spilling, {} bounds: [{}, {}]", reg.name(), min, max);
 
         // Only track as proper spill if 8-byte aligned

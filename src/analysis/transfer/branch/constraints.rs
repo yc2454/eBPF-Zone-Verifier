@@ -67,7 +67,7 @@ fn can_apply_dbm_constraint(
         let left_unbounded = {
             let (lo, _) = crate::zone::domain::get_interval(&state.dbm, left);
             let tnum = state.get_tnum(left);
-            lo.is_none() && tnum.max_value() > i64::MAX as u64
+            lo == i64::MIN && tnum.max_value() > i64::MAX as u64
         };
         let right_nonneg = right_bounds.0 >= 0;
         let right_is_pointer = match right {
@@ -285,7 +285,6 @@ fn resolve_right_operand(
                 (Either::Right(eff), (eff, eff))
             } else {
                 let bounds = crate::zone::domain::get_interval(dbm, reg);
-                let bounds = (bounds.0.unwrap_or(i64::MIN), bounds.1.unwrap_or(i64::MAX));
                 (Either::Left(reg), bounds)
             }
         }

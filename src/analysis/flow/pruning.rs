@@ -9,7 +9,7 @@ use crate::analysis::machine::state::State;
 use crate::ast::{CmpOp, Instr, Operand, Program};
 use crate::common::config::VerifierConfig;
 use crate::zone::dbm::Dbm;
-use crate::zone::domain::{assume_le_imm, assume_ge_imm, get_interval_i64};
+use crate::zone::domain::{assume_ge_imm, assume_le_imm, get_interval};
 use crate::zone::tnum::Tnum;
 
 /// Check if the loop body contains a conditional branch (If instruction),
@@ -64,8 +64,14 @@ fn detect_loop_bound(
 ) -> Option<(Reg, i64)> {
     // Case 1: Check if the CURRENT instruction is a `!= K` branch (back-edge at branch site)
     if current_pc < prog.instrs.len() {
-        if let Instr::If { op: CmpOp::Ne, left, right: Operand::Imm(k), .. } = &prog.instrs[current_pc] {
-            let (lo, _hi) = get_interval_i64(&state.dbm, *left);
+        if let Instr::If {
+            op: CmpOp::Ne,
+            left,
+            right: Operand::Imm(k),
+            ..
+        } = &prog.instrs[current_pc]
+        {
+            let (lo, _hi) = get_interval(&state.dbm, *left);
             if lo >= 0 && *k > 0 {
                 return Some((*left, *k - 1));
             }
@@ -78,9 +84,16 @@ fn detect_loop_bound(
     let branch_pc = branch_step.pc;
 
     if branch_pc < prog.instrs.len() {
-        if let Instr::If { op: CmpOp::Ne, left, right: Operand::Imm(k), target, .. } = &prog.instrs[branch_pc] {
+        if let Instr::If {
+            op: CmpOp::Ne,
+            left,
+            right: Operand::Imm(k),
+            target,
+            ..
+        } = &prog.instrs[branch_pc]
+        {
             if *target == current_pc {
-                let (lo, _hi) = get_interval_i64(&state.dbm, *left);
+                let (lo, _hi) = get_interval(&state.dbm, *left);
                 if lo >= 0 && *k > 0 {
                     return Some((*left, *k - 1));
                 }
@@ -141,7 +154,7 @@ pub fn should_prune(
     // Only prune at designated prune points
     if let Some(aux) = env.insn_aux_data.get(pc) {
         if !aux.prune_point {
-                    return false;
+            return false;
         }
     } else {
         return false;
@@ -179,22 +192,24 @@ pub fn should_prune(
     };
 
     // Check if we arrived at this PC via a backward jump (loop head detection)
-    let arrived_via_back_edge = state.history_idx.and_then(|idx| {
-        let prev_step = env.history.get(idx)?;
-        let prev_pc = prev_step.pc;
-        if prev_pc < prog.instrs.len() {
-            match &prog.instrs[prev_pc] {
-                Instr::If { target, .. } if *target == pc && prev_pc > pc => Some(true),
-                Instr::Jmp { target } if *target == pc && prev_pc > pc => Some(true),
-                _ => Some(false),
+    let arrived_via_back_edge = state
+        .history_idx
+        .and_then(|idx| {
+            let prev_step = env.history.get(idx)?;
+            let prev_pc = prev_step.pc;
+            if prev_pc < prog.instrs.len() {
+                match &prog.instrs[prev_pc] {
+                    Instr::If { target, .. } if *target == pc && prev_pc > pc => Some(true),
+                    Instr::Jmp { target } if *target == pc && prev_pc > pc => Some(true),
+                    _ => Some(false),
+                }
+            } else {
+                Some(false)
             }
-        } else {
-            Some(false)
-        }
-    }).unwrap_or(false);
+        })
+        .unwrap_or(false);
 
     let in_loop = is_back_edge_pc && (is_backward_branch || arrived_via_back_edge);
-
 
     if is_on_path && !in_loop {
         // Re-entry to a PC from a different depth (e.g. repeated call in a loop).
@@ -225,7 +240,7 @@ pub fn should_prune(
         // If the current state already has r > upper_bound, applying the bound
         // would create a contradiction. In that case, skip the bound application.
         if let Some((reg, upper_bound)) = loop_bound {
-            let (cur_lo, _) = get_interval_i64(&state.dbm, reg);
+            let (cur_lo, _) = get_interval(&state.dbm, reg);
             if cur_lo <= upper_bound {
                 assume_le_imm(&mut state.dbm, reg, upper_bound);
                 assume_ge_imm(&mut state.dbm, reg, 0);
@@ -252,15 +267,16 @@ pub fn should_prune(
                     if prev_states.len() >= 2 {
                         let first = &prev_states[0];
                         let widening_effective = live_regs.iter().any(|&r| {
-                            let (first_min, first_max) = get_interval_i64(&first.dbm, r);
-                            let (last_min, last_max) = get_interval_i64(&old.dbm, r);
+                            let (first_min, first_max) = get_interval(&first.dbm, r);
+                            let (last_min, last_max) = get_interval(&old.dbm, r);
                             last_min < first_min || last_max > first_max
                         });
 
                         // For bounded loops, we don't need to wait for exit exploration.
                         // The bound detection itself proves the exit exists and will be reached.
                         // For unbounded loops, we require the exit to be explored.
-                        let exit_ok = loop_bound.is_some() || loop_exit_was_explored(env, state, pc, prog);
+                        let exit_ok =
+                            loop_bound.is_some() || loop_exit_was_explored(env, state, pc, prog);
 
                         if widening_effective && exit_ok {
                             return true; // Converged with verified exit path
@@ -440,8 +456,8 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
 /// Check if cur DBM is subsumed by old DBM.
 fn dbm_subsumed_by(cur: &Dbm, old: &Dbm, live_regs: &HashSet<Reg>) -> bool {
     for &r in live_regs {
-        let (old_min, old_max) = get_interval_i64(old, r);
-        let (cur_min, cur_max) = get_interval_i64(cur, r);
+        let (old_min, old_max) = get_interval(old, r);
+        let (cur_min, cur_max) = get_interval(cur, r);
         if !(old_min <= cur_min && old_max >= cur_max) {
             return false;
         }

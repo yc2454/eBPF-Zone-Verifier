@@ -1,30 +1,25 @@
 // src/domain.rs
-use crate::{common::utils::clamped_add, zone::dbm::{Dbm, INF}};
-use crate::analysis::machine::reg::{Reg, REG_ENV};
+use crate::analysis::machine::reg::{REG_ENV, Reg};
+use crate::{
+    common::utils::clamped_add,
+    zone::dbm::{Dbm, INF},
+};
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  1. Query & Interval Analysis
 //  Functions for extracting concrete bounds and intervals from the DBM.
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Extracts the interval [lower_bound, upper_bound] for a register if they are finite.
-/// Returns (Option(lb), Option(ub)) where None represents infinity.
-pub fn get_interval(dbm: &Dbm, x: Reg) -> (Option<i64>, Option<i64>) {
+/// Extracts the interval [lower_bound, upper_bound] for a register.
+/// Unbounded minimum is i64::MIN and unbounded maximum is i64::MAX.
+pub fn get_interval(dbm: &Dbm, x: Reg) -> (i64, i64) {
     let ub = dbm.get(x, Reg::Zero);
     let lb_neg = dbm.get(Reg::Zero, x);
 
-    let ub_opt = if ub >= INF { None } else { Some(ub) };
-    let lb_opt = if lb_neg >= INF { None } else { Some(-lb_neg) };
+    let ub_val = if ub >= INF { i64::MAX } else { ub };
+    let lb_val = if lb_neg >= INF { i64::MIN } else { -lb_neg };
 
-    (lb_opt, ub_opt)
-}
-
-/// Convenience version of `get_interval` that returns i64::MIN/MAX for infinite bounds.
-pub fn get_interval_i64(dbm: &Dbm, x: Reg) -> (i64, i64) {
-    let (lo_opt, hi_opt) = get_interval(dbm, x);
-    let lo = lo_opt.unwrap_or(i64::MIN);
-    let hi = hi_opt.unwrap_or(i64::MAX);
-    (lo, hi)
+    (lb_val, ub_val)
 }
 
 /// Returns the interval of the distance between two registers: [lo, hi] such that lo <= x - y <= hi.
@@ -32,8 +27,16 @@ pub fn get_distance_interval(dbm: &Dbm, x: Reg, y: Reg) -> (Option<i64>, Option<
     let x_minus_y = dbm.get(x, y);
     let y_minus_x = dbm.get(y, x);
 
-    let ub_opt = if x_minus_y >= INF { None } else { Some(x_minus_y) };
-    let lb_opt = if y_minus_x >= INF { None } else { Some(-y_minus_x) };
+    let ub_opt = if x_minus_y >= INF {
+        None
+    } else {
+        Some(x_minus_y)
+    };
+    let lb_opt = if y_minus_x >= INF {
+        None
+    } else {
+        Some(-y_minus_x)
+    };
 
     (lb_opt, ub_opt)
 }
@@ -49,10 +52,9 @@ pub fn get_distance_fixed(dbm: &Dbm, x: Reg, y: Reg) -> Option<i64> {
 
 /// Returns the fixed concrete value of a register if it is constant.
 pub fn get_fixed_value(dbm: &Dbm, x: Reg) -> Option<i64> {
-    if let (Some(lo), Some(hi)) = get_interval(dbm, x) {
-        if lo == hi {
-            return Some(lo);
-        }
+    let (lo, hi) = get_interval(dbm, x);
+    if lo == hi && lo != i64::MIN && lo != i64::MAX {
+        return Some(lo);
     }
     None
 }
@@ -64,23 +66,20 @@ pub fn get_fixed_value(dbm: &Dbm, x: Reg) -> Option<i64> {
 
 /// Returns true if the register is proven to be exactly zero.
 pub fn proven_zero(dbm: &Dbm, x: Reg) -> bool {
-    if let (Some(l), Some(u)) = get_interval(dbm, x) {
-        l == u && l == 0
-    } else {
-        false
-    }
+    let (l, u) = get_interval(dbm, x);
+    l == u && l == 0
 }
 
 /// Returns true if the register is proven to be >= 0.
 pub fn proven_nonnegative(dbm: &Dbm, x: Reg) -> bool {
     let (lo, _) = get_interval(dbm, x);
-    lo.map_or(false, |l| l >= 0)
+    lo >= 0
 }
 
 /// Returns true if the register is proven to be > 0.
 pub fn proven_positive(dbm: &Dbm, x: Reg) -> bool {
     let (lo, _) = get_interval(dbm, x);
-    lo.map_or(false, |l| l > 0)
+    lo > 0
 }
 
 /// Returns true if a register is proven to be in the u32 range [0, 2^32-1].
@@ -179,35 +178,34 @@ pub fn apply_add_imm(dbm: &mut Dbm, dst: Reg, imm: i64) {
 pub fn apply_add_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
     let (src_lo, src_hi) = get_interval(dbm, src);
 
-    match (src_lo, src_hi) {
-        (Some(lo), Some(hi)) => {
-            let di = dst.idx();
-            let n = dbm.num_vars();
-            for j in 0..n {
-                if j == di { continue; }
-                let d_dj = dbm.get_idx(di, j);
-                if d_dj < INF {
-                    dbm.set_idx(di, j, clamped_add(d_dj, hi));
-                }
-                let d_jd = dbm.get_idx(j, di);
-                if d_jd < INF {
-                    dbm.set_idx(j, di, d_jd.saturating_sub(lo));
-                }
+    if src_lo != i64::MIN && src_hi != i64::MAX {
+        let di = dst.idx();
+        let n = dbm.num_vars();
+        for j in 0..n {
+            if j == di {
+                continue;
             }
-            dbm.set_idx(di, di, 0);
-            dbm.close();
+            let d_dj = dbm.get_idx(di, j);
+            if d_dj < INF {
+                dbm.set_idx(di, j, clamped_add(d_dj, src_hi));
+            }
+            let d_jd = dbm.get_idx(j, di);
+            if d_jd < INF {
+                dbm.set_idx(j, di, d_jd.saturating_sub(src_lo));
+            }
         }
-        _ => {
-            let (dst_lo, dst_hi) = get_interval(dbm, dst);
-            dbm.forget_var(dst);
-            if let (Some(dl), Some(sl)) = (dst_lo, src_lo) {
-                assume_ge_imm(dbm, dst, dl.saturating_add(sl));
-            }
-            if let (Some(dh), Some(sh)) = (dst_hi, src_hi) {
-                assume_le_imm(dbm, dst, dh.saturating_add(sh));
-            }
-            dbm.close();
+        dbm.set_idx(di, di, 0);
+        dbm.close();
+    } else {
+        let (dst_lo, dst_hi) = get_interval(dbm, dst);
+        dbm.forget_var(dst);
+        if dst_lo != i64::MIN && src_lo != i64::MIN {
+            assume_ge_imm(dbm, dst, dst_lo.saturating_add(src_lo));
         }
+        if dst_hi != i64::MAX && src_hi != i64::MAX {
+            assume_le_imm(dbm, dst, dst_hi.saturating_add(src_hi));
+        }
+        dbm.close();
     }
 }
 
@@ -215,36 +213,35 @@ pub fn apply_add_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
 pub fn apply_sub_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
     let (src_lo, src_hi) = get_interval(dbm, src);
 
-    match (src_lo, src_hi) {
-        (Some(lo), Some(hi)) => {
-            let di = dst.idx();
-            let n = dbm.num_vars();
+    if src_lo != i64::MIN && src_hi != i64::MAX {
+        let di = dst.idx();
+        let n = dbm.num_vars();
 
-            for j in 0..n {
-                if j == di { continue; }
-                let d_dj = dbm.get_idx(di, j);
-                if d_dj < INF {
-                    dbm.set_idx(di, j, d_dj.saturating_sub(lo));
-                }
-                let d_jd = dbm.get_idx(j, di);
-                if d_jd < INF {
-                    dbm.set_idx(j, di, clamped_add(d_jd, hi));
-                }
+        for j in 0..n {
+            if j == di {
+                continue;
             }
-            dbm.set_idx(di, di, 0);
-            dbm.close();
+            let d_dj = dbm.get_idx(di, j);
+            if d_dj < INF {
+                dbm.set_idx(di, j, d_dj.saturating_sub(src_lo));
+            }
+            let d_jd = dbm.get_idx(j, di);
+            if d_jd < INF {
+                dbm.set_idx(j, di, clamped_add(d_jd, src_hi));
+            }
         }
-        _ => {
-            let (dst_lo, dst_hi) = get_interval(dbm, dst);
-            dbm.forget_var(dst);
-            if let (Some(dl), Some(sh)) = (dst_lo, src_hi) {
-                assume_ge_imm(dbm, dst, dl.saturating_sub(sh));
-            }
-            if let (Some(dh), Some(sl)) = (dst_hi, src_lo) {
-                assume_le_imm(dbm, dst, dh.saturating_sub(sl));
-            }
-            dbm.close();
+        dbm.set_idx(di, di, 0);
+        dbm.close();
+    } else {
+        let (dst_lo, dst_hi) = get_interval(dbm, dst);
+        dbm.forget_var(dst);
+        if dst_lo != i64::MIN && src_hi != i64::MAX {
+            assume_ge_imm(dbm, dst, dst_lo.saturating_sub(src_hi));
         }
+        if dst_hi != i64::MAX && src_lo != i64::MIN {
+            assume_le_imm(dbm, dst, dst_hi.saturating_sub(src_lo));
+        }
+        dbm.close();
     }
 }
 
@@ -270,14 +267,14 @@ pub fn apply_mul_imm(dbm: &mut Dbm, dst: Reg, imm: i64) {
         return;
     }
 
-    let (ld_opt, ud_opt) = get_interval(dbm, dst);
+    let (ld, ud) = get_interval(dbm, dst);
     dbm.forget_var(dst);
 
-    if let Some(ld) = ld_opt {
+    if ld != i64::MIN {
         let new_lb = ld.saturating_mul(imm);
         assume_ge_imm(dbm, dst, new_lb);
     }
-    if let Some(ud) = ud_opt {
+    if ud != i64::MAX {
         let new_ub = ud.saturating_mul(imm);
         assume_le_imm(dbm, dst, new_ub);
     }
@@ -287,12 +284,12 @@ pub fn apply_mul_imm(dbm: &mut Dbm, dst: Reg, imm: i64) {
 /// Performs dst /= imm.
 pub fn apply_div_imm(dbm: &mut Dbm, reg: Reg, imm: i64) {
     if imm == 0 {
-        return; 
+        return;
     }
-    let (lo, hi) = get_interval(dbm, reg);
+    let (l, h) = get_interval(dbm, reg);
     forget(dbm, reg);
 
-    if let (Some(l), Some(h)) = (lo, hi) {
+    if l != i64::MIN && h != i64::MAX {
         if l >= 0 && h >= 0 {
             let new_lo = l / imm;
             let new_hi = h / imm;
@@ -309,10 +306,10 @@ pub fn apply_div_reg(dbm: &mut Dbm, dst: Reg, _src: Reg) {
 
 /// Performs reg = -reg. Scales/flips the bounds.
 pub fn apply_neg(dbm: &mut Dbm, reg: Reg) {
-    let (lo, hi) = get_interval(dbm, reg);
+    let (l, h) = get_interval(dbm, reg);
     forget(dbm, reg);
 
-    if let (Some(l), Some(h)) = (lo, hi) {
+    if l != i64::MIN && h != i64::MAX {
         let new_lo = h.wrapping_neg();
         let new_hi = l.wrapping_neg();
         assume_ge_imm(dbm, reg, new_lo);
@@ -351,6 +348,9 @@ pub fn assume_le_offset(dbm: &mut Dbm, x: Reg, y: Reg, c: i64) {
 
 /// Assumes x <= c.
 pub fn assume_le_imm(dbm: &mut Dbm, x: Reg, c: i64) {
+    if c == i64::MAX || c >= INF {
+        return;
+    }
     dbm.add_constraint(x, Reg::Zero, c);
     dbm.close();
 }
@@ -358,7 +358,7 @@ pub fn assume_le_imm(dbm: &mut Dbm, x: Reg, c: i64) {
 /// Assumes x >= c.
 pub fn assume_ge_imm(dbm: &mut Dbm, x: Reg, c: i64) {
     if c == i64::MIN {
-        return; 
+        return;
     }
     dbm.add_constraint(Reg::Zero, x, -c);
     dbm.close();
@@ -385,6 +385,9 @@ pub fn assume_lt_imm(d: &mut Dbm, x: Reg, c: i64) {
         d.set(Reg::R0, Reg::R0, -1);
         return;
     }
+    if c == i64::MAX || c >= INF {
+        return;
+    }
     let bound = c - 1;
     d.add_constraint(x, Reg::Zero, bound);
     d.close();
@@ -399,7 +402,7 @@ pub fn assume_lt_imm(d: &mut Dbm, x: Reg, c: i64) {
 pub fn init_packet_anchors(dbm: &mut Dbm) {
     let meta = Reg::AnchorDataMeta;
     let data = Reg::AnchorData;
-    let end  = Reg::AnchorDataEnd;
+    let end = Reg::AnchorDataEnd;
 
     dbm.add_constraint(meta, data, 0);
     dbm.add_constraint(data, end, 0);
@@ -449,8 +452,12 @@ pub fn reset_packet_anchors(dbm: &mut Dbm) {
         let i = anchor.idx();
         let n = dbm.num_vars();
         for j in 0..n {
-            if i == j { dbm.set_idx(i, j, 0); }
-            else      { dbm.set_idx(i, j, INF); dbm.set_idx(j, i, INF); }
+            if i == j {
+                dbm.set_idx(i, j, 0);
+            } else {
+                dbm.set_idx(i, j, INF);
+                dbm.set_idx(j, i, INF);
+            }
         }
     }
     init_packet_anchors(dbm);
@@ -461,7 +468,9 @@ pub fn preserve_anchor_constraints(caller_dbm: &mut Dbm, callee_dbm: &Dbm) {
     let anchors = [Reg::AnchorData, Reg::AnchorDataEnd, Reg::AnchorDataMeta];
     for &a in &anchors {
         for &b in &anchors {
-            if a == b { continue; }
+            if a == b {
+                continue;
+            }
             let callee_bound = callee_dbm.get(a, b);
             let caller_bound = caller_dbm.get(a, b);
             if callee_bound < caller_bound {
