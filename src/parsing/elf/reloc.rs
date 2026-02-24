@@ -178,9 +178,10 @@ pub fn load_relocations<P: AsRef<Path>>(
     let mut section_idx_to_map_idx: HashMap<usize, usize> = HashMap::new();
     for (sec_idx, sh) in elf.section_headers.iter().enumerate() {
         if let Some(name) = elf.shdr_strtab.get_at(sh.sh_name)
-            && let Some(&map_idx) = map_name_to_idx.get(name) {
-                section_idx_to_map_idx.insert(sec_idx, map_idx);
-            }
+            && let Some(&map_idx) = map_name_to_idx.get(name)
+        {
+            section_idx_to_map_idx.insert(sec_idx, map_idx);
+        }
     }
 
     let target_sec_idx = elf
@@ -330,9 +331,10 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
     let mut section_idx_to_map_idx: HashMap<usize, usize> = HashMap::new();
     for (sec_idx, sh) in elf.section_headers.iter().enumerate() {
         if let Some(name) = elf.shdr_strtab.get_at(sh.sh_name)
-            && let Some(&map_idx) = map_name_to_idx.get(name) {
-                section_idx_to_map_idx.insert(sec_idx, map_idx);
-            }
+            && let Some(&map_idx) = map_name_to_idx.get(name)
+        {
+            section_idx_to_map_idx.insert(sec_idx, map_idx);
+        }
     }
 
     let target_sec_idx = elf
@@ -638,14 +640,15 @@ pub fn combine_program_with_subprogs<P: AsRef<Path> + Clone>(
     for (&call_pc, reloc) in combined_relocs.iter() {
         if reloc.kind == RelocKind::BpfCall
             && let Some(ref target) = reloc.bpf_call_target
-                && let Some(&target_pc) = func_offsets.get(&target.func_name) {
-                    // Fix the imm field in the call instruction
-                    if call_pc < combined_insns.len() {
-                        let relative_offset = (target_pc as i32) - (call_pc as i32 + 1);
-                        combined_insns[call_pc].imm = relative_offset;
-                        combined_insns[call_pc].src = 1; // BPF_PSEUDO_CALL
-                    }
-                }
+            && let Some(&target_pc) = func_offsets.get(&target.func_name)
+        {
+            // Fix the imm field in the call instruction
+            if call_pc < combined_insns.len() {
+                let relative_offset = (target_pc as i32) - (call_pc as i32 + 1);
+                combined_insns[call_pc].imm = relative_offset;
+                combined_insns[call_pc].src = 1; // BPF_PSEUDO_CALL
+            }
+        }
     }
 
     // Apply other relocations (maps, helpers)

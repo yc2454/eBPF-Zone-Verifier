@@ -1,6 +1,7 @@
 // src/dbm.rs
 use crate::analysis::machine::reg::{REG_ENV, Reg};
 use crate::common::utils::{clamp_upper_bound, clamped_add};
+use log::debug;
 
 pub const INF: i64 = i64::MAX / 4;
 
@@ -118,66 +119,73 @@ impl Dbm {
     }
 
     pub fn dump_matrix(&self) {
+        use std::fmt::Write;
         let vars = REG_ENV.all();
         let n = vars.len();
 
-        println!("DBM [{} x {}]:", n, n);
+        let mut output = String::new();
+        writeln!(output, "DBM [{} x {}]:", n, n).unwrap();
 
         // header
-        print!("{:>8} ", "");
+        write!(output, "{:>8} ", "").unwrap();
         for v in vars {
-            print!("{:>12} ", v.name());
+            write!(output, "{:>12} ", v.name()).unwrap();
         }
-        println!();
+        writeln!(output).unwrap();
 
         for (row_idx, vi) in vars.iter().enumerate() {
-            print!("{:>8} ", vi.name());
+            write!(output, "{:>8} ", vi.name()).unwrap();
             for (col_idx, _vj) in vars.iter().enumerate() {
                 let v = self.data[row_idx][col_idx];
                 if v >= INF {
-                    print!("{:>12} ", "INF");
+                    write!(output, "{:>12} ", "INF").unwrap();
                 } else {
-                    print!("{:>12} ", v);
+                    write!(output, "{:>12} ", v).unwrap();
                 }
             }
-            println!();
+            writeln!(output).unwrap();
         }
 
-        println!();
+        debug!("{}", output);
     }
 
     #[allow(dead_code)]
     pub fn dump_matrix_full(&self) {
+        use std::fmt::Write;
         let n = self.num_vars();
-        println!("DBM [{} x {}] (full, with anchors):", n, n);
+        let mut output = String::new();
+        writeln!(output, "DBM [{} x {}] (full, with anchors):", n, n).unwrap();
 
         // header
-        print!("{:>12} ", "");
+        write!(output, "{:>12} ", "").unwrap();
         for j in 0..n {
             let name = Reg::idx_to_reg(j).map(|r| r.name()).unwrap_or("???");
-            print!("{:>12} ", name);
+            write!(output, "{:>12} ", name).unwrap();
         }
-        println!();
+        writeln!(output).unwrap();
 
         for i in 0..n {
             let name = Reg::idx_to_reg(i).map(|r| r.name()).unwrap_or("???");
-            print!("{:>12} ", name);
+            write!(output, "{:>12} ", name).unwrap();
             for j in 0..n {
                 let v = self.data[i][j];
                 if v >= INF {
-                    print!("{:>12} ", "INF");
+                    write!(output, "{:>12} ", "INF").unwrap();
                 } else {
-                    print!("{:>12} ", v);
+                    write!(output, "{:>12} ", v).unwrap();
                 }
             }
-            println!();
+            writeln!(output).unwrap();
         }
-        println!();
+
+        debug!("{}", output);
     }
 
     pub fn pretty_print(&self) {
+        use std::fmt::Write;
         let zero = Reg::Zero;
-        println!("  Bounds:");
+        let mut output = String::new();
+        writeln!(output, "  Bounds:").unwrap();
         for i in 0..self.dim() {
             let Some(i) = Reg::idx_to_reg(i) else {
                 continue;
@@ -203,7 +211,7 @@ impl Dbm {
             };
 
             if min_str != "-INF" || max_str != "+INF" {
-                println!("    {}: [{}, {}]", i.name(), min_str, max_str);
+                writeln!(output, "    {}: [{}, {}]", i.name(), min_str, max_str).unwrap();
             }
 
             for j in 1..self.dim() {
@@ -222,7 +230,7 @@ impl Dbm {
                     val.to_string()
                 };
                 if diff_str != "INF" {
-                    println!("    {} - {} <= {}", i.name(), j.name(), diff_str);
+                    writeln!(output, "    {} - {} <= {}", i.name(), j.name(), diff_str).unwrap();
                 }
             }
         }
@@ -243,7 +251,7 @@ impl Dbm {
 
                 if reg_minus_anchor < INF || anchor_minus_reg < INF {
                     if !has_anchor_info {
-                        println!("  Anchor offsets:");
+                        writeln!(output, "  Anchor offsets:").unwrap();
                         has_anchor_info = true;
                     }
                     if reg_minus_anchor < INF && anchor_minus_reg < INF {
@@ -251,28 +259,42 @@ impl Dbm {
                         let lo = -anchor_minus_reg;
                         let hi = reg_minus_anchor;
                         if lo == hi {
-                            println!("    {} - {} == {}", reg.name(), anchor.name(), lo);
+                            writeln!(output, "    {} - {} == {}", reg.name(), anchor.name(), lo)
+                                .unwrap();
                         } else {
-                            println!("    {} - {} in [{}, {}]", reg.name(), anchor.name(), lo, hi);
+                            writeln!(
+                                output,
+                                "    {} - {} in [{}, {}]",
+                                reg.name(),
+                                anchor.name(),
+                                lo,
+                                hi
+                            )
+                            .unwrap();
                         }
                     } else if reg_minus_anchor < INF {
-                        println!(
+                        writeln!(
+                            output,
                             "    {} - {} <= {}",
                             reg.name(),
                             anchor.name(),
                             reg_minus_anchor
-                        );
+                        )
+                        .unwrap();
                     } else {
-                        println!(
+                        writeln!(
+                            output,
                             "    {} - {} >= {}",
                             reg.name(),
                             anchor.name(),
                             -anchor_minus_reg
-                        );
+                        )
+                        .unwrap();
                     }
                 }
             }
         }
+        debug!("{}", output);
     }
 
     /// Standard DBM widening: entries that loosen become INF.

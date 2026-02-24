@@ -7,6 +7,7 @@ use crate::ast::MemSize;
 use crate::zone::dbm::{Dbm, INF};
 use crate::zone::domain::{self, get_interval};
 use crate::zone::tnum::Tnum;
+use log::trace;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,7 +162,7 @@ impl State {
         };
 
         let (min, max) = get_interval(&self.dbm, reg);
-        println!("At spilling, {} bounds: [{}, {}]", reg.name(), min, max);
+        trace!("At spilling, {} bounds: [{}, {}]", reg.name(), min, max);
 
         // Only track as proper spill if 8-byte aligned
         let source_reg = if is_aligned { Some(reg) } else { None };
@@ -343,8 +344,8 @@ impl State {
     }
 
     pub fn restore_anchor_info(&mut self, reg: Reg, spilled: &SpilledReg) {
-        println!("Restoring anchor info for {}", reg.name());
-        println!("{:?}, ", spilled);
+        trace!("Restoring anchor info for {}", reg.name());
+        trace!("{:?}, ", spilled);
         if let Some(anchor) = spilled.anchor {
             if let Some(hi) = spilled.anchor_hi {
                 self.dbm.add_constraint(reg, anchor, hi); // reg - anchor <= hi

@@ -27,12 +27,14 @@ pub fn check_stack_access(
     pointer_frame_lv: FrameLevel,
 ) {
     if state.current_frame_level() > pointer_frame_lv
-        && matches!(kind, AccessKind::Write) && src_type_op.is_some()
-            && let Some(ty) = src_type_op
-                && matches!(ty, RegType::PtrToStack { .. }) {
-                    env.fail(VerificationError::SpillToCaller { pc });
-                    return;
-                }
+        && matches!(kind, AccessKind::Write)
+        && src_type_op.is_some()
+        && let Some(ty) = src_type_op
+        && matches!(ty, RegType::PtrToStack { .. })
+    {
+        env.fail(VerificationError::SpillToCaller { pc });
+        return;
+    }
     let current_frame_depth = -(state.total_stack_depth() as i64);
     let stack_being_accessed = state.stack_at(pointer_frame_lv);
 
@@ -228,16 +230,17 @@ pub fn check_stack_no_pointers(
     for i in 0..size {
         let slot = (stack_offset + i) as i16;
         if let Some(spilled) = stack.get_slot(slot)
-            && spilled.reg_type.is_pointer() {
-                error!(
-                    "[Verifier] pc {}: stack slot {} contains pointer {:?}, cannot expose to map",
-                    pc, slot, spilled.reg_type
-                );
-                env.fail(VerificationError::PointerLeakage {
-                    pc,
-                    offset: slot as i64,
-                });
-                return;
-            }
+            && spilled.reg_type.is_pointer()
+        {
+            error!(
+                "[Verifier] pc {}: stack slot {} contains pointer {:?}, cannot expose to map",
+                pc, slot, spilled.reg_type
+            );
+            env.fail(VerificationError::PointerLeakage {
+                pc,
+                offset: slot as i64,
+            });
+            return;
+        }
     }
 }

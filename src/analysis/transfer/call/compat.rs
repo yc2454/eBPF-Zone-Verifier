@@ -178,18 +178,19 @@ pub fn check_map_type_for_helper(helper: u32, map_type: u32) -> Result<(), &'sta
     if let Some(req) = get_helper_map_requirement(helper) {
         // Check required type
         if let Some(required) = req.required_type
-            && map_type != required {
-                return Err(match helper {
-                    constants::BPF_TAIL_CALL => "bpf_tail_call requires PROG_ARRAY map",
-                    constants::BPF_PERF_EVENT_OUTPUT => {
-                        "bpf_perf_event_output requires PERF_EVENT_ARRAY map"
-                    }
-                    constants::BPF_RINGBUF_OUTPUT | constants::BPF_RINGBUF_RESERVE => {
-                        "bpf_ringbuf_* requires RINGBUF map"
-                    }
-                    _ => "invalid map type for helper",
-                });
-            }
+            && map_type != required
+        {
+            return Err(match helper {
+                constants::BPF_TAIL_CALL => "bpf_tail_call requires PROG_ARRAY map",
+                constants::BPF_PERF_EVENT_OUTPUT => {
+                    "bpf_perf_event_output requires PERF_EVENT_ARRAY map"
+                }
+                constants::BPF_RINGBUF_OUTPUT | constants::BPF_RINGBUF_RESERVE => {
+                    "bpf_ringbuf_* requires RINGBUF map"
+                }
+                _ => "invalid map type for helper",
+            });
+        }
 
         // Check rejected types
         if req.rejected_types.contains(&map_type) {

@@ -154,9 +154,10 @@ pub(crate) fn transfer_packet_load(
     }
 
     if let Some(reg) = src
-        && !check_reg_readable(env, &state, reg) {
-            return vec![];
-        }
+        && !check_reg_readable(env, &state, reg)
+    {
+        return vec![];
+    }
 
     if state.has_active_lock() && mode == PacketLoadMode::Abs {
         env.fail(VerificationError::LoadAbsUnderLock { pc: state.pc });

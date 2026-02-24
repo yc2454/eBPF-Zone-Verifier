@@ -19,6 +19,7 @@ use crate::ast::{EndianOp, Instr, Width};
 use crate::zone::domain::{
     apply_and_imm, assign_interval, forget, get_interval, preserve_anchor_constraints,
 };
+use log::warn;
 
 /// Main transfer function - dispatches to appropriate handler based on instruction type.
 pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<State> {
@@ -170,11 +171,10 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     let (r0_min, r0_max) = get_interval(&state.dbm, Reg::R0);
 
     // Use the helper method on the ProgramKind stored in env
-    if env.ctx.prog_kind.requires_strict_return_code()
-        && (r0_min < 0 || r0_max > 1) {
-            env.fail(VerificationError::InvalidReturnCode { pc: state.pc });
-            return vec![];
-        }
+    if env.ctx.prog_kind.requires_strict_return_code() && (r0_min < 0 || r0_max > 1) {
+        env.fail(VerificationError::InvalidReturnCode { pc: state.pc });
+        return vec![];
+    }
 
     // R0 must be readable at the main frame (it's the return value)
     if state.at_main_frame() && state.types.get(Reg::R0) == RegType::NotInit {
@@ -184,7 +184,7 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
 
     // Check if there is any released reference
     if state.at_main_frame() && state.has_unreleased_refs() {
-        println!("Unreleased reference: {:?}", state.active_refs);
+        warn!("Unreleased reference: {:?}", state.active_refs);
         env.fail(VerificationError::UnreleasedReference);
         return vec![];
     }
@@ -200,11 +200,10 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         return vec![];
     }
 
-    if !state.at_main_frame()
-        && matches!(state.types.get(Reg::R0), RegType::PtrToStack { .. }) {
-            env.fail(VerificationError::CannotReturnStackPointer { pc: state.pc });
-            return vec![];
-        }
+    if !state.at_main_frame() && matches!(state.types.get(Reg::R0), RegType::PtrToStack { .. }) {
+        env.fail(VerificationError::CannotReturnStackPointer { pc: state.pc });
+        return vec![];
+    }
 
     if let Some(frame) = state.pop_frame() {
         // Save callee's R0 (the return value) before restoring caller state

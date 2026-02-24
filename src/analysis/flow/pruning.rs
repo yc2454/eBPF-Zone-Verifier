@@ -18,17 +18,15 @@ fn loop_has_conditional_exit(env: &VerifierEnv, state: &State, pc: usize, prog: 
     if let Some(idx) = state.history_idx {
         let body_pcs = env.history.loop_body_pcs(idx, pc);
         for body_pc in body_pcs {
-            if body_pc < prog.instrs.len()
-                && matches!(prog.instrs[body_pc], Instr::If { .. }) {
-                    return true;
-                }
+            if body_pc < prog.instrs.len() && matches!(prog.instrs[body_pc], Instr::If { .. }) {
+                return true;
+            }
         }
     }
     // Also check the loop head itself
-    if pc < prog.instrs.len()
-        && matches!(prog.instrs[pc], Instr::If { .. }) {
-            return true;
-        }
+    if pc < prog.instrs.len() && matches!(prog.instrs[pc], Instr::If { .. }) {
+        return true;
+    }
     false
 }
 
@@ -68,12 +66,12 @@ fn detect_loop_bound(
             right: Operand::Imm(k),
             ..
         } = &prog.instrs[current_pc]
-        {
-            let (lo, _hi) = get_interval(&state.dbm, *left);
-            if lo >= 0 && *k > 0 {
-                return Some((*left, *k - 1));
-            }
+    {
+        let (lo, _hi) = get_interval(&state.dbm, *left);
+        if lo >= 0 && *k > 0 {
+            return Some((*left, *k - 1));
         }
+    }
 
     // Case 2: Check if we arrived via a `!= K` branch (back-edge at loop head)
     let history_idx = state.history_idx?;
@@ -88,12 +86,13 @@ fn detect_loop_bound(
             target,
             ..
         } = &prog.instrs[branch_pc]
-            && *target == current_pc {
-                let (lo, _hi) = get_interval(&state.dbm, *left);
-                if lo >= 0 && *k > 0 {
-                    return Some((*left, *k - 1));
-                }
-            }
+        && *target == current_pc
+    {
+        let (lo, _hi) = get_interval(&state.dbm, *left);
+        if lo >= 0 && *k > 0 {
+            return Some((*left, *k - 1));
+        }
+    }
 
     None
 }
@@ -115,19 +114,20 @@ fn loop_exit_was_explored(env: &VerifierEnv, state: &State, pc: usize, prog: &Pr
     // (the one that leaves the loop) has been explored
     for &body_pc in &body_pc_set {
         if body_pc < prog.instrs.len()
-            && let Instr::If { target, .. } = &prog.instrs[body_pc] {
-                let fall_through = body_pc + 1;
-                // Check if fall-through exits the loop
-                if !body_pc_set.contains(&fall_through)
-                    && env.explored_states.contains_key(&fall_through) {
-                        return true;
-                    }
-                // Check if target exits the loop
-                if !body_pc_set.contains(target)
-                    && env.explored_states.contains_key(target) {
-                        return true;
-                    }
+            && let Instr::If { target, .. } = &prog.instrs[body_pc]
+        {
+            let fall_through = body_pc + 1;
+            // Check if fall-through exits the loop
+            if !body_pc_set.contains(&fall_through)
+                && env.explored_states.contains_key(&fall_through)
+            {
+                return true;
             }
+            // Check if target exits the loop
+            if !body_pc_set.contains(target) && env.explored_states.contains_key(target) {
+                return true;
+            }
+        }
     }
     false
 }
@@ -248,61 +248,62 @@ pub fn should_prune(
         //    (indicating the loop makes progress and the exit path was explored
         //    with the widened state). Stagnant loops (no change) are infinite.
         if let Some(prev_states) = env.explored_states.get(&pc)
-            && let Some(old) = prev_states.last() {
-                if state_subsumed_by(state, old, live_regs, config) {
-                    // Only converge if:
-                    // 1. Widening was applied (prev_states >= 2)
-                    // 2. Widening was effective (bounds actually expanded
-                    //    compared to the first visit)
-                    // 3. An exit path from the loop was actually explored
-                    if prev_states.len() >= 2 {
-                        let first = &prev_states[0];
-                        let widening_effective = live_regs.iter().any(|&r| {
-                            let (first_min, first_max) = get_interval(&first.dbm, r);
-                            let (last_min, last_max) = get_interval(&old.dbm, r);
-                            last_min < first_min || last_max > first_max
-                        });
+            && let Some(old) = prev_states.last()
+        {
+            if state_subsumed_by(state, old, live_regs, config) {
+                // Only converge if:
+                // 1. Widening was applied (prev_states >= 2)
+                // 2. Widening was effective (bounds actually expanded
+                //    compared to the first visit)
+                // 3. An exit path from the loop was actually explored
+                if prev_states.len() >= 2 {
+                    let first = &prev_states[0];
+                    let widening_effective = live_regs.iter().any(|&r| {
+                        let (first_min, first_max) = get_interval(&first.dbm, r);
+                        let (last_min, last_max) = get_interval(&old.dbm, r);
+                        last_min < first_min || last_max > first_max
+                    });
 
-                        // For bounded loops, we don't need to wait for exit exploration.
-                        // The bound detection itself proves the exit exists and will be reached.
-                        // For unbounded loops, we require the exit to be explored.
-                        let exit_ok =
-                            loop_bound.is_some() || loop_exit_was_explored(env, state, pc, prog);
+                    // For bounded loops, we don't need to wait for exit exploration.
+                    // The bound detection itself proves the exit exists and will be reached.
+                    // For unbounded loops, we require the exit to be explored.
+                    let exit_ok =
+                        loop_bound.is_some() || loop_exit_was_explored(env, state, pc, prog);
 
-                        if widening_effective && exit_ok {
-                            return true; // Converged with verified exit path
-                        }
+                    if widening_effective && exit_ok {
+                        return true; // Converged with verified exit path
                     }
-                    // Widening not effective or no exit path →
-                    // loop may be infinite, let complexity limit catch it
-                    return false;
                 }
+                // Widening not effective or no exit path →
+                // loop may be infinite, let complexity limit catch it
+                return false;
+            }
 
-                // Not converged: apply widening
-                let widened_dbm = old.dbm.widen(&state.dbm);
-                state.dbm = widened_dbm;
+            // Not converged: apply widening
+            let widened_dbm = old.dbm.widen(&state.dbm);
+            state.dbm = widened_dbm;
 
-                // Re-apply the loop bound after widening (widening may have expanded it)
-                if let Some((reg, upper_bound)) = loop_bound {
-                    assume_le_imm(&mut state.dbm, reg, upper_bound);
-                    assume_ge_imm(&mut state.dbm, reg, 0);
-                    // For bounded loop counters, set tnum to fully unknown within the bound.
-                    // This ensures tnum convergence by not tracking exact bit patterns.
-                    state.set_tnum(reg, Tnum::UNKNOWN);
-                }
+            // Re-apply the loop bound after widening (widening may have expanded it)
+            if let Some((reg, upper_bound)) = loop_bound {
+                assume_le_imm(&mut state.dbm, reg, upper_bound);
+                assume_ge_imm(&mut state.dbm, reg, 0);
+                // For bounded loop counters, set tnum to fully unknown within the bound.
+                // This ensures tnum convergence by not tracking exact bit patterns.
+                state.set_tnum(reg, Tnum::UNKNOWN);
+            }
 
-                // Widen Tnums for all live registers to guarantee convergence
-                // Use aggressive widening: if the tnum changed, set to UNKNOWN.
-                // This ensures fast convergence for loops.
-                for &r in live_regs {
-                    let old_t = old.get_tnum(r);
-                    let cur_t = state.get_tnum(r);
-                    if old_t != cur_t {
-                        // Tnum changed - widen to unknown for fast convergence
-                        state.set_tnum(r, Tnum::UNKNOWN);
-                    }
+            // Widen Tnums for all live registers to guarantee convergence
+            // Use aggressive widening: if the tnum changed, set to UNKNOWN.
+            // This ensures fast convergence for loops.
+            for &r in live_regs {
+                let old_t = old.get_tnum(r);
+                let cur_t = state.get_tnum(r);
+                if old_t != cur_t {
+                    // Tnum changed - widen to unknown for fast convergence
+                    state.set_tnum(r, Tnum::UNKNOWN);
                 }
             }
+        }
         return false;
     }
 
@@ -357,9 +358,10 @@ fn state_subsumed_by(
             return false;
         }
         if !config.skip_dbm_check
-            && !dbm_subsumed_by(&cur_frame.caller_dbm, &old_frame.caller_dbm, &saved) {
-                return false;
-            }
+            && !dbm_subsumed_by(&cur_frame.caller_dbm, &old_frame.caller_dbm, &saved)
+        {
+            return false;
+        }
         if !caller_tnum_subsumed_by(cur_frame, old_frame, &saved) {
             return false;
         }

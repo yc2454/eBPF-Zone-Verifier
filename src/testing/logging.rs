@@ -22,9 +22,10 @@ impl FilterConfig {
                 let rest = &log_msg[start + 4..];
                 if let Some(end) = rest.find('|')
                     && let Ok(pc) = rest[..end].parse::<usize>()
-                        && !range.contains(&pc) {
-                            return false;
-                        }
+                    && !range.contains(&pc)
+                {
+                    return false;
+                }
             }
         }
 

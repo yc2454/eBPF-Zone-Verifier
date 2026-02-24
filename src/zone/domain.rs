@@ -290,13 +290,12 @@ pub fn apply_div_imm(dbm: &mut Dbm, reg: Reg, imm: i64) {
     let (l, h) = get_interval(dbm, reg);
     forget(dbm, reg);
 
-    if l != i64::MIN && h != i64::MAX
-        && l >= 0 && h >= 0 {
-            let new_lo = l / imm;
-            let new_hi = h / imm;
-            assume_ge_imm(dbm, reg, new_lo);
-            assume_le_imm(dbm, reg, new_hi);
-        }
+    if l != i64::MIN && h != i64::MAX && l >= 0 && h >= 0 {
+        let new_lo = l / imm;
+        let new_hi = h / imm;
+        assume_ge_imm(dbm, reg, new_lo);
+        assume_le_imm(dbm, reg, new_hi);
+    }
 }
 
 /// Performs dst /= src. Conservative: forgets the destination.

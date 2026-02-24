@@ -116,21 +116,25 @@ pub fn analyze_benchmark(dir_path: &str, config: &VerifierConfig) {
 
         // Apply Filters HERE
         if let Some(f_proj) = &config.bench_project
-            && &project != f_proj {
-                continue;
-            }
+            && &project != f_proj
+        {
+            continue;
+        }
         if let Some(f_comp) = &config.bench_compiler
-            && &compiler != f_comp {
-                continue;
-            }
+            && &compiler != f_comp
+        {
+            continue;
+        }
         if let Some(f_opt) = &config.bench_opt
-            && &opt != f_opt {
-                continue;
-            }
+            && &opt != f_opt
+        {
+            continue;
+        }
         if let Some(f_src) = &config.bench_source
-            && &source_prog != f_src {
-                continue;
-            }
+            && &source_prog != f_src
+        {
+            continue;
+        }
 
         tasks.push((path, filename, project, compiler, opt, source_prog));
     }

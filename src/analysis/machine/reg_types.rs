@@ -4,8 +4,7 @@ use crate::analysis::machine::reg::Reg;
 
 pub const NUM_REGS: usize = 11;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[derive(Default)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
 pub enum RegType {
     #[default]
     NotInit,
@@ -65,7 +64,6 @@ pub enum RegType {
         mem_size: u64,
     },
 }
-
 
 impl RegType {
     pub fn is_pointer(self) -> bool {

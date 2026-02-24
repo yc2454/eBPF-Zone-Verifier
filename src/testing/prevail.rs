@@ -561,9 +561,10 @@ pub fn prevail_benchmark(dir_path: &str, config: &VerifierConfig, output_dir: Op
 
         // Apply project filter
         if let Some(filter_proj) = &config.bench_project
-            && &project != filter_proj {
-                continue;
-            }
+            && &project != filter_proj
+        {
+            continue;
+        }
 
         // Skip build directory (that's for catalogue-based tests)
         if project == "build" {
