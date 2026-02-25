@@ -252,10 +252,6 @@ fn get_use_def(instr: &Instr) -> UseDef {
     let mut ud = UseDef::new();
 
     match instr {
-        Instr::MovArg0 { dst } => {
-            ud.def_regs.insert(*dst);
-        }
-
         Instr::Alu { op, dst, src, .. } => {
             use crate::ast::AluOp;
             // `Mov X, X` is a NOP — no use, no def for liveness purposes.

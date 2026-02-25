@@ -325,7 +325,7 @@ fn handle_packet_ptr_subtraction(state: &mut State, dst: Reg, src: Reg) {
     let end_to_dst = state.dbm.get(end_anchor, src);
     state.dbm.add_constraint(end_anchor, dst, end_to_dst);
 
-    // KEY FIX: Link @data to Zero so that absolute constraints on dst
+    // Link @data to Zero so that absolute constraints on dst
     // (like `dst >= 14`) propagate through to anchor relationships.
     //
     // The closure path is: @data → Zero → dst → @data_end

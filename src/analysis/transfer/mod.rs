@@ -23,14 +23,11 @@ use log::warn;
 
 /// Main transfer function - dispatches to appropriate handler based on instruction type.
 pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<State> {
-    // 1. Mark as Seen
     if state.pc < env.insn_aux_data.len() {
         env.insn_aux_data[state.pc].seen = true;
     }
 
     match instr {
-        Instr::MovArg0 { dst } => transfer_mov_arg0(state, *dst),
-
         Instr::Alu {
             width,
             op,
@@ -103,14 +100,6 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
     }
 }
 
-/// Transfer function for MovArg0 (initialize R1 with context pointer).
-fn transfer_mov_arg0(mut state: State, dst: Reg) -> Vec<State> {
-    forget(&mut state.dbm, dst);
-    state.types.set(dst, RegType::PtrToCtx);
-    state.pc += 1;
-    vec![state]
-}
-
 /// Transfer function for Endian (byte swap) instructions.
 fn transfer_endian(
     _env: &VerifierEnv,
@@ -147,16 +136,8 @@ fn transfer_endian(
     }
 
     // 3. Handle Implicit 32-bit Zero Extension
-    // If this was 0xdc (Width::W32), the upper 32 bits are ALWAYS cleared.
     // This provides a tighter bound [0, U32_MAX] even if the operation was "Unknown".
     if width == Width::W32 {
-        // Safe intersection: intersect current bounds with [0, 0xFFFFFFFF]
-        // domain::assign_and_mask effectively does 'forget + bound',
-        // but since we might have just set tighter bounds (like 0xFFFF) above,
-        // we use 'bit_and_const' or manual bounds to preserve them.
-
-        // Simplest Sound Approach: Just enforce the mask.
-        // If we already did mask 0xFFFF above, 0xFFFF & 0xFFFFFFFF == 0xFFFF (Safe).
         apply_and_imm(&mut state.dbm, dst, 0xFFFF_FFFF);
     }
 
