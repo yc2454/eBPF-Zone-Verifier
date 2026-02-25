@@ -17,7 +17,6 @@ use log::error;
 use super::common::{check_operand_readable, check_reg_readable, check_reg_writable};
 use super::types::update_alu_types;
 
-// Re-export public transfer function
 pub(crate) fn transfer_alu(
     env: &mut VerifierEnv,
     mut state: State,

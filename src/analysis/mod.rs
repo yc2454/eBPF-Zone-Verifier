@@ -26,7 +26,7 @@ pub fn analyze_program(
     entry_dbm: Dbm,
     config: &VerifierConfig,
 ) -> Result<Vec<Dbm>, VerificationError> {
-    // 1. Initialize Verifier Environment
+    // 1. Initialize Verifier Environment and control flow checks
     let mut env = VerifierEnv::new(ctx, prog);
 
     if config.verbosity >= 1 {
@@ -36,6 +36,7 @@ pub fn analyze_program(
         }
     }
 
+    // Check subprograms and stack overflow
     if let Err(e) = subprog::check_subprogs(prog) {
         error!(target: "app", "[Analysis] CFG Error: {}", e);
         return Err(VerificationError::SubprogError { e });
@@ -46,11 +47,13 @@ pub fn analyze_program(
         return Err(VerificationError::SubprogError { e });
     }
 
+    // Check CFG. This includes checking for unreachable code and marking prune points.
     if let Err(e) = cfg::check_cfg(prog, &mut env) {
         error!(target: "app", "[Analysis] CFG Error: {}", e);
         return Err(VerificationError::CfgError(e));
     }
 
+    // Compute liveness information for all registers.
     liveness::compute_liveness(prog, &mut env);
 
     // 2. Initialize Entry State
@@ -88,21 +91,21 @@ pub fn analyze_program(
             break;
         }
 
-        // A.a TYPE CONFLICT RESOLUTION (deferred checking approach)
+        // A.a TYPE CONFLICT RESOLUTION
         // Demote conflicting registers to ScalarValue.
         // If they're later used as pointers, that will fail.
         if state.pc < prog.instrs.len() - 1 {
             merging::resolve_type_conflicts(&env, &mut state);
         }
 
-        // A.b PRUNING CHECK (efficiency - may skip this path)
+        // A.b PRUNING CHECK
         if pruning::should_prune(&env, &mut state, config, prog) {
             info!("Pruned state at pc {}", state.pc);
             prune_count += 1;
             continue;
         }
 
-        // A.c RECORD STATE (must come after pruning check, before transfer)
+        // A.c RECORD STATE
         merging::record_state(&mut env, state.clone());
 
         // B. Global Complexity Limit (only count non-pruned states)
@@ -130,7 +133,6 @@ pub fn analyze_program(
         }
         let instr = &prog.instrs[state.pc];
 
-        // If history is enabled, record this step using the parent index from the state.
         let reg_types_str = state.types.reg_types_str();
         let current_step_idx = Some(env.history.record(
             state.pc,
@@ -140,28 +142,20 @@ pub fn analyze_program(
             state.history_idx,
         ));
 
-        // E. Logging (Delegated to Global Logger)
-        // We output the raw data following the protocol. The Logger filters it.
+        // E. Logging
         if config.verbosity >= 2 {
             state.dbm.pretty_print();
         }
         debug!(target: "app", "|PC:{}| Instr: [[{}]]\nRegs: {:?}\nTnums: {:?}\n", 
                state.pc, instr, state.types.reg_types_str(), state.tnums_to_string());
-        // debug!(target: "app", "|PC:{}| Instr: [[{}]]\n",
-        //        state.pc, instr);
-        // for cf in state.frames.iter() {
-        //     println!("{}: {}", cf, cf.stack);
-        // }
 
         // F. Transfer Function
         let successors = transfer::transfer(&mut env, state, instr);
 
         // G. Critical Failure Check
         if env.failed() {
-            // This error! call triggers the RingBufferLogger to dump the last 100 steps
             error!(target: "analysis", "[Verifier] Analysis halted due to critical error: {}", 
                    env.error.as_ref().unwrap().description());
-            // Additionally, if we have history tracking, reconstruct and print the crash trace
             if config.enable_path_trace
                 && let Some(crash_idx) = current_step_idx
             {
@@ -184,11 +178,6 @@ pub fn analyze_program(
 
         // H. Push Successors
         // Prioritize exit-path successors over loop-back successors.
-        // In a LIFO worklist, items pushed last are processed first.
-        // Push loop-back successors first (processed later), then exit
-        // successors last (processed first). This ensures exit paths are
-        // explored before the loop converges, so convergence can verify
-        // that the exit was actually reachable.
         let mut loop_back = Vec::new();
         let mut other = Vec::new();
         for mut succ in successors.into_iter() {

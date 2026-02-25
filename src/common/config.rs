@@ -132,7 +132,6 @@ impl VerifierConfig {
                                 Some((name, size_str)) => {
                                     if let Ok(size) = size_str.parse::<u32>() {
                                         config.map_overrides.insert(name.to_string(), size);
-                                        // println!("Overriding map '{}' to size {}", name, size);
                                     } else {
                                         eprintln!(
                                             "Warning: Invalid size in map override '{}'",

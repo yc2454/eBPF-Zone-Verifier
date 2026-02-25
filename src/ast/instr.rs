@@ -9,10 +9,6 @@ use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Instr {
-    #[allow(dead_code)]
-    MovArg0 {
-        dst: Reg,
-    },
     Alu {
         width: Width,
         op: AluOp,
@@ -86,7 +82,6 @@ impl fmt::Display for Instr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Instr::*;
         match *self {
-            MovArg0 { dst } => write!(f, "{} = arg0", dst.name()),
             Alu {
                 width,
                 op,
