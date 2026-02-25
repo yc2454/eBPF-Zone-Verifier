@@ -9,7 +9,7 @@ mod zone;
 
 use crate::ast::ProgramKind;
 use crate::common::config::VerifierConfig;
-use crate::common::utils::program_kind_for_object;
+use crate::parsing::elf::program_kind_for_object;
 use crate::parsing::elf::{list_section_names, load_maps, load_raw_programs};
 use crate::testing::bcf_benchmark::analyze_benchmark;
 use crate::testing::logging;
