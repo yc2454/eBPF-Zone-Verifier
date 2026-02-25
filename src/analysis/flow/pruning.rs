@@ -30,28 +30,17 @@ fn loop_has_conditional_exit(env: &VerifierEnv, state: &State, pc: usize, prog: 
     false
 }
 
-/// Extract loop bound from a `!= K` condition on the back-edge.
-///
-/// For bounded loops like `for (i = 0; i < 40; i++)`, the compiler often generates:
-///   `if r != 40 goto loop_head`
-///
-/// On the back-edge (taken path), we know `r != K`. For an incrementing loop counter
-/// starting from 0 or a small value, this means `r < K` (we haven't reached K yet).
-///
-/// Returns (reg, upper_bound) if a bounded loop pattern is detected.
 /// Extract loop bound from a `!= K` condition.
 ///
-/// This is called when we detect a back-edge. There are two cases:
-/// 1. Back-edge at the branch instruction itself (e.g., PC 26: `if r1 != 40 goto 20`)
-///    - We're re-visiting the branch, so look at the CURRENT instruction
-/// 2. Back-edge at the loop head (e.g., PC 20)
-///    - We jumped back, so look at the PARENT instruction (what branched here)
-///
-/// For bounded loops like `for (i = 0; i < 40; i++)`, the compiler generates:
+/// This is called when we detect a back-edge to infer an upper bound for the loop.
+/// For bounded loops (e.g. `for (i = 0; i < 40; i++)`), the compiler emits:
 ///   `if r != 40 goto loop_head`
 ///
-/// On the back-edge, we know `r != K`. For an incrementing loop counter,
-/// this means `r < K`.
+/// Since the loop continues only when `r != K`, an incrementing counter yields `r < K`.
+/// There are two back-edge detection cases handled here:
+/// 1. We're at the branch instruction itself (`if r1 != 40 goto 20`).
+/// 2. We're at the loop head and arrived via a backward jump (`goto 20` where PC=20).
+/// Returns `(reg, upper_bound)` if a bounded loop pattern is detected.
 fn detect_loop_bound(
     env: &VerifierEnv,
     state: &State,
