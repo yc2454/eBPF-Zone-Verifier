@@ -1,9 +1,6 @@
 // src/domain.rs
 use crate::analysis::machine::reg::{REG_ENV, Reg};
-use crate::{
-    common::utils::clamped_add,
-    zone::dbm::{Dbm, INF},
-};
+use crate::zone::dbm::{Dbm, INF, clamped_add};
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  1. Query & Interval Analysis

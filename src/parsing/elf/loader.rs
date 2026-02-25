@@ -3,43 +3,14 @@ use crate::parsing::bpf_to_ast;
 use crate::parsing::elf::{
     BpfMapDef, RelocInfo, combine_program_with_subprogs, discover_bpf_call_targets,
 };
-use crate::zone::dbm::INF;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-// Bounds for finite constraints inside the DBM.
-// We never store anything > POS_BOUND or < NEG_BOUND.
-const POS_BOUND: i64 = INF / 2;
-const NEG_BOUND: i64 = -POS_BOUND;
+pub const OBJ_PROG_TYPE_JSON: &str = "./obj_prog_type.json";
 
-#[inline]
-pub fn clamp_upper_bound(c: i64) -> i64 {
-    // We represent "no constraint" as INF.
-    // For x - y <= c with huge positive c, we can treat it as no constraint.
-    if c > POS_BOUND {
-        INF
-    } else if c < NEG_BOUND {
-        // Very strong negative bound; weaken to NEG_BOUND
-        NEG_BOUND
-    } else {
-        c
-    }
-}
-
-#[inline]
-pub fn clamped_add(a: i64, b: i64) -> i64 {
-    // Safe addition for Floyd–Warshall.
-    // If either side is INF, or the sum overflows, treat as INF (no useful bound).
-    if a >= INF || b >= INF {
-        return INF;
-    }
-    match a.checked_add(b) {
-        Some(sum) => clamp_upper_bound(sum),
-        None => INF,
-    }
-}
+type RawJsonMap = HashMap<String, Option<String>>;
 
 /// Load a Program from an ELF section by:
 ///   ELF -> bytes -> RawBpfInsn -> Program (via bpf_to_ast).
@@ -169,10 +140,6 @@ pub fn try_load_combined_program_from_elf(
 
     Ok((prog, combined.pc_to_reloc))
 }
-
-pub const OBJ_PROG_TYPE_JSON: &str = "./obj_prog_type.json";
-
-type RawJsonMap = HashMap<String, Option<String>>;
 
 /// Lookup program kind for a single object file.
 /// - `obj_path` may be a full path; we try exact match, then basename.

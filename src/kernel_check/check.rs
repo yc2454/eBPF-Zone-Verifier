@@ -1,9 +1,9 @@
-use crate::ast::Program;
-use crate::zone::dbm::Dbm;
 use crate::analysis::machine::context::ExecContext;
+use crate::analysis::machine::reg::{REG_ENV, Reg};
+use crate::ast::Program;
 use crate::kernel_semantics;
-use crate::analysis::machine::reg::{Reg, REG_ENV};
-use crate::utils::clamp_upper_bound;
+use crate::zone::dbm::Dbm;
+use crate::zone::dbm::clamp_upper_bound;
 
 pub struct CheckError {
     pub pc: usize,
@@ -34,7 +34,12 @@ pub fn check_included(post: &Dbm, cert: &Dbm) -> Result<(), InclusionFailure> {
             if post_v > cert_v {
                 let xi = REG_ENV.var_of_index(i);
                 let xj = REG_ENV.var_of_index(j);
-                return Err(InclusionFailure { post: post_v, cert: cert_v, xi, xj });
+                return Err(InclusionFailure {
+                    post: post_v,
+                    cert: cert_v,
+                    xi,
+                    xj,
+                });
             }
         }
     }
@@ -89,10 +94,7 @@ pub fn check_certificate_against_kernel_sim(
                     return Err(CheckError {
                         pc,
                         succ,
-                        msg: format!(
-                            "inclusion check failed\n{}",
-                            format_inclusion_failure(&f)
-                        ),
+                        msg: format!("inclusion check failed\n{}", format_inclusion_failure(&f)),
                     });
                 }
             }
@@ -109,9 +111,6 @@ pub fn format_inclusion_failure(f: &InclusionFailure) -> String {
 
     format!(
         "violated constraint at entry ({}, {}): {} - {} <= {}\n  post has {}\n  cert has {}",
-        xi_name, xj_name,
-        xi_name, xj_name, f.cert,
-        f.post,
-        f.cert
+        xi_name, xj_name, xi_name, xj_name, f.cert, f.post, f.cert
     )
 }

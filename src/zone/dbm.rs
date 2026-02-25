@@ -1,9 +1,40 @@
 // src/dbm.rs
 use crate::analysis::machine::reg::{REG_ENV, Reg};
-use crate::common::utils::{clamp_upper_bound, clamped_add};
 use log::debug;
 
 pub const INF: i64 = i64::MAX / 4;
+
+// Bounds for finite constraints inside the DBM.
+// We never store anything > POS_BOUND or < NEG_BOUND.
+const POS_BOUND: i64 = INF / 2;
+const NEG_BOUND: i64 = -POS_BOUND;
+
+#[inline]
+pub fn clamp_upper_bound(c: i64) -> i64 {
+    // We represent "no constraint" as INF.
+    // For x - y <= c with huge positive c, we can treat it as no constraint.
+    if c > POS_BOUND {
+        INF
+    } else if c < NEG_BOUND {
+        // Very strong negative bound; weaken to NEG_BOUND
+        NEG_BOUND
+    } else {
+        c
+    }
+}
+
+#[inline]
+pub fn clamped_add(a: i64, b: i64) -> i64 {
+    // Safe addition for Floyd–Warshall.
+    // If either side is INF, or the sum overflows, treat as INF (no useful bound).
+    if a >= INF || b >= INF {
+        return INF;
+    }
+    match a.checked_add(b) {
+        Some(sum) => clamp_upper_bound(sum),
+        None => INF,
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dbm {

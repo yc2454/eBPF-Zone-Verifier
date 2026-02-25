@@ -1,10 +1,10 @@
 // src/kernel_semantics.rs
 
-use crate::ast::{AluOp, CmpOp, Instr, Operand, Width, EndianKind};
-use crate::zone::dbm::{Dbm, INF};
-use crate::analysis::machine::reg::REG_ENV;
 use crate::analysis::machine::context::ExecContext;
-use crate::utils::{clamped_add, clamped_add3};
+use crate::analysis::machine::reg::REG_ENV;
+use crate::ast::{AluOp, CmpOp, EndianKind, Instr, Operand, Width};
+use crate::zone::dbm::{Dbm, INF};
+use crate::zone::dbm::{clamped_add, clamped_add3};
 
 pub fn inconsistent(dbm: &Dbm) -> bool {
     let n = dbm.dim();
@@ -57,7 +57,11 @@ fn forget_var_by_index(dbm: &mut Dbm, x: usize) {
     dbm.set_raw(x, x, 0);
 }
 
-fn proven_u32_range(dbm: &Dbm, v: crate::analysis::machine::reg::Reg, zero: crate::analysis::machine::reg::Reg) -> bool {
+fn proven_u32_range(
+    dbm: &Dbm,
+    v: crate::analysis::machine::reg::Reg,
+    zero: crate::analysis::machine::reg::Reg,
+) -> bool {
     // Need: 0 <= v <= 0xffff_ffff
     let vi = REG_ENV.index(v);
     let zi = REG_ENV.index(zero);
@@ -78,12 +82,20 @@ pub fn transfer_one_kernel(
 ) -> Vec<(usize, Dbm)> {
     match instr {
         Instr::MovArg0 { dst } => transfer_mov_arg0(ctx, pc, *dst, pre),
-        Instr::Alu { op, dst, src, width } => 
-            transfer_alu(ctx, pc, *op, *width, *dst, *src, pre),
-        Instr::Endian { dst, kind } => 
-            transfer_endian(ctx, pc, *dst, *kind, pre),
-        Instr::If { width, left, op, right, target } => 
-            transfer_if(ctx, pc, *width, *left, *op, *right, *target, pre),
+        Instr::Alu {
+            op,
+            dst,
+            src,
+            width,
+        } => transfer_alu(ctx, pc, *op, *width, *dst, *src, pre),
+        Instr::Endian { dst, kind } => transfer_endian(ctx, pc, *dst, *kind, pre),
+        Instr::If {
+            width,
+            left,
+            op,
+            right,
+            target,
+        } => transfer_if(ctx, pc, *width, *left, *op, *right, *target, pre),
         Instr::Jmp { target } => vec![(*target, pre.clone())],
         Instr::Load { dst, .. } => transfer_load(pc, *dst, pre),
         Instr::Store { .. } => vec![(pc + 1, pre.clone())],
@@ -94,14 +106,23 @@ pub fn transfer_one_kernel(
 
 // --- per-instruction helpers ---
 
-fn transfer_mov_arg0(ctx: &ExecContext, pc: usize, dst: crate::analysis::machine::reg::Reg, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_mov_arg0(
+    ctx: &ExecContext,
+    pc: usize,
+    dst: crate::analysis::machine::reg::Reg,
+    pre: &Dbm,
+) -> Vec<(usize, Dbm)> {
     let mut d = pre.clone();
     let x = REG_ENV.index(dst);
     let _zero_i = REG_ENV.index(ctx.zero);
 
     forget_var_by_index(&mut d, x);
 
-    if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
+    if inconsistent(&d) {
+        vec![]
+    } else {
+        vec![(pc + 1, d)]
+    }
 }
 
 fn transfer_alu(
@@ -120,7 +141,7 @@ fn transfer_alu(
         AluOp::And => transfer_and(ctx, pc, width, dst, src, pre),
         AluOp::Shr => transfer_shr(ctx, pc, width, dst, src, pre),
         AluOp::Shl => transfer_shl(pc, dst, pre),
-        AluOp::Or  => transfer_or(ctx, pc, width, dst, src, pre),
+        AluOp::Or => transfer_or(ctx, pc, width, dst, src, pre),
         AluOp::Arsh => {
             // Arithmetic right shift (sign-propagating).
             // Zones don’t track bit-level sign; modeling this precisely would
@@ -174,7 +195,14 @@ fn transfer_sub(
     }
 }
 
-fn transfer_shr(ctx: &ExecContext, pc: usize, width: Width, dst: crate::analysis::machine::reg::Reg, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_shr(
+    ctx: &ExecContext,
+    pc: usize,
+    width: Width,
+    dst: crate::analysis::machine::reg::Reg,
+    src: Operand,
+    pre: &Dbm,
+) -> Vec<(usize, Dbm)> {
     let mut d = pre.clone();
     let x = REG_ENV.index(dst);
     let z = REG_ENV.index(ctx.zero);
@@ -198,17 +226,36 @@ fn transfer_shr(ctx: &ExecContext, pc: usize, width: Width, dst: crate::analysis
         }
     }
 
-    if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
+    if inconsistent(&d) {
+        vec![]
+    } else {
+        vec![(pc + 1, d)]
+    }
 }
 
-fn transfer_shl(pc: usize, dst: crate::analysis::machine::reg::Reg, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_shl(
+    pc: usize,
+    dst: crate::analysis::machine::reg::Reg,
+    pre: &Dbm,
+) -> Vec<(usize, Dbm)> {
     let mut d = pre.clone();
     let x = REG_ENV.index(dst);
     forget_var_by_index(&mut d, x);
-    if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
+    if inconsistent(&d) {
+        vec![]
+    } else {
+        vec![(pc + 1, d)]
+    }
 }
 
-fn transfer_mov(ctx: &ExecContext, pc: usize, width: Width, dst: crate::analysis::machine::reg::Reg, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_mov(
+    ctx: &ExecContext,
+    pc: usize,
+    width: Width,
+    dst: crate::analysis::machine::reg::Reg,
+    src: Operand,
+    pre: &Dbm,
+) -> Vec<(usize, Dbm)> {
     let zero_i = REG_ENV.index(ctx.zero);
     let mut d = pre.clone();
     let x = REG_ENV.index(dst);
@@ -238,7 +285,11 @@ fn transfer_mov(ctx: &ExecContext, pc: usize, width: Width, dst: crate::analysis
         }
         Operand::Imm(c) => {
             // mov32 imm: u32 then zero-extend
-            let c = if width == Width::W32 { (c as u32) as i64 } else { c };
+            let c = if width == Width::W32 {
+                (c as u32) as i64
+            } else {
+                c
+            };
 
             // dst := c  ==> dst == c
             add_edge_and_saturate(&mut d, x, zero_i, c);
@@ -246,18 +297,34 @@ fn transfer_mov(ctx: &ExecContext, pc: usize, width: Width, dst: crate::analysis
         }
     }
 
-    if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
+    if inconsistent(&d) {
+        vec![]
+    } else {
+        vec![(pc + 1, d)]
+    }
 }
 
-fn transfer_add(ctx: &ExecContext, pc: usize, dst: crate::analysis::machine::reg::Reg, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_add(
+    ctx: &ExecContext,
+    pc: usize,
+    dst: crate::analysis::machine::reg::Reg,
+    src: Operand,
+    pre: &Dbm,
+) -> Vec<(usize, Dbm)> {
     match src {
         Operand::Imm(imm) => transfer_add_imm(pc, dst, imm, pre),
         Operand::Reg(r) => transfer_add_reg_mvp(ctx, pc, dst, r, pre),
     }
 }
 
-fn transfer_or(ctx: &ExecContext, pc: usize, width: Width,
-    dst: crate::analysis::machine::reg::Reg, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_or(
+    ctx: &ExecContext,
+    pc: usize,
+    width: Width,
+    dst: crate::analysis::machine::reg::Reg,
+    src: Operand,
+    pre: &Dbm,
+) -> Vec<(usize, Dbm)> {
     let x = REG_ENV.index(dst);
     let z = REG_ENV.index(ctx.zero);
     let mut d = pre.clone();
@@ -323,7 +390,12 @@ fn transfer_endian(
     }
 }
 
-fn transfer_add_imm(pc: usize, dst: crate::analysis::machine::reg::Reg, imm: i64, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_add_imm(
+    pc: usize,
+    dst: crate::analysis::machine::reg::Reg,
+    imm: i64,
+    pre: &Dbm,
+) -> Vec<(usize, Dbm)> {
     let mut d = pre.clone();
     let x = REG_ENV.index(dst);
     let n = d.dim();
@@ -338,10 +410,20 @@ fn transfer_add_imm(pc: usize, dst: crate::analysis::machine::reg::Reg, imm: i64
     }
     d.set_raw(x, x, 0);
 
-    if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
+    if inconsistent(&d) {
+        vec![]
+    } else {
+        vec![(pc + 1, d)]
+    }
 }
 
-fn transfer_add_reg_mvp(ctx: &ExecContext, pc: usize, dst: crate::analysis::machine::reg::Reg, src: crate::analysis::machine::reg::Reg, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_add_reg_mvp(
+    ctx: &ExecContext,
+    pc: usize,
+    dst: crate::analysis::machine::reg::Reg,
+    src: crate::analysis::machine::reg::Reg,
+    pre: &Dbm,
+) -> Vec<(usize, Dbm)> {
     // MVP rule (same as your current):
     // - if dst is provably constant, keep exact relation: dst := src + c
     // - else: forget dst
@@ -362,11 +444,21 @@ fn transfer_add_reg_mvp(ctx: &ExecContext, pc: usize, dst: crate::analysis::mach
         add_edge_and_saturate(&mut d, y, x, -c);
     }
 
-    if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
+    if inconsistent(&d) {
+        vec![]
+    } else {
+        vec![(pc + 1, d)]
+    }
 }
 
-fn transfer_and(ctx: &ExecContext, pc: usize, width: Width,
-    dst: crate::analysis::machine::reg::Reg, src: Operand, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_and(
+    ctx: &ExecContext,
+    pc: usize,
+    width: Width,
+    dst: crate::analysis::machine::reg::Reg,
+    src: Operand,
+    pre: &Dbm,
+) -> Vec<(usize, Dbm)> {
     // We only model AND with immediate masks for now.
     let zero_i = REG_ENV.index(ctx.zero);
     let mut d = pre.clone();
@@ -375,21 +467,37 @@ fn transfer_and(ctx: &ExecContext, pc: usize, width: Width,
     forget_var_by_index(&mut d, x);
 
     if let Operand::Imm(mask) = src {
-        let mask = if width == Width::W32 { (mask as u32) as i64 } else { mask };
+        let mask = if width == Width::W32 {
+            (mask as u32) as i64
+        } else {
+            mask
+        };
         // sound approximation for unsigned mask:
         // 0 <= dst <= mask
         add_edge_and_saturate(&mut d, x, zero_i, mask);
         add_edge_and_saturate(&mut d, zero_i, x, 0);
     }
 
-    if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
+    if inconsistent(&d) {
+        vec![]
+    } else {
+        vec![(pc + 1, d)]
+    }
 }
 
-fn transfer_forget_dst(pc: usize, dst: crate::analysis::machine::reg::Reg, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_forget_dst(
+    pc: usize,
+    dst: crate::analysis::machine::reg::Reg,
+    pre: &Dbm,
+) -> Vec<(usize, Dbm)> {
     let mut d = pre.clone();
     let x = REG_ENV.index(dst);
     forget_var_by_index(&mut d, x);
-    if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
+    if inconsistent(&d) {
+        vec![]
+    } else {
+        vec![(pc + 1, d)]
+    }
 }
 
 fn transfer_if(
@@ -413,8 +521,8 @@ fn transfer_if(
     // - Otherwise: no refinement, just fork.
     let (op, right) = if width == Width::W32 {
         match (op, right) {
-            (CmpOp::Eq,  Operand::Imm(imm))
-            | (CmpOp::Ne,  Operand::Imm(imm))
+            (CmpOp::Eq, Operand::Imm(imm))
+            | (CmpOp::Ne, Operand::Imm(imm))
             | (CmpOp::UGe, Operand::Imm(imm))
             | (CmpOp::ULe, Operand::Imm(imm))
             | (CmpOp::UGt, Operand::Imm(imm))
@@ -444,7 +552,9 @@ fn transfer_if(
             let mut dt = pre.clone();
             add_edge_and_saturate(&mut dt, l, zero_i, imm);
             add_edge_and_saturate(&mut dt, zero_i, l, -imm);
-            if !inconsistent(&dt) { out.push((target, dt)); }
+            if !inconsistent(&dt) {
+                out.push((target, dt));
+            }
 
             // else: left != imm  (DBM can't express disequality; no refinement)
             out.push((pc + 1, pre.clone()));
@@ -458,7 +568,9 @@ fn transfer_if(
             let mut de = pre.clone();
             add_edge_and_saturate(&mut de, l, zero_i, imm);
             add_edge_and_saturate(&mut de, zero_i, l, -imm);
-            if !inconsistent(&de) { out.push((pc + 1, de)); }
+            if !inconsistent(&de) {
+                out.push((pc + 1, de));
+            }
         }
 
         // ======= Existing UGe/ULe cases (W64 only in MVP; W32 returns earlier) =======
@@ -466,13 +578,17 @@ fn transfer_if(
             // then: left >= imm  <=> 0 - left <= -imm
             let mut dt = pre.clone();
             add_edge_and_saturate(&mut dt, zero_i, l, -imm);
-            if !inconsistent(&dt) { out.push((target, dt)); }
+            if !inconsistent(&dt) {
+                out.push((target, dt));
+            }
 
             // else: 0 <= left <= imm-1
             let mut de = pre.clone();
             add_edge_and_saturate(&mut de, l, zero_i, imm - 1);
             add_edge_and_saturate(&mut de, zero_i, l, 0);
-            if !inconsistent(&de) { out.push((pc + 1, de)); }
+            if !inconsistent(&de) {
+                out.push((pc + 1, de));
+            }
         }
 
         (CmpOp::ULe, Operand::Imm(imm)) => {
@@ -480,12 +596,16 @@ fn transfer_if(
             let mut dt = pre.clone();
             add_edge_and_saturate(&mut dt, l, zero_i, imm);
             add_edge_and_saturate(&mut dt, zero_i, l, 0);
-            if !inconsistent(&dt) { out.push((target, dt)); }
+            if !inconsistent(&dt) {
+                out.push((target, dt));
+            }
 
             // else: left >= imm+1  <=> 0 - left <= -(imm+1)
             let mut de = pre.clone();
             add_edge_and_saturate(&mut de, zero_i, l, -(imm + 1));
-            if !inconsistent(&de) { out.push((pc + 1, de)); }
+            if !inconsistent(&de) {
+                out.push((pc + 1, de));
+            }
         }
 
         // ---------- left > imm ----------
@@ -493,13 +613,17 @@ fn transfer_if(
             // then: left > imm  => left >= imm+1  <=> 0 - left <= -(imm+1)
             let mut dt = pre.clone();
             add_edge_and_saturate(&mut dt, zero_i, l, -(imm + 1));
-            if !inconsistent(&dt) { out.push((target, dt)); }
+            if !inconsistent(&dt) {
+                out.push((target, dt));
+            }
 
             // else: left <= imm, and 0 <= left
             let mut de = pre.clone();
             add_edge_and_saturate(&mut de, l, zero_i, imm);
             add_edge_and_saturate(&mut de, zero_i, l, 0);
-            if !inconsistent(&de) { out.push((pc + 1, de)); }
+            if !inconsistent(&de) {
+                out.push((pc + 1, de));
+            }
         }
 
         // ---------- left < imm ----------
@@ -508,12 +632,16 @@ fn transfer_if(
             let mut dt = pre.clone();
             add_edge_and_saturate(&mut dt, l, zero_i, imm - 1);
             add_edge_and_saturate(&mut dt, zero_i, l, 0);
-            if !inconsistent(&dt) { out.push((target, dt)); }
+            if !inconsistent(&dt) {
+                out.push((target, dt));
+            }
 
             // else: left >= imm  <=> 0 - left <= -imm
             let mut de = pre.clone();
             add_edge_and_saturate(&mut de, zero_i, l, -imm);
-            if !inconsistent(&de) { out.push((pc + 1, de)); }
+            if !inconsistent(&de) {
+                out.push((pc + 1, de));
+            }
         }
 
         (CmpOp::UGe, Operand::Reg(r)) => {
@@ -522,12 +650,16 @@ fn transfer_if(
             // then: left >= r  <=> r - left <= 0
             let mut dt = pre.clone();
             add_edge_and_saturate(&mut dt, rr, l, 0);
-            if !inconsistent(&dt) { out.push((target, dt)); }
+            if !inconsistent(&dt) {
+                out.push((target, dt));
+            }
 
             // else: left < r  <=> left - r <= -1
             let mut de = pre.clone();
             add_edge_and_saturate(&mut de, l, rr, -1);
-            if !inconsistent(&de) { out.push((pc + 1, de)); }
+            if !inconsistent(&de) {
+                out.push((pc + 1, de));
+            }
         }
 
         (CmpOp::ULe, Operand::Reg(r)) => {
@@ -536,12 +668,16 @@ fn transfer_if(
             // then: left <= r  <=> left - r <= 0
             let mut dt = pre.clone();
             add_edge_and_saturate(&mut dt, l, rr, 0);
-            if !inconsistent(&dt) { out.push((target, dt)); }
+            if !inconsistent(&dt) {
+                out.push((target, dt));
+            }
 
             // else: left > r  <=> r - left <= -1
             let mut de = pre.clone();
             add_edge_and_saturate(&mut de, rr, l, -1);
-            if !inconsistent(&de) { out.push((pc + 1, de)); }
+            if !inconsistent(&de) {
+                out.push((pc + 1, de));
+            }
         }
 
         // ---------- left > r ----------
@@ -551,12 +687,16 @@ fn transfer_if(
             // then: left > r  <=> r - left <= -1
             let mut dt = pre.clone();
             add_edge_and_saturate(&mut dt, rr, l, -1);
-            if !inconsistent(&dt) { out.push((target, dt)); }
+            if !inconsistent(&dt) {
+                out.push((target, dt));
+            }
 
             // else: left <= r  <=> left - r <= 0
             let mut de = pre.clone();
             add_edge_and_saturate(&mut de, l, rr, 0);
-            if !inconsistent(&de) { out.push((pc + 1, de)); }
+            if !inconsistent(&de) {
+                out.push((pc + 1, de));
+            }
         }
 
         // ---------- left < r ----------
@@ -566,12 +706,16 @@ fn transfer_if(
             // then: left < r  <=> left - r <= -1
             let mut dt = pre.clone();
             add_edge_and_saturate(&mut dt, l, rr, -1);
-            if !inconsistent(&dt) { out.push((target, dt)); }
+            if !inconsistent(&dt) {
+                out.push((target, dt));
+            }
 
             // else: left >= r  <=> r - left <= 0
             let mut de = pre.clone();
             add_edge_and_saturate(&mut de, rr, l, 0);
-            if !inconsistent(&de) { out.push((pc + 1, de)); }
+            if !inconsistent(&de) {
+                out.push((pc + 1, de));
+            }
         }
 
         // MVP: other compares not yet refined, just fork
@@ -589,24 +733,38 @@ fn transfer_call(pc: usize, _helper: u32, pre: &Dbm) -> Vec<(usize, Dbm)> {
 
     // Same MVP ABI model as userspace:
     // clobber r0..r5, preserve r6..r10.
-    for v in [crate::analysis::machine::reg::Reg::R0,
-              crate::analysis::machine::reg::Reg::R1,
-              crate::analysis::machine::reg::Reg::R2,
-              crate::analysis::machine::reg::Reg::R3,
-              crate::analysis::machine::reg::Reg::R4,
-              crate::analysis::machine::reg::Reg::R5] {
+    for v in [
+        crate::analysis::machine::reg::Reg::R0,
+        crate::analysis::machine::reg::Reg::R1,
+        crate::analysis::machine::reg::Reg::R2,
+        crate::analysis::machine::reg::Reg::R3,
+        crate::analysis::machine::reg::Reg::R4,
+        crate::analysis::machine::reg::Reg::R5,
+    ] {
         let idx = REG_ENV.index(v);
         forget_var_by_index(&mut d, idx);
     }
 
-    if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
+    if inconsistent(&d) {
+        vec![]
+    } else {
+        vec![(pc + 1, d)]
+    }
 }
 
-fn transfer_load(pc: usize, dst: crate::analysis::machine::reg::Reg, pre: &Dbm) -> Vec<(usize, Dbm)> {
+fn transfer_load(
+    pc: usize,
+    dst: crate::analysis::machine::reg::Reg,
+    pre: &Dbm,
+) -> Vec<(usize, Dbm)> {
     // Local transfer does not check memory safety.
     // Effect on registers: dst becomes unknown.
     let mut d = pre.clone();
     let x = REG_ENV.index(dst);
     forget_var_by_index(&mut d, x);
-    if inconsistent(&d) { vec![] } else { vec![(pc + 1, d)] }
+    if inconsistent(&d) {
+        vec![]
+    } else {
+        vec![(pc + 1, d)]
+    }
 }

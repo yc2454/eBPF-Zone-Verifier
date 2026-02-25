@@ -6,15 +6,15 @@ use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg::Reg;
 use crate::ast::ProgramKind;
 use crate::common::config::VerifierConfig;
-use crate::common::utils::{
-    program_kind_for_object, try_load_combined_program_from_elf, try_load_function_from_elf,
-    try_load_program_from_elf,
-};
 use crate::parsing::btf::{self, BtfContext};
 use crate::parsing::elf;
 use crate::parsing::elf::{
     BpfFuncInfo, BpfMapDef, get_functions_in_section, list_section_names, load_data_section_maps,
     load_maps, load_raw_programs, load_relocations_for_function,
+};
+use crate::parsing::elf::{
+    program_kind_for_object, try_load_combined_program_from_elf, try_load_function_from_elf,
+    try_load_program_from_elf,
 };
 use crate::zone::dbm::Dbm;
 use crate::zone::domain::assign_zero;
