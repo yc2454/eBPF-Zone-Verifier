@@ -33,6 +33,7 @@ fn usage() {
     eprintln!("  cargo run -- [flags] prevail-run     <catalogue.json>");
     eprintln!("  cargo run -- [flags] prevail-single  <catalogue.json> <test_name>");
     eprintln!("  cargo run -- [flags] prevail-benchmark <dir_path>");
+    eprintln!("  cargo run -- [flags] benchmark-scan    <dir_path> <output.json>");
     eprintln!();
     VerifierConfig::print_help();
     eprintln!();
@@ -408,6 +409,22 @@ fn main() {
             let output_dir = Some("./results/prevail");
 
             prevail_benchmark(dir_path, &config, output_dir);
+        }
+
+        // ============================================================
+        // Benchmark Scan: Export ELF metadata to JSON
+        // ============================================================
+        "benchmark-scan" => {
+            if remaining.len() < 3 {
+                eprintln!("Error: Missing arguments");
+                eprintln!("Usage: benchmark-scan <dir_path> <output.json>");
+                return;
+            }
+            let dir_path = &remaining[1];
+            let output_json = &remaining[2];
+            if let Err(e) = crate::testing::scanner::scan_benchmark_dir(dir_path, output_json) {
+                eprintln!("Error: {:?}", e);
+            }
         }
 
         _ => {

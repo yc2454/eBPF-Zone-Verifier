@@ -202,12 +202,28 @@ pub fn load_relocations<P: AsRef<Path>>(
             let pc = (reloc.r_offset / 8) as usize;
             let sym = match elf.syms.get(reloc.r_sym) {
                 Some(s) => s,
-                None => continue,
+                None => {
+                    continue;
+                }
             };
             let name = elf.strtab.get_at(sym.st_name).unwrap_or("");
 
+            let mut r_type = reloc.r_type;
+            if r_type == 0 {
+                let target_sh_offset = elf.section_headers[target_sec_idx].sh_offset as usize;
+                let insn_offset = target_sh_offset + reloc.r_offset as usize;
+                if insn_offset < buf.len() {
+                    let opcode = buf[insn_offset];
+                    if opcode == 0x85 {
+                        r_type = R_BPF_64_32;
+                    } else if opcode == 0x18 {
+                        r_type = R_BPF_64_64;
+                    }
+                }
+            }
+
             // Check relocation type
-            if reloc.r_type == R_BPF_64_32 {
+            if r_type == R_BPF_64_32 {
                 // Function call relocation - could be helper or BPF-to-BPF
                 if let Some(helper_id) = helper_id_by_name(name) {
                     pc_to_reloc.insert(
@@ -240,7 +256,7 @@ pub fn load_relocations<P: AsRef<Path>>(
                         },
                     );
                 }
-            } else if reloc.r_type == R_BPF_64_64 {
+            } else if r_type == R_BPF_64_64 {
                 // Map pointer/value relocation
                 if let Some(&map_idx) = map_name_to_idx.get(name) {
                     pc_to_reloc.insert(
@@ -372,8 +388,22 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
             };
             let name = elf.strtab.get_at(sym.st_name).unwrap_or("");
 
+            let mut r_type = reloc.r_type;
+            if r_type == 0 {
+                let target_sh_offset = elf.section_headers[target_sec_idx].sh_offset as usize;
+                let insn_offset = target_sh_offset + reloc.r_offset as usize;
+                if insn_offset < buf.len() {
+                    let opcode = buf[insn_offset];
+                    if opcode == 0x85 {
+                        r_type = R_BPF_64_32;
+                    } else if opcode == 0x18 {
+                        r_type = R_BPF_64_64;
+                    }
+                }
+            }
+
             // Check relocation type
-            if reloc.r_type == R_BPF_64_32 {
+            if r_type == R_BPF_64_32 {
                 // Function call relocation - could be helper or BPF-to-BPF
                 if let Some(helper_id) = helper_id_by_name(name) {
                     pc_to_reloc.insert(
@@ -406,7 +436,7 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                         },
                     );
                 }
-            } else if reloc.r_type == R_BPF_64_64 {
+            } else if r_type == R_BPF_64_64 {
                 // Map pointer/value relocation
                 if let Some(&map_idx) = map_name_to_idx.get(name) {
                     pc_to_reloc.insert(

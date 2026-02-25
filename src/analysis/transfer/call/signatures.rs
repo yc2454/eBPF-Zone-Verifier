@@ -234,6 +234,22 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare, DontCare,
         ]),
 
+        constants::BPF_SKB_GET_TUNNEL_KEY => HelperSignature::new([
+            PtrToCtx,       // R1: skb
+            PtrToUninitMem, // R2: key (buffer to store key)
+            ConstSize,      // R3: size
+            Anything,       // R4: flags
+            DontCare,
+        ]),
+
+        constants::BPF_SKB_SET_TUNNEL_KEY => HelperSignature::new([
+            PtrToCtx,  // R1: skb
+            PtrToMem,  // R2: key
+            ConstSize, // R3: size
+            Anything,  // R4: flags
+            DontCare,
+        ]),
+
         constants::BPF_SKB_VLAN_POP => HelperSignature::new([
             PtrToCtx, // R1: skb
             DontCare, DontCare, DontCare, DontCare,
@@ -259,6 +275,14 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             PtrToCtx, // R1: xdp_md
             Anything, // R2: delta
             DontCare, DontCare, DontCare,
+        ]),
+
+        // ---- Tail modification ----
+        constants::BPF_SKB_CHANGE_TAIL => HelperSignature::new([
+            PtrToCtx, // R1: skb
+            Anything, // R2: len
+            Anything, // R3: flags
+            DontCare, DontCare,
         ]),
 
         // ---- Socket lookup ----
@@ -491,6 +515,10 @@ pub fn get_mem_size_pairs(helper: u32) -> &'static [MemSizePair] {
 
     static SKB_STORE_BYTES: [MemSizePair; 1] = [MemSizePair::new(R3, R4)];
 
+    static SKB_GET_TUNNEL_KEY: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
+
+    static SKB_SET_TUNNEL_KEY: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
+
     static CSUM_DIFF: [MemSizePair; 2] = [
         MemSizePair::new_nullable(R1, R2),
         MemSizePair::new_nullable(R3, R4),
@@ -525,6 +553,10 @@ pub fn get_mem_size_pairs(helper: u32) -> &'static [MemSizePair] {
         constants::BPF_SKB_LOAD_BYTES => &SKB_LOAD_BYTES,
 
         constants::BPF_SKB_STORE_BYTES => &SKB_STORE_BYTES,
+
+        constants::BPF_SKB_GET_TUNNEL_KEY => &SKB_GET_TUNNEL_KEY,
+
+        constants::BPF_SKB_SET_TUNNEL_KEY => &SKB_SET_TUNNEL_KEY,
 
         constants::BPF_CSUM_DIFF => &CSUM_DIFF,
 

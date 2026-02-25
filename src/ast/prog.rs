@@ -73,6 +73,11 @@ impl ProgramKind {
         if s.starts_with("xdp") {
             return ProgramKind::Xdp;
         }
+        // Hotfix for OVS datapath benchmark: datapath.o utilizes bpf_tail_call
+        // from ingress/egress (SchedCls) into sections prefixed with "tail-" and "downcall".
+        // Since caller and callee must have the same program type, these target
+        // sections execute under the SchedCls context (SkBuff). This is a fast-path
+        // assumption and not a general mechanism for sound program kind inference.
         if s.starts_with("classifier")
             || s.starts_with("tc")
             || s.starts_with("sched_cls")
@@ -81,6 +86,8 @@ impl ProgramKind {
             || s.starts_with("egress")
             || s.starts_with("l2_")
             || s.starts_with("drop_")
+            || s.starts_with("tail")
+            || s.starts_with("downcall")
         {
             return ProgramKind::SchedCls;
         }
