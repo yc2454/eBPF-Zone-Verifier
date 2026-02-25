@@ -25,8 +25,12 @@ pub fn load_section_bytes<P: AsRef<Path>>(
 
     if require_bpf {
         const EM_BPF: u16 = 247;
-        if elf.header.e_machine != EM_BPF {
-            return Err(anyhow::anyhow!("Not an eBPF ELF object"));
+        const EM_NONE: u16 = 0;
+        if elf.header.e_machine != EM_BPF && elf.header.e_machine != EM_NONE {
+            return Err(anyhow::anyhow!(
+                "Not an eBPF ELF object (machine: {})",
+                elf.header.e_machine
+            ));
         }
     }
 
@@ -69,7 +73,7 @@ pub fn load_raw_programs<P: AsRef<Path>>(path: P) -> Result<Vec<RawBpfProgram>> 
             let file_offset = shdr.sh_offset as usize + sym.st_value as usize;
             let size = sym.st_size as usize;
 
-            if file_offset + size <= bytes.len() {
+            if file_offset + size <= bytes.len() && size > 0 {
                 programs.push(RawBpfProgram {
                     name,
                     data: bytes[file_offset..file_offset + size].to_vec(),
@@ -79,6 +83,27 @@ pub fn load_raw_programs<P: AsRef<Path>>(path: P) -> Result<Vec<RawBpfProgram>> 
             }
         }
     }
+
+    // Fallback: If no STT_FUNC programs were found, but we have code sections,
+    // treat each section as a single program.
+    if programs.is_empty() {
+        for (idx, sh) in elf.section_headers.iter().enumerate() {
+            let name = elf.shdr_strtab.get_at(sh.sh_name).unwrap_or("");
+            if crate::testing::runner::is_code_section(name) {
+                let file_offset = sh.sh_offset as usize;
+                let size = sh.sh_size as usize;
+                if file_offset + size <= bytes.len() && size > 0 {
+                    programs.push(RawBpfProgram {
+                        name: name.to_string(),
+                        data: bytes[file_offset..file_offset + size].to_vec(),
+                        section_idx: idx,
+                        file_offset: file_offset as u64,
+                    });
+                }
+            }
+        }
+    }
+
     Ok(programs)
 }
 
