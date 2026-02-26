@@ -3,15 +3,11 @@
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
 use crate::ast::{CmpOp, Width};
-use crate::domains::dbm::Dbm;
-use crate::domains::domain::{
-    assign_reg, assume_eq_imm, assume_ge, assume_ge_imm, assume_gt, assume_le, assume_le_imm,
-    assume_le_offset, assume_lt_imm, get_fixed_value,
-};
+use crate::domains::numeric::NumericDomain;
 use crate::domains::tnum::Tnum;
 use either::Either::{self};
 
-use super::outcome::{fits_in_i32, fits_in_u32, fits_in_u32_range, get_combined_signed_bounds};
+use super::outcome::{fits_in_i32, fits_in_u32, get_combined_signed_bounds};
 
 pub fn apply_jmp_constraints(
     then_s: &mut State,
@@ -26,9 +22,9 @@ pub fn apply_jmp_constraints(
         return;
     }
 
-    let (resolved, right_bounds) = resolve_right_operand(then_s.dbm(), right, width, op);
+    let (resolved, right_bounds) = resolve_right_operand(&then_s.domain, right, width, op);
     if can_apply_dbm_constraint(then_s, left, op, width, right_bounds, resolved) {
-        apply_cmp_to_dbm(then_s.dbm_mut(), else_s.dbm_mut(), left, op, resolved);
+        apply_cmp_to_domain(&mut then_s.domain, &mut else_s.domain, left, op, resolved);
     } else if width == Width::W64 && matches!(op, CmpOp::UGt | CmpOp::UGe | CmpOp::ULt | CmpOp::ULe)
     {
         apply_unsigned_const_fallback(then_s, else_s, left, op, resolved);
@@ -65,7 +61,7 @@ fn can_apply_dbm_constraint(
         let left_bounds = get_combined_signed_bounds(state, left);
         let left_nonneg = left_bounds.0 >= 0;
         let left_unbounded = {
-            let (lo, _) = crate::domains::domain::get_interval(state.dbm(), left);
+            let (lo, _) = state.domain.get_interval(left);
             let tnum = state.get_tnum(left);
             lo == i64::MIN && tnum.max_value() > i64::MAX as u64
         };
@@ -80,101 +76,101 @@ fn can_apply_dbm_constraint(
     true
 }
 
-fn apply_cmp_to_dbm(
-    then_dbm: &mut Dbm,
-    else_dbm: &mut Dbm,
+fn apply_cmp_to_domain(
+    then_domain: &mut NumericDomain,
+    else_domain: &mut NumericDomain,
     left: Reg,
     op: CmpOp,
     right: Either<Reg, i64>,
 ) {
     match (op, right) {
         (CmpOp::Eq, Either::Right(imm)) => {
-            assume_eq_imm(then_dbm, left, imm);
+            then_domain.assume_eq_imm(left, imm);
         }
         (CmpOp::Eq, Either::Left(reg)) => {
-            assign_reg(then_dbm, left, reg);
+            then_domain.assign_reg(left, reg);
         }
         (CmpOp::Ne, Either::Right(imm)) => {
-            assume_eq_imm(else_dbm, left, imm);
+            else_domain.assume_eq_imm(left, imm);
         }
         (CmpOp::Ne, Either::Left(reg)) => {
-            assign_reg(else_dbm, left, reg);
+            else_domain.assign_reg(left, reg);
         }
         (CmpOp::UGe, Either::Right(imm)) => {
-            assume_ge_imm(then_dbm, left, imm);
-            assume_lt_imm(else_dbm, left, imm);
+            then_domain.assume_ge_imm(left, imm);
+            else_domain.assume_lt_imm(left, imm);
             if imm > 0 {
-                assume_ge_imm(else_dbm, left, 0);
+                else_domain.assume_ge_imm(left, 0);
             }
         }
         (CmpOp::SGe, Either::Right(imm)) => {
-            assume_ge_imm(then_dbm, left, imm);
-            assume_lt_imm(else_dbm, left, imm);
+            then_domain.assume_ge_imm(left, imm);
+            else_domain.assume_lt_imm(left, imm);
         }
         (CmpOp::UGe, Either::Left(reg)) => {
-            assume_ge(then_dbm, left, reg);
-            assume_le_offset(else_dbm, left, reg, -1);
-            assume_ge_imm(else_dbm, left, 0);
+            then_domain.assume_ge(left, reg);
+            else_domain.assume_le_offset(left, reg, -1);
+            else_domain.assume_ge_imm(left, 0);
         }
         (CmpOp::SGe, Either::Left(reg)) => {
-            assume_ge(then_dbm, left, reg);
-            assume_le_offset(else_dbm, left, reg, -1);
+            then_domain.assume_ge(left, reg);
+            else_domain.assume_le_offset(left, reg, -1);
         }
         (CmpOp::UGt, Either::Right(imm)) => {
-            assume_ge_imm(then_dbm, left, imm + 1);
-            assume_le_imm(else_dbm, left, imm);
-            assume_ge_imm(else_dbm, left, 0);
+            then_domain.assume_ge_imm(left, imm + 1);
+            else_domain.assume_le_imm(left, imm);
+            else_domain.assume_ge_imm(left, 0);
         }
         (CmpOp::SGt, Either::Right(imm)) => {
-            assume_ge_imm(then_dbm, left, imm + 1);
-            assume_le_imm(else_dbm, left, imm);
+            then_domain.assume_ge_imm(left, imm + 1);
+            else_domain.assume_le_imm(left, imm);
         }
         (CmpOp::UGt, Either::Left(reg)) => {
-            assume_gt(then_dbm, left, reg);
-            assume_le(else_dbm, left, reg);
-            assume_ge_imm(else_dbm, left, 0);
+            then_domain.assume_gt(left, reg);
+            else_domain.assume_le(left, reg);
+            else_domain.assume_ge_imm(left, 0);
         }
         (CmpOp::SGt, Either::Left(reg)) => {
-            assume_gt(then_dbm, left, reg);
-            assume_le(else_dbm, left, reg);
+            then_domain.assume_gt(left, reg);
+            else_domain.assume_le(left, reg);
         }
         (CmpOp::ULe, Either::Right(imm)) => {
-            assume_le_imm(then_dbm, left, imm);
-            assume_ge_imm(then_dbm, left, 0);
-            assume_ge_imm(else_dbm, left, imm + 1);
+            then_domain.assume_le_imm(left, imm);
+            then_domain.assume_ge_imm(left, 0);
+            else_domain.assume_ge_imm(left, imm + 1);
         }
         (CmpOp::SLe, Either::Right(imm)) => {
-            assume_le_imm(then_dbm, left, imm);
-            assume_ge_imm(else_dbm, left, imm + 1);
+            then_domain.assume_le_imm(left, imm);
+            else_domain.assume_ge_imm(left, imm + 1);
         }
         (CmpOp::ULe, Either::Left(reg)) => {
-            assume_le(then_dbm, left, reg);
-            assume_ge_imm(then_dbm, left, 0);
-            assume_gt(else_dbm, left, reg);
+            then_domain.assume_le(left, reg);
+            then_domain.assume_ge_imm(left, 0);
+            else_domain.assume_gt(left, reg);
         }
         (CmpOp::SLe, Either::Left(reg)) => {
-            assume_le(then_dbm, left, reg);
-            assume_gt(else_dbm, left, reg);
+            then_domain.assume_le(left, reg);
+            else_domain.assume_gt(left, reg);
         }
         (CmpOp::ULt, Either::Right(imm)) => {
-            assume_lt_imm(then_dbm, left, imm);
+            then_domain.assume_lt_imm(left, imm);
             if imm > 0 {
-                assume_ge_imm(then_dbm, left, 0);
+                then_domain.assume_ge_imm(left, 0);
             }
-            assume_ge_imm(else_dbm, left, imm);
+            else_domain.assume_ge_imm(left, imm);
         }
         (CmpOp::SLt, Either::Right(imm)) => {
-            assume_lt_imm(then_dbm, left, imm);
-            assume_ge_imm(else_dbm, left, imm);
+            then_domain.assume_lt_imm(left, imm);
+            else_domain.assume_ge_imm(left, imm);
         }
         (CmpOp::ULt, Either::Left(reg)) => {
-            assume_le_offset(then_dbm, left, reg, -1);
-            assume_ge_imm(then_dbm, left, 0);
-            assume_ge(else_dbm, left, reg);
+            then_domain.assume_le_offset(left, reg, -1);
+            then_domain.assume_ge_imm(left, 0);
+            else_domain.assume_ge(left, reg);
         }
         (CmpOp::SLt, Either::Left(reg)) => {
-            assume_le_offset(then_dbm, left, reg, -1);
-            assume_ge(else_dbm, left, reg);
+            then_domain.assume_le_offset(left, reg, -1);
+            else_domain.assume_ge(left, reg);
         }
         (CmpOp::Test, _) => {}
     }
@@ -214,7 +210,7 @@ fn apply_test_constraints(
             }
         }
         Either::Left(reg) => {
-            if let Some(val) = get_fixed_value(then_s.dbm(), reg) {
+            if let Some(val) = then_s.domain.get_fixed_value(reg) {
                 if width == Width::W32 {
                     (val as u32) as u64
                 } else {
@@ -243,19 +239,19 @@ fn apply_test_constraints(
         then_s.set_tnum(left, refined);
 
         if width == Width::W32 && bit_pos == 31 {
-            if fits_in_u32_range(then_s.dbm(), left) {
-                assume_ge_imm(then_s.dbm_mut(), left, 0x80000000);
-                assume_le_imm(else_s.dbm_mut(), left, 0x7FFFFFFF);
+            if then_s.domain.fits_in_u32_range(left) {
+                then_s.domain.assume_ge_imm(left, 0x80000000);
+                else_s.domain.assume_le_imm(left, 0x7FFFFFFF);
             }
         } else if width == Width::W64 && bit_pos == 63 {
-            assume_lt_imm(then_s.dbm_mut(), left, 0);
-            assume_ge_imm(else_s.dbm_mut(), left, 0);
+            then_s.domain.assume_lt_imm(left, 0);
+            else_s.domain.assume_ge_imm(left, 0);
         }
     }
 }
 
 fn resolve_right_operand(
-    dbm: &Dbm,
+    domain: &NumericDomain,
     right: Either<Reg, i64>,
     width: Width,
     op: CmpOp,
@@ -280,11 +276,11 @@ fn resolve_right_operand(
             (Either::Right(eff), (eff, eff))
         }
         Either::Left(reg) => {
-            if let Some(val) = get_fixed_value(dbm, reg) {
+            if let Some(val) = domain.get_fixed_value(reg) {
                 let eff = truncate(val);
                 (Either::Right(eff), (eff, eff))
             } else {
-                let bounds = crate::domains::domain::get_interval(dbm, reg);
+                let bounds = domain.get_interval(reg);
                 (Either::Left(reg), bounds)
             }
         }
@@ -298,7 +294,7 @@ fn apply_unsigned_const_fallback(
     op: CmpOp,
     right: Either<Reg, i64>,
 ) {
-    let left_const = get_fixed_value(then_s.dbm(), left).or_else(|| {
+    let left_const = then_s.domain.get_fixed_value(left).or_else(|| {
         let t = then_s.get_tnum(left);
         if t.is_const() {
             Some(t.value as i64)
@@ -310,16 +306,16 @@ fn apply_unsigned_const_fallback(
     match (left_const, right) {
         (Some(k), Either::Left(reg)) => {
             let flipped = flip_unsigned_cmp(op);
-            apply_unsigned_range_constraint(
-                then_s.dbm_mut(),
-                else_s.dbm_mut(),
+            apply_unsigned_range_constraint_domain(
+                &mut then_s.domain,
+                &mut else_s.domain,
                 reg,
                 flipped,
                 k as u64,
             );
         }
         (_, Either::Right(imm)) => {
-            apply_unsigned_range_constraint(then_s.dbm_mut(), else_s.dbm_mut(), left, op, imm as u64);
+            apply_unsigned_range_constraint_domain(&mut then_s.domain, &mut else_s.domain, left, op, imm as u64);
         }
         _ => {}
     }
@@ -335,9 +331,9 @@ fn flip_unsigned_cmp(op: CmpOp) -> CmpOp {
     }
 }
 
-fn apply_unsigned_range_constraint(
-    then_dbm: &mut Dbm,
-    else_dbm: &mut Dbm,
+fn apply_unsigned_range_constraint_domain(
+    then_domain: &mut NumericDomain,
+    else_domain: &mut NumericDomain,
     reg: Reg,
     op: CmpOp,
     k: u64,
@@ -345,33 +341,33 @@ fn apply_unsigned_range_constraint(
     match op {
         CmpOp::UGt => {
             if k < u64::MAX {
-                apply_signed_from_unsigned_range(then_dbm, reg, k + 1, u64::MAX);
+                apply_signed_from_unsigned_range_domain(then_domain, reg, k + 1, u64::MAX);
             }
-            apply_signed_from_unsigned_range(else_dbm, reg, 0, k);
+            apply_signed_from_unsigned_range_domain(else_domain, reg, 0, k);
         }
         CmpOp::UGe => {
-            apply_signed_from_unsigned_range(then_dbm, reg, k, u64::MAX);
+            apply_signed_from_unsigned_range_domain(then_domain, reg, k, u64::MAX);
             if k > 0 {
-                apply_signed_from_unsigned_range(else_dbm, reg, 0, k - 1);
+                apply_signed_from_unsigned_range_domain(else_domain, reg, 0, k - 1);
             }
         }
         CmpOp::ULt => {
             if k > 0 {
-                apply_signed_from_unsigned_range(then_dbm, reg, 0, k - 1);
+                apply_signed_from_unsigned_range_domain(then_domain, reg, 0, k - 1);
             }
-            apply_signed_from_unsigned_range(else_dbm, reg, k, u64::MAX);
+            apply_signed_from_unsigned_range_domain(else_domain, reg, k, u64::MAX);
         }
         CmpOp::ULe => {
-            apply_signed_from_unsigned_range(then_dbm, reg, 0, k);
+            apply_signed_from_unsigned_range_domain(then_domain, reg, 0, k);
             if k < u64::MAX {
-                apply_signed_from_unsigned_range(else_dbm, reg, k + 1, u64::MAX);
+                apply_signed_from_unsigned_range_domain(else_domain, reg, k + 1, u64::MAX);
             }
         }
         _ => {}
     }
 }
 
-fn apply_signed_from_unsigned_range(dbm: &mut Dbm, reg: Reg, lo_u: u64, hi_u: u64) {
+fn apply_signed_from_unsigned_range_domain(domain: &mut NumericDomain, reg: Reg, lo_u: u64, hi_u: u64) {
     if lo_u > hi_u {
         return;
     }
@@ -380,10 +376,10 @@ fn apply_signed_from_unsigned_range(dbm: &mut Dbm, reg: Reg, lo_u: u64, hi_u: u6
     let hi_s = hi_u as i64;
 
     if hi_u <= i64::MAX as u64 {
-        assume_ge_imm(dbm, reg, lo_s);
-        assume_le_imm(dbm, reg, hi_s);
+        domain.assume_ge_imm(reg, lo_s);
+        domain.assume_le_imm(reg, hi_s);
     } else if lo_u >= 0x8000000000000000 {
-        assume_ge_imm(dbm, reg, lo_s);
-        assume_le_imm(dbm, reg, hi_s);
+        domain.assume_ge_imm(reg, lo_s);
+        domain.assume_le_imm(reg, hi_s);
     }
 }

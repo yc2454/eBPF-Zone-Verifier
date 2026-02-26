@@ -8,7 +8,6 @@ use crate::analysis::machine::state::State;
 use crate::common::constants;
 use crate::common::ctx_model;
 use crate::common::mem_region_model;
-use crate::domains::domain::get_distance_fixed;
 use RegType::*;
 use log::error;
 
@@ -32,7 +31,7 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
 
     match base_type {
         PtrToStack { frame_level } => {
-            let offset = get_distance_fixed(state.dbm(), base, Reg::R10);
+            let offset = state.domain.get_distance_fixed(base, Reg::R10);
             check_stack_access(
                 env,
                 state,
@@ -202,7 +201,7 @@ pub fn check_store(
             }
         }
         PtrToStack { frame_level } => {
-            let offset = get_distance_fixed(state.dbm(), base, Reg::R10);
+            let offset = state.domain.get_distance_fixed(base, Reg::R10);
             check_stack_access(
                 env,
                 state,

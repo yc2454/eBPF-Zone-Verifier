@@ -3,9 +3,6 @@
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
 use crate::ast::{Operand, Width};
-use crate::domains::domain::{
-    apply_and_imm, assume_eq_imm, assume_ge_imm, assume_le_imm, forget, get_interval,
-};
 use crate::domains::tnum::Tnum;
 
 use super::helpers::sync_tnum_to_dbm;
@@ -20,9 +17,9 @@ pub(crate) fn handle_shr(state: &mut State, width: Width, dst: Reg, src: &Operan
                 k & 0x3F
             };
 
-            let (old_lo, old_hi) = get_interval(state.dbm(), dst);
+            let (old_lo, old_hi) = state.domain.get_interval(dst);
             let old_tnum = state.get_tnum(dst);
-            forget(state.dbm_mut(), dst);
+            state.domain.forget(dst);
 
             if width == Width::W32 {
                 let truncated_tnum = old_tnum.trunc32();
@@ -32,25 +29,25 @@ pub(crate) fn handle_shr(state: &mut State, width: Width, dst: Reg, src: &Operan
                 let new_lo = (trunc_lo >> shift_amount) as i64;
                 let new_hi = (trunc_hi >> shift_amount) as i64;
 
-                assume_ge_imm(state.dbm_mut(), dst, new_lo);
-                assume_le_imm(state.dbm_mut(), dst, new_hi);
+                state.domain.assume_ge_imm(dst, new_lo);
+                state.domain.assume_le_imm(dst, new_hi);
 
                 let new_tnum = truncated_tnum.shr_imm(shift_amount as u64);
                 state.set_tnum(dst, new_tnum);
             } else {
-                assume_ge_imm(state.dbm_mut(), dst, 0);
+                state.domain.assume_ge_imm(dst, 0);
 
                 if old_lo != i64::MIN && old_hi != i64::MAX {
                     let (lo, hi) = (old_lo, old_hi);
                     if lo >= 0 {
                         let new_lo = (lo as u64 >> shift_amount) as i64;
                         let new_hi = (hi as u64 >> shift_amount) as i64;
-                        assume_ge_imm(state.dbm_mut(), dst, new_lo);
-                        assume_le_imm(state.dbm_mut(), dst, new_hi);
+                        state.domain.assume_ge_imm(dst, new_lo);
+                        state.domain.assume_le_imm(dst, new_hi);
                     } else if shift_amount > 0 {
                         let max_result = u64::MAX >> shift_amount;
                         if max_result <= i64::MAX as u64 {
-                            assume_le_imm(state.dbm_mut(), dst, max_result as i64);
+                            state.domain.assume_le_imm(dst, max_result as i64);
                         }
                     }
                 }
@@ -60,11 +57,11 @@ pub(crate) fn handle_shr(state: &mut State, width: Width, dst: Reg, src: &Operan
             }
         }
         Operand::Reg(_) => {
-            forget(state.dbm_mut(), dst);
-            assume_ge_imm(state.dbm_mut(), dst, 0);
+            state.domain.forget(dst);
+            state.domain.assume_ge_imm(dst, 0);
 
             if width == Width::W32 {
-                assume_le_imm(state.dbm_mut(), dst, u32::MAX as i64);
+                state.domain.assume_le_imm(dst, u32::MAX as i64);
                 state.set_tnum(dst, Tnum::u32_unknown());
             } else {
                 state.set_tnum(dst, Tnum::unknown());
@@ -85,9 +82,9 @@ pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operan
                 k & 0x3F
             };
 
-            let (old_lo, old_hi) = get_interval(state.dbm(), dst);
+            let (old_lo, old_hi) = state.domain.get_interval(dst);
             let old_tnum = state.get_tnum(dst);
-            forget(state.dbm_mut(), dst);
+            state.domain.forget(dst);
 
             if width == Width::W32 {
                 let truncated_tnum = old_tnum.trunc32();
@@ -99,14 +96,14 @@ pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operan
                     if trunc_hi <= max_safe {
                         let new_lo = ((trunc_lo << shift_amount) & 0xFFFFFFFF) as i64;
                         let new_hi = ((trunc_hi << shift_amount) & 0xFFFFFFFF) as i64;
-                        assume_ge_imm(state.dbm_mut(), dst, new_lo);
-                        assume_le_imm(state.dbm_mut(), dst, new_hi);
+                        state.domain.assume_ge_imm(dst, new_lo);
+                        state.domain.assume_le_imm(dst, new_hi);
                     } else {
-                        assume_ge_imm(state.dbm_mut(), dst, 0);
-                        assume_le_imm(state.dbm_mut(), dst, u32::MAX as i64);
+                        state.domain.assume_ge_imm(dst, 0);
+                        state.domain.assume_le_imm(dst, u32::MAX as i64);
                     }
                 } else {
-                    assume_eq_imm(state.dbm_mut(), dst, 0);
+                    state.domain.assume_eq_imm(dst, 0);
                 }
 
                 let new_tnum = truncated_tnum.shl_imm(shift_amount as u64).trunc32();
@@ -116,8 +113,8 @@ pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operan
                     if old_lo != i64::MIN && old_hi != i64::MAX {
                         let (lo, hi) = (old_lo, old_hi);
                         if lo >= i32::MIN as i64 && hi <= i32::MAX as i64 {
-                            assume_ge_imm(state.dbm_mut(), dst, lo << 32);
-                            assume_le_imm(state.dbm_mut(), dst, hi << 32);
+                            state.domain.assume_ge_imm(dst, lo << 32);
+                            state.domain.assume_le_imm(dst, hi << 32);
                         }
                     }
                 } else if old_lo != i64::MIN && old_hi != i64::MAX {
@@ -129,8 +126,8 @@ pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operan
                             i64::MAX >> shift_amount
                         };
                         if hi <= max_safe {
-                            assume_ge_imm(state.dbm_mut(), dst, lo << shift_amount);
-                            assume_le_imm(state.dbm_mut(), dst, hi << shift_amount);
+                            state.domain.assume_ge_imm(dst, lo << shift_amount);
+                            state.domain.assume_le_imm(dst, hi << shift_amount);
                         }
                     }
                 }
@@ -142,11 +139,11 @@ pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operan
             sync_tnum_to_dbm(state, dst);
         }
         Operand::Reg(_) => {
-            forget(state.dbm_mut(), dst);
+            state.domain.forget(dst);
 
             if width == Width::W32 {
-                assume_ge_imm(state.dbm_mut(), dst, 0);
-                assume_le_imm(state.dbm_mut(), dst, u32::MAX as i64);
+                state.domain.assume_ge_imm(dst, 0);
+                state.domain.assume_le_imm(dst, u32::MAX as i64);
                 state.set_tnum(dst, Tnum::u32_unknown());
             } else {
                 state.set_tnum(dst, Tnum::unknown());
@@ -168,8 +165,8 @@ pub(crate) fn handle_arsh(state: &mut State, width: Width, dst: Reg, src: &Opera
             };
 
             let old_tnum = state.get_tnum(dst);
-            let (old_lo, old_hi) = get_interval(state.dbm(), dst);
-            forget(state.dbm_mut(), dst);
+            let (old_lo, old_hi) = state.domain.get_interval(dst);
+            state.domain.forget(dst);
 
             if width == Width::W32 {
                 let truncated_tnum = old_tnum.trunc32();
@@ -182,11 +179,11 @@ pub(crate) fn handle_arsh(state: &mut State, width: Width, dst: Reg, src: &Opera
                 if signed_lo <= signed_hi {
                     let new_lo = (signed_lo >> shift_amount) as u32 as i64;
                     let new_hi = (signed_hi >> shift_amount) as u32 as i64;
-                    assume_ge_imm(state.dbm_mut(), dst, new_lo);
-                    assume_le_imm(state.dbm_mut(), dst, new_hi);
+                    state.domain.assume_ge_imm(dst, new_lo);
+                    state.domain.assume_le_imm(dst, new_hi);
                 } else {
-                    assume_ge_imm(state.dbm_mut(), dst, 0);
-                    assume_le_imm(state.dbm_mut(), dst, u32::MAX as i64);
+                    state.domain.assume_ge_imm(dst, 0);
+                    state.domain.assume_le_imm(dst, u32::MAX as i64);
                 }
 
                 let sign_bit = (truncated_tnum.value >> 31) & 1;
@@ -222,8 +219,8 @@ pub(crate) fn handle_arsh(state: &mut State, width: Width, dst: Reg, src: &Opera
                             i32::MAX as i64
                         };
 
-                        assume_ge_imm(state.dbm_mut(), dst, new_lo);
-                        assume_le_imm(state.dbm_mut(), dst, new_hi);
+                        state.domain.assume_ge_imm(dst, new_lo);
+                        state.domain.assume_le_imm(dst, new_hi);
 
                         let new_tnum = old_tnum.arsh_imm(shift_amount as u64);
                         state.set_tnum(dst, new_tnum);
@@ -236,8 +233,8 @@ pub(crate) fn handle_arsh(state: &mut State, width: Width, dst: Reg, src: &Opera
                     let (lo, hi) = (old_lo, old_hi);
                     let new_lo = lo >> shift_amount;
                     let new_hi = hi >> shift_amount;
-                    assume_ge_imm(state.dbm_mut(), dst, new_lo);
-                    assume_le_imm(state.dbm_mut(), dst, new_hi);
+                    state.domain.assume_ge_imm(dst, new_lo);
+                    state.domain.assume_le_imm(dst, new_hi);
                 }
 
                 let new_tnum = old_tnum.arsh_imm(shift_amount as u64);
@@ -247,11 +244,11 @@ pub(crate) fn handle_arsh(state: &mut State, width: Width, dst: Reg, src: &Opera
             sync_tnum_to_dbm(state, dst);
         }
         Operand::Reg(_) => {
-            forget(state.dbm_mut(), dst);
+            state.domain.forget(dst);
 
             if width == Width::W32 {
-                assume_ge_imm(state.dbm_mut(), dst, i32::MIN as i64);
-                assume_le_imm(state.dbm_mut(), dst, i32::MAX as i64);
+                state.domain.assume_ge_imm(dst, i32::MIN as i64);
+                state.domain.assume_le_imm(dst, i32::MAX as i64);
             }
 
             state.set_tnum(dst, Tnum::unknown());
@@ -270,26 +267,26 @@ pub(crate) fn handle_rsh(state: &mut State, width: Width, dst: Reg, src: &Operan
                 k & 0x3F
             };
 
-            let (old_lo, old_hi) = get_interval(state.dbm(), dst);
-            forget(state.dbm_mut(), dst);
+            let (old_lo, old_hi) = state.domain.get_interval(dst);
+            state.domain.forget(dst);
 
             if old_lo != i64::MIN && old_hi != i64::MAX {
                 let (lo, hi) = (old_lo, old_hi);
                 if lo >= 0 {
                     let new_lo = (lo as u64 >> shift_amount) as i64;
                     let new_hi = (hi as u64 >> shift_amount) as i64;
-                    assume_ge_imm(state.dbm_mut(), dst, new_lo);
-                    assume_le_imm(state.dbm_mut(), dst, new_hi);
+                    state.domain.assume_ge_imm(dst, new_lo);
+                    state.domain.assume_le_imm(dst, new_hi);
                 } else {
-                    assume_ge_imm(state.dbm_mut(), dst, 0);
+                    state.domain.assume_ge_imm(dst, 0);
                     if shift_amount > 0 {
-                        assume_le_imm(state.dbm_mut(), dst, (u64::MAX >> shift_amount) as i64);
+                        state.domain.assume_le_imm(dst, (u64::MAX >> shift_amount) as i64);
                     }
                 }
             }
 
             if width == Width::W32 {
-                apply_and_imm(state.dbm_mut(), dst, 0xFFFFFFFF);
+                state.domain.apply_and_imm(dst, 0xFFFFFFFF);
             }
 
             let t = state.get_tnum(dst);
@@ -297,11 +294,11 @@ pub(crate) fn handle_rsh(state: &mut State, width: Width, dst: Reg, src: &Operan
             state.set_tnum(dst, new_t);
         }
         Operand::Reg(_) => {
-            forget(state.dbm_mut(), dst);
-            assume_ge_imm(state.dbm_mut(), dst, 0);
+            state.domain.forget(dst);
+            state.domain.assume_ge_imm(dst, 0);
 
             if width == Width::W32 {
-                assume_le_imm(state.dbm_mut(), dst, u32::MAX as i64);
+                state.domain.assume_le_imm(dst, u32::MAX as i64);
                 state.set_tnum(dst, Tnum::u32_unknown());
             } else {
                 state.set_tnum(dst, Tnum::unknown());

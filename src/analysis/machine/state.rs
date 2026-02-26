@@ -5,7 +5,7 @@ use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::stack_state::{ScalarBounds, SpilledReg, StackState};
 use crate::ast::MemSize;
 use crate::common::config::DomainMode;
-use crate::domains::dbm::{Dbm, INF};
+use crate::domains::dbm::INF;
 use crate::domains::numeric::NumericDomain;
 use crate::domains::tnum::Tnum;
 use log::trace;
@@ -93,22 +93,6 @@ impl State {
             DomainMode::Interval => NumericDomain::new_interval(),
         };
         Self::new(domain, pc)
-    }
-
-    // ── Backwards compatibility accessors ───────────────────────────
-    // These methods provide access to the underlying Dbm for code that
-    // hasn't been migrated to use the NumericDomain interface yet.
-
-    /// Get reference to underlying Dbm (panics if Interval mode)
-    /// DEPRECATED: Use domain methods directly instead
-    pub fn dbm(&self) -> &Dbm {
-        self.domain.as_zone().expect("dbm() called in Interval mode - use domain methods instead")
-    }
-
-    /// Get mutable reference to underlying Dbm (panics if Interval mode)
-    /// DEPRECATED: Use domain methods directly instead
-    pub fn dbm_mut(&mut self) -> &mut Dbm {
-        self.domain.as_zone_mut().expect("dbm_mut() called in Interval mode - use domain methods instead")
     }
 
     // ── Tnum helpers ────────────────────────────────────────────

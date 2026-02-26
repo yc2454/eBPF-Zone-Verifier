@@ -16,9 +16,6 @@ use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
 use crate::ast::{EndianOp, Instr, Width};
-use crate::domains::domain::{
-    apply_and_imm, assign_interval, forget, get_interval, preserve_anchor_constraints,
-};
 use log::warn;
 
 /// Main transfer function - dispatches to appropriate handler based on instruction type.
@@ -116,9 +113,9 @@ fn transfer_endian(
         EndianOp::ToLe => {
             match size {
                 64 => { /* Identity for LE host; Keep constraints if Width::W64 */ }
-                32 => apply_and_imm(state.dbm_mut(), dst, 0xFFFF_FFFF),
-                16 => apply_and_imm(state.dbm_mut(), dst, 0xFFFF),
-                _ => forget(state.dbm_mut(), dst),
+                32 => state.domain.apply_and_imm(dst, 0xFFFF_FFFF),
+                16 => state.domain.apply_and_imm(dst, 0xFFFF),
+                _ => state.domain.forget(dst),
             }
         }
         EndianOp::ToBe => {
@@ -126,11 +123,11 @@ fn transfer_endian(
             // We must forget the old value.
             // However, we know the new max value based on the swap size.
             match size {
-                16 => apply_and_imm(state.dbm_mut(), dst, 0xFFFF),
-                32 => apply_and_imm(state.dbm_mut(), dst, 0xFFFF_FFFF),
+                16 => state.domain.apply_and_imm(dst, 0xFFFF),
+                32 => state.domain.apply_and_imm(dst, 0xFFFF_FFFF),
                 // 64-bit BE swap: Result is u64 (if Width::W64) or u32 (if Width::W32)
-                64 => forget(state.dbm_mut(), dst),
-                _ => forget(state.dbm_mut(), dst),
+                64 => state.domain.forget(dst),
+                _ => state.domain.forget(dst),
             }
         }
     }
@@ -138,7 +135,7 @@ fn transfer_endian(
     // 3. Handle Implicit 32-bit Zero Extension
     // This provides a tighter bound [0, U32_MAX] even if the operation was "Unknown".
     if width == Width::W32 {
-        apply_and_imm(state.dbm_mut(), dst, 0xFFFF_FFFF);
+        state.domain.apply_and_imm(dst, 0xFFFF_FFFF);
     }
 
     state.pc += 1;
@@ -149,7 +146,7 @@ fn transfer_endian(
 fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     let pc = state.pc;
 
-    let (r0_min, r0_max) = get_interval(state.dbm(), Reg::R0);
+    let (r0_min, r0_max) = state.domain.get_interval(Reg::R0);
 
     // Use the helper method on the ProgramKind stored in env
     if env.ctx.prog_kind.requires_strict_return_code() && (r0_min < 0 || r0_max > 1) {
@@ -190,7 +187,7 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         // Save callee's R0 (the return value) before restoring caller state
         let ret_type = state.types.get(Reg::R0);
         let ret_tnum = state.get_tnum(Reg::R0);
-        let ret_bounds = get_interval(state.dbm(), Reg::R0);
+        let ret_bounds = state.domain.get_interval(Reg::R0);
         let ret_anchor_info = state.save_anchor_info(Reg::R0);
 
         // Save callee's anchor constraints before overwriting
@@ -209,18 +206,18 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         // Re-apply R0 from callee's return value
         state.types.set(Reg::R0, ret_type);
         state.set_tnum(Reg::R0, ret_tnum);
-        forget(state.dbm_mut(), Reg::R0);
-        assign_interval(state.dbm_mut(), Reg::R0, ret_bounds.0, ret_bounds.1);
+        state.domain.forget(Reg::R0);
+        state.domain.assign_interval(Reg::R0, ret_bounds.0, ret_bounds.1);
 
         // Restore R0's anchor relationship (e.g., packet pointer offset from AnchorData)
         if let (Some(anchor), lo, hi) = ret_anchor_info {
             if let Some(h) = hi {
-                state.dbm_mut().add_constraint(Reg::R0, anchor, h);
+                state.domain.add_constraint(Reg::R0, anchor, h);
             }
             if let Some(l) = lo {
-                state.dbm_mut().add_constraint(anchor, Reg::R0, l);
+                state.domain.add_constraint(anchor, Reg::R0, l);
             }
-            state.dbm_mut().close();
+            state.domain.close();
         }
 
         state.types.set(

@@ -12,8 +12,6 @@ pub mod tnum;
 pub mod zone;
 
 // Re-export the unified domain type
-pub use numeric::NumericDomain;
-pub use interval::IntervalState;
 
 // Re-export zone components at top level for backwards compatibility
 // TODO: Remove these once all code migrates to the new abstraction

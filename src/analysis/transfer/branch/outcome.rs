@@ -143,7 +143,7 @@ pub(crate) fn get_combined_bounds(state: &State, reg: Reg, width: Width) -> Opti
     let tnum_max = tnum.max_value();
 
     // DBM bounds
-    let (dbm_lo, dbm_hi) = get_interval(state.dbm(), reg);
+    let (dbm_lo, dbm_hi) = state.domain.get_interval(reg);
 
     // Combine bounds
     if dbm_lo != i64::MIN && dbm_hi != i64::MAX {
@@ -198,7 +198,7 @@ pub(crate) fn fits_in_u32_range(dbm: &crate::domains::dbm::Dbm, reg: Reg) -> boo
 /// Get combined signed bounds for a register using both DBM and tnum.
 /// Returns (lo, hi) as signed i64 values, using the tighter bound from each source.
 pub(crate) fn get_combined_signed_bounds(state: &State, reg: Reg) -> (i64, i64) {
-    let (dbm_lo, dbm_hi) = get_interval(state.dbm(), reg);
+    let (dbm_lo, dbm_hi) = state.domain.get_interval(reg);
     let tnum = state.get_tnum(reg);
     let tnum_min = tnum.min_value();
     let tnum_max = tnum.max_value();

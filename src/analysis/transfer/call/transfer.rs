@@ -11,7 +11,6 @@ use crate::analysis::transfer::types::{
 use crate::ast::ProgramKind;
 use crate::common::constants;
 use crate::parsing::btf::SpecialFieldKind;
-use crate::domains::domain::{self, assume_ge_imm, assume_le_imm, forget, get_interval, proven_zero};
 use crate::domains::tnum::Tnum;
 use log::{debug, error, trace};
 
@@ -59,7 +58,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
         update_call_types(env, &in_types, &mut state, helper);
 
         for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-            forget(state.dbm_mut(), r);
+            state.domain.forget(r);
         }
 
         state.pc += 1;
@@ -121,7 +120,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
             return vec![];
         }
-        if !proven_zero(state.dbm(), Reg::R2) {
+        if !state.domain.proven_zero(Reg::R2) {
             env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
             return vec![];
         }
@@ -142,7 +141,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
 
     // 3. Update DBM - forget caller-saved registers and reset Tnums
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-        forget(state.dbm_mut(), r);
+        state.domain.forget(r);
         state.set_tnum(r, Tnum::unknown());
     }
 
@@ -152,13 +151,13 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             if r != Reg::R10 {
                 match in_types.get(r) {
                     RegType::PtrToPacket | RegType::PtrToPacketEnd | RegType::PtrToPacketMeta => {
-                        forget(state.dbm_mut(), r);
+                        state.domain.forget(r);
                     }
                     _ => {}
                 }
             }
         }
-        domain::reset_packet_anchors(state.dbm_mut());
+        state.domain.reset_packet_anchors();
     }
 
     // 5. Advance PC and return
@@ -183,9 +182,9 @@ fn initialize_uninit_mem_args(
             {
                 if let RegType::PtrToStack { frame_level } = in_types.get(pair.ptr_reg) {
                     if let Some(off) =
-                        domain::get_distance_fixed(state.dbm(), pair.ptr_reg, Reg::R10)
+                        state.domain.get_distance_fixed(pair.ptr_reg, Reg::R10)
                     {
-                        let (_, max_size) = domain::get_interval(state.dbm(), pair.size_reg);
+                        let (_, max_size) = state.domain.get_interval(pair.size_reg);
                         {
                             if max_size != i64::MAX && max_size > 0 {
                                 let max_bytes = (max_size as usize).min(512); // Bound to max stack size just in case
@@ -218,16 +217,16 @@ fn initialize_uninit_mem_args(
 
 /// Apply return value bounds based on helper semantics.
 fn apply_return_bounds(state: &mut State, helper: u32) {
-    forget(state.dbm_mut(), Reg::R0);
+    state.domain.forget(Reg::R0);
     state.set_tnum(Reg::R0, Tnum::unknown());
     match helper {
         constants::BPF_REDIRECT => {
-            assume_ge_imm(state.dbm_mut(), Reg::R0, 0);
-            assume_le_imm(state.dbm_mut(), Reg::R0, 7);
+            state.domain.assume_ge_imm(Reg::R0, 0);
+            state.domain.assume_le_imm(Reg::R0, 7);
         }
         constants::BPF_FIB_LOOKUP => {
-            assume_ge_imm(state.dbm_mut(), Reg::R0, 0);
-            assume_le_imm(state.dbm_mut(), Reg::R0, 8);
+            state.domain.assume_ge_imm(Reg::R0, 0);
+            state.domain.assume_le_imm(Reg::R0, 8);
         }
         constants::BPF_MAP_UPDATE_ELEM
         | constants::BPF_MAP_DELETE_ELEM
@@ -241,35 +240,35 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
         | constants::BPF_SKB_VLAN_POP
         | constants::BPF_SOCK_MAP_UPDATE => {
             // Returns 0 on success, or -errno
-            assume_le_imm(state.dbm_mut(), Reg::R0, 0);
-            assume_ge_imm(state.dbm_mut(), Reg::R0, -constants::MAX_ERRNO);
+            state.domain.assume_le_imm(Reg::R0, 0);
+            state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
         }
         constants::BPF_GET_PRANDOM_U32
         | constants::BPF_GET_CGROUP_CLASS_ID
         | constants::BPF_GET_HASH_RECALC => {
             // Returns a positive u32
-            assume_ge_imm(state.dbm_mut(), Reg::R0, 0);
-            assume_le_imm(state.dbm_mut(), Reg::R0, 0xFFFF_FFFF);
+            state.domain.assume_ge_imm(Reg::R0, 0);
+            state.domain.assume_le_imm(Reg::R0, 0xFFFF_FFFF);
             state.set_tnum(Reg::R0, Tnum::u32_unknown());
         }
         constants::BPF_CSUM_DIFF => {
             // Returns a positive u32 (checksum) or negative error
-            assume_ge_imm(state.dbm_mut(), Reg::R0, -constants::MAX_ERRNO);
-            assume_le_imm(state.dbm_mut(), Reg::R0, 0xFFFF_FFFF);
+            state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
+            state.domain.assume_le_imm(Reg::R0, 0xFFFF_FFFF);
             state.set_tnum(Reg::R0, Tnum::u32_unknown());
         }
         constants::BPF_GET_TASK_STACK => {
             let mem_size_pairs = get_mem_size_pairs(helper);
             let size_reg = mem_size_pairs[0].size_reg;
-            let (_, hi) = get_interval(state.dbm(), size_reg);
-            assume_le_imm(state.dbm_mut(), Reg::R0, hi);
+            let (_, hi) = state.domain.get_interval(size_reg);
+            state.domain.assume_le_imm(Reg::R0, hi);
         }
         constants::BPF_GET_STACK => {
             let mem_size_pairs = get_mem_size_pairs(helper);
             let size_reg = mem_size_pairs[0].size_reg;
-            let (_, hi) = get_interval(state.dbm(), size_reg);
-            assume_le_imm(state.dbm_mut(), Reg::R0, hi);
-            assume_ge_imm(state.dbm_mut(), Reg::R0, -constants::MAX_ERRNO);
+            let (_, hi) = state.domain.get_interval(size_reg);
+            state.domain.assume_le_imm(Reg::R0, hi);
+            state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
         }
         _ => {}
     }

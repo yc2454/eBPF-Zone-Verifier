@@ -148,7 +148,7 @@ pub fn analyze_program(
 
         // E. Logging
         if config.verbosity >= 2 {
-            state.dbm().pretty_print();
+            state.domain.dump();
         }
         debug!(target: "app", "|PC:{}| Instr: [[{}]]\nRegs: {:?}\nTnums: {:?}\n", 
                state.pc, instr, state.types.reg_types_str(), state.tnums_to_string());

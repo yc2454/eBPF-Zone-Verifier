@@ -7,7 +7,6 @@ use crate::analysis::machine::state::State;
 use crate::ast::MapLoadKind;
 use crate::common::constants;
 use crate::parsing::elf::BpfMapDef;
-use crate::domains::domain::{forget, get_interval};
 use log::error;
 
 pub fn check_map_rw(env: &mut VerifierEnv, map_idx: usize, pc: usize, is_write: bool) {
@@ -65,7 +64,7 @@ pub fn check_map_access(
     size: i64,
     pc: usize,
 ) {
-    let (dbm_min, dbm_max) = get_interval(state.dbm(), base);
+    let (dbm_min, dbm_max) = state.domain.get_interval(base);
     if dbm_min != i64::MIN && dbm_max != i64::MAX {
         let min_val = dbm_min;
         let max_val = dbm_max;
@@ -141,7 +140,7 @@ pub(crate) fn transfer_map_load(
             reloc.map_idx,
             dst,
         );
-        forget(state.dbm_mut(), dst);
+        state.domain.forget(dst);
         state.pc += 2;
         vec![state]
     } else {

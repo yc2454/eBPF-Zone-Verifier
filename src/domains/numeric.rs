@@ -305,6 +305,50 @@ impl NumericDomain {
     }
 
     // ══════════════════════════════════════════════════════════════════════════
+    //  Width Truncation
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// Apply W32 truncation to a register's bounds.
+    /// If the current bounds exceed [0, 0xFFFFFFFF], widen to that range.
+    pub fn apply_w32_truncation(&mut self, dst: Reg) {
+        let (lo, hi) = self.get_interval(dst);
+        let safe = lo >= 0 && hi <= 0xFFFFFFFF;
+
+        if !safe {
+            // Check if the lower 32 bits form a non-wrapping range.
+            let tight = if lo != i64::MIN && hi != i64::MAX {
+                let l_u = lo as u64;
+                let h_u = hi as u64;
+                (l_u >> 32) == (h_u >> 32)
+            } else {
+                false
+            };
+
+            if tight {
+                let new_lo = (lo as u64 & 0xFFFFFFFF) as i64;
+                let new_hi = (hi as u64 & 0xFFFFFFFF) as i64;
+                self.forget(dst);
+                self.assume_ge_imm(dst, new_lo);
+                self.assume_le_imm(dst, new_hi);
+            } else {
+                self.forget(dst);
+                self.assume_ge_imm(dst, 0);
+                self.assume_le_imm(dst, 0xFFFFFFFF);
+            }
+        }
+    }
+
+    /// Check if value is known to be in u32 range [0, 0xFFFFFFFF]
+    pub fn fits_in_u32_range(&self, reg: Reg) -> bool {
+        let (lo, hi) = self.get_interval(reg);
+        if lo != i64::MIN && hi != i64::MAX {
+            lo >= 0 && hi <= 0xFFFFFFFF
+        } else {
+            false
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
     //  Packet Geometry
     // ══════════════════════════════════════════════════════════════════════════
 

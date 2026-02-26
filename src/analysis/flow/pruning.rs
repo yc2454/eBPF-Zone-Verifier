@@ -8,7 +8,6 @@ use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::state::State;
 use crate::ast::{CmpOp, Instr, Operand, Program};
 use crate::common::config::VerifierConfig;
-use crate::domains::domain::{assume_ge_imm, assume_le_imm, get_interval};
 use crate::domains::numeric::NumericDomain;
 use crate::domains::tnum::Tnum;
 
@@ -58,7 +57,7 @@ fn detect_loop_bound(
             ..
         } = &prog.instrs[current_pc]
     {
-        let (lo, _hi) = get_interval(state.dbm(), *left);
+        let (lo, _hi) = state.domain.get_interval(*left);
         if lo >= 0 && *k > 0 {
             return Some((*left, *k - 1));
         }
@@ -79,7 +78,7 @@ fn detect_loop_bound(
         } = &prog.instrs[branch_pc]
         && *target == current_pc
     {
-        let (lo, _hi) = get_interval(state.dbm(), *left);
+        let (lo, _hi) = state.domain.get_interval(*left);
         if lo >= 0 && *k > 0 {
             return Some((*left, *k - 1));
         }
@@ -190,10 +189,10 @@ fn is_at_loop_point(env: &VerifierEnv, state: &State, pc: usize, prog: &Program)
 /// Returns true if bounds were applied.
 fn apply_loop_bound(state: &mut State, loop_bound: Option<(Reg, i64)>) -> bool {
     if let Some((reg, upper_bound)) = loop_bound {
-        let (cur_lo, _) = get_interval(state.dbm(), reg);
+        let (cur_lo, _) = state.domain.get_interval(reg);
         if cur_lo <= upper_bound {
-            assume_le_imm(state.dbm_mut(), reg, upper_bound);
-            assume_ge_imm(state.dbm_mut(), reg, 0);
+            state.domain.assume_le_imm(reg, upper_bound);
+            state.domain.assume_ge_imm(reg, 0);
             state.set_tnum(reg, Tnum::UNKNOWN);
             return true;
         }
@@ -208,8 +207,8 @@ fn widening_was_effective(
     live_regs: &HashSet<Reg>,
 ) -> bool {
     live_regs.iter().any(|&r| {
-        let (first_min, first_max) = get_interval(first.dbm(), r);
-        let (last_min, last_max) = get_interval(last.dbm(), r);
+        let (first_min, first_max) = first.domain.get_interval(r);
+        let (last_min, last_max) = last.domain.get_interval(r);
         last_min < first_min || last_max > first_max
     })
 }

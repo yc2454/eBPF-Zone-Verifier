@@ -10,12 +10,11 @@ use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, MapLoadKind, MemSize, Operand, Width};
 use crate::common::constants;
 use crate::common::ctx_model::{CtxFieldKind, validate_ctx_access};
-use crate::domains::dbm::Dbm;
-use crate::domains::domain::{self, get_distance_fixed, get_interval};
+use crate::domains::numeric::NumericDomain;
 
-fn update_packet_ptr_type_after_alu(types: &mut TypeState, dbm: &Dbm, dst: Reg) {
+fn update_packet_ptr_type_after_alu(types: &mut TypeState, domain: &NumericDomain, dst: Reg) {
     // Check offset from anchor: dst - @data
-    let offset_from_data = dbm.get(dst, Reg::AnchorData);
+    let offset_from_data = domain.get(dst, Reg::AnchorData);
     if offset_from_data <= constants::MAX_PACKET_OFF {
         types.set(dst, RegType::PtrToPacket);
     } else {
@@ -24,10 +23,10 @@ fn update_packet_ptr_type_after_alu(types: &mut TypeState, dbm: &Dbm, dst: Reg) 
 }
 
 /// Extracts a fixed i64 value from an operand (immediate or register with known value)
-fn get_operand_fixed_value(dbm: &Dbm, src: &Operand) -> Option<i64> {
+fn get_operand_fixed_value(domain: &NumericDomain, src: &Operand) -> Option<i64> {
     match src {
         Operand::Imm(k) => Some(*k),
-        Operand::Reg(r) => domain::get_fixed_value(dbm, *r),
+        Operand::Reg(r) => domain.get_fixed_value(*r),
     }
 }
 
@@ -56,13 +55,13 @@ fn adjust_map_value_offset(ty: RegType, delta: Option<i64>) -> RegType {
 /// Unified handler for pointer arithmetic (Add/Sub) type updates
 fn update_ptr_arithmetic_type(
     types: &mut TypeState,
-    dbm: &Dbm,
+    domain: &NumericDomain,
     dst: Reg,
     dst_ty: RegType,
     src: &Operand,
     is_add: bool, // true = Add, false = Sub
 ) {
-    let delta = get_operand_fixed_value(dbm, src);
+    let delta = get_operand_fixed_value(domain, src);
     let signed_delta = if is_add { delta } else { delta.map(|d| -d) };
 
     match dst_ty {
@@ -101,11 +100,11 @@ fn update_ptr_arithmetic_type(
                 }
             } else {
                 // For Sub: use anchor-based bounds check
-                update_packet_ptr_type_after_alu(types, dbm, dst);
+                update_packet_ptr_type_after_alu(types, domain, dst);
             }
         }
         RegType::PtrToPacketMeta => {
-            let offset_from_meta = dbm.get(dst, Reg::AnchorDataMeta);
+            let offset_from_meta = domain.get(dst, Reg::AnchorDataMeta);
             if offset_from_meta <= constants::MAX_PACKET_OFF {
                 types.set(dst, RegType::PtrToPacketMeta);
             } else {
@@ -146,7 +145,7 @@ pub(crate) fn update_alu_types(
     env: &VerifierEnv,
     in_types: &TypeState,
     types: &mut TypeState,
-    dbm: &Dbm,
+    domain: &NumericDomain,
     width: Width,
     op: AluOp,
     dst: Reg,
@@ -204,7 +203,7 @@ pub(crate) fn update_alu_types(
             let is_add = op == AluOp::Add;
 
             if dst_ty.is_pointer() {
-                update_ptr_arithmetic_type(types, dbm, dst, dst_ty, src, is_add);
+                update_ptr_arithmetic_type(types, domain, dst, dst_ty, src, is_add);
             } else {
                 handle_scalar_arithmetic_type(in_types, types, dst, src, is_add);
             }
@@ -272,7 +271,7 @@ pub(crate) fn update_load_types(
             }
         }
         RegType::PtrToStack { .. } => {
-            match get_distance_fixed(state.dbm(), base, Reg::R10) {
+            match state.domain.get_distance_fixed(base, Reg::R10) {
                 Some(base_off) => {
                     let actual_slot = base_off + (off as i64);
                     if size == MemSize::U64.bytes() {
@@ -474,9 +473,9 @@ pub(crate) fn update_call_types(
         constants::BPF_SKB_LOAD_BYTES => {
             let mem_ptr_ty = in_types.get(Reg::R3);
             if let RegType::PtrToStack { frame_level } = mem_ptr_ty
-                && let Some(off) = get_distance_fixed(state.dbm(), Reg::R3, Reg::R10)
+                && let Some(off) = state.domain.get_distance_fixed(Reg::R3, Reg::R10)
             {
-                let (_, hi) = get_interval(state.dbm(), Reg::R4);
+                let (_, hi) = state.domain.get_interval(Reg::R4);
                 let len = if hi <= 0xFFFF { hi as i16 } else { 0 };
                 if len > 0 {
                     // Mark the stack range as initialized scalars
@@ -492,7 +491,7 @@ pub(crate) fn update_call_types(
         }
 
         constants::BPF_RINGBUF_RESERVE => {
-            let (_, hi) = get_interval(state.dbm(), Reg::R2);
+            let (_, hi) = state.domain.get_interval(Reg::R2);
             state.types.set(
                 Reg::R0,
                 RegType::PtrToAllocMemOrNull {

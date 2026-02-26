@@ -8,4 +8,3 @@ mod state;
 pub mod ops;
 
 pub use state::IntervalState;
-pub use ops::*;
