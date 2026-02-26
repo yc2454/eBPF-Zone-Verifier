@@ -220,6 +220,7 @@ fn widening_was_effective(
 }
 
 /// Check if loop has converged and can be pruned.
+/// Precondition: state is already subsumed by prev_states.last().
 fn check_loop_convergence(
     env: &VerifierEnv,
     state: &State,
@@ -227,17 +228,8 @@ fn check_loop_convergence(
     prog: &Program,
     prev_states: &[State],
     live_regs: &HashSet<Reg>,
-    config: &VerifierConfig,
     loop_bound: Option<(Reg, i64)>,
 ) -> bool {
-    let Some(old) = prev_states.last() else {
-        return false;
-    };
-
-    if !state_subsumed_by(state, old, live_regs, config) {
-        return false;
-    }
-
     // Only converge if:
     // 1. Widening was applied (prev_states >= 2)
     // 2. Widening was effective (bounds expanded)
@@ -247,7 +239,8 @@ fn check_loop_convergence(
     }
 
     let first = &prev_states[0];
-    if !widening_was_effective(first, old, live_regs) {
+    let last = prev_states.last().unwrap();
+    if !widening_was_effective(first, last, live_regs) {
         return false;
     }
 
@@ -300,15 +293,20 @@ fn handle_loop_pruning(
         return false;
     };
 
-    if check_loop_convergence(env, state, pc, prog, prev_states, live_regs, config, loop_bound) {
-        return true;
-    }
-
-    // Not converged: apply widening if enabled
-    if config.use_widening {
-        if let Some(old) = prev_states.last() {
-            apply_widening(state, old, live_regs, loop_bound);
+    if let Some(old) = prev_states.last() {
+        if state_subsumed_by(state, old, live_regs, config) {
+            // Check if we can converge (widening effective + exit explored)
+            if check_loop_convergence(env, state, pc, prog, prev_states, live_regs, loop_bound)
+            {
+                return true;
+            }
+            // Subsumed but conditions not met (widening not effective or no exit path)
+            // Let complexity limit catch infinite loops - don't widen when already subsumed
+            return false;
         }
+
+        // Not subsumed: apply widening to accelerate convergence
+        apply_widening(state, old, live_regs, loop_bound);
     }
 
     false
