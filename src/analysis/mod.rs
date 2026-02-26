@@ -106,7 +106,7 @@ pub fn analyze_program(
         }
 
         // A.c RECORD STATE
-        merging::record_state(&mut env, state.clone());
+        merging::record_state(&mut env, state.clone(), config.max_states_per_pc);
 
         // B. Global Complexity Limit (only count non-pruned states)
         env.insn_processed += 1;

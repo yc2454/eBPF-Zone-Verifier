@@ -53,7 +53,7 @@ impl Default for VerifierConfig {
             verbosity: 1,
             max_insn: 1_000_0, // 1 million instructions to match modern kernel limits
             skip_dbm_check: false,
-            use_widening: false,
+            use_widening: true, // Use widening by default to ensure termination
             max_states_per_pc: 8,
             log_interval: 100_000,
             debug_pc: None,

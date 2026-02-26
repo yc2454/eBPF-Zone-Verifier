@@ -289,9 +289,11 @@ fn handle_loop_pruning(
         return true;
     }
 
-    // Not converged: apply widening
-    if let Some(old) = prev_states.last() {
-        apply_widening(state, old, live_regs, loop_bound);
+    // Not converged: apply widening if enabled
+    if config.use_widening {
+        if let Some(old) = prev_states.last() {
+            apply_widening(state, old, live_regs, loop_bound);
+        }
     }
 
     false
