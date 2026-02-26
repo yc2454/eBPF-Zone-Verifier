@@ -174,21 +174,16 @@ fn arrived_via_back_edge(env: &VerifierEnv, state: &State, pc: usize, prog: &Pro
 /// 1. A backward-jumping branch (source of back-edge): If/Jmp with target < pc
 /// 2. The target of a backward jump (loop head): arrived here via a backward jump
 ///
-/// We require that we've visited this PC before (on any path) to avoid treating
-/// the first visit to a backward branch as a loop point.
+/// We require that the history confirms this is a back-edge at the current call depth,
+/// not just that we've visited this PC before on some other path.
 fn is_at_loop_point(env: &VerifierEnv, state: &State, pc: usize, prog: &Program) -> bool {
-    // Must have visited this PC before to be a loop point
-    if !env.explored_states.contains_key(&pc) {
-        return false;
-    }
+    // History must confirm this is a back-edge at current call depth
+    let is_back_edge_pc = state
+        .history_idx
+        .map(|idx| env.history.is_back_edge(idx, pc, state.num_frames()))
+        .unwrap_or(false);
 
-    // Check if we're at a backward branch (source of back-edge)
-    let is_backward = is_backward_branch(pc, prog);
-
-    // Check if we arrived via a backward jump (loop head)
-    let arrived_back = arrived_via_back_edge(env, state, pc, prog);
-
-    is_backward || arrived_back
+    is_back_edge_pc && (is_backward_branch(pc, prog) || arrived_via_back_edge(env, state, pc, prog))
 }
 
 /// Apply loop bound constraints to the state.
