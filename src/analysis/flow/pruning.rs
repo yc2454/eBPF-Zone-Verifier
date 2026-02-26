@@ -14,9 +14,11 @@ use crate::zone::tnum::Tnum;
 
 /// Check if the loop body contains a conditional branch (If instruction),
 /// which indicates the loop has a potential exit path.
+/// Only considers instructions at the same call depth as the loop head.
 fn loop_has_conditional_exit(env: &VerifierEnv, state: &State, pc: usize, prog: &Program) -> bool {
     if let Some(idx) = state.history_idx {
-        let body_pcs = env.history.loop_body_pcs(idx, pc);
+        // Only check PCs at the same frame depth (excludes callee instructions)
+        let body_pcs = env.history.loop_body_pcs(idx, pc, Some(state.num_frames()));
         for body_pc in body_pcs {
             if body_pc < prog.instrs.len() && matches!(prog.instrs[body_pc], Instr::If { .. }) {
                 return true;
@@ -89,12 +91,16 @@ fn detect_loop_bound(
 /// Check if any conditional branch in the loop body has had its exit path
 /// actually explored (i.e., the exit PC has explored states). This detects
 /// cases where a conditional exit exists syntactically but is never feasible.
+///
+/// Only considers instructions at the same call depth as the loop head,
+/// so BPF-to-BPF calls within the loop don't pollute the loop body set.
 fn loop_exit_was_explored(env: &VerifierEnv, state: &State, pc: usize, prog: &Program) -> bool {
-    // Collect loop body PCs
+    // Collect loop body PCs at the same frame depth (excludes callee instructions)
+    let frame_depth = state.num_frames();
     let mut body_pc_set: HashSet<usize> = HashSet::new();
     body_pc_set.insert(pc); // loop head
     if let Some(idx) = state.history_idx {
-        for body_pc in env.history.loop_body_pcs(idx, pc) {
+        for body_pc in env.history.loop_body_pcs(idx, pc, Some(frame_depth)) {
             body_pc_set.insert(body_pc);
         }
     }
@@ -167,13 +173,22 @@ fn arrived_via_back_edge(env: &VerifierEnv, state: &State, pc: usize, prog: &Pro
 /// A loop point is either:
 /// 1. A backward-jumping branch (source of back-edge): If/Jmp with target < pc
 /// 2. The target of a backward jump (loop head): arrived here via a backward jump
+///
+/// We require that we've visited this PC before (on any path) to avoid treating
+/// the first visit to a backward branch as a loop point.
 fn is_at_loop_point(env: &VerifierEnv, state: &State, pc: usize, prog: &Program) -> bool {
-    let is_back_edge_pc = state
-        .history_idx
-        .map(|idx| env.history.is_back_edge(idx, pc, state.num_frames()))
-        .unwrap_or(false);
+    // Must have visited this PC before to be a loop point
+    if !env.explored_states.contains_key(&pc) {
+        return false;
+    }
 
-    is_back_edge_pc && (is_backward_branch(pc, prog) || arrived_via_back_edge(env, state, pc, prog))
+    // Check if we're at a backward branch (source of back-edge)
+    let is_backward = is_backward_branch(pc, prog);
+
+    // Check if we arrived via a backward jump (loop head)
+    let arrived_back = arrived_via_back_edge(env, state, pc, prog);
+
+    is_backward || arrived_back
 }
 
 /// Apply loop bound constraints to the state.
@@ -225,7 +240,7 @@ fn check_loop_convergence(
 
     // Only converge if:
     // 1. Widening was applied (prev_states >= 2)
-    // 2. Widening was effective
+    // 2. Widening was effective (bounds expanded)
     // 3. Exit path exists (bounded loop or exit was explored)
     if prev_states.len() < 2 {
         return false;

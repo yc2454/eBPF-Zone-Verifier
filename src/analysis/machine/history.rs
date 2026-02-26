@@ -64,7 +64,15 @@ impl History {
 
     /// Collect all PCs visited on the path from `from_idx` back to (but not including)
     /// the first occurrence of `target_pc`. These are the PCs in the loop body.
-    pub fn loop_body_pcs(&self, from_idx: usize, target_pc: usize) -> Vec<usize> {
+    ///
+    /// If `frame_depth` is Some, only collects PCs at that specific call depth.
+    /// This filters out callee PCs when analyzing loops that contain BPF-to-BPF calls.
+    pub fn loop_body_pcs(
+        &self,
+        from_idx: usize,
+        target_pc: usize,
+        frame_depth: Option<usize>,
+    ) -> Vec<usize> {
         let mut pcs = Vec::new();
         let mut current = Some(from_idx);
         while let Some(idx) = current {
@@ -72,7 +80,10 @@ impl History {
                 if step.pc == target_pc {
                     break;
                 }
-                pcs.push(step.pc);
+                // Only include PCs at the target frame depth (if specified)
+                if frame_depth.is_none_or(|d| step.depth == d) {
+                    pcs.push(step.pc);
+                }
                 current = step.parent_idx;
             } else {
                 break;
