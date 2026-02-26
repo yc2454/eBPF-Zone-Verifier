@@ -3,11 +3,11 @@
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
 use crate::ast::{Operand, Width};
-use crate::zone::domain::{
+use crate::domains::domain::{
     apply_and_imm, assign_reg, assign_zero, assume_eq_imm, assume_ge_imm, assume_le_imm, forget,
     get_interval,
 };
-use crate::zone::tnum::Tnum;
+use crate::domains::tnum::Tnum;
 
 use super::helpers::sync_tnum_to_dbm;
 
@@ -34,21 +34,21 @@ pub(crate) fn handle_mov(state: &mut State, width: Width, dst: Reg, src: &Operan
     match src {
         Operand::Reg(r) => {
             if width == Width::W32 {
-                forget(&mut state.dbm, dst);
-                if crate::zone::domain::proven_u32_range(&mut state.dbm, *r, Reg::Zero) {
-                    assign_reg(&mut state.dbm, dst, *r);
+                forget(state.dbm_mut(), dst);
+                if crate::domains::domain::proven_u32_range(state.dbm_mut(), *r, Reg::Zero) {
+                    assign_reg(state.dbm_mut(), dst, *r);
                 } else {
-                    assume_ge_imm(&mut state.dbm, dst, 0);
-                    assume_le_imm(&mut state.dbm, dst, 0xFFFFFFFF);
+                    assume_ge_imm(state.dbm_mut(), dst, 0);
+                    assume_le_imm(state.dbm_mut(), dst, 0xFFFFFFFF);
                 }
             } else {
                 if dst == *r {
                     return;
                 }
                 if *r == Reg::R10 {
-                    assign_zero(&mut state.dbm, dst);
+                    assign_zero(state.dbm_mut(), dst);
                 } else {
-                    assign_reg(&mut state.dbm, dst, *r);
+                    assign_reg(state.dbm_mut(), dst, *r);
                 }
             }
         }
@@ -58,18 +58,18 @@ pub(crate) fn handle_mov(state: &mut State, width: Width, dst: Reg, src: &Operan
             } else {
                 *c
             };
-            forget(&mut state.dbm, dst);
-            assume_le_imm(&mut state.dbm, dst, c);
-            assume_ge_imm(&mut state.dbm, dst, c);
+            forget(state.dbm_mut(), dst);
+            assume_le_imm(state.dbm_mut(), dst, c);
+            assume_ge_imm(state.dbm_mut(), dst, c);
         }
     }
 }
 
 pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operand) {
-    let (min_op, max_op) = get_interval(&state.dbm, dst);
+    let (min_op, max_op) = get_interval(state.dbm(), dst);
     let input_nonnegative = min_op >= 0;
 
-    forget(&mut state.dbm, dst);
+    forget(state.dbm_mut(), dst);
 
     if let Operand::Imm(mask) = src {
         let mask = if width == Width::W32 {
@@ -78,15 +78,15 @@ pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operan
             *mask
         };
         if mask >= 0 {
-            apply_and_imm(&mut state.dbm, dst, mask);
+            apply_and_imm(state.dbm_mut(), dst, mask);
         } else if input_nonnegative {
-            assume_ge_imm(&mut state.dbm, dst, 0);
+            assume_ge_imm(state.dbm_mut(), dst, 0);
             if max_op != i64::MAX {
-                assume_le_imm(&mut state.dbm, dst, max_op);
+                assume_le_imm(state.dbm_mut(), dst, max_op);
             }
         }
     } else if let Operand::Reg(_) = src {
-        assume_ge_imm(&mut state.dbm, dst, 0);
+        assume_ge_imm(state.dbm_mut(), dst, 0);
     }
 
     let t = state.get_tnum(dst);
@@ -107,12 +107,12 @@ pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operan
     state.set_tnum(dst, new_t);
 
     if let Some(c) = new_t.const_value() {
-        assume_eq_imm(&mut state.dbm, dst, c as i64);
+        assume_eq_imm(state.dbm_mut(), dst, c as i64);
     }
 }
 
 pub(crate) fn handle_or(state: &mut State, width: Width, dst: Reg, src: &Operand) {
-    forget(&mut state.dbm, dst);
+    forget(state.dbm_mut(), dst);
 
     let t = state.get_tnum(dst);
     let new_t = match src {
@@ -135,7 +135,7 @@ pub(crate) fn handle_or(state: &mut State, width: Width, dst: Reg, src: &Operand
 }
 
 pub(crate) fn handle_xor(state: &mut State, width: Width, dst: Reg, src: &Operand) {
-    forget(&mut state.dbm, dst);
+    forget(state.dbm_mut(), dst);
 
     let t = state.get_tnum(dst);
     let new_t = match src {

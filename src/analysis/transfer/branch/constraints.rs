@@ -3,12 +3,12 @@
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
 use crate::ast::{CmpOp, Width};
-use crate::zone::dbm::Dbm;
-use crate::zone::domain::{
+use crate::domains::dbm::Dbm;
+use crate::domains::domain::{
     assign_reg, assume_eq_imm, assume_ge, assume_ge_imm, assume_gt, assume_le, assume_le_imm,
     assume_le_offset, assume_lt_imm, get_fixed_value,
 };
-use crate::zone::tnum::Tnum;
+use crate::domains::tnum::Tnum;
 use either::Either::{self};
 
 use super::outcome::{fits_in_i32, fits_in_u32, fits_in_u32_range, get_combined_signed_bounds};
@@ -26,9 +26,9 @@ pub fn apply_jmp_constraints(
         return;
     }
 
-    let (resolved, right_bounds) = resolve_right_operand(&then_s.dbm, right, width, op);
+    let (resolved, right_bounds) = resolve_right_operand(then_s.dbm(), right, width, op);
     if can_apply_dbm_constraint(then_s, left, op, width, right_bounds, resolved) {
-        apply_cmp_to_dbm(&mut then_s.dbm, &mut else_s.dbm, left, op, resolved);
+        apply_cmp_to_dbm(then_s.dbm_mut(), else_s.dbm_mut(), left, op, resolved);
     } else if width == Width::W64 && matches!(op, CmpOp::UGt | CmpOp::UGe | CmpOp::ULt | CmpOp::ULe)
     {
         apply_unsigned_const_fallback(then_s, else_s, left, op, resolved);
@@ -65,7 +65,7 @@ fn can_apply_dbm_constraint(
         let left_bounds = get_combined_signed_bounds(state, left);
         let left_nonneg = left_bounds.0 >= 0;
         let left_unbounded = {
-            let (lo, _) = crate::zone::domain::get_interval(&state.dbm, left);
+            let (lo, _) = crate::domains::domain::get_interval(state.dbm(), left);
             let tnum = state.get_tnum(left);
             lo == i64::MIN && tnum.max_value() > i64::MAX as u64
         };
@@ -214,7 +214,7 @@ fn apply_test_constraints(
             }
         }
         Either::Left(reg) => {
-            if let Some(val) = get_fixed_value(&then_s.dbm, reg) {
+            if let Some(val) = get_fixed_value(then_s.dbm(), reg) {
                 if width == Width::W32 {
                     (val as u32) as u64
                 } else {
@@ -243,13 +243,13 @@ fn apply_test_constraints(
         then_s.set_tnum(left, refined);
 
         if width == Width::W32 && bit_pos == 31 {
-            if fits_in_u32_range(&then_s.dbm, left) {
-                assume_ge_imm(&mut then_s.dbm, left, 0x80000000);
-                assume_le_imm(&mut else_s.dbm, left, 0x7FFFFFFF);
+            if fits_in_u32_range(then_s.dbm(), left) {
+                assume_ge_imm(then_s.dbm_mut(), left, 0x80000000);
+                assume_le_imm(else_s.dbm_mut(), left, 0x7FFFFFFF);
             }
         } else if width == Width::W64 && bit_pos == 63 {
-            assume_lt_imm(&mut then_s.dbm, left, 0);
-            assume_ge_imm(&mut else_s.dbm, left, 0);
+            assume_lt_imm(then_s.dbm_mut(), left, 0);
+            assume_ge_imm(else_s.dbm_mut(), left, 0);
         }
     }
 }
@@ -284,7 +284,7 @@ fn resolve_right_operand(
                 let eff = truncate(val);
                 (Either::Right(eff), (eff, eff))
             } else {
-                let bounds = crate::zone::domain::get_interval(dbm, reg);
+                let bounds = crate::domains::domain::get_interval(dbm, reg);
                 (Either::Left(reg), bounds)
             }
         }
@@ -298,7 +298,7 @@ fn apply_unsigned_const_fallback(
     op: CmpOp,
     right: Either<Reg, i64>,
 ) {
-    let left_const = get_fixed_value(&then_s.dbm, left).or_else(|| {
+    let left_const = get_fixed_value(then_s.dbm(), left).or_else(|| {
         let t = then_s.get_tnum(left);
         if t.is_const() {
             Some(t.value as i64)
@@ -311,15 +311,15 @@ fn apply_unsigned_const_fallback(
         (Some(k), Either::Left(reg)) => {
             let flipped = flip_unsigned_cmp(op);
             apply_unsigned_range_constraint(
-                &mut then_s.dbm,
-                &mut else_s.dbm,
+                then_s.dbm_mut(),
+                else_s.dbm_mut(),
                 reg,
                 flipped,
                 k as u64,
             );
         }
         (_, Either::Right(imm)) => {
-            apply_unsigned_range_constraint(&mut then_s.dbm, &mut else_s.dbm, left, op, imm as u64);
+            apply_unsigned_range_constraint(then_s.dbm_mut(), else_s.dbm_mut(), left, op, imm as u64);
         }
         _ => {}
     }

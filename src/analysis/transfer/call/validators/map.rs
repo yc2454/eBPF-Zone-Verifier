@@ -6,7 +6,7 @@ use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::common::constants;
-use crate::zone::domain::get_distance_fixed;
+use crate::domains::domain::get_distance_fixed;
 
 use super::super::checks::{ValidationContext, validate_readable_mem};
 use super::super::compat::check_map_type_for_helper;
@@ -119,7 +119,7 @@ pub fn validate_ptr_to_map_key(ctx: &mut ValidationContext) -> bool {
     // the memory doesn't contain pointers that would be leaked to the map.
     if ctx.helper == constants::BPF_MAP_UPDATE_ELEM
         && let RegType::PtrToStack { .. } = actual
-        && let Some(off) = get_distance_fixed(&ctx.state.dbm, ctx.reg, Reg::R10)
+        && let Some(off) = get_distance_fixed(ctx.state.dbm(), ctx.reg, Reg::R10)
     {
         check_stack_no_pointers(ctx.env, ctx.state, off, target_info.key_size as i64, ctx.pc);
         if ctx.env.failed() {
@@ -207,7 +207,7 @@ pub fn validate_ptr_to_map_value(ctx: &mut ValidationContext) -> bool {
 
     // For stack pointers, check that the memory doesn't contain pointers
     if let RegType::PtrToStack { .. } = actual
-        && let Some(off) = get_distance_fixed(&ctx.state.dbm, ctx.reg, Reg::R10)
+        && let Some(off) = get_distance_fixed(ctx.state.dbm(), ctx.reg, Reg::R10)
     {
         check_stack_no_pointers(
             ctx.env,

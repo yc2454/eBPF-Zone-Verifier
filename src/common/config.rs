@@ -2,6 +2,18 @@
 //
 // Verifier configuration - controls analysis behavior via command-line flags.
 
+/// Abstract domain mode for numerical analysis
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DomainMode {
+    /// Zone domain (DBM) - tracks relational constraints x - y <= c
+    /// More precise, especially for packet bounds checking
+    #[default]
+    Zone,
+    /// Interval domain - kernel verifier style, per-register bounds only
+    /// Less precise but matches kernel behavior
+    Interval,
+}
+
 /// Verifier configuration options
 #[derive(Clone, Debug)]
 pub struct VerifierConfig {
@@ -10,6 +22,9 @@ pub struct VerifierConfig {
 
     /// Maximum instructions to process before aborting
     pub max_insn: usize,
+
+    /// Abstract domain mode (Zone or Interval)
+    pub domain_mode: DomainMode,
 
     /// Skip DBM (numeric) comparison in pruning - faster but less precise
     pub skip_dbm_check: bool,
@@ -52,6 +67,7 @@ impl Default for VerifierConfig {
         Self {
             verbosity: 1,
             max_insn: 1_000_0, // 1 million instructions to match modern kernel limits
+            domain_mode: DomainMode::Zone,
             skip_dbm_check: false,
             use_widening: true, // Use widening by default to ensure termination
             max_states_per_pc: 8,
@@ -98,6 +114,12 @@ impl VerifierConfig {
                     }
                     "--enable-path-trace" => {
                         config.enable_path_trace = true;
+                    }
+                    "--kernel-mode" | "--interval" => {
+                        config.domain_mode = DomainMode::Interval;
+                    }
+                    "--zone-mode" | "--zone" => {
+                        config.domain_mode = DomainMode::Zone;
                     }
                     "--max-insn" => {
                         i += 1;
@@ -201,6 +223,10 @@ impl VerifierConfig {
         eprintln!("  -q, --quiet          Verbosity 0: errors only");
         eprintln!("  -v, --verbose        Verbosity 2: trace execution");
         eprintln!("  -vv, --very-verbose  Verbosity 3: full debug output");
+        eprintln!("Domain Mode:");
+        eprintln!("  --kernel-mode        Use interval domain (kernel verifier style)");
+        eprintln!("  --zone-mode          Use zone domain (default, more precise)");
+        eprintln!("Analysis Options:");
         eprintln!("  --skip-dbm           Skip DBM comparison in pruning (faster)");
         eprintln!(
             "  --use-widening       Use widening in pruning (DANGEROUS: might cause unsoundness)"

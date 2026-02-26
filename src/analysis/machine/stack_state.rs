@@ -1,5 +1,5 @@
 use crate::analysis::machine::reg::Reg;
-use crate::zone::tnum::Tnum;
+use crate::domains::tnum::Tnum;
 use crate::{analysis::machine::reg_types::RegType, ast::MemSize};
 use std::collections::{BTreeMap, HashSet};
 

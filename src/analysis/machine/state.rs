@@ -4,9 +4,10 @@ use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::stack_state::{ScalarBounds, SpilledReg, StackState};
 use crate::ast::MemSize;
-use crate::zone::dbm::{Dbm, INF};
-use crate::zone::domain::{self, get_interval};
-use crate::zone::tnum::Tnum;
+use crate::common::config::DomainMode;
+use crate::domains::dbm::{Dbm, INF};
+use crate::domains::numeric::NumericDomain;
+use crate::domains::tnum::Tnum;
 use log::trace;
 use std::collections::{HashMap, HashSet};
 
@@ -26,7 +27,8 @@ pub struct State {
 
     /// Numerical Domain (Values)
     /// Mirrors `bpf_reg_state.{smin_value, umax_value, var_off}`
-    pub dbm: Dbm,
+    /// Can be either Zone (DBM) or Interval domain based on config
+    pub domain: NumericDomain,
 
     /// Current Program Counter
     pub pc: usize,
@@ -52,7 +54,8 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(dbm: Dbm, pc: usize) -> Self {
+    /// Create a new State with the specified domain and program counter
+    pub fn new(domain: NumericDomain, pc: usize) -> Self {
         let mut tnums = HashMap::new();
         tnums.insert(Reg::Zero, Tnum::constant(0));
         for r in Reg::ALL {
@@ -62,7 +65,7 @@ impl State {
         }
         State {
             types: TypeState::new_not_init(),
-            dbm,
+            domain,
             pc,
             history_idx: None,
             tnums: tnums.clone(),
@@ -71,6 +74,41 @@ impl State {
             active_refs: HashSet::new(),
             active_lock: None,
         }
+    }
+
+    /// Create a new State with Zone domain (for backwards compatibility)
+    pub fn new_zone(pc: usize) -> Self {
+        Self::new(NumericDomain::new_zone(), pc)
+    }
+
+    /// Create a new State with Interval domain
+    pub fn new_interval(pc: usize) -> Self {
+        Self::new(NumericDomain::new_interval(), pc)
+    }
+
+    /// Create a new State based on domain mode config
+    pub fn new_with_mode(mode: DomainMode, pc: usize) -> Self {
+        let domain = match mode {
+            DomainMode::Zone => NumericDomain::new_zone(),
+            DomainMode::Interval => NumericDomain::new_interval(),
+        };
+        Self::new(domain, pc)
+    }
+
+    // ── Backwards compatibility accessors ───────────────────────────
+    // These methods provide access to the underlying Dbm for code that
+    // hasn't been migrated to use the NumericDomain interface yet.
+
+    /// Get reference to underlying Dbm (panics if Interval mode)
+    /// DEPRECATED: Use domain methods directly instead
+    pub fn dbm(&self) -> &Dbm {
+        self.domain.as_zone().expect("dbm() called in Interval mode - use domain methods instead")
+    }
+
+    /// Get mutable reference to underlying Dbm (panics if Interval mode)
+    /// DEPRECATED: Use domain methods directly instead
+    pub fn dbm_mut(&mut self) -> &mut Dbm {
+        self.domain.as_zone_mut().expect("dbm_mut() called in Interval mode - use domain methods instead")
     }
 
     // ── Tnum helpers ────────────────────────────────────────────
@@ -161,7 +199,7 @@ impl State {
             (None, None, None)
         };
 
-        let (min, max) = get_interval(&self.dbm, reg);
+        let (min, max) = self.domain.get_interval(reg);
         trace!("At spilling, {} bounds: [{}, {}]", reg.name(), min, max);
 
         // Only track as proper spill if 8-byte aligned
@@ -294,7 +332,7 @@ impl State {
             None => return false,
         };
 
-        domain::forget(&mut self.dbm, dst);
+        self.domain.forget(dst);
 
         // Check if we can preserve type/bounds:
         // 1. Must be reading from start of a spilled value (source_reg.is_some())
@@ -307,7 +345,7 @@ impl State {
             // Preserve type and bounds
             self.types.set(dst, spilled.reg_type);
             self.tnums.insert(dst, spilled.tnum);
-            domain::assign_interval(&mut self.dbm, dst, spilled.bounds.min, spilled.bounds.max);
+            self.domain.assign_interval(dst, spilled.bounds.min, spilled.bounds.max);
 
             // Only restore anchors for U64 (pointers need full 64-bit)
             if size == MemSize::U64 {
@@ -318,7 +356,7 @@ impl State {
             self.types.set(dst, RegType::ScalarValue);
             let (min, max) = size.unbounded_scalar_bounds();
             self.tnums.insert(dst, Tnum::unknown());
-            domain::assign_interval(&mut self.dbm, dst, min, max);
+            self.domain.assign_interval(dst, min, max);
         }
 
         true
@@ -333,8 +371,8 @@ impl State {
         };
 
         if let Some(a) = anchor {
-            let hi = self.dbm.get(reg, a); // reg - anchor <= hi
-            let lo = self.dbm.get(a, reg); // anchor - reg <= lo  (i.e., reg - anchor >= -lo)
+            let hi = self.domain.get(reg, a); // reg - anchor <= hi
+            let lo = self.domain.get(a, reg); // anchor - reg <= lo  (i.e., reg - anchor >= -lo)
             let hi = if hi >= INF { None } else { Some(hi) };
             let lo = if lo >= INF { None } else { Some(lo) };
             (Some(a), lo, hi)
@@ -348,12 +386,12 @@ impl State {
         trace!("{:?}, ", spilled);
         if let Some(anchor) = spilled.anchor {
             if let Some(hi) = spilled.anchor_hi {
-                self.dbm.add_constraint(reg, anchor, hi); // reg - anchor <= hi
+                self.domain.add_constraint(reg, anchor, hi); // reg - anchor <= hi
             }
             if let Some(lo) = spilled.anchor_lo {
-                self.dbm.add_constraint(anchor, reg, lo); // anchor - reg <= lo
+                self.domain.add_constraint(anchor, reg, lo); // anchor - reg <= lo
             }
-            self.dbm.close();
+            self.domain.close();
         }
     }
 
@@ -397,7 +435,7 @@ impl State {
         self.frames.push(
             return_pc,
             self.types.clone(),
-            self.dbm.clone(),
+            self.domain.clone(),
             self.tnums.clone(),
         );
     }

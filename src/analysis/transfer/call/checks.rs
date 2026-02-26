@@ -14,7 +14,7 @@ use crate::analysis::transfer::memory::{
     check_stack_arg_readable,
 };
 use crate::common::constants;
-use crate::zone::domain::{
+use crate::domains::domain::{
     get_distance_fixed, get_distance_interval, get_interval, proven_nonnegative, proven_zero,
 };
 use log::{error, info, warn};
@@ -311,7 +311,7 @@ fn validate_ptr_to_stack(ctx: &mut ValidationContext) -> bool {
 
 fn validate_ptr_to_long(ctx: &mut ValidationContext) -> bool {
     if let RegType::PtrToStack { frame_level } = ctx.actual {
-        let offset = get_distance_fixed(&ctx.state.dbm, ctx.reg, Reg::R10);
+        let offset = get_distance_fixed(ctx.state.dbm(), ctx.reg, Reg::R10);
         check_stack_access(
             ctx.env,
             ctx.state,
@@ -356,7 +356,7 @@ pub(crate) fn validate_readable_mem(
 ) -> bool {
     match reg_type {
         RegType::PtrToStack { .. } => {
-            if let Some(off) = get_distance_fixed(&state.dbm, reg, Reg::R10) {
+            if let Some(off) = get_distance_fixed(state.dbm(), reg, Reg::R10) {
                 if let Some(sz) = size {
                     check_stack_arg_readable(
                         env,
@@ -371,7 +371,7 @@ pub(crate) fn validate_readable_mem(
             } else {
                 // Variable stack offset — use bounds check
                 if let Some(sz) = size {
-                    let (lo, hi) = get_distance_interval(&state.dbm, reg, Reg::R10);
+                    let (lo, hi) = get_distance_interval(state.dbm(), reg, Reg::R10);
                     if lo != i64::MIN && hi != i64::MAX {
                         // Check all possible offsets in the range
                         for off_candidate in lo..=hi {
@@ -448,7 +448,7 @@ pub(crate) fn validate_writable_mem(
 ) -> bool {
     match reg_type {
         RegType::PtrToStack { frame_level } => {
-            if let Some(off) = get_distance_fixed(&state.dbm, reg, Reg::R10)
+            if let Some(off) = get_distance_fixed(state.dbm(), reg, Reg::R10)
                 && let Some(sz) = size
             {
                 check_stack_access(
@@ -535,10 +535,10 @@ pub(crate) fn check_single_mem_size_pair(
     let ptr_type = state.types.get(pair.ptr_reg);
 
     // Handle NULL pointer case
-    if proven_zero(&state.dbm, pair.ptr_reg) {
+    if proven_zero(state.dbm(), pair.ptr_reg) {
         if pair.allow_zero {
             // NULL ptr is OK, but size must also be 0
-            if !proven_zero(&state.dbm, pair.size_reg) {
+            if !proven_zero(state.dbm(), pair.size_reg) {
                 env.fail(VerificationError::InvalidArgType {
                     pc,
                     reg: pair.size_reg,
@@ -562,7 +562,7 @@ pub(crate) fn check_single_mem_size_pair(
     }
 
     // Get size bounds from DBM
-    let (_, max_size) = get_interval(&state.dbm, pair.size_reg);
+    let (_, max_size) = get_interval(state.dbm(), pair.size_reg);
     if max_size == i64::MAX {
         // Size is unbounded - reject
         env.fail(VerificationError::InvalidArgType {
@@ -577,7 +577,7 @@ pub(crate) fn check_single_mem_size_pair(
     }
 
     // Size must be non-negative
-    if !proven_nonnegative(&state.dbm, pair.size_reg) {
+    if !proven_nonnegative(state.dbm(), pair.size_reg) {
         env.fail(VerificationError::InvalidArgType {
             pc,
             reg: pair.size_reg,
@@ -641,7 +641,7 @@ pub(crate) fn check_ptr_access_size(
 ) -> bool {
     match ptr_type {
         RegType::PtrToStack { .. } => {
-            if let Some(off) = get_distance_fixed(&state.dbm, ptr_reg, Reg::R10) {
+            if let Some(off) = get_distance_fixed(state.dbm(), ptr_reg, Reg::R10) {
                 // Stack: check [off, off + size) is within stack bounds
                 // Stack grows down, so valid range is [-512, 0)
                 let end_offset = off + size as i64;
@@ -671,7 +671,7 @@ pub(crate) fn check_ptr_access_size(
                 !env.failed()
             } else {
                 // Variable offset — use bounds for range check
-                let (lo, hi) = get_distance_interval(&state.dbm, ptr_reg, Reg::R10);
+                let (lo, hi) = get_distance_interval(state.dbm(), ptr_reg, Reg::R10);
                 if lo != i64::MIN && hi != i64::MAX {
                     let end_offset = hi + size as i64;
                     if lo < -512 || end_offset > 0 {

@@ -9,7 +9,7 @@ use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::stack_state::StackState;
 use crate::analysis::machine::state::State;
 use crate::common::constants;
-use crate::zone::domain::get_distance_interval;
+use crate::domains::domain::get_distance_interval;
 use log::error;
 
 /// Check if a stack access at (base + off) of size bytes is safe.
@@ -64,7 +64,7 @@ pub fn check_stack_access(
             check_stack_initialization(env, stack_being_accessed, kind, actual_offset, size, pc);
         }
         None => {
-            let (lo, hi) = get_distance_interval(&state.dbm, base, Reg::R10);
+            let (lo, hi) = get_distance_interval(state.dbm(), base, Reg::R10);
 
             let safe = if lo != i64::MIN && hi != i64::MAX {
                 let lower = lo;

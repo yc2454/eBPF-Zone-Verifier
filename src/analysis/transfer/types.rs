@@ -10,8 +10,8 @@ use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, MapLoadKind, MemSize, Operand, Width};
 use crate::common::constants;
 use crate::common::ctx_model::{CtxFieldKind, validate_ctx_access};
-use crate::zone::dbm::Dbm;
-use crate::zone::domain::{self, get_distance_fixed, get_interval};
+use crate::domains::dbm::Dbm;
+use crate::domains::domain::{self, get_distance_fixed, get_interval};
 
 fn update_packet_ptr_type_after_alu(types: &mut TypeState, dbm: &Dbm, dst: Reg) {
     // Check offset from anchor: dst - @data
@@ -272,7 +272,7 @@ pub(crate) fn update_load_types(
             }
         }
         RegType::PtrToStack { .. } => {
-            match get_distance_fixed(&state.dbm, base, Reg::R10) {
+            match get_distance_fixed(state.dbm(), base, Reg::R10) {
                 Some(base_off) => {
                     let actual_slot = base_off + (off as i64);
                     if size == MemSize::U64.bytes() {
@@ -474,9 +474,9 @@ pub(crate) fn update_call_types(
         constants::BPF_SKB_LOAD_BYTES => {
             let mem_ptr_ty = in_types.get(Reg::R3);
             if let RegType::PtrToStack { frame_level } = mem_ptr_ty
-                && let Some(off) = get_distance_fixed(&state.dbm, Reg::R3, Reg::R10)
+                && let Some(off) = get_distance_fixed(state.dbm(), Reg::R3, Reg::R10)
             {
-                let (_, hi) = get_interval(&state.dbm, Reg::R4);
+                let (_, hi) = get_interval(state.dbm(), Reg::R4);
                 let len = if hi <= 0xFFFF { hi as i16 } else { 0 };
                 if len > 0 {
                     // Mark the stack range as initialized scalars
@@ -492,7 +492,7 @@ pub(crate) fn update_call_types(
         }
 
         constants::BPF_RINGBUF_RESERVE => {
-            let (_, hi) = get_interval(&state.dbm, Reg::R2);
+            let (_, hi) = get_interval(state.dbm(), Reg::R2);
             state.types.set(
                 Reg::R0,
                 RegType::PtrToAllocMemOrNull {

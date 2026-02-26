@@ -6,8 +6,8 @@ use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, Operand, Width};
 use crate::common::constants;
-use crate::zone::dbm::{Dbm, INF};
-use crate::zone::domain::get_interval;
+use crate::domains::dbm::{Dbm, INF};
+use crate::domains::domain::get_interval;
 use log::error;
 
 /// Pure validation of pointer arithmetic rules.
@@ -28,7 +28,7 @@ pub(crate) fn check_ptr_arithmetic(
     let src_max = match src {
         Operand::Imm(k) => *k,
         Operand::Reg(r) => {
-            let (_, max) = get_interval(&state.dbm, *r);
+            let (_, max) = get_interval(state.dbm(), *r);
             if max == i64::MAX { INF } else { max }
         }
     };
@@ -36,12 +36,12 @@ pub(crate) fn check_ptr_arithmetic(
     let src_min = match src {
         Operand::Imm(k) => *k,
         Operand::Reg(r) => {
-            let (min, _) = get_interval(&state.dbm, *r);
+            let (min, _) = get_interval(state.dbm(), *r);
             if min == i64::MIN { -INF } else { min }
         }
     };
 
-    let (dst_min, dst_max) = get_interval(&state.dbm, dst);
+    let (dst_min, dst_max) = get_interval(state.dbm(), dst);
     let dst_min = if dst_min == i64::MIN { -INF } else { dst_min };
     let dst_max = if dst_max == i64::MAX { INF } else { dst_max };
 

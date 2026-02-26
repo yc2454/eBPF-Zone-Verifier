@@ -3,8 +3,8 @@
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::stack_state::StackState;
-use crate::zone::dbm::Dbm;
-use crate::zone::tnum::Tnum;
+use crate::domains::numeric::NumericDomain;
+use crate::domains::tnum::Tnum;
 use std::collections::HashMap;
 
 /// A type-safe handle to a specific frame in the call stack.
@@ -24,7 +24,7 @@ impl std::fmt::Display for FrameLevel {
 }
 
 /// A saved call frame (caller's state when entering a subfunction).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallFrame {
     pub return_pc: usize,
     pub stack: StackState,
@@ -34,8 +34,21 @@ pub struct CallFrame {
     // Used to restore state on return and to compare caller
     // contexts during cross-frame pruning.
     pub caller_types: TypeState,
-    pub caller_dbm: Dbm,
+    pub caller_domain: NumericDomain,
     pub caller_tnums: HashMap<Reg, Tnum>,
+}
+
+impl Default for CallFrame {
+    fn default() -> Self {
+        CallFrame {
+            return_pc: 0,
+            stack: StackState::default(),
+            frame_depth: 0,
+            caller_types: TypeState::default(),
+            caller_domain: NumericDomain::default(),
+            caller_tnums: HashMap::new(),
+        }
+    }
 }
 
 impl std::fmt::Display for CallFrame {
@@ -111,7 +124,7 @@ impl FrameStack {
         &mut self,
         return_pc: usize,
         caller_types: TypeState,
-        caller_dbm: Dbm,
+        caller_domain: NumericDomain,
         caller_tnums: HashMap<Reg, Tnum>,
     ) -> FrameLevel {
         let frame = CallFrame {
@@ -119,7 +132,7 @@ impl FrameStack {
             stack: StackState::default(),
             frame_depth: 0,
             caller_types,
-            caller_dbm,
+            caller_domain,
             caller_tnums,
         };
         self.frames.push(frame);

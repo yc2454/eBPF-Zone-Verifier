@@ -53,7 +53,7 @@ pub(crate) fn transfer_alu(
     }
 
     // 4. Division by zero check
-    if op == AluOp::Div && validation::is_div_by_zero(&state.dbm, &src) {
+    if op == AluOp::Div && validation::is_div_by_zero(state.dbm(), &src) {
         env.fail(VerificationError::DivideByZero { pc: state.pc });
         return vec![];
     }
@@ -78,23 +78,26 @@ pub(crate) fn transfer_alu(
     }
 
     // 6. Update types
+    // Clone dbm before mutably borrowing types to avoid borrow conflict
+    let dbm = state.dbm().clone();
+    let pc = state.pc;
     update_alu_types(
         env,
         &in_types,
         &mut state.types,
-        &state.dbm,
+        &dbm,
         width,
         op,
         dst,
         &src,
-        state.pc,
+        pc,
     );
 
     // 7. Post-operation consistency check
-    if state.dbm.is_inconsistent() {
+    if state.dbm().is_inconsistent() {
         env.fail(VerificationError::DbmInconsistent { pc: state.pc });
         error!("[Verifier] DBM became inconsistent at pc {}", state.pc);
-        state.dbm.dump_matrix();
+        state.dbm().dump_matrix();
         vec![]
     } else {
         let next_pc = if env.invalid_pc_set.contains(&(state.pc + 1)) {

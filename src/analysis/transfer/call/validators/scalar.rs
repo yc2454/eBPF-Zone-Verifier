@@ -3,14 +3,14 @@
 // Validators for scalar argument types: ConstSize, ConstSizeOrZero, ConstAllocSizeOrZero
 
 use crate::analysis::machine::error::VerificationError;
-use crate::zone::domain::{proven_nonnegative, proven_positive};
+use crate::domains::domain::{proven_nonnegative, proven_positive};
 
 use super::super::checks::ValidationContext;
 
 /// Validates ConstSize argument type.
 /// Value must be positive (> 0).
 pub fn validate_const_size(ctx: &mut ValidationContext) -> bool {
-    if !proven_positive(&ctx.state.dbm, ctx.reg) {
+    if !proven_positive(ctx.state.dbm(), ctx.reg) {
         ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,
@@ -30,7 +30,7 @@ pub fn validate_const_size(ctx: &mut ValidationContext) -> bool {
 /// Validates ConstSizeOrZero or ConstAllocSizeOrZero argument type.
 /// Value must be non-negative (>= 0).
 pub fn validate_const_size_or_zero(ctx: &mut ValidationContext) -> bool {
-    if !proven_nonnegative(&ctx.state.dbm, ctx.reg) {
+    if !proven_nonnegative(ctx.state.dbm(), ctx.reg) {
         ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,
