@@ -387,7 +387,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "zone-mvp"
+name = "zovia"
 version = "0.1.0"
 dependencies = [
  "anyhow",

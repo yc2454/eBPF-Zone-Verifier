@@ -67,8 +67,16 @@ pub fn resolve_type_conflicts(env: &VerifierEnv, state: &mut State) {
 }
 
 /// Record a state as explored at its PC.
-pub fn record_state(env: &mut VerifierEnv, state: State) {
-    env.explored_states.entry(state.pc).or_default().push(state);
+/// Enforces max_states_per_pc limit by removing oldest states when exceeded.
+pub fn record_state(env: &mut VerifierEnv, state: State, max_states_per_pc: usize) {
+    let states = env.explored_states.entry(state.pc).or_default();
+    states.push(state);
+
+    // Enforce limit: keep only the most recent states
+    if max_states_per_pc > 0 && states.len() > max_states_per_pc {
+        let excess = states.len() - max_states_per_pc;
+        states.drain(0..excess);
+    }
 }
 
 /// Check if two types are compatible at a join point.
