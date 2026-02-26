@@ -121,6 +121,200 @@ fn loop_exit_was_explored(env: &VerifierEnv, state: &State, pc: usize, prog: &Pr
     false
 }
 
+/// Check if current PC is a designated prune point.
+fn is_prune_point(env: &VerifierEnv, pc: usize) -> bool {
+    env.insn_aux_data
+        .get(pc)
+        .map(|aux| aux.prune_point)
+        .unwrap_or(false)
+}
+
+/// Check if the current instruction is a backward-jumping branch.
+fn is_backward_branch(pc: usize, prog: &Program) -> bool {
+    if pc >= prog.instrs.len() {
+        return false;
+    }
+    match &prog.instrs[pc] {
+        Instr::If { target, .. } | Instr::Jmp { target } => *target < pc,
+        _ => false,
+    }
+}
+
+/// Check if we arrived at current PC via a backward jump (loop head detection).
+fn arrived_via_back_edge(env: &VerifierEnv, state: &State, pc: usize, prog: &Program) -> bool {
+    state
+        .history_idx
+        .and_then(|idx| {
+            let prev_step = env.history.get(idx)?;
+            let prev_pc = prev_step.pc;
+            if prev_pc >= prog.instrs.len() {
+                return Some(false);
+            }
+            match &prog.instrs[prev_pc] {
+                Instr::If { target, .. } | Instr::Jmp { target }
+                    if *target == pc && prev_pc > pc =>
+                {
+                    Some(true)
+                }
+                _ => Some(false),
+            }
+        })
+        .unwrap_or(false)
+}
+
+/// Determine if we're at an actual loop point (back-edge).
+///
+/// A loop point is either:
+/// 1. A backward-jumping branch (source of back-edge): If/Jmp with target < pc
+/// 2. The target of a backward jump (loop head): arrived here via a backward jump
+fn is_at_loop_point(env: &VerifierEnv, state: &State, pc: usize, prog: &Program) -> bool {
+    let is_back_edge_pc = state
+        .history_idx
+        .map(|idx| env.history.is_back_edge(idx, pc, state.num_frames()))
+        .unwrap_or(false);
+
+    is_back_edge_pc && (is_backward_branch(pc, prog) || arrived_via_back_edge(env, state, pc, prog))
+}
+
+/// Apply loop bound constraints to the state.
+/// Returns true if bounds were applied.
+fn apply_loop_bound(state: &mut State, loop_bound: Option<(Reg, i64)>) -> bool {
+    if let Some((reg, upper_bound)) = loop_bound {
+        let (cur_lo, _) = get_interval(&state.dbm, reg);
+        if cur_lo <= upper_bound {
+            assume_le_imm(&mut state.dbm, reg, upper_bound);
+            assume_ge_imm(&mut state.dbm, reg, 0);
+            state.set_tnum(reg, Tnum::UNKNOWN);
+            return true;
+        }
+    }
+    false
+}
+
+/// Check if widening was effective (bounds expanded compared to first visit).
+fn widening_was_effective(
+    first: &State,
+    last: &State,
+    live_regs: &HashSet<Reg>,
+) -> bool {
+    live_regs.iter().any(|&r| {
+        let (first_min, first_max) = get_interval(&first.dbm, r);
+        let (last_min, last_max) = get_interval(&last.dbm, r);
+        last_min < first_min || last_max > first_max
+    })
+}
+
+/// Check if loop has converged and can be pruned.
+fn check_loop_convergence(
+    env: &VerifierEnv,
+    state: &State,
+    pc: usize,
+    prog: &Program,
+    prev_states: &[State],
+    live_regs: &HashSet<Reg>,
+    config: &VerifierConfig,
+    loop_bound: Option<(Reg, i64)>,
+) -> bool {
+    let Some(old) = prev_states.last() else {
+        return false;
+    };
+
+    if !state_subsumed_by(state, old, live_regs, config) {
+        return false;
+    }
+
+    // Only converge if:
+    // 1. Widening was applied (prev_states >= 2)
+    // 2. Widening was effective
+    // 3. Exit path exists (bounded loop or exit was explored)
+    if prev_states.len() < 2 {
+        return false;
+    }
+
+    let first = &prev_states[0];
+    if !widening_was_effective(first, old, live_regs) {
+        return false;
+    }
+
+    // Bounded loops don't need exit exploration; bound proves exit exists
+    loop_bound.is_some() || loop_exit_was_explored(env, state, pc, prog)
+}
+
+/// Apply widening to state based on previous exploration.
+fn apply_widening(
+    state: &mut State,
+    old: &State,
+    live_regs: &HashSet<Reg>,
+    loop_bound: Option<(Reg, i64)>,
+) {
+    // Widen DBM
+    state.dbm = old.dbm.widen(&state.dbm);
+
+    // Re-apply loop bound after widening
+    apply_loop_bound(state, loop_bound);
+
+    // Widen Tnums: if changed, set to UNKNOWN for fast convergence
+    for &r in live_regs {
+        if old.get_tnum(r) != state.get_tnum(r) {
+            state.set_tnum(r, Tnum::UNKNOWN);
+        }
+    }
+}
+
+/// Handle pruning decision at a loop point.
+/// Returns Some(true) to prune, Some(false) to continue, None if no previous states.
+fn handle_loop_pruning(
+    env: &VerifierEnv,
+    state: &mut State,
+    pc: usize,
+    prog: &Program,
+    live_regs: &HashSet<Reg>,
+    config: &VerifierConfig,
+) -> bool {
+    // Loops without conditional exits are infinite - let complexity limit catch them
+    if !loop_has_conditional_exit(env, state, pc, prog) {
+        return false;
+    }
+
+    let loop_bound = detect_loop_bound(env, state, pc, prog);
+
+    // Apply bound before subsumption check
+    apply_loop_bound(state, loop_bound);
+
+    let Some(prev_states) = env.explored_states.get(&pc) else {
+        return false;
+    };
+
+    if check_loop_convergence(env, state, pc, prog, prev_states, live_regs, config, loop_bound) {
+        return true;
+    }
+
+    // Not converged: apply widening
+    if let Some(old) = prev_states.last() {
+        apply_widening(state, old, live_regs, loop_bound);
+    }
+
+    false
+}
+
+/// Handle standard (non-loop) subsumption check.
+fn handle_standard_pruning(
+    env: &VerifierEnv,
+    state: &State,
+    pc: usize,
+    live_regs: &HashSet<Reg>,
+    config: &VerifierConfig,
+) -> bool {
+    if let Some(prev_states) = env.explored_states.get(&pc) {
+        for prev in prev_states {
+            if state_subsumed_by(state, prev, live_regs, config) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Check if we should prune this state (already covered by a previous exploration).
 /// For loop heads with conditional exits, applies widening to accelerate convergence.
 pub fn should_prune(
@@ -131,181 +325,30 @@ pub fn should_prune(
 ) -> bool {
     let pc = state.pc;
 
-    // Only prune at designated prune points
-    if let Some(aux) = env.insn_aux_data.get(pc) {
-        if !aux.prune_point {
-            return false;
-        }
-    } else {
+    if !is_prune_point(env, pc) {
         return false;
     }
 
-    // Check if on path (safety)
     let is_on_path = state
         .history_idx
         .map(|idx| env.history.is_on_path(idx, pc))
         .unwrap_or(false);
 
-    // Check if in a real loop back-edge (widening)
-    // Only apply widening at actual loop points, not at every instruction
-    // that happens to be revisited inside a loop body.
-    //
-    // A loop point is either:
-    // 1. A backward-jumping branch (source of back-edge): If/Jmp with target < pc
-    // 2. The target of a backward jump (loop head): we arrived here via a backward jump
-    //
-    // We detect case 2 by checking if the previous step in history was a backward
-    // jump that landed at this PC.
-    let is_back_edge_pc = state
-        .history_idx
-        .map(|idx| env.history.is_back_edge(idx, pc, state.num_frames()))
-        .unwrap_or(false);
+    let in_loop = is_at_loop_point(env, state, pc, prog);
 
-    let is_backward_branch = if pc < prog.instrs.len() {
-        match &prog.instrs[pc] {
-            Instr::If { target, .. } => *target < pc,
-            Instr::Jmp { target } => *target < pc,
-            _ => false,
-        }
-    } else {
-        false
-    };
-
-    // Check if we arrived at this PC via a backward jump (loop head detection)
-    let arrived_via_back_edge = state
-        .history_idx
-        .and_then(|idx| {
-            let prev_step = env.history.get(idx)?;
-            let prev_pc = prev_step.pc;
-            if prev_pc < prog.instrs.len() {
-                match &prog.instrs[prev_pc] {
-                    Instr::If { target, .. } if *target == pc && prev_pc > pc => Some(true),
-                    Instr::Jmp { target } if *target == pc && prev_pc > pc => Some(true),
-                    _ => Some(false),
-                }
-            } else {
-                Some(false)
-            }
-        })
-        .unwrap_or(false);
-
-    let in_loop = is_back_edge_pc && (is_backward_branch || arrived_via_back_edge);
-
+    // Re-entry to a PC from a different depth (e.g. repeated call in a loop).
+    // Must continue to reach the actual loop back-edge.
     if is_on_path && !in_loop {
-        // Re-entry to a PC from a different depth (e.g. repeated call in a loop).
-        // Must continue analysis to reach the actual loop back-edge.
-        // Do NOT prune via subsumption here as it might close a caller's loop unsoundly.
         return false;
     }
 
     let live_regs = &env.insn_aux_data[pc].live_regs;
 
     if in_loop {
-        // Only apply widening if the loop has a conditional exit (If instruction).
-        // Loops without conditional exits are infinite and should be rejected
-        // by the complexity limit.
-        if !loop_has_conditional_exit(env, state, pc, prog) {
-            return false;
-        }
-
-        // Bounded loop detection: extract upper bound from `!= K` condition
-        let loop_bound = detect_loop_bound(env, state, pc, prog);
-
-        // Apply the loop bound to the CURRENT state BEFORE subsumption check.
-        // This is crucial because the state arriving at the branch point may have
-        // bounds that exceed the loop limit (e.g., after increment: [2, 40]).
-        // Applying the bound first constrains it to [2, 39] so subsumption can succeed.
-        //
-        // IMPORTANT: Only apply if it doesn't make the DBM inconsistent.
-        // If the current state already has r > upper_bound, applying the bound
-        // would create a contradiction. In that case, skip the bound application.
-        if let Some((reg, upper_bound)) = loop_bound {
-            let (cur_lo, _) = get_interval(&state.dbm, reg);
-            if cur_lo <= upper_bound {
-                assume_le_imm(&mut state.dbm, reg, upper_bound);
-                assume_ge_imm(&mut state.dbm, reg, 0);
-                // Also set tnum to unknown for convergence check
-                state.set_tnum(reg, Tnum::UNKNOWN);
-            }
-        }
-
-        // Loop convergence via widening:
-        // 1. Apply widening to over-approximate the state (ensures termination).
-        // 2. On subsequent visits, check if the current state is subsumed
-        //    by the last explored (widened) state → convergence.
-        // 3. Only allow convergence if widening actually expanded the state
-        //    (indicating the loop makes progress and the exit path was explored
-        //    with the widened state). Stagnant loops (no change) are infinite.
-        if let Some(prev_states) = env.explored_states.get(&pc)
-            && let Some(old) = prev_states.last()
-        {
-            if state_subsumed_by(state, old, live_regs, config) {
-                // Only converge if:
-                // 1. Widening was applied (prev_states >= 2)
-                // 2. Widening was effective (bounds actually expanded
-                //    compared to the first visit)
-                // 3. An exit path from the loop was actually explored
-                if prev_states.len() >= 2 {
-                    let first = &prev_states[0];
-                    let widening_effective = live_regs.iter().any(|&r| {
-                        let (first_min, first_max) = get_interval(&first.dbm, r);
-                        let (last_min, last_max) = get_interval(&old.dbm, r);
-                        last_min < first_min || last_max > first_max
-                    });
-
-                    // For bounded loops, we don't need to wait for exit exploration.
-                    // The bound detection itself proves the exit exists and will be reached.
-                    // For unbounded loops, we require the exit to be explored.
-                    let exit_ok =
-                        loop_bound.is_some() || loop_exit_was_explored(env, state, pc, prog);
-
-                    if widening_effective && exit_ok {
-                        return true; // Converged with verified exit path
-                    }
-                }
-                // Widening not effective or no exit path →
-                // loop may be infinite, let complexity limit catch it
-                return false;
-            }
-
-            // Not converged: apply widening
-            let widened_dbm = old.dbm.widen(&state.dbm);
-            state.dbm = widened_dbm;
-
-            // Re-apply the loop bound after widening (widening may have expanded it)
-            if let Some((reg, upper_bound)) = loop_bound {
-                assume_le_imm(&mut state.dbm, reg, upper_bound);
-                assume_ge_imm(&mut state.dbm, reg, 0);
-                // For bounded loop counters, set tnum to fully unknown within the bound.
-                // This ensures tnum convergence by not tracking exact bit patterns.
-                state.set_tnum(reg, Tnum::UNKNOWN);
-            }
-
-            // Widen Tnums for all live registers to guarantee convergence
-            // Use aggressive widening: if the tnum changed, set to UNKNOWN.
-            // This ensures fast convergence for loops.
-            for &r in live_regs {
-                let old_t = old.get_tnum(r);
-                let cur_t = state.get_tnum(r);
-                if old_t != cur_t {
-                    // Tnum changed - widen to unknown for fast convergence
-                    state.set_tnum(r, Tnum::UNKNOWN);
-                }
-            }
-        }
-        return false;
+        handle_loop_pruning(env, state, pc, prog, live_regs, config)
+    } else {
+        handle_standard_pruning(env, state, pc, live_regs, config)
     }
-
-    // Non-loop: standard subsumption check
-    if let Some(prev_states) = env.explored_states.get(&pc) {
-        for prev in prev_states {
-            if state_subsumed_by(state, prev, live_regs, config) {
-                return true;
-            }
-        }
-    }
-
-    false
 }
 
 /// Callee-saved registers that persist across calls and affect
