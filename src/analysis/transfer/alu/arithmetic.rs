@@ -49,18 +49,21 @@ pub(crate) fn handle_add(
                     // For interval mode, combine ptr's PtrOffset with scalar's range
                     state.domain.apply_scalar_add_ptr(dst, *r, lo, hi);
 
-                    // Zone domain fallback
-                    if let Some(off) = RegType::get_ptr_offset(&in_types.get(*r)) {
-                        state.domain.forget(*r);
-                        state.domain.assign_interval(*r, off, off);
+                    // For zone domain, use constraint-based tracking
+                    if !state.domain.is_interval_mode() {
+                        if let Some(off) = RegType::get_ptr_offset(&in_types.get(*r)) {
+                            state.domain.forget(*r);
+                            state.domain.assign_interval(*r, off, off);
+                        }
+                        state.domain.forget(dst);
+                        if hi != i64::MAX {
+                            state.domain.add_constraint(dst, *r, hi);
+                        }
+                        if lo != i64::MIN && lo > i64::MIN {
+                            state.domain.add_constraint(*r, dst, -lo);
+                        }
+                        state.domain.close();
                     }
-                    if hi != i64::MAX {
-                        state.domain.add_constraint(dst, *r, hi);
-                    }
-                    if lo != i64::MIN && lo > i64::MIN {
-                        state.domain.add_constraint(*r, dst, -lo);
-                    }
-                    state.domain.close();
                 }
             } else {
                 // scalar += scalar, ptr += ptr, etc.
