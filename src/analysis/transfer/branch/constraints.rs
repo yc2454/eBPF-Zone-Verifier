@@ -45,6 +45,22 @@ fn can_apply_dbm_constraint(
     right_bounds: (i64, i64),
     right: Either<Reg, i64>,
 ) -> bool {
+    // For interval domain, skip scalar constraint propagation for packet pointer
+    // comparisons. The relationship between pkt_data/pkt_end is tracked via
+    // packet_size_lower_bound, not scalar bounds. Applying scalar constraints
+    // to packet pointers with unknown absolute values incorrectly marks
+    // branches as infeasible.
+    if matches!(state.domain, NumericDomain::Interval(_)) {
+        let left_is_packet = state.types.get(left).is_packet_ptr();
+        let right_is_packet = match right {
+            Either::Left(reg) => state.types.get(reg).is_packet_ptr(),
+            Either::Right(_) => false,
+        };
+        if left_is_packet && right_is_packet {
+            return false;
+        }
+    }
+
     let dominated_by_signed = matches!(op, CmpOp::SLt | CmpOp::SLe | CmpOp::SGt | CmpOp::SGe);
     let dominated_by_unsigned = matches!(op, CmpOp::ULt | CmpOp::ULe | CmpOp::UGt | CmpOp::UGe);
 

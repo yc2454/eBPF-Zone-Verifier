@@ -36,6 +36,11 @@ impl NumericDomain {
         NumericDomain::Interval(IntervalState::new())
     }
 
+    /// Check if this is an Interval domain
+    pub fn is_interval_mode(&self) -> bool {
+        matches!(self, NumericDomain::Interval(_))
+    }
+
     // ══════════════════════════════════════════════════════════════════════════
     //  Query & Interval Analysis
     // ══════════════════════════════════════════════════════════════════════════
@@ -161,6 +166,15 @@ impl NumericDomain {
         }
     }
 
+    /// Initializes a register as a map value pointer (interval mode only)
+    /// Sets up PtrOffset tracking for bounds checking
+    pub fn init_map_value_ptr(&mut self, reg: Reg) {
+        if let NumericDomain::Interval(ivl) = self {
+            interval_ops::init_map_value_ptr(ivl, reg);
+        }
+        // Zone domain doesn't need special setup - it tracks via DBM constraints
+    }
+
     // ══════════════════════════════════════════════════════════════════════════
     //  Arithmetic Transformations
     // ══════════════════════════════════════════════════════════════════════════
@@ -179,6 +193,15 @@ impl NumericDomain {
             NumericDomain::Zone(dbm) => zone_ops::apply_add_reg(dbm, dst, src),
             NumericDomain::Interval(ivl) => interval_ops::apply_add_reg(ivl, dst, src),
         }
+    }
+
+    /// Performs dst = scalar_dst + ptr_src (interval mode only)
+    /// Creates a new PtrOffset for dst combining ptr's offset with scalar's range
+    pub fn apply_scalar_add_ptr(&mut self, dst: Reg, ptr_src: Reg, scalar_lo: i64, scalar_hi: i64) {
+        if let NumericDomain::Interval(ivl) = self {
+            interval_ops::apply_scalar_add_ptr(ivl, dst, ptr_src, scalar_lo, scalar_hi);
+        }
+        // Zone domain handles this via constraints, no special action needed
     }
 
     /// Performs dst -= src

@@ -6,6 +6,7 @@ use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
 use crate::ast::MapLoadKind;
 use crate::common::constants;
+use crate::domains::numeric::NumericDomain;
 use crate::parsing::elf::BpfMapDef;
 use log::error;
 
@@ -64,6 +65,37 @@ pub fn check_map_access(
     size: i64,
     pc: usize,
 ) {
+    // For interval domain, try to use PtrOffset for bounds checking
+    if let NumericDomain::Interval(ref ivl) = state.domain {
+        if let Some(ptr_off) = ivl.get_ptr_offset(base) {
+            // Use PtrOffset to get offset range from buffer start
+            let min_off = ptr_off.min_offset() + (insn_off as i64);
+            let max_off = ptr_off.max_offset() + (insn_off as i64) + size;
+
+            if let Some(btf_id) = map_def.btf_val_type_id {
+                check_btf_fields_access(env, pc, min_off, max_off, size, map_limit, btf_id);
+                return;
+            }
+
+            if min_off >= 0 && max_off <= map_limit {
+                return; // Access is safe
+            } else {
+                error!(
+                    "Unsafe variable map access at pc {}: range [{}, {}], limit {}",
+                    pc, min_off, max_off, map_limit
+                );
+                env.fail(VerificationError::UnsafeMapLoad {
+                    pc,
+                    off: min_off,
+                    size,
+                    limit: map_limit,
+                });
+                return;
+            }
+        }
+    }
+
+    // Zone domain or interval without PtrOffset: use scalar bounds
     let (dbm_min, dbm_max) = state.domain.get_interval(base);
     if dbm_min != i64::MIN && dbm_max != i64::MAX {
         let min_val = dbm_min;

@@ -143,6 +143,25 @@ pub fn assign_reg_offset(state: &mut IntervalState, dst: Reg, src: Reg, imm: i64
     });
 }
 
+/// Initializes a register as a map value pointer at offset 0
+/// This sets up PtrOffset tracking for bounds checking
+pub fn init_map_value_ptr(state: &mut IntervalState, reg: Reg) {
+    if reg == Reg::Zero || reg.is_anchor() {
+        return;
+    }
+
+    // Use Reg::Zero as a synthetic anchor for map values
+    // This allows us to track offset from buffer start
+    state.set(reg, RegInterval {
+        bounds: ScalarBounds::unknown(), // Absolute address unknown
+        ptr_offset: Some(PtrOffset {
+            anchor: Reg::Zero, // Synthetic anchor for map values
+            offset: 0,
+            range: 0,
+        }),
+    });
+}
+
 /// Assigns a concrete interval to a register
 pub fn assign_interval(state: &mut IntervalState, r: Reg, min: i64, max: i64) {
     if r != Reg::Zero && !r.is_anchor() {
@@ -207,6 +226,45 @@ pub fn apply_add_reg(state: &mut IntervalState, dst: Reg, src: Reg) {
             let src_range = src_bounds.umax.saturating_sub(src_bounds.umin);
             po.range = po.range.saturating_add(src_range);
         }
+    }
+}
+
+/// Performs dst = scalar_dst + ptr_src
+/// Creates a new PtrOffset for dst combining ptr's offset with scalar's range
+/// scalar_lo and scalar_hi are the bounds of the scalar before the add
+pub fn apply_scalar_add_ptr(state: &mut IntervalState, dst: Reg, ptr_src: Reg, scalar_lo: i64, scalar_hi: i64) {
+    if dst == Reg::Zero || dst.is_anchor() {
+        return;
+    }
+
+    // Get the ptr's PtrOffset
+    let ptr_offset = state.get_ptr_offset(ptr_src).cloned();
+
+    // Forget dst's current state
+    state.forget(dst);
+
+    // If ptr has PtrOffset, create new PtrOffset for dst
+    if let Some(po) = ptr_offset {
+        // The scalar range adds to the pointer's range
+        let scalar_range = if scalar_hi >= scalar_lo {
+            (scalar_hi - scalar_lo) as u64
+        } else {
+            0
+        };
+
+        // New offset combines ptr's offset with scalar's minimum
+        // New range combines both ranges
+        let new_offset = po.offset.saturating_add(scalar_lo);
+        let new_range = po.range.saturating_add(scalar_range);
+
+        state.set(dst, RegInterval {
+            bounds: ScalarBounds::unknown(), // Absolute address still unknown
+            ptr_offset: Some(PtrOffset {
+                anchor: po.anchor,
+                offset: new_offset,
+                range: new_range,
+            }),
+        });
     }
 }
 
@@ -325,9 +383,30 @@ pub fn apply_neg(state: &mut IntervalState, reg: Reg) {
     }
 
     let bounds = state.get_bounds(reg).clone();
+
+    // Handle edge cases that would cause inconsistent bounds after negation:
+    // - i64::MIN cannot be negated (overflow: -i64::MIN = i64::MIN)
+    // - Wide ranges spanning both positive and negative may produce smin > smax
+    if bounds.smin == i64::MIN || bounds.smax == i64::MIN {
+        // Cannot safely negate i64::MIN, go conservative
+        forget(state, reg);
+        return;
+    }
+
+    // For well-behaved ranges, negate swaps the bounds
+    // -[a, b] = [-b, -a]
+    let neg_smax = bounds.smin.wrapping_neg();
+    let neg_smin = bounds.smax.wrapping_neg();
+
+    // Safety check: ensure bounds are still valid after negation
+    if neg_smin > neg_smax {
+        forget(state, reg);
+        return;
+    }
+
     let new_bounds = ScalarBounds {
-        smin: bounds.smax.wrapping_neg(),
-        smax: bounds.smin.wrapping_neg(),
+        smin: neg_smin,
+        smax: neg_smax,
         umin: 0, // Conservative for unsigned after negation
         umax: u64::MAX,
     };
@@ -345,8 +424,19 @@ pub fn apply_neg(state: &mut IntervalState, reg: Reg) {
 pub fn assume_le(state: &mut IntervalState, x: Reg, y: Reg) {
     let y_max = state.get_bounds(y).smax;
     let x_min = state.get_bounds(x).smin;
-    state.get_bounds_mut(x).assume_sle(y_max);
-    state.get_bounds_mut(y).assume_sge(x_min);
+    let x_smin = state.get_bounds(x).smin;
+    let y_smax = state.get_bounds(y).smax;
+
+    // Only apply constraints if they won't create inconsistent bounds
+    // x <= y means x <= y_max, but only if that doesn't go below x_min
+    if y_max >= x_smin {
+        state.get_bounds_mut(x).assume_sle(y_max);
+    }
+
+    // x <= y means y >= x_min, but only if that doesn't exceed y_max
+    if x_min <= y_smax {
+        state.get_bounds_mut(y).assume_sge(x_min);
+    }
 }
 
 /// Assumes x >= y
@@ -358,8 +448,25 @@ pub fn assume_ge(state: &mut IntervalState, x: Reg, y: Reg) {
 pub fn assume_gt(state: &mut IntervalState, x: Reg, y: Reg) {
     let y_max = state.get_bounds(y).smax;
     let x_min = state.get_bounds(x).smin;
-    state.get_bounds_mut(x).assume_sge(y_max.saturating_add(1));
-    state.get_bounds_mut(y).assume_sle(x_min.saturating_sub(1));
+    let x_max = state.get_bounds(x).smax;
+    let y_min = state.get_bounds(y).smin;
+
+    // Only apply constraints if they won't create inconsistent bounds
+    // x > y means x >= y_max + 1, but only if that doesn't exceed x_max
+    if y_max != i64::MAX {
+        let new_x_min = y_max.saturating_add(1);
+        if new_x_min <= x_max {
+            state.get_bounds_mut(x).assume_sge(new_x_min);
+        }
+    }
+
+    // x > y means y <= x_min - 1, but only if that doesn't go below y_min
+    if x_min != i64::MIN {
+        let new_y_max = x_min.saturating_sub(1);
+        if new_y_max >= y_min {
+            state.get_bounds_mut(y).assume_sle(new_y_max);
+        }
+    }
 }
 
 /// Assumes x <= y + c (not directly expressible without relational info)

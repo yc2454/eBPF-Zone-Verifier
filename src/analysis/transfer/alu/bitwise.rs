@@ -41,11 +41,8 @@ pub(crate) fn handle_mov(state: &mut State, width: Width, dst: Reg, src: &Operan
                 if dst == *r {
                     return;
                 }
-                if *r == Reg::R10 {
-                    state.domain.assign_zero(dst);
-                } else {
-                    state.domain.assign_reg(dst, *r);
-                }
+                // Copy register state including pointer offset info
+                state.domain.assign_reg(dst, *r);
             }
         }
         Operand::Imm(c) => {
