@@ -19,14 +19,14 @@ use crate::domains::numeric::NumericDomain;
 
 /// Information extracted from a packet pointer comparison
 struct PacketComparison {
-    /// Offset from pkt_data (e.g., 8 for pkt_data + 8)
-    data_offset: i64,
-    /// Whether data_offset includes any variable range
-    has_variable_range: bool,
+    /// Fixed offset from pkt_data (only valid if is_fixed is true)
+    offset: i64,
+    /// Whether the offset is exactly known (no variable part)
+    is_fixed: bool,
 }
 
 /// Try to extract packet comparison info from a register.
-/// Returns Some if the register is pkt_data + constant offset.
+/// Returns Some if the register is pkt_data + offset.
 fn get_packet_data_offset(state: &State, reg: Reg) -> Option<PacketComparison> {
     // Check if register type is PtrToPacket
     if !matches!(state.types.get(reg), RegType::PtrToPacket) {
@@ -39,8 +39,8 @@ fn get_packet_data_offset(state: &State, reg: Reg) -> Option<PacketComparison> {
             // Must be relative to AnchorData (pkt_data)
             if ptr_off.anchor == Reg::AnchorData {
                 return Some(PacketComparison {
-                    data_offset: ptr_off.offset,
-                    has_variable_range: ptr_off.range > 0,
+                    offset: ptr_off.offset,
+                    is_fixed: ptr_off.range == 0,
                 });
             }
         }
@@ -95,14 +95,20 @@ pub fn refine_packet_bounds(
         return;
     };
 
-    // Skip if there's variable range - we can only use fixed offsets
-    if data_info.has_variable_range {
+    // For variable offsets, we CANNOT conclude packet_size >= max_offset.
+    // The branch only proves the constraint for the actual runtime value,
+    // not for all possible values in the range.
+    //
+    // Example: if R0 = pkt_data + [0, 65535] and branch proves R0 <= pkt_end,
+    // the actual offset might be 20 and packet might only be 21 bytes.
+    // We cannot conclude packet_size >= 65535.
+    if !data_info.is_fixed {
         return;
     }
 
-    let offset = data_info.data_offset;
+    let proven_size = data_info.offset;
 
-    // Determine if this path proves packet has at least `offset` bytes
+    // Determine if this path proves packet has at least `proven_size` bytes
     //
     // Pattern: if (pkt_data + N OP pkt_end) goto taken
     //
@@ -145,12 +151,12 @@ pub fn refine_packet_bounds(
         }
     };
 
-    if proves_size_ge_offset && offset > 0 {
+    if proves_size_ge_offset && proven_size > 0 {
         // Now do the mutable borrow to update
         if let NumericDomain::Interval(ref mut ivl) = state.domain {
             let current = ivl.get_packet_size_bound().unwrap_or(0);
-            if offset as u64 > current {
-                ivl.set_packet_size_bound(offset as u64);
+            if proven_size as u64 > current {
+                ivl.set_packet_size_bound(proven_size as u64);
             }
         }
     }
