@@ -4,43 +4,6 @@ use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
 use crate::common::constants;
-use crate::domains::dbm::Dbm;
-use crate::domains::domain::{
-    assume_ge_imm, assume_le_imm, forget, get_interval,
-};
-
-/// Apply W32 truncation to a register's bounds.
-/// If the current bounds exceed [0, 0xFFFFFFFF], widen to that range.
-pub(crate) fn apply_w32_truncation(dbm: &mut Dbm, dst: Reg) {
-    let (lo, hi) = get_interval(dbm, dst);
-
-    let safe = lo >= 0 && hi <= 0xFFFFFFFF;
-
-    if !safe {
-        // Check if the lower 32 bits form a non-wrapping range.
-        // This is true when lo and hi fall in the same 2^32 "page",
-        // i.e. their upper 32 bits are identical.
-        let tight = if lo != i64::MIN && hi != i64::MAX {
-            let l_u = lo as u64;
-            let h_u = hi as u64;
-            (l_u >> 32) == (h_u >> 32)
-        } else {
-            false
-        };
-
-        if tight {
-            let new_lo = (lo as u64 & 0xFFFFFFFF) as i64;
-            let new_hi = (hi as u64 & 0xFFFFFFFF) as i64;
-            forget(dbm, dst);
-            assume_ge_imm(dbm, dst, new_lo);
-            assume_le_imm(dbm, dst, new_hi);
-        } else {
-            forget(dbm, dst);
-            assume_ge_imm(dbm, dst, 0);
-            assume_le_imm(dbm, dst, 0xFFFFFFFF);
-        }
-    }
-}
 
 /// Tightens DBM bounds using information from Tnum.
 pub(crate) fn sync_tnum_to_dbm(state: &mut State, reg: Reg) {

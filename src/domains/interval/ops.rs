@@ -18,6 +18,11 @@ pub fn get_interval(state: &IntervalState, x: Reg) -> (i64, i64) {
 /// Returns the interval of the distance between two registers
 /// For interval domain, this is conservative unless both are pointers to same anchor
 pub fn get_distance_interval(state: &IntervalState, x: Reg, y: Reg) -> (i64, i64) {
+    // Trivial case: distance from a register to itself is always 0
+    if x == y {
+        return (0, 0);
+    }
+
     // Check if both registers have pointer offset info to the same anchor
     let x_off = state.get_ptr_offset(x);
     let y_off = state.get_ptr_offset(y);
@@ -444,7 +449,7 @@ pub fn check_region_access(
     off: i64,
     size: i64,
     anchor_start: Reg,
-    anchor_end: Reg,
+    _anchor_end: Reg,
 ) -> (bool, bool) {
     let base_offset = state.get_ptr_offset(base);
 

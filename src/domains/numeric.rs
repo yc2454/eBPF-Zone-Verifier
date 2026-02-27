@@ -121,6 +121,7 @@ impl NumericDomain {
     }
 
     /// Overwrites a register with a specific constant value
+    #[allow(dead_code)]
     pub fn assign_imm(&mut self, x: Reg, imm: i64) {
         match self {
             NumericDomain::Zone(dbm) => zone_ops::assign_imm(dbm, x, imm),
@@ -369,6 +370,7 @@ impl NumericDomain {
     }
 
     /// Check if a memory access [off, off + size) is within [anchor_start, anchor_end]
+    #[allow(dead_code)]
     pub fn check_region_access(
         &self,
         base: Reg,
@@ -481,6 +483,7 @@ impl NumericDomain {
     }
 
     /// Set raw constraint value (Zone-specific)
+    #[allow(dead_code)]
     pub fn set(&mut self, i: Reg, j: Reg, val: i64) {
         match self {
             NumericDomain::Zone(dbm) => dbm.set(i, j, val),
@@ -519,6 +522,7 @@ impl NumericDomain {
     // ══════════════════════════════════════════════════════════════════════════
 
     /// Get reference to underlying Dbm if this is a Zone domain
+    #[allow(dead_code)]
     pub fn as_zone(&self) -> Option<&Dbm> {
         match self {
             NumericDomain::Zone(dbm) => Some(dbm),
@@ -527,6 +531,7 @@ impl NumericDomain {
     }
 
     /// Get mutable reference to underlying Dbm if this is a Zone domain
+    #[allow(dead_code)]
     pub fn as_zone_mut(&mut self) -> Option<&mut Dbm> {
         match self {
             NumericDomain::Zone(dbm) => Some(dbm),
@@ -535,6 +540,7 @@ impl NumericDomain {
     }
 
     /// Get reference to underlying IntervalState if this is an Interval domain
+    #[allow(dead_code)]
     pub fn as_interval(&self) -> Option<&IntervalState> {
         match self {
             NumericDomain::Zone(_) => None,
@@ -543,6 +549,7 @@ impl NumericDomain {
     }
 
     /// Get mutable reference to underlying IntervalState if this is an Interval domain
+    #[allow(dead_code)]
     pub fn as_interval_mut(&mut self) -> Option<&mut IntervalState> {
         match self {
             NumericDomain::Zone(_) => None,
@@ -551,11 +558,13 @@ impl NumericDomain {
     }
 
     /// Check if this is a Zone domain
+    #[allow(dead_code)]
     pub fn is_zone(&self) -> bool {
         matches!(self, NumericDomain::Zone(_))
     }
 
     /// Check if this is an Interval domain
+    #[allow(dead_code)]
     pub fn is_interval(&self) -> bool {
         matches!(self, NumericDomain::Interval(_))
     }

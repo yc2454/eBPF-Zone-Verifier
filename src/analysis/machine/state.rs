@@ -77,16 +77,19 @@ impl State {
     }
 
     /// Create a new State with Zone domain (for backwards compatibility)
+    #[allow(dead_code)]
     pub fn new_zone(pc: usize) -> Self {
         Self::new(NumericDomain::new_zone(), pc)
     }
 
     /// Create a new State with Interval domain
+    #[allow(dead_code)]
     pub fn new_interval(pc: usize) -> Self {
         Self::new(NumericDomain::new_interval(), pc)
     }
 
     /// Create a new State based on domain mode config
+    #[allow(dead_code)]
     pub fn new_with_mode(mode: DomainMode, pc: usize) -> Self {
         let domain = match mode {
             DomainMode::Zone => NumericDomain::new_zone(),

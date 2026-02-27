@@ -38,6 +38,7 @@ impl ScalarBounds {
     }
 
     /// Create bounds for a non-negative value in range [0, max]
+    #[allow(dead_code)]
     pub fn nonnegative(max: u64) -> Self {
         ScalarBounds {
             smin: 0,
@@ -82,6 +83,7 @@ impl ScalarBounds {
     }
 
     /// Intersect with another bounds (take tighter constraints)
+    #[allow(dead_code)]
     pub fn intersect(&self, other: &ScalarBounds) -> ScalarBounds {
         ScalarBounds {
             smin: self.smin.max(other.smin),
@@ -92,6 +94,7 @@ impl ScalarBounds {
     }
 
     /// Join with another bounds (take looser constraints)
+    #[allow(dead_code)]
     pub fn join(&self, other: &ScalarBounds) -> ScalarBounds {
         ScalarBounds {
             smin: self.smin.min(other.smin),
@@ -118,6 +121,7 @@ impl ScalarBounds {
     }
 
     /// Apply unsigned constraint: value <= c
+    #[allow(dead_code)]
     pub fn assume_ule(&mut self, c: u64) {
         self.umax = self.umax.min(c);
         if c <= i64::MAX as u64 {
@@ -126,6 +130,7 @@ impl ScalarBounds {
     }
 
     /// Apply unsigned constraint: value >= c
+    #[allow(dead_code)]
     pub fn assume_uge(&mut self, c: u64) {
         self.umin = self.umin.max(c);
         if c <= i64::MAX as u64 && self.smin >= 0 {
@@ -164,6 +169,7 @@ impl PtrOffset {
     }
 
     /// Create offset info for a pointer at fixed offset from anchor
+    #[allow(dead_code)]
     pub fn at_fixed(anchor: Reg, offset: i64) -> Self {
         PtrOffset {
             anchor,
@@ -173,6 +179,7 @@ impl PtrOffset {
     }
 
     /// Create offset info with variable range
+    #[allow(dead_code)]
     pub fn with_range(anchor: Reg, offset: i64, range: u64) -> Self {
         PtrOffset {
             anchor,
@@ -182,6 +189,7 @@ impl PtrOffset {
     }
 
     /// Check if the offset is exactly known (no variable part)
+    #[allow(dead_code)]
     pub fn is_fixed(&self) -> bool {
         self.range == 0
     }
@@ -265,6 +273,13 @@ impl IntervalState {
             );
         }
 
+        // R10 is the stack frame pointer - track it as an anchor for stack offsets
+        // This allows us to compute distances like (R10 - 8) - R10 = -8
+        regs[Reg::R10.idx()] = RegInterval::with_ptr_offset(
+            ScalarBounds::unknown(),
+            PtrOffset::at_anchor(Reg::R10),
+        );
+
         IntervalState {
             regs,
             packet_size_lower_bound: None,
@@ -304,6 +319,7 @@ impl IntervalState {
     }
 
     /// Set pointer offset info for a register
+    #[allow(dead_code)]
     pub fn set_ptr_offset(&mut self, r: Reg, offset: Option<PtrOffset>) {
         if r != Reg::Zero {
             self.regs[r.idx()].ptr_offset = offset;
@@ -329,6 +345,7 @@ impl IntervalState {
     }
 
     /// Record that packet has at least n bytes (from bounds check)
+    #[allow(dead_code)]
     pub fn set_packet_size_bound(&mut self, min_size: u64) {
         self.packet_size_lower_bound = Some(
             self.packet_size_lower_bound
