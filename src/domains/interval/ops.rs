@@ -449,7 +449,7 @@ pub fn check_region_access(
     off: i64,
     size: i64,
     anchor_start: Reg,
-    _anchor_end: Reg,
+    anchor_end: Reg,
 ) -> (bool, bool) {
     let base_offset = state.get_ptr_offset(base);
 
@@ -462,12 +462,22 @@ pub fn check_region_access(
 
             // end_safe: base + off + size <= anchor_end
             // This requires knowing anchor_end - anchor_start
-            // Use packet_size_lower_bound if available
-            let end_safe = if let Some(packet_size) = state.get_packet_size_bound() {
-                let max_off = po.max_offset().saturating_add(off).saturating_add(size);
-                max_off <= packet_size as i64
+            //
+            // IMPORTANT: packet_size_lower_bound tracks (data_end - data), which is
+            // only valid for the packet data region (AnchorData to AnchorDataEnd).
+            // For other regions (like meta), we cannot prove safety without
+            // separate tracking.
+            let end_safe = if anchor_end == Reg::AnchorDataEnd {
+                // Packet data region: use packet_size_lower_bound
+                if let Some(packet_size) = state.get_packet_size_bound() {
+                    let max_off = po.max_offset().saturating_add(off).saturating_add(size);
+                    max_off <= packet_size as i64
+                } else {
+                    false
+                }
             } else {
-                false // Cannot prove without knowing packet size
+                // Meta region or other: we don't track this bound separately
+                false
             };
 
             (start_safe, end_safe)

@@ -2,6 +2,7 @@ use crate::analysis::machine::error::VerificationError;
 // src/analysis/transfer/branch/mod.rs
 
 pub mod constraints;
+pub mod interval_packet;
 pub mod outcome;
 pub mod refinement;
 
@@ -14,6 +15,7 @@ use crate::analysis::machine::state::State;
 use crate::ast::{CmpOp, Instr, Operand, Width};
 
 use self::constraints::apply_jmp_constraints;
+use self::interval_packet::refine_packet_bounds_on_branch;
 use self::outcome::condition_outcome;
 use self::refinement::refine_branch;
 use super::common::{check_operand_readable, check_reg_readable};
@@ -54,7 +56,9 @@ pub(crate) fn transfer_if(
             Right(*imm),
         ),
         Operand::Reg(r) => {
-            apply_jmp_constraints(&mut state_then, &mut state_else, left, op, width, Left(*r))
+            apply_jmp_constraints(&mut state_then, &mut state_else, left, op, width, Left(*r));
+            // Interval-specific: refine packet bounds from pointer comparisons
+            refine_packet_bounds_on_branch(&mut state_then, &mut state_else, left, *r, op);
         }
     }
 

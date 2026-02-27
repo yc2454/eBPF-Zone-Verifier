@@ -345,7 +345,6 @@ impl IntervalState {
     }
 
     /// Record that packet has at least n bytes (from bounds check)
-    #[allow(dead_code)]
     pub fn set_packet_size_bound(&mut self, min_size: u64) {
         self.packet_size_lower_bound = Some(
             self.packet_size_lower_bound
