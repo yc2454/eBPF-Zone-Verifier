@@ -147,15 +147,20 @@ impl Default for ScalarBounds {
 
 /// Pointer offset information
 /// Tracks the relationship between a register and its base anchor
+/// Field names match Linux kernel's bpf_reg_state for clarity
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PtrOffset {
     /// Which anchor this pointer is relative to
     pub anchor: Reg,
-    /// Fixed offset from the anchor (like kernel's reg->off)
-    pub offset: i64,
-    /// Maximum variable range on top of offset (derived from var_off in kernel)
-    /// This represents the uncertainty: actual offset is in [offset, offset + range]
-    pub range: u64,
+    /// Fixed offset from the anchor (kernel: reg->off)
+    pub off: i64,
+    /// Variable offset uncertainty (kernel: tnum_range(reg->var_off))
+    /// Actual offset is in [off, off + var_off]
+    pub var_off: u64,
+    /// Proven safe access range from this pointer (kernel: reg->range)
+    /// After bounds check `if (ptr + N <= end)`, this is set to N
+    /// Access check: off + size <= range
+    pub range: Option<i64>,
 }
 
 impl PtrOffset {
@@ -163,45 +168,60 @@ impl PtrOffset {
     pub fn at_anchor(anchor: Reg) -> Self {
         PtrOffset {
             anchor,
-            offset: 0,
-            range: 0,
+            off: 0,
+            var_off: 0,
+            range: None,
         }
     }
 
     /// Create offset info for a pointer at fixed offset from anchor
     #[allow(dead_code)]
-    pub fn at_fixed(anchor: Reg, offset: i64) -> Self {
+    pub fn at_fixed(anchor: Reg, off: i64) -> Self {
         PtrOffset {
             anchor,
-            offset,
-            range: 0,
+            off,
+            var_off: 0,
+            range: None,
         }
     }
 
     /// Create offset info with variable range
     #[allow(dead_code)]
-    pub fn with_range(anchor: Reg, offset: i64, range: u64) -> Self {
+    pub fn with_var_off(anchor: Reg, off: i64, var_off: u64) -> Self {
         PtrOffset {
             anchor,
-            offset,
-            range,
+            off,
+            var_off,
+            range: None,
         }
     }
 
     /// Check if the offset is exactly known (no variable part)
-    #[allow(dead_code)]
     pub fn is_fixed(&self) -> bool {
-        self.range == 0
+        self.var_off == 0
     }
 
-    /// Get the minimum possible offset
+    /// Get the minimum possible offset (off)
     pub fn min_offset(&self) -> i64 {
-        self.offset
+        self.off
     }
 
-    /// Get the maximum possible offset
+    /// Get the maximum possible offset (off + var_off)
     pub fn max_offset(&self) -> i64 {
-        self.offset.saturating_add(self.range as i64)
+        self.off.saturating_add(self.var_off as i64)
+    }
+
+    /// Set proven safe range after bounds check
+    pub fn set_range(&mut self, range: i64) {
+        self.range = Some(match self.range {
+            Some(existing) => existing.max(range),
+            None => range,
+        });
+    }
+
+    /// Get proven safe range if set
+    pub fn get_range(&self) -> Option<i64> {
+        self.range
     }
 }
 
@@ -255,6 +275,18 @@ pub struct IntervalState {
     /// If Some(n), then data_end - data >= n (packet has at least n bytes)
     /// This is learned from successful bounds checks
     packet_size_lower_bound: Option<u64>,
+
+    /// Packet geometry upper bound: if Some(n), then data_end - data < n
+    /// This is learned when bounds checks FAIL (packet too small path)
+    packet_size_upper_bound: Option<u64>,
+
+    /// Meta region geometry: known relationship between data_meta and data
+    /// If Some(n), then data - data_meta >= n (meta region has at least n bytes)
+    /// This is learned from successful bounds checks
+    meta_size_lower_bound: Option<u64>,
+
+    /// Meta region upper bound: if Some(n), then data - data_meta < n
+    meta_size_upper_bound: Option<u64>,
 }
 
 impl IntervalState {
@@ -283,6 +315,9 @@ impl IntervalState {
         IntervalState {
             regs,
             packet_size_lower_bound: None,
+            packet_size_upper_bound: None,
+            meta_size_lower_bound: None,
+            meta_size_upper_bound: None,
         }
     }
 
@@ -358,13 +393,75 @@ impl IntervalState {
         self.packet_size_lower_bound
     }
 
+    /// Record that packet has fewer than n bytes (packet too small path)
+    pub fn set_packet_size_upper_bound(&mut self, max_size_exclusive: u64) {
+        self.packet_size_upper_bound = Some(
+            self.packet_size_upper_bound
+                .map(|old| old.min(max_size_exclusive))
+                .unwrap_or(max_size_exclusive),
+        );
+    }
+
+    /// Get known upper bound on packet size (exclusive)
+    pub fn get_packet_size_upper_bound(&self) -> Option<u64> {
+        self.packet_size_upper_bound
+    }
+
+    /// Record that meta region has at least n bytes (from bounds check)
+    pub fn set_meta_size_bound(&mut self, min_size: u64) {
+        self.meta_size_lower_bound = Some(
+            self.meta_size_lower_bound
+                .map(|old| old.max(min_size))
+                .unwrap_or(min_size),
+        );
+    }
+
+    /// Get known lower bound on meta region size
+    pub fn get_meta_size_bound(&self) -> Option<u64> {
+        self.meta_size_lower_bound
+    }
+
+    /// Record that meta region has fewer than n bytes
+    pub fn set_meta_size_upper_bound(&mut self, max_size_exclusive: u64) {
+        self.meta_size_upper_bound = Some(
+            self.meta_size_upper_bound
+                .map(|old| old.min(max_size_exclusive))
+                .unwrap_or(max_size_exclusive),
+        );
+    }
+
+    /// Get known upper bound on meta region size (exclusive)
+    pub fn get_meta_size_upper_bound(&self) -> Option<u64> {
+        self.meta_size_upper_bound
+    }
+
     /// Check if the domain state is inconsistent (infeasible)
     pub fn is_inconsistent(&self) -> bool {
+        // Check register bounds
         for reg in &self.regs {
             if reg.bounds.smin > reg.bounds.smax || reg.bounds.umin > reg.bounds.umax {
                 return true;
             }
         }
+
+        // Check packet size bounds: if lower >= upper, infeasible
+        // lower_bound means packet_size >= lower
+        // upper_bound means packet_size < upper (exclusive)
+        // So if lower >= upper, we have packet_size >= lower AND packet_size < upper
+        // which is impossible when lower >= upper
+        if let (Some(lower), Some(upper)) = (self.packet_size_lower_bound, self.packet_size_upper_bound) {
+            if lower >= upper {
+                return true;
+            }
+        }
+
+        // Check meta size bounds similarly
+        if let (Some(lower), Some(upper)) = (self.meta_size_lower_bound, self.meta_size_upper_bound) {
+            if lower >= upper {
+                return true;
+            }
+        }
+
         false
     }
 }

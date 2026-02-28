@@ -30,8 +30,8 @@ pub fn get_distance_interval(state: &IntervalState, x: Reg, y: Reg) -> (i64, i64
     match (x_off, y_off) {
         (Some(xo), Some(yo)) if xo.anchor == yo.anchor => {
             // Both point to same anchor - can compute distance
-            let min_diff = xo.offset.saturating_sub(yo.max_offset());
-            let max_diff = xo.max_offset().saturating_sub(yo.offset);
+            let min_diff = xo.off.saturating_sub(yo.max_offset());
+            let max_diff = xo.max_offset().saturating_sub(yo.off);
             (min_diff, max_diff)
         }
         _ => {
@@ -130,11 +130,14 @@ pub fn assign_reg_offset(state: &mut IntervalState, dst: Reg, src: Reg, imm: i64
         umax: src_interval.bounds.umax.saturating_add(imm as u64),
     };
 
-    // Preserve pointer offset info, adjusting the offset
+    // Preserve pointer offset info, adjusting the fixed offset
+    // Also preserve range if set, adjusting for the offset change
     let new_ptr_offset = src_interval.ptr_offset.map(|po| PtrOffset {
         anchor: po.anchor,
-        offset: po.offset.saturating_add(imm),
-        range: po.range,
+        off: po.off.saturating_add(imm),
+        var_off: po.var_off,
+        // Adjust range: if we had range=8 and add offset=2, new range=6
+        range: po.range.map(|r| r.saturating_sub(imm)),
     });
 
     state.set(dst, RegInterval {
@@ -156,8 +159,9 @@ pub fn init_map_value_ptr(state: &mut IntervalState, reg: Reg) {
         bounds: ScalarBounds::unknown(), // Absolute address unknown
         ptr_offset: Some(PtrOffset {
             anchor: Reg::Zero, // Synthetic anchor for map values
-            offset: 0,
-            range: 0,
+            off: 0,
+            var_off: 0,
+            range: None,
         }),
     });
 }
@@ -195,7 +199,9 @@ pub fn apply_add_imm(state: &mut IntervalState, dst: Reg, imm: i64) {
 
     // Update pointer offset if present
     if let Some(ref mut po) = state.get_mut(dst).ptr_offset {
-        po.offset = po.offset.saturating_add(imm);
+        po.off = po.off.saturating_add(imm);
+        // Adjust range: adding to offset decreases remaining safe range
+        po.range = po.range.map(|r| r.saturating_sub(imm));
     }
 }
 
@@ -218,13 +224,18 @@ pub fn apply_add_reg(state: &mut IntervalState, dst: Reg, src: Reg) {
     // But we can preserve if src is constant
     if let Some(src_const) = src_bounds.get_constant() {
         if let Some(ref mut po) = state.get_mut(dst).ptr_offset {
-            po.offset = po.offset.saturating_add(src_const);
+            po.off = po.off.saturating_add(src_const);
+            // Adjust range: adding to offset decreases remaining safe range
+            po.range = po.range.map(|r| r.saturating_sub(src_const));
         }
     } else {
-        // Variable addition increases range
+        // Variable addition increases var_off uncertainty
+        // Also invalidates any proven range (we don't know where we are anymore)
         if let Some(ref mut po) = state.get_mut(dst).ptr_offset {
             let src_range = src_bounds.umax.saturating_sub(src_bounds.umin);
-            po.range = po.range.saturating_add(src_range);
+            po.var_off = po.var_off.saturating_add(src_range);
+            // Adding variable invalidates proven range
+            po.range = None;
         }
     }
 }
@@ -245,7 +256,7 @@ pub fn apply_scalar_add_ptr(state: &mut IntervalState, dst: Reg, ptr_src: Reg, s
 
     // If ptr has PtrOffset, create new PtrOffset for dst
     if let Some(po) = ptr_offset {
-        // The scalar range adds to the pointer's range
+        // The scalar range adds to the pointer's var_off
         let scalar_range = if scalar_hi >= scalar_lo {
             (scalar_hi - scalar_lo) as u64
         } else {
@@ -253,16 +264,18 @@ pub fn apply_scalar_add_ptr(state: &mut IntervalState, dst: Reg, ptr_src: Reg, s
         };
 
         // New offset combines ptr's offset with scalar's minimum
-        // New range combines both ranges
-        let new_offset = po.offset.saturating_add(scalar_lo);
-        let new_range = po.range.saturating_add(scalar_range);
+        // New var_off combines both variable ranges
+        let new_off = po.off.saturating_add(scalar_lo);
+        let new_var_off = po.var_off.saturating_add(scalar_range);
 
         state.set(dst, RegInterval {
             bounds: ScalarBounds::unknown(), // Absolute address still unknown
             ptr_offset: Some(PtrOffset {
                 anchor: po.anchor,
-                offset: new_offset,
-                range: new_range,
+                off: new_off,
+                var_off: new_var_off,
+                // Adding variable invalidates proven range
+                range: None,
             }),
         });
     }
@@ -568,13 +581,18 @@ pub fn check_region_access(
             let start_safe = min_off >= 0;
 
             // end_safe: base + off + size <= anchor_end
-            // This requires knowing anchor_end - anchor_start
             //
-            // IMPORTANT: packet_size_lower_bound tracks (data_end - data), which is
-            // only valid for the packet data region (AnchorData to AnchorDataEnd).
-            // For other regions (like meta), we cannot prove safety without
-            // separate tracking.
-            let end_safe = if anchor_end == Reg::AnchorDataEnd {
+            // Method 1: Use per-register proven range (works for variable offsets too)
+            // If po.range is set, then we know from base we can access range bytes.
+            // Access is safe if: off + size <= range
+            let end_safe_by_range = if let Some(range) = po.range {
+                off.saturating_add(size) <= range
+            } else {
+                false
+            };
+
+            // Method 2: Use global packet/meta size bounds (works only for fixed offsets)
+            let end_safe_by_global = if anchor_end == Reg::AnchorDataEnd {
                 // Packet data region: use packet_size_lower_bound
                 if let Some(packet_size) = state.get_packet_size_bound() {
                     let max_off = po.max_offset().saturating_add(off).saturating_add(size);
@@ -582,10 +600,20 @@ pub fn check_region_access(
                 } else {
                     false
                 }
+            } else if anchor_end == Reg::AnchorData {
+                // Meta region [data_meta, data): use meta_size_lower_bound
+                if let Some(meta_size) = state.get_meta_size_bound() {
+                    let max_off = po.max_offset().saturating_add(off).saturating_add(size);
+                    max_off <= meta_size as i64
+                } else {
+                    false
+                }
             } else {
-                // Meta region or other: we don't track this bound separately
+                // Other regions: we don't track this bound
                 false
             };
+
+            let end_safe = end_safe_by_range || end_safe_by_global;
 
             (start_safe, end_safe)
         }

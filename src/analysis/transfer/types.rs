@@ -14,8 +14,9 @@ use crate::domains::numeric::NumericDomain;
 
 fn update_packet_ptr_type_after_alu(types: &mut TypeState, domain: &NumericDomain, dst: Reg) {
     // Check offset from anchor: dst - @data
-    let offset_from_data = domain.get(dst, Reg::AnchorData);
-    if offset_from_data <= constants::MAX_PACKET_OFF {
+    // Use get_distance_interval to support both zone and interval domains
+    let (_, max_offset) = domain.get_distance_interval(dst, Reg::AnchorData);
+    if max_offset <= constants::MAX_PACKET_OFF {
         types.set(dst, RegType::PtrToPacket);
     } else {
         types.set(dst, RegType::ScalarValue);
@@ -104,8 +105,9 @@ fn update_ptr_arithmetic_type(
             }
         }
         RegType::PtrToPacketMeta => {
-            let offset_from_meta = domain.get(dst, Reg::AnchorDataMeta);
-            if offset_from_meta <= constants::MAX_PACKET_OFF {
+            // Use get_distance_interval to support both zone and interval domains
+            let (_, max_offset) = domain.get_distance_interval(dst, Reg::AnchorDataMeta);
+            if max_offset <= constants::MAX_PACKET_OFF {
                 types.set(dst, RegType::PtrToPacketMeta);
             } else {
                 types.set(dst, RegType::ScalarValue);
