@@ -9,6 +9,35 @@ use either::Either::{self};
 
 use super::outcome::{fits_in_i32, fits_in_u32, get_combined_signed_bounds};
 
+/// Propagate a constraint to all registers with the same scalar_id as source_reg.
+/// This is used in the interval domain to track bounds across register copies.
+fn propagate_to_equal_scalars<F>(
+    domain: &mut NumericDomain,
+    source_reg: Reg,
+    apply: F,
+) where
+    F: Fn(&mut NumericDomain, Reg),
+{
+    if let NumericDomain::Interval(ivl) = domain {
+        let source_id = ivl.get(source_reg).bounds.scalar_id;
+        if let Some(id) = source_id {
+            // Collect registers with matching scalar_id
+            let matching_regs: Vec<Reg> = Reg::ALL
+                .iter()
+                .copied()
+                .filter(|&r| {
+                    r != source_reg && r != Reg::Zero && !r.is_anchor()
+                        && ivl.get(r).bounds.scalar_id == Some(id)
+                })
+                .collect();
+            // Apply constraint to each matching register
+            for r in matching_regs {
+                apply(domain, r);
+            }
+        }
+    }
+}
+
 pub fn apply_jmp_constraints(
     then_s: &mut State,
     else_s: &mut State,
@@ -102,31 +131,39 @@ fn apply_cmp_to_domain(
     match (op, right) {
         (CmpOp::Eq, Either::Right(imm)) => {
             then_domain.assume_eq_imm(left, imm);
+            propagate_to_equal_scalars(then_domain, left, |d, r| d.assume_eq_imm(r, imm));
         }
         (CmpOp::Eq, Either::Left(reg)) => {
             then_domain.assign_reg(left, reg);
         }
         (CmpOp::Ne, Either::Right(imm)) => {
             else_domain.assume_eq_imm(left, imm);
+            propagate_to_equal_scalars(else_domain, left, |d, r| d.assume_eq_imm(r, imm));
         }
         (CmpOp::Ne, Either::Left(reg)) => {
             else_domain.assign_reg(left, reg);
         }
         (CmpOp::UGe, Either::Right(imm)) => {
             then_domain.assume_ge_imm(left, imm);
+            propagate_to_equal_scalars(then_domain, left, |d, r| d.assume_ge_imm(r, imm));
             else_domain.assume_lt_imm(left, imm);
+            propagate_to_equal_scalars(else_domain, left, |d, r| d.assume_lt_imm(r, imm));
             if imm > 0 {
                 else_domain.assume_ge_imm(left, 0);
+                propagate_to_equal_scalars(else_domain, left, |d, r| d.assume_ge_imm(r, 0));
             }
         }
         (CmpOp::SGe, Either::Right(imm)) => {
             then_domain.assume_ge_imm(left, imm);
+            propagate_to_equal_scalars(then_domain, left, |d, r| d.assume_ge_imm(r, imm));
             else_domain.assume_lt_imm(left, imm);
+            propagate_to_equal_scalars(else_domain, left, |d, r| d.assume_lt_imm(r, imm));
         }
         (CmpOp::UGe, Either::Left(reg)) => {
             then_domain.assume_ge(left, reg);
             else_domain.assume_le_offset(left, reg, -1);
             else_domain.assume_ge_imm(left, 0);
+            propagate_to_equal_scalars(else_domain, left, |d, r| d.assume_ge_imm(r, 0));
         }
         (CmpOp::SGe, Either::Left(reg)) => {
             then_domain.assume_ge(left, reg);
@@ -134,17 +171,23 @@ fn apply_cmp_to_domain(
         }
         (CmpOp::UGt, Either::Right(imm)) => {
             then_domain.assume_ge_imm(left, imm + 1);
+            propagate_to_equal_scalars(then_domain, left, |d, r| d.assume_ge_imm(r, imm + 1));
             else_domain.assume_le_imm(left, imm);
+            propagate_to_equal_scalars(else_domain, left, |d, r| d.assume_le_imm(r, imm));
             else_domain.assume_ge_imm(left, 0);
+            propagate_to_equal_scalars(else_domain, left, |d, r| d.assume_ge_imm(r, 0));
         }
         (CmpOp::SGt, Either::Right(imm)) => {
             then_domain.assume_ge_imm(left, imm + 1);
+            propagate_to_equal_scalars(then_domain, left, |d, r| d.assume_ge_imm(r, imm + 1));
             else_domain.assume_le_imm(left, imm);
+            propagate_to_equal_scalars(else_domain, left, |d, r| d.assume_le_imm(r, imm));
         }
         (CmpOp::UGt, Either::Left(reg)) => {
             then_domain.assume_gt(left, reg);
             else_domain.assume_le(left, reg);
             else_domain.assume_ge_imm(left, 0);
+            propagate_to_equal_scalars(else_domain, left, |d, r| d.assume_ge_imm(r, 0));
         }
         (CmpOp::SGt, Either::Left(reg)) => {
             then_domain.assume_gt(left, reg);
@@ -152,16 +195,22 @@ fn apply_cmp_to_domain(
         }
         (CmpOp::ULe, Either::Right(imm)) => {
             then_domain.assume_le_imm(left, imm);
+            propagate_to_equal_scalars(then_domain, left, |d, r| d.assume_le_imm(r, imm));
             then_domain.assume_ge_imm(left, 0);
+            propagate_to_equal_scalars(then_domain, left, |d, r| d.assume_ge_imm(r, 0));
             else_domain.assume_ge_imm(left, imm + 1);
+            propagate_to_equal_scalars(else_domain, left, |d, r| d.assume_ge_imm(r, imm + 1));
         }
         (CmpOp::SLe, Either::Right(imm)) => {
             then_domain.assume_le_imm(left, imm);
+            propagate_to_equal_scalars(then_domain, left, |d, r| d.assume_le_imm(r, imm));
             else_domain.assume_ge_imm(left, imm + 1);
+            propagate_to_equal_scalars(else_domain, left, |d, r| d.assume_ge_imm(r, imm + 1));
         }
         (CmpOp::ULe, Either::Left(reg)) => {
             then_domain.assume_le(left, reg);
             then_domain.assume_ge_imm(left, 0);
+            propagate_to_equal_scalars(then_domain, left, |d, r| d.assume_ge_imm(r, 0));
             else_domain.assume_gt(left, reg);
         }
         (CmpOp::SLe, Either::Left(reg)) => {
@@ -170,18 +219,24 @@ fn apply_cmp_to_domain(
         }
         (CmpOp::ULt, Either::Right(imm)) => {
             then_domain.assume_lt_imm(left, imm);
+            propagate_to_equal_scalars(then_domain, left, |d, r| d.assume_lt_imm(r, imm));
             if imm > 0 {
                 then_domain.assume_ge_imm(left, 0);
+                propagate_to_equal_scalars(then_domain, left, |d, r| d.assume_ge_imm(r, 0));
             }
             else_domain.assume_ge_imm(left, imm);
+            propagate_to_equal_scalars(else_domain, left, |d, r| d.assume_ge_imm(r, imm));
         }
         (CmpOp::SLt, Either::Right(imm)) => {
             then_domain.assume_lt_imm(left, imm);
+            propagate_to_equal_scalars(then_domain, left, |d, r| d.assume_lt_imm(r, imm));
             else_domain.assume_ge_imm(left, imm);
+            propagate_to_equal_scalars(else_domain, left, |d, r| d.assume_ge_imm(r, imm));
         }
         (CmpOp::ULt, Either::Left(reg)) => {
             then_domain.assume_le_offset(left, reg, -1);
             then_domain.assume_ge_imm(left, 0);
+            propagate_to_equal_scalars(then_domain, left, |d, r| d.assume_ge_imm(r, 0));
             else_domain.assume_ge(left, reg);
         }
         (CmpOp::SLt, Either::Left(reg)) => {

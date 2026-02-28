@@ -128,6 +128,7 @@ pub fn assign_reg_offset(state: &mut IntervalState, dst: Reg, src: Reg, imm: i64
         smax: src_interval.bounds.smax.saturating_add(imm),
         umin: src_interval.bounds.umin.saturating_add(imm as u64),
         umax: src_interval.bounds.umax.saturating_add(imm as u64),
+        scalar_id: None,  // Arithmetic breaks scalar relationship
     };
 
     // Preserve pointer offset info, adjusting the fixed offset
@@ -175,6 +176,7 @@ pub fn assign_interval(state: &mut IntervalState, r: Reg, min: i64, max: i64) {
                 smax: max,
                 umin: if min >= 0 { min as u64 } else { 0 },
                 umax: if max >= 0 { max as u64 } else { u64::MAX },
+                scalar_id: None,
             },
             ptr_offset: None,
         });
@@ -196,6 +198,7 @@ pub fn apply_add_imm(state: &mut IntervalState, dst: Reg, imm: i64) {
     bounds.smax = bounds.smax.saturating_add(imm);
     bounds.umin = bounds.umin.saturating_add(imm as u64);
     bounds.umax = bounds.umax.saturating_add(imm as u64);
+    bounds.scalar_id = None;  // Arithmetic breaks scalar relationship
 
     // Update pointer offset if present
     if let Some(ref mut po) = state.get_mut(dst).ptr_offset {
@@ -219,6 +222,7 @@ pub fn apply_add_reg(state: &mut IntervalState, dst: Reg, src: Reg) {
     dst_bounds.smax = dst_bounds.smax.saturating_add(src_bounds.smax);
     dst_bounds.umin = dst_bounds.umin.saturating_add(src_bounds.umin);
     dst_bounds.umax = dst_bounds.umax.saturating_add(src_bounds.umax);
+    dst_bounds.scalar_id = None;  // Arithmetic breaks scalar relationship
 
     // Adding variable destroys fixed pointer offset precision
     // But we can preserve if src is constant
@@ -295,6 +299,7 @@ pub fn apply_sub_reg(state: &mut IntervalState, dst: Reg, src: Reg) {
     dst_bounds.smax = dst_bounds.smax.saturating_sub(src_bounds.smin);
     dst_bounds.umin = dst_bounds.umin.saturating_sub(src_bounds.umax);
     dst_bounds.umax = dst_bounds.umax.saturating_sub(src_bounds.umin);
+    dst_bounds.scalar_id = None;  // Arithmetic breaks scalar relationship
 
     // Subtracting variable destroys pointer offset info
     state.get_mut(dst).ptr_offset = None;
@@ -313,6 +318,7 @@ pub fn apply_and_imm(state: &mut IntervalState, dst: Reg, mask: i64) {
         bounds.smax = mask;
         bounds.umin = 0;
         bounds.umax = mask as u64;
+        bounds.scalar_id = None;  // Arithmetic breaks scalar relationship
     } else {
         // Negative mask - conservative
         *bounds = ScalarBounds::unknown();
@@ -346,6 +352,7 @@ pub fn apply_mul_imm(state: &mut IntervalState, dst: Reg, imm: i64) {
             smax: bounds.smax.saturating_mul(imm),
             umin: bounds.umin.saturating_mul(imm as u64),
             umax: bounds.umax.saturating_mul(imm as u64),
+            scalar_id: None,  // Arithmetic breaks scalar relationship
         };
         state.get_bounds_mut(dst).clone_from(&new_bounds);
     } else {
@@ -373,6 +380,7 @@ pub fn apply_div_imm(state: &mut IntervalState, reg: Reg, imm: i64) {
             smax: bounds.smax / imm,
             umin: bounds.umin / (imm as u64),
             umax: bounds.umax / (imm as u64),
+            scalar_id: None,  // Arithmetic breaks scalar relationship
         };
         state.get_bounds_mut(reg).clone_from(&new_bounds);
     } else {
@@ -422,6 +430,7 @@ pub fn apply_neg(state: &mut IntervalState, reg: Reg) {
         smax: neg_smax,
         umin: 0, // Conservative for unsigned after negation
         umax: u64::MAX,
+        scalar_id: None,  // Arithmetic breaks scalar relationship
     };
     state.get_bounds_mut(reg).clone_from(&new_bounds);
 

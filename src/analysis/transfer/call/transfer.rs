@@ -11,6 +11,8 @@ use crate::analysis::transfer::types::{
 use crate::ast::ProgramKind;
 use crate::common::constants;
 use crate::parsing::btf::SpecialFieldKind;
+use crate::domains::numeric::NumericDomain;
+use crate::domains::interval::new_scalar_id;
 use crate::domains::tnum::Tnum;
 use log::{debug, error, trace};
 
@@ -250,6 +252,10 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
             state.domain.assume_ge_imm(Reg::R0, 0);
             state.domain.assume_le_imm(Reg::R0, 0xFFFF_FFFF);
             state.set_tnum(Reg::R0, Tnum::u32_unknown());
+            // Assign scalar_id for tracking related scalars
+            if let NumericDomain::Interval(ivl) = &mut state.domain {
+                ivl.get_bounds_mut(Reg::R0).scalar_id = Some(new_scalar_id());
+            }
         }
         constants::BPF_CSUM_DIFF => {
             // Returns a positive u32 (checksum) or negative error

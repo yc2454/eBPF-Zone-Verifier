@@ -3,8 +3,18 @@
 // Mirrors the kernel verifier's per-register tracking:
 // - Signed and unsigned bounds (smin, smax, umin, umax)
 // - Pointer offset tracking (fixed offset + variable range)
+// - Scalar ID tracking for propagating bounds to copied registers
 
 use crate::analysis::machine::reg::Reg;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// Global counter for generating unique scalar IDs
+static NEXT_SCALAR_ID: AtomicU32 = AtomicU32::new(1);
+
+/// Generate a new unique scalar ID for tracking related scalars
+pub fn new_scalar_id() -> u32 {
+    NEXT_SCALAR_ID.fetch_add(1, Ordering::Relaxed)
+}
 
 /// Scalar interval bounds for a single register
 /// Mirrors kernel's smin_value, smax_value, umin_value, umax_value
@@ -14,6 +24,10 @@ pub struct ScalarBounds {
     pub smax: i64,  // Signed maximum
     pub umin: u64,  // Unsigned minimum
     pub umax: u64,  // Unsigned maximum
+    /// Scalar ID for tracking related scalars (copied registers share the same ID)
+    /// When bounds are refined on one register, the refinement propagates to all
+    /// registers with matching scalar_id
+    pub scalar_id: Option<u32>,
 }
 
 impl ScalarBounds {
@@ -24,6 +38,7 @@ impl ScalarBounds {
             smax: i64::MAX,
             umin: 0,
             umax: u64::MAX,
+            scalar_id: None,
         }
     }
 
@@ -34,6 +49,7 @@ impl ScalarBounds {
             smax: val,
             umin: val as u64,
             umax: val as u64,
+            scalar_id: None,  // Constants don't need tracking
         }
     }
 
@@ -45,6 +61,7 @@ impl ScalarBounds {
             smax: max as i64,
             umin: 0,
             umax: max,
+            scalar_id: None,
         }
     }
 
@@ -90,6 +107,8 @@ impl ScalarBounds {
             smax: self.smax.min(other.smax),
             umin: self.umin.max(other.umin),
             umax: self.umax.min(other.umax),
+            // Preserve scalar_id if both have the same ID
+            scalar_id: if self.scalar_id == other.scalar_id { self.scalar_id } else { None },
         }
     }
 
@@ -101,6 +120,8 @@ impl ScalarBounds {
             smax: self.smax.max(other.smax),
             umin: self.umin.min(other.umin),
             umax: self.umax.max(other.umax),
+            // Preserve scalar_id if both have the same ID
+            scalar_id: if self.scalar_id == other.scalar_id { self.scalar_id } else { None },
         }
     }
 

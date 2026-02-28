@@ -7,4 +7,4 @@
 mod state;
 pub mod ops;
 
-pub use state::{IntervalState, PtrOffset};
+pub use state::{IntervalState, PtrOffset, new_scalar_id};
