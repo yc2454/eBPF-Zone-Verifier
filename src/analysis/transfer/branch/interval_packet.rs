@@ -323,6 +323,51 @@ fn propagate_packet_range(
     }
 }
 
+/// Propagate range to all meta pointer registers with compatible offsets.
+/// After proving that (pkt_meta + checked_off + var_off) <= pkt_data,
+/// any register R at (pkt_meta + R.off + var_off) can access (checked_off - R.off) bytes.
+fn propagate_meta_range(
+    state: &mut State,
+    checked_var_off: u64,
+    proven_size: i64,
+) {
+    // Get all meta pointer registers and update their ranges
+    let mut updates: Vec<(Reg, i64)> = Vec::new();
+
+    if let NumericDomain::Interval(ref ivl) = state.domain {
+        for reg in Reg::ALL {
+            if !matches!(state.types.get(reg), RegType::PtrToPacketMeta) {
+                continue;
+            }
+
+            if let Some(ptr_off) = ivl.get_ptr_offset(reg) {
+                // Must be same anchor and var_off to be in the same "group"
+                if ptr_off.anchor == Reg::AnchorDataMeta && ptr_off.var_off == checked_var_off {
+                    // From this register, we can access up to (proven_size - this_reg.off) bytes
+                    let range_for_reg = proven_size.saturating_sub(ptr_off.off);
+                    if range_for_reg > 0 {
+                        updates.push((reg, range_for_reg));
+                    }
+                }
+            }
+        }
+    }
+
+    // Apply updates
+    if let NumericDomain::Interval(ref mut ivl) = state.domain {
+        for (reg, range) in updates {
+            if let Some(ptr_off) = ivl.get_ptr_offset(reg).cloned() {
+                let current_range = ptr_off.range.unwrap_or(0);
+                if range > current_range {
+                    let mut new_ptr_off = ptr_off;
+                    new_ptr_off.range = Some(range);
+                    ivl.get_mut(reg).ptr_offset = Some(new_ptr_off);
+                }
+            }
+        }
+    }
+}
+
 /// Refine bounds for the meta region [pkt_meta, pkt_data)
 fn refine_meta_region_bounds(
     state: &mut State,
@@ -348,12 +393,10 @@ fn refine_meta_region_bounds(
         return;
     };
 
-    // For variable offsets, we cannot prove the bound
-    if !meta_info.is_fixed {
-        return;
-    }
-
+    // For variable offsets: we can still prove lower bounds using the fixed offset,
+    // but upper bounds need the full offset (fixed + var_off).
     let base_offset = meta_info.offset;
+    let max_offset = meta_info.offset.saturating_add(meta_info.var_off as i64);
 
     // Determine if this path proves meta region has at least `proven_size` bytes
     // and whether it's a strict inequality (> or <) which adds 1 to the bound.
@@ -418,14 +461,17 @@ fn refine_meta_region_bounds(
                     ivl.set_meta_size_bound(proven_size as u64);
                 }
             }
+            // Propagate range to all meta pointers with the same var_off
+            propagate_meta_range(state, meta_info.var_off, proven_size);
         }
     }
 
     if proves_upper {
+        // For upper bounds, use max_offset (includes var_off) for correctness
         let upper_exclusive = if upper_strict {
-            base_offset.saturating_add(1)
+            max_offset.saturating_add(1)
         } else {
-            base_offset
+            max_offset
         };
 
         if upper_exclusive > 0 {
