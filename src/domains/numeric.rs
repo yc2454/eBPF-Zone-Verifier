@@ -522,9 +522,10 @@ impl NumericDomain {
             (NumericDomain::Zone(old), NumericDomain::Zone(new)) => {
                 NumericDomain::Zone(old.widen(new))
             }
-            (NumericDomain::Interval(ivl), NumericDomain::Interval(_)) => {
-                // Interval domain: no widening needed per user requirement
-                NumericDomain::Interval(ivl.clone())
+            (NumericDomain::Interval(_), NumericDomain::Interval(new_ivl)) => {
+                // Interval domain: no widening, preserve the newer state
+                // (widening would corrupt the state by replacing it with old values)
+                NumericDomain::Interval(new_ivl.clone())
             }
             _ => panic!("Cannot widen between different domain types"),
         }
