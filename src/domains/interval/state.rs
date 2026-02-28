@@ -456,6 +456,16 @@ impl IntervalState {
         self.meta_size_upper_bound
     }
 
+    /// Clear all packet and meta size bounds.
+    /// Called when entering a function to ensure the callee starts fresh,
+    /// matching kernel verifier behavior where each function tracks its own bounds.
+    pub fn clear_packet_size_bounds(&mut self) {
+        self.packet_size_lower_bound = None;
+        self.packet_size_upper_bound = None;
+        self.meta_size_lower_bound = None;
+        self.meta_size_upper_bound = None;
+    }
+
     /// Check if the domain state is inconsistent (infeasible)
     pub fn is_inconsistent(&self) -> bool {
         // Check register bounds

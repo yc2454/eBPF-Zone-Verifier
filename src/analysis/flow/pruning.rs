@@ -496,16 +496,39 @@ fn dbm_subsumed_by(cur: &NumericDomain, old: &NumericDomain, live_regs: &HashSet
     // Anchor-to-anchor constraints (packet bounds) must also be subsumed.
     // These represent relationships like data_end - data >= N that are
     // critical for packet access safety and persist across calls.
-    let anchors = [Reg::AnchorData, Reg::AnchorDataEnd, Reg::AnchorDataMeta];
-    for &a in &anchors {
-        for &b in &anchors {
-            if a == b {
-                continue;
+    match (old, cur) {
+        (NumericDomain::Zone(old_dbm), NumericDomain::Zone(cur_dbm)) => {
+            // Zone domain: check anchor-to-anchor constraints directly
+            let anchors = [Reg::AnchorData, Reg::AnchorDataEnd, Reg::AnchorDataMeta];
+            for &a in &anchors {
+                for &b in &anchors {
+                    if a == b {
+                        continue;
+                    }
+                    // old must be at least as permissive: old.get(a,b) >= cur.get(a,b)
+                    if old_dbm.get(a, b) < cur_dbm.get(a, b) {
+                        return false;
+                    }
+                }
             }
-            // old must be at least as permissive: old.get(a,b) >= cur.get(a,b)
-            if old.get(a, b) < cur.get(a, b) {
+        }
+        (NumericDomain::Interval(old_ivl), NumericDomain::Interval(cur_ivl)) => {
+            // Interval domain: check packet_size_lower_bound and meta_size_lower_bound
+            // For subsumption, old must be MORE permissive (fewer constraints) than cur.
+            // If old requires a minimum packet size but cur doesn't, old does NOT subsume cur.
+            let old_pkt = old_ivl.get_packet_size_bound().unwrap_or(0);
+            let cur_pkt = cur_ivl.get_packet_size_bound().unwrap_or(0);
+            if old_pkt > cur_pkt {
                 return false;
             }
+            let old_meta = old_ivl.get_meta_size_bound().unwrap_or(0);
+            let cur_meta = cur_ivl.get_meta_size_bound().unwrap_or(0);
+            if old_meta > cur_meta {
+                return false;
+            }
+        }
+        _ => {
+            // Mismatched domain types - should not happen in normal operation
         }
     }
 
@@ -526,6 +549,25 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
             let new_ty = new_frame.stack.get_slot_type(offset);
             if !type_subsumed_by(&new_ty, &old_ty) {
                 return false;
+            }
+
+            // For packet pointers, also check interval_range subsumption.
+            // If old has a proven range but cur doesn't, old does NOT subsume cur,
+            // because cur might fail a packet access that old would pass.
+            // We need to explore cur to find potential unsafe paths.
+            if matches!(new_ty, RegType::PtrToPacket | RegType::PtrToPacketMeta) {
+                let old_slot = old_frame.stack.get_slot(offset);
+                let new_slot = new_frame.stack.get_slot(offset);
+                if let (Some(old_s), Some(new_s)) = (old_slot, new_slot) {
+                    match (old_s.interval_range, new_s.interval_range) {
+                        // old has range but cur doesn't: old does NOT subsume cur
+                        (Some(_), None) => return false,
+                        // old has larger range than cur: old does NOT subsume cur
+                        (Some(old_r), Some(new_r)) if old_r > new_r => return false,
+                        // cur has range >= old, or both None: OK
+                        _ => {}
+                    }
+                }
             }
         }
     }

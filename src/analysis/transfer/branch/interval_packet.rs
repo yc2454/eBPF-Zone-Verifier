@@ -300,7 +300,9 @@ fn propagate_packet_range(
                 if ptr_off.anchor == Reg::AnchorData && ptr_off.var_off == checked_var_off {
                     // From this register, we can access up to (proven_size - this_reg.off) bytes
                     let range_for_reg = proven_size.saturating_sub(ptr_off.off);
-                    if range_for_reg > 0 {
+                    // Include range=0 for registers at the boundary (offset == proven_size).
+                    // This is needed for negative offset accesses like *(reg + -N).
+                    if range_for_reg >= 0 {
                         updates.push((reg, range_for_reg));
                     }
                 }
@@ -308,15 +310,60 @@ fn propagate_packet_range(
         }
     }
 
-    // Apply updates
+    // Apply updates to registers
     if let NumericDomain::Interval(ref mut ivl) = state.domain {
         for (reg, range) in updates {
             if let Some(ptr_off) = ivl.get_ptr_offset(reg).cloned() {
-                let current_range = ptr_off.range.unwrap_or(0);
+                // Use -1 to represent "no range" so that range=0 is still an update
+                let current_range = ptr_off.range.unwrap_or(-1);
                 if range > current_range {
                     let mut new_ptr_off = ptr_off;
                     new_ptr_off.range = Some(range);
                     ivl.get_mut(reg).ptr_offset = Some(new_ptr_off);
+                }
+            }
+        }
+    }
+
+    // Propagate range to spilled packet pointers on ALL frames' stacks.
+    // The kernel's find_good_pkt_pointers does this, relying on id matching.
+    // Since we don't track id, we propagate to all matching slots.
+    propagate_packet_range_to_all_frames_stack(state, checked_var_off, proven_size);
+}
+
+/// Propagate packet range to spilled packet pointers on ALL frames' stacks.
+/// The kernel's find_good_pkt_pointers iterates all frames.
+fn propagate_packet_range_to_all_frames_stack(
+    state: &mut State,
+    checked_var_off: u64,
+    proven_size: i64,
+) {
+    for frame_idx in 0..state.num_frames() {
+        let frame_level = crate::analysis::machine::frame_stack::FrameLevel::from_index(frame_idx);
+        let stack = state.stack_at_mut(frame_level);
+
+        for (_, spilled) in stack.slots.iter_mut() {
+            // Only update PtrToPacket slots
+            if spilled.reg_type != RegType::PtrToPacket {
+                continue;
+            }
+
+            // Check if this slot has compatible offset info
+            if let (Some(off), Some(var_off)) = (spilled.interval_off, spilled.interval_var_off) {
+                // Must have same var_off to be in the same "group"
+                if var_off != checked_var_off {
+                    continue;
+                }
+
+                // Calculate the range for this spilled pointer
+                let range_for_slot = proven_size.saturating_sub(off);
+                // Include range=0 for pointers at the boundary (offset == proven_size).
+                // This is needed for negative offset accesses like *(ptr + -N).
+                if range_for_slot >= 0 {
+                    let current_range = spilled.interval_range.unwrap_or(-1);
+                    if range_for_slot > current_range {
+                        spilled.interval_range = Some(range_for_slot);
+                    }
                 }
             }
         }
@@ -345,7 +392,9 @@ fn propagate_meta_range(
                 if ptr_off.anchor == Reg::AnchorDataMeta && ptr_off.var_off == checked_var_off {
                     // From this register, we can access up to (proven_size - this_reg.off) bytes
                     let range_for_reg = proven_size.saturating_sub(ptr_off.off);
-                    if range_for_reg > 0 {
+                    // Include range=0 for registers at the boundary (offset == proven_size).
+                    // This is needed for negative offset accesses like *(reg + -N).
+                    if range_for_reg >= 0 {
                         updates.push((reg, range_for_reg));
                     }
                 }
@@ -353,15 +402,54 @@ fn propagate_meta_range(
         }
     }
 
-    // Apply updates
+    // Apply updates to registers
     if let NumericDomain::Interval(ref mut ivl) = state.domain {
         for (reg, range) in updates {
             if let Some(ptr_off) = ivl.get_ptr_offset(reg).cloned() {
-                let current_range = ptr_off.range.unwrap_or(0);
+                // Use -1 to represent "no range" so that range=0 is still an update
+                let current_range = ptr_off.range.unwrap_or(-1);
                 if range > current_range {
                     let mut new_ptr_off = ptr_off;
                     new_ptr_off.range = Some(range);
                     ivl.get_mut(reg).ptr_offset = Some(new_ptr_off);
+                }
+            }
+        }
+    }
+
+    // Also propagate range to spilled meta pointers on the stack
+    propagate_meta_range_to_stack(state, checked_var_off, proven_size);
+}
+
+/// Propagate meta range to spilled meta pointers on all stack frames.
+fn propagate_meta_range_to_stack(state: &mut State, checked_var_off: u64, proven_size: i64) {
+    // Iterate over all frames and update meta pointer slots
+    for frame_idx in 0..state.num_frames() {
+        let frame_level = crate::analysis::machine::frame_stack::FrameLevel::from_index(frame_idx);
+        let stack = state.stack_at_mut(frame_level);
+
+        for (_, spilled) in stack.slots.iter_mut() {
+            // Only update PtrToPacketMeta slots
+            if spilled.reg_type != RegType::PtrToPacketMeta {
+                continue;
+            }
+
+            // Check if this slot has compatible offset info
+            if let (Some(off), Some(var_off)) = (spilled.interval_off, spilled.interval_var_off) {
+                // Must have same var_off to be in the same "group"
+                if var_off != checked_var_off {
+                    continue;
+                }
+
+                // Calculate the range for this spilled pointer
+                let range_for_slot = proven_size.saturating_sub(off);
+                // Include range=0 for pointers at the boundary (offset == proven_size).
+                // This is needed for negative offset accesses like *(ptr + -N).
+                if range_for_slot >= 0 {
+                    let current_range = spilled.interval_range.unwrap_or(-1);
+                    if range_for_slot > current_range {
+                        spilled.interval_range = Some(range_for_slot);
+                    }
                 }
             }
         }

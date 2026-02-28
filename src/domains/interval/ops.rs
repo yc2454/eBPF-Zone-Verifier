@@ -600,27 +600,12 @@ pub fn check_region_access(
                 false
             };
 
-            // Method 2: Use global packet/meta size bounds (works only for fixed offsets)
-            let end_safe_by_global = if anchor_end == Reg::AnchorDataEnd {
-                // Packet data region: use packet_size_lower_bound
-                if let Some(packet_size) = state.get_packet_size_bound() {
-                    let max_off = po.max_offset().saturating_add(off).saturating_add(size);
-                    max_off <= packet_size as i64
-                } else {
-                    false
-                }
-            } else if anchor_end == Reg::AnchorData {
-                // Meta region [data_meta, data): use meta_size_lower_bound
-                if let Some(meta_size) = state.get_meta_size_bound() {
-                    let max_off = po.max_offset().saturating_add(off).saturating_add(size);
-                    max_off <= meta_size as i64
-                } else {
-                    false
-                }
-            } else {
-                // Other regions: we don't track this bound
-                false
-            };
+            // Method 2: Use global packet/meta size bounds
+            // DISABLED: The kernel only uses per-register range, not global bounds.
+            // Using global bounds causes soundness issues when a subprog's pointer
+            // in the stack is accessed using the caller's global bound.
+            let end_safe_by_global = false;
+            let _ = anchor_end; // suppress unused warning
 
             let end_safe = end_safe_by_range || end_safe_by_global;
 
@@ -651,23 +636,13 @@ pub fn reset_packet_anchors(state: &mut IntervalState) {
 }
 
 /// Merges anchor-to-anchor constraints from callee to caller
-/// For interval domain, preserve packet/meta size bounds learned in callee
-pub fn preserve_anchor_constraints(caller: &mut IntervalState, callee: &IntervalState) {
-    // Preserve packet_size_lower_bound from callee if it's larger than caller's
-    // This is crucial for cases where the callee does a bounds check and the
-    // caller later uses a packet pointer from stack.
-    if let Some(callee_pkt_bound) = callee.get_packet_size_bound() {
-        let caller_bound = caller.get_packet_size_bound().unwrap_or(0);
-        if callee_pkt_bound > caller_bound {
-            caller.set_packet_size_bound(callee_pkt_bound);
-        }
-    }
-
-    // Similarly preserve meta_size_lower_bound
-    if let Some(callee_meta_bound) = callee.get_meta_size_bound() {
-        let caller_bound = caller.get_meta_size_bound().unwrap_or(0);
-        if callee_meta_bound > caller_bound {
-            caller.set_meta_size_bound(callee_meta_bound);
-        }
-    }
+/// For interval domain, we do NOT preserve global packet/meta size bounds
+/// because the kernel verifier only tracks per-register range info.
+/// The per-register range info for callee-saved registers is handled separately
+/// in transfer_exit.
+pub fn preserve_anchor_constraints(_caller: &mut IntervalState, _callee: &IntervalState) {
+    // Intentionally empty for interval domain.
+    // Global packet_size_lower_bound should NOT be preserved across function
+    // returns because a spilled pointer in the caller stack that was never
+    // bounds-checked should not benefit from the callee's bounds check.
 }

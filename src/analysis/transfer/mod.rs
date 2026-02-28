@@ -192,6 +192,13 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         // Also save interval mode PtrOffset for packet pointer returns
         let ret_interval_ptr_offset = state.save_interval_ptr_offset(Reg::R0);
 
+        // Save callee-saved registers' (R6-R9) packet range info.
+        // These registers may have been updated by bounds checks in the callee.
+        let callee_saved_packet_info: Vec<_> = [Reg::R6, Reg::R7, Reg::R8, Reg::R9]
+            .iter()
+            .map(|&r| (r, state.types.get(r), state.save_interval_ptr_offset(r)))
+            .collect();
+
         // Save callee's anchor constraints before overwriting
         let callee_domain = state.domain.clone();
 
@@ -245,6 +252,49 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
                         range,
                     };
                     ivl.get_mut(Reg::R0).ptr_offset = Some(ptr_offset);
+                }
+            }
+        }
+
+        // Restore callee-saved registers' (R6-R9) packet range info.
+        // If a bounds check in the callee proved range for these registers,
+        // we need to carry that forward to the caller.
+        {
+            use crate::domains::numeric::NumericDomain;
+
+            for (reg, callee_type, (off_opt, var_off_opt, range)) in callee_saved_packet_info {
+                // Only restore if the callee had a packet pointer with range info
+                if let (Some(off), Some(range_val)) = (off_opt, range) {
+                    // Determine anchor from the callee's register type
+                    let anchor = match callee_type {
+                        RegType::PtrToPacket => Some(Reg::AnchorData),
+                        RegType::PtrToPacketMeta => Some(Reg::AnchorDataMeta),
+                        _ => None,
+                    };
+
+                    // Only update if caller also has a packet pointer in this register
+                    // and the anchor matches
+                    if let Some(anchor) = anchor {
+                        if matches!(state.types.get(reg), RegType::PtrToPacket | RegType::PtrToPacketMeta) {
+                            if let NumericDomain::Interval(ref mut ivl) = state.domain {
+                                // Check if caller's register has compatible offset info
+                                if let Some(caller_ptr_off) = ivl.get_ptr_offset(reg) {
+                                    if caller_ptr_off.anchor == anchor
+                                        && caller_ptr_off.off == off
+                                        && caller_ptr_off.var_off == var_off_opt.unwrap_or(0)
+                                    {
+                                        // Update range to the max of caller and callee
+                                        let caller_range = caller_ptr_off.range.unwrap_or(0);
+                                        if range_val > caller_range {
+                                            let mut new_ptr_off = caller_ptr_off.clone();
+                                            new_ptr_off.range = Some(range_val);
+                                            ivl.get_mut(reg).ptr_offset = Some(new_ptr_off);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

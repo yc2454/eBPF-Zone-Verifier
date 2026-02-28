@@ -301,6 +301,14 @@ pub(crate) fn transfer_call_rel(
 
     state.push_frame(pc + 1);
     update_call_rel_types(&mut state);
+
+    // Clear packet size bounds for the callee.
+    // The kernel verifier tracks bounds per-function, so each function
+    // starts with no proven packet size. This is important for cases where
+    // the caller did a bounds check but the callee spills a fresh packet
+    // pointer before doing its own check.
+    state.domain.clear_packet_size_bounds();
+
     state.pc = target;
 
     vec![state]

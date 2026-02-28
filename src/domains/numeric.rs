@@ -436,6 +436,16 @@ impl NumericDomain {
         }
     }
 
+    /// Clear packet and meta size bounds (interval mode only).
+    /// Called when entering a function to match kernel behavior where each
+    /// function tracks its own bounds independently.
+    pub fn clear_packet_size_bounds(&mut self) {
+        if let NumericDomain::Interval(ivl) = self {
+            ivl.clear_packet_size_bounds();
+        }
+        // Zone mode doesn't have global packet size bounds - it uses DBM constraints
+    }
+
     /// Merges anchor-to-anchor constraints from callee to caller
     pub fn preserve_anchor_constraints(&mut self, callee: &NumericDomain) {
         match (self, callee) {

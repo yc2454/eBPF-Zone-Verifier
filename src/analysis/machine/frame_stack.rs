@@ -15,6 +15,12 @@ pub struct FrameLevel(usize);
 impl FrameLevel {
     /// The main function frame (always valid).
     pub const MAIN: FrameLevel = FrameLevel(0);
+
+    /// Create a FrameLevel from an index.
+    /// Use with caution - only valid if index < num_frames.
+    pub fn from_index(idx: usize) -> Self {
+        FrameLevel(idx)
+    }
 }
 
 impl std::fmt::Display for FrameLevel {
@@ -141,6 +147,10 @@ impl FrameStack {
 
     /// Return from a subfunction. Pops the current frame and returns
     /// it (owned) so the caller can restore register state.
+    /// NOTE: We do NOT restore the caller frames' stacks. If the callee
+    /// modified the caller's stack (via a passed pointer), those modifications
+    /// persist. This matches kernel verifier behavior where stack state is
+    /// not saved/restored on call/return.
     /// Returns None if already at main (nothing to pop).
     pub fn pop(&mut self) -> Option<CallFrame> {
         if self.frames.len() <= 1 {
