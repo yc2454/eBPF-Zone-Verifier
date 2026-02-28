@@ -189,6 +189,8 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         let ret_tnum = state.get_tnum(Reg::R0);
         let ret_bounds = state.domain.get_interval(Reg::R0);
         let ret_anchor_info = state.save_anchor_info(Reg::R0);
+        // Also save interval mode PtrOffset for packet pointer returns
+        let ret_interval_ptr_offset = state.save_interval_ptr_offset(Reg::R0);
 
         // Save callee's anchor constraints before overwriting
         let callee_domain = state.domain.clone();
@@ -204,7 +206,7 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         state.domain.preserve_anchor_constraints(&callee_domain);
 
         // Re-apply R0 from callee's return value
-        state.types.set(Reg::R0, ret_type);
+        state.types.set(Reg::R0, ret_type.clone());
         state.set_tnum(Reg::R0, ret_tnum);
         state.domain.forget(Reg::R0);
         state.domain.assign_interval(Reg::R0, ret_bounds.0, ret_bounds.1);
@@ -218,6 +220,33 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
                 state.domain.add_constraint(anchor, Reg::R0, l);
             }
             state.domain.close();
+        }
+
+        // Restore interval mode PtrOffset for packet pointer returns
+        if let (Some(off), var_off_opt, range) = ret_interval_ptr_offset {
+            use crate::domains::numeric::NumericDomain;
+            use crate::domains::interval::PtrOffset;
+
+            // Determine anchor from register type
+            let anchor = match &ret_type {
+                RegType::PtrToPacket => Some(Reg::AnchorData),
+                RegType::PtrToPacketMeta => Some(Reg::AnchorDataMeta),
+                RegType::PtrToPacketEnd => Some(Reg::AnchorDataEnd),
+                _ => None,
+            };
+
+            if let Some(anchor) = anchor {
+                if let NumericDomain::Interval(ref mut ivl) = state.domain {
+                    let var_off = var_off_opt.unwrap_or(0);
+                    let ptr_offset = PtrOffset {
+                        anchor,
+                        off,
+                        var_off,
+                        range,
+                    };
+                    ivl.get_mut(Reg::R0).ptr_offset = Some(ptr_offset);
+                }
+            }
         }
 
         state.types.set(

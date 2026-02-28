@@ -651,9 +651,23 @@ pub fn reset_packet_anchors(state: &mut IntervalState) {
 }
 
 /// Merges anchor-to-anchor constraints from callee to caller
-/// For interval domain, this is mostly a no-op since we don't track relations
-pub fn preserve_anchor_constraints(_caller: &mut IntervalState, callee: &IntervalState) {
-    // In interval domain, we might want to preserve packet_size_lower_bound
-    // But since callee is separate, we generally don't merge these
-    let _ = callee; // Acknowledge parameter
+/// For interval domain, preserve packet/meta size bounds learned in callee
+pub fn preserve_anchor_constraints(caller: &mut IntervalState, callee: &IntervalState) {
+    // Preserve packet_size_lower_bound from callee if it's larger than caller's
+    // This is crucial for cases where the callee does a bounds check and the
+    // caller later uses a packet pointer from stack.
+    if let Some(callee_pkt_bound) = callee.get_packet_size_bound() {
+        let caller_bound = caller.get_packet_size_bound().unwrap_or(0);
+        if callee_pkt_bound > caller_bound {
+            caller.set_packet_size_bound(callee_pkt_bound);
+        }
+    }
+
+    // Similarly preserve meta_size_lower_bound
+    if let Some(callee_meta_bound) = callee.get_meta_size_bound() {
+        let caller_bound = caller.get_meta_size_bound().unwrap_or(0);
+        if callee_meta_bound > caller_bound {
+            caller.set_meta_size_bound(callee_meta_bound);
+        }
+    }
 }
