@@ -17,10 +17,14 @@ pub struct SpilledReg {
     pub tnum: Tnum,
     pub bounds: ScalarBounds,
     pub size: MemSize,
-    // NEW: saved anchor offsets for packet pointers
+    // Zone mode: saved anchor offsets for packet pointers (DBM constraints)
     pub anchor_lo: Option<i64>, // anchor - reg <= ? (i.e., reg >= anchor + lo)
     pub anchor_hi: Option<i64>, // reg - anchor <= ? (i.e., reg <= anchor + hi)
     pub anchor: Option<Reg>,    // which anchor this relates to
+    // Interval mode: saved PtrOffset fields
+    pub interval_off: Option<i64>,      // fixed offset from anchor
+    pub interval_var_off: Option<u64>,  // variable offset uncertainty
+    pub interval_range: Option<i64>,    // proven safe access range
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -87,6 +91,9 @@ impl StackState {
                     anchor: None,
                     anchor_hi: None,
                     anchor_lo: None,
+                    interval_off: None,
+                    interval_var_off: None,
+                    interval_range: None,
                 },
             );
         }
@@ -119,6 +126,9 @@ impl StackState {
                 anchor: None,
                 anchor_hi: None,
                 anchor_lo: None,
+                interval_off: None,
+                interval_var_off: None,
+                interval_range: None,
             },
         );
     }

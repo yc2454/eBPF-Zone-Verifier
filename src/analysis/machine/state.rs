@@ -186,6 +186,13 @@ impl State {
             (None, None, None)
         };
 
+        // Save interval mode PtrOffset info
+        let (interval_off, interval_var_off, interval_range) = if size == MemSize::U64 && is_aligned {
+            self.save_interval_ptr_offset(reg)
+        } else {
+            (None, None, None)
+        };
+
         let (min, max) = self.domain.get_interval(reg);
         trace!("At spilling, {} bounds: [{}, {}]", reg.name(), min, max);
 
@@ -201,6 +208,9 @@ impl State {
             anchor,
             anchor_lo,
             anchor_hi,
+            interval_off,
+            interval_var_off,
+            interval_range,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -223,6 +233,9 @@ impl State {
                         anchor: None,
                         anchor_lo: None,
                         anchor_hi: None,
+                        interval_off: None,
+                        interval_var_off: None,
+                        interval_range: None,
                     },
                 );
             }
@@ -267,6 +280,9 @@ impl State {
             anchor: None,
             anchor_lo: None,
             anchor_hi: None,
+            interval_off: None,
+            interval_var_off: None,
+            interval_range: None,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -289,6 +305,9 @@ impl State {
                         anchor: None,
                         anchor_lo: None,
                         anchor_hi: None,
+                        interval_off: None,
+                        interval_var_off: None,
+                        interval_range: None,
                     },
                 );
             }
@@ -368,9 +387,23 @@ impl State {
         }
     }
 
+    /// Save interval mode PtrOffset info for a register
+    pub fn save_interval_ptr_offset(&self, reg: Reg) -> (Option<i64>, Option<u64>, Option<i64>) {
+        use crate::domains::numeric::NumericDomain;
+
+        if let NumericDomain::Interval(ref ivl) = self.domain {
+            if let Some(ptr_off) = ivl.get_ptr_offset(reg) {
+                return (Some(ptr_off.off), Some(ptr_off.var_off), ptr_off.range);
+            }
+        }
+        (None, None, None)
+    }
+
     pub fn restore_anchor_info(&mut self, reg: Reg, spilled: &SpilledReg) {
         trace!("Restoring anchor info for {}", reg.name());
         trace!("{:?}, ", spilled);
+
+        // Restore zone mode constraints
         if let Some(anchor) = spilled.anchor {
             if let Some(hi) = spilled.anchor_hi {
                 self.domain.add_constraint(reg, anchor, hi); // reg - anchor <= hi
@@ -379,6 +412,46 @@ impl State {
                 self.domain.add_constraint(anchor, reg, lo); // anchor - reg <= lo
             }
             self.domain.close();
+        }
+
+        // Restore interval mode PtrOffset
+        self.restore_interval_ptr_offset(reg, spilled);
+    }
+
+    /// Restore interval mode PtrOffset info for a register
+    fn restore_interval_ptr_offset(&mut self, reg: Reg, spilled: &SpilledReg) {
+        use crate::domains::numeric::NumericDomain;
+        use crate::domains::interval::PtrOffset;
+
+        // Only restore if we have interval mode data
+        if spilled.interval_off.is_none() {
+            return;
+        }
+
+        // Determine anchor from register type
+        let anchor = match spilled.reg_type {
+            RegType::PtrToPacket => Some(Reg::AnchorData),
+            RegType::PtrToPacketMeta => Some(Reg::AnchorDataMeta),
+            RegType::PtrToPacketEnd => Some(Reg::AnchorDataEnd),
+            RegType::PtrToStack { .. } => Some(Reg::R10),
+            _ => spilled.anchor, // fallback to saved anchor
+        };
+
+        if let (Some(anchor), Some(off)) = (anchor, spilled.interval_off) {
+            if let NumericDomain::Interval(ref mut ivl) = self.domain {
+                let var_off = spilled.interval_var_off.unwrap_or(0);
+                let range = spilled.interval_range;
+
+                let ptr_offset = PtrOffset {
+                    anchor,
+                    off,
+                    var_off,
+                    range,
+                };
+
+                // Set the PtrOffset on the register
+                ivl.get_mut(reg).ptr_offset = Some(ptr_offset);
+            }
         }
     }
 
