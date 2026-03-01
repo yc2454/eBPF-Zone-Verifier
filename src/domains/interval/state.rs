@@ -20,10 +20,10 @@ pub fn new_scalar_id() -> u32 {
 /// Mirrors kernel's smin_value, smax_value, umin_value, umax_value
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScalarBounds {
-    pub smin: i64,  // Signed minimum
-    pub smax: i64,  // Signed maximum
-    pub umin: u64,  // Unsigned minimum
-    pub umax: u64,  // Unsigned maximum
+    pub smin: i64, // Signed minimum
+    pub smax: i64, // Signed maximum
+    pub umin: u64, // Unsigned minimum
+    pub umax: u64, // Unsigned maximum
     /// Scalar ID for tracking related scalars (copied registers share the same ID)
     /// When bounds are refined on one register, the refinement propagates to all
     /// registers with matching scalar_id
@@ -49,7 +49,7 @@ impl ScalarBounds {
             smax: val,
             umin: val as u64,
             umax: val as u64,
-            scalar_id: None,  // Constants don't need tracking
+            scalar_id: None, // Constants don't need tracking
         }
     }
 
@@ -108,7 +108,11 @@ impl ScalarBounds {
             umin: self.umin.max(other.umin),
             umax: self.umax.min(other.umax),
             // Preserve scalar_id if both have the same ID
-            scalar_id: if self.scalar_id == other.scalar_id { self.scalar_id } else { None },
+            scalar_id: if self.scalar_id == other.scalar_id {
+                self.scalar_id
+            } else {
+                None
+            },
         }
     }
 
@@ -121,7 +125,11 @@ impl ScalarBounds {
             umin: self.umin.min(other.umin),
             umax: self.umax.max(other.umax),
             // Preserve scalar_id if both have the same ID
-            scalar_id: if self.scalar_id == other.scalar_id { self.scalar_id } else { None },
+            scalar_id: if self.scalar_id == other.scalar_id {
+                self.scalar_id
+            } else {
+                None
+            },
         }
     }
 
@@ -217,11 +225,6 @@ impl PtrOffset {
         }
     }
 
-    /// Check if the offset is exactly known (no variable part)
-    pub fn is_fixed(&self) -> bool {
-        self.var_off == 0
-    }
-
     /// Get the minimum possible offset (off)
     pub fn min_offset(&self) -> i64 {
         self.off
@@ -230,19 +233,6 @@ impl PtrOffset {
     /// Get the maximum possible offset (off + var_off)
     pub fn max_offset(&self) -> i64 {
         self.off.saturating_add(self.var_off as i64)
-    }
-
-    /// Set proven safe range after bounds check
-    pub fn set_range(&mut self, range: i64) {
-        self.range = Some(match self.range {
-            Some(existing) => existing.max(range),
-            None => range,
-        });
-    }
-
-    /// Get proven safe range if set
-    pub fn get_range(&self) -> Option<i64> {
-        self.range
     }
 }
 
@@ -320,18 +310,14 @@ impl IntervalState {
 
         // Initialize anchors to themselves at offset 0
         for anchor in [Reg::AnchorData, Reg::AnchorDataEnd, Reg::AnchorDataMeta] {
-            regs[anchor.idx()] = RegInterval::with_ptr_offset(
-                ScalarBounds::unknown(),
-                PtrOffset::at_anchor(anchor),
-            );
+            regs[anchor.idx()] =
+                RegInterval::with_ptr_offset(ScalarBounds::unknown(), PtrOffset::at_anchor(anchor));
         }
 
         // R10 is the stack frame pointer - track it as an anchor for stack offsets
         // This allows us to compute distances like (R10 - 8) - R10 = -8
-        regs[Reg::R10.idx()] = RegInterval::with_ptr_offset(
-            ScalarBounds::unknown(),
-            PtrOffset::at_anchor(Reg::R10),
-        );
+        regs[Reg::R10.idx()] =
+            RegInterval::with_ptr_offset(ScalarBounds::unknown(), PtrOffset::at_anchor(Reg::R10));
 
         IntervalState {
             regs,
@@ -423,11 +409,6 @@ impl IntervalState {
         );
     }
 
-    /// Get known upper bound on packet size (exclusive)
-    pub fn get_packet_size_upper_bound(&self) -> Option<u64> {
-        self.packet_size_upper_bound
-    }
-
     /// Record that meta region has at least n bytes (from bounds check)
     pub fn set_meta_size_bound(&mut self, min_size: u64) {
         self.meta_size_lower_bound = Some(
@@ -449,11 +430,6 @@ impl IntervalState {
                 .map(|old| old.min(max_size_exclusive))
                 .unwrap_or(max_size_exclusive),
         );
-    }
-
-    /// Get known upper bound on meta region size (exclusive)
-    pub fn get_meta_size_upper_bound(&self) -> Option<u64> {
-        self.meta_size_upper_bound
     }
 
     /// Clear all packet and meta size bounds.
@@ -480,14 +456,17 @@ impl IntervalState {
         // upper_bound means packet_size < upper (exclusive)
         // So if lower >= upper, we have packet_size >= lower AND packet_size < upper
         // which is impossible when lower >= upper
-        if let (Some(lower), Some(upper)) = (self.packet_size_lower_bound, self.packet_size_upper_bound) {
+        if let (Some(lower), Some(upper)) =
+            (self.packet_size_lower_bound, self.packet_size_upper_bound)
+        {
             if lower >= upper {
                 return true;
             }
         }
 
         // Check meta size bounds similarly
-        if let (Some(lower), Some(upper)) = (self.meta_size_lower_bound, self.meta_size_upper_bound) {
+        if let (Some(lower), Some(upper)) = (self.meta_size_lower_bound, self.meta_size_upper_bound)
+        {
             if lower >= upper {
                 return true;
             }

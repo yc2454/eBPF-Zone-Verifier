@@ -368,13 +368,13 @@ fn check_and_handle_spin_lock(env: &mut VerifierEnv, state: &mut State, helper: 
     true
 }
 
-fn interval_set_scalar_id(domain: &mut NumericDomain, reg: Reg) {
+pub(crate) fn interval_set_scalar_id(domain: &mut NumericDomain, reg: Reg) {
     if let NumericDomain::Interval(ivl) = domain {
         ivl.get_bounds_mut(reg).scalar_id = Some(new_scalar_id());
     }
 }
 
-fn restore_interval_ptr_offset_from_return(
+pub(crate) fn restore_interval_ptr_offset_from_return(
     domain: &mut NumericDomain,
     ret_type: &RegType,
     ret_interval_ptr_offset: (Option<i64>, Option<u64>, Option<i64>),
@@ -405,7 +405,7 @@ fn restore_interval_ptr_offset_from_return(
     }
 }
 
-fn restore_callee_interval_packet_info(
+pub(crate) fn restore_callee_interval_packet_info(
     domain: &mut NumericDomain,
     caller_types: &crate::analysis::machine::reg_types::TypeState,
     callee_saved_packet_info: Vec<(Reg, RegType, (Option<i64>, Option<u64>, Option<i64>))>,

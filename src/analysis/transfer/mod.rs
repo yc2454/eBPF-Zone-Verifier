@@ -216,7 +216,9 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         state.types.set(Reg::R0, ret_type.clone());
         state.set_tnum(Reg::R0, ret_tnum);
         state.domain.forget(Reg::R0);
-        state.domain.assign_interval(Reg::R0, ret_bounds.0, ret_bounds.1);
+        state
+            .domain
+            .assign_interval(Reg::R0, ret_bounds.0, ret_bounds.1);
 
         // Restore R0's anchor relationship (e.g., packet pointer offset from AnchorData)
         if let (Some(anchor), lo, hi) = ret_anchor_info {
@@ -230,74 +232,20 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         }
 
         // Restore interval mode PtrOffset for packet pointer returns
-        if let (Some(off), var_off_opt, range) = ret_interval_ptr_offset {
-            use crate::domains::numeric::NumericDomain;
-            use crate::domains::interval::PtrOffset;
-
-            // Determine anchor from register type
-            let anchor = match &ret_type {
-                RegType::PtrToPacket => Some(Reg::AnchorData),
-                RegType::PtrToPacketMeta => Some(Reg::AnchorDataMeta),
-                RegType::PtrToPacketEnd => Some(Reg::AnchorDataEnd),
-                _ => None,
-            };
-
-            if let Some(anchor) = anchor {
-                if let NumericDomain::Interval(ref mut ivl) = state.domain {
-                    let var_off = var_off_opt.unwrap_or(0);
-                    let ptr_offset = PtrOffset {
-                        anchor,
-                        off,
-                        var_off,
-                        range,
-                    };
-                    ivl.get_mut(Reg::R0).ptr_offset = Some(ptr_offset);
-                }
-            }
-        }
+        crate::analysis::transfer::call::transfer::restore_interval_ptr_offset_from_return(
+            &mut state.domain,
+            &ret_type,
+            ret_interval_ptr_offset,
+        );
 
         // Restore callee-saved registers' (R6-R9) packet range info.
         // If a bounds check in the callee proved range for these registers,
         // we need to carry that forward to the caller.
-        {
-            use crate::domains::numeric::NumericDomain;
-
-            for (reg, callee_type, (off_opt, var_off_opt, range)) in callee_saved_packet_info {
-                // Only restore if the callee had a packet pointer with range info
-                if let (Some(off), Some(range_val)) = (off_opt, range) {
-                    // Determine anchor from the callee's register type
-                    let anchor = match callee_type {
-                        RegType::PtrToPacket => Some(Reg::AnchorData),
-                        RegType::PtrToPacketMeta => Some(Reg::AnchorDataMeta),
-                        _ => None,
-                    };
-
-                    // Only update if caller also has a packet pointer in this register
-                    // and the anchor matches
-                    if let Some(anchor) = anchor {
-                        if matches!(state.types.get(reg), RegType::PtrToPacket | RegType::PtrToPacketMeta) {
-                            if let NumericDomain::Interval(ref mut ivl) = state.domain {
-                                // Check if caller's register has compatible offset info
-                                if let Some(caller_ptr_off) = ivl.get_ptr_offset(reg) {
-                                    if caller_ptr_off.anchor == anchor
-                                        && caller_ptr_off.off == off
-                                        && caller_ptr_off.var_off == var_off_opt.unwrap_or(0)
-                                    {
-                                        // Update range to the max of caller and callee
-                                        let caller_range = caller_ptr_off.range.unwrap_or(0);
-                                        if range_val > caller_range {
-                                            let mut new_ptr_off = caller_ptr_off.clone();
-                                            new_ptr_off.range = Some(range_val);
-                                            ivl.get_mut(reg).ptr_offset = Some(new_ptr_off);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        crate::analysis::transfer::call::transfer::restore_callee_interval_packet_info(
+            &mut state.domain,
+            &state.types,
+            callee_saved_packet_info,
+        );
 
         state.types.set(
             Reg::R10,

@@ -3,11 +3,11 @@
 // This enum wraps the different numeric abstract domains (Zone, Interval)
 // and provides a unified interface for the verifier.
 
-use crate::analysis::machine::reg::Reg;
-use super::zone::dbm::{Dbm, INF};
-use super::zone::ops as zone_ops;
 use super::interval::IntervalState;
 use super::interval::ops as interval_ops;
+use super::zone::dbm::{Dbm, INF};
+use super::zone::ops as zone_ops;
+use crate::analysis::machine::reg::Reg;
 
 /// Unified numeric domain that abstracts over Zone (DBM) and Interval
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,14 +131,6 @@ impl NumericDomain {
         match self {
             NumericDomain::Zone(dbm) => zone_ops::assign_imm(dbm, x, imm),
             NumericDomain::Interval(ivl) => interval_ops::assign_imm(ivl, x, imm),
-        }
-    }
-
-    /// Overwrites a register with zero
-    pub fn assign_zero(&mut self, x: Reg) {
-        match self {
-            NumericDomain::Zone(dbm) => zone_ops::assign_zero(dbm, x),
-            NumericDomain::Interval(ivl) => interval_ops::assign_zero(ivl, x),
         }
     }
 
@@ -416,7 +408,9 @@ impl NumericDomain {
     pub fn verify_packet_meta_bounds(&self, base: Reg, off: i64, size: i64) -> (bool, bool) {
         match self {
             NumericDomain::Zone(dbm) => zone_ops::verify_packet_meta_bounds(dbm, base, off, size),
-            NumericDomain::Interval(ivl) => interval_ops::verify_packet_meta_bounds(ivl, base, off, size),
+            NumericDomain::Interval(ivl) => {
+                interval_ops::verify_packet_meta_bounds(ivl, base, off, size)
+            }
         }
     }
 
@@ -424,7 +418,9 @@ impl NumericDomain {
     pub fn verify_packet_bounds(&self, base: Reg, off: i64, size: i64) -> (bool, bool) {
         match self {
             NumericDomain::Zone(dbm) => zone_ops::verify_packet_bounds(dbm, base, off, size),
-            NumericDomain::Interval(ivl) => interval_ops::verify_packet_bounds(ivl, base, off, size),
+            NumericDomain::Interval(ivl) => {
+                interval_ops::verify_packet_bounds(ivl, base, off, size)
+            }
         }
     }
 
