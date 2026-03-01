@@ -1,0 +1,52 @@
+[
+  {
+    "name": "invalid call insn1",
+    "result": "REJECT",
+    "errstr": "unknown opcode 8d",
+    "insns": [
+      {"code": 141, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid call insn2",
+    "result": "REJECT",
+    "errstr": "BPF_CALL uses reserved",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid function call",
+    "result": "REJECT",
+    "errstr": "invalid func unknown#1234567",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 1234567},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "invalid argument register",
+    "result": "REJECT",
+    "errstr": "R1 !read_ok",
+    "prog_type": 3,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 17},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 17},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "non-invalid argument register",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 191, "dst": 6, "src": 1, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 17},
+      {"code": 191, "dst": 1, "src": 6, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 17},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]
