@@ -574,7 +574,8 @@ pub fn run_test(test: &JsonTestCase, config: &VerifierConfig) -> TestResult {
                         && matches!(e.kind, LowerErrorKind::InvalidLDIMM64))
                     || (s.contains("invalid destination")
                         && matches!(e.kind, LowerErrorKind::CallTargetOutOfBounds))
-                    || (s.contains("reserved fields")
+                    || ((s.contains("reserved fields")
+                        || s.contains("BPF_CALL uses reserved"))
                         && matches!(
                             e.kind,
                             LowerErrorKind::CallUsedReservedFields | LowerErrorKind::InvalidSrcReg

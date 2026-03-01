@@ -756,3 +756,8 @@ pub(crate) fn check_ptr_access_size(
         }
     }
 }
+
+/// Check if a helper ID is valid (within known range).
+pub(crate) fn is_valid_helper_id(id: u32) -> bool {
+    id <= constants::BPF_HELPER_MAX
+}

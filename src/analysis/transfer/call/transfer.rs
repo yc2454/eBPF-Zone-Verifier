@@ -16,13 +16,21 @@ use crate::domains::tnum::Tnum;
 use crate::parsing::btf::SpecialFieldKind;
 use log::{debug, error, trace};
 
-use super::checks::{check_mem_size_pairs, validate_helper_args};
+use super::checks::{check_mem_size_pairs, validate_helper_args, is_valid_helper_id};
 use super::signatures::get_mem_size_pairs;
 
 /// Transfer function for helper Call instructions.
 pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32) -> Vec<State> {
     let in_types = state.types.clone();
     let pc = state.pc;
+
+    // =======================================================================
+    // Check if helper ID is valid
+    // =======================================================================
+    if !is_valid_helper_id(helper) {
+        env.fail(VerificationError::InvalidHelperId { pc, helper });
+        return vec![];
+    }
 
     // ========================================================================
     // Check if the call is forbidden under an active lock

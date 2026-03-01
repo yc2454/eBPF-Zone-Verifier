@@ -194,6 +194,10 @@ pub enum VerificationError {
         key_max: i64,
         max_entries: u32,
     },
+    InvalidHelperId {
+        pc: usize,
+        helper: u32,
+    },
 }
 
 impl VerificationError {
@@ -432,6 +436,12 @@ impl VerificationError {
                 format!(
                     "Map key out of bounds at pc {}: key range [{}, {}], max_entries={}",
                     pc, key_min, key_max, max_entries
+                )
+            }
+            VerificationError::InvalidHelperId { pc, helper } => {
+                format!(
+                    "Invalid helper ID {} at pc {}: exceeds maximum known helper ID",
+                    helper, pc
                 )
             }
         }
