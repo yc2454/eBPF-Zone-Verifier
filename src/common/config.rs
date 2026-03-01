@@ -1,4 +1,4 @@
-// src/analysis/config.rs
+// src/common/config.rs
 //
 // Verifier configuration - controls analysis behavior via command-line flags.
 
@@ -47,16 +47,17 @@ pub struct VerifierConfig {
     /// A manual override for map file descriptors to sizes
     pub map_overrides: std::collections::HashMap<String, u32>,
 
-    /// Detect bounded loops (e.g., `for (i = 0; i < 40; i++)`) and allow early convergence.
-    /// This is a precision improvement but diverges from kernel behavior.
-    /// Disabled by default in kernel-mode for compatibility.
+    /// Detect bounded loops via pattern matching (e.g., `if r != K goto loop_head`)
+    /// and allow early convergence without fully exploring all iterations.
+    /// This is a precision improvement over the kernel verifier.
+    /// Disabled automatically by --kernel-mode.
     pub detect_bounded_loops: bool,
 
-    /// Reject loops with non-single-entry patterns during CFG analysis.
+    /// Require loops to have a single entry point (the loop head).
     /// The kernel's bounded loop support uses dominator tree analysis which
-    /// requires single-entry loops. Code that jumps into the middle of a loop
-    /// cannot be verified by the kernel and is rejected with "back-edge" error.
-    /// Enabled by default in kernel-mode for compatibility.
+    /// requires this property. Code that jumps into the middle of a loop
+    /// (skipping over the loop head) is rejected with "back-edge" error.
+    /// Enabled automatically by --kernel-mode.
     pub require_single_loop_entry: bool,
 
     // --- Benchmark Filters ---
@@ -78,7 +79,7 @@ impl Default for VerifierConfig {
     fn default() -> Self {
         Self {
             verbosity: 1,
-            max_insn: 1_000_0, // 1 million instructions to match modern kernel limits
+            max_insn: 1_000_000, // 1 million instructions to match modern kernel limits
             domain_mode: DomainMode::Zone,
             skip_dbm_check: false,
             use_widening: false,
@@ -87,8 +88,8 @@ impl Default for VerifierConfig {
             debug_pc: None,
             enable_path_trace: false,
             map_overrides: std::collections::HashMap::new(),
-            detect_bounded_loops: true, // Default: enabled for precision
-            require_single_loop_entry: false,   // Default: allow loops
+            detect_bounded_loops: true,        // Default: enabled for precision
+            require_single_loop_entry: false,  // Default: allow multi-entry loops
             bench_project: None,
             bench_compiler: None,
             bench_opt: None,
@@ -251,28 +252,32 @@ impl VerifierConfig {
         eprintln!("  -q, --quiet          Verbosity 0: errors only");
         eprintln!("  -v, --verbose        Verbosity 2: trace execution");
         eprintln!("  -vv, --very-verbose  Verbosity 3: full debug output");
+        eprintln!();
         eprintln!("Domain Mode:");
-        eprintln!("  --kernel-mode        Use interval domain (kernel verifier style)");
+        eprintln!("  --kernel-mode        Simulate kernel verifier: interval domain + strict loops");
         eprintln!("  --zone-mode          Use zone domain (default, more precise)");
+        eprintln!();
+        eprintln!("Loop Analysis (kernel-mode sets both automatically):");
+        eprintln!("  --detect-bounded-loops    Use pattern matching for early loop convergence");
+        eprintln!("  --no-detect-bounded-loops Disable bounded loop detection");
+        eprintln!("  --single-entry-loops      Reject loops with jumps into middle (kernel behavior)");
+        eprintln!("  --multi-entry-loops       Allow loops with any entry pattern (default)");
+        eprintln!();
         eprintln!("Analysis Options:");
         eprintln!("  --skip-dbm           Skip DBM comparison in pruning (faster)");
-        eprintln!(
-            "  --use-widening       Use widening in pruning (DANGEROUS: might cause unsoundness)"
-        );
+        eprintln!("  --use-widening       Use widening in pruning (may cause unsoundness)");
         eprintln!("  --max-insn N         Max instructions to process (default: 1000000)");
         eprintln!("  --max-states N       Max states per PC for pruning (default: 8)");
         eprintln!("  --log-interval N     Heartbeat log interval (default: 100000)");
         eprintln!("  --debug-pc N         Force debug logging at specific PC");
         eprintln!("  --enable-path-trace  Enable path tracing for crash analysis");
-        eprintln!("  --detect-bounded-loops    Enable bounded loop convergence detection (default)");
-        eprintln!("  --no-detect-bounded-loops Disable bounded loop detection (auto in kernel-mode)");
-        eprintln!("  --single-entry-loops      Require single-entry loops (auto in kernel-mode)");
-        eprintln!("  --multi-entry-loops       Allow multi-entry loops (default)");
+        eprintln!();
         eprintln!("Benchmark Filters:");
         eprintln!("  --project NAME       Filter by project subdirectory (e.g. 'cilium')");
         eprintln!("  --compiler NAME      Filter by compiler (e.g. 'clang-16')");
         eprintln!("  --opt LEVEL          Filter by optimization (e.g. '-O1')");
         eprintln!("  --source NAME        Filter by source program name (e.g. 'bpf_host')");
+        eprintln!();
         eprintln!("Benchmark Input:");
         eprintln!("  --input-list PATH    Path to file with list of ELF paths to analyze");
     }
