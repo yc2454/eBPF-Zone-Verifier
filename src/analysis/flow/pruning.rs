@@ -223,6 +223,7 @@ fn check_loop_convergence(
     prev_states: &[State],
     live_regs: &HashSet<Reg>,
     loop_bound: Option<(Reg, i64)>,
+    config: &VerifierConfig,
 ) -> bool {
     // Only converge if:
     // 1. Widening was applied (prev_states >= 2)
@@ -239,7 +240,9 @@ fn check_loop_convergence(
     }
 
     // Bounded loops don't need exit exploration; bound proves exit exists
-    loop_bound.is_some() || loop_exit_was_explored(env, state, pc, prog)
+    // (only if detect_bounded_loops is enabled)
+    let bounded_loop_detected = config.detect_bounded_loops && loop_bound.is_some();
+    bounded_loop_detected || loop_exit_was_explored(env, state, pc, prog)
 }
 
 /// Apply widening to state based on previous exploration.
@@ -290,7 +293,7 @@ fn handle_loop_pruning(
     if let Some(old) = prev_states.last() {
         if state_subsumed_by(state, old, live_regs, config) {
             // Check if we can converge (widening effective + exit explored)
-            if check_loop_convergence(env, state, pc, prog, prev_states, live_regs, loop_bound)
+            if check_loop_convergence(env, state, pc, prog, prev_states, live_regs, loop_bound, config)
             {
                 return true;
             }
@@ -300,7 +303,9 @@ fn handle_loop_pruning(
         }
 
         // Not subsumed: apply widening to accelerate convergence
-        apply_widening(state, old, live_regs, loop_bound);
+        if config.use_widening {
+            apply_widening(state, old, live_regs, loop_bound);
+        }
     }
 
     false

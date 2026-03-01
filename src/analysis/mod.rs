@@ -48,7 +48,7 @@ pub fn analyze_program(
     }
 
     // Check CFG. This includes checking for unreachable code and marking prune points.
-    if let Err(e) = cfg::check_cfg(prog, &mut env) {
+    if let Err(e) = cfg::check_cfg(prog, &mut env, config) {
         error!(target: "app", "[Analysis] CFG Error: {}", e);
         return Err(VerificationError::CfgError(e));
     }

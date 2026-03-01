@@ -47,6 +47,18 @@ pub struct VerifierConfig {
     /// A manual override for map file descriptors to sizes
     pub map_overrides: std::collections::HashMap<String, u32>,
 
+    /// Detect bounded loops (e.g., `for (i = 0; i < 40; i++)`) and allow early convergence.
+    /// This is a precision improvement but diverges from kernel behavior.
+    /// Disabled by default in kernel-mode for compatibility.
+    pub detect_bounded_loops: bool,
+
+    /// Reject loops with non-single-entry patterns during CFG analysis.
+    /// The kernel's bounded loop support uses dominator tree analysis which
+    /// requires single-entry loops. Code that jumps into the middle of a loop
+    /// cannot be verified by the kernel and is rejected with "back-edge" error.
+    /// Enabled by default in kernel-mode for compatibility.
+    pub require_single_loop_entry: bool,
+
     // --- Benchmark Filters ---
     /// Filter benchmark by project (subdirectory name)
     pub bench_project: Option<String>,
@@ -69,12 +81,14 @@ impl Default for VerifierConfig {
             max_insn: 1_000_0, // 1 million instructions to match modern kernel limits
             domain_mode: DomainMode::Zone,
             skip_dbm_check: false,
-            use_widening: true, // Use widening by default to ensure termination
+            use_widening: false,
             max_states_per_pc: 8,
             log_interval: 100_000,
             debug_pc: None,
             enable_path_trace: false,
             map_overrides: std::collections::HashMap::new(),
+            detect_bounded_loops: true, // Default: enabled for precision
+            require_single_loop_entry: false,   // Default: allow loops
             bench_project: None,
             bench_compiler: None,
             bench_opt: None,
@@ -117,6 +131,20 @@ impl VerifierConfig {
                     }
                     "--kernel-mode" | "--interval" => {
                         config.domain_mode = DomainMode::Interval;
+                        config.detect_bounded_loops = false; // Kernel doesn't detect bounded loops
+                        config.require_single_loop_entry = true;     // Kernel rejects unsupported loops
+                    }
+                    "--detect-bounded-loops" => {
+                        config.detect_bounded_loops = true;
+                    }
+                    "--no-detect-bounded-loops" => {
+                        config.detect_bounded_loops = false;
+                    }
+                    "--single-entry-loops" => {
+                        config.require_single_loop_entry = true;
+                    }
+                    "--multi-entry-loops" => {
+                        config.require_single_loop_entry = false;
                     }
                     "--zone-mode" | "--zone" => {
                         config.domain_mode = DomainMode::Zone;
@@ -236,6 +264,10 @@ impl VerifierConfig {
         eprintln!("  --log-interval N     Heartbeat log interval (default: 100000)");
         eprintln!("  --debug-pc N         Force debug logging at specific PC");
         eprintln!("  --enable-path-trace  Enable path tracing for crash analysis");
+        eprintln!("  --detect-bounded-loops    Enable bounded loop convergence detection (default)");
+        eprintln!("  --no-detect-bounded-loops Disable bounded loop detection (auto in kernel-mode)");
+        eprintln!("  --single-entry-loops      Require single-entry loops (auto in kernel-mode)");
+        eprintln!("  --multi-entry-loops       Allow multi-entry loops (default)");
         eprintln!("Benchmark Filters:");
         eprintln!("  --project NAME       Filter by project subdirectory (e.g. 'cilium')");
         eprintln!("  --compiler NAME      Filter by compiler (e.g. 'clang-16')");
