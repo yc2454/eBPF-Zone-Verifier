@@ -8,8 +8,9 @@ pub mod transfer;
 use crate::analysis::machine::frame_stack::FrameLevel;
 use crate::analysis::machine::reg::Reg;
 use crate::ast::Program;
-use crate::zone::dbm::Dbm;
-use crate::zone::domain::init_packet_anchors;
+use crate::common::config::{DomainMode, VerifierConfig};
+use crate::domains::dbm::Dbm;
+use crate::domains::numeric::NumericDomain;
 use log::{debug, error, info};
 use std::collections::VecDeque;
 
@@ -18,7 +19,6 @@ use self::machine::context::ExecContext;
 use self::machine::env::VerifierEnv;
 use self::machine::reg_types::RegType;
 use self::machine::state::State;
-use crate::common::config::VerifierConfig;
 
 pub fn analyze_program(
     ctx: &ExecContext,
@@ -48,7 +48,7 @@ pub fn analyze_program(
     }
 
     // Check CFG. This includes checking for unreachable code and marking prune points.
-    if let Err(e) = cfg::check_cfg(prog, &mut env) {
+    if let Err(e) = cfg::check_cfg(prog, &mut env, config) {
         error!(target: "app", "[Analysis] CFG Error: {}", e);
         return Err(VerificationError::CfgError(e));
     }
@@ -56,8 +56,12 @@ pub fn analyze_program(
     // Compute liveness information for all registers.
     liveness::compute_liveness(prog, &mut env);
 
-    // 2. Initialize Entry State
-    let mut initial_state = State::new(entry_dbm, 0);
+    // 2. Initialize Entry State based on domain mode
+    let initial_domain = match config.domain_mode {
+        DomainMode::Zone => NumericDomain::Zone(entry_dbm),
+        DomainMode::Interval => NumericDomain::new_interval(),
+    };
+    let mut initial_state = State::new(initial_domain, 0);
     initial_state.types.set(Reg::R1, RegType::PtrToCtx);
     initial_state.types.set(
         Reg::R10,
@@ -65,7 +69,7 @@ pub fn analyze_program(
             frame_level: FrameLevel::MAIN,
         },
     );
-    init_packet_anchors(&mut initial_state.dbm);
+    initial_state.domain.init_packet_anchors();
 
     // 3. Setup Worklist
     let mut worklist = VecDeque::new();
@@ -144,7 +148,7 @@ pub fn analyze_program(
 
         // E. Logging
         if config.verbosity >= 2 {
-            state.dbm.pretty_print();
+            state.domain.dump();
         }
         debug!(target: "app", "|PC:{}| Instr: [[{}]]\nRegs: {:?}\nTnums: {:?}\n", 
                state.pc, instr, state.types.reg_types_str(), state.tnums_to_string());
@@ -216,13 +220,19 @@ pub fn analyze_program(
     }
 
     // 5. Return Results
+    // NOTE: For backwards compatibility, we return Vec<Dbm>.
+    // In Interval mode, we return empty Dbms since there's no underlying DBM.
     let n = prog.instrs.len();
     let mut results = Vec::with_capacity(n);
 
     for i in 0..n {
         if let Some(states) = env.explored_states.get(&i) {
             if !states.is_empty() {
-                results.push(states[0].dbm.clone());
+                // Extract Dbm from Zone domain, or return empty for Interval
+                match &states[0].domain {
+                    NumericDomain::Zone(dbm) => results.push(dbm.clone()),
+                    NumericDomain::Interval(_) => results.push(Dbm::new()),
+                }
             } else {
                 results.push(Dbm::new());
             }

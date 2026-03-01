@@ -7,9 +7,6 @@ use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
 use crate::ast::{MemSize, PacketLoadMode, ProgramKind};
 use crate::common::constants;
-use crate::zone::domain::{
-    assume_range, forget, get_distance_interval, verify_packet_bounds, verify_packet_meta_bounds,
-};
 use log::{debug, error};
 
 use super::access::AccessKind;
@@ -53,7 +50,7 @@ fn get_packet_offset_range(state: &State, base: Reg, insn_off: i16) -> (Option<i
                 .find(|&&r| matches!(state.types.get(r), RegType::PtrToPacket));
 
             if let Some(&start_reg) = pkt_start_reg {
-                let (lo, hi) = get_distance_interval(&state.dbm, base, start_reg);
+                let (lo, hi) = state.domain.get_distance_interval(base, start_reg);
                 (
                     if lo != i64::MIN {
                         Some(lo + insn_off as i64)
@@ -100,7 +97,7 @@ pub fn check_packet_access(
         return;
     }
 
-    let (start_ok, end_ok) = verify_packet_bounds(&state.dbm, base, off as i64, size);
+    let (start_ok, end_ok) = state.domain.verify_packet_bounds(base, off as i64, size);
     debug!(
         "Packet access check at pc {}: base {} offset {} size {} => start_ok {}, end_ok {}",
         pc,
@@ -134,7 +131,7 @@ pub fn check_packet_meta_access(
     size: i64,
     pc: usize,
 ) {
-    let (start_ok, end_ok) = verify_packet_meta_bounds(&state.dbm, base, off as i64, size);
+    let (start_ok, end_ok) = state.domain.verify_packet_meta_bounds(base, off as i64, size);
     if !start_ok || !end_ok {
         env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
     }
@@ -168,33 +165,33 @@ pub(crate) fn transfer_packet_load(
 
     // Clobber R1 - R5 in DBM and Tnums as well
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-        forget(&mut state.dbm, r);
-        state.set_tnum(r, crate::zone::tnum::Tnum::unknown());
+        state.domain.forget(r);
+        state.set_tnum(r, crate::domains::tnum::Tnum::unknown());
     }
 
-    forget(&mut state.dbm, Reg::R0);
+    state.domain.forget(Reg::R0);
     // Reset R0's Tnum based on size
     match size {
         MemSize::U8 => {
-            assume_range(&mut state.dbm, Reg::R0, 0, 255);
-            let mut t = crate::zone::tnum::Tnum::unknown();
+            state.domain.assume_range(Reg::R0, 0, 255);
+            let mut t = crate::domains::tnum::Tnum::unknown();
             t.value = 0;
             t.mask = 0xFF;
             state.set_tnum(Reg::R0, t);
         }
         MemSize::U16 => {
-            assume_range(&mut state.dbm, Reg::R0, 0, 65535);
-            let mut t = crate::zone::tnum::Tnum::unknown();
+            state.domain.assume_range(Reg::R0, 0, 65535);
+            let mut t = crate::domains::tnum::Tnum::unknown();
             t.value = 0;
             t.mask = 0xFFFF;
             state.set_tnum(Reg::R0, t);
         }
         MemSize::U32 => {
-            assume_range(&mut state.dbm, Reg::R0, 0, 4294967295);
-            state.set_tnum(Reg::R0, crate::zone::tnum::Tnum::u32_unknown());
+            state.domain.assume_range(Reg::R0, 0, 4294967295);
+            state.set_tnum(Reg::R0, crate::domains::tnum::Tnum::u32_unknown());
         }
         MemSize::U64 => {
-            state.set_tnum(Reg::R0, crate::zone::tnum::Tnum::unknown());
+            state.set_tnum(Reg::R0, crate::domains::tnum::Tnum::unknown());
         }
     }
 

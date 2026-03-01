@@ -8,9 +8,8 @@ use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::state::State;
 use crate::ast::{CmpOp, Instr, Operand, Program};
 use crate::common::config::VerifierConfig;
-use crate::zone::dbm::Dbm;
-use crate::zone::domain::{assume_ge_imm, assume_le_imm, get_interval};
-use crate::zone::tnum::Tnum;
+use crate::domains::numeric::NumericDomain;
+use crate::domains::tnum::Tnum;
 
 /// Check if the loop body contains a conditional branch (If instruction),
 /// which indicates the loop has a potential exit path.
@@ -58,7 +57,7 @@ fn detect_loop_bound(
             ..
         } = &prog.instrs[current_pc]
     {
-        let (lo, _hi) = get_interval(&state.dbm, *left);
+        let (lo, _hi) = state.domain.get_interval(*left);
         if lo >= 0 && *k > 0 {
             return Some((*left, *k - 1));
         }
@@ -79,7 +78,7 @@ fn detect_loop_bound(
         } = &prog.instrs[branch_pc]
         && *target == current_pc
     {
-        let (lo, _hi) = get_interval(&state.dbm, *left);
+        let (lo, _hi) = state.domain.get_interval(*left);
         if lo >= 0 && *k > 0 {
             return Some((*left, *k - 1));
         }
@@ -190,10 +189,10 @@ fn is_at_loop_point(env: &VerifierEnv, state: &State, pc: usize, prog: &Program)
 /// Returns true if bounds were applied.
 fn apply_loop_bound(state: &mut State, loop_bound: Option<(Reg, i64)>) -> bool {
     if let Some((reg, upper_bound)) = loop_bound {
-        let (cur_lo, _) = get_interval(&state.dbm, reg);
+        let (cur_lo, _) = state.domain.get_interval(reg);
         if cur_lo <= upper_bound {
-            assume_le_imm(&mut state.dbm, reg, upper_bound);
-            assume_ge_imm(&mut state.dbm, reg, 0);
+            state.domain.assume_le_imm(reg, upper_bound);
+            state.domain.assume_ge_imm(reg, 0);
             state.set_tnum(reg, Tnum::UNKNOWN);
             return true;
         }
@@ -202,14 +201,10 @@ fn apply_loop_bound(state: &mut State, loop_bound: Option<(Reg, i64)>) -> bool {
 }
 
 /// Check if widening was effective (bounds expanded compared to first visit).
-fn widening_was_effective(
-    first: &State,
-    last: &State,
-    live_regs: &HashSet<Reg>,
-) -> bool {
+fn widening_was_effective(first: &State, last: &State, live_regs: &HashSet<Reg>) -> bool {
     live_regs.iter().any(|&r| {
-        let (first_min, first_max) = get_interval(&first.dbm, r);
-        let (last_min, last_max) = get_interval(&last.dbm, r);
+        let (first_min, first_max) = first.domain.get_interval(r);
+        let (last_min, last_max) = last.domain.get_interval(r);
         last_min < first_min || last_max > first_max
     })
 }
@@ -224,6 +219,7 @@ fn check_loop_convergence(
     prev_states: &[State],
     live_regs: &HashSet<Reg>,
     loop_bound: Option<(Reg, i64)>,
+    config: &VerifierConfig,
 ) -> bool {
     // Only converge if:
     // 1. Widening was applied (prev_states >= 2)
@@ -240,7 +236,9 @@ fn check_loop_convergence(
     }
 
     // Bounded loops don't need exit exploration; bound proves exit exists
-    loop_bound.is_some() || loop_exit_was_explored(env, state, pc, prog)
+    // (only if detect_bounded_loops is enabled)
+    let bounded_loop_detected = config.detect_bounded_loops && loop_bound.is_some();
+    bounded_loop_detected || loop_exit_was_explored(env, state, pc, prog)
 }
 
 /// Apply widening to state based on previous exploration.
@@ -250,8 +248,8 @@ fn apply_widening(
     live_regs: &HashSet<Reg>,
     loop_bound: Option<(Reg, i64)>,
 ) {
-    // Widen DBM
-    state.dbm = old.dbm.widen(&state.dbm);
+    // Widen numeric domain
+    state.domain = old.domain.widen(&state.domain);
 
     // Re-apply loop bound after widening
     apply_loop_bound(state, loop_bound);
@@ -291,8 +289,16 @@ fn handle_loop_pruning(
     if let Some(old) = prev_states.last() {
         if state_subsumed_by(state, old, live_regs, config) {
             // Check if we can converge (widening effective + exit explored)
-            if check_loop_convergence(env, state, pc, prog, prev_states, live_regs, loop_bound)
-            {
+            if check_loop_convergence(
+                env,
+                state,
+                pc,
+                prog,
+                prev_states,
+                live_regs,
+                loop_bound,
+                config,
+            ) {
                 return true;
             }
             // Subsumed but conditions not met (widening not effective or no exit path)
@@ -301,7 +307,9 @@ fn handle_loop_pruning(
         }
 
         // Not subsumed: apply widening to accelerate convergence
-        apply_widening(state, old, live_regs, loop_bound);
+        if config.use_widening {
+            apply_widening(state, old, live_regs, loop_bound);
+        }
     }
 
     false
@@ -383,7 +391,7 @@ fn state_subsumed_by(
             return false;
         }
     } else if !(types_subsumed_by(&cur.types, &old.types, live_regs)
-        && dbm_subsumed_by(&cur.dbm, &old.dbm, live_regs)
+        && domain_subsumed_by(&cur.domain, &old.domain, live_regs)
         && stack_subsumed_by(cur, old)
         && tnum_subsumed_by(cur, old, live_regs))
     {
@@ -400,7 +408,7 @@ fn state_subsumed_by(
             return false;
         }
         if !config.skip_dbm_check
-            && !dbm_subsumed_by(&cur_frame.caller_dbm, &old_frame.caller_dbm, &saved)
+            && !domain_subsumed_by(&cur_frame.caller_domain, &old_frame.caller_domain, &saved)
         {
             return false;
         }
@@ -484,11 +492,11 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
     }
 }
 
-/// Check if cur DBM is subsumed by old DBM.
-fn dbm_subsumed_by(cur: &Dbm, old: &Dbm, live_regs: &HashSet<Reg>) -> bool {
+/// Check if cur numeric domain is subsumed by old domain.
+fn domain_subsumed_by(cur: &NumericDomain, old: &NumericDomain, live_regs: &HashSet<Reg>) -> bool {
     for &r in live_regs {
-        let (old_min, old_max) = get_interval(old, r);
-        let (cur_min, cur_max) = get_interval(cur, r);
+        let (old_min, old_max) = old.get_interval(r);
+        let (cur_min, cur_max) = cur.get_interval(r);
         if !(old_min <= cur_min && old_max >= cur_max) {
             return false;
         }
@@ -497,6 +505,22 @@ fn dbm_subsumed_by(cur: &Dbm, old: &Dbm, live_regs: &HashSet<Reg>) -> bool {
     // Anchor-to-anchor constraints (packet bounds) must also be subsumed.
     // These represent relationships like data_end - data >= N that are
     // critical for packet access safety and persist across calls.
+    match (old, cur) {
+        (NumericDomain::Zone(old_dbm), NumericDomain::Zone(cur_dbm)) => {
+            zone_subsumed_by(old_dbm, cur_dbm)
+        }
+        (NumericDomain::Interval(old_ivl), NumericDomain::Interval(cur_ivl)) => {
+            interval_subsumed_by(old_ivl, cur_ivl)
+        }
+        _ => {
+            // Mismatched domain types - should not happen in normal operation
+            true
+        }
+    }
+}
+
+fn zone_subsumed_by(old_dbm: &crate::analysis::Dbm, cur_dbm: &crate::analysis::Dbm) -> bool {
+    // Zone domain: check anchor-to-anchor constraints directly
     let anchors = [Reg::AnchorData, Reg::AnchorDataEnd, Reg::AnchorDataMeta];
     for &a in &anchors {
         for &b in &anchors {
@@ -504,12 +528,31 @@ fn dbm_subsumed_by(cur: &Dbm, old: &Dbm, live_regs: &HashSet<Reg>) -> bool {
                 continue;
             }
             // old must be at least as permissive: old.get(a,b) >= cur.get(a,b)
-            if old.get(a, b) < cur.get(a, b) {
+            if old_dbm.get(a, b) < cur_dbm.get(a, b) {
                 return false;
             }
         }
     }
+    true
+}
 
+fn interval_subsumed_by(
+    old_ivl: &crate::domains::interval::IntervalState,
+    cur_ivl: &crate::domains::interval::IntervalState,
+) -> bool {
+    // Interval domain: check packet_size_lower_bound and meta_size_lower_bound
+    // For subsumption, old must be MORE permissive (fewer constraints) than cur.
+    // If old requires a minimum packet size but cur doesn't, old does NOT subsume cur.
+    let old_pkt = old_ivl.get_packet_size_bound().unwrap_or(0);
+    let cur_pkt = cur_ivl.get_packet_size_bound().unwrap_or(0);
+    if old_pkt > cur_pkt {
+        return false;
+    }
+    let old_meta = old_ivl.get_meta_size_bound().unwrap_or(0);
+    let cur_meta = cur_ivl.get_meta_size_bound().unwrap_or(0);
+    if old_meta > cur_meta {
+        return false;
+    }
     true
 }
 
@@ -528,6 +571,35 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
             if !type_subsumed_by(&new_ty, &old_ty) {
                 return false;
             }
+
+            // For packet pointers, also check interval_range subsumption.
+            // If old has a proven range but cur doesn't, old does NOT subsume cur,
+            // because cur might fail a packet access that old would pass.
+            // We need to explore cur to find potential unsafe paths.
+            if matches!(new_ty, RegType::PtrToPacket | RegType::PtrToPacketMeta) {
+                let old_slot = old_frame.stack.get_slot(offset);
+                let new_slot = new_frame.stack.get_slot(offset);
+                if let (Some(old_s), Some(new_s)) = (old_slot, new_slot) {
+                    use crate::analysis::machine::stack_state::PointerBounds;
+                    let old_range = match &old_s.ptr_bounds {
+                        Some(PointerBounds::Interval { range, .. }) => *range,
+                        _ => None,
+                    };
+                    let new_range = match &new_s.ptr_bounds {
+                        Some(PointerBounds::Interval { range, .. }) => *range,
+                        _ => None,
+                    };
+
+                    match (old_range, new_range) {
+                        // old has range but cur doesn't: old does NOT subsume cur
+                        (Some(_), None) => return false,
+                        // old has larger range than cur: old does NOT subsume cur
+                        (Some(old_r), Some(new_r)) if old_r > new_r => return false,
+                        // cur has range >= old, or both None: OK
+                        _ => {}
+                    }
+                }
+            }
         }
     }
     true
@@ -545,7 +617,7 @@ fn tnum_subsumed_by(cur_state: &State, old_state: &State, live_regs: &HashSet<Re
 }
 
 /// Check if old tnum covers cur tnum (old's possible values are a superset of cur's).
-fn tnum_covers(cur: &crate::zone::tnum::Tnum, old: &crate::zone::tnum::Tnum) -> bool {
+fn tnum_covers(cur: &crate::domains::tnum::Tnum, old: &crate::domains::tnum::Tnum) -> bool {
     // Every unknown bit in cur must also be unknown in old
     if cur.mask & !old.mask != 0 {
         return false;

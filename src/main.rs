@@ -5,7 +5,7 @@ mod ast;
 mod common;
 mod parsing;
 mod testing;
-mod zone;
+mod domains;
 
 use crate::ast::ProgramKind;
 use crate::common::config::VerifierConfig;

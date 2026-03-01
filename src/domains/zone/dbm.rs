@@ -149,6 +149,7 @@ impl Dbm {
         false
     }
 
+    #[allow(dead_code)]
     pub fn dump_matrix(&self) {
         use std::fmt::Write;
         let vars = REG_ENV.all();

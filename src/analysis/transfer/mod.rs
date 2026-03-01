@@ -16,9 +16,6 @@ use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
 use crate::ast::{EndianOp, Instr, Width};
-use crate::zone::domain::{
-    apply_and_imm, assign_interval, forget, get_interval, preserve_anchor_constraints,
-};
 use log::warn;
 
 /// Main transfer function - dispatches to appropriate handler based on instruction type.
@@ -116,9 +113,9 @@ fn transfer_endian(
         EndianOp::ToLe => {
             match size {
                 64 => { /* Identity for LE host; Keep constraints if Width::W64 */ }
-                32 => apply_and_imm(&mut state.dbm, dst, 0xFFFF_FFFF),
-                16 => apply_and_imm(&mut state.dbm, dst, 0xFFFF),
-                _ => forget(&mut state.dbm, dst),
+                32 => state.domain.apply_and_imm(dst, 0xFFFF_FFFF),
+                16 => state.domain.apply_and_imm(dst, 0xFFFF),
+                _ => state.domain.forget(dst),
             }
         }
         EndianOp::ToBe => {
@@ -126,11 +123,11 @@ fn transfer_endian(
             // We must forget the old value.
             // However, we know the new max value based on the swap size.
             match size {
-                16 => apply_and_imm(&mut state.dbm, dst, 0xFFFF),
-                32 => apply_and_imm(&mut state.dbm, dst, 0xFFFF_FFFF),
+                16 => state.domain.apply_and_imm(dst, 0xFFFF),
+                32 => state.domain.apply_and_imm(dst, 0xFFFF_FFFF),
                 // 64-bit BE swap: Result is u64 (if Width::W64) or u32 (if Width::W32)
-                64 => forget(&mut state.dbm, dst),
-                _ => forget(&mut state.dbm, dst),
+                64 => state.domain.forget(dst),
+                _ => state.domain.forget(dst),
             }
         }
     }
@@ -138,7 +135,7 @@ fn transfer_endian(
     // 3. Handle Implicit 32-bit Zero Extension
     // This provides a tighter bound [0, U32_MAX] even if the operation was "Unknown".
     if width == Width::W32 {
-        apply_and_imm(&mut state.dbm, dst, 0xFFFF_FFFF);
+        state.domain.apply_and_imm(dst, 0xFFFF_FFFF);
     }
 
     state.pc += 1;
@@ -149,7 +146,7 @@ fn transfer_endian(
 fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     let pc = state.pc;
 
-    let (r0_min, r0_max) = get_interval(&state.dbm, Reg::R0);
+    let (r0_min, r0_max) = state.domain.get_interval(Reg::R0);
 
     // Use the helper method on the ProgramKind stored in env
     if env.ctx.prog_kind.requires_strict_return_code() && (r0_min < 0 || r0_max > 1) {
@@ -190,38 +187,65 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         // Save callee's R0 (the return value) before restoring caller state
         let ret_type = state.types.get(Reg::R0);
         let ret_tnum = state.get_tnum(Reg::R0);
-        let ret_bounds = get_interval(&state.dbm, Reg::R0);
+        let ret_bounds = state.domain.get_interval(Reg::R0);
         let ret_anchor_info = state.save_anchor_info(Reg::R0);
+        // Also save interval mode PtrOffset for packet pointer returns
+        let ret_interval_ptr_offset = state.save_interval_ptr_offset(Reg::R0);
+
+        // Save callee-saved registers' (R6-R9) packet range info.
+        // These registers may have been updated by bounds checks in the callee.
+        let callee_saved_packet_info: Vec<_> = [Reg::R6, Reg::R7, Reg::R8, Reg::R9]
+            .iter()
+            .map(|&r| (r, state.types.get(r), state.save_interval_ptr_offset(r)))
+            .collect();
 
         // Save callee's anchor constraints before overwriting
-        let callee_dbm = state.dbm.clone();
+        let callee_domain = state.domain.clone();
 
         let return_pc = frame.return_pc;
         state.types = frame.caller_types;
-        state.dbm = frame.caller_dbm;
+        state.domain = frame.caller_domain;
         state.tnums = frame.caller_tnums;
 
         // Preserve anchor-to-anchor constraints from the callee.
         // These represent packet bounds (data/data_end/data_meta)
         // that were verified in the callee and remain valid.
-        preserve_anchor_constraints(&mut state.dbm, &callee_dbm);
+        state.domain.preserve_anchor_constraints(&callee_domain);
 
         // Re-apply R0 from callee's return value
-        state.types.set(Reg::R0, ret_type);
+        state.types.set(Reg::R0, ret_type.clone());
         state.set_tnum(Reg::R0, ret_tnum);
-        forget(&mut state.dbm, Reg::R0);
-        assign_interval(&mut state.dbm, Reg::R0, ret_bounds.0, ret_bounds.1);
+        state.domain.forget(Reg::R0);
+        state
+            .domain
+            .assign_interval(Reg::R0, ret_bounds.0, ret_bounds.1);
 
         // Restore R0's anchor relationship (e.g., packet pointer offset from AnchorData)
         if let (Some(anchor), lo, hi) = ret_anchor_info {
             if let Some(h) = hi {
-                state.dbm.add_constraint(Reg::R0, anchor, h);
+                state.domain.add_constraint(Reg::R0, anchor, h);
             }
             if let Some(l) = lo {
-                state.dbm.add_constraint(anchor, Reg::R0, l);
+                state.domain.add_constraint(anchor, Reg::R0, l);
             }
-            state.dbm.close();
+            state.domain.close();
         }
+
+        // Restore interval mode PtrOffset for packet pointer returns
+        crate::analysis::transfer::call::transfer::restore_interval_ptr_offset_from_return(
+            &mut state.domain,
+            &ret_type,
+            ret_interval_ptr_offset,
+        );
+
+        // Restore callee-saved registers' (R6-R9) packet range info.
+        // If a bounds check in the callee proved range for these registers,
+        // we need to carry that forward to the caller.
+        crate::analysis::transfer::call::transfer::restore_callee_interval_packet_info(
+            &mut state.domain,
+            &state.types,
+            callee_saved_packet_info,
+        );
 
         state.types.set(
             Reg::R10,

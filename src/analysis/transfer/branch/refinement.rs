@@ -71,6 +71,8 @@ fn maybe_promote_map_val(state: &mut State, reg: Reg) {
                     map_idx,
                 },
             );
+            // Initialize PtrOffset tracking for interval domain
+            state.domain.init_map_value_ptr(r);
         }
     }
     promote_stack_slots_all_frames(

@@ -3,11 +3,7 @@
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
 use crate::ast::{Operand, Width};
-use crate::zone::domain::{
-    apply_and_imm, assign_reg, assign_zero, assume_eq_imm, assume_ge_imm, assume_le_imm, forget,
-    get_interval,
-};
-use crate::zone::tnum::Tnum;
+use crate::domains::tnum::Tnum;
 
 use super::helpers::sync_tnum_to_dbm;
 
@@ -34,22 +30,19 @@ pub(crate) fn handle_mov(state: &mut State, width: Width, dst: Reg, src: &Operan
     match src {
         Operand::Reg(r) => {
             if width == Width::W32 {
-                forget(&mut state.dbm, dst);
-                if crate::zone::domain::proven_u32_range(&mut state.dbm, *r, Reg::Zero) {
-                    assign_reg(&mut state.dbm, dst, *r);
+                state.domain.forget(dst);
+                if state.domain.proven_u32_range(*r, Reg::Zero) {
+                    state.domain.assign_reg(dst, *r);
                 } else {
-                    assume_ge_imm(&mut state.dbm, dst, 0);
-                    assume_le_imm(&mut state.dbm, dst, 0xFFFFFFFF);
+                    state.domain.assume_ge_imm(dst, 0);
+                    state.domain.assume_le_imm(dst, 0xFFFFFFFF);
                 }
             } else {
                 if dst == *r {
                     return;
                 }
-                if *r == Reg::R10 {
-                    assign_zero(&mut state.dbm, dst);
-                } else {
-                    assign_reg(&mut state.dbm, dst, *r);
-                }
+                // Copy register state including pointer offset info
+                state.domain.assign_reg(dst, *r);
             }
         }
         Operand::Imm(c) => {
@@ -58,18 +51,18 @@ pub(crate) fn handle_mov(state: &mut State, width: Width, dst: Reg, src: &Operan
             } else {
                 *c
             };
-            forget(&mut state.dbm, dst);
-            assume_le_imm(&mut state.dbm, dst, c);
-            assume_ge_imm(&mut state.dbm, dst, c);
+            state.domain.forget(dst);
+            state.domain.assume_le_imm(dst, c);
+            state.domain.assume_ge_imm(dst, c);
         }
     }
 }
 
 pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operand) {
-    let (min_op, max_op) = get_interval(&state.dbm, dst);
+    let (min_op, max_op) = state.domain.get_interval(dst);
     let input_nonnegative = min_op >= 0;
 
-    forget(&mut state.dbm, dst);
+    state.domain.forget(dst);
 
     if let Operand::Imm(mask) = src {
         let mask = if width == Width::W32 {
@@ -78,15 +71,15 @@ pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operan
             *mask
         };
         if mask >= 0 {
-            apply_and_imm(&mut state.dbm, dst, mask);
+            state.domain.apply_and_imm(dst, mask);
         } else if input_nonnegative {
-            assume_ge_imm(&mut state.dbm, dst, 0);
+            state.domain.assume_ge_imm(dst, 0);
             if max_op != i64::MAX {
-                assume_le_imm(&mut state.dbm, dst, max_op);
+                state.domain.assume_le_imm(dst, max_op);
             }
         }
     } else if let Operand::Reg(_) = src {
-        assume_ge_imm(&mut state.dbm, dst, 0);
+        state.domain.assume_ge_imm(dst, 0);
     }
 
     let t = state.get_tnum(dst);
@@ -107,12 +100,12 @@ pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operan
     state.set_tnum(dst, new_t);
 
     if let Some(c) = new_t.const_value() {
-        assume_eq_imm(&mut state.dbm, dst, c as i64);
+        state.domain.assume_eq_imm(dst, c as i64);
     }
 }
 
 pub(crate) fn handle_or(state: &mut State, width: Width, dst: Reg, src: &Operand) {
-    forget(&mut state.dbm, dst);
+    state.domain.forget(dst);
 
     let t = state.get_tnum(dst);
     let new_t = match src {
@@ -135,7 +128,7 @@ pub(crate) fn handle_or(state: &mut State, width: Width, dst: Reg, src: &Operand
 }
 
 pub(crate) fn handle_xor(state: &mut State, width: Width, dst: Reg, src: &Operand) {
-    forget(&mut state.dbm, dst);
+    state.domain.forget(dst);
 
     let t = state.get_tnum(dst);
     let new_t = match src {

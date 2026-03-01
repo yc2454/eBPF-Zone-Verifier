@@ -16,8 +16,8 @@ use crate::parsing::elf::{
     program_kind_for_object, try_load_combined_program_from_elf, try_load_function_from_elf,
     try_load_program_from_elf,
 };
-use crate::zone::dbm::Dbm;
-use crate::zone::domain::assign_zero;
+use crate::domains::dbm::Dbm;
+use crate::domains::domain::assign_zero;
 use std::path::Path;
 
 /// Result of analyzing a single section

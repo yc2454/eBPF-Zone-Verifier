@@ -1,5 +1,5 @@
 use crate::analysis::machine::reg::Reg;
-use crate::zone::tnum::Tnum;
+use crate::domains::tnum::Tnum;
 use crate::{analysis::machine::reg_types::RegType, ast::MemSize};
 use std::collections::{BTreeMap, HashSet};
 
@@ -7,6 +7,20 @@ use std::collections::{BTreeMap, HashSet};
 pub struct ScalarBounds {
     pub min: i64,
     pub max: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PointerBounds {
+    Zone {
+        anchor: Option<Reg>,
+        anchor_lo: Option<i64>, // anchor - reg <= ? (i.e., reg >= anchor + lo)
+        anchor_hi: Option<i64>, // reg - anchor <= ? (i.e., reg <= anchor + hi)
+    },
+    Interval {
+        off: Option<i64>,     // fixed offset from anchor
+        var_off: Option<u64>, // variable offset uncertainty
+        range: Option<i64>,   // proven safe access range
+    },
 }
 
 /// Snapshot of a register's abstract state at spill time
@@ -17,10 +31,7 @@ pub struct SpilledReg {
     pub tnum: Tnum,
     pub bounds: ScalarBounds,
     pub size: MemSize,
-    // NEW: saved anchor offsets for packet pointers
-    pub anchor_lo: Option<i64>, // anchor - reg <= ? (i.e., reg >= anchor + lo)
-    pub anchor_hi: Option<i64>, // reg - anchor <= ? (i.e., reg <= anchor + hi)
-    pub anchor: Option<Reg>,    // which anchor this relates to
+    pub ptr_bounds: Option<PointerBounds>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -33,8 +44,15 @@ impl std::fmt::Display for StackState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut entries: Vec<String> = Vec::new();
         for (offset, spilled) in &self.slots {
-            entries.push(format!("offset {}: type={:?}, bounds=[{}, {}], source_reg={:?}, anchor={:?} (lo {}, hi {})", 
-                offset, spilled.reg_type, spilled.bounds.min, spilled.bounds.max, spilled.source_reg, spilled.anchor, spilled.anchor_lo.unwrap_or(-1), spilled.anchor_hi.unwrap_or(-1)));
+            entries.push(format!(
+                "offset {}: type={:?}, bounds=[{}, {}], source_reg={:?}, ptr_bounds={:?}",
+                offset,
+                spilled.reg_type,
+                spilled.bounds.min,
+                spilled.bounds.max,
+                spilled.source_reg,
+                spilled.ptr_bounds
+            ));
         }
         write!(f, "StackState {{\n  {}\n}}", entries.join("\n  "))
     }
@@ -84,9 +102,7 @@ impl StackState {
                         max: i64::MAX,
                     },
                     size: MemSize::U64,
-                    anchor: None,
-                    anchor_hi: None,
-                    anchor_lo: None,
+                    ptr_bounds: None,
                 },
             );
         }
@@ -116,9 +132,7 @@ impl StackState {
                     max: i64::MAX,
                 },
                 size: MemSize::U64,
-                anchor: None,
-                anchor_hi: None,
-                anchor_lo: None,
+                ptr_bounds: None,
             },
         );
     }

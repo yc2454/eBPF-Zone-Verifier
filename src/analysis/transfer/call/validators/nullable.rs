@@ -5,7 +5,6 @@
 use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
-use crate::zone::domain::proven_zero;
 
 use super::super::checks::{ValidationContext, validate_readable_mem};
 use super::super::compat::{MAP_VALUE_OR_NULL_COMPAT, base_arg_type, is_compatible};
@@ -19,7 +18,7 @@ pub fn validate_nullable(ctx: &mut ValidationContext, expected: BpfArgType) -> b
     let types = ctx.types;
 
     // If provably zero (NULL), accept immediately
-    if types.get(ctx.reg).is_scalar() && proven_zero(&ctx.state.dbm, ctx.reg) {
+    if types.get(ctx.reg).is_scalar() && ctx.state.domain.proven_zero(ctx.reg) {
         return true;
     }
 
@@ -53,7 +52,7 @@ fn validate_ctx_or_null(ctx: &mut ValidationContext) -> bool {
     let actual = ctx.actual;
 
     // If not provably zero, must be PtrToCtx
-    if !matches!(actual, RegType::PtrToCtx) && !proven_zero(&ctx.state.dbm, ctx.reg) {
+    if !matches!(actual, RegType::PtrToCtx) && !ctx.state.domain.proven_zero(ctx.reg) {
         ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,
@@ -75,7 +74,7 @@ fn validate_ctx_or_null(ctx: &mut ValidationContext) -> bool {
 fn validate_stack_or_null(ctx: &mut ValidationContext) -> bool {
     let actual = ctx.actual;
 
-    if !matches!(actual, RegType::PtrToStack { .. }) && !proven_zero(&ctx.state.dbm, ctx.reg) {
+    if !matches!(actual, RegType::PtrToStack { .. }) && !ctx.state.domain.proven_zero(ctx.reg) {
         ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,
@@ -102,7 +101,7 @@ fn validate_mem_or_null(ctx: &mut ValidationContext) -> bool {
         // Pointer is nullable - check that paired size arg is also 0
         if let Some(size_arg_idx) = get_nullable_ptr_size_pair(ctx.helper, ctx.arg_index) {
             let size_reg = [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5][size_arg_idx];
-            if !proven_zero(&ctx.state.dbm, size_reg) {
+            if !ctx.state.domain.proven_zero(size_reg) {
                 ctx.fail_with_log(
                     VerificationError::InvalidArgType {
                         pc: ctx.pc,

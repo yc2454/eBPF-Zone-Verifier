@@ -4,9 +4,10 @@ use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::stack_state::{ScalarBounds, SpilledReg, StackState};
 use crate::ast::MemSize;
-use crate::zone::dbm::{Dbm, INF};
-use crate::zone::domain::{self, get_interval};
-use crate::zone::tnum::Tnum;
+use crate::common::config::DomainMode;
+use crate::domains::dbm::INF;
+use crate::domains::numeric::NumericDomain;
+use crate::domains::tnum::Tnum;
 use log::trace;
 use std::collections::{HashMap, HashSet};
 
@@ -26,7 +27,8 @@ pub struct State {
 
     /// Numerical Domain (Values)
     /// Mirrors `bpf_reg_state.{smin_value, umax_value, var_off}`
-    pub dbm: Dbm,
+    /// Can be either Zone (DBM) or Interval domain based on config
+    pub domain: NumericDomain,
 
     /// Current Program Counter
     pub pc: usize,
@@ -52,7 +54,8 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(dbm: Dbm, pc: usize) -> Self {
+    /// Create a new State with the specified domain and program counter
+    pub fn new(domain: NumericDomain, pc: usize) -> Self {
         let mut tnums = HashMap::new();
         tnums.insert(Reg::Zero, Tnum::constant(0));
         for r in Reg::ALL {
@@ -62,7 +65,7 @@ impl State {
         }
         State {
             types: TypeState::new_not_init(),
-            dbm,
+            domain,
             pc,
             history_idx: None,
             tnums: tnums.clone(),
@@ -71,6 +74,28 @@ impl State {
             active_refs: HashSet::new(),
             active_lock: None,
         }
+    }
+
+    /// Create a new State with Zone domain (for backwards compatibility)
+    #[allow(dead_code)]
+    pub fn new_zone(pc: usize) -> Self {
+        Self::new(NumericDomain::new_zone(), pc)
+    }
+
+    /// Create a new State with Interval domain
+    #[allow(dead_code)]
+    pub fn new_interval(pc: usize) -> Self {
+        Self::new(NumericDomain::new_interval(), pc)
+    }
+
+    /// Create a new State based on domain mode config
+    #[allow(dead_code)]
+    pub fn new_with_mode(mode: DomainMode, pc: usize) -> Self {
+        let domain = match mode {
+            DomainMode::Zone => NumericDomain::new_zone(),
+            DomainMode::Interval => NumericDomain::new_interval(),
+        };
+        Self::new(domain, pc)
     }
 
     // ── Tnum helpers ────────────────────────────────────────────
@@ -154,14 +179,33 @@ impl State {
             RegType::ScalarValue
         };
 
-        // Only save anchor info for aligned U64 stores
-        let (anchor, anchor_lo, anchor_hi) = if size == MemSize::U64 && is_aligned {
-            self.save_anchor_info(reg)
+        // Save pointer bounds if applicable
+        let ptr_bounds = if size == MemSize::U64 && is_aligned {
+            use crate::analysis::machine::stack_state::PointerBounds;
+            let (i_off, i_var, i_range) = self.save_interval_ptr_offset(reg);
+            if i_off.is_some() || i_var.is_some() || i_range.is_some() {
+                Some(PointerBounds::Interval {
+                    off: i_off,
+                    var_off: i_var,
+                    range: i_range,
+                })
+            } else {
+                let (a, lo, hi) = self.save_anchor_info(reg);
+                if a.is_some() || lo.is_some() || hi.is_some() {
+                    Some(PointerBounds::Zone {
+                        anchor: a,
+                        anchor_lo: lo,
+                        anchor_hi: hi,
+                    })
+                } else {
+                    None
+                }
+            }
         } else {
-            (None, None, None)
+            None
         };
 
-        let (min, max) = get_interval(&self.dbm, reg);
+        let (min, max) = self.domain.get_interval(reg);
         trace!("At spilling, {} bounds: [{}, {}]", reg.name(), min, max);
 
         // Only track as proper spill if 8-byte aligned
@@ -173,9 +217,7 @@ impl State {
             tnum: self.tnums.get(&reg).cloned().unwrap_or(Tnum::unknown()),
             bounds: ScalarBounds { min, max },
             size,
-            anchor,
-            anchor_lo,
-            anchor_hi,
+            ptr_bounds,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -195,9 +237,7 @@ impl State {
                             max: i64::MAX,
                         },
                         size,
-                        anchor: None,
-                        anchor_lo: None,
-                        anchor_hi: None,
+                        ptr_bounds: None,
                     },
                 );
             }
@@ -239,9 +279,7 @@ impl State {
             tnum,
             bounds,
             size,
-            anchor: None,
-            anchor_lo: None,
-            anchor_hi: None,
+            ptr_bounds: None,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -261,9 +299,7 @@ impl State {
                             max: i64::MAX,
                         },
                         size,
-                        anchor: None,
-                        anchor_lo: None,
-                        anchor_hi: None,
+                        ptr_bounds: None,
                     },
                 );
             }
@@ -294,7 +330,7 @@ impl State {
             None => return false,
         };
 
-        domain::forget(&mut self.dbm, dst);
+        self.domain.forget(dst);
 
         // Check if we can preserve type/bounds:
         // 1. Must be reading from start of a spilled value (source_reg.is_some())
@@ -307,7 +343,8 @@ impl State {
             // Preserve type and bounds
             self.types.set(dst, spilled.reg_type);
             self.tnums.insert(dst, spilled.tnum);
-            domain::assign_interval(&mut self.dbm, dst, spilled.bounds.min, spilled.bounds.max);
+            self.domain
+                .assign_interval(dst, spilled.bounds.min, spilled.bounds.max);
 
             // Only restore anchors for U64 (pointers need full 64-bit)
             if size == MemSize::U64 {
@@ -318,7 +355,7 @@ impl State {
             self.types.set(dst, RegType::ScalarValue);
             let (min, max) = size.unbounded_scalar_bounds();
             self.tnums.insert(dst, Tnum::unknown());
-            domain::assign_interval(&mut self.dbm, dst, min, max);
+            self.domain.assign_interval(dst, min, max);
         }
 
         true
@@ -333,8 +370,8 @@ impl State {
         };
 
         if let Some(a) = anchor {
-            let hi = self.dbm.get(reg, a); // reg - anchor <= hi
-            let lo = self.dbm.get(a, reg); // anchor - reg <= lo  (i.e., reg - anchor >= -lo)
+            let hi = self.domain.get(reg, a); // reg - anchor <= hi
+            let lo = self.domain.get(a, reg); // anchor - reg <= lo  (i.e., reg - anchor >= -lo)
             let hi = if hi >= INF { None } else { Some(hi) };
             let lo = if lo >= INF { None } else { Some(lo) };
             (Some(a), lo, hi)
@@ -343,17 +380,69 @@ impl State {
         }
     }
 
+    /// Save interval mode PtrOffset info for a register
+    pub fn save_interval_ptr_offset(&self, reg: Reg) -> (Option<i64>, Option<u64>, Option<i64>) {
+        use crate::domains::numeric::NumericDomain;
+
+        if let NumericDomain::Interval(ref ivl) = self.domain {
+            if let Some(ptr_off) = ivl.get_ptr_offset(reg) {
+                return (Some(ptr_off.off), Some(ptr_off.var_off), ptr_off.range);
+            }
+        }
+        (None, None, None)
+    }
+
     pub fn restore_anchor_info(&mut self, reg: Reg, spilled: &SpilledReg) {
         trace!("Restoring anchor info for {}", reg.name());
         trace!("{:?}, ", spilled);
-        if let Some(anchor) = spilled.anchor {
-            if let Some(hi) = spilled.anchor_hi {
-                self.dbm.add_constraint(reg, anchor, hi); // reg - anchor <= hi
+
+        use crate::analysis::machine::stack_state::PointerBounds;
+        match &spilled.ptr_bounds {
+            Some(PointerBounds::Zone {
+                anchor,
+                anchor_lo,
+                anchor_hi,
+            }) => {
+                if let Some(anchor_reg) = anchor {
+                    if let Some(hi) = anchor_hi {
+                        self.domain.add_constraint(reg, *anchor_reg, *hi); // reg - anchor <= hi
+                    }
+                    if let Some(lo) = anchor_lo {
+                        self.domain.add_constraint(*anchor_reg, reg, *lo); // anchor - reg <= lo
+                    }
+                    self.domain.close();
+                }
             }
-            if let Some(lo) = spilled.anchor_lo {
-                self.dbm.add_constraint(anchor, reg, lo); // anchor - reg <= lo
+            Some(PointerBounds::Interval {
+                off,
+                var_off,
+                range,
+            }) => {
+                // Determine anchor from register type
+                let anchor = match spilled.reg_type {
+                    RegType::PtrToPacket => Some(Reg::AnchorData),
+                    RegType::PtrToPacketMeta => Some(Reg::AnchorDataMeta),
+                    RegType::PtrToPacketEnd => Some(Reg::AnchorDataEnd),
+                    RegType::PtrToStack { .. } => Some(Reg::R10),
+                    _ => None, // fallback is None
+                };
+
+                if let (Some(anchor_reg), Some(o)) = (anchor, off) {
+                    if let NumericDomain::Interval(ref mut ivl) = self.domain {
+                        let v = var_off.unwrap_or(0);
+                        let ptr_offset = crate::domains::interval::PtrOffset {
+                            anchor: anchor_reg,
+                            off: *o,
+                            var_off: v,
+                            range: *range,
+                        };
+
+                        // Set the PtrOffset on the register
+                        ivl.get_mut(reg).ptr_offset = Some(ptr_offset);
+                    }
+                }
             }
-            self.dbm.close();
+            None => {}
         }
     }
 
@@ -397,7 +486,7 @@ impl State {
         self.frames.push(
             return_pc,
             self.types.clone(),
-            self.dbm.clone(),
+            self.domain.clone(),
             self.tnums.clone(),
         );
     }

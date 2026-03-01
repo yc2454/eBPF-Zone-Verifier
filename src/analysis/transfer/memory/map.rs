@@ -6,8 +6,8 @@ use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
 use crate::ast::MapLoadKind;
 use crate::common::constants;
+use crate::domains::numeric::NumericDomain;
 use crate::parsing::elf::BpfMapDef;
-use crate::zone::domain::{forget, get_interval};
 use log::error;
 
 pub fn check_map_rw(env: &mut VerifierEnv, map_idx: usize, pc: usize, is_write: bool) {
@@ -65,7 +65,83 @@ pub fn check_map_access(
     size: i64,
     pc: usize,
 ) {
-    let (dbm_min, dbm_max) = get_interval(&state.dbm, base);
+    // For interval domain, try to use PtrOffset for bounds checking
+    if let NumericDomain::Interval(ref ivl) = state.domain {
+        if interval_check_map_access(
+            env, ivl, map_limit, map_idx, base, map_def, insn_off, size, pc,
+        ) {
+            return;
+        }
+    }
+
+    zone_check_map_access(
+        env,
+        state,
+        map_limit,
+        map_off_opt,
+        map_idx,
+        base,
+        map_def,
+        insn_off,
+        size,
+        pc,
+    );
+}
+
+fn interval_check_map_access(
+    env: &mut VerifierEnv,
+    ivl: &crate::domains::interval::IntervalState,
+    map_limit: i64,
+    _map_idx: usize,
+    base: Reg,
+    map_def: &BpfMapDef,
+    insn_off: i16,
+    size: i64,
+    pc: usize,
+) -> bool {
+    if let Some(ptr_off) = ivl.get_ptr_offset(base) {
+        // Use PtrOffset to get offset range from buffer start
+        let min_off = ptr_off.min_offset() + (insn_off as i64);
+        let max_off = ptr_off.max_offset() + (insn_off as i64) + size;
+
+        if let Some(btf_id) = map_def.btf_val_type_id {
+            check_btf_fields_access(env, pc, min_off, max_off, size, map_limit, btf_id);
+            return true;
+        }
+
+        if min_off >= 0 && max_off <= map_limit {
+            return true; // Access is safe
+        } else {
+            error!(
+                "Unsafe variable map access at pc {}: range [{}, {}], limit {}",
+                pc, min_off, max_off, map_limit
+            );
+            env.fail(VerificationError::UnsafeMapLoad {
+                pc,
+                off: min_off,
+                size,
+                limit: map_limit,
+            });
+            return true;
+        }
+    }
+    false
+}
+
+fn zone_check_map_access(
+    env: &mut VerifierEnv,
+    state: &State,
+    map_limit: i64,
+    map_off_opt: Option<i64>,
+    map_idx: usize,
+    base: Reg,
+    map_def: &BpfMapDef,
+    insn_off: i16,
+    size: i64,
+    pc: usize,
+) {
+    // Zone domain or interval without PtrOffset: use scalar bounds
+    let (dbm_min, dbm_max) = state.domain.get_interval(base);
     if dbm_min != i64::MIN && dbm_max != i64::MAX {
         let min_val = dbm_min;
         let max_val = dbm_max;
@@ -141,7 +217,7 @@ pub(crate) fn transfer_map_load(
             reloc.map_idx,
             dst,
         );
-        forget(&mut state.dbm, dst);
+        state.domain.forget(dst);
         state.pc += 2;
         vec![state]
     } else {

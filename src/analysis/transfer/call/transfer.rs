@@ -10,9 +10,10 @@ use crate::analysis::transfer::types::{
 };
 use crate::ast::ProgramKind;
 use crate::common::constants;
+use crate::domains::interval::new_scalar_id;
+use crate::domains::numeric::NumericDomain;
+use crate::domains::tnum::Tnum;
 use crate::parsing::btf::SpecialFieldKind;
-use crate::zone::domain::{self, assume_ge_imm, assume_le_imm, forget, get_interval, proven_zero};
-use crate::zone::tnum::Tnum;
 use log::{debug, error, trace};
 
 use super::checks::{check_mem_size_pairs, validate_helper_args};
@@ -59,7 +60,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
         update_call_types(env, &in_types, &mut state, helper);
 
         for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-            forget(&mut state.dbm, r);
+            state.domain.forget(r);
         }
 
         state.pc += 1;
@@ -121,7 +122,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
             return vec![];
         }
-        if !proven_zero(&state.dbm, Reg::R2) {
+        if !state.domain.proven_zero(Reg::R2) {
             env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
             return vec![];
         }
@@ -142,7 +143,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
 
     // 3. Update DBM - forget caller-saved registers and reset Tnums
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-        forget(&mut state.dbm, r);
+        state.domain.forget(r);
         state.set_tnum(r, Tnum::unknown());
     }
 
@@ -152,13 +153,13 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             if r != Reg::R10 {
                 match in_types.get(r) {
                     RegType::PtrToPacket | RegType::PtrToPacketEnd | RegType::PtrToPacketMeta => {
-                        forget(&mut state.dbm, r);
+                        state.domain.forget(r);
                     }
                     _ => {}
                 }
             }
         }
-        domain::reset_packet_anchors(&mut state.dbm);
+        state.domain.reset_packet_anchors();
     }
 
     // 5. Advance PC and return
@@ -182,10 +183,8 @@ fn initialize_uninit_mem_args(
                 && matches!(ptr_arg_type, BpfArgType::PtrToUninitMem)
             {
                 if let RegType::PtrToStack { frame_level } = in_types.get(pair.ptr_reg) {
-                    if let Some(off) =
-                        domain::get_distance_fixed(&state.dbm, pair.ptr_reg, Reg::R10)
-                    {
-                        let (_, max_size) = domain::get_interval(&state.dbm, pair.size_reg);
+                    if let Some(off) = state.domain.get_distance_fixed(pair.ptr_reg, Reg::R10) {
+                        let (_, max_size) = state.domain.get_interval(pair.size_reg);
                         {
                             if max_size != i64::MAX && max_size > 0 {
                                 let max_bytes = (max_size as usize).min(512); // Bound to max stack size just in case
@@ -218,16 +217,16 @@ fn initialize_uninit_mem_args(
 
 /// Apply return value bounds based on helper semantics.
 fn apply_return_bounds(state: &mut State, helper: u32) {
-    forget(&mut state.dbm, Reg::R0);
+    state.domain.forget(Reg::R0);
     state.set_tnum(Reg::R0, Tnum::unknown());
     match helper {
         constants::BPF_REDIRECT => {
-            assume_ge_imm(&mut state.dbm, Reg::R0, 0);
-            assume_le_imm(&mut state.dbm, Reg::R0, 7);
+            state.domain.assume_ge_imm(Reg::R0, 0);
+            state.domain.assume_le_imm(Reg::R0, 7);
         }
         constants::BPF_FIB_LOOKUP => {
-            assume_ge_imm(&mut state.dbm, Reg::R0, 0);
-            assume_le_imm(&mut state.dbm, Reg::R0, 8);
+            state.domain.assume_ge_imm(Reg::R0, 0);
+            state.domain.assume_le_imm(Reg::R0, 8);
         }
         constants::BPF_MAP_UPDATE_ELEM
         | constants::BPF_MAP_DELETE_ELEM
@@ -241,35 +240,37 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
         | constants::BPF_SKB_VLAN_POP
         | constants::BPF_SOCK_MAP_UPDATE => {
             // Returns 0 on success, or -errno
-            assume_le_imm(&mut state.dbm, Reg::R0, 0);
-            assume_ge_imm(&mut state.dbm, Reg::R0, -constants::MAX_ERRNO);
+            state.domain.assume_le_imm(Reg::R0, 0);
+            state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
         }
         constants::BPF_GET_PRANDOM_U32
         | constants::BPF_GET_CGROUP_CLASS_ID
         | constants::BPF_GET_HASH_RECALC => {
             // Returns a positive u32
-            assume_ge_imm(&mut state.dbm, Reg::R0, 0);
-            assume_le_imm(&mut state.dbm, Reg::R0, 0xFFFF_FFFF);
+            state.domain.assume_ge_imm(Reg::R0, 0);
+            state.domain.assume_le_imm(Reg::R0, 0xFFFF_FFFF);
             state.set_tnum(Reg::R0, Tnum::u32_unknown());
+            // Assign scalar_id for tracking related scalars
+            interval_set_scalar_id(&mut state.domain, Reg::R0);
         }
         constants::BPF_CSUM_DIFF => {
             // Returns a positive u32 (checksum) or negative error
-            assume_ge_imm(&mut state.dbm, Reg::R0, -constants::MAX_ERRNO);
-            assume_le_imm(&mut state.dbm, Reg::R0, 0xFFFF_FFFF);
+            state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
+            state.domain.assume_le_imm(Reg::R0, 0xFFFF_FFFF);
             state.set_tnum(Reg::R0, Tnum::u32_unknown());
         }
         constants::BPF_GET_TASK_STACK => {
             let mem_size_pairs = get_mem_size_pairs(helper);
             let size_reg = mem_size_pairs[0].size_reg;
-            let (_, hi) = get_interval(&state.dbm, size_reg);
-            assume_le_imm(&mut state.dbm, Reg::R0, hi);
+            let (_, hi) = state.domain.get_interval(size_reg);
+            state.domain.assume_le_imm(Reg::R0, hi);
         }
         constants::BPF_GET_STACK => {
             let mem_size_pairs = get_mem_size_pairs(helper);
             let size_reg = mem_size_pairs[0].size_reg;
-            let (_, hi) = get_interval(&state.dbm, size_reg);
-            assume_le_imm(&mut state.dbm, Reg::R0, hi);
-            assume_ge_imm(&mut state.dbm, Reg::R0, -constants::MAX_ERRNO);
+            let (_, hi) = state.domain.get_interval(size_reg);
+            state.domain.assume_le_imm(Reg::R0, hi);
+            state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
         }
         _ => {}
     }
@@ -296,6 +297,14 @@ pub(crate) fn transfer_call_rel(
 
     state.push_frame(pc + 1);
     update_call_rel_types(&mut state);
+
+    // Clear packet size bounds for the callee.
+    // The kernel verifier tracks bounds per-function, so each function
+    // starts with no proven packet size. This is important for cases where
+    // the caller did a bounds check but the callee spills a fresh packet
+    // pointer before doing its own check.
+    state.domain.clear_packet_size_bounds();
+
     state.pc = target;
 
     vec![state]
@@ -357,4 +366,80 @@ fn check_and_handle_spin_lock(env: &mut VerifierEnv, state: &mut State, helper: 
         }
     }
     true
+}
+
+pub(crate) fn interval_set_scalar_id(domain: &mut NumericDomain, reg: Reg) {
+    if let NumericDomain::Interval(ivl) = domain {
+        ivl.get_bounds_mut(reg).scalar_id = Some(new_scalar_id());
+    }
+}
+
+pub(crate) fn restore_interval_ptr_offset_from_return(
+    domain: &mut NumericDomain,
+    ret_type: &RegType,
+    ret_interval_ptr_offset: (Option<i64>, Option<u64>, Option<i64>),
+) {
+    if let (Some(off), var_off_opt, range) = ret_interval_ptr_offset {
+        use crate::domains::interval::PtrOffset;
+
+        // Determine anchor from register type
+        let anchor = match ret_type {
+            RegType::PtrToPacket => Some(Reg::AnchorData),
+            RegType::PtrToPacketMeta => Some(Reg::AnchorDataMeta),
+            RegType::PtrToPacketEnd => Some(Reg::AnchorDataEnd),
+            _ => None,
+        };
+
+        if let Some(anchor) = anchor {
+            if let NumericDomain::Interval(ivl) = domain {
+                let var_off = var_off_opt.unwrap_or(0);
+                let ptr_offset = PtrOffset {
+                    anchor,
+                    off,
+                    var_off,
+                    range,
+                };
+                ivl.get_mut(Reg::R0).ptr_offset = Some(ptr_offset);
+            }
+        }
+    }
+}
+
+pub(crate) fn restore_callee_interval_packet_info(
+    domain: &mut NumericDomain,
+    caller_types: &crate::analysis::machine::reg_types::TypeState,
+    callee_saved_packet_info: Vec<(Reg, RegType, (Option<i64>, Option<u64>, Option<i64>))>,
+) {
+    for (reg, callee_type, (off_opt, var_off_opt, range)) in callee_saved_packet_info {
+        if let (Some(off), Some(range_val)) = (off_opt, range) {
+            let anchor = match callee_type {
+                RegType::PtrToPacket => Some(Reg::AnchorData),
+                RegType::PtrToPacketMeta => Some(Reg::AnchorDataMeta),
+                _ => None,
+            };
+
+            if let Some(anchor) = anchor {
+                if matches!(
+                    caller_types.get(reg),
+                    RegType::PtrToPacket | RegType::PtrToPacketMeta
+                ) {
+                    if let NumericDomain::Interval(ivl) = domain {
+                        if let Some(caller_ptr_off) = ivl.get_ptr_offset(reg) {
+                            if caller_ptr_off.anchor == anchor
+                                && caller_ptr_off.off == off
+                                && caller_ptr_off.var_off == var_off_opt.unwrap_or(0)
+                            {
+                                let caller_range = caller_ptr_off.range.unwrap_or(0);
+                                if range_val > caller_range {
+                                    let mut new_ptr_off = caller_ptr_off.clone();
+                                    new_ptr_off.range = Some(range_val);
+                                    ivl.get_mut(reg).ptr_offset = Some(new_ptr_off);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

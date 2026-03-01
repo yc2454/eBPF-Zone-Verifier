@@ -3,7 +3,6 @@
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
 use crate::ast::{CmpOp, Operand, Width};
-use crate::zone::domain::get_interval;
 
 /// Check if a branch condition can be determined at analysis time.
 /// Returns:
@@ -143,7 +142,7 @@ pub(crate) fn get_combined_bounds(state: &State, reg: Reg, width: Width) -> Opti
     let tnum_max = tnum.max_value();
 
     // DBM bounds
-    let (dbm_lo, dbm_hi) = get_interval(&state.dbm, reg);
+    let (dbm_lo, dbm_hi) = state.domain.get_interval(reg);
 
     // Combine bounds
     if dbm_lo != i64::MIN && dbm_hi != i64::MAX {
@@ -185,20 +184,11 @@ pub(crate) fn fits_in_u32(bounds: (i64, i64)) -> bool {
     bounds.0 >= 0 && bounds.1 <= 0xFFFFFFFF
 }
 
-/// Check if value is known to be in u32 range [0, 0xFFFFFFFF]
-pub(crate) fn fits_in_u32_range(dbm: &crate::zone::dbm::Dbm, reg: Reg) -> bool {
-    let (lo, hi) = get_interval(dbm, reg);
-    if lo != i64::MIN && hi != i64::MAX {
-        fits_in_u32((lo, hi))
-    } else {
-        false
-    }
-}
 
 /// Get combined signed bounds for a register using both DBM and tnum.
 /// Returns (lo, hi) as signed i64 values, using the tighter bound from each source.
 pub(crate) fn get_combined_signed_bounds(state: &State, reg: Reg) -> (i64, i64) {
-    let (dbm_lo, dbm_hi) = get_interval(&state.dbm, reg);
+    let (dbm_lo, dbm_hi) = state.domain.get_interval(reg);
     let tnum = state.get_tnum(reg);
     let tnum_min = tnum.min_value();
     let tnum_max = tnum.max_value();

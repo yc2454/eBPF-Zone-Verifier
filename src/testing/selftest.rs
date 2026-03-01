@@ -25,8 +25,8 @@ use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::parsing::bpf_to_ast::{LowerErrorKind, lower_raw_to_program};
 use crate::parsing::btf::{BtfContext, BtfMember, BtfType};
 use crate::parsing::elf::{BpfMapDef, RelocInfo, RelocKind};
-use crate::zone::dbm::Dbm;
-use crate::zone::domain::assign_zero;
+use crate::domains::dbm::Dbm;
+use crate::domains::domain::assign_zero;
 
 // ============================================================================
 // JSON Deserialization Types

@@ -10,6 +10,7 @@ A robust, user-space static analyzer for eBPF (Extended Berkeley Packet Filter) 
 * **Context Validation:** Enforces strict access rules based on BPF program types (e.g., `sk_buff`, `xdp_md`, `bpf_sock_addr`).
 * **Map Safety:** Validates map lookups and value dereferences, supporting map-in-map and global data (`.rodata`).
 * **Dead Code Pruning:** Intelligently prunes unreachable paths using static branch evaluation and state comparison.
+* **Kernel Compatibility Mode:** Optional `--kernel-mode` flag simulates kernel verifier behavior for compatibility testing.
 * **Selftest Suite:** Built-in support for running large JSON-based test suites (compatible with Kernel BPF tests).
 * **Benchmarking Suite:** Bulk analysis of BPF datasets with support for custom input lists, filtering, and detailed reporting.
 
@@ -64,18 +65,28 @@ ELF File (.o)
 
 ### Abstract Domain
 
-The verifier tracks program state using two complementary abstract domains:
+The verifier tracks program state using complementary abstract domains:
 
-**1. Difference Bound Matrix (DBM) - Zone Domain**
-- Represents constraints of the form `xi - xj <= c`
+**1. Numeric Domain (selectable via flags)**
+
+*Zone Domain (default, `--zone-mode`):*
+- Uses Difference Bound Matrices (DBM) to represent constraints of the form `xi - xj <= c`
 - Tracks relational bounds between registers (e.g., `r1 <= r2 + 10`)
 - Enables precise reasoning about pointer arithmetic and array bounds
 - Implemented with Floyd-Warshall closure for constraint propagation
+- More precise than kernel, especially for packet bounds checking
+
+*Interval Domain (`--kernel-mode`):*
+- Tracks per-register bounds only (min, max for each register)
+- Matches the kernel verifier's numeric analysis
+- Faster but less precise (no relational constraints)
+- Use for kernel compatibility testing
 
 **2. Tri-state Numbers (Tnum)**
 - Each bit is classified as: known-0, known-1, or unknown
 - Enables precise bitwise operation analysis (AND, OR, XOR, shifts)
-- Complements DBM for non-relational reasoning
+- Complements numeric domain for non-relational reasoning
+- Used in both Zone and Interval modes
 
 ### Pruning Strategy
 
@@ -111,12 +122,24 @@ Loops require special treatment to ensure termination. The verifier detects loop
    - Tnum widening: if a tnum changed, set to fully unknown
 3. Check for convergence: if widened state subsumes current state, the loop is verified
 
-**Bounded Loop Optimization:**
+**Bounded Loop Detection (`--detect-bounded-loops`, default: enabled):**
 For loops with compile-time bounds (e.g., `for (i = 0; i < 40; i++)`), the verifier detects the pattern:
 ```c
 if (r != K) goto loop_head  // K is the bound
 ```
-And applies the constraint `r < K` to enable faster convergence without losing precision.
+And applies the constraint `r < K` to enable faster convergence without losing precision. This is a precision improvement over the kernel verifier.
+
+**Single-Entry Loop Requirement (`--single-entry-loops`):**
+The kernel's bounded loop support uses dominator tree analysis, which requires loops to have a single entry point. Code that jumps into the middle of a loop (skipping over the loop head) is rejected with a "back-edge" error:
+```c
+// REJECTED: jumps into middle of loop
+    goto condition;
+body:
+    r0 += 1;
+condition:
+    if (r0 < 4) goto body;
+```
+This check is enabled automatically by `--kernel-mode`.
 
 **Loop Exit Verification:**
 The verifier ensures loops have feasible exit paths:
@@ -163,6 +186,26 @@ The tool is run via `cargo run -- [flags] <subcommand> [args]`.
 ### Configuration Flags
 
 Flags must be placed *before* the subcommand.
+
+#### Domain Mode
+
+| Flag | Description |
+| --- | --- |
+| `--kernel-mode` | Simulate kernel verifier: interval domain + strict loop checks. |
+| `--zone-mode` | Use zone domain (default, more precise than kernel). |
+
+#### Loop Analysis
+
+These flags control loop handling. `--kernel-mode` sets both automatically for kernel compatibility.
+
+| Flag | Description | Default |
+| --- | --- | --- |
+| `--detect-bounded-loops` | Use pattern matching for early loop convergence. | `true` |
+| `--no-detect-bounded-loops` | Disable bounded loop detection. | |
+| `--single-entry-loops` | Reject loops with jumps into middle (kernel behavior). | `false` |
+| `--multi-entry-loops` | Allow loops with any entry pattern. | `true` |
+
+#### General Options
 
 | Flag | Description | Default |
 | --- | --- | --- |
@@ -220,6 +263,12 @@ cargo run -- prevail-benchmark ~/ebpf-samples --project cilium
 
 # Test the invalid programs (expected rejections)
 cargo run -- prevail-benchmark ~/ebpf-samples --project invalid
+```
+
+**6. Run selftests in kernel-compatible mode:**
+```bash
+# Simulate kernel verifier behavior (interval domain + strict loop checks)
+cargo run -- --kernel-mode selftest-suite ./selftests
 ```
 
 ## Troubleshooting

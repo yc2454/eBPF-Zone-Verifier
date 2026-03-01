@@ -5,15 +5,10 @@ use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::state::State;
 use crate::ast::{Operand, Width};
-use crate::zone::domain::{
-    apply_add_imm, apply_add_reg, apply_and_imm, apply_div_imm, apply_div_reg, apply_mul_imm,
-    apply_neg, apply_sub_reg, assign_interval, assign_reg_offset, assume_ge_imm, assume_le_imm,
-    forget, get_fixed_value, get_interval,
-};
-use crate::zone::tnum::Tnum;
+use crate::domains::tnum::Tnum;
 use log::debug;
 
-use super::helpers::{apply_w32_truncation, check_ptr_bounds, sync_tnum_to_dbm};
+use super::helpers::{check_ptr_bounds, sync_tnum_to_dbm};
 
 pub(crate) fn handle_add(
     _env: &mut VerifierEnv,
@@ -25,7 +20,7 @@ pub(crate) fn handle_add(
 ) {
     match src {
         Operand::Imm(c) => {
-            apply_add_imm(&mut state.dbm, dst, *c);
+            state.domain.apply_add_imm(dst, *c);
         }
         Operand::Reg(r) => {
             let src_is_ptr = in_types.get(*r).is_pointer();
@@ -33,40 +28,46 @@ pub(crate) fn handle_add(
 
             if dst_is_ptr && !src_is_ptr {
                 // ptr += scalar: preserve relational info if possible
-                let (lo, hi) = get_interval(&state.dbm, *r);
+                let (lo, hi) = state.domain.get_interval(*r);
                 if lo == hi && lo != i64::MIN && lo != i64::MAX {
                     // Known constant: shift all relations exactly
-                    apply_add_imm(&mut state.dbm, dst, lo);
+                    state.domain.apply_add_imm(dst, lo);
                 } else {
                     // Non-constant: fall back to interval
                     if let Some(off) = RegType::get_ptr_offset(&in_types.get(dst)) {
-                        forget(&mut state.dbm, dst);
-                        assign_interval(&mut state.dbm, dst, off, off);
+                        state.domain.forget(dst);
+                        state.domain.assign_interval(dst, off, off);
                     }
-                    apply_add_reg(&mut state.dbm, dst, *r);
+                    state.domain.apply_add_reg(dst, *r);
                 }
             } else if src_is_ptr && !dst_is_ptr {
                 // scalar += ptr
-                let (lo, hi) = get_interval(&state.dbm, dst);
+                let (lo, hi) = state.domain.get_interval(dst);
                 if lo == hi && lo != i64::MIN && lo != i64::MAX {
-                    assign_reg_offset(&mut state.dbm, dst, *r, lo);
+                    state.domain.assign_reg_offset(dst, *r, lo);
                 } else {
-                    if let Some(off) = RegType::get_ptr_offset(&in_types.get(*r)) {
-                        forget(&mut state.dbm, *r);
-                        assign_interval(&mut state.dbm, *r, off, off);
+                    // For interval mode, combine ptr's PtrOffset with scalar's range
+                    state.domain.apply_scalar_add_ptr(dst, *r, lo, hi);
+
+                    // For zone domain, use constraint-based tracking
+                    if !state.domain.is_interval_mode() {
+                        if let Some(off) = RegType::get_ptr_offset(&in_types.get(*r)) {
+                            state.domain.forget(*r);
+                            state.domain.assign_interval(*r, off, off);
+                        }
+                        state.domain.forget(dst);
+                        if hi != i64::MAX {
+                            state.domain.add_constraint(dst, *r, hi);
+                        }
+                        if lo != i64::MIN && lo > i64::MIN {
+                            state.domain.add_constraint(*r, dst, -lo);
+                        }
+                        state.domain.close();
                     }
-                    forget(&mut state.dbm, dst);
-                    if hi != i64::MAX {
-                        state.dbm.add_constraint(dst, *r, hi);
-                    }
-                    if lo != i64::MIN && lo > i64::MIN {
-                        state.dbm.add_constraint(*r, dst, -lo);
-                    }
-                    state.dbm.close();
                 }
             } else {
                 // scalar += scalar, ptr += ptr, etc.
-                apply_add_reg(&mut state.dbm, dst, *r);
+                state.domain.apply_add_reg(dst, *r);
             }
         }
     }
@@ -84,7 +85,7 @@ pub(crate) fn handle_add(
     state.set_tnum(dst, new_tnum);
 
     if width == Width::W32 {
-        apply_w32_truncation(&mut state.dbm, dst);
+        state.domain.apply_w32_truncation(dst);
     }
 
     check_ptr_bounds(state, dst);
@@ -101,7 +102,7 @@ pub(crate) fn handle_sub(
 ) {
     match src {
         Operand::Imm(c) => {
-            apply_add_imm(&mut state.dbm, dst, -c);
+            state.domain.apply_add_imm(dst, -c);
         }
         Operand::Reg(r) => {
             let dst_type = in_types.get(dst);
@@ -111,14 +112,14 @@ pub(crate) fn handle_sub(
 
             if dst_is_ptr && !src_is_ptr {
                 // ptr -= scalar: try to preserve relational info
-                let const_value = get_fixed_value(&state.dbm, *r);
+                let const_value = state.domain.get_fixed_value(*r);
 
                 if const_value.is_some() {
                     // Scalar is a known constant: exact relational shift
-                    apply_add_imm(&mut state.dbm, dst, -const_value.unwrap());
+                    state.domain.apply_add_imm(dst, -const_value.unwrap());
                 } else {
                     // Bounded but not constant: fall back to interval
-                    apply_sub_reg(&mut state.dbm, dst, *r);
+                    state.domain.apply_sub_reg(dst, *r);
                 }
             } else if is_packet_ptr_subtraction(&dst_type, &src_type) {
                 // SPECIAL CASE: Packet Pointer Subtraction (Correlated Branch Support)
@@ -131,7 +132,7 @@ pub(crate) fn handle_sub(
                 handle_packet_ptr_subtraction(state, dst, *r);
             } else {
                 // scalar -= scalar, scalar -= ptr, other ptr -= ptr
-                apply_sub_reg(&mut state.dbm, dst, *r);
+                state.domain.apply_sub_reg(dst, *r);
             }
         }
     }
@@ -149,7 +150,7 @@ pub(crate) fn handle_sub(
     state.set_tnum(dst, new_tnum);
 
     if width == Width::W32 {
-        apply_w32_truncation(&mut state.dbm, dst);
+        state.domain.apply_w32_truncation(dst);
     }
 
     let dst_is_ptr = in_types.get(dst).is_pointer();
@@ -165,10 +166,10 @@ pub(crate) fn handle_sub(
 }
 
 pub(crate) fn handle_neg(state: &mut State, width: Width, dst: Reg) {
-    apply_neg(&mut state.dbm, dst);
+    state.domain.apply_neg(dst);
 
     if width == Width::W32 {
-        apply_and_imm(&mut state.dbm, dst, 0xFFFFFFFF);
+        state.domain.apply_and_imm(dst, 0xFFFFFFFF);
     }
 
     let t = state.get_tnum(dst);
@@ -183,15 +184,15 @@ pub(crate) fn handle_neg(state: &mut State, width: Width, dst: Reg) {
 pub(crate) fn handle_mul(state: &mut State, width: Width, dst: Reg, src: &Operand) {
     match src {
         Operand::Imm(c) => {
-            apply_mul_imm(&mut state.dbm, dst, *c);
+            state.domain.apply_mul_imm(dst, *c);
         }
         Operand::Reg(_) => {
-            forget(&mut state.dbm, dst);
+            state.domain.forget(dst);
         }
     }
 
     if width == Width::W32 {
-        apply_w32_truncation(&mut state.dbm, dst);
+        state.domain.apply_w32_truncation(dst);
     }
 
     state.set_tnum(dst, Tnum::unknown());
@@ -201,28 +202,28 @@ pub(crate) fn handle_mod(state: &mut State, width: Width, dst: Reg, src: &Operan
     match src {
         Operand::Imm(c) => {
             if *c > 0 {
-                forget(&mut state.dbm, dst);
-                assume_ge_imm(&mut state.dbm, dst, 0);
-                assume_le_imm(&mut state.dbm, dst, c - 1);
+                state.domain.forget(dst);
+                state.domain.assume_ge_imm(dst, 0);
+                state.domain.assume_le_imm(dst, c - 1);
             } else {
-                forget(&mut state.dbm, dst);
+                state.domain.forget(dst);
             }
         }
         Operand::Reg(r) => {
-            let (r_lo, r_hi) = get_interval(&state.dbm, *r);
-            forget(&mut state.dbm, dst);
+            let (r_lo, r_hi) = state.domain.get_interval(*r);
+            state.domain.forget(dst);
 
             if r_lo > 0 && r_hi != i64::MAX {
-                assume_ge_imm(&mut state.dbm, dst, 0);
-                assume_le_imm(&mut state.dbm, dst, r_hi - 1);
+                state.domain.assume_ge_imm(dst, 0);
+                state.domain.assume_le_imm(dst, r_hi - 1);
             } else if r_lo > 0 {
-                assume_ge_imm(&mut state.dbm, dst, 0);
+                state.domain.assume_ge_imm(dst, 0);
             }
         }
     }
 
     if width == Width::W32 {
-        apply_w32_truncation(&mut state.dbm, dst);
+        state.domain.apply_w32_truncation(dst);
     }
 
     state.set_tnum(dst, Tnum::unknown());
@@ -230,12 +231,12 @@ pub(crate) fn handle_mod(state: &mut State, width: Width, dst: Reg, src: &Operan
 
 pub(crate) fn handle_div(state: &mut State, width: Width, dst: Reg, src: &Operand) {
     match src {
-        Operand::Imm(imm) => apply_div_imm(&mut state.dbm, dst, *imm),
-        Operand::Reg(r_src) => apply_div_reg(&mut state.dbm, dst, *r_src),
+        Operand::Imm(imm) => state.domain.apply_div_imm(dst, *imm),
+        Operand::Reg(r_src) => state.domain.apply_div_reg(dst, *r_src),
     }
 
     if width == Width::W32 {
-        apply_and_imm(&mut state.dbm, dst, 0xFFFFFFFF);
+        state.domain.apply_and_imm(dst, 0xFFFFFFFF);
     }
 
     state.set_tnum(dst, Tnum::unknown());
@@ -267,19 +268,19 @@ fn is_packet_ptr_subtraction(dst_type: &RegType, src_type: &RegType) -> bool {
 /// relationships via DBM closure.
 fn handle_packet_ptr_subtraction(state: &mut State, dst: Reg, src: Reg) {
     // First, perform standard subtraction to compute interval bounds
-    apply_sub_reg(&mut state.dbm, dst, src);
+    state.domain.apply_sub_reg(dst, src);
 
     let start_anchor = Reg::AnchorData;
     let end_anchor = Reg::AnchorDataEnd;
 
     // Link dst to @data_end (dst <= @data_end)
     // Copy from src since src is at @data, and @data <= @data_end
-    let dst_to_end = state.dbm.get(src, end_anchor);
-    state.dbm.add_constraint(dst, end_anchor, dst_to_end);
+    let dst_to_end = state.domain.get(src, end_anchor);
+    state.domain.add_constraint(dst, end_anchor, dst_to_end);
 
     // Link dst to @data_end in reverse (@data_end - dst relationship)
-    let end_to_dst = state.dbm.get(end_anchor, src);
-    state.dbm.add_constraint(end_anchor, dst, end_to_dst);
+    let end_to_dst = state.domain.get(end_anchor, src);
+    state.domain.add_constraint(end_anchor, dst, end_to_dst);
 
     // Link @data to Zero so that absolute constraints on dst
     // (like `dst >= 14`) propagate through to anchor relationships.
@@ -292,10 +293,10 @@ fn handle_packet_ptr_subtraction(state: &mut State, dst: Reg, src: Reg) {
     //   - D[@data, Zero] = 0 and D[Zero, @data] = 0
     //   - When D[Zero, dst] = -14, then D[@data, dst] = -14
     //   - Then D[@data, @data_end] = -14 + 0 = -14
-    state.dbm.add_constraint(start_anchor, Reg::Zero, 0);
-    state.dbm.add_constraint(Reg::Zero, start_anchor, 0);
+    state.domain.add_constraint(start_anchor, Reg::Zero, 0);
+    state.domain.add_constraint(Reg::Zero, start_anchor, 0);
 
-    state.dbm.close();
+    state.domain.close();
 
     debug!(
         "Packet ptr subtraction: linked {} to anchors (D[dst,end]={}, D[end,dst]={})",

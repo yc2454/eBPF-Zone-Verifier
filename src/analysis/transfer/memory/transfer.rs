@@ -6,11 +6,7 @@ use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
 use crate::ast::{AtomicOp, MemSize, Operand};
-use crate::zone::domain::{
-    assume_eq_imm, assume_ge_imm, assume_le_imm, bind_to_anchor, forget, get_distance_fixed,
-    get_distance_interval,
-};
-use crate::zone::tnum::Tnum;
+use crate::domains::tnum::Tnum;
 
 use super::access::{self};
 use crate::analysis::transfer::common::{
@@ -42,7 +38,7 @@ pub(crate) fn transfer_load(
     }
 
     if let RegType::PtrToStack { frame_level } = state.types.get(base)
-        && let Some(base_off) = get_distance_fixed(&state.dbm, base, Reg::R10)
+        && let Some(base_off) = state.domain.get_distance_fixed(base, Reg::R10)
         && state.fill_at(frame_level, dst, off + base_off as i16, size)
     {
         state.pc += 1;
@@ -50,33 +46,33 @@ pub(crate) fn transfer_load(
     }
 
     update_load_types(env, &mut state, access_size as usize, dst, base, off);
-    forget(&mut state.dbm, dst);
+    state.domain.forget(dst);
 
     match size {
         MemSize::U8 => {
-            assume_ge_imm(&mut state.dbm, dst, 0);
-            assume_le_imm(&mut state.dbm, dst, 0xFF);
+            state.domain.assume_ge_imm(dst, 0);
+            state.domain.assume_le_imm(dst, 0xFF);
         }
         MemSize::U16 => {
-            assume_ge_imm(&mut state.dbm, dst, 0);
-            assume_le_imm(&mut state.dbm, dst, 0xFFFF);
+            state.domain.assume_ge_imm(dst, 0);
+            state.domain.assume_le_imm(dst, 0xFFFF);
         }
         MemSize::U32 => {
-            assume_ge_imm(&mut state.dbm, dst, 0);
-            assume_le_imm(&mut state.dbm, dst, 0xFFFFFFFF);
+            state.domain.assume_ge_imm(dst, 0);
+            state.domain.assume_le_imm(dst, 0xFFFFFFFF);
         }
         MemSize::U64 => {}
     }
 
     match state.types.get(dst) {
         RegType::PtrToPacket => {
-            bind_to_anchor(&mut state.dbm, dst, Reg::AnchorData);
+            state.domain.bind_to_anchor(dst, Reg::AnchorData);
         }
         RegType::PtrToPacketMeta => {
-            bind_to_anchor(&mut state.dbm, dst, Reg::AnchorDataMeta);
+            state.domain.bind_to_anchor(dst, Reg::AnchorDataMeta);
         }
         RegType::PtrToPacketEnd => {
-            bind_to_anchor(&mut state.dbm, dst, Reg::AnchorDataEnd);
+            state.domain.bind_to_anchor(dst, Reg::AnchorDataEnd);
         }
         _ => {}
     }
@@ -111,7 +107,7 @@ pub(crate) fn transfer_store(
 
     let base_type = state.types.get(base);
     if let RegType::PtrToStack { frame_level } = base_type {
-        if let Some(base_off) = get_distance_fixed(&state.dbm, base, Reg::R10) {
+        if let Some(base_off) = state.domain.get_distance_fixed(base, Reg::R10) {
             let full_offset = base_off + off as i64;
             match src {
                 Operand::Reg(r) => {
@@ -129,7 +125,7 @@ pub(crate) fn transfer_store(
                 Some(full_offset),
             );
         } else {
-            let (lo, hi) = get_distance_interval(&state.dbm, base, Reg::R10);
+            let (lo, hi) = state.domain.get_distance_interval(base, Reg::R10);
             if lo != i64::MIN && hi != i64::MAX {
                 let min_slot = lo + off as i64;
                 let max_slot = hi + off as i64 + size.bytes() as i64;
@@ -207,7 +203,7 @@ pub(crate) fn transfer_atomic(
     };
 
     let resolved_offset = if matches!(base_ty, RegType::PtrToStack { .. }) {
-        get_distance_fixed(&state.dbm, base, Reg::R10).map(|o| o + off as i64)
+        state.domain.get_distance_fixed(base, Reg::R10).map(|o| o + off as i64)
     } else {
         None
     };
@@ -223,11 +219,11 @@ pub(crate) fn transfer_atomic(
 
     if op == AtomicOp::CmpXchg {
         if !reloaded {
-            forget(&mut state.dbm, Reg::R0);
+            state.domain.forget(Reg::R0);
             state.set_tnum(Reg::R0, Tnum::unknown());
         }
     } else if fetch && !reloaded {
-        forget(&mut state.dbm, src);
+        state.domain.forget(src);
         state.set_tnum(src, Tnum::unknown());
     }
 
@@ -271,8 +267,8 @@ pub fn try_load_from_rodata(
                         val |= (b as u64) << (i * 8);
                     }
 
-                    forget(&mut state.dbm, dst);
-                    assume_eq_imm(&mut state.dbm, dst, val as i64);
+                    state.domain.forget(dst);
+                    state.domain.assume_eq_imm(dst, val as i64);
                     state.types.set(dst, RegType::ScalarValue);
 
                     return true;

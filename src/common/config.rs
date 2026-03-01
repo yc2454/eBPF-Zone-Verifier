@@ -1,6 +1,18 @@
-// src/analysis/config.rs
+// src/common/config.rs
 //
 // Verifier configuration - controls analysis behavior via command-line flags.
+
+/// Abstract domain mode for numerical analysis
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DomainMode {
+    /// Zone domain (DBM) - tracks relational constraints x - y <= c
+    /// More precise, especially for packet bounds checking
+    #[default]
+    Zone,
+    /// Interval domain - kernel verifier style, per-register bounds only
+    /// Less precise but matches kernel behavior
+    Interval,
+}
 
 /// Verifier configuration options
 #[derive(Clone, Debug)]
@@ -10,6 +22,9 @@ pub struct VerifierConfig {
 
     /// Maximum instructions to process before aborting
     pub max_insn: usize,
+
+    /// Abstract domain mode (Zone or Interval)
+    pub domain_mode: DomainMode,
 
     /// Skip DBM (numeric) comparison in pruning - faster but less precise
     pub skip_dbm_check: bool,
@@ -32,6 +47,19 @@ pub struct VerifierConfig {
     /// A manual override for map file descriptors to sizes
     pub map_overrides: std::collections::HashMap<String, u32>,
 
+    /// Detect bounded loops via pattern matching (e.g., `if r != K goto loop_head`)
+    /// and allow early convergence without fully exploring all iterations.
+    /// This is a precision improvement over the kernel verifier.
+    /// Disabled automatically by --kernel-mode.
+    pub detect_bounded_loops: bool,
+
+    /// Require loops to have a single entry point (the loop head).
+    /// The kernel's bounded loop support uses dominator tree analysis which
+    /// requires this property. Code that jumps into the middle of a loop
+    /// (skipping over the loop head) is rejected with "back-edge" error.
+    /// Enabled automatically by --kernel-mode.
+    pub require_single_loop_entry: bool,
+
     // --- Benchmark Filters ---
     /// Filter benchmark by project (subdirectory name)
     pub bench_project: Option<String>,
@@ -51,14 +79,17 @@ impl Default for VerifierConfig {
     fn default() -> Self {
         Self {
             verbosity: 1,
-            max_insn: 1_000_0, // 1 million instructions to match modern kernel limits
+            max_insn: 1_000_000, // 1 million instructions to match modern kernel limits
+            domain_mode: DomainMode::Zone,
             skip_dbm_check: false,
-            use_widening: true, // Use widening by default to ensure termination
+            use_widening: false,
             max_states_per_pc: 8,
             log_interval: 100_000,
             debug_pc: None,
             enable_path_trace: false,
             map_overrides: std::collections::HashMap::new(),
+            detect_bounded_loops: true,        // Default: enabled for precision
+            require_single_loop_entry: false,  // Default: allow multi-entry loops
             bench_project: None,
             bench_compiler: None,
             bench_opt: None,
@@ -98,6 +129,26 @@ impl VerifierConfig {
                     }
                     "--enable-path-trace" => {
                         config.enable_path_trace = true;
+                    }
+                    "--kernel-mode" | "--interval" => {
+                        config.domain_mode = DomainMode::Interval;
+                        config.detect_bounded_loops = false; // Kernel doesn't detect bounded loops
+                        config.require_single_loop_entry = true;     // Kernel rejects unsupported loops
+                    }
+                    "--detect-bounded-loops" => {
+                        config.detect_bounded_loops = true;
+                    }
+                    "--no-detect-bounded-loops" => {
+                        config.detect_bounded_loops = false;
+                    }
+                    "--single-entry-loops" => {
+                        config.require_single_loop_entry = true;
+                    }
+                    "--multi-entry-loops" => {
+                        config.require_single_loop_entry = false;
+                    }
+                    "--zone-mode" | "--zone" => {
+                        config.domain_mode = DomainMode::Zone;
                     }
                     "--max-insn" => {
                         i += 1;
@@ -201,20 +252,32 @@ impl VerifierConfig {
         eprintln!("  -q, --quiet          Verbosity 0: errors only");
         eprintln!("  -v, --verbose        Verbosity 2: trace execution");
         eprintln!("  -vv, --very-verbose  Verbosity 3: full debug output");
+        eprintln!();
+        eprintln!("Domain Mode:");
+        eprintln!("  --kernel-mode        Simulate kernel verifier: interval domain + strict loops");
+        eprintln!("  --zone-mode          Use zone domain (default, more precise)");
+        eprintln!();
+        eprintln!("Loop Analysis (kernel-mode sets both automatically):");
+        eprintln!("  --detect-bounded-loops    Use pattern matching for early loop convergence");
+        eprintln!("  --no-detect-bounded-loops Disable bounded loop detection");
+        eprintln!("  --single-entry-loops      Reject loops with jumps into middle (kernel behavior)");
+        eprintln!("  --multi-entry-loops       Allow loops with any entry pattern (default)");
+        eprintln!();
+        eprintln!("Analysis Options:");
         eprintln!("  --skip-dbm           Skip DBM comparison in pruning (faster)");
-        eprintln!(
-            "  --use-widening       Use widening in pruning (DANGEROUS: might cause unsoundness)"
-        );
+        eprintln!("  --use-widening       Use widening in pruning (may cause unsoundness)");
         eprintln!("  --max-insn N         Max instructions to process (default: 1000000)");
         eprintln!("  --max-states N       Max states per PC for pruning (default: 8)");
         eprintln!("  --log-interval N     Heartbeat log interval (default: 100000)");
         eprintln!("  --debug-pc N         Force debug logging at specific PC");
         eprintln!("  --enable-path-trace  Enable path tracing for crash analysis");
+        eprintln!();
         eprintln!("Benchmark Filters:");
         eprintln!("  --project NAME       Filter by project subdirectory (e.g. 'cilium')");
         eprintln!("  --compiler NAME      Filter by compiler (e.g. 'clang-16')");
         eprintln!("  --opt LEVEL          Filter by optimization (e.g. '-O1')");
         eprintln!("  --source NAME        Filter by source program name (e.g. 'bpf_host')");
+        eprintln!();
         eprintln!("Benchmark Input:");
         eprintln!("  --input-list PATH    Path to file with list of ELF paths to analyze");
     }
