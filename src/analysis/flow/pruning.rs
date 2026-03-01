@@ -507,40 +507,52 @@ fn domain_subsumed_by(cur: &NumericDomain, old: &NumericDomain, live_regs: &Hash
     // critical for packet access safety and persist across calls.
     match (old, cur) {
         (NumericDomain::Zone(old_dbm), NumericDomain::Zone(cur_dbm)) => {
-            // Zone domain: check anchor-to-anchor constraints directly
-            let anchors = [Reg::AnchorData, Reg::AnchorDataEnd, Reg::AnchorDataMeta];
-            for &a in &anchors {
-                for &b in &anchors {
-                    if a == b {
-                        continue;
-                    }
-                    // old must be at least as permissive: old.get(a,b) >= cur.get(a,b)
-                    if old_dbm.get(a, b) < cur_dbm.get(a, b) {
-                        return false;
-                    }
-                }
-            }
+            zone_subsumed_by(old_dbm, cur_dbm)
         }
         (NumericDomain::Interval(old_ivl), NumericDomain::Interval(cur_ivl)) => {
-            // Interval domain: check packet_size_lower_bound and meta_size_lower_bound
-            // For subsumption, old must be MORE permissive (fewer constraints) than cur.
-            // If old requires a minimum packet size but cur doesn't, old does NOT subsume cur.
-            let old_pkt = old_ivl.get_packet_size_bound().unwrap_or(0);
-            let cur_pkt = cur_ivl.get_packet_size_bound().unwrap_or(0);
-            if old_pkt > cur_pkt {
-                return false;
-            }
-            let old_meta = old_ivl.get_meta_size_bound().unwrap_or(0);
-            let cur_meta = cur_ivl.get_meta_size_bound().unwrap_or(0);
-            if old_meta > cur_meta {
-                return false;
-            }
+            interval_subsumed_by(old_ivl, cur_ivl)
         }
         _ => {
             // Mismatched domain types - should not happen in normal operation
+            true
         }
     }
+}
 
+fn zone_subsumed_by(old_dbm: &crate::analysis::Dbm, cur_dbm: &crate::analysis::Dbm) -> bool {
+    // Zone domain: check anchor-to-anchor constraints directly
+    let anchors = [Reg::AnchorData, Reg::AnchorDataEnd, Reg::AnchorDataMeta];
+    for &a in &anchors {
+        for &b in &anchors {
+            if a == b {
+                continue;
+            }
+            // old must be at least as permissive: old.get(a,b) >= cur.get(a,b)
+            if old_dbm.get(a, b) < cur_dbm.get(a, b) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn interval_subsumed_by(
+    old_ivl: &crate::domains::interval::IntervalState,
+    cur_ivl: &crate::domains::interval::IntervalState,
+) -> bool {
+    // Interval domain: check packet_size_lower_bound and meta_size_lower_bound
+    // For subsumption, old must be MORE permissive (fewer constraints) than cur.
+    // If old requires a minimum packet size but cur doesn't, old does NOT subsume cur.
+    let old_pkt = old_ivl.get_packet_size_bound().unwrap_or(0);
+    let cur_pkt = cur_ivl.get_packet_size_bound().unwrap_or(0);
+    if old_pkt > cur_pkt {
+        return false;
+    }
+    let old_meta = old_ivl.get_meta_size_bound().unwrap_or(0);
+    let cur_meta = cur_ivl.get_meta_size_bound().unwrap_or(0);
+    if old_meta > cur_meta {
+        return false;
+    }
     true
 }
 

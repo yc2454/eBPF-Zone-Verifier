@@ -10,10 +10,10 @@ use crate::analysis::transfer::types::{
 };
 use crate::ast::ProgramKind;
 use crate::common::constants;
-use crate::parsing::btf::SpecialFieldKind;
-use crate::domains::numeric::NumericDomain;
 use crate::domains::interval::new_scalar_id;
+use crate::domains::numeric::NumericDomain;
 use crate::domains::tnum::Tnum;
+use crate::parsing::btf::SpecialFieldKind;
 use log::{debug, error, trace};
 
 use super::checks::{check_mem_size_pairs, validate_helper_args};
@@ -183,9 +183,7 @@ fn initialize_uninit_mem_args(
                 && matches!(ptr_arg_type, BpfArgType::PtrToUninitMem)
             {
                 if let RegType::PtrToStack { frame_level } = in_types.get(pair.ptr_reg) {
-                    if let Some(off) =
-                        state.domain.get_distance_fixed(pair.ptr_reg, Reg::R10)
-                    {
+                    if let Some(off) = state.domain.get_distance_fixed(pair.ptr_reg, Reg::R10) {
                         let (_, max_size) = state.domain.get_interval(pair.size_reg);
                         {
                             if max_size != i64::MAX && max_size > 0 {
@@ -253,9 +251,7 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
             state.domain.assume_le_imm(Reg::R0, 0xFFFF_FFFF);
             state.set_tnum(Reg::R0, Tnum::u32_unknown());
             // Assign scalar_id for tracking related scalars
-            if let NumericDomain::Interval(ivl) = &mut state.domain {
-                ivl.get_bounds_mut(Reg::R0).scalar_id = Some(new_scalar_id());
-            }
+            interval_set_scalar_id(&mut state.domain, Reg::R0);
         }
         constants::BPF_CSUM_DIFF => {
             // Returns a positive u32 (checksum) or negative error
@@ -370,4 +366,80 @@ fn check_and_handle_spin_lock(env: &mut VerifierEnv, state: &mut State, helper: 
         }
     }
     true
+}
+
+fn interval_set_scalar_id(domain: &mut NumericDomain, reg: Reg) {
+    if let NumericDomain::Interval(ivl) = domain {
+        ivl.get_bounds_mut(reg).scalar_id = Some(new_scalar_id());
+    }
+}
+
+fn restore_interval_ptr_offset_from_return(
+    domain: &mut NumericDomain,
+    ret_type: &RegType,
+    ret_interval_ptr_offset: (Option<i64>, Option<u64>, Option<i64>),
+) {
+    if let (Some(off), var_off_opt, range) = ret_interval_ptr_offset {
+        use crate::domains::interval::PtrOffset;
+
+        // Determine anchor from register type
+        let anchor = match ret_type {
+            RegType::PtrToPacket => Some(Reg::AnchorData),
+            RegType::PtrToPacketMeta => Some(Reg::AnchorDataMeta),
+            RegType::PtrToPacketEnd => Some(Reg::AnchorDataEnd),
+            _ => None,
+        };
+
+        if let Some(anchor) = anchor {
+            if let NumericDomain::Interval(ivl) = domain {
+                let var_off = var_off_opt.unwrap_or(0);
+                let ptr_offset = PtrOffset {
+                    anchor,
+                    off,
+                    var_off,
+                    range,
+                };
+                ivl.get_mut(Reg::R0).ptr_offset = Some(ptr_offset);
+            }
+        }
+    }
+}
+
+fn restore_callee_interval_packet_info(
+    domain: &mut NumericDomain,
+    caller_types: &crate::analysis::machine::reg_types::TypeState,
+    callee_saved_packet_info: Vec<(Reg, RegType, (Option<i64>, Option<u64>, Option<i64>))>,
+) {
+    for (reg, callee_type, (off_opt, var_off_opt, range)) in callee_saved_packet_info {
+        if let (Some(off), Some(range_val)) = (off_opt, range) {
+            let anchor = match callee_type {
+                RegType::PtrToPacket => Some(Reg::AnchorData),
+                RegType::PtrToPacketMeta => Some(Reg::AnchorDataMeta),
+                _ => None,
+            };
+
+            if let Some(anchor) = anchor {
+                if matches!(
+                    caller_types.get(reg),
+                    RegType::PtrToPacket | RegType::PtrToPacketMeta
+                ) {
+                    if let NumericDomain::Interval(ivl) = domain {
+                        if let Some(caller_ptr_off) = ivl.get_ptr_offset(reg) {
+                            if caller_ptr_off.anchor == anchor
+                                && caller_ptr_off.off == off
+                                && caller_ptr_off.var_off == var_off_opt.unwrap_or(0)
+                            {
+                                let caller_range = caller_ptr_off.range.unwrap_or(0);
+                                if range_val > caller_range {
+                                    let mut new_ptr_off = caller_ptr_off.clone();
+                                    new_ptr_off.range = Some(range_val);
+                                    ivl.get_mut(reg).ptr_offset = Some(new_ptr_off);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
