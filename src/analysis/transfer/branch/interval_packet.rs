@@ -142,21 +142,22 @@ fn refine_data_region_bounds(
     branch_taken: bool,
 ) {
     // Look for comparisons between pkt_data+offset and pkt_end
-    let (data_info, is_data_on_left, checked_reg) = if let Some(info) = get_packet_data_offset(state, left) {
-        if is_packet_end(state, right) {
-            (info, true, left)
+    let (data_info, is_data_on_left, checked_reg) =
+        if let Some(info) = get_packet_data_offset(state, left) {
+            if is_packet_end(state, right) {
+                (info, true, left)
+            } else {
+                return;
+            }
+        } else if let Some(info) = get_packet_data_offset(state, right) {
+            if is_packet_end(state, left) {
+                (info, false, right)
+            } else {
+                return;
+            }
         } else {
             return;
-        }
-    } else if let Some(info) = get_packet_data_offset(state, right) {
-        if is_packet_end(state, left) {
-            (info, false, right)
-        } else {
-            return;
-        }
-    } else {
-        return;
-    };
+        };
 
     let base_offset = data_info.offset;
     let checked_var_off = data_info.var_off;
@@ -349,20 +350,28 @@ fn propagate_packet_range_to_all_frames_stack(
             }
 
             // Check if this slot has compatible offset info
-            if let (Some(off), Some(var_off)) = (spilled.interval_off, spilled.interval_var_off) {
-                // Must have same var_off to be in the same "group"
-                if var_off != checked_var_off {
-                    continue;
-                }
+            use crate::analysis::machine::stack_state::PointerBounds;
+            if let Some(PointerBounds::Interval {
+                off,
+                var_off,
+                range,
+            }) = &mut spilled.ptr_bounds
+            {
+                if let (Some(o), Some(v)) = (*off, *var_off) {
+                    // Must have same var_off to be in the same "group"
+                    if v != checked_var_off {
+                        continue;
+                    }
 
-                // Calculate the range for this spilled pointer
-                let range_for_slot = proven_size.saturating_sub(off);
-                // Include range=0 for pointers at the boundary (offset == proven_size).
-                // This is needed for negative offset accesses like *(ptr + -N).
-                if range_for_slot >= 0 {
-                    let current_range = spilled.interval_range.unwrap_or(-1);
-                    if range_for_slot > current_range {
-                        spilled.interval_range = Some(range_for_slot);
+                    // Calculate the range for this spilled pointer
+                    let range_for_slot = proven_size.saturating_sub(o);
+                    // Include range=0 for pointers at the boundary (offset == proven_size).
+                    // This is needed for negative offset accesses like *(ptr + -N).
+                    if range_for_slot >= 0 {
+                        let current_range = range.unwrap_or(-1);
+                        if range_for_slot > current_range {
+                            *range = Some(range_for_slot);
+                        }
                     }
                 }
             }
@@ -373,11 +382,7 @@ fn propagate_packet_range_to_all_frames_stack(
 /// Propagate range to all meta pointer registers with compatible offsets.
 /// After proving that (pkt_meta + checked_off + var_off) <= pkt_data,
 /// any register R at (pkt_meta + R.off + var_off) can access (checked_off - R.off) bytes.
-fn propagate_meta_range(
-    state: &mut State,
-    checked_var_off: u64,
-    proven_size: i64,
-) {
+fn propagate_meta_range(state: &mut State, checked_var_off: u64, proven_size: i64) {
     // Get all meta pointer registers and update their ranges
     let mut updates: Vec<(Reg, i64)> = Vec::new();
 
@@ -435,20 +440,28 @@ fn propagate_meta_range_to_stack(state: &mut State, checked_var_off: u64, proven
             }
 
             // Check if this slot has compatible offset info
-            if let (Some(off), Some(var_off)) = (spilled.interval_off, spilled.interval_var_off) {
-                // Must have same var_off to be in the same "group"
-                if var_off != checked_var_off {
-                    continue;
-                }
+            use crate::analysis::machine::stack_state::PointerBounds;
+            if let Some(PointerBounds::Interval {
+                off,
+                var_off,
+                range,
+            }) = &mut spilled.ptr_bounds
+            {
+                if let (Some(o), Some(v)) = (*off, *var_off) {
+                    // Must have same var_off to be in the same "group"
+                    if v != checked_var_off {
+                        continue;
+                    }
 
-                // Calculate the range for this spilled pointer
-                let range_for_slot = proven_size.saturating_sub(off);
-                // Include range=0 for pointers at the boundary (offset == proven_size).
-                // This is needed for negative offset accesses like *(ptr + -N).
-                if range_for_slot >= 0 {
-                    let current_range = spilled.interval_range.unwrap_or(-1);
-                    if range_for_slot > current_range {
-                        spilled.interval_range = Some(range_for_slot);
+                    // Calculate the range for this spilled pointer
+                    let range_for_slot = proven_size.saturating_sub(o);
+                    // Include range=0 for pointers at the boundary (offset == proven_size).
+                    // This is needed for negative offset accesses like *(ptr + -N).
+                    if range_for_slot >= 0 {
+                        let current_range = range.unwrap_or(-1);
+                        if range_for_slot > current_range {
+                            *range = Some(range_for_slot);
+                        }
                     }
                 }
             }

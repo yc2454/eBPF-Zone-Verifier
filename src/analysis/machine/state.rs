@@ -179,18 +179,30 @@ impl State {
             RegType::ScalarValue
         };
 
-        // Only save anchor info for aligned U64 stores
-        let (anchor, anchor_lo, anchor_hi) = if size == MemSize::U64 && is_aligned {
-            self.save_anchor_info(reg)
+        // Save pointer bounds if applicable
+        let ptr_bounds = if size == MemSize::U64 && is_aligned {
+            use crate::analysis::machine::stack_state::PointerBounds;
+            let (i_off, i_var, i_range) = self.save_interval_ptr_offset(reg);
+            if i_off.is_some() || i_var.is_some() || i_range.is_some() {
+                Some(PointerBounds::Interval {
+                    off: i_off,
+                    var_off: i_var,
+                    range: i_range,
+                })
+            } else {
+                let (a, lo, hi) = self.save_anchor_info(reg);
+                if a.is_some() || lo.is_some() || hi.is_some() {
+                    Some(PointerBounds::Zone {
+                        anchor: a,
+                        anchor_lo: lo,
+                        anchor_hi: hi,
+                    })
+                } else {
+                    None
+                }
+            }
         } else {
-            (None, None, None)
-        };
-
-        // Save interval mode PtrOffset info
-        let (interval_off, interval_var_off, interval_range) = if size == MemSize::U64 && is_aligned {
-            self.save_interval_ptr_offset(reg)
-        } else {
-            (None, None, None)
+            None
         };
 
         let (min, max) = self.domain.get_interval(reg);
@@ -205,12 +217,7 @@ impl State {
             tnum: self.tnums.get(&reg).cloned().unwrap_or(Tnum::unknown()),
             bounds: ScalarBounds { min, max },
             size,
-            anchor,
-            anchor_lo,
-            anchor_hi,
-            interval_off,
-            interval_var_off,
-            interval_range,
+            ptr_bounds,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -230,12 +237,7 @@ impl State {
                             max: i64::MAX,
                         },
                         size,
-                        anchor: None,
-                        anchor_lo: None,
-                        anchor_hi: None,
-                        interval_off: None,
-                        interval_var_off: None,
-                        interval_range: None,
+                        ptr_bounds: None,
                     },
                 );
             }
@@ -277,12 +279,7 @@ impl State {
             tnum,
             bounds,
             size,
-            anchor: None,
-            anchor_lo: None,
-            anchor_hi: None,
-            interval_off: None,
-            interval_var_off: None,
-            interval_range: None,
+            ptr_bounds: None,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -302,12 +299,7 @@ impl State {
                             max: i64::MAX,
                         },
                         size,
-                        anchor: None,
-                        anchor_lo: None,
-                        anchor_hi: None,
-                        interval_off: None,
-                        interval_var_off: None,
-                        interval_range: None,
+                        ptr_bounds: None,
                     },
                 );
             }
@@ -351,7 +343,8 @@ impl State {
             // Preserve type and bounds
             self.types.set(dst, spilled.reg_type);
             self.tnums.insert(dst, spilled.tnum);
-            self.domain.assign_interval(dst, spilled.bounds.min, spilled.bounds.max);
+            self.domain
+                .assign_interval(dst, spilled.bounds.min, spilled.bounds.max);
 
             // Only restore anchors for U64 (pointers need full 64-bit)
             if size == MemSize::U64 {
@@ -403,55 +396,53 @@ impl State {
         trace!("Restoring anchor info for {}", reg.name());
         trace!("{:?}, ", spilled);
 
-        // Restore zone mode constraints
-        if let Some(anchor) = spilled.anchor {
-            if let Some(hi) = spilled.anchor_hi {
-                self.domain.add_constraint(reg, anchor, hi); // reg - anchor <= hi
+        use crate::analysis::machine::stack_state::PointerBounds;
+        match &spilled.ptr_bounds {
+            Some(PointerBounds::Zone {
+                anchor,
+                anchor_lo,
+                anchor_hi,
+            }) => {
+                if let Some(anchor_reg) = anchor {
+                    if let Some(hi) = anchor_hi {
+                        self.domain.add_constraint(reg, *anchor_reg, *hi); // reg - anchor <= hi
+                    }
+                    if let Some(lo) = anchor_lo {
+                        self.domain.add_constraint(*anchor_reg, reg, *lo); // anchor - reg <= lo
+                    }
+                    self.domain.close();
+                }
             }
-            if let Some(lo) = spilled.anchor_lo {
-                self.domain.add_constraint(anchor, reg, lo); // anchor - reg <= lo
-            }
-            self.domain.close();
-        }
-
-        // Restore interval mode PtrOffset
-        self.restore_interval_ptr_offset(reg, spilled);
-    }
-
-    /// Restore interval mode PtrOffset info for a register
-    fn restore_interval_ptr_offset(&mut self, reg: Reg, spilled: &SpilledReg) {
-        use crate::domains::numeric::NumericDomain;
-        use crate::domains::interval::PtrOffset;
-
-        // Only restore if we have interval mode data
-        if spilled.interval_off.is_none() {
-            return;
-        }
-
-        // Determine anchor from register type
-        let anchor = match spilled.reg_type {
-            RegType::PtrToPacket => Some(Reg::AnchorData),
-            RegType::PtrToPacketMeta => Some(Reg::AnchorDataMeta),
-            RegType::PtrToPacketEnd => Some(Reg::AnchorDataEnd),
-            RegType::PtrToStack { .. } => Some(Reg::R10),
-            _ => spilled.anchor, // fallback to saved anchor
-        };
-
-        if let (Some(anchor), Some(off)) = (anchor, spilled.interval_off) {
-            if let NumericDomain::Interval(ref mut ivl) = self.domain {
-                let var_off = spilled.interval_var_off.unwrap_or(0);
-                let range = spilled.interval_range;
-
-                let ptr_offset = PtrOffset {
-                    anchor,
-                    off,
-                    var_off,
-                    range,
+            Some(PointerBounds::Interval {
+                off,
+                var_off,
+                range,
+            }) => {
+                // Determine anchor from register type
+                let anchor = match spilled.reg_type {
+                    RegType::PtrToPacket => Some(Reg::AnchorData),
+                    RegType::PtrToPacketMeta => Some(Reg::AnchorDataMeta),
+                    RegType::PtrToPacketEnd => Some(Reg::AnchorDataEnd),
+                    RegType::PtrToStack { .. } => Some(Reg::R10),
+                    _ => None, // fallback is None
                 };
 
-                // Set the PtrOffset on the register
-                ivl.get_mut(reg).ptr_offset = Some(ptr_offset);
+                if let (Some(anchor_reg), Some(o)) = (anchor, off) {
+                    if let NumericDomain::Interval(ref mut ivl) = self.domain {
+                        let v = var_off.unwrap_or(0);
+                        let ptr_offset = crate::domains::interval::PtrOffset {
+                            anchor: anchor_reg,
+                            off: *o,
+                            var_off: v,
+                            range: *range,
+                        };
+
+                        // Set the PtrOffset on the register
+                        ivl.get_mut(reg).ptr_offset = Some(ptr_offset);
+                    }
+                }
             }
+            None => {}
         }
     }
 
