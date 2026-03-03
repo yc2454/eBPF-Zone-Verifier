@@ -97,6 +97,57 @@ fn mem_size_bytes(sz: MemSize) -> i64 {
     }
 }
 
+fn hash_v1_pred_context(
+    pred_pc: usize,
+    dst: Reg,
+    src: Reg,
+    d_dst_data: i64,
+    d_data_end: i64,
+    src_umax: i64,
+) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    pred_pc.hash(&mut h);
+    dst.idx().hash(&mut h);
+    src.idx().hash(&mut h);
+    d_dst_data.hash(&mut h);
+    d_data_end.hash(&mut h);
+    src_umax.hash(&mut h);
+    h.finish()
+}
+
+fn compute_v1_pred_fingerprint_from_interval(
+    pre_state: &State,
+    pred_instr: &Instr,
+    ob: &EdgeObligation,
+) -> Option<u64> {
+    let Instr::Alu {
+        op: AluOp::Add,
+        dst,
+        src: Operand::Reg(src),
+        ..
+    } = pred_instr
+    else {
+        return None;
+    };
+    let target_i = Reg::idx_to_reg(ob.target.i)?;
+    let target_j = Reg::idx_to_reg(ob.target.j)?;
+    if target_i != *dst || target_j != Reg::AnchorDataEnd {
+        return None;
+    }
+    let ivl = pre_state.domain.as_interval()?;
+    let d_dst_data = prestate_bound(ivl, *dst, Reg::AnchorData)?;
+    let d_data_end = prestate_bound(ivl, Reg::AnchorData, Reg::AnchorDataEnd)?;
+    let src_umax = ivl.get_bounds(*src).umax as i64;
+    Some(hash_v1_pred_context(
+        pre_state.pc,
+        *dst,
+        *src,
+        d_dst_data,
+        d_data_end,
+        src_umax,
+    ))
+}
+
 /// v1 producer: derive obligations from zone DBM on edges shaped as
 /// `dst += src` followed by `load [dst + off]`.
 pub fn generate_v1_obligations_from_zone(prog: &Program, dbms: &[Dbm]) -> Vec<EdgeObligation> {
@@ -147,7 +198,9 @@ pub fn generate_v1_obligations_from_zone(prog: &Program, dbms: &[Dbm]) -> Vec<Ed
         out.push(EdgeObligation {
             pred_pc,
             succ_pc,
-            pred_fingerprint: 0, // wildcard for v1
+            pred_fingerprint: hash_v1_pred_context(
+                pred_pc, *dst, *src, d_dst_data, d_data_end, src_umax,
+            ),
             target: Constraint {
                 i: dst.idx(),
                 j: Reg::AnchorDataEnd.idx(),
@@ -277,13 +330,15 @@ pub fn apply_certificate_aided_refinement(
     if !matches!(succ_state.domain, NumericDomain::Interval(_)) {
         return;
     }
-    let pre_fp = state_fingerprint(pre_state);
-
     for ob in &cert.obligations {
         if ob.pred_pc != pre_state.pc || ob.succ_pc != succ_state.pc {
             continue;
         }
-        if ob.pred_fingerprint != 0 && ob.pred_fingerprint != pre_fp {
+        let Some(pre_fp) = compute_v1_pred_fingerprint_from_interval(pre_state, pred_instr, ob)
+        else {
+            continue;
+        };
+        if ob.pred_fingerprint != pre_fp {
             continue;
         }
         let Some(i) = Reg::idx_to_reg(ob.target.i) else {
@@ -359,30 +414,4 @@ pub fn apply_certificate_aided_refinement(
         }
         apply_verified_packet_end_fact(succ_state, &ob.target);
     }
-}
-
-pub fn state_fingerprint(state: &State) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    state.pc.hash(&mut hasher);
-    for reg in Reg::ALL {
-        format!("{:?}", state.types.get(reg)).hash(&mut hasher);
-        format!("{:?}", state.get_tnum(reg)).hash(&mut hasher);
-        let (lo, hi) = state.domain.get_interval(reg);
-        lo.hash(&mut hasher);
-        hi.hash(&mut hasher);
-    }
-    if let Some(ivl) = state.domain.as_interval() {
-        for reg in Reg::ALL {
-            if let Some(po) = ivl.get_ptr_offset(reg) {
-                reg.idx().hash(&mut hasher);
-                po.anchor.idx().hash(&mut hasher);
-                po.off.hash(&mut hasher);
-                po.var_off.hash(&mut hasher);
-                po.range.hash(&mut hasher);
-            }
-        }
-        ivl.get_packet_size_bound().hash(&mut hasher);
-        ivl.get_meta_size_bound().hash(&mut hasher);
-    }
-    hasher.finish()
 }
