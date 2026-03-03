@@ -8,7 +8,8 @@ mod testing;
 mod domains;
 
 use crate::ast::ProgramKind;
-use crate::common::config::VerifierConfig;
+use crate::common::config::{DomainMode, VerifierConfig};
+use crate::domains::annotation::ProgramAnnotation;
 use crate::parsing::elf::program_kind_for_object;
 use crate::parsing::elf::{list_section_names, load_maps, load_raw_programs};
 use crate::testing::bcf_benchmark::analyze_benchmark;
@@ -58,6 +59,22 @@ fn main() {
 
     // Parse config flags and get remaining positional args
     let (config, remaining) = VerifierConfig::from_args(&args[1..]);
+
+    if config.annotation_output.is_some() && config.annotation_input.is_some() {
+        eprintln!("Error: --generate-annotation and --check-annotation cannot be used together");
+        return;
+    }
+    if config.annotation_output.is_some() && config.domain_mode != DomainMode::Zone {
+        eprintln!("Error: --generate-annotation currently requires --zone-mode");
+        return;
+    }
+
+    if let Some(path) = &config.annotation_input {
+        if let Err(e) = ProgramAnnotation::load_from_path(path) {
+            eprintln!("Error: invalid annotation file '{}': {e:#}", path);
+            return;
+        }
+    }
 
     // Initialize logging
     logging::VerifierLogger::init(config.verbosity);

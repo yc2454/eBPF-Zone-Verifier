@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
@@ -21,6 +22,7 @@ use crate::analysis::machine::reg::Reg;
 use crate::ast::{AttachKind, ProgramKind};
 use crate::common::config::VerifierConfig;
 use crate::common::constants;
+use crate::domains::annotation::ProgramAnnotation;
 use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::parsing::bpf_to_ast::{LowerErrorKind, lower_raw_to_program};
 use crate::parsing::btf::{BtfContext, BtfMember, BtfType};
@@ -543,6 +545,19 @@ fn make_entry_state() -> Dbm {
     dbm
 }
 
+fn compute_program_hash(raw_insns: &[RawBpfInsn]) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    raw_insns.len().hash(&mut hasher);
+    for insn in raw_insns {
+        insn.code.hash(&mut hasher);
+        insn.dst.hash(&mut hasher);
+        insn.src.hash(&mut hasher);
+        insn.off.hash(&mut hasher);
+        insn.imm.hash(&mut hasher);
+    }
+    format!("{:016x}", hasher.finish())
+}
+
 // ============================================================================
 // Run Single Test
 // ============================================================================
@@ -1049,6 +1064,12 @@ pub fn selftest_single(json_path: &str, test_name: &str, config: &VerifierConfig
     if matching.len() > 1 {
         eprintln!("Multiple tests match '{}', running all:\n", test_name);
     }
+    if matching.len() > 1 && config.annotation_output.is_some() {
+        eprintln!(
+            "Error: --generate-annotation with selftest-single requires exactly one matching test"
+        );
+        return;
+    }
 
     for test in matching {
         println!("Test: {}", test.name);
@@ -1063,6 +1084,17 @@ pub fn selftest_single(json_path: &str, test_name: &str, config: &VerifierConfig
         println!();
 
         let result = run_test(test, config);
+
+        if let Some(path) = &config.annotation_output
+            && matches!(result.outcome, TestOutcome::Pass)
+        {
+            let raw_insns: Vec<RawBpfInsn> = test.insns.iter().map(|j| j.into()).collect();
+            let ann = ProgramAnnotation::empty(compute_program_hash(&raw_insns));
+            match ann.save_to_path(path) {
+                Ok(()) => println!("Annotation written: {}", path),
+                Err(e) => eprintln!("Warning: failed to write annotation '{}': {e:#}", path),
+            }
+        }
 
         match &result.outcome {
             TestOutcome::Pass => {

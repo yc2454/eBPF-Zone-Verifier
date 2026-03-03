@@ -73,6 +73,11 @@ pub struct VerifierConfig {
     // --- Benchmark Input ---
     /// Optional: Path to a file containing a list of ELF paths to analyze
     pub bench_input_file: Option<String>,
+
+    /// Optional path to write generated PCC annotation JSON.
+    pub annotation_output: Option<String>,
+    /// Optional path to load and check PCC annotation JSON.
+    pub annotation_input: Option<String>,
 }
 
 impl Default for VerifierConfig {
@@ -95,6 +100,8 @@ impl Default for VerifierConfig {
             bench_opt: None,
             bench_source: None,
             bench_input_file: None,
+            annotation_output: None,
+            annotation_input: None,
         }
     }
 }
@@ -232,6 +239,18 @@ impl VerifierConfig {
                             config.bench_input_file = Some(args[i].clone());
                         }
                     }
+                    "--generate-annotation" => {
+                        i += 1;
+                        if i < args.len() {
+                            config.annotation_output = Some(args[i].clone());
+                        }
+                    }
+                    "--check-annotation" => {
+                        i += 1;
+                        if i < args.len() {
+                            config.annotation_input = Some(args[i].clone());
+                        }
+                    }
                     _ => {
                         eprintln!("Warning: Unknown flag '{}'", arg);
                     }
@@ -280,5 +299,9 @@ impl VerifierConfig {
         eprintln!();
         eprintln!("Benchmark Input:");
         eprintln!("  --input-list PATH    Path to file with list of ELF paths to analyze");
+        eprintln!();
+        eprintln!("PCC Annotation (experimental):");
+        eprintln!("  --generate-annotation PATH  Generate annotation JSON to PATH");
+        eprintln!("  --check-annotation PATH     Load/check annotation JSON from PATH");
     }
 }
