@@ -8,7 +8,6 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
@@ -22,7 +21,7 @@ use crate::analysis::machine::reg::Reg;
 use crate::ast::{AttachKind, ProgramKind};
 use crate::common::config::VerifierConfig;
 use crate::common::constants;
-use crate::domains::annotation::ProgramAnnotation;
+use crate::domains::annotation::{ProgramAnnotation, generate_v1_obligations_for_program, program_hash};
 use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::parsing::bpf_to_ast::{LowerErrorKind, lower_raw_to_program};
 use crate::parsing::btf::{BtfContext, BtfMember, BtfType};
@@ -543,19 +542,6 @@ fn make_entry_state() -> Dbm {
     let mut dbm = Dbm::new();
     assign_zero(&mut dbm, Reg::R10);
     dbm
-}
-
-fn compute_program_hash(raw_insns: &[RawBpfInsn]) -> String {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    raw_insns.len().hash(&mut hasher);
-    for insn in raw_insns {
-        insn.code.hash(&mut hasher);
-        insn.dst.hash(&mut hasher);
-        insn.src.hash(&mut hasher);
-        insn.off.hash(&mut hasher);
-        insn.imm.hash(&mut hasher);
-    }
-    format!("{:016x}", hasher.finish())
 }
 
 // ============================================================================
@@ -1089,7 +1075,15 @@ pub fn selftest_single(json_path: &str, test_name: &str, config: &VerifierConfig
             && matches!(result.outcome, TestOutcome::Pass)
         {
             let raw_insns: Vec<RawBpfInsn> = test.insns.iter().map(|j| j.into()).collect();
-            let ann = ProgramAnnotation::empty(compute_program_hash(&raw_insns));
+            let program = match lower_raw_to_program(&raw_insns) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("Warning: cannot generate annotation, lowering failed: {:?}", e);
+                    continue;
+                }
+            };
+            let mut ann = ProgramAnnotation::empty(program_hash(&program));
+            ann.obligations = generate_v1_obligations_for_program(&program);
             match ann.save_to_path(path) {
                 Ok(()) => println!("Annotation written: {}", path),
                 Err(e) => eprintln!("Warning: failed to write annotation '{}': {e:#}", path),

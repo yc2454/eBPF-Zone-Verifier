@@ -58,7 +58,7 @@ fn main() {
     }
 
     // Parse config flags and get remaining positional args
-    let (config, remaining) = VerifierConfig::from_args(&args[1..]);
+    let (mut config, remaining) = VerifierConfig::from_args(&args[1..]);
 
     if config.annotation_output.is_some() && config.annotation_input.is_some() {
         eprintln!("Error: --generate-annotation and --check-annotation cannot be used together");
@@ -70,10 +70,13 @@ fn main() {
     }
 
     if let Some(path) = &config.annotation_input {
-        if let Err(e) = ProgramAnnotation::load_from_path(path) {
-            eprintln!("Error: invalid annotation file '{}': {e:#}", path);
-            return;
-        }
+        match ProgramAnnotation::load_from_path(path) {
+            Ok(ann) => config.annotation = Some(ann),
+            Err(e) => {
+                eprintln!("Error: invalid annotation file '{}': {e:#}", path);
+                return;
+            }
+        };
     }
 
     // Initialize logging

@@ -2,6 +2,8 @@
 //
 // Verifier configuration - controls analysis behavior via command-line flags.
 
+use crate::domains::annotation::ProgramAnnotation;
+
 /// Abstract domain mode for numerical analysis
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DomainMode {
@@ -78,6 +80,8 @@ pub struct VerifierConfig {
     pub annotation_output: Option<String>,
     /// Optional path to load and check PCC annotation JSON.
     pub annotation_input: Option<String>,
+    /// Parsed annotation payload (loaded in main when --check-annotation is used).
+    pub annotation: Option<ProgramAnnotation>,
 }
 
 impl Default for VerifierConfig {
@@ -102,6 +106,7 @@ impl Default for VerifierConfig {
             bench_input_file: None,
             annotation_output: None,
             annotation_input: None,
+            annotation: None,
         }
     }
 }

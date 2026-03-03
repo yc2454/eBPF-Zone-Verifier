@@ -9,6 +9,7 @@ use crate::analysis::machine::frame_stack::FrameLevel;
 use crate::analysis::machine::reg::Reg;
 use crate::ast::Program;
 use crate::common::config::{DomainMode, VerifierConfig};
+use crate::domains::annotation::{program_hash, verify_and_apply_edge_obligations};
 use crate::domains::dbm::Dbm;
 use crate::domains::numeric::NumericDomain;
 use log::{debug, error, info};
@@ -27,7 +28,16 @@ pub fn analyze_program(
     config: &VerifierConfig,
 ) -> Result<Vec<Dbm>, VerificationError> {
     // 1. Initialize Verifier Environment and control flow checks
-    let mut env = VerifierEnv::new(ctx, prog);
+    let mut env = VerifierEnv::new(ctx, prog, config.annotation.clone());
+    if let Some(ref ann) = env.annotation
+        && ann.program_hash != program_hash(prog)
+    {
+        info!(
+            target: "app",
+            "[PCC] Annotation program hash mismatch; disabling annotation checks"
+        );
+        env.annotation = None;
+    }
 
     if config.verbosity >= 1 {
         info!(target: "app", "[Analysis] Running Static Analysis Passes...");
@@ -154,7 +164,13 @@ pub fn analyze_program(
                state.pc, instr, state.types.reg_types_str(), state.tnums_to_string());
 
         // F. Transfer Function
-        let successors = transfer::transfer(&mut env, state, instr);
+        let pre_state = state.clone();
+        let mut successors = transfer::transfer(&mut env, state, instr);
+        if let Some(ref ann) = env.annotation {
+            for succ in &mut successors {
+                verify_and_apply_edge_obligations(ann, &pre_state, instr, succ);
+            }
+        }
 
         // G. Critical Failure Check
         if env.failed() {
