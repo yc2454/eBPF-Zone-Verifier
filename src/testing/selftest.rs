@@ -27,7 +27,7 @@ use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::parsing::bpf_to_ast::{LowerErrorKind, lower_raw_to_program};
 use crate::parsing::btf::{BtfContext, BtfMember, BtfType};
 use crate::parsing::elf::{BpfMapDef, RelocInfo, RelocKind};
-use crate::pcc::{ProgramCertificate, generate_v1_obligations_for_program, program_hash};
+use crate::pcc::{ProgramCertificate, generate_v1_obligations_from_zone, program_hash};
 
 // ============================================================================
 // JSON Deserialization Types
@@ -1085,7 +1085,23 @@ pub fn selftest_single(json_path: &str, test_name: &str, config: &VerifierConfig
                 }
             };
             let mut cert = ProgramCertificate::empty(program_hash(&program));
-            cert.obligations = generate_v1_obligations_for_program(&program);
+            let (ctx, has_unsupported_fixup) = build_exec_context(test);
+            if has_unsupported_fixup {
+                eprintln!("Warning: certificate generation skipped due to unsupported fixup type");
+                continue;
+            }
+            let entry = make_entry_state();
+            let zone_dbms = match analysis::analyze_program(&ctx, &program, entry, config) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: certificate generation failed during zone analysis: {}",
+                        e.description()
+                    );
+                    continue;
+                }
+            };
+            cert.obligations = generate_v1_obligations_from_zone(&program, &zone_dbms);
             match cert.save_to_path(path) {
                 Ok(()) => println!("Certificate written: {}", path),
                 Err(e) => eprintln!("Warning: failed to write certificate '{}': {e:#}", path),

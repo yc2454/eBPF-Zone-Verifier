@@ -6,6 +6,7 @@ use std::hash::{Hash, Hasher};
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, Instr, MemSize, Operand, Program};
+use crate::domains::dbm::{Dbm, INF};
 use crate::domains::interval::IntervalState;
 use crate::domains::numeric::NumericDomain;
 
@@ -87,68 +88,88 @@ pub fn program_hash(prog: &Program) -> String {
     format!("{:016x}", hasher.finish())
 }
 
-/// v1 producer for a single motivating pattern.
-pub fn generate_v1_obligations_for_program(prog: &Program) -> Vec<EdgeObligation> {
-    // Match the motivating shape:
-    // pc9:  r5 += r4
-    // pc10: *(u32 *)(r5 + 0)
-    if prog.instrs.len() <= 10 {
-        return Vec::new();
+fn mem_size_bytes(sz: MemSize) -> i64 {
+    match sz {
+        MemSize::U8 => 1,
+        MemSize::U16 => 2,
+        MemSize::U32 => 4,
+        MemSize::U64 => 8,
     }
-    let Some(Instr::Alu {
-        op: AluOp::Add,
-        dst,
-        src,
-        ..
-    }) = prog.instrs.get(9)
-    else {
-        return Vec::new();
-    };
-    let Some(Instr::Load {
-        size: MemSize::U32,
-        base,
-        off: 0,
-        ..
-    }) = prog.instrs.get(10)
-    else {
-        return Vec::new();
-    };
-    let Operand::Reg(src_reg) = src else {
-        return Vec::new();
-    };
-    if *dst != Reg::R5 || *src_reg != Reg::R4 || *base != Reg::R5 {
-        return Vec::new();
-    }
+}
 
-    // Pre-state chain:
-    // r5 - @data <= 0
-    // @data - @data_end <= -8
-    // pre-sum => r5 - @data_end <= -8
-    // transfer through r5 += r4 with umax(r4)=3 => post <= -5
-    vec![EdgeObligation {
-        pred_pc: 9,
-        succ_pc: 10,
-        pred_fingerprint: 0, // wildcard for v1
-        target: Constraint {
-            i: Reg::R5.idx(),
-            j: Reg::AnchorDataEnd.idx(),
-            c: -5,
-        },
-        proof: vec![
-            ProofStep {
-                from: Reg::R5.idx(),
-                to: Reg::AnchorData.idx(),
-                weight: 0,
-                source: ProofSource::PreState,
+/// v1 producer: derive obligations from zone DBM on edges shaped as
+/// `dst += src` followed by `load [dst + off]`.
+pub fn generate_v1_obligations_from_zone(prog: &Program, dbms: &[Dbm]) -> Vec<EdgeObligation> {
+    let mut out = Vec::new();
+    if prog.instrs.len() < 2 {
+        return out;
+    }
+    for pred_pc in 0..(prog.instrs.len() - 1) {
+        let Some(Instr::Alu {
+            op: AluOp::Add,
+            dst,
+            src: Operand::Reg(src),
+            ..
+        }) = prog.instrs.get(pred_pc)
+        else {
+            continue;
+        };
+        let succ_pc = pred_pc + 1;
+        let Some(Instr::Load {
+            size, base, off, ..
+        }) = prog.instrs.get(succ_pc)
+        else {
+            continue;
+        };
+        if base != dst {
+            continue;
+        }
+        let Some(dbm) = dbms.get(pred_pc) else {
+            continue;
+        };
+        let d_dst_data = dbm.get(*dst, Reg::AnchorData);
+        let d_data_end = dbm.get(Reg::AnchorData, Reg::AnchorDataEnd);
+        let src_umax = dbm.get(*src, Reg::Zero);
+        if d_dst_data >= INF || d_data_end >= INF || src_umax >= INF {
+            continue;
+        }
+        let Some(pre_sum) = d_dst_data.checked_add(d_data_end) else {
+            continue;
+        };
+        let Some(target_c) = pre_sum.checked_add(src_umax) else {
+            continue;
+        };
+        // Emit only obligations that are immediately useful for this load.
+        let access_need = -((*off as i64) + mem_size_bytes(*size));
+        if target_c > access_need {
+            continue;
+        }
+        out.push(EdgeObligation {
+            pred_pc,
+            succ_pc,
+            pred_fingerprint: 0, // wildcard for v1
+            target: Constraint {
+                i: dst.idx(),
+                j: Reg::AnchorDataEnd.idx(),
+                c: target_c,
             },
-            ProofStep {
-                from: Reg::AnchorData.idx(),
-                to: Reg::AnchorDataEnd.idx(),
-                weight: -8,
-                source: ProofSource::PreState,
-            },
-        ],
-    }]
+            proof: vec![
+                ProofStep {
+                    from: dst.idx(),
+                    to: Reg::AnchorData.idx(),
+                    weight: d_dst_data,
+                    source: ProofSource::PreState,
+                },
+                ProofStep {
+                    from: Reg::AnchorData.idx(),
+                    to: Reg::AnchorDataEnd.idx(),
+                    weight: d_data_end,
+                    source: ProofSource::PreState,
+                },
+            ],
+        });
+    }
+    out
 }
 
 fn checked_sum(weights: impl Iterator<Item = i64>) -> Option<i64> {
