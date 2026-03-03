@@ -9,9 +9,9 @@ use crate::ast::{AluOp, Instr, MemSize, Operand, Program};
 use crate::domains::interval::IntervalState;
 use crate::domains::numeric::NumericDomain;
 
-/// Top-level PCC annotation container.
+/// Top-level PCC certificate container.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ProgramAnnotation {
+pub struct ProgramCertificate {
     pub version: u32,
     pub program_hash: String,
     pub obligations: Vec<EdgeObligation>,
@@ -47,7 +47,7 @@ pub struct ProofStep {
     pub source: ProofSource,
 }
 
-impl ProgramAnnotation {
+impl ProgramCertificate {
     #[allow(dead_code)]
     pub const VERSION_V1: u32 = 1;
 
@@ -62,17 +62,16 @@ impl ProgramAnnotation {
 
     pub fn load_from_path(path: &str) -> Result<Self> {
         let raw = fs::read_to_string(path)
-            .with_context(|| format!("failed to read annotation file '{}'", path))?;
+            .with_context(|| format!("failed to read certificate file '{}'", path))?;
         serde_json::from_str(&raw)
-            .with_context(|| format!("failed to parse annotation JSON '{}'", path))
+            .with_context(|| format!("failed to parse certificate JSON '{}'", path))
     }
 
     #[allow(dead_code)]
     pub fn save_to_path(&self, path: &str) -> Result<()> {
-        let raw = serde_json::to_string_pretty(self)
-            .context("failed to serialize annotation JSON")?;
-        fs::write(path, raw)
-            .with_context(|| format!("failed to write annotation file '{}'", path))
+        let raw =
+            serde_json::to_string_pretty(self).context("failed to serialize certificate JSON")?;
+        fs::write(path, raw).with_context(|| format!("failed to write certificate file '{}'", path))
     }
 }
 
@@ -96,10 +95,22 @@ pub fn generate_v1_obligations_for_program(prog: &Program) -> Vec<EdgeObligation
     if prog.instrs.len() <= 10 {
         return Vec::new();
     }
-    let Some(Instr::Alu { op: AluOp::Add, dst, src, .. }) = prog.instrs.get(9) else {
+    let Some(Instr::Alu {
+        op: AluOp::Add,
+        dst,
+        src,
+        ..
+    }) = prog.instrs.get(9)
+    else {
         return Vec::new();
     };
-    let Some(Instr::Load { size: MemSize::U32, base, off: 0, .. }) = prog.instrs.get(10) else {
+    let Some(Instr::Load {
+        size: MemSize::U32,
+        base,
+        off: 0,
+        ..
+    }) = prog.instrs.get(10)
+    else {
         return Vec::new();
     };
     let Operand::Reg(src_reg) = src else {
@@ -153,11 +164,15 @@ fn prestate_bound(ivl: &IntervalState, i: Reg, j: Reg) -> Option<i64> {
         return Some(0);
     }
     // reg - anchor <= off + var_off
-    if j.is_anchor() && let Some(po) = ivl.get_ptr_offset(i) && po.anchor == j {
+    if j.is_anchor()
+        && let Some(po) = ivl.get_ptr_offset(i)
+        && po.anchor == j
+    {
         return Some(po.off.saturating_add(po.var_off as i64));
     }
     // @data - @data_end <= -packet_size_lower_bound
-    if i == Reg::AnchorData && j == Reg::AnchorDataEnd
+    if i == Reg::AnchorData
+        && j == Reg::AnchorDataEnd
         && let Some(min_pkt) = ivl.get_packet_size_bound()
     {
         return Some(-(min_pkt as i64));
@@ -221,8 +236,18 @@ fn apply_verified_packet_end_fact(succ_state: &mut State, target: &Constraint) {
     }
 }
 
-pub fn verify_and_apply_edge_obligations(
-    ann: &ProgramAnnotation,
+/// Applies certificate-aided refinement on a single CFG edge.
+///
+/// This function is called after transfer creates a successor state. It verifies
+/// all matching edge obligations against the predecessor state + instruction
+/// semantics, and applies only the narrow packet-range refinement when proofs
+/// are valid.
+///
+/// Fail-closed behavior:
+/// - Any malformed or unsupported obligation is ignored.
+/// - Analysis continues with baseline semantics.
+pub fn apply_certificate_aided_refinement(
+    cert: &ProgramCertificate,
     pre_state: &State,
     pred_instr: &Instr,
     succ_state: &mut State,
@@ -233,7 +258,7 @@ pub fn verify_and_apply_edge_obligations(
     }
     let pre_fp = state_fingerprint(pre_state);
 
-    for ob in &ann.obligations {
+    for ob in &cert.obligations {
         if ob.pred_pc != pre_state.pc || ob.succ_pc != succ_state.pc {
             continue;
         }
@@ -303,7 +328,8 @@ pub fn verify_and_apply_edge_obligations(
         let Some(pre_sum) = checked_sum(ob.proof.iter().map(|s| s.weight)) else {
             continue;
         };
-        let Some(post_bound) = apply_add_reg_transfer_to_bound(pre_state, pred_instr, i, j, pre_sum)
+        let Some(post_bound) =
+            apply_add_reg_transfer_to_bound(pre_state, pred_instr, i, j, pre_sum)
         else {
             continue;
         };

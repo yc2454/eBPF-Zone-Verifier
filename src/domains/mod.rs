@@ -8,7 +8,6 @@
 
 pub mod interval;
 pub mod numeric;
-pub mod annotation;
 pub mod tnum;
 pub mod zone;
 

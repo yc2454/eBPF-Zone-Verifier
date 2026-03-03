@@ -184,7 +184,6 @@ pub(crate) fn fits_in_u32(bounds: (i64, i64)) -> bool {
     bounds.0 >= 0 && bounds.1 <= 0xFFFFFFFF
 }
 
-
 /// Get combined signed bounds for a register using both DBM and tnum.
 /// Returns (lo, hi) as signed i64 values, using the tighter bound from each source.
 pub(crate) fn get_combined_signed_bounds(state: &State, reg: Reg) -> (i64, i64) {

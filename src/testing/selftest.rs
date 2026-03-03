@@ -21,13 +21,13 @@ use crate::analysis::machine::reg::Reg;
 use crate::ast::{AttachKind, ProgramKind};
 use crate::common::config::VerifierConfig;
 use crate::common::constants;
-use crate::domains::annotation::{ProgramAnnotation, generate_v1_obligations_for_program, program_hash};
+use crate::domains::dbm::Dbm;
+use crate::domains::domain::assign_zero;
 use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::parsing::bpf_to_ast::{LowerErrorKind, lower_raw_to_program};
 use crate::parsing::btf::{BtfContext, BtfMember, BtfType};
 use crate::parsing::elf::{BpfMapDef, RelocInfo, RelocKind};
-use crate::domains::dbm::Dbm;
-use crate::domains::domain::assign_zero;
+use crate::pcc::{ProgramCertificate, generate_v1_obligations_for_program, program_hash};
 
 // ============================================================================
 // JSON Deserialization Types
@@ -575,8 +575,7 @@ pub fn run_test(test: &JsonTestCase, config: &VerifierConfig) -> TestResult {
                         && matches!(e.kind, LowerErrorKind::InvalidLDIMM64))
                     || (s.contains("invalid destination")
                         && matches!(e.kind, LowerErrorKind::CallTargetOutOfBounds))
-                    || ((s.contains("reserved fields")
-                        || s.contains("BPF_CALL uses reserved"))
+                    || ((s.contains("reserved fields") || s.contains("BPF_CALL uses reserved"))
                         && matches!(
                             e.kind,
                             LowerErrorKind::CallUsedReservedFields | LowerErrorKind::InvalidSrcReg
@@ -1050,9 +1049,9 @@ pub fn selftest_single(json_path: &str, test_name: &str, config: &VerifierConfig
     if matching.len() > 1 {
         eprintln!("Multiple tests match '{}', running all:\n", test_name);
     }
-    if matching.len() > 1 && config.annotation_output.is_some() {
+    if matching.len() > 1 && config.certificate_output.is_some() {
         eprintln!(
-            "Error: --generate-annotation with selftest-single requires exactly one matching test"
+            "Error: --generate-certificate with selftest-single requires exactly one matching test"
         );
         return;
     }
@@ -1071,22 +1070,25 @@ pub fn selftest_single(json_path: &str, test_name: &str, config: &VerifierConfig
 
         let result = run_test(test, config);
 
-        if let Some(path) = &config.annotation_output
+        if let Some(path) = &config.certificate_output
             && matches!(result.outcome, TestOutcome::Pass)
         {
             let raw_insns: Vec<RawBpfInsn> = test.insns.iter().map(|j| j.into()).collect();
             let program = match lower_raw_to_program(&raw_insns) {
                 Ok(p) => p,
                 Err(e) => {
-                    eprintln!("Warning: cannot generate annotation, lowering failed: {:?}", e);
+                    eprintln!(
+                        "Warning: cannot generate annotation, lowering failed: {:?}",
+                        e
+                    );
                     continue;
                 }
             };
-            let mut ann = ProgramAnnotation::empty(program_hash(&program));
-            ann.obligations = generate_v1_obligations_for_program(&program);
-            match ann.save_to_path(path) {
-                Ok(()) => println!("Annotation written: {}", path),
-                Err(e) => eprintln!("Warning: failed to write annotation '{}': {e:#}", path),
+            let mut cert = ProgramCertificate::empty(program_hash(&program));
+            cert.obligations = generate_v1_obligations_for_program(&program);
+            match cert.save_to_path(path) {
+                Ok(()) => println!("Certificate written: {}", path),
+                Err(e) => eprintln!("Warning: failed to write certificate '{}': {e:#}", path),
             }
         }
 

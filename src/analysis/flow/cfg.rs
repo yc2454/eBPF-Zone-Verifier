@@ -206,7 +206,7 @@ fn check_jump_into_loop_middle(prog: &Program) -> Option<(usize, usize)> {
     let back_edges = collect_loop_back_edges(prog);
 
     for (be_src, be_tgt) in &back_edges {
-        let loop_head = *be_tgt;     // H - where the loop body starts
+        let loop_head = *be_tgt; // H - where the loop body starts
         let back_edge_src = *be_src; // B - where the conditional/back-edge is
 
         // Check for forward jumps that land at the back-edge source
@@ -231,7 +231,11 @@ fn check_jump_into_loop_middle(prog: &Program) -> Option<(usize, usize)> {
 }
 
 /// Performs DFS to validate CFG and populate prune points via visit_insn.
-pub fn check_cfg(prog: &Program, env: &mut VerifierEnv, config: &VerifierConfig) -> Result<(), String> {
+pub fn check_cfg(
+    prog: &Program,
+    env: &mut VerifierEnv,
+    config: &VerifierConfig,
+) -> Result<(), String> {
     let n = prog.instrs.len();
     if n == 0 {
         return Ok(());

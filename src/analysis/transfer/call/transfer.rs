@@ -16,7 +16,7 @@ use crate::domains::tnum::Tnum;
 use crate::parsing::btf::SpecialFieldKind;
 use log::{debug, error, trace};
 
-use super::checks::{check_mem_size_pairs, validate_helper_args, is_valid_helper_id};
+use super::checks::{check_mem_size_pairs, is_valid_helper_id, validate_helper_args};
 use super::signatures::get_mem_size_pairs;
 
 /// Transfer function for helper Call instructions.

@@ -131,7 +131,9 @@ pub fn check_packet_meta_access(
     size: i64,
     pc: usize,
 ) {
-    let (start_ok, end_ok) = state.domain.verify_packet_meta_bounds(base, off as i64, size);
+    let (start_ok, end_ok) = state
+        .domain
+        .verify_packet_meta_bounds(base, off as i64, size);
     if !start_ok || !end_ok {
         env.fail(VerificationError::UnsafePacketLoad { pc, off, size });
     }

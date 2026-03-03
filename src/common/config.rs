@@ -2,7 +2,7 @@
 //
 // Verifier configuration - controls analysis behavior via command-line flags.
 
-use crate::domains::annotation::ProgramAnnotation;
+use crate::pcc::ProgramCertificate;
 
 /// Abstract domain mode for numerical analysis
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -76,12 +76,12 @@ pub struct VerifierConfig {
     /// Optional: Path to a file containing a list of ELF paths to analyze
     pub bench_input_file: Option<String>,
 
-    /// Optional path to write generated PCC annotation JSON.
-    pub annotation_output: Option<String>,
-    /// Optional path to load and check PCC annotation JSON.
-    pub annotation_input: Option<String>,
-    /// Parsed annotation payload (loaded in main when --check-annotation is used).
-    pub annotation: Option<ProgramAnnotation>,
+    /// Optional path to write generated PCC certificate JSON.
+    pub certificate_output: Option<String>,
+    /// Optional path to load a PCC certificate for certificate-aided analysis.
+    pub certificate_input: Option<String>,
+    /// Parsed certificate payload (loaded in main when certificate-aided analysis is enabled).
+    pub certificate: Option<ProgramCertificate>,
 }
 
 impl Default for VerifierConfig {
@@ -97,16 +97,16 @@ impl Default for VerifierConfig {
             debug_pc: None,
             enable_path_trace: false,
             map_overrides: std::collections::HashMap::new(),
-            detect_bounded_loops: true,        // Default: enabled for precision
-            require_single_loop_entry: false,  // Default: allow multi-entry loops
+            detect_bounded_loops: true, // Default: enabled for precision
+            require_single_loop_entry: false, // Default: allow multi-entry loops
             bench_project: None,
             bench_compiler: None,
             bench_opt: None,
             bench_source: None,
             bench_input_file: None,
-            annotation_output: None,
-            annotation_input: None,
-            annotation: None,
+            certificate_output: None,
+            certificate_input: None,
+            certificate: None,
         }
     }
 }
@@ -145,7 +145,7 @@ impl VerifierConfig {
                     "--kernel-mode" | "--interval" => {
                         config.domain_mode = DomainMode::Interval;
                         config.detect_bounded_loops = false; // Kernel doesn't detect bounded loops
-                        config.require_single_loop_entry = true;     // Kernel rejects unsupported loops
+                        config.require_single_loop_entry = true; // Kernel rejects unsupported loops
                     }
                     "--detect-bounded-loops" => {
                         config.detect_bounded_loops = true;
@@ -244,16 +244,34 @@ impl VerifierConfig {
                             config.bench_input_file = Some(args[i].clone());
                         }
                     }
-                    "--generate-annotation" => {
+                    "--generate-certificate" => {
                         i += 1;
                         if i < args.len() {
-                            config.annotation_output = Some(args[i].clone());
+                            config.certificate_output = Some(args[i].clone());
+                        }
+                    }
+                    "--generate-annotation" => {
+                        eprintln!(
+                            "Warning: --generate-annotation is deprecated; use --generate-certificate"
+                        );
+                        i += 1;
+                        if i < args.len() {
+                            config.certificate_output = Some(args[i].clone());
+                        }
+                    }
+                    "--certificate-aided-analysis" => {
+                        i += 1;
+                        if i < args.len() {
+                            config.certificate_input = Some(args[i].clone());
                         }
                     }
                     "--check-annotation" => {
+                        eprintln!(
+                            "Warning: --check-annotation is deprecated; use --certificate-aided-analysis"
+                        );
                         i += 1;
                         if i < args.len() {
-                            config.annotation_input = Some(args[i].clone());
+                            config.certificate_input = Some(args[i].clone());
                         }
                     }
                     _ => {
@@ -278,13 +296,17 @@ impl VerifierConfig {
         eprintln!("  -vv, --very-verbose  Verbosity 3: full debug output");
         eprintln!();
         eprintln!("Domain Mode:");
-        eprintln!("  --kernel-mode        Simulate kernel verifier: interval domain + strict loops");
+        eprintln!(
+            "  --kernel-mode        Simulate kernel verifier: interval domain + strict loops"
+        );
         eprintln!("  --zone-mode          Use zone domain (default, more precise)");
         eprintln!();
         eprintln!("Loop Analysis (kernel-mode sets both automatically):");
         eprintln!("  --detect-bounded-loops    Use pattern matching for early loop convergence");
         eprintln!("  --no-detect-bounded-loops Disable bounded loop detection");
-        eprintln!("  --single-entry-loops      Reject loops with jumps into middle (kernel behavior)");
+        eprintln!(
+            "  --single-entry-loops      Reject loops with jumps into middle (kernel behavior)"
+        );
         eprintln!("  --multi-entry-loops       Allow loops with any entry pattern (default)");
         eprintln!();
         eprintln!("Analysis Options:");
@@ -305,8 +327,10 @@ impl VerifierConfig {
         eprintln!("Benchmark Input:");
         eprintln!("  --input-list PATH    Path to file with list of ELF paths to analyze");
         eprintln!();
-        eprintln!("PCC Annotation (experimental):");
-        eprintln!("  --generate-annotation PATH  Generate annotation JSON to PATH");
-        eprintln!("  --check-annotation PATH     Load/check annotation JSON from PATH");
+        eprintln!("PCC Certificate (experimental):");
+        eprintln!("  --generate-certificate PATH       Generate certificate JSON to PATH");
+        eprintln!(
+            "  --certificate-aided-analysis PATH Load certificate and run certificate-aided analysis"
+        );
     }
 }

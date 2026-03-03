@@ -3,15 +3,16 @@
 mod analysis;
 mod ast;
 mod common;
-mod parsing;
-mod testing;
 mod domains;
+mod parsing;
+mod pcc;
+mod testing;
 
 use crate::ast::ProgramKind;
 use crate::common::config::{DomainMode, VerifierConfig};
-use crate::domains::annotation::ProgramAnnotation;
 use crate::parsing::elf::program_kind_for_object;
 use crate::parsing::elf::{list_section_names, load_maps, load_raw_programs};
+use crate::pcc::ProgramCertificate;
 use crate::testing::bcf_benchmark::analyze_benchmark;
 use crate::testing::logging;
 use crate::testing::prevail::{prevail_benchmark, prevail_list, prevail_run, prevail_single};
@@ -60,20 +61,22 @@ fn main() {
     // Parse config flags and get remaining positional args
     let (mut config, remaining) = VerifierConfig::from_args(&args[1..]);
 
-    if config.annotation_output.is_some() && config.annotation_input.is_some() {
-        eprintln!("Error: --generate-annotation and --check-annotation cannot be used together");
+    if config.certificate_output.is_some() && config.certificate_input.is_some() {
+        eprintln!(
+            "Error: --generate-certificate and --certificate-aided-analysis cannot be used together"
+        );
         return;
     }
-    if config.annotation_output.is_some() && config.domain_mode != DomainMode::Zone {
-        eprintln!("Error: --generate-annotation currently requires --zone-mode");
+    if config.certificate_output.is_some() && config.domain_mode != DomainMode::Zone {
+        eprintln!("Error: --generate-certificate currently requires --zone-mode");
         return;
     }
 
-    if let Some(path) = &config.annotation_input {
-        match ProgramAnnotation::load_from_path(path) {
-            Ok(ann) => config.annotation = Some(ann),
+    if let Some(path) = &config.certificate_input {
+        match ProgramCertificate::load_from_path(path) {
+            Ok(cert) => config.certificate = Some(cert),
             Err(e) => {
-                eprintln!("Error: invalid annotation file '{}': {e:#}", path);
+                eprintln!("Error: invalid certificate file '{}': {e:#}", path);
                 return;
             }
         };
