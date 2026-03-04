@@ -21,19 +21,19 @@ use crate::analysis::machine::reg::Reg;
 use crate::ast::{AttachKind, ProgramKind};
 use crate::common::config::VerifierConfig;
 use crate::common::constants;
+use crate::domains::dbm::Dbm;
+use crate::domains::domain::assign_zero;
 use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::parsing::bpf_to_ast::{LowerErrorKind, lower_raw_to_program};
 use crate::parsing::btf::{BtfContext, BtfMember, BtfType};
 use crate::parsing::elf::{BpfMapDef, RelocInfo, RelocKind};
-use crate::domains::dbm::Dbm;
-use crate::domains::domain::assign_zero;
 
 // ============================================================================
 // JSON Deserialization Types
 // ============================================================================
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct JsonTestCase {
     pub name: String,
     pub result: String,
@@ -48,7 +48,7 @@ pub struct JsonTestCase {
     pub insns: Vec<JsonInsn>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct JsonInsn {
     pub code: u8,
     pub dst: u8,
@@ -449,7 +449,7 @@ pub fn create_spin_lock_btf() -> BtfContext {
     BtfContext { types, strings }
 }
 
-fn build_exec_context(
+pub(crate) fn build_exec_context(
     test: &JsonTestCase,
 ) -> (crate::analysis::machine::context::ExecContext, bool) {
     let mut ctx = default_exec_ctx();
@@ -537,7 +537,7 @@ fn build_exec_context(
 // Entry State
 // ============================================================================
 
-fn make_entry_state() -> Dbm {
+pub(crate) fn make_entry_state() -> Dbm {
     let mut dbm = Dbm::new();
     assign_zero(&mut dbm, Reg::R10);
     dbm
@@ -574,8 +574,7 @@ pub fn run_test(test: &JsonTestCase, config: &VerifierConfig) -> TestResult {
                         && matches!(e.kind, LowerErrorKind::InvalidLDIMM64))
                     || (s.contains("invalid destination")
                         && matches!(e.kind, LowerErrorKind::CallTargetOutOfBounds))
-                    || ((s.contains("reserved fields")
-                        || s.contains("BPF_CALL uses reserved"))
+                    || ((s.contains("reserved fields") || s.contains("BPF_CALL uses reserved"))
                         && matches!(
                             e.kind,
                             LowerErrorKind::CallUsedReservedFields | LowerErrorKind::InvalidSrcReg
@@ -1049,7 +1048,6 @@ pub fn selftest_single(json_path: &str, test_name: &str, config: &VerifierConfig
     if matching.len() > 1 {
         eprintln!("Multiple tests match '{}', running all:\n", test_name);
     }
-
     for test in matching {
         println!("Test: {}", test.name);
         println!("Expected: {}", test.result);

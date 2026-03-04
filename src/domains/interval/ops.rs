@@ -3,8 +3,8 @@
 // Implements the abstract operations for the interval domain.
 // These mirror the zone/ops.rs interface but without relational constraints.
 
+use super::state::{IntervalState, PtrOffset, RegInterval, ScalarBounds};
 use crate::analysis::machine::reg::Reg;
-use super::state::{IntervalState, ScalarBounds, RegInterval, PtrOffset};
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  Query & Interval Analysis
@@ -128,7 +128,7 @@ pub fn assign_reg_offset(state: &mut IntervalState, dst: Reg, src: Reg, imm: i64
         smax: src_interval.bounds.smax.saturating_add(imm),
         umin: src_interval.bounds.umin.saturating_add(imm as u64),
         umax: src_interval.bounds.umax.saturating_add(imm as u64),
-        scalar_id: None,  // Arithmetic breaks scalar relationship
+        scalar_id: None, // Arithmetic breaks scalar relationship
     };
 
     // Preserve pointer offset info, adjusting the fixed offset
@@ -141,10 +141,13 @@ pub fn assign_reg_offset(state: &mut IntervalState, dst: Reg, src: Reg, imm: i64
         range: po.range.map(|r| r.saturating_sub(imm)),
     });
 
-    state.set(dst, RegInterval {
-        bounds: new_bounds,
-        ptr_offset: new_ptr_offset,
-    });
+    state.set(
+        dst,
+        RegInterval {
+            bounds: new_bounds,
+            ptr_offset: new_ptr_offset,
+        },
+    );
 }
 
 /// Initializes a register as a map value pointer at offset 0
@@ -156,30 +159,36 @@ pub fn init_map_value_ptr(state: &mut IntervalState, reg: Reg) {
 
     // Use Reg::Zero as a synthetic anchor for map values
     // This allows us to track offset from buffer start
-    state.set(reg, RegInterval {
-        bounds: ScalarBounds::unknown(), // Absolute address unknown
-        ptr_offset: Some(PtrOffset {
-            anchor: Reg::Zero, // Synthetic anchor for map values
-            off: 0,
-            var_off: 0,
-            range: None,
-        }),
-    });
+    state.set(
+        reg,
+        RegInterval {
+            bounds: ScalarBounds::unknown(), // Absolute address unknown
+            ptr_offset: Some(PtrOffset {
+                anchor: Reg::Zero, // Synthetic anchor for map values
+                off: 0,
+                var_off: 0,
+                range: None,
+            }),
+        },
+    );
 }
 
 /// Assigns a concrete interval to a register
 pub fn assign_interval(state: &mut IntervalState, r: Reg, min: i64, max: i64) {
     if r != Reg::Zero && !r.is_anchor() {
-        state.set(r, RegInterval {
-            bounds: ScalarBounds {
-                smin: min,
-                smax: max,
-                umin: if min >= 0 { min as u64 } else { 0 },
-                umax: if max >= 0 { max as u64 } else { u64::MAX },
-                scalar_id: None,
+        state.set(
+            r,
+            RegInterval {
+                bounds: ScalarBounds {
+                    smin: min,
+                    smax: max,
+                    umin: if min >= 0 { min as u64 } else { 0 },
+                    umax: if max >= 0 { max as u64 } else { u64::MAX },
+                    scalar_id: None,
+                },
+                ptr_offset: None,
             },
-            ptr_offset: None,
-        });
+        );
     }
 }
 
@@ -198,7 +207,7 @@ pub fn apply_add_imm(state: &mut IntervalState, dst: Reg, imm: i64) {
     bounds.smax = bounds.smax.saturating_add(imm);
     bounds.umin = bounds.umin.saturating_add(imm as u64);
     bounds.umax = bounds.umax.saturating_add(imm as u64);
-    bounds.scalar_id = None;  // Arithmetic breaks scalar relationship
+    bounds.scalar_id = None; // Arithmetic breaks scalar relationship
 
     // Update pointer offset if present
     if let Some(ref mut po) = state.get_mut(dst).ptr_offset {
@@ -222,7 +231,7 @@ pub fn apply_add_reg(state: &mut IntervalState, dst: Reg, src: Reg) {
     dst_bounds.smax = dst_bounds.smax.saturating_add(src_bounds.smax);
     dst_bounds.umin = dst_bounds.umin.saturating_add(src_bounds.umin);
     dst_bounds.umax = dst_bounds.umax.saturating_add(src_bounds.umax);
-    dst_bounds.scalar_id = None;  // Arithmetic breaks scalar relationship
+    dst_bounds.scalar_id = None; // Arithmetic breaks scalar relationship
 
     // Adding variable destroys fixed pointer offset precision
     // But we can preserve if src is constant
@@ -247,7 +256,13 @@ pub fn apply_add_reg(state: &mut IntervalState, dst: Reg, src: Reg) {
 /// Performs dst = scalar_dst + ptr_src
 /// Creates a new PtrOffset for dst combining ptr's offset with scalar's range
 /// scalar_lo and scalar_hi are the bounds of the scalar before the add
-pub fn apply_scalar_add_ptr(state: &mut IntervalState, dst: Reg, ptr_src: Reg, scalar_lo: i64, scalar_hi: i64) {
+pub fn apply_scalar_add_ptr(
+    state: &mut IntervalState,
+    dst: Reg,
+    ptr_src: Reg,
+    scalar_lo: i64,
+    scalar_hi: i64,
+) {
     if dst == Reg::Zero || dst.is_anchor() {
         return;
     }
@@ -272,16 +287,19 @@ pub fn apply_scalar_add_ptr(state: &mut IntervalState, dst: Reg, ptr_src: Reg, s
         let new_off = po.off.saturating_add(scalar_lo);
         let new_var_off = po.var_off.saturating_add(scalar_range);
 
-        state.set(dst, RegInterval {
-            bounds: ScalarBounds::unknown(), // Absolute address still unknown
-            ptr_offset: Some(PtrOffset {
-                anchor: po.anchor,
-                off: new_off,
-                var_off: new_var_off,
-                // Adding variable invalidates proven range
-                range: None,
-            }),
-        });
+        state.set(
+            dst,
+            RegInterval {
+                bounds: ScalarBounds::unknown(), // Absolute address still unknown
+                ptr_offset: Some(PtrOffset {
+                    anchor: po.anchor,
+                    off: new_off,
+                    var_off: new_var_off,
+                    // Adding variable invalidates proven range
+                    range: None,
+                }),
+            },
+        );
     }
 }
 
@@ -299,7 +317,7 @@ pub fn apply_sub_reg(state: &mut IntervalState, dst: Reg, src: Reg) {
     dst_bounds.smax = dst_bounds.smax.saturating_sub(src_bounds.smin);
     dst_bounds.umin = dst_bounds.umin.saturating_sub(src_bounds.umax);
     dst_bounds.umax = dst_bounds.umax.saturating_sub(src_bounds.umin);
-    dst_bounds.scalar_id = None;  // Arithmetic breaks scalar relationship
+    dst_bounds.scalar_id = None; // Arithmetic breaks scalar relationship
 
     // Subtracting variable destroys pointer offset info
     state.get_mut(dst).ptr_offset = None;
@@ -318,7 +336,7 @@ pub fn apply_and_imm(state: &mut IntervalState, dst: Reg, mask: i64) {
         bounds.smax = mask;
         bounds.umin = 0;
         bounds.umax = mask as u64;
-        bounds.scalar_id = None;  // Arithmetic breaks scalar relationship
+        bounds.scalar_id = None; // Arithmetic breaks scalar relationship
     } else {
         // Negative mask - conservative
         *bounds = ScalarBounds::unknown();
@@ -352,7 +370,7 @@ pub fn apply_mul_imm(state: &mut IntervalState, dst: Reg, imm: i64) {
             smax: bounds.smax.saturating_mul(imm),
             umin: bounds.umin.saturating_mul(imm as u64),
             umax: bounds.umax.saturating_mul(imm as u64),
-            scalar_id: None,  // Arithmetic breaks scalar relationship
+            scalar_id: None, // Arithmetic breaks scalar relationship
         };
         state.get_bounds_mut(dst).clone_from(&new_bounds);
     } else {
@@ -380,7 +398,7 @@ pub fn apply_div_imm(state: &mut IntervalState, reg: Reg, imm: i64) {
             smax: bounds.smax / imm,
             umin: bounds.umin / (imm as u64),
             umax: bounds.umax / (imm as u64),
-            scalar_id: None,  // Arithmetic breaks scalar relationship
+            scalar_id: None, // Arithmetic breaks scalar relationship
         };
         state.get_bounds_mut(reg).clone_from(&new_bounds);
     } else {
@@ -430,7 +448,7 @@ pub fn apply_neg(state: &mut IntervalState, reg: Reg) {
         smax: neg_smax,
         umin: 0, // Conservative for unsigned after negation
         umax: u64::MAX,
-        scalar_id: None,  // Arithmetic breaks scalar relationship
+        scalar_id: None, // Arithmetic breaks scalar relationship
     };
     state.get_bounds_mut(reg).clone_from(&new_bounds);
 
@@ -521,10 +539,13 @@ pub fn assume_eq_imm(state: &mut IntervalState, x: Reg, c: i64) {
     if x != Reg::Zero && !x.is_anchor() {
         // Preserve pointer offset if it's consistent with the constant
         let ptr_offset = state.get_ptr_offset(x).cloned();
-        state.set(x, RegInterval {
-            bounds: ScalarBounds::constant(c),
-            ptr_offset,
-        });
+        state.set(
+            x,
+            RegInterval {
+                bounds: ScalarBounds::constant(c),
+                ptr_offset,
+            },
+        );
     }
 }
 
@@ -542,18 +563,27 @@ pub fn assume_lt_imm(state: &mut IntervalState, x: Reg, c: i64) {
 /// Establishes the invariant: data_meta <= data <= data_end
 pub fn init_packet_anchors(state: &mut IntervalState) {
     // Set up anchor registers with their identity offsets
-    state.set(Reg::AnchorDataMeta, RegInterval::with_ptr_offset(
-        ScalarBounds::unknown(),
-        PtrOffset::at_anchor(Reg::AnchorDataMeta),
-    ));
-    state.set(Reg::AnchorData, RegInterval::with_ptr_offset(
-        ScalarBounds::unknown(),
-        PtrOffset::at_anchor(Reg::AnchorData),
-    ));
-    state.set(Reg::AnchorDataEnd, RegInterval::with_ptr_offset(
-        ScalarBounds::unknown(),
-        PtrOffset::at_anchor(Reg::AnchorDataEnd),
-    ));
+    state.set(
+        Reg::AnchorDataMeta,
+        RegInterval::with_ptr_offset(
+            ScalarBounds::unknown(),
+            PtrOffset::at_anchor(Reg::AnchorDataMeta),
+        ),
+    );
+    state.set(
+        Reg::AnchorData,
+        RegInterval::with_ptr_offset(
+            ScalarBounds::unknown(),
+            PtrOffset::at_anchor(Reg::AnchorData),
+        ),
+    );
+    state.set(
+        Reg::AnchorDataEnd,
+        RegInterval::with_ptr_offset(
+            ScalarBounds::unknown(),
+            PtrOffset::at_anchor(Reg::AnchorDataEnd),
+        ),
+    );
     // Note: The ordering data_meta <= data <= data_end is implicit
     // and will be used during bounds checking
 }
@@ -564,10 +594,13 @@ pub fn bind_to_anchor(state: &mut IntervalState, reg: Reg, anchor: Reg) {
         return;
     }
 
-    state.set(reg, RegInterval::with_ptr_offset(
-        ScalarBounds::unknown(), // Value unknown, but offset is known
-        PtrOffset::at_anchor(anchor),
-    ));
+    state.set(
+        reg,
+        RegInterval::with_ptr_offset(
+            ScalarBounds::unknown(), // Value unknown, but offset is known
+            PtrOffset::at_anchor(anchor),
+        ),
+    );
 }
 
 /// Check if a memory access [off, off + size) is within [anchor_start, anchor_end]
@@ -619,7 +652,12 @@ pub fn check_region_access(
 }
 
 /// Convenience check for the packet metadata region [data_meta, data)
-pub fn verify_packet_meta_bounds(state: &IntervalState, base: Reg, off: i64, size: i64) -> (bool, bool) {
+pub fn verify_packet_meta_bounds(
+    state: &IntervalState,
+    base: Reg,
+    off: i64,
+    size: i64,
+) -> (bool, bool) {
     check_region_access(state, base, off, size, Reg::AnchorDataMeta, Reg::AnchorData)
 }
 

@@ -1,6 +1,6 @@
 // Zone domain operations - high-level API for the DBM
-use crate::analysis::machine::reg::{REG_ENV, Reg};
 use super::dbm::{Dbm, INF, clamped_add};
+use crate::analysis::machine::reg::{REG_ENV, Reg};
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  1. Query & Interval Analysis

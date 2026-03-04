@@ -280,7 +280,9 @@ pub(crate) fn handle_rsh(state: &mut State, width: Width, dst: Reg, src: &Operan
                 } else {
                     state.domain.assume_ge_imm(dst, 0);
                     if shift_amount > 0 {
-                        state.domain.assume_le_imm(dst, (u64::MAX >> shift_amount) as i64);
+                        state
+                            .domain
+                            .assume_le_imm(dst, (u64::MAX >> shift_amount) as i64);
                     }
                 }
             }

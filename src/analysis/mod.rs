@@ -11,6 +11,9 @@ use crate::ast::Program;
 use crate::common::config::{DomainMode, VerifierConfig};
 use crate::domains::dbm::Dbm;
 use crate::domains::numeric::NumericDomain;
+use crate::pcc::{
+    apply_certificate_aided_refinement, program_hash, validate_certificate_for_program,
+};
 use log::{debug, error, info};
 use std::collections::VecDeque;
 
@@ -27,7 +30,23 @@ pub fn analyze_program(
     config: &VerifierConfig,
 ) -> Result<Vec<Dbm>, VerificationError> {
     // 1. Initialize Verifier Environment and control flow checks
-    let mut env = VerifierEnv::new(ctx, prog);
+    let mut env = VerifierEnv::new(ctx, prog, config.certificate.clone());
+    if let Some(ref cert) = env.certificate {
+        if cert.program_hash != program_hash(prog) {
+            info!(
+                target: "app",
+                "[PCC] Certificate program hash mismatch; disabling certificate-aided refinement"
+            );
+            env.certificate = None;
+        } else if let Err(e) = validate_certificate_for_program(cert, prog) {
+            info!(
+                target: "app",
+                "[PCC] Certificate validation failed ({}); disabling certificate-aided refinement",
+                e
+            );
+            env.certificate = None;
+        }
+    }
 
     if config.verbosity >= 1 {
         info!(target: "app", "[Analysis] Running Static Analysis Passes...");
@@ -154,7 +173,16 @@ pub fn analyze_program(
                state.pc, instr, state.types.reg_types_str(), state.tnums_to_string());
 
         // F. Transfer Function
-        let successors = transfer::transfer(&mut env, state, instr);
+        let pre_state = state.clone();
+        let mut successors = transfer::transfer(&mut env, state, instr);
+        // F.1 Certificate-Aided Refinement (optional)
+        // Verifies pc-annotation proof entries against local transition semantics
+        // and applies only sound, narrow refinements to successor states.
+        if let Some(ref cert) = env.certificate {
+            for succ in &mut successors {
+                apply_certificate_aided_refinement(cert, &pre_state, instr, succ);
+            }
+        }
 
         // G. Critical Failure Check
         if env.failed() {

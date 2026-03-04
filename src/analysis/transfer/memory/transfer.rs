@@ -203,7 +203,10 @@ pub(crate) fn transfer_atomic(
     };
 
     let resolved_offset = if matches!(base_ty, RegType::PtrToStack { .. }) {
-        state.domain.get_distance_fixed(base, Reg::R10).map(|o| o + off as i64)
+        state
+            .domain
+            .get_distance_fixed(base, Reg::R10)
+            .map(|o| o + off as i64)
     } else {
         None
     };

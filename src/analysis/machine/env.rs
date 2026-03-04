@@ -5,6 +5,7 @@ use crate::analysis::machine::context::ExecContext;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
 use crate::ast::Program;
+use crate::pcc::ProgramCertificate;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Default, Debug)]
@@ -30,10 +31,16 @@ pub struct VerifierEnv<'a> {
     pub error: Option<VerificationError>,
     // Path execution history
     pub history: History,
+    // Optional PCC certificate loaded from CLI.
+    pub certificate: Option<ProgramCertificate>,
 }
 
 impl<'a> VerifierEnv<'a> {
-    pub fn new(ctx: &'a ExecContext, prog: &'a Program) -> Self {
+    pub fn new(
+        ctx: &'a ExecContext,
+        prog: &'a Program,
+        certificate: Option<ProgramCertificate>,
+    ) -> Self {
         VerifierEnv {
             ctx,
             explored_states: HashMap::new(),
@@ -42,6 +49,7 @@ impl<'a> VerifierEnv<'a> {
             insn_processed: 0,
             error: None,
             history: History::new(),
+            certificate,
         }
     }
 
