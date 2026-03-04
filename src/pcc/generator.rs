@@ -1,20 +1,11 @@
 use std::collections::BTreeMap;
 
 use crate::analysis::machine::reg::Reg;
-use crate::ast::{AluOp, Instr, MemSize, Operand, Program};
+use crate::ast::{AluOp, Instr, Operand, Program};
 use crate::domains::dbm::{Dbm, INF};
 
 use super::model::{AnnotationEntry, PcAnnotation, ProgramCertificate, ProofStep};
 use super::program_hash;
-
-fn mem_size_bytes(sz: MemSize) -> i64 {
-    match sz {
-        MemSize::U8 => 1,
-        MemSize::U16 => 2,
-        MemSize::U32 => 4,
-        MemSize::U64 => 8,
-    }
-}
 
 /// Generate the prototype pc-annotation certificate from zone artifacts.
 ///
@@ -71,7 +62,7 @@ pub fn generate_prototype_certificate_from_zone(
         };
 
         // Only emit entries that are immediately useful for the load at succ_pc.
-        let access_need = -((*off as i64) + mem_size_bytes(*size));
+        let access_need = -((*off as i64) + size.bytes() as i64);
         if target_c > access_need {
             continue;
         }

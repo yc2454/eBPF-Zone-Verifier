@@ -12,6 +12,38 @@ use crate::testing::selftest::{
 };
 use serde::Deserialize;
 
+fn slugify_test_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut last_was_sep = false;
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            last_was_sep = false;
+        } else if !last_was_sep {
+            out.push('_');
+            last_was_sep = true;
+        }
+    }
+    let out = out.trim_matches('_');
+    if out.is_empty() {
+        "unnamed_test".to_string()
+    } else {
+        out.to_string()
+    }
+}
+
+fn default_generated_cert_path(json_path: &str, test_name: &str, program_hash: &str) -> String {
+    let suite = Path::new(json_path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "pcc_suite".to_string());
+    let test = slugify_test_name(test_name);
+    format!(
+        "pcc-tests/certs/generated/{}.{}.{}.cert.json",
+        suite, test, program_hash
+    )
+}
+
 /// Run all PCC tests in a single JSON file.
 pub fn pcc_test_run(json_path: &str, config: &VerifierConfig, output_dir: Option<&str>) {
     println!("Running PCC test file: {}\n", json_path);
@@ -97,9 +129,9 @@ pub fn pcc_test_single(json_path: &str, test_name: &str, config: &VerifierConfig
 
     let result = run_test(test, config);
 
-    if let Some(path) = &config.certificate_output
-        && matches!(result.outcome, TestOutcome::Pass)
-    {
+    let should_generate_cert =
+        matches!(result.outcome, TestOutcome::Pass) && config.domain_mode == DomainMode::Zone;
+    if should_generate_cert {
         let raw_insns: Vec<RawBpfInsn> = test.insns.iter().map(|j| j.into()).collect();
         let program = match lower_raw_to_program(&raw_insns) {
             Ok(p) => p,
@@ -128,9 +160,31 @@ pub fn pcc_test_single(json_path: &str, test_name: &str, config: &VerifierConfig
             }
         };
         let cert = generate_prototype_certificate_from_zone(&program, &zone_dbms);
-        match cert.save_to_path(path) {
-            Ok(()) => println!("Certificate written: {}", path),
-            Err(e) => eprintln!("Warning: failed to write certificate '{}': {e:#}", path),
+        let output_path = config.certificate_output.clone().unwrap_or_else(|| {
+            default_generated_cert_path(json_path, test_name, &cert.program_hash)
+        });
+        if let Some(parent) = Path::new(&output_path).parent()
+            && let Err(e) = fs::create_dir_all(parent)
+        {
+            eprintln!(
+                "Warning: failed to create certificate directory '{}': {}",
+                parent.display(),
+                e
+            );
+            return;
+        }
+        match cert.save_to_path(&output_path) {
+            Ok(()) => {
+                if config.certificate_output.is_some() {
+                    println!("Certificate written: {}", output_path);
+                } else {
+                    println!("Certificate auto-written: {}", output_path);
+                }
+            }
+            Err(e) => eprintln!(
+                "Warning: failed to write certificate '{}': {e:#}",
+                output_path
+            ),
         }
     }
 
