@@ -71,6 +71,10 @@ fn apply_verified_packet_end_fact(succ_state: &mut State, target: &Constraint) {
     }
 }
 
+/// Hashes branch predecessor context for `BranchGuardBound`.
+///
+/// This binds an obligation to instruction identity + edge polarity and prevents
+/// replay on different branch contexts.
 fn hash_branch_pred_context(
     pred_pc: usize,
     width: Width,
@@ -266,6 +270,14 @@ fn apply_add_reg_packet_bound_obligation(
     apply_verified_packet_end_fact(succ_state, &ob.target);
 }
 
+/// Checker for `ObligationKind::BranchGuardBound`.
+///
+/// High-level rule:
+/// 1. verify predecessor fingerprint and edge polarity;
+/// 2. derive the exact guard inequality implied by branch semantics;
+/// 3. verify each proof step (`GuardStep`/`PreStateStep`);
+/// 4. verify chain sum equals target;
+/// 5. apply narrow packet-range refinement.
 fn apply_branch_guard_bound_obligation(
     ob: &EdgeObligation,
     pre_state: &State,
@@ -338,9 +350,11 @@ fn apply_branch_guard_bound_obligation(
 
 /// Applies certificate-aided refinement on a single CFG edge.
 ///
-/// This function is called after transfer creates a successor state. It verifies
-/// all matching edge obligations against the predecessor state + instruction
-/// semantics, and applies only narrow packet-range refinements when proofs are valid.
+/// This function is called after transfer creates a successor state.
+///
+/// It is the semantic phase: it checks matching obligations against the concrete
+/// predecessor transition and successor edge context, and applies only narrow
+/// packet-range refinements when proofs are valid.
 ///
 /// Fail-closed behavior:
 /// - Any malformed or unsupported obligation is ignored.

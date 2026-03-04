@@ -13,10 +13,19 @@ fn checked_sum(weights: impl Iterator<Item = i64>) -> Option<i64> {
     Some(sum)
 }
 
-/// Validates certificate structure against the current program.
+/// Structural certificate validation against a concrete program.
 ///
-/// This is a structural gate, not a semantic proof. Semantic proof still happens
-/// per edge during certificate-aided refinement.
+/// Scope of this phase:
+/// - version compatibility;
+/// - obligation shape and register-index sanity;
+/// - per-kind static constraints (edge form, required fields, allowed ops).
+///
+/// Non-scope:
+/// - no abstract-state-dependent reasoning;
+/// - no transfer-equation checking;
+/// - no refinement application.
+///
+/// Those are handled in `checker::apply_certificate_aided_refinement`.
 pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Program) -> Result<()> {
     if cert.version != ProgramCertificate::VERSION_V1
         && cert.version != ProgramCertificate::VERSION_V2
