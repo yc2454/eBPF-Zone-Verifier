@@ -1,6 +1,6 @@
 [
   {
-    "name": "pcc v2: branch guard + prestate chain for packet access",
+    "name": "pcc: branch guard + prestate chain for packet access",
     "result": "ACCEPT",
     "prog_type": 3,
     "insns": [

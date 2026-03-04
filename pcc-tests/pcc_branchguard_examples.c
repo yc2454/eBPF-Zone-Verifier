@@ -1,9 +1,9 @@
-/* PCC v2 motivating example:
+/* PCC motivating example:
  * baseline kernel mode rejects at packet load after var-add;
- * BranchGuardBound cert (guard + prestate chain) enables acceptance.
+ * pc-annotation cert (guard + prestate chain) enables acceptance.
  */
 SEC("tc")
-int pcc_v2_branch_guard_chain(struct __sk_buff *skb)
+int pcc_branch_guard_chain(struct __sk_buff *skb)
 {
     void *data = (void *)(long)skb->data;
     void *data_end = (void *)(long)skb->data_end;

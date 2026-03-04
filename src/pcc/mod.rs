@@ -9,22 +9,20 @@
 //! - `validate` answers: "Is this certificate well-formed and compatible with
 //!   this program shape?"
 //! - `checker` answers: "For this concrete predecessor/successor transition,
-//!   does the obligation proof hold under current abstract state and transfer
+//!   does the annotation proof hold under current abstract state and transfer
 //!   semantics?"
 //!
-//! Unknown/invalid obligations are handled fail-closed: they do not broaden
+//! Unknown/invalid annotations are handled fail-closed: they do not broaden
 //! analysis behavior and baseline verifier semantics remain authoritative.
 
 mod checker;
 mod generator;
 mod hash;
 mod model;
-mod v1;
 mod validate;
 
 pub use checker::apply_certificate_aided_refinement;
 pub use generator::generate_prototype_certificate_from_zone;
 pub use hash::program_hash;
 pub use model::ProgramCertificate;
-pub use v1::generate_v1_obligations_from_zone;
 pub use validate::validate_certificate_for_program;

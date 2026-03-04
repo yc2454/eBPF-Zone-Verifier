@@ -1,28 +1,22 @@
 {
   "version": 1,
   "program_hash": "37910c98808e089c",
-  "obligations": [
+  "pc_annotations": [
     {
-      "pred_pc": 9,
-      "succ_pc": 10,
-      "pred_fingerprint": 13338733177373399053,
-      "target": {
-        "i": 6,
-        "j": 14,
-        "c": -5
-      },
-      "proof": [
+      "pc": 10,
+      "entries": [
         {
-          "kind": "PreStateStep",
           "i": 6,
-          "j": 13,
-          "c": 0
-        },
-        {
-          "kind": "PreStateStep",
-          "i": 13,
           "j": 14,
-          "c": -8
+          "bound": -5,
+          "proof": [
+            {
+              "kind": "PreStateStep",
+              "i": 6,
+              "j": 14,
+              "c": -5
+            }
+          ]
         }
       ]
     }

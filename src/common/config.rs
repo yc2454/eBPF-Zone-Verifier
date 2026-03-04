@@ -250,25 +250,7 @@ impl VerifierConfig {
                             config.certificate_output = Some(args[i].clone());
                         }
                     }
-                    "--generate-annotation" => {
-                        eprintln!(
-                            "Warning: --generate-annotation is deprecated; use --generate-certificate"
-                        );
-                        i += 1;
-                        if i < args.len() {
-                            config.certificate_output = Some(args[i].clone());
-                        }
-                    }
                     "--certificate-aided-analysis" => {
-                        i += 1;
-                        if i < args.len() {
-                            config.certificate_input = Some(args[i].clone());
-                        }
-                    }
-                    "--check-annotation" => {
-                        eprintln!(
-                            "Warning: --check-annotation is deprecated; use --certificate-aided-analysis"
-                        );
                         i += 1;
                         if i < args.len() {
                             config.certificate_input = Some(args[i].clone());

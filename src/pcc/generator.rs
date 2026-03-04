@@ -1,43 +1,89 @@
-use crate::ast::Program;
-use crate::domains::dbm::Dbm;
-
 use std::collections::BTreeMap;
 
-use super::model::{AnnotationEntry, PcAnnotation, ProgramCertificate, ProofStep};
-use super::{generate_v1_obligations_from_zone, program_hash};
+use crate::analysis::machine::reg::Reg;
+use crate::ast::{AluOp, Instr, MemSize, Operand, Program};
+use crate::domains::dbm::{Dbm, INF};
 
-/// Generate an obligation-based certificate from zone analysis artifacts.
-pub fn generate_obligation_certificate_from_zone(
-    prog: &Program,
-    zone_dbms: &[Dbm],
-) -> ProgramCertificate {
-    let mut cert = ProgramCertificate::empty(program_hash(prog));
-    cert.obligations = generate_v1_obligations_from_zone(prog, zone_dbms);
-    cert
+use super::model::{AnnotationEntry, PcAnnotation, ProgramCertificate, ProofStep};
+use super::program_hash;
+
+fn mem_size_bytes(sz: MemSize) -> i64 {
+    match sz {
+        MemSize::U8 => 1,
+        MemSize::U16 => 2,
+        MemSize::U32 => 4,
+        MemSize::U64 => 8,
+    }
 }
 
-/// Generate a prototype pc-annotation certificate from zone artifacts.
+/// Generate the prototype pc-annotation certificate from zone artifacts.
 ///
-/// For v0.1, this derives entries from currently supported zone obligations and
-/// materializes them as per-PC entries (at obligation successor PCs).
-pub fn generate_pc_annotation_certificate_from_zone(
+/// v0.1 scope: emit entries for edges shaped as `dst += src` followed by
+/// `load [dst + off]`, when zone proves enough packet-end precision.
+pub fn generate_prototype_certificate_from_zone(
     prog: &Program,
     zone_dbms: &[Dbm],
 ) -> ProgramCertificate {
     let mut cert = ProgramCertificate::empty(program_hash(prog));
-    let obligations = generate_v1_obligations_from_zone(prog, zone_dbms);
+    if prog.instrs.len() < 2 {
+        return cert;
+    }
+
     let mut by_pc: BTreeMap<usize, Vec<AnnotationEntry>> = BTreeMap::new();
 
-    for ob in obligations {
-        by_pc.entry(ob.succ_pc).or_default().push(AnnotationEntry {
-            i: ob.target.i,
-            j: ob.target.j,
-            bound: ob.target.c,
-            // Single-step target proof keeps v0.1 checker simple.
+    for pred_pc in 0..(prog.instrs.len() - 1) {
+        let Some(Instr::Alu {
+            op: AluOp::Add,
+            dst,
+            src: Operand::Reg(src),
+            ..
+        }) = prog.instrs.get(pred_pc)
+        else {
+            continue;
+        };
+        let succ_pc = pred_pc + 1;
+        let Some(Instr::Load {
+            size, base, off, ..
+        }) = prog.instrs.get(succ_pc)
+        else {
+            continue;
+        };
+        if base != dst {
+            continue;
+        }
+        let Some(dbm) = zone_dbms.get(pred_pc) else {
+            continue;
+        };
+
+        let d_dst_data = dbm.get(*dst, Reg::AnchorData);
+        let d_data_end = dbm.get(Reg::AnchorData, Reg::AnchorDataEnd);
+        let src_umax = dbm.get(*src, Reg::Zero);
+        if d_dst_data >= INF || d_data_end >= INF || src_umax >= INF {
+            continue;
+        }
+
+        let Some(step1_c) = d_dst_data.checked_add(src_umax) else {
+            continue;
+        };
+        let step2_c = d_data_end;
+        let Some(target_c) = step1_c.checked_add(step2_c) else {
+            continue;
+        };
+
+        // Only emit entries that are immediately useful for the load at succ_pc.
+        let access_need = -((*off as i64) + mem_size_bytes(*size));
+        if target_c > access_need {
+            continue;
+        }
+
+        by_pc.entry(succ_pc).or_default().push(AnnotationEntry {
+            i: dst.idx(),
+            j: Reg::AnchorDataEnd.idx(),
+            bound: target_c,
             proof: vec![ProofStep::PreStateStep {
-                i: ob.target.i,
-                j: ob.target.j,
-                c: ob.target.c,
+                i: dst.idx(),
+                j: Reg::AnchorDataEnd.idx(),
+                c: target_c,
             }],
         });
     }
@@ -46,17 +92,5 @@ pub fn generate_pc_annotation_certificate_from_zone(
         .into_iter()
         .map(|(pc, entries)| PcAnnotation { pc, entries })
         .collect();
-    cert
-}
-
-/// Generate the unified prototype certificate that carries both legacy
-/// obligations and pc-annotations during migration.
-pub fn generate_prototype_certificate_from_zone(
-    prog: &Program,
-    zone_dbms: &[Dbm],
-) -> ProgramCertificate {
-    let mut cert = generate_obligation_certificate_from_zone(prog, zone_dbms);
-    let pc_ann = generate_pc_annotation_certificate_from_zone(prog, zone_dbms);
-    cert.pc_annotations = pc_ann.pc_annotations;
     cert
 }

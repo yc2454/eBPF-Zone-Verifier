@@ -176,8 +176,8 @@ pub fn analyze_program(
         let pre_state = state.clone();
         let mut successors = transfer::transfer(&mut env, state, instr);
         // F.1 Certificate-Aided Refinement (optional)
-        // Verifies edge obligations against local transition semantics and
-        // applies only sound, narrow refinements to successor states.
+        // Verifies pc-annotation proof entries against local transition semantics
+        // and applies only sound, narrow refinements to successor states.
         if let Some(ref cert) = env.certificate {
             for succ in &mut successors {
                 apply_certificate_aided_refinement(cert, &pre_state, instr, succ);

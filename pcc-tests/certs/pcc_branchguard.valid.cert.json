@@ -1,30 +1,28 @@
 {
   "version": 1,
   "program_hash": "89666d930fe0a2e1",
-  "obligations": [
+  "pc_annotations": [
     {
-      "kind": "branch_guard_bound",
-      "pred_pc": 11,
-      "succ_pc": 12,
-      "branch_taken": false,
-      "pred_fingerprint": 11349947482533845509,
-      "target": {
-        "i": 6,
-        "j": 14,
-        "c": -5
-      },
-      "proof": [
+      "pc": 12,
+      "entries": [
         {
-          "kind": "GuardStep",
           "i": 6,
-          "j": 8,
-          "c": -1
-        },
-        {
-          "kind": "PreStateStep",
-          "i": 8,
           "j": 14,
-          "c": -4
+          "bound": -5,
+          "proof": [
+            {
+              "kind": "GuardStep",
+              "i": 6,
+              "j": 8,
+              "c": -1
+            },
+            {
+              "kind": "PreStateStep",
+              "i": 8,
+              "j": 14,
+              "c": -4
+            }
+          ]
         }
       ]
     }

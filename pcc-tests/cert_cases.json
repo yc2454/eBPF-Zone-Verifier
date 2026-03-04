@@ -7,14 +7,14 @@
     "expected": "ACCEPT"
   },
   {
-    "name": "tampered fingerprint fails closed",
+    "name": "tampered proof chain fails closed",
     "json_file": "pcc-tests/pcc_examples.json",
     "test_name": "pcc motivating: var add packet access (zone ok, kernel reject)",
     "certificate": "pcc-tests/certs/pcc_examples.bad_fingerprint.cert.json",
     "expected": "REJECT"
   },
   {
-    "name": "tampered edge fails closed",
+    "name": "tampered annotation pc fails closed",
     "json_file": "pcc-tests/pcc_examples.json",
     "test_name": "pcc motivating: var add packet access (zone ok, kernel reject)",
     "certificate": "pcc-tests/certs/pcc_examples.bad_edge.cert.json",
@@ -30,43 +30,29 @@
   {
     "name": "branchguard valid cert enables acceptance",
     "json_file": "pcc-tests/pcc_branchguard_examples.json",
-    "test_name": "pcc v2: branch guard + prestate chain for packet access",
+    "test_name": "pcc: branch guard + prestate chain for packet access",
     "certificate": "pcc-tests/certs/pcc_branchguard.valid.cert.json",
     "expected": "ACCEPT"
   },
   {
-    "name": "branchguard tampered fingerprint fails closed",
+    "name": "branchguard tampered guard-step fails closed",
     "json_file": "pcc-tests/pcc_branchguard_examples.json",
-    "test_name": "pcc v2: branch guard + prestate chain for packet access",
+    "test_name": "pcc: branch guard + prestate chain for packet access",
     "certificate": "pcc-tests/certs/pcc_branchguard.bad_fingerprint.cert.json",
     "expected": "REJECT"
   },
   {
     "name": "branchguard tampered edge fails closed",
     "json_file": "pcc-tests/pcc_branchguard_examples.json",
-    "test_name": "pcc v2: branch guard + prestate chain for packet access",
+    "test_name": "pcc: branch guard + prestate chain for packet access",
     "certificate": "pcc-tests/certs/pcc_branchguard.bad_edge.cert.json",
     "expected": "REJECT"
   },
   {
     "name": "branchguard tampered bound fails closed",
     "json_file": "pcc-tests/pcc_branchguard_examples.json",
-    "test_name": "pcc v2: branch guard + prestate chain for packet access",
+    "test_name": "pcc: branch guard + prestate chain for packet access",
     "certificate": "pcc-tests/certs/pcc_branchguard.bad_bound.cert.json",
-    "expected": "REJECT"
-  },
-  {
-    "name": "pc-annotation valid cert enables acceptance",
-    "json_file": "pcc-tests/pcc_branchguard_examples.json",
-    "test_name": "pcc v2: branch guard + prestate chain for packet access",
-    "certificate": "pcc-tests/certs/pcc_branchguard.pcanno.valid.cert.json",
-    "expected": "ACCEPT"
-  },
-  {
-    "name": "pc-annotation tampered bound fails closed",
-    "json_file": "pcc-tests/pcc_branchguard_examples.json",
-    "test_name": "pcc v2: branch guard + prestate chain for packet access",
-    "certificate": "pcc-tests/certs/pcc_branchguard.pcanno.bad_bound.cert.json",
     "expected": "REJECT"
   }
 ]

@@ -1,90 +1,53 @@
 # PCC Module Notes
 
-This folder implements certificate-aided verification for the userspace verifier.
+This prototype uses one proof model: **PC-local inductive annotations**.
 
-## Why this module exists
+## Certificate schema
 
-Zone mode can derive relational facts that interval/kernel mode may not keep. PCC lets us carry selected facts from an offline proof artifact (certificate) and re-check them locally during interval analysis.
+- `ProgramCertificate { version, program_hash, pc_annotations }`
+- `PcAnnotation { pc, entries }`
+- `AnnotationEntry { i, j, bound, proof }`
+- `ProofStep`:
+  - `GuardStep { i, j, c }`
+  - `PreStateStep { i, j, c }`
 
-## Core terms
+Constraint meaning is always:
 
-- `ProgramCertificate`: certificate file bound to a single lowered program (`program_hash`).
-- `PcAnnotation`: per-PC inductive annotation table (current prototype path).
-- `EdgeObligation`: one local claim for one CFG edge (`pred_pc -> succ_pc`).
-- `ProofStep`: one inequality atom used in the proof chain.
-  - `GuardStep { i, j, c }`: implied by branch semantics + edge polarity.
-  - `PreStateStep { i, j, c }`: read from predecessor abstract state.
-- `Constraint { i, j, c }`: means `reg(i) - reg(j) <= c`.
+- `i - j <= c`
 
-## What is `ObligationKind`
+## Checker model
 
-`ObligationKind` is the theorem template tag. It tells the checker:
+For successor state at `pc = k`, checker reads `PcAnnotation { pc: k }` and verifies each entry from:
 
-1. what the claim means,
-2. what step patterns are legal,
-3. what transfer/equation checks are required,
-4. what refinement is allowed on success.
+1. predecessor state,
+2. predecessor instruction,
+3. edge guard (if predecessor is a branch and this edge has a polarity).
 
-This is intentionally separate from `ProofStep`:
-- `ProofStep` says where each inequality came from.
-- `ObligationKind` says how the whole proof should be interpreted.
+Entry is accepted only if all hold:
 
-Current kinds:
+1. proof chain is connected and endpoints match `(i, j)`,
+2. each step is justified:
+   - `GuardStep`: must match the guard implied by branch op + edge,
+   - `PreStateStep`: must be justified by one-step transfer upper-bound from predecessor state,
+3. sum of step bounds equals `entry.bound`.
 
-- `add_reg_packet_bound`:
-  - Pattern: additive pointer update (`dst += src`) style bound reconstruction.
-  - Uses `PreStateStep` chain in current implementation.
-  - On success: narrows packet pointer range metadata only.
+On success, checker applies narrow packet-range refinement only.
+On failure, entry is ignored (fail-closed).
 
-- `branch_guard_bound`:
-  - Pattern: combine guard-implied inequality from a branch edge with prestate facts.
-  - Requires `branch_taken` to pin edge polarity.
-  - On success: same narrow packet-range refinement sink.
+## Validation model
 
-## Validate vs Checker (important)
+`validate` is structural only:
 
-The module uses two phases on purpose.
+- schema version check,
+- PC and register index bounds,
+- proof non-empty and capped length,
+- chain connectivity and i64-safe sum.
 
-### `validate` phase (`validate.rs`)
+No semantic proof happens in `validate`; that is checker-only.
 
-Structural gate at certificate load time:
-- version compatibility;
-- in-bounds PCs/register indices;
-- per-kind static shape checks (required fields, allowed branch ops, etc.).
+## Practical caps
 
-This phase does **not** prove semantic correctness of obligations.
+- `MAX_STEPS_PER_ENTRY = 3`
+- `MAX_ENTRIES_PER_PC = 8`
 
-### `checker` phase (`checker.rs`)
-
-Semantic gate during analysis, per edge:
-- recompute predecessor fingerprint from live state + instruction;
-- verify proof steps against live predecessor state and/or branch-implied guard;
-- verify equation consistency;
-- apply only narrow refinement on success.
-
-If any check fails, refinement is skipped (fail-closed) and baseline verifier behavior continues.
-
-## Inductive PC Annotation Direction
-
-For conceptual simplicity, the prototype adds `pc_annotations`:
-
-- each `PcAnnotation` targets a single `pc` and contains several entries;
-- each entry is a bound `i - j <= bound` with a short proof chain;
-- checker validates each step on the incoming edge:
-  - `GuardStep` must match edge guard,
-  - `PreStateStep` must be justified by one-step transfer from predecessor state;
-- current proof-step cap is intentionally small (`<= 3`) for practicality.
-
-Legacy `obligations` remain supported for compatibility during migration.
-
-## Soundness posture
-
-- Unknown/malformed/inapplicable obligations do not broaden behavior.
-- Refinement sink is intentionally narrow (packet range only).
-- Certificate and program are hash-bound.
-
-## Current limitations
-
-- No global/loop proof obligations yet.
-- Guard reasoning currently supports a restricted branch family.
-- Obligation generation is still targeted at motivating shapes.
+If an entry exceeds caps, it is rejected at validation.
