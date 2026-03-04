@@ -4,8 +4,12 @@ use crate::ast::{AluOp, CmpOp, Instr, Operand, Width};
 use crate::domains::numeric::NumericDomain;
 use std::hash::{Hash, Hasher};
 
-use super::model::{Constraint, EdgeObligation, ObligationKind, ProgramCertificate, ProofStep};
+use super::model::{
+    AnnotationEntry, Constraint, EdgeObligation, ObligationKind, ProgramCertificate, ProofStep,
+};
 use super::v1::{compute_v1_pred_fingerprint_from_interval, prestate_bound};
+
+const MAX_STEPS_PER_ENTRY: usize = 3;
 
 fn checked_sum(weights: impl Iterator<Item = i64>) -> Option<i64> {
     let mut sum = 0i64;
@@ -68,6 +72,194 @@ fn apply_verified_packet_end_fact(succ_state: &mut State, target: &Constraint) {
     let reg = ivl.get_mut(i);
     if let Some(ref mut ptr_off) = reg.ptr_offset {
         ptr_off.range = Some(ptr_off.range.unwrap_or(proven_range).max(proven_range));
+    }
+}
+
+fn distance_upper_bound(state: &State, i: Reg, j: Reg) -> Option<i64> {
+    if !matches!(state.domain, NumericDomain::Interval(_)) {
+        return None;
+    }
+    Some(state.domain.get_distance_interval(i, j).1)
+}
+
+fn edge_guard_constraint(pred_instr: &Instr, pred_pc: usize, succ_pc: usize) -> Option<Constraint> {
+    derive_guard_constraint_from_branch(pred_instr, pred_pc, succ_pc).map(|(_, c)| c)
+}
+
+fn transfer_upper_bound_for_constraint(
+    pre_state: &State,
+    pred_instr: &Instr,
+    i: Reg,
+    j: Reg,
+) -> Option<i64> {
+    let base = |x: Reg, y: Reg| distance_upper_bound(pre_state, x, y);
+    match pred_instr {
+        Instr::Alu {
+            op: AluOp::Mov,
+            dst,
+            src: Operand::Reg(src),
+            ..
+        } => {
+            if *dst == i {
+                base(*src, j)
+            } else if *dst == j {
+                base(i, *src)
+            } else {
+                base(i, j)
+            }
+        }
+        Instr::Alu {
+            op: AluOp::Mov,
+            dst,
+            src: Operand::Imm(imm),
+            ..
+        } => {
+            if *dst == i {
+                base(Reg::Zero, j)?.checked_add(*imm)
+            } else if *dst == j {
+                base(i, Reg::Zero)?.checked_sub(*imm)
+            } else {
+                base(i, j)
+            }
+        }
+        Instr::Alu {
+            op: AluOp::Add,
+            dst,
+            src: Operand::Imm(imm),
+            ..
+        } => {
+            let ub = base(i, j)?;
+            if *dst == i {
+                ub.checked_add(*imm)
+            } else if *dst == j {
+                ub.checked_sub(*imm)
+            } else {
+                Some(ub)
+            }
+        }
+        Instr::Alu {
+            op: AluOp::Add,
+            dst,
+            src: Operand::Reg(src),
+            ..
+        } => {
+            let ub = base(i, j)?;
+            let (src_min, src_max) = pre_state.domain.get_interval(*src);
+            if *dst == i {
+                ub.checked_add(src_max)
+            } else if *dst == j {
+                ub.checked_sub(src_min)
+            } else {
+                Some(ub)
+            }
+        }
+        Instr::Alu {
+            op: AluOp::And,
+            dst,
+            ..
+        } => {
+            if *dst == i || *dst == j {
+                None
+            } else {
+                base(i, j)
+            }
+        }
+        Instr::Alu { .. }
+        | Instr::Endian { .. }
+        | Instr::Load { .. }
+        | Instr::LoadMap { .. }
+        | Instr::Call { .. }
+        | Instr::LoadPacket { .. } => {
+            // Conservative invalidation for unmodeled writers touching i/j.
+            let writes_i_or_j = match pred_instr {
+                Instr::Alu { dst, .. }
+                | Instr::Endian { dst, .. }
+                | Instr::Load { dst, .. }
+                | Instr::LoadMap { dst, .. } => *dst == i || *dst == j,
+                Instr::Call { .. } | Instr::LoadPacket { .. } => i == Reg::R0 || j == Reg::R0,
+                _ => false,
+            };
+            if writes_i_or_j { None } else { base(i, j) }
+        }
+        _ => base(i, j),
+    }
+}
+
+fn verify_pc_annotation_entry(
+    entry: &AnnotationEntry,
+    pre_state: &State,
+    pred_instr: &Instr,
+    guard: Option<Constraint>,
+) -> bool {
+    if entry.proof.is_empty() || entry.proof.len() > MAX_STEPS_PER_ENTRY {
+        return false;
+    }
+    if entry.proof[0].i() != entry.i || entry.proof[entry.proof.len() - 1].j() != entry.j {
+        return false;
+    }
+    for w in entry.proof.windows(2) {
+        if w[0].j() != w[1].i() {
+            return false;
+        }
+    }
+    for step in &entry.proof {
+        let Some(i) = Reg::idx_to_reg(step.i()) else {
+            return false;
+        };
+        let Some(j) = Reg::idx_to_reg(step.j()) else {
+            return false;
+        };
+        match step {
+            ProofStep::GuardStep { i, j, c } => {
+                let Some(ref g) = guard else {
+                    return false;
+                };
+                if *i != g.i || *j != g.j || *c != g.c {
+                    return false;
+                }
+            }
+            ProofStep::PreStateStep { c, .. } => {
+                let Some(post_ub) =
+                    transfer_upper_bound_for_constraint(pre_state, pred_instr, i, j)
+                else {
+                    return false;
+                };
+                if post_ub > *c {
+                    return false;
+                }
+            }
+        }
+    }
+    let Some(sum) = checked_sum(entry.proof.iter().map(ProofStep::c)) else {
+        return false;
+    };
+    sum == entry.bound
+}
+
+fn apply_pc_annotation_refinement(
+    cert: &ProgramCertificate,
+    pre_state: &State,
+    pred_instr: &Instr,
+    succ_state: &mut State,
+) {
+    let guard = edge_guard_constraint(pred_instr, pre_state.pc, succ_state.pc);
+    for ann in &cert.pc_annotations {
+        if ann.pc != succ_state.pc {
+            continue;
+        }
+        for entry in &ann.entries {
+            if !verify_pc_annotation_entry(entry, pre_state, pred_instr, guard.clone()) {
+                continue;
+            }
+            apply_verified_packet_end_fact(
+                succ_state,
+                &Constraint {
+                    i: entry.i,
+                    j: entry.j,
+                    c: entry.bound,
+                },
+            );
+        }
     }
 }
 
@@ -368,6 +560,7 @@ pub fn apply_certificate_aided_refinement(
     if !matches!(succ_state.domain, NumericDomain::Interval(_)) {
         return;
     }
+    apply_pc_annotation_refinement(cert, pre_state, pred_instr, succ_state);
     for ob in &cert.obligations {
         if ob.pred_pc != pre_state.pc || ob.succ_pc != succ_state.pc {
             continue;

@@ -54,5 +54,19 @@
     "test_name": "pcc v2: branch guard + prestate chain for packet access",
     "certificate": "pcc-tests/certs/pcc_branchguard.bad_bound.cert.json",
     "expected": "REJECT"
+  },
+  {
+    "name": "pc-annotation valid cert enables acceptance",
+    "json_file": "pcc-tests/pcc_branchguard_examples.json",
+    "test_name": "pcc v2: branch guard + prestate chain for packet access",
+    "certificate": "pcc-tests/certs/pcc_branchguard.pcanno.valid.cert.json",
+    "expected": "ACCEPT"
+  },
+  {
+    "name": "pc-annotation tampered bound fails closed",
+    "json_file": "pcc-tests/pcc_branchguard_examples.json",
+    "test_name": "pcc v2: branch guard + prestate chain for packet access",
+    "certificate": "pcc-tests/certs/pcc_branchguard.pcanno.bad_bound.cert.json",
+    "expected": "REJECT"
   }
 ]

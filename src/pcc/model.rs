@@ -10,7 +10,26 @@ use std::fs;
 pub struct ProgramCertificate {
     pub version: u32,
     pub program_hash: String,
+    /// Inductive per-PC annotations (current prototype path).
+    #[serde(default)]
+    pub pc_annotations: Vec<PcAnnotation>,
+    /// Edge-obligation format kept for compatibility during migration.
+    #[serde(default)]
     pub obligations: Vec<EdgeObligation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PcAnnotation {
+    pub pc: usize,
+    pub entries: Vec<AnnotationEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AnnotationEntry {
+    pub i: usize,
+    pub j: usize,
+    pub bound: i64,
+    pub proof: Vec<ProofStep>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -105,14 +124,15 @@ pub enum ObligationKind {
 }
 
 impl ProgramCertificate {
-    pub const VERSION_V1: u32 = 1;
-    pub const VERSION_V2: u32 = 2;
+    /// Prototype certificate schema version.
+    pub const VERSION: u32 = 1;
 
     #[allow(dead_code)]
     pub fn empty(program_hash: String) -> Self {
         Self {
-            version: Self::VERSION_V2,
+            version: Self::VERSION,
             program_hash,
+            pc_annotations: Vec::new(),
             obligations: Vec::new(),
         }
     }

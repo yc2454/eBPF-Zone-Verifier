@@ -9,6 +9,7 @@ Zone mode can derive relational facts that interval/kernel mode may not keep. PC
 ## Core terms
 
 - `ProgramCertificate`: certificate file bound to a single lowered program (`program_hash`).
+- `PcAnnotation`: per-PC inductive annotation table (current prototype path).
 - `EdgeObligation`: one local claim for one CFG edge (`pred_pc -> succ_pc`).
 - `ProofStep`: one inequality atom used in the proof chain.
   - `GuardStep { i, j, c }`: implied by branch semantics + edge polarity.
@@ -62,6 +63,19 @@ Semantic gate during analysis, per edge:
 - apply only narrow refinement on success.
 
 If any check fails, refinement is skipped (fail-closed) and baseline verifier behavior continues.
+
+## Inductive PC Annotation Direction
+
+For conceptual simplicity, the prototype adds `pc_annotations`:
+
+- each `PcAnnotation` targets a single `pc` and contains several entries;
+- each entry is a bound `i - j <= bound` with a short proof chain;
+- checker validates each step on the incoming edge:
+  - `GuardStep` must match edge guard,
+  - `PreStateStep` must be justified by one-step transfer from predecessor state;
+- current proof-step cap is intentionally small (`<= 3`) for practicality.
+
+Legacy `obligations` remain supported for compatibility during migration.
 
 ## Soundness posture
 

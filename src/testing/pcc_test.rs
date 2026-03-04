@@ -5,7 +5,7 @@ use crate::analysis;
 use crate::common::config::{DomainMode, VerifierConfig};
 use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::parsing::bpf_to_ast::lower_raw_to_program;
-use crate::pcc::{ProgramCertificate, generate_v1_obligations_from_zone, program_hash};
+use crate::pcc::{ProgramCertificate, generate_prototype_certificate_from_zone};
 use crate::testing::selftest::{
     JsonTestCase, TestOutcome, build_exec_context, make_entry_state, run_test, run_test_file,
     run_test_suite, write_json_report, write_txt_report,
@@ -111,7 +111,6 @@ pub fn pcc_test_single(json_path: &str, test_name: &str, config: &VerifierConfig
                 return;
             }
         };
-        let mut cert = ProgramCertificate::empty(program_hash(&program));
         let (ctx, has_unsupported_fixup) = build_exec_context(test);
         if has_unsupported_fixup {
             eprintln!("Warning: certificate generation skipped due to unsupported fixup type");
@@ -128,7 +127,7 @@ pub fn pcc_test_single(json_path: &str, test_name: &str, config: &VerifierConfig
                 return;
             }
         };
-        cert.obligations = generate_v1_obligations_from_zone(&program, &zone_dbms);
+        let cert = generate_prototype_certificate_from_zone(&program, &zone_dbms);
         match cert.save_to_path(path) {
             Ok(()) => println!("Certificate written: {}", path),
             Err(e) => eprintln!("Warning: failed to write certificate '{}': {e:#}", path),
