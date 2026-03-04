@@ -61,6 +61,20 @@ impl NumericDomain {
         }
     }
 
+    /// Extacts the 32-bit signed bounds for a register
+    pub fn get_s32_bounds(&self, x: Reg) -> (i32, i32) {
+        match self {
+            NumericDomain::Zone(dbm) => {
+                let b = &dbm.bounds[x.idx()];
+                (b.s32_min, b.s32_max)
+            }
+            NumericDomain::Interval(ivl) => {
+                let st = ivl.get_bounds(x);
+                (st.smin as i32, st.smax as i32)
+            }
+        }
+    }
+
     /// Returns the exact distance between two registers if constant
     pub fn get_distance_fixed(&self, x: Reg, y: Reg) -> Option<i64> {
         match self {
@@ -139,6 +153,18 @@ impl NumericDomain {
         match self {
             NumericDomain::Zone(dbm) => zone_ops::assign_reg(dbm, x, y),
             NumericDomain::Interval(ivl) => interval_ops::assign_reg(ivl, x, y),
+        }
+    }
+
+    /// Explicitly sets the 32-bit signed bounds for a register
+    pub fn set_s32_bounds(&mut self, x: Reg, min: i32, max: i32) {
+        match self {
+            NumericDomain::Zone(dbm) => {
+                dbm.bounds[x.idx()].s32_min = min;
+                dbm.bounds[x.idx()].s32_max = max;
+                zone_ops::sync_bounds(dbm, x);
+            }
+            NumericDomain::Interval(_) => {} // Not needed for this domain here
         }
     }
 

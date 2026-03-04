@@ -108,7 +108,10 @@ pub fn assign_imm(dbm: &mut Dbm, x: Reg, imm: i64) {
     if imm > i64::MIN {
         dbm.add_constraint(Reg::Zero, x, -imm);
     }
+    dbm.bounds[x.idx()].s64_min = imm;
+    dbm.bounds[x.idx()].s64_max = imm;
     dbm.close();
+    sync_bounds(dbm, x);
 }
 
 /// Overwrites a register with zero.
@@ -349,6 +352,7 @@ pub fn assume_le_imm(dbm: &mut Dbm, x: Reg, c: i64) {
     }
     dbm.add_constraint(x, Reg::Zero, c);
     dbm.close();
+    sync_bounds(dbm, x);
 }
 
 /// Assumes x >= c.
@@ -358,6 +362,7 @@ pub fn assume_ge_imm(dbm: &mut Dbm, x: Reg, c: i64) {
     }
     dbm.add_constraint(Reg::Zero, x, -c);
     dbm.close();
+    sync_bounds(dbm, x);
 }
 
 /// Assumes min <= x <= max.
@@ -373,6 +378,7 @@ pub fn assume_eq_imm(dbm: &mut Dbm, x: Reg, c: i64) {
         dbm.add_constraint(Reg::Zero, x, -c);
     }
     dbm.close();
+    sync_bounds(dbm, x);
 }
 
 /// Assumes x < c.
@@ -387,6 +393,7 @@ pub fn assume_lt_imm(d: &mut Dbm, x: Reg, c: i64) {
     let bound = c - 1;
     d.add_constraint(x, Reg::Zero, bound);
     d.close();
+    sync_bounds(d, x);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -475,4 +482,80 @@ pub fn preserve_anchor_constraints(caller_dbm: &mut Dbm, callee_dbm: &Dbm) {
         }
     }
     caller_dbm.close();
+}
+
+/// Synchronizes the relational DBM constraints with absolute 4-tuple bounds for a given register.
+/// Implements the Sync Contract to prevent divergence.
+pub fn sync_bounds(dbm: &mut Dbm, x: Reg) {
+    if x == Reg::Zero || x.is_anchor() {
+        return;
+    }
+
+    let idx = x.idx();
+
+    // 1. DBM -> Bounds (s64 wrapper)
+    let dbm_max = dbm.get(x, Reg::Zero);
+    if dbm_max < INF {
+        dbm.bounds[idx].s64_max = dbm.bounds[idx].s64_max.min(dbm_max);
+    }
+    let dbm_min_neg = dbm.get(Reg::Zero, x);
+    if dbm_min_neg < INF {
+        dbm.bounds[idx].s64_min = dbm.bounds[idx].s64_min.max(-dbm_min_neg);
+    }
+
+    // 2. Cross-pollinate bounds within the bounds array
+    let b = &mut dbm.bounds[idx];
+
+    // s64 <-> u64
+    if b.s64_min >= 0 {
+        b.u64_min = b.u64_min.max(b.s64_min as u64);
+        b.u64_max = b.u64_max.min(b.s64_max as u64);
+    }
+    if b.u64_max <= i64::MAX as u64 {
+        b.s64_min = b.s64_min.max(b.u64_min as i64);
+        b.s64_max = b.s64_max.min(b.u64_max as i64);
+    }
+
+    // s32 <-> u32
+    if b.s32_min >= 0 {
+        b.u32_min = b.u32_min.max(b.s32_min as u32);
+        b.u32_max = b.u32_max.min(b.s32_max as u32);
+    }
+    if b.u32_max <= i32::MAX as u32 {
+        b.s32_min = b.s32_min.max(b.u32_min as i32);
+        b.s32_max = b.s32_max.min(b.u32_max as i32);
+    }
+
+    // 64-bit into 32-bit (if fitting completely)
+    if b.s64_min >= i32::MIN as i64 && b.s64_max <= i32::MAX as i64 {
+        b.s32_min = b.s32_min.max(b.s64_min as i32);
+        b.s32_max = b.s32_max.min(b.s64_max as i32);
+    }
+    if b.u64_max <= u32::MAX as u64 {
+        b.u32_min = b.u32_min.max(b.u64_min as u32);
+        b.u32_max = b.u32_max.min(b.u64_max as u32);
+    }
+
+    // 32-bit back into 64-bit (only valid if we already know top 32 bits are clean due to zero-extension)
+    if b.u64_max <= u32::MAX as u64 {
+        b.u64_min = b.u64_min.max(b.u32_min as u64);
+        b.u64_max = b.u64_max.min(b.u32_max as u64);
+
+        // At this point, u64_max <= u32::MAX, which is < i64::MAX, so s64 is non-negative
+        b.s64_min = b.s64_min.max(b.u64_min as i64);
+        b.s64_max = b.s64_max.min(b.u64_max as i64);
+    }
+
+    // 3. Bounds -> DBM (s64 back to relational edge)
+    let final_s64_max = b.s64_max;
+    let final_s64_min = b.s64_min;
+
+    // Drop mutable borrow of dbm.bounds before calling dbm.add_constraint
+
+    if final_s64_max < i64::MAX {
+        dbm.add_constraint(x, Reg::Zero, final_s64_max);
+    }
+    if final_s64_min > i64::MIN {
+        dbm.add_constraint(Reg::Zero, x, -final_s64_min);
+    }
 }

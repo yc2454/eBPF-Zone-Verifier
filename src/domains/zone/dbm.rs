@@ -36,9 +36,37 @@ pub fn clamped_add(a: i64, b: i64) -> i64 {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Bounds {
+    pub s32_min: i32,
+    pub s32_max: i32,
+    pub u32_min: u32,
+    pub u32_max: u32,
+    pub s64_min: i64,
+    pub s64_max: i64,
+    pub u64_min: u64,
+    pub u64_max: u64,
+}
+
+impl Bounds {
+    pub fn unknown() -> Self {
+        Self {
+            s32_min: i32::MIN,
+            s32_max: i32::MAX,
+            u32_min: 0,
+            u32_max: u32::MAX,
+            s64_min: i64::MIN,
+            s64_max: i64::MAX,
+            u64_min: 0,
+            u64_max: u64::MAX,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dbm {
     pub data: Vec<Vec<i64>>,
+    pub bounds: Vec<Bounds>,
 }
 
 impl Dbm {
@@ -48,7 +76,10 @@ impl Dbm {
         for (i, row) in data.iter_mut().enumerate() {
             row[i] = 0;
         }
-        Self { data }
+        Self {
+            data,
+            bounds: vec![Bounds::unknown(); n],
+        }
     }
 
     pub fn num_vars(&self) -> usize {
@@ -115,6 +146,7 @@ impl Dbm {
                 self.data[k][i] = INF;
             }
         }
+        self.bounds[i] = Bounds::unknown();
     }
 
     pub fn close(&mut self) {
@@ -341,6 +373,16 @@ impl Dbm {
                 }
                 // If newer <= self, keep self (stable/tightening)
             }
+            let b1 = &self.bounds[i];
+            let b2 = &newer.bounds[i];
+            result.bounds[i].s32_min = b1.s32_min.min(b2.s32_min);
+            result.bounds[i].s32_max = b1.s32_max.max(b2.s32_max);
+            result.bounds[i].u32_min = b1.u32_min.min(b2.u32_min);
+            result.bounds[i].u32_max = b1.u32_max.max(b2.u32_max);
+            result.bounds[i].s64_min = b1.s64_min.min(b2.s64_min);
+            result.bounds[i].s64_max = b1.s64_max.max(b2.s64_max);
+            result.bounds[i].u64_min = b1.u64_min.min(b2.u64_min);
+            result.bounds[i].u64_max = b1.u64_max.max(b2.u64_max);
         }
         result
     }
@@ -357,6 +399,16 @@ impl Dbm {
                 // Take the tighter constraint (smaller value = tighter bound)
                 result.data[i][j] = self.data[i][j].min(other.data[i][j]);
             }
+            let b1 = &self.bounds[i];
+            let b2 = &other.bounds[i];
+            result.bounds[i].s32_min = b1.s32_min.max(b2.s32_min);
+            result.bounds[i].s32_max = b1.s32_max.min(b2.s32_max);
+            result.bounds[i].u32_min = b1.u32_min.max(b2.u32_min);
+            result.bounds[i].u32_max = b1.u32_max.min(b2.u32_max);
+            result.bounds[i].s64_min = b1.s64_min.max(b2.s64_min);
+            result.bounds[i].s64_max = b1.s64_max.min(b2.s64_max);
+            result.bounds[i].u64_min = b1.u64_min.max(b2.u64_min);
+            result.bounds[i].u64_max = b1.u64_max.min(b2.u64_max);
         }
         result
     }
