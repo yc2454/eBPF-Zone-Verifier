@@ -17,6 +17,9 @@ pub struct EdgeObligation {
     pub kind: ObligationKind,
     pub pred_pc: usize,
     pub succ_pc: usize,
+    /// Required for branch obligations; ignored for non-branch obligations.
+    #[serde(default)]
+    pub branch_taken: Option<bool>,
     pub pred_fingerprint: u64,
     pub target: Constraint,
     pub proof: Vec<ProofStep>,

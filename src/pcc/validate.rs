@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use crate::analysis::machine::reg::Reg;
-use crate::ast::Program;
+use crate::ast::{CmpOp, Instr, Operand, Program, Width};
 
 use super::model::{ObligationKind, ProgramCertificate, ProofStep};
 
@@ -30,9 +30,6 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
     }
 
     for (idx, ob) in cert.obligations.iter().enumerate() {
-        if !matches!(ob.kind, ObligationKind::AddRegPacketBound) {
-            anyhow::bail!("obligation #{} has unsupported kind {:?}", idx, ob.kind);
-        }
         if ob.pred_pc >= prog.instrs.len() {
             anyhow::bail!(
                 "obligation #{} has pred_pc={} out of bounds (program len={})",
@@ -49,7 +46,7 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
                 prog.instrs.len()
             );
         }
-        if ob.succ_pc != ob.pred_pc + 1 {
+        if matches!(ob.kind, ObligationKind::AddRegPacketBound) && ob.succ_pc != ob.pred_pc + 1 {
             anyhow::bail!(
                 "obligation #{} has unsupported non-fallthrough edge {} -> {}",
                 idx,
@@ -119,12 +116,89 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
                     step.j()
                 );
             }
-            if matches!(step, ProofStep::GuardStep { .. }) {
+            if matches!(ob.kind, ObligationKind::AddRegPacketBound)
+                && matches!(step, ProofStep::GuardStep { .. })
+            {
                 anyhow::bail!(
                     "obligation #{} step #{} uses unsupported GuardStep",
                     idx,
                     step_idx
                 );
+            }
+        }
+
+        match ob.kind {
+            ObligationKind::AddRegPacketBound => {}
+            ObligationKind::BranchGuardBound => {
+                let Some(branch_taken) = ob.branch_taken else {
+                    anyhow::bail!(
+                        "obligation #{} missing branch_taken for BranchGuardBound",
+                        idx
+                    );
+                };
+                let Instr::If {
+                    width,
+                    left: _,
+                    op,
+                    right,
+                    target,
+                } = prog.instrs[ob.pred_pc]
+                else {
+                    anyhow::bail!(
+                        "obligation #{} BranchGuardBound requires pred instruction to be If",
+                        idx
+                    );
+                };
+
+                let expected_succ = if branch_taken { target } else { ob.pred_pc + 1 };
+                if ob.succ_pc != expected_succ {
+                    anyhow::bail!(
+                        "obligation #{} has succ_pc={} inconsistent with branch_taken={} (expected {})",
+                        idx,
+                        ob.succ_pc,
+                        branch_taken,
+                        expected_succ
+                    );
+                }
+                if !matches!(
+                    op,
+                    CmpOp::ULe
+                        | CmpOp::UGe
+                        | CmpOp::ULt
+                        | CmpOp::UGt
+                        | CmpOp::SLe
+                        | CmpOp::SGe
+                        | CmpOp::SLt
+                        | CmpOp::SGt
+                ) {
+                    anyhow::bail!(
+                        "obligation #{} uses unsupported branch op {:?} for BranchGuardBound",
+                        idx,
+                        op
+                    );
+                }
+                if !matches!(right, Operand::Reg(_)) {
+                    anyhow::bail!(
+                        "obligation #{} requires register-vs-register branch for BranchGuardBound",
+                        idx
+                    );
+                }
+                if !matches!(width, Width::W64) {
+                    anyhow::bail!(
+                        "obligation #{} requires 64-bit branch width for BranchGuardBound",
+                        idx
+                    );
+                }
+                if !ob
+                    .proof
+                    .iter()
+                    .any(|s| matches!(s, ProofStep::GuardStep { .. }))
+                {
+                    anyhow::bail!(
+                        "obligation #{} BranchGuardBound requires at least one GuardStep",
+                        idx
+                    );
+                }
             }
         }
     }

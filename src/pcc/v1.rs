@@ -140,6 +140,7 @@ pub fn generate_v1_obligations_from_zone(prog: &Program, dbms: &[Dbm]) -> Vec<Ed
             kind: ObligationKind::AddRegPacketBound,
             pred_pc,
             succ_pc,
+            branch_taken: None,
             pred_fingerprint: hash_v1_pred_context(
                 pred_pc, *dst, *src, d_dst_data, d_data_end, src_umax,
             ),
