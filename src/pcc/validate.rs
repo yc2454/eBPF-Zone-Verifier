@@ -3,7 +3,7 @@ use anyhow::Result;
 use crate::analysis::machine::reg::Reg;
 use crate::ast::Program;
 
-use super::model::{ObligationKind, ProgramCertificate, ProofSource};
+use super::model::{ObligationKind, ProgramCertificate, ProofStep};
 
 fn checked_sum(weights: impl Iterator<Item = i64>) -> Option<i64> {
     let mut sum = 0i64;
@@ -18,7 +18,8 @@ fn checked_sum(weights: impl Iterator<Item = i64>) -> Option<i64> {
 /// This is a structural gate, not a semantic proof. Semantic proof still happens
 /// per edge during certificate-aided refinement.
 pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Program) -> Result<()> {
-    if cert.version != ProgramCertificate::VERSION_V1 && cert.version != ProgramCertificate::VERSION_V2
+    if cert.version != ProgramCertificate::VERSION_V1
+        && cert.version != ProgramCertificate::VERSION_V2
     {
         anyhow::bail!(
             "unsupported certificate version {} (expected {} or {})",
@@ -30,11 +31,7 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
 
     for (idx, ob) in cert.obligations.iter().enumerate() {
         if !matches!(ob.kind, ObligationKind::AddRegPacketBound) {
-            anyhow::bail!(
-                "obligation #{} has unsupported kind {:?}",
-                idx,
-                ob.kind
-            );
+            anyhow::bail!("obligation #{} has unsupported kind {:?}", idx, ob.kind);
         }
         if ob.pred_pc >= prog.instrs.len() {
             anyhow::bail!(
@@ -91,7 +88,7 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
         if ob.proof.is_empty() {
             anyhow::bail!("obligation #{} has empty proof", idx);
         }
-        if ob.proof[0].from != ob.target.i || ob.proof[ob.proof.len() - 1].to != ob.target.j {
+        if ob.proof[0].i() != ob.target.i || ob.proof[ob.proof.len() - 1].j() != ob.target.j {
             anyhow::bail!(
                 "obligation #{} proof endpoints do not match target ({} -> {})",
                 idx,
@@ -100,34 +97,33 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
             );
         }
         for w in ob.proof.windows(2) {
-            if w[0].to != w[1].from {
+            if w[0].j() != w[1].i() {
                 anyhow::bail!(
                     "obligation #{} proof chain is disconnected at {} -> {}",
                     idx,
-                    w[0].to,
-                    w[1].from
+                    w[0].j(),
+                    w[1].i()
                 );
             }
         }
-        let Some(_sum) = checked_sum(ob.proof.iter().map(|s| s.weight)) else {
+        let Some(_sum) = checked_sum(ob.proof.iter().map(ProofStep::c)) else {
             anyhow::bail!("obligation #{} proof weight sum overflows i64", idx);
         };
         for (step_idx, step) in ob.proof.iter().enumerate() {
-            if Reg::idx_to_reg(step.from).is_none() || Reg::idx_to_reg(step.to).is_none() {
+            if Reg::idx_to_reg(step.i()).is_none() || Reg::idx_to_reg(step.j()).is_none() {
                 anyhow::bail!(
                     "obligation #{} step #{} uses invalid register indices {} -> {}",
                     idx,
                     step_idx,
-                    step.from,
-                    step.to
+                    step.i(),
+                    step.j()
                 );
             }
-            if !matches!(step.source, ProofSource::PreState) {
+            if matches!(step, ProofStep::GuardStep { .. }) {
                 anyhow::bail!(
-                    "obligation #{} step #{} uses unsupported proof source {:?}",
+                    "obligation #{} step #{} uses unsupported GuardStep",
                     idx,
-                    step_idx,
-                    step.source
+                    step_idx
                 );
             }
         }

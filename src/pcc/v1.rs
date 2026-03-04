@@ -6,7 +6,7 @@ use crate::ast::{AluOp, Instr, MemSize, Operand, Program};
 use crate::domains::dbm::{Dbm, INF};
 use crate::domains::interval::IntervalState;
 
-use super::model::{Constraint, EdgeObligation, ObligationKind, ProofSource, ProofStep};
+use super::model::{Constraint, EdgeObligation, ObligationKind, ProofStep};
 
 fn mem_size_bytes(sz: MemSize) -> i64 {
     match sz {
@@ -149,17 +149,15 @@ pub fn generate_v1_obligations_from_zone(prog: &Program, dbms: &[Dbm]) -> Vec<Ed
                 c: target_c,
             },
             proof: vec![
-                ProofStep {
-                    from: dst.idx(),
-                    to: Reg::AnchorData.idx(),
-                    weight: d_dst_data,
-                    source: ProofSource::PreState,
+                ProofStep::PreStateStep {
+                    i: dst.idx(),
+                    j: Reg::AnchorData.idx(),
+                    c: d_dst_data,
                 },
-                ProofStep {
-                    from: Reg::AnchorData.idx(),
-                    to: Reg::AnchorDataEnd.idx(),
-                    weight: d_data_end,
-                    source: ProofSource::PreState,
+                ProofStep::PreStateStep {
+                    i: Reg::AnchorData.idx(),
+                    j: Reg::AnchorDataEnd.idx(),
+                    c: d_data_end,
                 },
             ],
         });

@@ -30,19 +30,32 @@ pub struct Constraint {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ProofSource {
-    #[serde(alias = "guard", alias = "Guard")]
-    Guard,
-    #[serde(alias = "pre_state", alias = "PreState")]
-    PreState,
+#[serde(tag = "kind")]
+pub enum ProofStep {
+    #[serde(rename = "GuardStep")]
+    GuardStep { i: usize, j: usize, c: i64 },
+    #[serde(rename = "PreStateStep")]
+    PreStateStep { i: usize, j: usize, c: i64 },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ProofStep {
-    pub from: usize,
-    pub to: usize,
-    pub weight: i64,
-    pub source: ProofSource,
+impl ProofStep {
+    pub fn i(&self) -> usize {
+        match self {
+            ProofStep::GuardStep { i, .. } | ProofStep::PreStateStep { i, .. } => *i,
+        }
+    }
+
+    pub fn j(&self) -> usize {
+        match self {
+            ProofStep::GuardStep { j, .. } | ProofStep::PreStateStep { j, .. } => *j,
+        }
+    }
+
+    pub fn c(&self) -> i64 {
+        match self {
+            ProofStep::GuardStep { c, .. } | ProofStep::PreStateStep { c, .. } => *c,
+        }
+    }
 }
 
 /// Typed obligation semantics.

@@ -3,7 +3,7 @@ use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, Instr, Operand};
 use crate::domains::numeric::NumericDomain;
 
-use super::model::{Constraint, EdgeObligation, ObligationKind, ProgramCertificate, ProofSource};
+use super::model::{Constraint, EdgeObligation, ObligationKind, ProgramCertificate, ProofStep};
 use super::v1::{compute_v1_pred_fingerprint_from_interval, prestate_bound};
 
 fn checked_sum(weights: impl Iterator<Item = i64>) -> Option<i64> {
@@ -91,11 +91,11 @@ fn apply_add_reg_packet_bound_obligation(
     if ob.proof.is_empty() {
         return;
     }
-    if ob.proof[0].from != ob.target.i || ob.proof[ob.proof.len() - 1].to != ob.target.j {
+    if ob.proof[0].i() != ob.target.i || ob.proof[ob.proof.len() - 1].j() != ob.target.j {
         return;
     }
     for w in ob.proof.windows(2) {
-        if w[0].to != w[1].from {
+        if w[0].j() != w[1].i() {
             return;
         }
     }
@@ -104,29 +104,29 @@ fn apply_add_reg_packet_bound_obligation(
         return;
     };
     for step in &ob.proof {
-        match step.source {
-            ProofSource::PreState => {
-                let Some(from) = Reg::idx_to_reg(step.from) else {
+        match step {
+            ProofStep::PreStateStep { i, j, c } => {
+                let Some(from) = Reg::idx_to_reg(*i) else {
                     return;
                 };
-                let Some(to) = Reg::idx_to_reg(step.to) else {
+                let Some(to) = Reg::idx_to_reg(*j) else {
                     return;
                 };
                 let Some(actual) = prestate_bound(ivl, from, to) else {
                     return;
                 };
-                if actual > step.weight {
+                if actual > *c {
                     return;
                 }
             }
-            ProofSource::Guard => {
+            ProofStep::GuardStep { .. } => {
                 // Guard-based proofs are not enabled in this checker path yet.
                 return;
             }
         }
     }
 
-    let Some(pre_sum) = checked_sum(ob.proof.iter().map(|s| s.weight)) else {
+    let Some(pre_sum) = checked_sum(ob.proof.iter().map(ProofStep::c)) else {
         return;
     };
     let Some(post_bound) = apply_add_reg_transfer_to_bound(pre_state, pred_instr, i, j, pre_sum)
