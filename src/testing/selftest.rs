@@ -33,7 +33,7 @@ use crate::parsing::elf::{BpfMapDef, RelocInfo, RelocKind};
 // ============================================================================
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct JsonTestCase {
     pub name: String,
     pub result: String,
@@ -48,7 +48,7 @@ pub struct JsonTestCase {
     pub insns: Vec<JsonInsn>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct JsonInsn {
     pub code: u8,
     pub dst: u8,

@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::analysis;
-use crate::common::config::VerifierConfig;
+use crate::common::config::{DomainMode, VerifierConfig};
 use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::parsing::bpf_to_ast::lower_raw_to_program;
 use crate::pcc::{ProgramCertificate, generate_v1_obligations_from_zone, program_hash};
@@ -10,6 +10,7 @@ use crate::testing::selftest::{
     JsonTestCase, TestOutcome, build_exec_context, make_entry_state, run_test, run_test_file,
     run_test_suite, write_json_report, write_txt_report,
 };
+use serde::Deserialize;
 
 /// Run all PCC tests in a single JSON file.
 pub fn pcc_test_run(json_path: &str, config: &VerifierConfig, output_dir: Option<&str>) {
@@ -198,4 +199,91 @@ pub fn pcc_test_suite(dir: &str, config: &VerifierConfig, output_dir: Option<&st
         }
         Err(e) => eprintln!("Error: {}", e),
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct PccCertCase {
+    name: String,
+    json_file: String,
+    test_name: String,
+    certificate: String,
+    expected: String,
+}
+
+/// Run manifest-defined certificate cases with kernel-mode semantics.
+pub fn pcc_cert_run(manifest_path: &str, config: &VerifierConfig) {
+    println!("Running PCC certificate cases: {}\n", manifest_path);
+    let content = match fs::read_to_string(manifest_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error: Failed to read {}: {}", manifest_path, e);
+            return;
+        }
+    };
+    let cases: Vec<PccCertCase> = match serde_json::from_str(&content) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error: Failed to parse {}: {}", manifest_path, e);
+            return;
+        }
+    };
+
+    let mut passed = 0usize;
+    let mut failed = 0usize;
+    for case in &cases {
+        let test_content = match fs::read_to_string(&case.json_file) {
+            Ok(c) => c,
+            Err(e) => {
+                println!("[FAIL] {}: read test file: {}", case.name, e);
+                failed += 1;
+                continue;
+            }
+        };
+        let tests: Vec<JsonTestCase> = match serde_json::from_str(&test_content) {
+            Ok(t) => t,
+            Err(e) => {
+                println!("[FAIL] {}: parse test file: {}", case.name, e);
+                failed += 1;
+                continue;
+            }
+        };
+        let Some(test) = tests.iter().find(|t| t.name == case.test_name) else {
+            println!("[FAIL] {}: test '{}' not found", case.name, case.test_name);
+            failed += 1;
+            continue;
+        };
+        let cert = match ProgramCertificate::load_from_path(&case.certificate) {
+            Ok(c) => c,
+            Err(e) => {
+                println!("[FAIL] {}: load cert failed: {e:#}", case.name);
+                failed += 1;
+                continue;
+            }
+        };
+
+        let mut cfg = config.clone();
+        cfg.domain_mode = DomainMode::Interval;
+        cfg.detect_bounded_loops = false;
+        cfg.require_single_loop_entry = true;
+        cfg.certificate = Some(cert);
+
+        let result = run_test(test, &cfg);
+        if result.actual == case.expected {
+            println!("[PASS] {} => {}", case.name, result.actual);
+            passed += 1;
+        } else {
+            println!(
+                "[FAIL] {} => expected {}, got {}",
+                case.name, case.expected, result.actual
+            );
+            failed += 1;
+        }
+    }
+
+    println!(
+        "\nPCC certificate case summary: {}/{} passed, {} failed",
+        passed,
+        passed + failed,
+        failed
+    );
 }

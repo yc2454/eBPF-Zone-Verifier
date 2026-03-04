@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "program_hash": "37910c98808e089c",
+  "obligations": [
+    {
+      "pred_pc": 9,
+      "succ_pc": 11,
+      "pred_fingerprint": 13338733177373399053,
+      "target": {
+        "i": 6,
+        "j": 14,
+        "c": -5
+      },
+      "proof": [
+        {
+          "from": 6,
+          "to": 13,
+          "weight": 0,
+          "source": "PreState"
+        },
+        {
+          "from": 13,
+          "to": 14,
+          "weight": -8,
+          "source": "PreState"
+        }
+      ]
+    }
+  ]
+}

@@ -15,7 +15,9 @@ use crate::parsing::elf::{list_section_names, load_maps, load_raw_programs};
 use crate::pcc::ProgramCertificate;
 use crate::testing::bcf_benchmark::analyze_benchmark;
 use crate::testing::logging;
-use crate::testing::pcc_test::{pcc_test_list, pcc_test_run, pcc_test_single, pcc_test_suite};
+use crate::testing::pcc_test::{
+    pcc_cert_run, pcc_test_list, pcc_test_run, pcc_test_single, pcc_test_suite,
+};
 use crate::testing::prevail::{prevail_benchmark, prevail_list, prevail_run, prevail_single};
 use crate::testing::runner::{AnalysisResult, Analyzer, find_section_for_func, is_code_section};
 use crate::testing::selftest::{selftest_list, selftest_run, selftest_single, selftest_suite};
@@ -36,6 +38,7 @@ fn usage() {
     eprintln!("  cargo run -- [flags] pcc-test-single <json_file> <test_name>");
     eprintln!("  cargo run -- [flags] pcc-test-run    <json_file>");
     eprintln!("  cargo run -- [flags] pcc-test-suite  <json_dir>");
+    eprintln!("  cargo run -- [flags] pcc-cert-run    <cert_cases.json>");
     eprintln!("  cargo run -- [flags] prevail-list    <catalogue.json>");
     eprintln!("  cargo run -- [flags] prevail-run     <catalogue.json>");
     eprintln!("  cargo run -- [flags] prevail-single  <catalogue.json> <test_name>");
@@ -437,6 +440,18 @@ fn main() {
                 return;
             }
             pcc_test_single(&remaining[1], &remaining[2], &config);
+        }
+
+        // ============================================================
+        // PCC cert cases: run manifest-defined certificate scenarios
+        // ============================================================
+        "pcc-cert-run" => {
+            if remaining.len() < 2 {
+                eprintln!("Error: Missing certificate case manifest path");
+                eprintln!("Usage: pcc-cert-run <cert_cases.json>");
+                return;
+            }
+            pcc_cert_run(&remaining[1], &config);
         }
 
         // ============================================================
