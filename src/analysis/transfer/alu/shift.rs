@@ -23,8 +23,19 @@ pub(crate) fn handle_shr(state: &mut State, width: Width, dst: Reg, src: &Operan
 
             if width == Width::W32 {
                 let truncated_tnum = old_tnum.trunc32();
-                let trunc_lo = truncated_tnum.min_value();
-                let trunc_hi = truncated_tnum.max_value();
+                let dbm_lo = if old_lo >= 0 && old_hi <= u32::MAX as i64 {
+                    old_lo as u64
+                } else {
+                    0
+                };
+                let dbm_hi = if old_lo >= 0 && old_hi <= u32::MAX as i64 {
+                    old_hi as u64
+                } else {
+                    u32::MAX as u64
+                };
+
+                let trunc_lo = truncated_tnum.min_value().max(dbm_lo);
+                let trunc_hi = truncated_tnum.max_value().min(dbm_hi);
 
                 let new_lo = (trunc_lo >> shift_amount) as i64;
                 let new_hi = (trunc_hi >> shift_amount) as i64;
@@ -88,8 +99,19 @@ pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operan
 
             if width == Width::W32 {
                 let truncated_tnum = old_tnum.trunc32();
-                let trunc_lo = truncated_tnum.min_value();
-                let trunc_hi = truncated_tnum.max_value();
+                let dbm_lo = if old_lo >= 0 && old_hi <= u32::MAX as i64 {
+                    old_lo as u64
+                } else {
+                    0
+                };
+                let dbm_hi = if old_lo >= 0 && old_hi <= u32::MAX as i64 {
+                    old_hi as u64
+                } else {
+                    u32::MAX as u64
+                };
+
+                let trunc_lo = truncated_tnum.min_value().max(dbm_lo);
+                let trunc_hi = truncated_tnum.max_value().min(dbm_hi);
 
                 if shift_amount < 32 {
                     let max_safe = u32::MAX as u64 >> shift_amount;

@@ -375,14 +375,46 @@ impl Dbm {
             }
             let b1 = &self.bounds[i];
             let b2 = &newer.bounds[i];
-            result.bounds[i].s32_min = b1.s32_min.min(b2.s32_min);
-            result.bounds[i].s32_max = b1.s32_max.max(b2.s32_max);
-            result.bounds[i].u32_min = b1.u32_min.min(b2.u32_min);
-            result.bounds[i].u32_max = b1.u32_max.max(b2.u32_max);
-            result.bounds[i].s64_min = b1.s64_min.min(b2.s64_min);
-            result.bounds[i].s64_max = b1.s64_max.max(b2.s64_max);
-            result.bounds[i].u64_min = b1.u64_min.min(b2.u64_min);
-            result.bounds[i].u64_max = b1.u64_max.max(b2.u64_max);
+            result.bounds[i].s32_min = if b2.s32_min < b1.s32_min {
+                i32::MIN
+            } else {
+                b1.s32_min
+            };
+            result.bounds[i].s32_max = if b2.s32_max > b1.s32_max {
+                i32::MAX
+            } else {
+                b1.s32_max
+            };
+            result.bounds[i].u32_min = if b2.u32_min < b1.u32_min {
+                0
+            } else {
+                b1.u32_min
+            };
+            result.bounds[i].u32_max = if b2.u32_max > b1.u32_max {
+                u32::MAX
+            } else {
+                b1.u32_max
+            };
+            result.bounds[i].s64_min = if b2.s64_min < b1.s64_min {
+                i64::MIN
+            } else {
+                b1.s64_min
+            };
+            result.bounds[i].s64_max = if b2.s64_max > b1.s64_max {
+                i64::MAX
+            } else {
+                b1.s64_max
+            };
+            result.bounds[i].u64_min = if b2.u64_min < b1.u64_min {
+                0
+            } else {
+                b1.u64_min
+            };
+            result.bounds[i].u64_max = if b2.u64_max > b1.u64_max {
+                u64::MAX
+            } else {
+                b1.u64_max
+            };
         }
         result
     }

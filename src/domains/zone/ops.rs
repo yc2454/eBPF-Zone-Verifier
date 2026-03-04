@@ -167,6 +167,17 @@ pub fn add_imm(d: &mut Dbm, x: Reg, c: i64) {
         }
     }
     d.set_idx(xi, xi, 0);
+
+    let b = &mut d.bounds[xi];
+    b.s64_min = b.s64_min.saturating_add(c);
+    b.s64_max = b.s64_max.saturating_add(c);
+    b.u64_min = 0;
+    b.u64_max = u64::MAX;
+    b.s32_min = i32::MIN;
+    b.s32_max = i32::MAX;
+    b.u32_min = 0;
+    b.u32_max = u32::MAX;
+
     d.close();
 }
 
@@ -196,6 +207,17 @@ pub fn apply_add_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
             }
         }
         dbm.set_idx(di, di, 0);
+
+        let b = &mut dbm.bounds[di];
+        b.s64_min = b.s64_min.saturating_add(src_lo);
+        b.s64_max = b.s64_max.saturating_add(src_hi);
+        b.u64_min = 0;
+        b.u64_max = u64::MAX;
+        b.s32_min = i32::MIN;
+        b.s32_max = i32::MAX;
+        b.u32_min = 0;
+        b.u32_max = u32::MAX;
+
         dbm.close();
     } else {
         let (dst_lo, dst_hi) = get_interval(dbm, dst);
@@ -232,6 +254,17 @@ pub fn apply_sub_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
             }
         }
         dbm.set_idx(di, di, 0);
+
+        let b = &mut dbm.bounds[di];
+        b.s64_min = b.s64_min.saturating_sub(src_hi);
+        b.s64_max = b.s64_max.saturating_sub(src_lo);
+        b.u64_min = 0;
+        b.u64_max = u64::MAX;
+        b.s32_min = i32::MIN;
+        b.s32_max = i32::MAX;
+        b.u32_min = 0;
+        b.u32_max = u32::MAX;
+
         dbm.close();
     } else {
         let (dst_lo, dst_hi) = get_interval(dbm, dst);
