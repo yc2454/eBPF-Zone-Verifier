@@ -15,6 +15,7 @@ use crate::parsing::elf::{list_section_names, load_maps, load_raw_programs};
 use crate::pcc::ProgramCertificate;
 use crate::testing::bcf_benchmark::analyze_benchmark;
 use crate::testing::logging;
+use crate::testing::pcc_test::{pcc_test_list, pcc_test_run, pcc_test_single, pcc_test_suite};
 use crate::testing::prevail::{prevail_benchmark, prevail_list, prevail_run, prevail_single};
 use crate::testing::runner::{AnalysisResult, Analyzer, find_section_for_func, is_code_section};
 use crate::testing::selftest::{selftest_list, selftest_run, selftest_single, selftest_suite};
@@ -31,6 +32,10 @@ fn usage() {
     eprintln!("  cargo run -- [flags] selftest-single <json_file> <test_name>");
     eprintln!("  cargo run -- [flags] selftest-run    <json_file>");
     eprintln!("  cargo run -- [flags] selftest-suite  <json_dir>");
+    eprintln!("  cargo run -- [flags] pcc-test-list   <json_file>");
+    eprintln!("  cargo run -- [flags] pcc-test-single <json_file> <test_name>");
+    eprintln!("  cargo run -- [flags] pcc-test-run    <json_file>");
+    eprintln!("  cargo run -- [flags] pcc-test-suite  <json_dir>");
     eprintln!("  cargo run -- [flags] prevail-list    <catalogue.json>");
     eprintln!("  cargo run -- [flags] prevail-run     <catalogue.json>");
     eprintln!("  cargo run -- [flags] prevail-single  <catalogue.json> <test_name>");
@@ -48,6 +53,7 @@ fn usage() {
     eprintln!("  cargo run -- selftest-single <json_file> <test_name>");
     eprintln!("  cargo run -- selftest-run <json_file>");
     eprintln!("  cargo run -- selftest-suite <json_dir>");
+    eprintln!("  cargo run -- pcc-test-single <json_file> <test_name>");
 }
 
 fn main() {
@@ -100,6 +106,11 @@ fn main() {
     }
 
     let cmd = &remaining[0];
+
+    if config.certificate_output.is_some() && cmd != "pcc-test-single" {
+        eprintln!("Error: --generate-certificate is currently supported only with pcc-test-single");
+        return;
+    }
 
     match cmd.as_str() {
         // ============================================================
@@ -374,6 +385,58 @@ fn main() {
             let test_name = &remaining[2];
 
             selftest_single(json_path, test_name, &config);
+        }
+
+        // ============================================================
+        // PCC test: Run single JSON test file
+        // ============================================================
+        "pcc-test-run" => {
+            if remaining.len() < 2 {
+                eprintln!("Error: Missing JSON test file path");
+                usage();
+                return;
+            }
+            let json_path = &remaining[1];
+            let output_dir = Some("./results/pcc_test");
+            pcc_test_run(json_path, &config, output_dir);
+        }
+
+        // ============================================================
+        // PCC test: Run all JSON files in directory
+        // ============================================================
+        "pcc-test-suite" => {
+            if remaining.len() < 2 {
+                eprintln!("Error: Missing JSON test directory path");
+                usage();
+                return;
+            }
+            let json_dir = &remaining[1];
+            let output_dir = Some("./results/pcc_test");
+            pcc_test_suite(json_dir, &config, output_dir);
+        }
+
+        // ============================================================
+        // PCC test: List tests in JSON file
+        // ============================================================
+        "pcc-test-list" => {
+            if remaining.len() < 2 {
+                eprintln!("Error: Missing JSON test file path");
+                usage();
+                return;
+            }
+            pcc_test_list(&remaining[1]);
+        }
+
+        // ============================================================
+        // PCC test: Run single test by name
+        // ============================================================
+        "pcc-test-single" => {
+            if remaining.len() < 3 {
+                eprintln!("Error: Missing arguments");
+                eprintln!("Usage: pcc-test-single <json_file> <test_name>");
+                return;
+            }
+            pcc_test_single(&remaining[1], &remaining[2], &config);
         }
 
         // ============================================================

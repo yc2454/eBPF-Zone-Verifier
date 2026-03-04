@@ -27,7 +27,6 @@ use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::parsing::bpf_to_ast::{LowerErrorKind, lower_raw_to_program};
 use crate::parsing::btf::{BtfContext, BtfMember, BtfType};
 use crate::parsing::elf::{BpfMapDef, RelocInfo, RelocKind};
-use crate::pcc::{ProgramCertificate, generate_v1_obligations_from_zone, program_hash};
 
 // ============================================================================
 // JSON Deserialization Types
@@ -450,7 +449,7 @@ pub fn create_spin_lock_btf() -> BtfContext {
     BtfContext { types, strings }
 }
 
-fn build_exec_context(
+pub(crate) fn build_exec_context(
     test: &JsonTestCase,
 ) -> (crate::analysis::machine::context::ExecContext, bool) {
     let mut ctx = default_exec_ctx();
@@ -538,7 +537,7 @@ fn build_exec_context(
 // Entry State
 // ============================================================================
 
-fn make_entry_state() -> Dbm {
+pub(crate) fn make_entry_state() -> Dbm {
     let mut dbm = Dbm::new();
     assign_zero(&mut dbm, Reg::R10);
     dbm
@@ -1049,13 +1048,6 @@ pub fn selftest_single(json_path: &str, test_name: &str, config: &VerifierConfig
     if matching.len() > 1 {
         eprintln!("Multiple tests match '{}', running all:\n", test_name);
     }
-    if matching.len() > 1 && config.certificate_output.is_some() {
-        eprintln!(
-            "Error: --generate-certificate with selftest-single requires exactly one matching test"
-        );
-        return;
-    }
-
     for test in matching {
         println!("Test: {}", test.name);
         println!("Expected: {}", test.result);
@@ -1069,44 +1061,6 @@ pub fn selftest_single(json_path: &str, test_name: &str, config: &VerifierConfig
         println!();
 
         let result = run_test(test, config);
-
-        if let Some(path) = &config.certificate_output
-            && matches!(result.outcome, TestOutcome::Pass)
-        {
-            let raw_insns: Vec<RawBpfInsn> = test.insns.iter().map(|j| j.into()).collect();
-            let program = match lower_raw_to_program(&raw_insns) {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!(
-                        "Warning: cannot generate annotation, lowering failed: {:?}",
-                        e
-                    );
-                    continue;
-                }
-            };
-            let mut cert = ProgramCertificate::empty(program_hash(&program));
-            let (ctx, has_unsupported_fixup) = build_exec_context(test);
-            if has_unsupported_fixup {
-                eprintln!("Warning: certificate generation skipped due to unsupported fixup type");
-                continue;
-            }
-            let entry = make_entry_state();
-            let zone_dbms = match analysis::analyze_program(&ctx, &program, entry, config) {
-                Ok(v) => v,
-                Err(e) => {
-                    eprintln!(
-                        "Warning: certificate generation failed during zone analysis: {}",
-                        e.description()
-                    );
-                    continue;
-                }
-            };
-            cert.obligations = generate_v1_obligations_from_zone(&program, &zone_dbms);
-            match cert.save_to_path(path) {
-                Ok(()) => println!("Certificate written: {}", path),
-                Err(e) => eprintln!("Warning: failed to write certificate '{}': {e:#}", path),
-            }
-        }
 
         match &result.outcome {
             TestOutcome::Pass => {
