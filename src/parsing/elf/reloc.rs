@@ -254,6 +254,18 @@ pub fn load_relocations<P: AsRef<Path>>(
                             }),
                         },
                     );
+                } else {
+                    // Unknown external function call (possibly kfunc)
+                    pc_to_reloc.insert(
+                        pc,
+                        RelocInfo {
+                            map_idx: 0,
+                            offset: 0,
+                            helper_id: constants::BPF_KFUNC_CALL_DUMMY,
+                            kind: RelocKind::HelperCall,
+                            bpf_call_target: None,
+                        },
+                    );
                 }
             } else if r_type == R_BPF_64_64 {
                 // Map pointer/value relocation
@@ -432,6 +444,18 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                                 offset_in_section: offset,
                                 size,
                             }),
+                        },
+                    );
+                } else {
+                    // Unknown external function call (possibly kfunc)
+                    pc_to_reloc.insert(
+                        func_pc,
+                        RelocInfo {
+                            map_idx: 0,
+                            offset: 0,
+                            helper_id: constants::BPF_KFUNC_CALL_DUMMY,
+                            kind: RelocKind::HelperCall,
+                            bpf_call_target: None,
                         },
                     );
                 }

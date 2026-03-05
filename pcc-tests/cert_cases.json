@@ -54,5 +54,33 @@
     "test_name": "pcc: branch guard + prestate chain for packet access",
     "certificate": "pcc-tests/certs/pcc_branchguard.bad_bound.cert.json",
     "expected": "REJECT"
+  },
+  {
+    "name": "masked varoff valid cert enables acceptance",
+    "json_file": "pcc-tests/pcc_masked_varoff_examples.json",
+    "test_name": "pcc: masked varoff packet access (dbm expressible)",
+    "certificate": "pcc-tests/certs/pcc_masked_varoff.valid.cert.json",
+    "expected": "ACCEPT"
+  },
+  {
+    "name": "masked varoff tampered proof step fails closed",
+    "json_file": "pcc-tests/pcc_masked_varoff_examples.json",
+    "test_name": "pcc: masked varoff packet access (dbm expressible)",
+    "certificate": "pcc-tests/certs/pcc_masked_varoff.bad_fingerprint.cert.json",
+    "expected": "REJECT"
+  },
+  {
+    "name": "masked varoff tampered edge fails closed",
+    "json_file": "pcc-tests/pcc_masked_varoff_examples.json",
+    "test_name": "pcc: masked varoff packet access (dbm expressible)",
+    "certificate": "pcc-tests/certs/pcc_masked_varoff.bad_edge.cert.json",
+    "expected": "REJECT"
+  },
+  {
+    "name": "masked varoff tampered bound fails closed",
+    "json_file": "pcc-tests/pcc_masked_varoff_examples.json",
+    "test_name": "pcc: masked varoff packet access (dbm expressible)",
+    "certificate": "pcc-tests/certs/pcc_masked_varoff.bad_bound.cert.json",
+    "expected": "REJECT"
   }
 ]

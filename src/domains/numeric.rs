@@ -70,7 +70,11 @@ impl NumericDomain {
             }
             NumericDomain::Interval(ivl) => {
                 let st = ivl.get_bounds(x);
-                (st.smin as i32, st.smax as i32)
+                if st.smin >= i32::MIN as i64 && st.smax <= i32::MAX as i64 {
+                    (st.smin as i32, st.smax as i32)
+                } else {
+                    (i32::MIN, i32::MAX)
+                }
             }
         }
     }

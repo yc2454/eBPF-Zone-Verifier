@@ -157,9 +157,10 @@ pub const BPF_SKC_TO_UDP6_SOCK: u32 = 140;
 pub const BPF_GET_TASK_STACK: u32 = 141;
 pub const BPF_D_PATH: u32 = 147;
 pub const BPF_SKC_TO_UNIX_SOCK: u32 = 178;
+pub const BPF_KFUNC_CALL_DUMMY: u32 = 213;
 
 /// Maximum valid helper ID (used for validation)
-pub const BPF_HELPER_MAX: u32 = 212;
+pub const BPF_HELPER_MAX: u32 = 213;
 
 // ============================================================================
 // Limits & Defaults

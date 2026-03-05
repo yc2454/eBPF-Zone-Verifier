@@ -271,7 +271,9 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
         ]),
 
         // ---- XDP helpers ----
-        constants::BPF_XDP_ADJUST_HEAD => HelperSignature::new([
+        constants::BPF_XDP_ADJUST_HEAD
+        | constants::BPF_XDP_ADJUST_TAIL
+        | constants::BPF_XDP_ADJUST_META => HelperSignature::new([
             PtrToCtx, // R1: xdp_md
             Anything, // R2: delta
             DontCare, DontCare, DontCare,
