@@ -2,6 +2,7 @@ use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, CmpOp, Instr, Operand, Width};
 use crate::domains::numeric::NumericDomain;
+use log::{debug, info};
 
 use super::model::{
     checked_sum, AnnotationEntry, ProgramCertificate, ProofStep, MAX_STEPS_PER_ENTRY,
@@ -185,7 +186,13 @@ fn derive_guard_constraint_from_branch(
     Some(Constraint { i, j, c })
 }
 
-fn apply_verified_packet_end_fact(succ_state: &mut State, i_idx: usize, j_idx: usize, c: i64) {
+fn apply_verified_packet_end_fact(
+    succ_state: &mut State,
+    i_idx: usize,
+    j_idx: usize,
+    c: i64,
+    succ_pc: usize,
+) {
     let Some(i) = Reg::idx_to_reg(i_idx) else {
         return;
     };
@@ -209,6 +216,14 @@ fn apply_verified_packet_end_fact(succ_state: &mut State, i_idx: usize, j_idx: u
     let reg = ivl.get_mut(i);
     if let Some(ref mut ptr_off) = reg.ptr_offset {
         ptr_off.range = Some(ptr_off.range.unwrap_or(proven_range).max(proven_range));
+        info!(
+            target: "pcc",
+            "[PCC] pc={}: strengthened {}.range to {} (packet accessible beyond fixed offset +{})",
+            succ_pc,
+            i.name(),
+            ptr_off.range.unwrap(),
+            po.off,
+        );
     }
 }
 
@@ -217,7 +232,10 @@ fn verify_pc_annotation_entry(
     pre_state: &State,
     pred_instr: &Instr,
     guard: Option<Constraint>,
+    succ_pc: usize,
 ) -> bool {
+    // Structural guards — these are redundant with validate.rs but kept as a
+    // defence-in-depth check. Silent failure: if they trigger the cert is corrupt.
     if entry.proof.is_empty() || entry.proof.len() > MAX_STEPS_PER_ENTRY {
         return false;
     }
@@ -229,7 +247,11 @@ fn verify_pc_annotation_entry(
             return false;
         }
     }
-    for step in &entry.proof {
+
+    // Semantic step verification — each failure is logged with its reason.
+    let reg_name = |idx: usize| Reg::idx_to_reg(idx).map(|r| r.name()).unwrap_or("?");
+
+    for (sidx, step) in entry.proof.iter().enumerate() {
         let Some(i) = Reg::idx_to_reg(step.i()) else {
             return false;
         };
@@ -237,36 +259,91 @@ fn verify_pc_annotation_entry(
             return false;
         };
         match step {
-            ProofStep::GuardStep { i, j, c } => {
+            ProofStep::GuardStep {
+                i: step_i,
+                j: step_j,
+                c: step_c,
+            } => {
                 let Some(g) = guard else {
+                    debug!(
+                        target: "pcc",
+                        "[PCC] pc={} step {} GuardStep({}, {}, {}): \
+                         predecessor pc={} is not a branch — REJECTED",
+                        succ_pc, sidx, i.name(), j.name(), step_c, pre_state.pc,
+                    );
                     return false;
                 };
-                if *i != g.i || *j != g.j || *c != g.c {
+                if *step_i != g.i || *step_j != g.j || *step_c != g.c {
+                    debug!(
+                        target: "pcc",
+                        "[PCC] pc={} step {} GuardStep({}, {}, {}): \
+                         guard mismatch (branch gives {}, {}, {}) — REJECTED",
+                        succ_pc,
+                        sidx,
+                        i.name(),
+                        j.name(),
+                        step_c,
+                        reg_name(g.i),
+                        reg_name(g.j),
+                        g.c,
+                    );
                     return false;
                 }
+                debug!(
+                    target: "pcc",
+                    "[PCC] pc={} step {} GuardStep({}, {}, {}): guard matches — OK",
+                    succ_pc, sidx, i.name(), j.name(), step_c,
+                );
             }
-            ProofStep::PreStateStep { c, .. } => {
+            ProofStep::PreStateStep { c: step_c, .. } => {
                 let Some(post_ub) =
                     transfer_upper_bound_for_constraint(pre_state, pred_instr, i, j)
                 else {
+                    debug!(
+                        target: "pcc",
+                        "[PCC] pc={} step {} PreStateStep({}, {}, {}): \
+                         cannot compute transfer bound — REJECTED",
+                        succ_pc, sidx, i.name(), j.name(), step_c,
+                    );
                     return false;
                 };
-                if post_ub > *c {
+                if post_ub > *step_c {
+                    debug!(
+                        target: "pcc",
+                        "[PCC] pc={} step {} PreStateStep({}, {}, {}): \
+                         transfer_upper_bound={} > {} — REJECTED",
+                        succ_pc, sidx, i.name(), j.name(), step_c, post_ub, step_c,
+                    );
                     return false;
                 }
+                debug!(
+                    target: "pcc",
+                    "[PCC] pc={} step {} PreStateStep({}, {}, {}): \
+                     transfer_upper_bound={} ≤ {} — OK",
+                    succ_pc, sidx, i.name(), j.name(), step_c, post_ub, step_c,
+                );
             }
         }
     }
+
     let Some(sum) = checked_sum(entry.proof.iter().map(ProofStep::c)) else {
         return false;
     };
-    sum == entry.bound
+    if sum != entry.bound {
+        debug!(
+            target: "pcc",
+            "[PCC] pc={}: proof step sum ({}) ≠ claimed bound ({}) — REJECTED",
+            succ_pc, sum, entry.bound,
+        );
+        return false;
+    }
+    true
 }
 
 /// Applies certificate-aided refinement on a single CFG edge.
 ///
 /// This is the semantic checker phase for the prototype pc-annotation model.
-/// Fail-closed: any invalid entry is ignored and baseline analysis continues.
+/// Fail-closed: any invalid entry is silently skipped and baseline analysis continues.
 pub fn apply_certificate_aided_refinement(
     cert: &ProgramCertificate,
     pre_state: &State,
@@ -276,14 +353,44 @@ pub fn apply_certificate_aided_refinement(
     if !matches!(succ_state.domain, NumericDomain::Interval(_)) {
         return;
     }
-    let guard = derive_guard_constraint_from_branch(pred_instr, pre_state.pc, succ_state.pc);
+    // Capture succ_pc before the mutable borrow of succ_state in apply_verified_packet_end_fact.
+    let succ_pc = succ_state.pc;
+    let guard = derive_guard_constraint_from_branch(pred_instr, pre_state.pc, succ_pc);
     for ann in &cert.pc_annotations {
-        if ann.pc != succ_state.pc {
+        if ann.pc != succ_pc {
             continue;
         }
-        for entry in &ann.entries {
-            if verify_pc_annotation_entry(entry, pre_state, pred_instr, guard) {
-                apply_verified_packet_end_fact(succ_state, entry.i, entry.j, entry.bound);
+        debug!(
+            target: "pcc",
+            "[PCC] pc={}: checking {} annotation entr{} (edge from pc={})",
+            succ_pc,
+            ann.entries.len(),
+            if ann.entries.len() == 1 { "y" } else { "ies" },
+            pre_state.pc,
+        );
+        for (eidx, entry) in ann.entries.iter().enumerate() {
+            let i_name = Reg::idx_to_reg(entry.i).map(|r| r.name()).unwrap_or("?");
+            let j_name = Reg::idx_to_reg(entry.j).map(|r| r.name()).unwrap_or("?");
+            debug!(
+                target: "pcc",
+                "[PCC] pc={} entry {}: [{} - {} ≤ {}] ({}-step proof)",
+                succ_pc, eidx, i_name, j_name, entry.bound, entry.proof.len(),
+            );
+            if verify_pc_annotation_entry(entry, pre_state, pred_instr, guard, succ_pc) {
+                info!(
+                    target: "pcc",
+                    "[PCC] pc={} entry {}: proof verified [{} - {} ≤ {}]",
+                    succ_pc, eidx, i_name, j_name, entry.bound,
+                );
+                apply_verified_packet_end_fact(succ_state, entry.i, entry.j, entry.bound, succ_pc);
+            } else {
+                // Visible at default verbosity so users know the cert entry was rejected
+                // and can re-run with -v to see the per-step rejection reason.
+                info!(
+                    target: "pcc",
+                    "[PCC] pc={} entry {}: [{} - {} ≤ {}] proof REJECTED (run with -v for details)",
+                    succ_pc, eidx, i_name, j_name, entry.bound,
+                );
             }
         }
     }

@@ -15,9 +15,7 @@ use crate::parsing::elf::{list_section_names, load_maps, load_raw_programs};
 use crate::pcc::ProgramCertificate;
 use crate::testing::bcf_benchmark::analyze_benchmark;
 use crate::testing::logging;
-use crate::testing::pcc_test::{
-    pcc_cert_run, pcc_test_list, pcc_test_run, pcc_test_single, pcc_test_suite,
-};
+use crate::testing::pcc_test::{pcc_cert_run, pcc_test_single};
 use crate::testing::prevail::{prevail_benchmark, prevail_list, prevail_run, prevail_single};
 use crate::testing::runner::{AnalysisResult, Analyzer, find_section_for_func, is_code_section};
 use crate::testing::selftest::{selftest_list, selftest_run, selftest_single, selftest_suite};
@@ -34,11 +32,10 @@ fn usage() {
     eprintln!("  cargo run -- [flags] selftest-single <json_file> <test_name>");
     eprintln!("  cargo run -- [flags] selftest-run    <json_file>");
     eprintln!("  cargo run -- [flags] selftest-suite  <json_dir>");
-    eprintln!("  cargo run -- [flags] pcc-test-list   <json_file>");
-    eprintln!("  cargo run -- [flags] pcc-test-single <json_file> <test_name>");
-    eprintln!("  cargo run -- [flags] pcc-test-run    <json_file>");
-    eprintln!("  cargo run -- [flags] pcc-test-suite  <json_dir>");
-    eprintln!("  cargo run -- [flags] pcc-cert-run    <cert_cases.json>");
+    eprintln!("  cargo run -- [flags] pcc-gen         <json_file> <test_name> [cert_out]");
+    eprintln!("  cargo run -- [flags] pcc-check       <json_file> <test_name> <cert_path>");
+    eprintln!("  cargo run -- [flags] pcc-cycle       <json_file> <test_name> [cert_out]");
+    eprintln!("  cargo run -- [flags] pcc-regress     [cert_cases.json]");
     eprintln!("  cargo run -- [flags] prevail-list    <catalogue.json>");
     eprintln!("  cargo run -- [flags] prevail-run     <catalogue.json>");
     eprintln!("  cargo run -- [flags] prevail-single  <catalogue.json> <test_name>");
@@ -56,7 +53,10 @@ fn usage() {
     eprintln!("  cargo run -- selftest-single <json_file> <test_name>");
     eprintln!("  cargo run -- selftest-run <json_file>");
     eprintln!("  cargo run -- selftest-suite <json_dir>");
-    eprintln!("  cargo run -- pcc-test-single <json_file> <test_name>");
+    eprintln!("  cargo run -- pcc-gen pcc-tests/pcc_examples.json \"pcc motivating: var add packet access (zone ok, kernel reject)\"");
+    eprintln!("  cargo run -- pcc-check pcc-tests/pcc_examples.json \"pcc motivating: var add packet access (zone ok, kernel reject)\" pcc-tests/certs/pcc_examples.valid.cert.json");
+    eprintln!("  cargo run -- pcc-cycle pcc-tests/pcc_examples.json \"pcc motivating: var add packet access (zone ok, kernel reject)\"");
+    eprintln!("  cargo run -- pcc-regress");
 }
 
 fn main() {
@@ -110,8 +110,10 @@ fn main() {
 
     let cmd = &remaining[0];
 
-    if config.certificate_output.is_some() && cmd != "pcc-test-single" {
-        eprintln!("Error: --generate-certificate is currently supported only with pcc-test-single");
+    if config.certificate_output.is_some() && cmd != "pcc-gen" && cmd != "pcc-cycle" {
+        eprintln!(
+            "Error: --generate-certificate is supported only with pcc-gen or pcc-cycle"
+        );
         return;
     }
 
@@ -391,67 +393,110 @@ fn main() {
         }
 
         // ============================================================
-        // PCC test: Run single JSON test file
+        // PCC: generate certificate (zone mode enforced)
         // ============================================================
-        "pcc-test-run" => {
-            if remaining.len() < 2 {
-                eprintln!("Error: Missing JSON test file path");
-                usage();
-                return;
-            }
-            let json_path = &remaining[1];
-            let output_dir = Some("./results/pcc_test");
-            pcc_test_run(json_path, &config, output_dir);
-        }
-
-        // ============================================================
-        // PCC test: Run all JSON files in directory
-        // ============================================================
-        "pcc-test-suite" => {
-            if remaining.len() < 2 {
-                eprintln!("Error: Missing JSON test directory path");
-                usage();
-                return;
-            }
-            let json_dir = &remaining[1];
-            let output_dir = Some("./results/pcc_test");
-            pcc_test_suite(json_dir, &config, output_dir);
-        }
-
-        // ============================================================
-        // PCC test: List tests in JSON file
-        // ============================================================
-        "pcc-test-list" => {
-            if remaining.len() < 2 {
-                eprintln!("Error: Missing JSON test file path");
-                usage();
-                return;
-            }
-            pcc_test_list(&remaining[1]);
-        }
-
-        // ============================================================
-        // PCC test: Run single test by name
-        // ============================================================
-        "pcc-test-single" => {
+        "pcc-gen" => {
             if remaining.len() < 3 {
                 eprintln!("Error: Missing arguments");
-                eprintln!("Usage: pcc-test-single <json_file> <test_name>");
+                eprintln!("Usage: pcc-gen <json_file> <test_name> [cert_out]");
                 return;
             }
-            pcc_test_single(&remaining[1], &remaining[2], &config);
+            let mut cfg = config.clone();
+            cfg.domain_mode = DomainMode::Zone;
+            cfg.detect_bounded_loops = true;
+            cfg.require_single_loop_entry = false;
+            cfg.certificate = None;
+            cfg.certificate_input = None;
+            cfg.certificate_output = remaining.get(3).cloned();
+            pcc_test_single(&remaining[1], &remaining[2], &cfg);
         }
 
         // ============================================================
-        // PCC cert cases: run manifest-defined certificate scenarios
+        // PCC: cert-aided check (kernel mode enforced)
         // ============================================================
-        "pcc-cert-run" => {
-            if remaining.len() < 2 {
-                eprintln!("Error: Missing certificate case manifest path");
-                eprintln!("Usage: pcc-cert-run <cert_cases.json>");
+        "pcc-check" => {
+            if remaining.len() < 4 {
+                eprintln!("Error: Missing arguments");
+                eprintln!("Usage: pcc-check <json_file> <test_name> <cert_path>");
                 return;
             }
-            pcc_cert_run(&remaining[1], &config);
+            let cert = match ProgramCertificate::load_from_path(&remaining[3]) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Error: invalid certificate file '{}': {e:#}", &remaining[3]);
+                    return;
+                }
+            };
+            let mut cfg = config.clone();
+            cfg.domain_mode = DomainMode::Interval;
+            cfg.detect_bounded_loops = false;
+            cfg.require_single_loop_entry = true;
+            cfg.certificate_output = None;
+            cfg.certificate_input = None;
+            cfg.certificate = Some(cert);
+            pcc_test_single(&remaining[1], &remaining[2], &cfg);
+        }
+
+        // ============================================================
+        // PCC: generate + check in one command
+        // ============================================================
+        "pcc-cycle" => {
+            if remaining.len() < 3 {
+                eprintln!("Error: Missing arguments");
+                eprintln!("Usage: pcc-cycle <json_file> <test_name> [cert_out]");
+                return;
+            }
+            let cert_out = remaining
+                .get(3)
+                .cloned()
+                .unwrap_or_else(|| "/tmp/pcc_cycle.cert.json".to_string());
+
+            let mut gen_cfg = config.clone();
+            gen_cfg.domain_mode = DomainMode::Zone;
+            gen_cfg.detect_bounded_loops = true;
+            gen_cfg.require_single_loop_entry = false;
+            gen_cfg.certificate = None;
+            gen_cfg.certificate_input = None;
+            gen_cfg.certificate_output = Some(cert_out.clone());
+
+            pcc_test_single(&remaining[1], &remaining[2], &gen_cfg);
+
+            if !Path::new(&cert_out).exists() {
+                eprintln!(
+                    "Error: certificate was not generated at '{}'; skipping cert-aided check",
+                    cert_out
+                );
+                return;
+            }
+
+            let cert = match ProgramCertificate::load_from_path(&cert_out) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Error: generated certificate is invalid '{}': {e:#}", cert_out);
+                    return;
+                }
+            };
+
+            let mut check_cfg = config.clone();
+            check_cfg.domain_mode = DomainMode::Interval;
+            check_cfg.detect_bounded_loops = false;
+            check_cfg.require_single_loop_entry = true;
+            check_cfg.certificate_output = None;
+            check_cfg.certificate_input = None;
+            check_cfg.certificate = Some(cert);
+
+            pcc_test_single(&remaining[1], &remaining[2], &check_cfg);
+        }
+
+        // ============================================================
+        // PCC: run regression manifest
+        // ============================================================
+        "pcc-regress" => {
+            let manifest = remaining
+                .get(1)
+                .map(|s| s.as_str())
+                .unwrap_or("pcc-tests/cert_cases.json");
+            pcc_cert_run(manifest, &config);
         }
 
         // ============================================================

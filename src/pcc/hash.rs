@@ -3,7 +3,6 @@ use std::hash::{Hash, Hasher};
 use crate::ast::Program;
 
 /// FNV-1a 64-bit hasher with fixed constants.
-/// Unlike DefaultHasher, this is guaranteed stable across Rust versions and platforms.
 struct StableHasher(u64);
 
 impl StableHasher {

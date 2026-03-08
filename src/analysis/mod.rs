@@ -48,6 +48,16 @@ pub fn analyze_program(
                 e
             );
             env.certificate = None;
+        } else {
+            let pcs: Vec<String> = cert.pc_annotations.iter().map(|a| a.pc.to_string()).collect();
+            info!(
+                target: "app",
+                "[PCC] Certificate accepted: v{}, hash={}, {} annotation(s) at PC(s): [{}]",
+                cert.version,
+                cert.program_hash,
+                cert.pc_annotations.len(),
+                pcs.join(", "),
+            );
         }
     }
 
