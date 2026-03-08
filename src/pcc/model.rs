@@ -54,6 +54,23 @@ impl ProofStep {
     }
 }
 
+/// Maximum proof steps allowed per annotation entry.
+/// Shared between the validator and checker to ensure they agree.
+pub const MAX_STEPS_PER_ENTRY: usize = 3;
+
+/// Maximum annotation entries allowed per PC.
+/// Enforced by the validator; checker iterates all entries that pass validation.
+pub const MAX_ENTRIES_PER_PC: usize = 8;
+
+/// Overflow-safe sum of step bounds.
+pub fn checked_sum(weights: impl Iterator<Item = i64>) -> Option<i64> {
+    let mut sum = 0i64;
+    for w in weights {
+        sum = sum.checked_add(w)?;
+    }
+    Some(sum)
+}
+
 impl ProgramCertificate {
     /// Prototype certificate schema version.
     pub const VERSION: u32 = 1;

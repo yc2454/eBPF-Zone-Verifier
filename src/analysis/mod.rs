@@ -32,10 +32,13 @@ pub fn analyze_program(
     // 1. Initialize Verifier Environment and control flow checks
     let mut env = VerifierEnv::new(ctx, prog, config.certificate.clone());
     if let Some(ref cert) = env.certificate {
-        if cert.program_hash != program_hash(prog) {
+        let computed_hash = program_hash(prog);
+        if cert.program_hash != computed_hash {
             info!(
                 target: "app",
-                "[PCC] Certificate program hash mismatch; disabling certificate-aided refinement"
+                "[PCC] Certificate program hash mismatch (cert={}, program={}); disabling certificate-aided refinement",
+                cert.program_hash,
+                computed_hash
             );
             env.certificate = None;
         } else if let Err(e) = validate_certificate_for_program(cert, prog) {

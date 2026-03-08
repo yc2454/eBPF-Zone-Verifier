@@ -3,23 +3,15 @@ use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, CmpOp, Instr, Operand, Width};
 use crate::domains::numeric::NumericDomain;
 
-use super::model::{AnnotationEntry, ProgramCertificate, ProofStep};
-
-const MAX_STEPS_PER_ENTRY: usize = 3;
+use super::model::{
+    checked_sum, AnnotationEntry, ProgramCertificate, ProofStep, MAX_STEPS_PER_ENTRY,
+};
 
 #[derive(Clone, Copy)]
 struct Constraint {
     i: usize,
     j: usize,
     c: i64,
-}
-
-fn checked_sum(weights: impl Iterator<Item = i64>) -> Option<i64> {
-    let mut sum = 0i64;
-    for w in weights {
-        sum = sum.checked_add(w)?;
-    }
-    Some(sum)
 }
 
 fn distance_upper_bound(state: &State, i: Reg, j: Reg) -> Option<i64> {

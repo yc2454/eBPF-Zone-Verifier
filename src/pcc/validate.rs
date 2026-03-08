@@ -3,18 +3,9 @@ use anyhow::Result;
 use crate::analysis::machine::reg::Reg;
 use crate::ast::Program;
 
-use super::model::{ProgramCertificate, ProofStep};
-
-const MAX_STEPS_PER_ENTRY: usize = 3;
-const MAX_ENTRIES_PER_PC: usize = 8;
-
-fn checked_sum(weights: impl Iterator<Item = i64>) -> Option<i64> {
-    let mut sum = 0i64;
-    for w in weights {
-        sum = sum.checked_add(w)?;
-    }
-    Some(sum)
-}
+use super::model::{
+    checked_sum, ProgramCertificate, ProofStep, MAX_ENTRIES_PER_PC, MAX_STEPS_PER_ENTRY,
+};
 
 /// Structural validation for the prototype pc-annotation certificate schema.
 pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Program) -> Result<()> {
