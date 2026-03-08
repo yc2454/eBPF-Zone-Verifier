@@ -15,6 +15,13 @@ struct Constraint {
     c: i64,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct VerifiedEntry {
+    pub i: usize,
+    pub j: usize,
+    pub bound: i64,
+}
+
 fn distance_upper_bound(state: &State, i: Reg, j: Reg) -> Option<i64> {
     if !matches!(state.domain, NumericDomain::Interval(_)) {
         return Some(state.domain.get_distance_interval(i, j).1);
@@ -186,47 +193,6 @@ fn derive_guard_constraint_from_branch(
     Some(Constraint { i, j, c })
 }
 
-fn apply_verified_packet_end_fact(
-    succ_state: &mut State,
-    i_idx: usize,
-    j_idx: usize,
-    c: i64,
-    succ_pc: usize,
-) {
-    let Some(i) = Reg::idx_to_reg(i_idx) else {
-        return;
-    };
-    let Some(j) = Reg::idx_to_reg(j_idx) else {
-        return;
-    };
-    if j != Reg::AnchorDataEnd {
-        return;
-    }
-    let Some(ivl) = succ_state.domain.as_interval_mut() else {
-        return;
-    };
-    let Some(po) = ivl.get_ptr_offset(i).copied() else {
-        return;
-    };
-    if po.anchor != Reg::AnchorData {
-        return;
-    }
-    let proven_end_from_i = (-c).max(0);
-    let proven_range = proven_end_from_i.saturating_sub(po.off);
-    let reg = ivl.get_mut(i);
-    if let Some(ref mut ptr_off) = reg.ptr_offset {
-        ptr_off.range = Some(ptr_off.range.unwrap_or(proven_range).max(proven_range));
-        info!(
-            target: "pcc",
-            "[PCC] pc={}: strengthened {}.range to {} (packet accessible beyond fixed offset +{})",
-            succ_pc,
-            i.name(),
-            ptr_off.range.unwrap(),
-            po.off,
-        );
-    }
-}
-
 fn verify_pc_annotation_entry(
     entry: &AnnotationEntry,
     pre_state: &State,
@@ -340,20 +306,20 @@ fn verify_pc_annotation_entry(
     true
 }
 
-/// Applies certificate-aided refinement on a single CFG edge.
+/// Verifies certificate entries on a single CFG edge.
 ///
 /// This is the semantic checker phase for the prototype pc-annotation model.
-/// Fail-closed: any invalid entry is silently skipped and baseline analysis continues.
-pub fn apply_certificate_aided_refinement(
+/// Fail-closed: any invalid entry is skipped and baseline analysis continues.
+pub fn verify_certificate_entries_for_edge(
     cert: &ProgramCertificate,
     pre_state: &State,
     pred_instr: &Instr,
-    succ_state: &mut State,
-) {
+    succ_state: &State,
+) -> Vec<VerifiedEntry> {
+    let mut verified = Vec::new();
     if !matches!(succ_state.domain, NumericDomain::Interval(_)) {
-        return;
+        return verified;
     }
-    // Capture succ_pc before the mutable borrow of succ_state in apply_verified_packet_end_fact.
     let succ_pc = succ_state.pc;
     let guard = derive_guard_constraint_from_branch(pred_instr, pre_state.pc, succ_pc);
     for ann in &cert.pc_annotations {
@@ -382,7 +348,11 @@ pub fn apply_certificate_aided_refinement(
                     "[PCC] pc={} entry {}: proof verified [{} - {} ≤ {}]",
                     succ_pc, eidx, i_name, j_name, entry.bound,
                 );
-                apply_verified_packet_end_fact(succ_state, entry.i, entry.j, entry.bound, succ_pc);
+                verified.push(VerifiedEntry {
+                    i: entry.i,
+                    j: entry.j,
+                    bound: entry.bound,
+                });
             } else {
                 // Visible at default verbosity so users know the cert entry was rejected
                 // and can re-run with -v to see the per-step rejection reason.
@@ -394,4 +364,5 @@ pub fn apply_certificate_aided_refinement(
             }
         }
     }
+    verified
 }

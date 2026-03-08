@@ -12,7 +12,8 @@ use crate::common::config::{DomainMode, VerifierConfig};
 use crate::domains::dbm::Dbm;
 use crate::domains::numeric::NumericDomain;
 use crate::pcc::{
-    apply_certificate_aided_refinement, program_hash, validate_certificate_for_program,
+    apply_verified_refinements, program_hash, validate_certificate_for_program,
+    verify_certificate_entries_for_edge,
 };
 use log::{debug, error, info};
 use std::collections::VecDeque;
@@ -189,11 +190,12 @@ pub fn analyze_program(
         let pre_state = state.clone();
         let mut successors = transfer::transfer(&mut env, state, instr);
         // F.1 Certificate-Aided Refinement (optional)
-        // Verifies pc-annotation proof entries against local transition semantics
-        // and applies only sound, narrow refinements to successor states.
+        // Phase A: check certificate proof entries for this edge.
+        // Phase B: apply only verified facts via dedicated injector.
         if let Some(ref cert) = env.certificate {
             for succ in &mut successors {
-                apply_certificate_aided_refinement(cert, &pre_state, instr, succ);
+                let verified = verify_certificate_entries_for_edge(cert, &pre_state, instr, succ);
+                apply_verified_refinements(succ, &verified);
             }
         }
 
