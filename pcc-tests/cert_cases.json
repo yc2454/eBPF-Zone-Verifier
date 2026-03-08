@@ -54,5 +54,26 @@
     "test_name": "pcc: branch guard + prestate chain for packet access",
     "certificate": "pcc-tests/certs/pcc_branchguard.bad_bound.cert.json",
     "expected": "REJECT"
+  },
+  {
+    "name": "wrong program hash fails closed",
+    "json_file": "pcc-tests/pcc_examples.json",
+    "test_name": "pcc motivating: var add packet access (zone ok, kernel reject)",
+    "certificate": "pcc-tests/certs/pcc_examples.bad_hash.cert.json",
+    "expected": "REJECT"
+  },
+  {
+    "name": "overclaiming step bound fails closed",
+    "json_file": "pcc-tests/pcc_examples.json",
+    "test_name": "pcc motivating: var add packet access (zone ok, kernel reject)",
+    "certificate": "pcc-tests/certs/pcc_examples.bad_step.cert.json",
+    "expected": "REJECT"
+  },
+  {
+    "name": "guard step on non-branch predecessor fails closed",
+    "json_file": "pcc-tests/pcc_examples.json",
+    "test_name": "pcc motivating: var add packet access (zone ok, kernel reject)",
+    "certificate": "pcc-tests/certs/pcc_examples.bad_guardstep.cert.json",
+    "expected": "REJECT"
   }
 ]

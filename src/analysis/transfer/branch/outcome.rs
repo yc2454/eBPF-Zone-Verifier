@@ -81,6 +81,13 @@ pub(crate) fn condition_outcome(
                     }
                 }
                 CmpOp::Eq => {
+                    if width == Width::W32 {
+                        let (smin, smax) = state.domain.get_s32_bounds(left);
+                        let imm_s32 = imm_val as i32;
+                        if smin > imm_s32 || smax < imm_s32 {
+                            return Some(false);
+                        }
+                    }
                     if min == max && min == imm_val {
                         Some(true)
                     } else if min > imm_val || max < imm_val {
@@ -90,6 +97,13 @@ pub(crate) fn condition_outcome(
                     }
                 }
                 CmpOp::Ne => {
+                    if width == Width::W32 {
+                        let (smin, smax) = state.domain.get_s32_bounds(left);
+                        let imm_s32 = imm_val as i32;
+                        if smin > imm_s32 || smax < imm_s32 {
+                            return Some(true);
+                        }
+                    }
                     if min > imm_val || max < imm_val {
                         Some(true)
                     } else if min == max && min == imm_val {

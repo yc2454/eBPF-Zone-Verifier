@@ -23,8 +23,19 @@ pub(crate) fn handle_shr(state: &mut State, width: Width, dst: Reg, src: &Operan
 
             if width == Width::W32 {
                 let truncated_tnum = old_tnum.trunc32();
-                let trunc_lo = truncated_tnum.min_value();
-                let trunc_hi = truncated_tnum.max_value();
+                let dbm_lo = if old_lo >= 0 && old_hi <= u32::MAX as i64 {
+                    old_lo as u64
+                } else {
+                    0
+                };
+                let dbm_hi = if old_lo >= 0 && old_hi <= u32::MAX as i64 {
+                    old_hi as u64
+                } else {
+                    u32::MAX as u64
+                };
+
+                let trunc_lo = truncated_tnum.min_value().max(dbm_lo);
+                let trunc_hi = truncated_tnum.max_value().min(dbm_hi);
 
                 let new_lo = (trunc_lo >> shift_amount) as i64;
                 let new_hi = (trunc_hi >> shift_amount) as i64;
@@ -88,8 +99,19 @@ pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operan
 
             if width == Width::W32 {
                 let truncated_tnum = old_tnum.trunc32();
-                let trunc_lo = truncated_tnum.min_value();
-                let trunc_hi = truncated_tnum.max_value();
+                let dbm_lo = if old_lo >= 0 && old_hi <= u32::MAX as i64 {
+                    old_lo as u64
+                } else {
+                    0
+                };
+                let dbm_hi = if old_lo >= 0 && old_hi <= u32::MAX as i64 {
+                    old_hi as u64
+                } else {
+                    u32::MAX as u64
+                };
+
+                let trunc_lo = truncated_tnum.min_value().max(dbm_lo);
+                let trunc_hi = truncated_tnum.max_value().min(dbm_hi);
 
                 if shift_amount < 32 {
                     let max_safe = u32::MAX as u64 >> shift_amount;
@@ -166,21 +188,43 @@ pub(crate) fn handle_arsh(state: &mut State, width: Width, dst: Reg, src: &Opera
 
             let old_tnum = state.get_tnum(dst);
             let (old_lo, old_hi) = state.domain.get_interval(dst);
+            let (old_s32_min, old_s32_max) = state.domain.get_s32_bounds(dst);
             state.domain.forget(dst);
 
             if width == Width::W32 {
                 let truncated_tnum = old_tnum.trunc32();
-                let trunc_lo = truncated_tnum.min_value() as u32;
-                let trunc_hi = truncated_tnum.max_value() as u32;
 
-                let signed_lo = trunc_lo as i32;
-                let signed_hi = trunc_hi as i32;
+                // Update s32 bounds explicitly via shift rules
+                let mut new_s32_min = i32::MIN;
+                let mut new_s32_max = i32::MAX;
 
-                if signed_lo <= signed_hi {
-                    let new_lo = (signed_lo >> shift_amount) as u32 as i64;
-                    let new_hi = (signed_hi >> shift_amount) as u32 as i64;
-                    state.domain.assume_ge_imm(dst, new_lo);
-                    state.domain.assume_le_imm(dst, new_hi);
+                let min_possible = i32::MIN >> shift_amount;
+                let max_possible = i32::MAX >> shift_amount;
+
+                if old_s32_min != i32::MIN && old_s32_max != i32::MAX {
+                    new_s32_min = old_s32_min >> shift_amount;
+                    new_s32_max = old_s32_max >> shift_amount;
+                } else {
+                    let trunc_lo = truncated_tnum.min_value() as u32;
+                    let trunc_hi = truncated_tnum.max_value() as u32;
+
+                    let signed_lo = trunc_lo as i32;
+                    let signed_hi = trunc_hi as i32;
+                    if signed_lo <= signed_hi && (signed_lo < 0) == (signed_hi < 0) {
+                        new_s32_min = signed_lo >> shift_amount;
+                        new_s32_max = signed_hi >> shift_amount;
+                    }
+                }
+
+                // Absolute structural limit of ARSH
+                new_s32_min = new_s32_min.max(min_possible);
+                new_s32_max = new_s32_max.min(max_possible);
+
+                state.domain.set_s32_bounds(dst, new_s32_min, new_s32_max);
+
+                if new_s32_min >= 0 {
+                    state.domain.assume_ge_imm(dst, new_s32_min as i64);
+                    state.domain.assume_le_imm(dst, new_s32_max as i64);
                 } else {
                     state.domain.assume_ge_imm(dst, 0);
                     state.domain.assume_le_imm(dst, u32::MAX as i64);

@@ -56,6 +56,9 @@ pub fn apply_jmp_constraints(
     } else if width == Width::W64 && matches!(op, CmpOp::UGt | CmpOp::UGe | CmpOp::ULt | CmpOp::ULe)
     {
         apply_unsigned_const_fallback(then_s, else_s, left, op, resolved);
+    } else if width == Width::W32 && matches!(op, CmpOp::SLt | CmpOp::SLe | CmpOp::SGt | CmpOp::SGe)
+    {
+        apply_w32_signed_fallback(then_s, else_s, left, op, resolved);
     }
 
     let imm_val = match resolved {
@@ -458,6 +461,57 @@ fn apply_signed_from_unsigned_range_domain(
         domain.assume_ge_imm(reg, lo_s);
         domain.assume_le_imm(reg, hi_s);
     }
+}
+
+fn apply_w32_signed_fallback(
+    then_s: &mut State,
+    else_s: &mut State,
+    left: Reg,
+    op: CmpOp,
+    right: Either<Reg, i64>,
+) {
+    let right_imm = match right {
+        Either::Right(imm) => imm,
+        Either::Left(reg) => {
+            if let Some(val) = then_s.domain.get_fixed_value(reg) {
+                val
+            } else {
+                return;
+            }
+        }
+    };
+
+    let rv = right_imm as i32;
+
+    let (mut t_s32_min, mut t_s32_max) = then_s.domain.get_s32_bounds(left);
+    let (mut e_s32_min, mut e_s32_max) = else_s.domain.get_s32_bounds(left);
+
+    match op {
+        CmpOp::SGt => {
+            t_s32_min = t_s32_min.max(rv.saturating_add(1));
+            e_s32_max = e_s32_max.min(rv);
+        }
+        CmpOp::SGe => {
+            t_s32_min = t_s32_min.max(rv);
+            e_s32_max = e_s32_max.min(rv.saturating_sub(1));
+        }
+        CmpOp::SLt => {
+            t_s32_max = t_s32_max.min(rv.saturating_sub(1));
+            e_s32_min = e_s32_min.max(rv);
+        }
+        CmpOp::SLe => {
+            t_s32_max = t_s32_max.min(rv);
+            e_s32_min = e_s32_min.max(rv.saturating_add(1));
+        }
+        CmpOp::Eq => {
+            t_s32_min = t_s32_min.max(rv);
+            t_s32_max = t_s32_max.min(rv);
+        }
+        _ => return,
+    }
+
+    then_s.domain.set_s32_bounds(left, t_s32_min, t_s32_max);
+    else_s.domain.set_s32_bounds(left, e_s32_min, e_s32_max);
 }
 
 fn interval_can_apply_constraint(state: &State, left: Reg, right: Either<Reg, i64>) -> bool {

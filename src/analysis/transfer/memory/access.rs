@@ -132,7 +132,16 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             check_packet_meta_access(env, state, base, off, size, pc);
         }
         PtrToBtfId { .. } | PtrToMapObject { .. } => {
-            if !mem_region_model::is_valid_mem_region_read(state.types.get(base), off, size) {
+            let is_unknown = match base_type {
+                PtrToBtfId {
+                    type_name: "unknown",
+                    ..
+                } => true,
+                _ => false,
+            };
+            if !is_unknown
+                && !mem_region_model::is_valid_mem_region_read(state.types.get(base), off, size)
+            {
                 error!(
                     "Invalid socket access at pc {}: {:?} offset {} size {}",
                     pc, base_type, off, size

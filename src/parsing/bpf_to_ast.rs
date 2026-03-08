@@ -865,7 +865,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 Instr::If {
                     width: Width::W32,
                     left: dst,
-                    op: CmpOp::UGt, // “no-refinement” bucket
+                    op: CmpOp::SGt,
                     right: Operand::Imm(insn.imm as i64),
                     target,
                 }

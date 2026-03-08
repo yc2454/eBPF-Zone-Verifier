@@ -62,6 +62,8 @@ pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operan
     let (min_op, max_op) = state.domain.get_interval(dst);
     let input_nonnegative = min_op >= 0;
 
+    let (old_s32_min, old_s32_max) = state.domain.get_s32_bounds(dst);
+
     state.domain.forget(dst);
 
     if let Operand::Imm(mask) = src {
@@ -101,6 +103,19 @@ pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operan
 
     if let Some(c) = new_t.const_value() {
         state.domain.assume_eq_imm(dst, c as i64);
+    }
+
+    if width == Width::W32 {
+        if let Operand::Imm(mask) = src {
+            let mask32 = *mask as i32;
+            // If the value was exactly restricted to [-1, 0] (e.g. from arsh 31)
+            // Then val & mask is strictly bounded by min(mask32, 0) and max(mask32, 0).
+            if old_s32_min >= -1 && old_s32_max <= 0 {
+                let new_min = mask32.min(0);
+                let new_max = mask32.max(0);
+                state.domain.set_s32_bounds(dst, new_min, new_max);
+            }
+        }
     }
 }
 

@@ -280,6 +280,16 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
             state.domain.assume_le_imm(Reg::R0, hi);
             state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
         }
+        constants::BPF_KFUNC_CALL_DUMMY => {
+            // Assume unsupported external kfuncs return an unknown opaque pointer that can be dereferenced
+            state.types.set(
+                Reg::R0,
+                RegType::PtrToBtfId {
+                    type_name: "unknown",
+                    trusted: false,
+                },
+            );
+        }
         _ => {}
     }
 }

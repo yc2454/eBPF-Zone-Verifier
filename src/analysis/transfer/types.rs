@@ -331,6 +331,7 @@ pub(crate) fn helper_invalidates_packets(helper: u32) -> bool {
     matches!(
         helper,
         constants::BPF_XDP_ADJUST_HEAD
+            | constants::BPF_XDP_ADJUST_TAIL
             | constants::BPF_XDP_ADJUST_META
             | constants::BPF_SKB_PULL_DATA
             | constants::BPF_SKB_CHANGE_HEAD
