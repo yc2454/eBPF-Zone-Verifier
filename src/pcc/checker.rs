@@ -4,10 +4,10 @@ use crate::ast::{AluOp, CmpOp, Instr, Operand, Width};
 use crate::domains::numeric::NumericDomain;
 use log::{debug, info};
 
-use super::model::{
-    checked_sum, AnnotationEntry, ProgramCertificate, ProofStep, MAX_STEPS_PER_ENTRY,
-};
+use super::model::{AnnotationEntry, ProgramCertificate};
 
+// Used by derive_guard_constraint_from_branch; will be reused in Step 3.
+#[allow(dead_code)]
 #[derive(Clone, Copy)]
 struct Constraint {
     i: usize,
@@ -22,6 +22,7 @@ pub struct VerifiedEntry {
     pub bound: i64,
 }
 
+#[allow(dead_code)]
 fn distance_upper_bound(state: &State, i: Reg, j: Reg) -> Option<i64> {
     if !matches!(state.domain, NumericDomain::Interval(_)) {
         return Some(state.domain.get_distance_interval(i, j).1);
@@ -52,6 +53,7 @@ fn distance_upper_bound(state: &State, i: Reg, j: Reg) -> Option<i64> {
     Some(direct)
 }
 
+#[allow(dead_code)]
 fn transfer_upper_bound_for_constraint(
     pre_state: &State,
     pred_instr: &Instr,
@@ -150,6 +152,7 @@ fn transfer_upper_bound_for_constraint(
     }
 }
 
+#[allow(dead_code)]
 fn derive_guard_constraint_from_branch(
     pred_instr: &Instr,
     pred_pc: usize,
@@ -193,117 +196,21 @@ fn derive_guard_constraint_from_branch(
     Some(Constraint { i, j, c })
 }
 
+/// V1 single-edge checker — stubbed out pending v2 replay implementation (Step 3).
+/// Fail-closed: always returns false for v2 certificates.
 fn verify_pc_annotation_entry(
-    entry: &AnnotationEntry,
-    pre_state: &State,
-    pred_instr: &Instr,
-    guard: Option<Constraint>,
+    _entry: &AnnotationEntry,
+    _pre_state: &State,
+    _pred_instr: &Instr,
+    _guard: Option<Constraint>,
     succ_pc: usize,
 ) -> bool {
-    // Structural guards — these are redundant with validate.rs but kept as a
-    // defence-in-depth check. Silent failure: if they trigger the cert is corrupt.
-    if entry.proof.is_empty() || entry.proof.len() > MAX_STEPS_PER_ENTRY {
-        return false;
-    }
-    if entry.proof[0].i() != entry.i || entry.proof[entry.proof.len() - 1].j() != entry.j {
-        return false;
-    }
-    for w in entry.proof.windows(2) {
-        if w[0].j() != w[1].i() {
-            return false;
-        }
-    }
-
-    // Semantic step verification — each failure is logged with its reason.
-    let reg_name = |idx: usize| Reg::idx_to_reg(idx).map(|r| r.name()).unwrap_or("?");
-
-    for (sidx, step) in entry.proof.iter().enumerate() {
-        let Some(i) = Reg::idx_to_reg(step.i()) else {
-            return false;
-        };
-        let Some(j) = Reg::idx_to_reg(step.j()) else {
-            return false;
-        };
-        match step {
-            ProofStep::Guard {
-                i: step_i,
-                j: step_j,
-                c: step_c,
-            } => {
-                let Some(g) = guard else {
-                    debug!(
-                        target: "pcc",
-                        "[PCC] pc={} step {} Guard({}, {}, {}): \
-                         predecessor pc={} is not a branch — REJECTED",
-                        succ_pc, sidx, i.name(), j.name(), step_c, pre_state.pc,
-                    );
-                    return false;
-                };
-                if *step_i != g.i || *step_j != g.j || *step_c != g.c {
-                    debug!(
-                        target: "pcc",
-                        "[PCC] pc={} step {} Guard({}, {}, {}): \
-                         guard mismatch (branch gives {}, {}, {}) — REJECTED",
-                        succ_pc,
-                        sidx,
-                        i.name(),
-                        j.name(),
-                        step_c,
-                        reg_name(g.i),
-                        reg_name(g.j),
-                        g.c,
-                    );
-                    return false;
-                }
-                debug!(
-                    target: "pcc",
-                    "[PCC] pc={} step {} Guard({}, {}, {}): guard matches — OK",
-                    succ_pc, sidx, i.name(), j.name(), step_c,
-                );
-            }
-            ProofStep::PredCarry { c: step_c, .. } => {
-                let Some(post_ub) =
-                    transfer_upper_bound_for_constraint(pre_state, pred_instr, i, j)
-                else {
-                    debug!(
-                        target: "pcc",
-                        "[PCC] pc={} step {} PredCarry({}, {}, {}): \
-                         cannot compute transfer bound — REJECTED",
-                        succ_pc, sidx, i.name(), j.name(), step_c,
-                    );
-                    return false;
-                };
-                if post_ub > *step_c {
-                    debug!(
-                        target: "pcc",
-                        "[PCC] pc={} step {} PredCarry({}, {}, {}): \
-                         transfer_upper_bound={} > {} — REJECTED",
-                        succ_pc, sidx, i.name(), j.name(), step_c, post_ub, step_c,
-                    );
-                    return false;
-                }
-                debug!(
-                    target: "pcc",
-                    "[PCC] pc={} step {} PredCarry({}, {}, {}): \
-                     transfer_upper_bound={} ≤ {} — OK",
-                    succ_pc, sidx, i.name(), j.name(), step_c, post_ub, step_c,
-                );
-            }
-        }
-    }
-
-    let Some(sum) = checked_sum(entry.proof.iter().map(ProofStep::c)) else {
-        return false;
-    };
-    if sum != entry.bound {
-        debug!(
-            target: "pcc",
-            "[PCC] pc={}: proof step sum ({}) ≠ claimed bound ({}) — REJECTED",
-            succ_pc, sum, entry.bound,
-        );
-        return false;
-    }
-    true
+    debug!(
+        target: "pcc",
+        "[PCC] pc={}: v1 single-edge checker disabled for v2 certificates",
+        succ_pc,
+    );
+    false
 }
 
 /// Verifies certificate entries on a single CFG edge.

@@ -16,6 +16,7 @@ PCC bridges this gap: the zone analysis runs once (offline) and emits a certific
                                           ▼
   [Interval analysis] ──checks──> [Checker (this module)]
                                           │
+                                          ▼
                       accepted / skipped (fail-closed)
 ```
 
@@ -81,7 +82,7 @@ Each annotation entry contains a chain of steps that together prove `i - j <= bo
 
 Extracts a constraint directly from the **branch condition** on the predecessor edge. If the predecessor instruction is a conditional jump (e.g. `JGE r5, r6`) and execution reaches the annotation PC via the fall-through edge, then the branch guarantees `r5 < r6`, i.e. `r5 - r6 <= -1`.
 
-The checker verifies this by re-deriving the guard constraint from the branch opcode and edge direction. `Guard` must always be the **first step** in a chain.
+The checker verifies this by re-deriving the guard constraint from the branch opcode and edge direction.
 
 | Branch | Edge | Constraint |
 |--------|------|------------|
@@ -115,7 +116,6 @@ A valid proof chain must satisfy:
 1. **Connectivity** — `step[k].j == step[k+1].i` for all consecutive steps.
 2. **Endpoints** — `step[0].i == entry.i` and `step[-1].j == entry.j`.
 3. **Sum** — `Σ step.c == entry.bound`.
-4. **Guard position** — at most one `Guard` step, and it must be first.
 
 ## Checker Behavior
 

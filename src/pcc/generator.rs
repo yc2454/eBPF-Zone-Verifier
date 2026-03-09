@@ -67,11 +67,14 @@ pub fn generate_prototype_certificate_from_zone(
             continue;
         }
 
+        // Emit a single-step proof: Guard at pred_pc establishing the bound.
+        // This is a temporary v1→v2 bridge; backward tracing replaces it in Step 6.
         by_pc.entry(succ_pc).or_default().push(AnnotationEntry {
             i: dst.idx(),
             j: Reg::AnchorDataEnd.idx(),
             bound: target_c,
-            proof: vec![ProofStep::PredCarry {
+            proof: vec![ProofStep::Guard {
+                pc: pred_pc,
                 i: dst.idx(),
                 j: Reg::AnchorDataEnd.idx(),
                 c: target_c,
