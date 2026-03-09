@@ -71,7 +71,7 @@ pub fn generate_prototype_certificate_from_zone(
             i: dst.idx(),
             j: Reg::AnchorDataEnd.idx(),
             bound: target_c,
-            proof: vec![ProofStep::PreStateStep {
+            proof: vec![ProofStep::PredCarry {
                 i: dst.idx(),
                 j: Reg::AnchorDataEnd.idx(),
                 c: target_c,

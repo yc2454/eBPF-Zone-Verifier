@@ -225,7 +225,7 @@ fn verify_pc_annotation_entry(
             return false;
         };
         match step {
-            ProofStep::GuardStep {
+            ProofStep::Guard {
                 i: step_i,
                 j: step_j,
                 c: step_c,
@@ -233,7 +233,7 @@ fn verify_pc_annotation_entry(
                 let Some(g) = guard else {
                     debug!(
                         target: "pcc",
-                        "[PCC] pc={} step {} GuardStep({}, {}, {}): \
+                        "[PCC] pc={} step {} Guard({}, {}, {}): \
                          predecessor pc={} is not a branch — REJECTED",
                         succ_pc, sidx, i.name(), j.name(), step_c, pre_state.pc,
                     );
@@ -242,7 +242,7 @@ fn verify_pc_annotation_entry(
                 if *step_i != g.i || *step_j != g.j || *step_c != g.c {
                     debug!(
                         target: "pcc",
-                        "[PCC] pc={} step {} GuardStep({}, {}, {}): \
+                        "[PCC] pc={} step {} Guard({}, {}, {}): \
                          guard mismatch (branch gives {}, {}, {}) — REJECTED",
                         succ_pc,
                         sidx,
@@ -257,17 +257,17 @@ fn verify_pc_annotation_entry(
                 }
                 debug!(
                     target: "pcc",
-                    "[PCC] pc={} step {} GuardStep({}, {}, {}): guard matches — OK",
+                    "[PCC] pc={} step {} Guard({}, {}, {}): guard matches — OK",
                     succ_pc, sidx, i.name(), j.name(), step_c,
                 );
             }
-            ProofStep::PreStateStep { c: step_c, .. } => {
+            ProofStep::PredCarry { c: step_c, .. } => {
                 let Some(post_ub) =
                     transfer_upper_bound_for_constraint(pre_state, pred_instr, i, j)
                 else {
                     debug!(
                         target: "pcc",
-                        "[PCC] pc={} step {} PreStateStep({}, {}, {}): \
+                        "[PCC] pc={} step {} PredCarry({}, {}, {}): \
                          cannot compute transfer bound — REJECTED",
                         succ_pc, sidx, i.name(), j.name(), step_c,
                     );
@@ -276,7 +276,7 @@ fn verify_pc_annotation_entry(
                 if post_ub > *step_c {
                     debug!(
                         target: "pcc",
-                        "[PCC] pc={} step {} PreStateStep({}, {}, {}): \
+                        "[PCC] pc={} step {} PredCarry({}, {}, {}): \
                          transfer_upper_bound={} > {} — REJECTED",
                         succ_pc, sidx, i.name(), j.name(), step_c, post_ub, step_c,
                     );
@@ -284,7 +284,7 @@ fn verify_pc_annotation_entry(
                 }
                 debug!(
                     target: "pcc",
-                    "[PCC] pc={} step {} PreStateStep({}, {}, {}): \
+                    "[PCC] pc={} step {} PredCarry({}, {}, {}): \
                      transfer_upper_bound={} ≤ {} — OK",
                     succ_pc, sidx, i.name(), j.name(), step_c, post_ub, step_c,
                 );

@@ -11,13 +11,13 @@
           "bound": -4,
           "proof": [
             {
-              "kind": "GuardStep",
+              "kind": "Guard",
               "i": 6,
               "j": 8,
               "c": -1
             },
             {
-              "kind": "PreStateStep",
+              "kind": "PredCarry",
               "i": 8,
               "j": 14,
               "c": -4

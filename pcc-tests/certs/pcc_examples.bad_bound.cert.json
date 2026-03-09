@@ -11,7 +11,7 @@
           "bound": -4,
           "proof": [
             {
-              "kind": "PreStateStep",
+              "kind": "PredCarry",
               "i": 6,
               "j": 14,
               "c": -5

@@ -28,28 +28,28 @@ pub struct AnnotationEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind")]
 pub enum ProofStep {
-    #[serde(rename = "GuardStep")]
-    GuardStep { i: usize, j: usize, c: i64 },
-    #[serde(rename = "PreStateStep")]
-    PreStateStep { i: usize, j: usize, c: i64 },
+    #[serde(rename = "Guard")]
+    Guard { i: usize, j: usize, c: i64 },
+    #[serde(rename = "PredCarry")]
+    PredCarry { i: usize, j: usize, c: i64 },
 }
 
 impl ProofStep {
     pub fn i(&self) -> usize {
         match self {
-            ProofStep::GuardStep { i, .. } | ProofStep::PreStateStep { i, .. } => *i,
+            ProofStep::Guard { i, .. } | ProofStep::PredCarry { i, .. } => *i,
         }
     }
 
     pub fn j(&self) -> usize {
         match self {
-            ProofStep::GuardStep { j, .. } | ProofStep::PreStateStep { j, .. } => *j,
+            ProofStep::Guard { j, .. } | ProofStep::PredCarry { j, .. } => *j,
         }
     }
 
     pub fn c(&self) -> i64 {
         match self {
-            ProofStep::GuardStep { c, .. } | ProofStep::PreStateStep { c, .. } => *c,
+            ProofStep::Guard { c, .. } | ProofStep::PredCarry { c, .. } => *c,
         }
     }
 }
