@@ -16,10 +16,10 @@ The current prototype focuses on packet-access safety (proving `base - @data_end
   [Zone analysis] ──generates──> [Certificate (.cert.json)]
                                          │
                                          ▼
-  [Interval analysis] ──checks──> [Checker (this module)]
+  [Interval analysis] ──checks──>    [Checker]
                                          │
                                          ▼
-                     accepted / skipped (fail-closed)
+                                accepted / skipped
 ```
 
 The **certificate is not trusted**. The checker independently verifies every step against the program's own instruction stream and the interval abstract state. A malformed or adversarial certificate can only cause the proof to be silently skipped and we fall back to the plain interval verifier.
@@ -138,6 +138,62 @@ A valid proof chain must satisfy:
 3. **Endpoints** — last step's `(post_left_reg, post_right_reg) == entry.(left_reg, right_reg)`.
 4. **Sum** — `Guard.c + Σ Transfer.delta == entry.bound`.
 5. **PC ordering** — Guard PC <= first Transfer PC (may be equal); subsequent strictly increasing; all < target PC.
+
+## Certificate Generation
+
+The generator (`generator.rs`) produces the certificate automatically from the zone and interval analysis results.
+
+### Overview
+
+For each load instruction at `target_pc`, the generator:
+
+1. **Queries the zone** — checks whether the zone DBM at `target_pc` proves the access is safe (`base - @data_end <= -(off + size)`). If not, the load is skipped (nothing to certify).
+2. **Queries the interval** — checks whether the interval verifier already proves the access safe on its own. If so, PCC is not needed and the load is skipped.
+3. **Backward-traces** from `target_pc - 1` toward the start of the program to find the **divergence point**: the earliest instruction where the interval state agrees with the zone on the tracked constraint.
+4. **Emits the proof chain** — reverses the backward steps into a forward `[Guard, Transfer, …, Transfer]` chain and writes it into the certificate.
+
+### Backward Tracing
+
+Starting from the target constraint `base - @data_end <= zone_ub` at `target_pc`, the generator walks backward one instruction at a time. At each instruction it calls `backward_transfer`, which **algebraically inverts** the instruction's semantics to determine what the constraint must have looked like *before* that instruction:
+
+| Instruction | Inversion | `delta` |
+|---|---|---|
+| `add dst, imm` (`dst == L`) | `L - R <= b`  ←  `L - R <= b - imm` before | `imm` |
+| `add dst, imm` (`dst == R`) | `L - R <= b`  ←  `L - R <= b + imm` before | `-imm` |
+| `add dst, src` (`dst == L`) | uses `ub(src)` from zone DBM: pre-bound = `b - ub(src)` | `ub(src)` |
+| `add dst, src` (`dst == R`) | uses `lb(src)` from zone DBM: pre-bound = `b + lb(src)` | `-lb(src)` |
+| `mov dst, src` (`dst == L`) | track value in `src` instead; bound unchanged | `0` |
+| passthrough | constraint unchanged | `0` |
+
+After inverting through each instruction, the generator checks whether the interval pre-state at that PC already proves the (now tighter) pre-constraint. The first instruction where this holds is the **divergence point** — the interval and zone agree there, so no PCC step is needed before it. A `Guard` is placed at that PC with the interval-proved bound `c`.
+
+### Example
+
+```
+pc  instruction          zone knows          interval knows
+──────────────────────────────────────────────────────────────
+5   r5 = r4              r5 - @end <= -12    r5 - @end = ∞
+6   r5 += 4              r5 - @end <= -8     r5 - @end = ∞
+7   r5 += r3             r5 - @end <= -5     r5 - @end = ∞
+8   r1 = *(r5 + 0)       [load: needs -1]    REJECTED
+```
+
+Zone proves `r5 - @end <= -5` at pc=8, interval doesn't. Backward trace:
+
+- **pc=7** (`add r5, r3`): invert via `ub(r3)` from zone = 3 → pre-bound = `-5 - 3 = -8`. Interval at pc=7: `r5 - @end = ∞` — no agreement yet.
+- **pc=6** (`add r5, 4`): invert → pre-bound = `-8 - 4 = -12`. Interval at pc=6: `r5 - @end = ∞` — no agreement yet.
+- **pc=5** (`mov r5, r4`): invert → track `r4` instead, pre-bound = `-12`. Interval at pc=5: `r4 - @end <= -12` ✓ — **divergence point found**.
+
+Emitted chain (forward order):
+
+```
+Guard    pc=5, r4 - @end <= -12
+Transfer pc=5, (r4,@end) → (r5,@end), delta=0   [mov: value moved into r5]
+Transfer pc=6, (r5,@end) → (r5,@end), delta=4   [add r5, 4]
+Transfer pc=7, (r5,@end) → (r5,@end), delta=3   [add r5, r3; ub(r3)=3 from zone]
+```
+
+Accumulated bound: `-12 + 0 + 4 + 3 = -5`. The checker verifies each step independently against the interval states and instruction stream.
 
 ## Checker Behavior
 
