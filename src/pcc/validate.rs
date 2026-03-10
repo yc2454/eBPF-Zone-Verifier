@@ -133,7 +133,10 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
                 );
             }
 
-            // PC monotonicity: strictly increasing, all < ann.pc
+            // PC monotonicity: non-decreasing, all < ann.pc.
+            // The Guard and its immediately following Transfer may share the same PC
+            // (Guard establishes the fact before the instruction; Transfer processes it).
+            // After the first Transfer, PCs must be strictly increasing.
             let mut prev_pc = None;
             for (sidx, step) in e.proof.iter().enumerate() {
                 let step_pc = step.pc();
@@ -148,11 +151,22 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
                     );
                 }
                 if let Some(prev) = prev_pc {
-                    if step_pc <= prev {
-                        anyhow::bail!(
-                            "pc_annotation #{} entry #{} step #{} pc={} not strictly increasing (prev={})",
-                            pc_idx, eidx, sidx, step_pc, prev
-                        );
+                    if sidx == 1 {
+                        // Guard → first Transfer: allow same PC (non-decreasing)
+                        if step_pc < prev {
+                            anyhow::bail!(
+                                "pc_annotation #{} entry #{} step #{} pc={} < guard pc={}",
+                                pc_idx, eidx, sidx, step_pc, prev
+                            );
+                        }
+                    } else {
+                        // Transfer → Transfer: strictly increasing
+                        if step_pc <= prev {
+                            anyhow::bail!(
+                                "pc_annotation #{} entry #{} step #{} pc={} not strictly increasing (prev={})",
+                                pc_idx, eidx, sidx, step_pc, prev
+                            );
+                        }
                     }
                 }
                 prev_pc = Some(step_pc);

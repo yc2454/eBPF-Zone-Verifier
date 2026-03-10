@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "program_hash": "0000000000000000",
+  "version": 2,
+  "program_hash": "deadbeefdeadbeef",
   "pc_annotations": [
     {
       "pc": 10,
@@ -11,10 +11,20 @@
           "bound": -5,
           "proof": [
             {
-              "kind": "PredCarry",
+              "kind": "Guard",
+              "pc": 9,
               "i": 6,
               "j": 14,
-              "c": -5
+              "c": -8
+            },
+            {
+              "kind": "Transfer",
+              "pc": 9,
+              "from_i": 6,
+              "from_j": 14,
+              "to_i": 6,
+              "to_j": 14,
+              "delta": 3
             }
           ]
         }

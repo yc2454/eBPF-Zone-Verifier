@@ -35,7 +35,7 @@ struct ProofCheckState {
 // Interval-state queries (reused from v1)
 // ---------------------------------------------------------------------------
 
-fn distance_upper_bound(state: &State, i: Reg, j: Reg) -> Option<i64> {
+pub fn distance_upper_bound(state: &State, i: Reg, j: Reg) -> Option<i64> {
     if !matches!(state.domain, NumericDomain::Interval(_)) {
         return Some(state.domain.get_distance_interval(i, j).1);
     }

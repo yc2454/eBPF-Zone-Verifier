@@ -16,7 +16,7 @@ use crate::pcc::{
     verify_proof_chain_replay,
 };
 use log::{debug, error, info};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use self::flow::{cfg, liveness, merging, pruning, subprog};
 use self::machine::context::ExecContext;
@@ -24,12 +24,38 @@ use self::machine::env::VerifierEnv;
 use self::machine::reg_types::RegType;
 use self::machine::state::State;
 
+/// Analysis results including both the DBM vector and the explored states.
+pub struct AnalysisResult {
+    pub dbms: Vec<Dbm>,
+    pub explored_states: HashMap<usize, Vec<State>>,
+    /// If analysis failed, the error is stored here. The explored_states are
+    /// still populated with all states collected before the failure point.
+    pub error: Option<VerificationError>,
+}
+
 pub fn analyze_program(
     ctx: &ExecContext,
     prog: &Program,
     entry_dbm: Dbm,
     config: &VerifierConfig,
 ) -> Result<Vec<Dbm>, VerificationError> {
+    let r = analyze_program_full(ctx, prog, entry_dbm, config);
+    if let Some(err) = r.error {
+        Err(err)
+    } else {
+        Ok(r.dbms)
+    }
+}
+
+/// Like `analyze_program`, but always returns explored states (even on failure).
+/// Used by the PCC certificate generator which needs interval states at PCs
+/// before the failure point.
+pub fn analyze_program_full(
+    ctx: &ExecContext,
+    prog: &Program,
+    entry_dbm: Dbm,
+    config: &VerifierConfig,
+) -> AnalysisResult {
     // 1. Initialize Verifier Environment and control flow checks
     let mut env = VerifierEnv::new(ctx, prog, config.certificate.clone());
     if let Some(ref cert) = env.certificate {
@@ -72,18 +98,30 @@ pub fn analyze_program(
     // Check subprograms and stack overflow
     if let Err(e) = subprog::check_subprogs(prog) {
         error!(target: "app", "[Analysis] CFG Error: {}", e);
-        return Err(VerificationError::SubprogError { e });
+        return AnalysisResult {
+            dbms: vec![],
+            explored_states: env.explored_states,
+            error: Some(VerificationError::SubprogError { e }),
+        };
     }
 
     if let Err(e) = subprog::check_stack_overflow(prog) {
         error!(target: "app", "[Analysis] Stack Error: {}", e);
-        return Err(VerificationError::SubprogError { e });
+        return AnalysisResult {
+            dbms: vec![],
+            explored_states: env.explored_states,
+            error: Some(VerificationError::SubprogError { e }),
+        };
     }
 
     // Check CFG. This includes checking for unreachable code and marking prune points.
     if let Err(e) = cfg::check_cfg(prog, &mut env, config) {
         error!(target: "app", "[Analysis] CFG Error: {}", e);
-        return Err(VerificationError::CfgError(e));
+        return AnalysisResult {
+            dbms: vec![],
+            explored_states: env.explored_states,
+            error: Some(VerificationError::CfgError(e)),
+        };
     }
 
     // Compute liveness information for all registers.
@@ -261,23 +299,23 @@ pub fn analyze_program(
     }
 
     // --- FINAL REPORT ---
-    if let Some(err) = &env.error {
+    let analysis_error = if let Some(err) = &env.error {
         info!(target: "app", "\n[Verifier] FAILURE: {}", err.description());
         if config.verbosity >= 1 {
             info!(target: "app", "[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count);
         }
-        return Err(err.clone());
-    }
-
-    info!(target: "app", "\n[Verifier] Success! Verified {} instructions (pruned {} states).", 
-             env.insn_processed, prune_count);
-
-    if config.verbosity >= 1 {
-        info!(target: "app", "[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count);
-    }
+        Some(err.clone())
+    } else {
+        info!(target: "app", "\n[Verifier] Success! Verified {} instructions (pruned {} states).",
+                 env.insn_processed, prune_count);
+        if config.verbosity >= 1 {
+            info!(target: "app", "[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count);
+        }
+        None
+    };
 
     // 5. Return Results
-    // NOTE: For backwards compatibility, we return Vec<Dbm>.
+    // NOTE: For backwards compatibility, dbms returns Vec<Dbm>.
     // In Interval mode, we return empty Dbms since there's no underlying DBM.
     let n = prog.instrs.len();
     let mut results = Vec::with_capacity(n);
@@ -298,5 +336,9 @@ pub fn analyze_program(
         }
     }
 
-    Ok(results)
+    AnalysisResult {
+        dbms: results,
+        explored_states: env.explored_states,
+        error: analysis_error,
+    }
 }

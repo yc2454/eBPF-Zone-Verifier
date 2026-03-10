@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "program_hash": "d0d6dee8fadea7a0",
   "pc_annotations": [
     {
@@ -12,9 +12,19 @@
           "proof": [
             {
               "kind": "Guard",
+              "pc": 7,
               "i": 6,
               "j": 14,
-              "c": -5
+              "c": -8
+            },
+            {
+              "kind": "Transfer",
+              "pc": 9,
+              "from_i": 6,
+              "from_j": 14,
+              "to_i": 6,
+              "to_j": 14,
+              "delta": 3
             }
           ]
         }
