@@ -98,7 +98,7 @@ The checker verifies this via two paths:
 | `JGE dst, src` | taken         | `src - dst <= 0`  |
 | `JGT dst, src` | taken         | `src - dst <= -1` |
 
-### `Transfer`
+### `Transfer` {#transfer}
 
 ```json
 { "kind": "Transfer", "pc": 9,
@@ -112,8 +112,10 @@ pre-state of the instruction at `pc`, then `post_left_reg - post_right_reg <= b 
 holds in the post-state.
 
 Let `L = pre_left_reg` and `R = pre_right_reg`. The checker verifies the step by looking
-up the interval pre-state and the instruction at `pc`, and checking that the claimed
-`delta` (and register remapping) is a sound algebraic consequence:
+up the **interval** pre-state and the instruction at `pc`, and checking that the claimed
+`delta` (and register remapping) is a sound algebraic consequence (forward direction —
+see [backward transfer](#generation-and-verification-two-directions-of-the-same-arithmetic)
+for how the generator derives these values in the opposite direction):
 
 | Instruction | Condition | Derivation | Required `delta` |
 |---|---|---|---|
@@ -141,7 +143,7 @@ A valid proof chain must satisfy:
 
 ## Certificate Generation
 
-The generator (`generator.rs`) produces the certificate automatically from the zone and interval analysis results.
+The generator (`generator.rs`) produces the certificate automatically from the zone and interval analysis results. It runs offline and its output is not in the TCB.
 
 ### Overview
 
@@ -149,51 +151,75 @@ For each load instruction at `target_pc`, the generator:
 
 1. **Queries the zone** — checks whether the zone DBM at `target_pc` proves the access is safe (`base - @data_end <= -(off + size)`). If not, the load is skipped (nothing to certify).
 2. **Queries the interval** — checks whether the interval verifier already proves the access safe on its own. If so, PCC is not needed and the load is skipped.
-3. **Backward-traces** from `target_pc - 1` toward the start of the program to find the **divergence point**: the earliest instruction where the interval state agrees with the zone on the tracked constraint.
+3. **Backward-traces** from `target_pc - 1` toward the start of the program to find the **divergence point**: the instruction whose interval pre-state independently agrees with the zone on the tracked constraint.
 4. **Emits the proof chain** — reverses the backward steps into a forward `[Guard, Transfer, …, Transfer]` chain and writes it into the certificate.
 
-### Backward Tracing
+### Generation and Verification: Two Directions of the Same Arithmetic
 
-Starting from the target constraint `base - @data_end <= zone_ub` at `target_pc`, the generator walks backward one instruction at a time. At each instruction it calls `backward_transfer`, which **algebraically inverts** the instruction's semantics to determine what the constraint must have looked like *before* that instruction:
+The generator and checker both reason about the same instruction-level bound arithmetic, but from **opposite directions**:
 
-| Instruction | Inversion | `delta` |
+- The **generator** walks *backward* from the load. At each instruction it asks: "given that the constraint `L - R <= b` holds *after* this instruction, what must have held *before* it?" It uses the zone DBM (which has full relational precision) to bound variable-offset additions.
+- The **checker** walks *forward* through the emitted proof chain. At each Transfer it asks: "given that the constraint `L - R <= b` holds *before* this instruction, does `L' - R' <= b + delta` follow *after* it?" It uses the interval pre-state (available at check time, without the zone) to verify the bound on variable-offset additions.
+
+The `delta` field in each Transfer is the shared language between them: the generator computes it during inversion, and the checker verifies it during replay.
+
+**Generator — backward transfer** (given post-constraint `L - R <= b`, derive pre-constraint):
+
+| Instruction | Inversion | Recorded `delta` |
 |---|---|---|
-| `add dst, imm` (`dst == L`) | `L - R <= b`  ←  `L - R <= b - imm` before | `imm` |
-| `add dst, imm` (`dst == R`) | `L - R <= b`  ←  `L - R <= b + imm` before | `-imm` |
-| `add dst, src` (`dst == L`) | uses `ub(src)` from zone DBM: pre-bound = `b - ub(src)` | `ub(src)` |
-| `add dst, src` (`dst == R`) | uses `lb(src)` from zone DBM: pre-bound = `b + lb(src)` | `-lb(src)` |
-| `mov dst, src` (`dst == L`) | track value in `src` instead; bound unchanged | `0` |
+| `add dst, imm` (`dst == L`) | `b - imm` before → `b` after | `imm` |
+| `add dst, imm` (`dst == R`) | `b + imm` before → `b` after | `-imm` |
+| `add dst, src` (`dst == L`) | `b - ub(src)` before, using `ub(src)` from **zone DBM** | `ub(src)` |
+| `add dst, src` (`dst == R`) | `b + lb(src)` before, using `lb(src)` from **zone DBM** | `-lb(src)` |
+| `mov dst, src` (`dst == L`) | track `src` instead of `dst`; bound unchanged | `0` |
 | passthrough | constraint unchanged | `0` |
 
-After inverting through each instruction, the generator checks whether the interval pre-state at that PC already proves the (now tighter) pre-constraint. The first instruction where this holds is the **divergence point** — the interval and zone agree there, so no PCC step is needed before it. A `Guard` is placed at that PC with the interval-proved bound `c`.
+After each inversion, the generator checks whether the interval pre-state at that PC can independently prove the derived pre-constraint. The first PC where it can is the **divergence point**: the interval and zone agree there without any relational help. A `Guard` is placed at that PC, and all subsequent instructions become Transfer steps.
+
+See the [Transfer step verification table](#transfer) for the corresponding forward direction used by the checker.
 
 ### Example
 
-```
-pc  instruction          zone knows          interval knows
-──────────────────────────────────────────────────────────────
-5   r5 = r4              r5 - @end <= -12    r5 - @end = ∞
-6   r5 += 4              r5 - @end <= -8     r5 - @end = ∞
-7   r5 += r3             r5 - @end <= -5     r5 - @end = ∞
-8   r1 = *(r5 + 0)       [load: needs -1]    REJECTED
-```
-
-Zone proves `r5 - @end <= -5` at pc=8, interval doesn't. Backward trace:
-
-- **pc=7** (`add r5, r3`): invert via `ub(r3)` from zone = 3 → pre-bound = `-5 - 3 = -8`. Interval at pc=7: `r5 - @end = ∞` — no agreement yet.
-- **pc=6** (`add r5, 4`): invert → pre-bound = `-8 - 4 = -12`. Interval at pc=6: `r5 - @end = ∞` — no agreement yet.
-- **pc=5** (`mov r5, r4`): invert → track `r4` instead, pre-bound = `-12`. Interval at pc=5: `r4 - @end <= -12` ✓ — **divergence point found**.
-
-Emitted chain (forward order):
+Consider a program fragment where `r4` is a packet data pointer that a prior bounds check has established is at least 12 bytes before end-of-packet, and `r3` is a variable offset known by the zone to be at most 3:
 
 ```
-Guard    pc=5, r4 - @end <= -12
-Transfer pc=5, (r4,@end) → (r5,@end), delta=0   [mov: value moved into r5]
-Transfer pc=6, (r5,@end) → (r5,@end), delta=4   [add r5, 4]
-Transfer pc=7, (r5,@end) → (r5,@end), delta=3   [add r5, r3; ub(r3)=3 from zone]
+pc  instruction           purpose
+──────────────────────────────────────────────────────────────────────
+5   r5 = r4               copy packet pointer into r5
+6   r5 += 4               skip a 4-byte fixed header
+7   r5 += r3              advance by variable offset r3 (zone: 0 ≤ r3 ≤ 3)
+8   r1 = *(u8 *)(r5 + 0)  load 1 byte — needs r5 - @end ≤ -1
 ```
 
-Accumulated bound: `-12 + 0 + 4 + 3 = -5`. The checker verifies each step independently against the interval states and instruction stream.
+The table below shows the **pre-state of each instruction** — what each domain knows just *before* that instruction executes:
+
+```
+pc  instruction           zone pre-state           interval pre-state
+──────────────────────────────────────────────────────────────────────
+5   r5 = r4               r4 - @end ≤ -12          r4 - @end = ∞
+6   r5 += 4               r5 - @end ≤ -12          r5 - @end = ∞
+7   r5 += r3              r5 - @end ≤ -8           r5 - @end = ∞
+8   r1 = *(u8 *)(r5 + 0)  r5 - @end ≤ -5  ✓        r5 - @end = ∞  → REJECTED
+```
+
+At pc=8 the zone pre-state proves the load is safe (`-5 ≤ -1`), but the interval pre-state does not. PCC is needed.
+
+**Backward trace** (starting from target constraint `r5 - @end ≤ -5` at pc=8):
+
+- **Invert pc=7** (`add r5, r3`): `ub(r3) = 3` from zone pre-state at pc=7 → pre-bound = `-5 - 3 = -8`. Check interval pre-state at pc=7: `r5 - @end = ∞ > -8` — interval does not agree. Continue backward.
+- **Invert pc=6** (`add r5, 4`): pre-bound = `-8 - 4 = -12`. Check interval pre-state at pc=6: `r5 - @end = ∞ > -12` — no agreement. Continue backward.
+- **Invert pc=5** (`mov r5, r4`): register substitution — track `r4` instead of `r5`, pre-bound = `-12` (unchanged). Check interval pre-state at pc=5: `r4 - @end ≤ -12` ✓ — **divergence point found**.
+
+**Emitted proof chain** (forward order, ready for the certificate):
+
+```
+Guard    pc=5,  r4 - @end ≤ -12                              [interval pre-state at pc=5 proves this]
+Transfer pc=5,  (r4,@end) → (r5,@end),  delta=0             [mov r5,r4: value moves into r5]
+Transfer pc=6,  (r5,@end) → (r5,@end),  delta=4             [add r5,4: bound shifts by +4]
+Transfer pc=7,  (r5,@end) → (r5,@end),  delta=3             [add r5,r3: bound shifts by ub(r3)=3]
+```
+
+Accumulated bound: `-12 + 0 + 4 + 3 = -5`. At check time, the checker walks this chain forward, verifying each Transfer against the interval pre-state and instruction stream independently — no zone required.
 
 ## Checker Behavior
 
@@ -212,12 +238,14 @@ This means a certificate can pass validation and still be rejected at check time
 
 ## Practical Limits
 
-| Limit | Value |
-|-------|-------|
-| Max steps per entry | 16 |
-| Max entries per PC | 8 |
+| Limit | Value | Nature |
+|-------|-------|--------|
+| Max steps per entry | 16 | Bounds proof chain length; generator traces at most a few instructions in practice |
+| Max entries per PC | 8 | **Defensive cap only** — the current generator emits at most 1 entry per PC |
 
-Entries exceeding these caps are rejected at validation and never reach the checker.
+Both limits are enforced by the validator; entries that exceed them are rejected before they reach the checker.
+
+The `max entries per PC` cap deserves a note: the generator loops over instructions and produces at most one entry per load PC, so this limit is never approached in practice. It exists purely to bound the work an adversarial certificate could force the checker to perform — without it, a malicious certificate could embed an arbitrarily large number of entries at a single PC, each triggering a full proof replay.
 
 ## CLI
 

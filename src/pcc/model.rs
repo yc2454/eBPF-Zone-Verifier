@@ -116,7 +116,11 @@ impl ProofStep {
 pub const MAX_STEPS_PER_ENTRY: usize = 16;
 
 /// Maximum annotation entries allowed per PC.
-/// Enforced by the validator; checker iterates all entries that pass validation.
+///
+/// This is a **defensive cap** on the checker side, not a reflection of what the
+/// generator currently produces. The generator emits at most one entry per PC
+/// (one constraint per load instruction). The cap exists to bound the work an
+/// adversarial certificate could force the checker to perform.
 pub const MAX_ENTRIES_PER_PC: usize = 8;
 
 /// Overflow-safe sum of step bounds.
