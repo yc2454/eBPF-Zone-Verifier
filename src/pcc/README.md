@@ -98,7 +98,7 @@ The checker verifies this via two paths:
 | `JGE dst, src` | taken         | `src - dst <= 0`  |
 | `JGT dst, src` | taken         | `src - dst <= -1` |
 
-### `Transfer` {#transfer}
+### `Transfer`
 
 ```json
 { "kind": "Transfer", "pc": 9,
@@ -245,7 +245,7 @@ This means a certificate can pass validation and still be rejected at check time
 
 Both limits are enforced by the validator; entries that exceed them are rejected before they reach the checker.
 
-The `max entries per PC` cap deserves a note: the generator loops over instructions and produces at most one entry per load PC, so this limit is never approached in practice. It exists purely to bound the work an adversarial certificate could force the checker to perform — without it, a malicious certificate could embed an arbitrarily large number of entries at a single PC, each triggering a full proof replay.
+Note for `max entries per PC`: the generator loops over instructions and produces at most one entry per load PC, so this limit is never approached in practice. It exists purely to bound the work an adversarial certificate could force the checker to perform — without it, a malicious certificate could embed an arbitrarily large number of entries at a single PC, each triggering a full proof replay.
 
 ## CLI
 
