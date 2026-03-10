@@ -45,6 +45,20 @@ fn interval_upper_bound(state: &State, i: Reg, j: Reg) -> Option<i64> {
 // ---------------------------------------------------------------------------
 
 /// A backward-traced step before it is reversed into the forward chain.
+///
+/// During backward tracing the generator walks from the target load toward the divergence
+/// point, calling [`backward_transfer`] at each instruction to invert the instruction's
+/// semantics: given the post-state constraint, what must the pre-state constraint be?
+///
+/// Each `BackwardStep` stores the forward-Transfer data (i.e. the same `delta` and
+/// register mapping that would appear in a [`ProofStep::Transfer`]) even though it was
+/// discovered by walking backward. When the divergence point is found, the accumulated
+/// `BackwardStep`s are reversed into [`ProofStep::Transfer`] entries in forward order.
+///
+/// Field names follow the forward Transfer convention:
+/// `pre_left_reg/pre_right_reg` is the constraint pair **before** the instruction,
+/// `post_left_reg/post_right_reg` is the pair **after** it, and `delta` is the
+/// forward bound shift (`post_bound = pre_bound + delta`).
 struct BackwardStep {
     pc: usize,
     pre_left_reg: usize,
@@ -146,11 +160,39 @@ fn backward_trace(
 
 /// Compute the backward transfer through a single instruction.
 ///
-/// Given the post-instruction constraint `(cur_i, cur_j)`, returns
-/// `(prev_i, prev_j, delta)` where the pre-instruction constraint is
-/// `(prev_i, prev_j)` and `delta` is the forward bound shift.
+/// Given that after the instruction at `pc`, the constraint `cur_i - cur_j <= cur_bound`
+/// holds (the post-state), returns `(prev_i, prev_j, delta)` such that the pre-state
+/// constraint `prev_i - prev_j <= cur_bound - delta` is a valid backward implication.
 ///
-/// Returns None for unsupported instructions that write to tracked registers.
+/// Equivalently, `delta` is the *forward* bound shift: when `prev_i - prev_j <= pre_bound`
+/// holds before the instruction, then `cur_i - cur_j <= pre_bound + delta` holds after it.
+/// The caller computes `pre_bound = cur_bound - delta`.
+///
+/// The derivations for each supported case (let `L = cur_i`, `R = cur_j`):
+///
+/// - **`mov dst, src`** (`cur_i == dst`):
+///   Post: `dst - R <= b`. Since `dst_post == src_pre`, pre: `src - R <= b`. `delta = 0`.
+///
+/// - **`add dst, imm`** (`cur_i == dst`):
+///   Post: `(dst_old+imm) - R <= b`  ⟺  `dst_old - R <= b - imm`. `delta = imm`.
+///
+/// - **`add dst, imm`** (`cur_j == dst`):
+///   Post: `L - (dst_old+imm) <= b`  ⟺  `L - dst_old <= b + imm`. `delta = -imm`.
+///
+/// - **`add dst, src_reg`** (`cur_i == dst`):
+///   Post: `(dst_old+src) - R <= b`  ⟺  `dst_old - R <= b - src`.
+///   The tightest conservative pre-bound uses `src <= ub(src)` (worst case: src is largest):
+///   `dst_old - R <= b - ub(src)`. `delta = ub(src)` from the zone DBM at `pc`.
+///
+/// - **`add dst, src_reg`** (`cur_j == dst`):
+///   Post: `L - (dst_old+src) <= b`  ⟺  `L - dst_old <= b + src`.
+///   The tightest conservative pre-bound uses `src >= lb(src)` (worst case: src is smallest):
+///   `L - dst_old <= b + lb(src)`. `delta = -lb(src)` from the zone DBM at `pc`.
+///
+/// - **Passthrough** (`dst` ∉ {`cur_i`, `cur_j`}): constraint unchanged. `delta = 0`.
+///
+/// Returns `None` for unsupported instructions that write to a tracked register in a way
+/// the generator cannot invert.
 fn backward_transfer(
     instr: &Instr,
     cur_i: Reg,
@@ -159,8 +201,10 @@ fn backward_transfer(
     pc: usize,
 ) -> Option<(Reg, Reg, i64)> {
     match instr {
-        // mov dst, src: after mov, dst has src's value.
-        // If cur_i == dst, then before the mov the value was in src.
+        // mov dst, src  →  dst_post = src_pre.
+        // If cur_i == dst, the value now in dst came from src before the move.
+        // Pre-constraint: src - cur_j <= b (same bound, delta = 0).
+        // Symmetric for cur_j.
         Instr::Alu {
             op: AluOp::Mov,
             dst,
@@ -172,9 +216,11 @@ fn backward_transfer(
             Some((prev_i, prev_j, 0))
         }
 
-        // add dst, imm: after add, dst = dst_old + imm.
-        // If cur_i == dst: bound shifted by +imm forward, so delta = imm.
-        // Before: prev_i = dst (same register), bound was tighter by imm.
+        // add dst, imm  →  dst_post = dst_pre + imm.
+        // cur_i == dst: (dst_pre+imm) - cur_j <= b  ⟺  dst_pre - cur_j <= b - imm.
+        //   delta = imm (pre_bound = cur_bound - imm).
+        // cur_j == dst: cur_i - (dst_pre+imm) <= b  ⟺  cur_i - dst_pre <= b + imm.
+        //   delta = -imm (pre_bound = cur_bound + imm).
         Instr::Alu {
             op: AluOp::Add,
             dst,
@@ -186,13 +232,17 @@ fn backward_transfer(
             } else if *dst == cur_j {
                 Some((cur_i, cur_j, -(*imm)))
             } else {
-                // Passthrough
+                // Passthrough: dst doesn't affect the tracked pair.
                 Some((cur_i, cur_j, 0))
             }
         }
 
-        // add dst, src_reg: after add, dst = dst_old + src_reg.
-        // delta = ub(src_reg) from the zone DBM at this PC.
+        // add dst, src_reg  →  dst_post = dst_pre + src_reg.
+        // cur_i == dst: (dst_pre+src) - cur_j <= b  ⟺  dst_pre - cur_j <= b - src.
+        //   Worst case (largest src): src = ub(src).  Pre-bound = b - ub(src). delta = ub(src).
+        // cur_j == dst: cur_i - (dst_pre+src) <= b  ⟺  cur_i - dst_pre <= b + src.
+        //   Worst case (smallest src): src = lb(src). Pre-bound = b + lb(src). delta = -lb(src).
+        //   lb(src) = -ub(Zero - src) = -zone_upper_bound(dbm, Zero, src).
         Instr::Alu {
             op: AluOp::Add,
             dst,
@@ -206,7 +256,7 @@ fn backward_transfer(
             } else if *dst == cur_j {
                 let dbm = zone_dbms.get(pc)?;
                 let src_lb = {
-                    // lb(src) = -ub(Zero - src) = -dbm[Zero][src]
+                    // lb(src) = -ub(Zero - src)
                     let neg_lb = zone_upper_bound(dbm, Reg::Zero, *src)?;
                     -neg_lb
                 };

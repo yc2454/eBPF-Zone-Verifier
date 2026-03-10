@@ -105,17 +105,27 @@ The checker verifies this via two paths:
   "delta": 3 }
 ```
 
-The inductive step. Asserts that the instruction at `pc` transforms a constraint on `(pre_left_reg, pre_right_reg)` into a constraint on `(post_left_reg, post_right_reg)` with a bound shift of `delta`.
+The inductive step. Formally: if `pre_left_reg - pre_right_reg <= b` holds in the
+pre-state of the instruction at `pc`, then `post_left_reg - post_right_reg <= b + delta`
+holds in the post-state.
 
-The checker verifies this by looking up the interval pre-state and the instruction at `pc`:
+Let `L = pre_left_reg` and `R = pre_right_reg`. The checker verifies the step by looking
+up the interval pre-state and the instruction at `pc`, and checking that the claimed
+`delta` (and register remapping) is a sound algebraic consequence:
 
-| Instruction | Effect | Delta |
-|-------------|--------|-------|
-| `mov dst, src` | If `pre_left_reg == src`, track value in `dst` | 0 |
-| `add dst, imm` | If `pre_left_reg == dst`, bound shifts | `imm` |
-| `add dst, src_reg` | If `pre_left_reg == dst`, bound shifts by `ub(src)` | `>= ub(src)` |
-| Other (no tracked write) | Passthrough | 0 |
-| Other (writes tracked reg) | **Rejected** | — |
+| Instruction | Condition | Derivation | Required `delta` |
+|---|---|---|---|
+| `add dst, imm` | `dst == L` | `(L+imm) - R = (L-R) + imm <= b + imm` | exactly `imm` |
+| `add dst, imm` | `dst == R` | `L - (R+imm) = (L-R) - imm <= b - imm` | exactly `-imm` |
+| `add dst, src` | `dst == L` | `(L+src) - R = (L-R) + src <= b + ub(src)` since `src <= ub(src)` | `>= ub(src)` |
+| `add dst, src` | `dst == R` | `L - (R+src) = (L-R) - src <= b - lb(src)` since `src >= lb(src)` | `>= -lb(src)` |
+| `mov dst, src` | `src == L` | value moved into `dst`; `post_left_reg = dst.idx()`, bound unchanged | exactly `0` |
+| passthrough | `dst` ∉ {`L`,`R`} | neither register touched; constraint unchanged | exactly `0` |
+| other (writes `L` or `R`) | — | **Rejected** | — |
+
+Here `ub(src)` and `lb(src)` are the interval upper and lower bounds of `src` read from
+the interval pre-state at `pc`. For `add dst, src`, the generator uses the tightest value
+(`delta == ub(src)`), but the checker accepts any `delta >= ub(src)` (sound overestimate).
 
 ### Chain Rules
 
@@ -140,7 +150,7 @@ At each annotated PC, the checker:
 
 `validate` (run before the checker) is **structural only** — it checks schema version, register index bounds, chain connectivity, PC ordering, and that the sum does not overflow `i64`. It does **not** verify the semantic correctness of any step. That is the checker's job.
 
-This means a certificate can pass validation and still be rejected at check time (e.g. if the Guard's `c` is tighter than what the interval state supports, or a Transfer's `delta` exceeds the interval's `ub(src)`).
+This means a certificate can pass validation and still be rejected at check time (e.g. if the Guard's `c` is tighter than what the interval state supports, or a Transfer's `delta` is less than the interval's `ub(src)`).
 
 ## Practical Limits
 

@@ -17,6 +17,15 @@ pub struct PcAnnotation {
     pub entries: Vec<AnnotationEntry>,
 }
 
+/// A single annotation at a load instruction.
+///
+/// Claims that `left_reg - right_reg <= bound` holds in the pre-state of the annotated
+/// instruction, and carries a proof chain ([`ProofStep`]) that the interval checker
+/// can replay to independently verify the claim.
+///
+/// The constraint follows DBM convention: a negative `bound` means the left register
+/// is at least `|bound|` units below the right register. For packet-safety annotations,
+/// `right_reg` is always `@data_end` (index 14) and `bound <= -(offset + access_size)`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AnnotationEntry {
     pub left_reg: usize,
@@ -37,8 +46,24 @@ pub enum ProofStep {
         right_reg: usize,
         c: i64,
     },
-    /// Transfer: if `pre_left_reg - pre_right_reg <= b` before instruction at `pc`,
-    /// then `post_left_reg - post_right_reg <= b + delta` after that instruction.
+    /// Inductive step: the instruction at `pc` transforms the pre-state constraint
+    /// `pre_left_reg - pre_right_reg <= b` into the post-state constraint
+    /// `post_left_reg - post_right_reg <= b + delta`.
+    ///
+    /// The claimed `delta` is sound only for specific instruction shapes. Let
+    /// `L = pre_left_reg` and `R = pre_right_reg`. The algebraic derivations are:
+    ///
+    /// | Instruction          | Condition   | Derivation                                                          | Required `delta`    |
+    /// |----------------------|-------------|---------------------------------------------------------------------|---------------------|
+    /// | `add dst, imm`       | `dst == L`  | `(L+imm) - R = (L-R) + imm <= b + imm`                              | exactly `imm`       |
+    /// | `add dst, imm`       | `dst == R`  | `L - (R+imm) = (L-R) - imm <= b - imm`                              | exactly `-imm`      |
+    /// | `add dst, src`       | `dst == L`  | `(L+src) - R <= b + ub(src)` since `src <= ub(src)`                 | `>= ub(src)`        |
+    /// | `add dst, src`       | `dst == R`  | `L - (R+src) = (L-R) - src <= b - lb(src)` since `src >= lb(src)`   | `>= -lb(src)`       |
+    /// | `mov dst, src`       | `src == L`  | value copied; track in `dst`: `post_left = dst`, bound unchanged    | exactly 0           |
+    /// | passthrough          | `dst` ∉ {L,R} | constraint registers untouched                                    | exactly 0           |
+    ///
+    /// Here `ub(src)` and `lb(src)` are the interval upper/lower bounds of `src`
+    /// read from the interval pre-state at `pc`.
     #[serde(rename = "Transfer")]
     Transfer {
         pc: usize,

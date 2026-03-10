@@ -24,10 +24,23 @@ pub struct VerifiedEntry {
 // ---------------------------------------------------------------------------
 
 /// Tracks progress through a single proof chain during replay verification.
-/// This is NOT the verifier's abstract state — it is purely proof-tracking data.
+///
+/// This is **not** the verifier's abstract state — it is purely proof-chain bookkeeping,
+/// kept entirely separate from [`State`] to make it clear that the checker only reads
+/// interval states and never modifies them.
+///
+/// **Invariant:** after processing step `k` of the chain,
+/// `current_left - current_right <= accumulated_bound` is the bound derivable
+/// from all steps seen so far. The chain starts from the Guard's `c` (the base fact
+/// independently verified against the interval state at the divergence point) and
+/// accumulates each Transfer's `delta`. At the end of the chain,
+/// `accumulated_bound` must equal `entry.bound`.
 struct ProofCheckState {
+    /// The left register of the currently tracked constraint pair.
     current_left: usize,
+    /// The right register of the currently tracked constraint pair.
     current_right: usize,
+    /// Running upper bound: `current_left - current_right <= accumulated_bound`.
     accumulated_bound: i64,
 }
 
@@ -197,8 +210,37 @@ fn verify_guard(
 
 /// Verify a Transfer step against the interval pre-state and instruction at its PC.
 ///
-/// Returns true if the claimed (pre_left, pre_right) -> (post_left, post_right, delta) transformation
-/// is sound for the instruction at `step_pc`.
+/// A Transfer step claims: if `pre_left - pre_right <= b` holds in the pre-state of
+/// the instruction at `step_pc`, then `post_left - post_right <= b + delta` holds in
+/// the post-state. This function checks whether the claimed `(post_left, post_right, delta)`
+/// is a sound consequence of the instruction's semantics.
+///
+/// Let `L = pre_left`, `R = pre_right`. The four supported cases and their soundness
+/// arguments (all using the fact that `L - R <= b` holds before the instruction):
+///
+/// - **`add dst, imm`** (`dst == L`, `post_left == L`, `post_right == R`):
+///   `(L+imm) - R = (L-R) + imm <= b + imm`. Requires `delta == imm` exactly.
+///
+/// - **`add dst, imm`** (`dst == R`, `post_left == L`, `post_right == R`):
+///   `L - (R+imm) = (L-R) - imm <= b - imm`. Requires `delta == -imm` exactly.
+///
+/// - **`add dst, src_reg`** (`dst == L`, `post_left == L`, `post_right == R`):
+///   `(L+src) - R = (L-R) + src`. Since `src <= ub(src)` (from the interval pre-state),
+///   the result is `<= b + ub(src)`. Requires `delta >= ub(src)`; the generator uses
+///   the tightest value (`delta == ub(src)`), but the checker accepts any sound overestimate.
+///
+/// - **`add dst, src_reg`** (`dst == R`, `post_left == L`, `post_right == R`):
+///   `L - (R+src) = (L-R) - src`. Since `src >= lb(src)`, the result is `<= b - lb(src)`.
+///   Requires `delta >= -lb(src)`.
+///
+/// - **`mov dst, src`** (`src == L`, `post_left == dst.idx()`, `post_right == R`):
+///   After the move, `dst` holds the old value of `L`. The constraint `L - R <= b` becomes
+///   `dst - R <= b` with the same bound. Requires `delta == 0` and `post_left == dst.idx()`.
+///
+/// - **Passthrough** (`dst ∉ {L, R}`): the constraint registers are untouched.
+///   Requires `post_left == pre_left`, `post_right == pre_right`, `delta == 0`.
+///
+/// - **Unsupported write to `L` or `R`**: returns `false` (chain fails, fail-closed).
 fn verify_transfer(
     step_pc: usize,
     pre_left: usize,
@@ -405,10 +447,24 @@ fn verify_transfer(
 // Replay verification: the v2 checker entry point
 // ---------------------------------------------------------------------------
 
-/// Verify a proof chain by replaying each step against the interval pre-state
+/// Verify a proof chain by replaying each step against the interval pre-states
 /// stored in `explored_states` at each step's PC.
 ///
-/// Fail-closed: returns None if any step fails or required state is missing.
+/// The chain must begin with a [`ProofStep::Guard`] and be followed by zero or more
+/// [`ProofStep::Transfer`] steps. Replay maintains the running invariant:
+/// `current_left - current_right <= accumulated_bound`, starting from the Guard's
+/// independently verified base case and accumulating `delta` from each Transfer.
+///
+/// Returns `Some(VerifiedEntry)` only when **all** of the following hold:
+/// 1. `proof[0]` is a Guard whose claimed constraint is verified against the interval
+///    pre-state at the guard's PC (state-derived or branch-derived — see [`verify_guard`]).
+/// 2. Every subsequent Transfer is connected (its `pre_*` matches the previous step's
+///    output) and sound for the instruction and interval pre-state at its PC.
+/// 3. The chain endpoint `(current_left, current_right)` matches `entry.(left_reg, right_reg)`.
+/// 4. The final `accumulated_bound` equals `entry.bound`.
+///
+/// Fail-closed: returns `None` if any check fails or a required state is missing.
+/// The caller skips this entry; the interval verifier proceeds without refinement.
 pub fn verify_proof_chain_replay(
     entry: &AnnotationEntry,
     target_pc: usize,
