@@ -26,7 +26,7 @@ The **certificate is not trusted**. The checker independently verifies every ste
 
 ## Certificate Format
 
-Certificates are JSON files (v2 schema) with the following structure:
+Certificates are JSON files with the following structure:
 
 ```json
 {
@@ -41,7 +41,7 @@ Certificates are JSON files (v2 schema) with the following structure:
           "right_reg": 14,
           "bound": -5,
           "proof": [
-            { "kind": "Guard", "pc": 9, "left_reg": 6, "right_reg": 14, "c": -8 },
+            { "kind": "Guard", "pc": 8, "left_reg": 6, "right_reg": 14, "c": -8 },
             { "kind": "Transfer", "pc": 9,
               "pre_left_reg": 6, "pre_right_reg": 14,
               "post_left_reg": 6, "post_right_reg": 14,

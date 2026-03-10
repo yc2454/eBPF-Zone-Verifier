@@ -45,7 +45,7 @@ struct ProofCheckState {
 }
 
 // ---------------------------------------------------------------------------
-// Interval-state queries (reused from v1)
+// Interval-state queries
 // ---------------------------------------------------------------------------
 
 pub fn distance_upper_bound(state: &State, i: Reg, j: Reg) -> Option<i64> {
@@ -444,7 +444,7 @@ fn verify_transfer(
 }
 
 // ---------------------------------------------------------------------------
-// Replay verification: the v2 checker entry point
+// Replay verification
 // ---------------------------------------------------------------------------
 
 /// Verify a proof chain by replaying each step against the interval pre-states

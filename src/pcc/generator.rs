@@ -293,7 +293,7 @@ fn backward_transfer(
 // Certificate generation entry point
 // ---------------------------------------------------------------------------
 
-/// Generate a v2 certificate using backward tracing from zone analysis.
+/// Generate a certificate using backward tracing from zone analysis.
 ///
 /// For each candidate load instruction, traces backward to the divergence
 /// point where zone and interval first disagree, emitting a proof chain
@@ -384,7 +384,7 @@ pub fn generate_certificate(
     cert
 }
 
-/// Legacy v1 generator — kept for backward compatibility during migration.
+/// Legacy generator (Guard-only, no Transfer steps) — kept for backward compatibility.
 #[allow(dead_code)]
 pub fn generate_prototype_certificate_from_zone(
     prog: &Program,
