@@ -124,12 +124,8 @@ pub fn pcc_test_single(json_path: &str, test_name: &str, config: &VerifierConfig
         interval_config.domain_mode = DomainMode::Interval;
         interval_config.certificate = None;
         let interval_entry = Dbm::new(); // Interval mode ignores the entry DBM
-        let interval_result = analysis::analyze_program_full(
-            &ctx,
-            &program,
-            interval_entry,
-            &interval_config,
-        );
+        let interval_result =
+            analysis::analyze_program_full(&ctx, &program, interval_entry, &interval_config);
         // Convert explored_states to a flat Vec<State> indexed by PC.
         // For straightline programs: exactly 1 state per PC.
         let n = program.instrs.len();

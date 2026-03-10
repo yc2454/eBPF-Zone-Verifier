@@ -3,9 +3,7 @@ use anyhow::Result;
 use crate::analysis::machine::reg::Reg;
 use crate::ast::Program;
 
-use super::model::{
-    ProgramCertificate, ProofStep, MAX_ENTRIES_PER_PC, MAX_STEPS_PER_ENTRY,
-};
+use super::model::{MAX_ENTRIES_PER_PC, MAX_STEPS_PER_ENTRY, ProgramCertificate, ProofStep};
 
 /// Structural validation for the prototype pc-annotation certificate schema.
 pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Program) -> Result<()> {
@@ -35,23 +33,23 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
             );
         }
         for (eidx, e) in ann.entries.iter().enumerate() {
-            let Some(i) = Reg::idx_to_reg(e.i) else {
+            let Some(left) = Reg::idx_to_reg(e.left_reg) else {
                 anyhow::bail!(
-                    "pc_annotation #{} entry #{} has invalid i={}",
+                    "pc_annotation #{} entry #{} has invalid left_reg={}",
                     pc_idx,
                     eidx,
-                    e.i
+                    e.left_reg
                 );
             };
-            let Some(j) = Reg::idx_to_reg(e.j) else {
+            let Some(right) = Reg::idx_to_reg(e.right_reg) else {
                 anyhow::bail!(
-                    "pc_annotation #{} entry #{} has invalid j={}",
+                    "pc_annotation #{} entry #{} has invalid right_reg={}",
                     pc_idx,
                     eidx,
-                    e.j
+                    e.right_reg
                 );
             };
-            if i.is_anchor() && j.is_anchor() && i == j {
+            if left.is_anchor() && right.is_anchor() && left == right {
                 anyhow::bail!(
                     "pc_annotation #{} entry #{} is degenerate anchor constraint",
                     pc_idx,
@@ -83,14 +81,23 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
             // Validate register indices in all steps
             for (sidx, step) in e.proof.iter().enumerate() {
                 let indices = match step {
-                    ProofStep::Guard { i, j, .. } => vec![*i, *j],
-                    ProofStep::Transfer {
-                        from_i,
-                        from_j,
-                        to_i,
-                        to_j,
+                    ProofStep::Guard {
+                        left_reg,
+                        right_reg,
                         ..
-                    } => vec![*from_i, *from_j, *to_i, *to_j],
+                    } => vec![*left_reg, *right_reg],
+                    ProofStep::Transfer {
+                        pre_left_reg,
+                        pre_right_reg,
+                        post_left_reg,
+                        post_right_reg,
+                        ..
+                    } => vec![
+                        *pre_left_reg,
+                        *pre_right_reg,
+                        *post_left_reg,
+                        *post_right_reg,
+                    ],
                 };
                 for idx in indices {
                     if Reg::idx_to_reg(idx).is_none() {
@@ -107,14 +114,21 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
 
             // Chain connectivity: Transfer[k].from == prev.output
             for w in e.proof.windows(2) {
-                let ProofStep::Transfer { from_i, from_j, .. } = &w[1] else {
+                let ProofStep::Transfer {
+                    pre_left_reg,
+                    pre_right_reg,
+                    ..
+                } = &w[1]
+                else {
                     anyhow::bail!(
                         "pc_annotation #{} entry #{} has non-Transfer step after Guard",
                         pc_idx,
                         eidx
                     );
                 };
-                if w[0].output_i() != *from_i || w[0].output_j() != *from_j {
+                if w[0].output_left_reg() != *pre_left_reg
+                    || w[0].output_right_reg() != *pre_right_reg
+                {
                     anyhow::bail!(
                         "pc_annotation #{} entry #{} proof chain disconnected",
                         pc_idx,
@@ -125,7 +139,7 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
 
             // Last step output matches entry target
             let last = e.proof.last().unwrap();
-            if last.output_i() != e.i || last.output_j() != e.j {
+            if last.output_left_reg() != e.left_reg || last.output_right_reg() != e.right_reg {
                 anyhow::bail!(
                     "pc_annotation #{} entry #{} proof endpoints mismatch entry target",
                     pc_idx,
@@ -156,7 +170,11 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
                         if step_pc < prev {
                             anyhow::bail!(
                                 "pc_annotation #{} entry #{} step #{} pc={} < guard pc={}",
-                                pc_idx, eidx, sidx, step_pc, prev
+                                pc_idx,
+                                eidx,
+                                sidx,
+                                step_pc,
+                                prev
                             );
                         }
                     } else {
@@ -164,7 +182,11 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
                         if step_pc <= prev {
                             anyhow::bail!(
                                 "pc_annotation #{} entry #{} step #{} pc={} not strictly increasing (prev={})",
-                                pc_idx, eidx, sidx, step_pc, prev
+                                pc_idx,
+                                eidx,
+                                sidx,
+                                step_pc,
+                                prev
                             );
                         }
                     }

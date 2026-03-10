@@ -18,7 +18,10 @@ use super::program_hash;
 /// required_bound = -(off + size). The access is safe iff
 /// base - @data_end <= required_bound.
 fn required_access_bound(instr: &Instr) -> Option<(Reg, i16, MemSize, i64)> {
-    let Instr::Load { size, base, off, .. } = instr else {
+    let Instr::Load {
+        size, base, off, ..
+    } = instr
+    else {
         return None;
     };
     Some((*base, *off, *size, -((*off as i64) + size.bytes() as i64)))
@@ -44,10 +47,10 @@ fn interval_upper_bound(state: &State, i: Reg, j: Reg) -> Option<i64> {
 /// A backward-traced step before it is reversed into the forward chain.
 struct BackwardStep {
     pc: usize,
-    from_i: usize,
-    from_j: usize,
-    to_i: usize,
-    to_j: usize,
+    pre_left_reg: usize,
+    pre_right_reg: usize,
+    post_left_reg: usize,
+    post_right_reg: usize,
     delta: i64,
 }
 
@@ -84,10 +87,10 @@ fn backward_trace(
         // Record this as a backward step (instruction transforms constraint).
         backward_steps.push(BackwardStep {
             pc,
-            from_i: prev_i.idx(),
-            from_j: prev_j.idx(),
-            to_i: cur_i.idx(),
-            to_j: cur_j.idx(),
+            pre_left_reg: prev_i.idx(),
+            pre_right_reg: prev_j.idx(),
+            post_left_reg: cur_i.idx(),
+            post_right_reg: cur_j.idx(),
             delta,
         });
 
@@ -102,8 +105,8 @@ fn backward_trace(
                     let mut proof = Vec::with_capacity(1 + backward_steps.len());
                     proof.push(ProofStep::Guard {
                         pc,
-                        i: prev_i.idx(),
-                        j: prev_j.idx(),
+                        left_reg: prev_i.idx(),
+                        right_reg: prev_j.idx(),
                         c: guard_c,
                     });
 
@@ -111,10 +114,10 @@ fn backward_trace(
                     for bs in backward_steps.into_iter().rev() {
                         proof.push(ProofStep::Transfer {
                             pc: bs.pc,
-                            from_i: bs.from_i,
-                            from_j: bs.from_j,
-                            to_i: bs.to_i,
-                            to_j: bs.to_j,
+                            pre_left_reg: bs.pre_left_reg,
+                            pre_right_reg: bs.pre_right_reg,
+                            post_left_reg: bs.post_left_reg,
+                            post_right_reg: bs.post_right_reg,
                             delta: bs.delta,
                         });
                     }
@@ -279,9 +282,11 @@ pub fn generate_certificate(
         // Use the actual verify_packet_bounds check (not distance_upper_bound,
         // which can be tighter than what the verifier uses).
         if target_pc < interval_states.len() {
-            let (start_ok, end_ok) = interval_states[target_pc]
-                .domain
-                .verify_packet_bounds(base, off as i64, size.bytes() as i64);
+            let (start_ok, end_ok) = interval_states[target_pc].domain.verify_packet_bounds(
+                base,
+                off as i64,
+                size.bytes() as i64,
+            );
             if start_ok && end_ok {
                 continue; // interval already sufficient, no PCC needed
             }
@@ -315,8 +320,8 @@ pub fn generate_certificate(
         let bound: i64 = proof.iter().map(|s| s.bound_contribution()).sum();
 
         by_pc.entry(target_pc).or_default().push(AnnotationEntry {
-            i: base.idx(),
-            j: Reg::AnchorDataEnd.idx(),
+            left_reg: base.idx(),
+            right_reg: Reg::AnchorDataEnd.idx(),
             bound,
             proof,
         });
@@ -387,13 +392,13 @@ pub fn generate_prototype_certificate_from_zone(
         }
 
         by_pc.entry(succ_pc).or_default().push(AnnotationEntry {
-            i: dst.idx(),
-            j: Reg::AnchorDataEnd.idx(),
+            left_reg: dst.idx(),
+            right_reg: Reg::AnchorDataEnd.idx(),
             bound: target_c,
             proof: vec![ProofStep::Guard {
                 pc: pred_pc,
-                i: dst.idx(),
-                j: Reg::AnchorDataEnd.idx(),
+                left_reg: dst.idx(),
+                right_reg: Reg::AnchorDataEnd.idx(),
                 c: target_c,
             }],
         });

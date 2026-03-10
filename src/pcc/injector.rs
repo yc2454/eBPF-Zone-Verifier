@@ -54,6 +54,12 @@ pub fn apply_verified_refinements(succ_state: &mut State, facts: &[VerifiedEntry
     }
     let succ_pc = succ_state.pc;
     for fact in facts {
-        apply_verified_packet_end_fact(succ_state, fact.i, fact.j, fact.bound, succ_pc);
+        apply_verified_packet_end_fact(
+            succ_state,
+            fact.left_reg,
+            fact.right_reg,
+            fact.bound,
+            succ_pc,
+        );
     }
 }

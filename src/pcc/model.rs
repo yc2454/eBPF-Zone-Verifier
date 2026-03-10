@@ -19,8 +19,8 @@ pub struct PcAnnotation {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AnnotationEntry {
-    pub i: usize,
-    pub j: usize,
+    pub left_reg: usize,
+    pub right_reg: usize,
     pub bound: i64,
     pub proof: Vec<ProofStep>,
 }
@@ -28,24 +28,24 @@ pub struct AnnotationEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind")]
 pub enum ProofStep {
-    /// Base fact: the interval state at `pc` proves `i - j <= c`.
+    /// Base fact: the interval state at `pc` proves `left_reg - right_reg <= c`.
     /// Placed at the divergence point where zone and interval agree.
     #[serde(rename = "Guard")]
     Guard {
         pc: usize,
-        i: usize,
-        j: usize,
+        left_reg: usize,
+        right_reg: usize,
         c: i64,
     },
-    /// Transfer: if `from_i - from_j <= b` before instruction at `pc`,
-    /// then `to_i - to_j <= b + delta` after that instruction.
+    /// Transfer: if `pre_left_reg - pre_right_reg <= b` before instruction at `pc`,
+    /// then `post_left_reg - post_right_reg <= b + delta` after that instruction.
     #[serde(rename = "Transfer")]
     Transfer {
         pc: usize,
-        from_i: usize,
-        from_j: usize,
-        to_i: usize,
-        to_j: usize,
+        pre_left_reg: usize,
+        pre_right_reg: usize,
+        post_left_reg: usize,
+        post_right_reg: usize,
         delta: i64,
     },
 }
@@ -58,21 +58,21 @@ impl ProofStep {
         }
     }
 
-    /// The output register index `i` after this step.
-    /// Guard: `i`; Transfer: `to_i`.
-    pub fn output_i(&self) -> usize {
+    /// The output left register index after this step.
+    /// Guard: `left_reg`; Transfer: `post_left_reg`.
+    pub fn output_left_reg(&self) -> usize {
         match self {
-            ProofStep::Guard { i, .. } => *i,
-            ProofStep::Transfer { to_i, .. } => *to_i,
+            ProofStep::Guard { left_reg, .. } => *left_reg,
+            ProofStep::Transfer { post_left_reg, .. } => *post_left_reg,
         }
     }
 
-    /// The output register index `j` after this step.
-    /// Guard: `j`; Transfer: `to_j`.
-    pub fn output_j(&self) -> usize {
+    /// The output right register index after this step.
+    /// Guard: `right_reg`; Transfer: `post_right_reg`.
+    pub fn output_right_reg(&self) -> usize {
         match self {
-            ProofStep::Guard { j, .. } => *j,
-            ProofStep::Transfer { to_j, .. } => *to_j,
+            ProofStep::Guard { right_reg, .. } => *right_reg,
+            ProofStep::Transfer { post_right_reg, .. } => *post_right_reg,
         }
     }
 
@@ -140,8 +140,8 @@ mod tests {
     fn proof_step_guard_json_round_trip() {
         let step = ProofStep::Guard {
             pc: 5,
-            i: 6,
-            j: 14,
+            left_reg: 6,
+            right_reg: 14,
             c: -8,
         };
         let json = serde_json::to_string(&step).unwrap();
@@ -155,15 +155,15 @@ mod tests {
     fn proof_step_transfer_json_round_trip() {
         let step = ProofStep::Transfer {
             pc: 9,
-            from_i: 6,
-            from_j: 14,
-            to_i: 6,
-            to_j: 14,
+            pre_left_reg: 6,
+            pre_right_reg: 14,
+            post_left_reg: 6,
+            post_right_reg: 14,
             delta: 3,
         };
         let json = serde_json::to_string(&step).unwrap();
         assert!(json.contains("\"kind\":\"Transfer\""));
-        assert!(json.contains("\"from_i\":6"));
+        assert!(json.contains("\"pre_left_reg\":6"));
         assert!(json.contains("\"delta\":3"));
         let back: ProofStep = serde_json::from_str(&json).unwrap();
         assert_eq!(step, back);
@@ -177,22 +177,22 @@ mod tests {
             pc_annotations: vec![PcAnnotation {
                 pc: 10,
                 entries: vec![AnnotationEntry {
-                    i: 6,
-                    j: 14,
+                    left_reg: 6,
+                    right_reg: 14,
                     bound: -5,
                     proof: vec![
                         ProofStep::Guard {
                             pc: 5,
-                            i: 6,
-                            j: 14,
+                            left_reg: 6,
+                            right_reg: 14,
                             c: -8,
                         },
                         ProofStep::Transfer {
                             pc: 9,
-                            from_i: 6,
-                            from_j: 14,
-                            to_i: 6,
-                            to_j: 14,
+                            pre_left_reg: 6,
+                            pre_right_reg: 14,
+                            post_left_reg: 6,
+                            post_right_reg: 14,
                             delta: 3,
                         },
                     ],
@@ -208,26 +208,26 @@ mod tests {
     fn proof_step_accessors() {
         let guard = ProofStep::Guard {
             pc: 5,
-            i: 6,
-            j: 14,
+            left_reg: 6,
+            right_reg: 14,
             c: -8,
         };
         assert_eq!(guard.pc(), 5);
-        assert_eq!(guard.output_i(), 6);
-        assert_eq!(guard.output_j(), 14);
+        assert_eq!(guard.output_left_reg(), 6);
+        assert_eq!(guard.output_right_reg(), 14);
         assert_eq!(guard.bound_contribution(), -8);
 
         let transfer = ProofStep::Transfer {
             pc: 9,
-            from_i: 5,
-            from_j: 14,
-            to_i: 6,
-            to_j: 14,
+            pre_left_reg: 5,
+            pre_right_reg: 14,
+            post_left_reg: 6,
+            post_right_reg: 14,
             delta: 3,
         };
         assert_eq!(transfer.pc(), 9);
-        assert_eq!(transfer.output_i(), 6);
-        assert_eq!(transfer.output_j(), 14);
+        assert_eq!(transfer.output_left_reg(), 6);
+        assert_eq!(transfer.output_right_reg(), 14);
         assert_eq!(transfer.bound_contribution(), 3);
     }
 }

@@ -14,8 +14,8 @@ use super::model::{AnnotationEntry, ProofStep};
 
 #[derive(Debug, Clone, Copy)]
 pub struct VerifiedEntry {
-    pub i: usize,
-    pub j: usize,
+    pub left_reg: usize,
+    pub right_reg: usize,
     pub bound: i64,
 }
 
@@ -26,8 +26,8 @@ pub struct VerifiedEntry {
 /// Tracks progress through a single proof chain during replay verification.
 /// This is NOT the verifier's abstract state — it is purely proof-tracking data.
 struct ProofCheckState {
-    current_i: usize,
-    current_j: usize,
+    current_left: usize,
+    current_right: usize,
     accumulated_bound: i64,
 }
 
@@ -71,8 +71,8 @@ pub fn distance_upper_bound(state: &State, i: Reg, j: Reg) -> Option<i64> {
 
 #[derive(Clone, Copy)]
 struct Constraint {
-    i: usize,
-    j: usize,
+    left_reg: usize,
+    right_reg: usize,
     c: i64,
 }
 
@@ -101,7 +101,7 @@ fn derive_guard_constraint_from_branch(
     } else {
         return None;
     };
-    let (i, j, c) = match (*op, branch_taken) {
+    let (left_reg, right_reg, c) = match (*op, branch_taken) {
         (CmpOp::ULe | CmpOp::SLe, true) | (CmpOp::UGt | CmpOp::SGt, false) => {
             (left.idx(), right.idx(), 0)
         }
@@ -116,7 +116,11 @@ fn derive_guard_constraint_from_branch(
         }
         _ => return None,
     };
-    Some(Constraint { i, j, c })
+    Some(Constraint {
+        left_reg,
+        right_reg,
+        c,
+    })
 }
 
 /// Verify a Guard step against the interval pre-state at its PC.
@@ -129,17 +133,17 @@ fn derive_guard_constraint_from_branch(
 ///    where zone and interval agree on the constraint.
 fn verify_guard(
     guard_pc: usize,
-    i_idx: usize,
-    j_idx: usize,
+    left_idx: usize,
+    right_idx: usize,
     c: i64,
     state: &State,
     prog: &Program,
     target_pc: usize,
 ) -> bool {
-    let Some(i) = Reg::idx_to_reg(i_idx) else {
+    let Some(i) = Reg::idx_to_reg(left_idx) else {
         return false;
     };
-    let Some(j) = Reg::idx_to_reg(j_idx) else {
+    let Some(j) = Reg::idx_to_reg(right_idx) else {
         return false;
     };
 
@@ -147,10 +151,11 @@ fn verify_guard(
     // Check if the instruction at guard_pc is a branch and the guard matches
     // the condition on the edge toward the target.
     let instr = &prog.instrs[guard_pc];
-    if let Some(branch_guard) =
-        derive_guard_constraint_from_branch(instr, guard_pc, guard_pc + 1)
-    {
-        if i_idx == branch_guard.i && j_idx == branch_guard.j && c == branch_guard.c {
+    if let Some(branch_guard) = derive_guard_constraint_from_branch(instr, guard_pc, guard_pc + 1) {
+        if left_idx == branch_guard.left_reg
+            && right_idx == branch_guard.right_reg
+            && c == branch_guard.c
+        {
             debug!(
                 target: "pcc",
                 "[PCC] target={} Guard(pc={}, {}, {}, {}): branch-derived — OK",
@@ -192,14 +197,14 @@ fn verify_guard(
 
 /// Verify a Transfer step against the interval pre-state and instruction at its PC.
 ///
-/// Returns true if the claimed (from_i, from_j) -> (to_i, to_j, delta) transformation
+/// Returns true if the claimed (pre_left, pre_right) -> (post_left, post_right, delta) transformation
 /// is sound for the instruction at `step_pc`.
 fn verify_transfer(
     step_pc: usize,
-    from_i: usize,
-    from_j: usize,
-    to_i: usize,
-    to_j: usize,
+    pre_left: usize,
+    pre_right: usize,
+    post_left: usize,
+    post_right: usize,
     delta: i64,
     state: &State,
     instr: &Instr,
@@ -216,27 +221,31 @@ fn verify_transfer(
             ..
         } => {
             // After mov dst, src: dst gets src's old value.
-            // If from_i tracks src, then to_i should be dst (src's value is now in dst).
-            // If from_j tracks src, symmetric.
-            // If neither from_i nor from_j is dst, passthrough.
-            let expected_to_i = if from_i == src.idx() && *dst != Reg::idx_to_reg(from_j).unwrap_or(Reg::Zero) {
+            // If pre_left tracks src, then post_left should be dst (src's value is now in dst).
+            // If pre_right tracks src, symmetric.
+            // If neither pre_left nor pre_right is dst, passthrough.
+            let expected_post_left = if pre_left == src.idx()
+                && *dst != Reg::idx_to_reg(pre_right).unwrap_or(Reg::Zero)
+            {
                 dst.idx()
             } else {
-                from_i
+                pre_left
             };
-            let expected_to_j = if from_j == src.idx() && *dst != Reg::idx_to_reg(from_i).unwrap_or(Reg::Zero) {
+            let expected_post_right = if pre_right == src.idx()
+                && *dst != Reg::idx_to_reg(pre_left).unwrap_or(Reg::Zero)
+            {
                 dst.idx()
             } else {
-                from_j
+                pre_right
             };
 
             // If dst overwrites a tracked register and we're not substituting, fail.
-            if (*dst == Reg::idx_to_reg(from_i).unwrap_or(Reg::Zero)
-                || *dst == Reg::idx_to_reg(from_j).unwrap_or(Reg::Zero))
-                && to_i == from_i
-                && to_j == from_j
-                && from_i != src.idx()
-                && from_j != src.idx()
+            if (*dst == Reg::idx_to_reg(pre_left).unwrap_or(Reg::Zero)
+                || *dst == Reg::idx_to_reg(pre_right).unwrap_or(Reg::Zero))
+                && post_left == pre_left
+                && post_right == pre_right
+                && pre_left != src.idx()
+                && pre_right != src.idx()
             {
                 debug!(
                     target: "pcc",
@@ -246,13 +255,13 @@ fn verify_transfer(
                 return false;
             }
 
-            if to_i != expected_to_i || to_j != expected_to_j || delta != 0 {
+            if post_left != expected_post_left || post_right != expected_post_right || delta != 0 {
                 debug!(
                     target: "pcc",
                     "[PCC] target={} Transfer(pc={}) mov: expected ({},{},0) got ({},{},{}) — REJECTED",
                     target_pc, step_pc,
-                    reg_name(expected_to_i), reg_name(expected_to_j),
-                    reg_name(to_i), reg_name(to_j), delta,
+                    reg_name(expected_post_left), reg_name(expected_post_right),
+                    reg_name(post_left), reg_name(post_right), delta,
                 );
                 return false;
             }
@@ -267,7 +276,7 @@ fn verify_transfer(
             ..
         } => {
             let di = dst.idx();
-            if di == from_i && from_i == to_i && from_j == to_j {
+            if di == pre_left && pre_left == post_left && pre_right == post_right {
                 // dst is the i-side: bound shifts by +imm
                 if delta != *imm {
                     debug!(
@@ -278,7 +287,7 @@ fn verify_transfer(
                     return false;
                 }
                 true
-            } else if di == from_j && from_i == to_i && from_j == to_j {
+            } else if di == pre_right && pre_left == post_left && pre_right == post_right {
                 // dst is the j-side: bound shifts by -imm
                 if delta != -(*imm) {
                     debug!(
@@ -289,9 +298,9 @@ fn verify_transfer(
                     return false;
                 }
                 true
-            } else if di != from_i && di != from_j {
+            } else if di != pre_left && di != pre_right {
                 // dst doesn't touch tracked registers: passthrough
-                if from_i != to_i || from_j != to_j || delta != 0 {
+                if pre_left != post_left || pre_right != post_right || delta != 0 {
                     debug!(
                         target: "pcc",
                         "[PCC] target={} Transfer(pc={}) add imm passthrough mismatch — REJECTED",
@@ -318,7 +327,7 @@ fn verify_transfer(
             ..
         } => {
             let di = dst.idx();
-            if di == from_i && from_i == to_i && from_j == to_j {
+            if di == pre_left && pre_left == post_left && pre_right == post_right {
                 // dst is the i-side: bound shifts by ub(src) from interval state
                 let (_src_min, src_max) = state.domain.get_interval(*src);
                 if delta < src_max {
@@ -330,7 +339,7 @@ fn verify_transfer(
                     return false;
                 }
                 true
-            } else if di == from_j && from_i == to_i && from_j == to_j {
+            } else if di == pre_right && pre_left == post_left && pre_right == post_right {
                 // dst is the j-side: bound shifts by -lb(src)
                 let (src_min, _src_max) = state.domain.get_interval(*src);
                 if delta < -src_min {
@@ -342,9 +351,9 @@ fn verify_transfer(
                     return false;
                 }
                 true
-            } else if di != from_i && di != from_j {
+            } else if di != pre_left && di != pre_right {
                 // Passthrough
-                if from_i != to_i || from_j != to_j || delta != 0 {
+                if pre_left != post_left || pre_right != post_right || delta != 0 {
                     return false;
                 }
                 true
@@ -355,7 +364,7 @@ fn verify_transfer(
 
         // Instructions that don't write to tracked registers: passthrough
         _ => {
-            // Check if this instruction writes to from_i or from_j
+            // Check if this instruction writes to pre_left or pre_right
             let writes_to = |r: Reg| -> bool {
                 match instr {
                     Instr::Alu { dst, .. }
@@ -366,10 +375,10 @@ fn verify_transfer(
                     _ => false,
                 }
             };
-            let fi = Reg::idx_to_reg(from_i).unwrap_or(Reg::Zero);
-            let fj = Reg::idx_to_reg(from_j).unwrap_or(Reg::Zero);
+            let fl = Reg::idx_to_reg(pre_left).unwrap_or(Reg::Zero);
+            let fr = Reg::idx_to_reg(pre_right).unwrap_or(Reg::Zero);
 
-            if writes_to(fi) || writes_to(fj) {
+            if writes_to(fl) || writes_to(fr) {
                 debug!(
                     target: "pcc",
                     "[PCC] target={} Transfer(pc={}) unsupported write to tracked reg — REJECTED",
@@ -379,7 +388,7 @@ fn verify_transfer(
             }
 
             // Passthrough: constraint unchanged
-            if from_i != to_i || from_j != to_j || delta != 0 {
+            if pre_left != post_left || pre_right != post_right || delta != 0 {
                 debug!(
                     target: "pcc",
                     "[PCC] target={} Transfer(pc={}) passthrough mismatch — REJECTED",
@@ -416,14 +425,14 @@ pub fn verify_proof_chain_replay(
         target: "pcc",
         "[PCC] target={}: replaying {}-step proof for [{} - {} <= {}]",
         target_pc, entry.proof.len(),
-        reg_name(entry.i), reg_name(entry.j), entry.bound,
+        reg_name(entry.left_reg), reg_name(entry.right_reg), entry.bound,
     );
 
     // Step 0: Verify Guard (must be proof[0])
     let ProofStep::Guard {
         pc: guard_pc,
-        i: gi,
-        j: gj,
+        left_reg: g_left,
+        right_reg: g_right,
         c: gc,
     } = &entry.proof[0]
     else {
@@ -439,14 +448,22 @@ pub fn verify_proof_chain_replay(
         return None;
     }
 
-    if !verify_guard(*guard_pc, *gi, *gj, *gc, guard_state, prog, target_pc) {
+    if !verify_guard(
+        *guard_pc,
+        *g_left,
+        *g_right,
+        *gc,
+        guard_state,
+        prog,
+        target_pc,
+    ) {
         return None;
     }
 
     // Initialize proof-check state
     let mut pcs = ProofCheckState {
-        current_i: *gi,
-        current_j: *gj,
+        current_left: *g_left,
+        current_right: *g_right,
         accumulated_bound: *gc,
     };
 
@@ -454,10 +471,10 @@ pub fn verify_proof_chain_replay(
     for (sidx, step) in entry.proof.iter().enumerate().skip(1) {
         let ProofStep::Transfer {
             pc: step_pc,
-            from_i,
-            from_j,
-            to_i,
-            to_j,
+            pre_left_reg,
+            pre_right_reg,
+            post_left_reg,
+            post_right_reg,
             delta,
         } = step
         else {
@@ -470,13 +487,13 @@ pub fn verify_proof_chain_replay(
         };
 
         // Connectivity check
-        if *from_i != pcs.current_i || *from_j != pcs.current_j {
+        if *pre_left_reg != pcs.current_left || *pre_right_reg != pcs.current_right {
             debug!(
                 target: "pcc",
                 "[PCC] target={} step {}: chain disconnected ({},{}) != ({},{}) — REJECTED",
                 target_pc, sidx,
-                reg_name(*from_i), reg_name(*from_j),
-                reg_name(pcs.current_i), reg_name(pcs.current_j),
+                reg_name(*pre_left_reg), reg_name(*pre_right_reg),
+                reg_name(pcs.current_left), reg_name(pcs.current_right),
             );
             return None;
         }
@@ -491,25 +508,33 @@ pub fn verify_proof_chain_replay(
         let instr = &prog.instrs[*step_pc];
 
         if !verify_transfer(
-            *step_pc, *from_i, *from_j, *to_i, *to_j, *delta, step_state, instr, target_pc,
+            *step_pc,
+            *pre_left_reg,
+            *pre_right_reg,
+            *post_left_reg,
+            *post_right_reg,
+            *delta,
+            step_state,
+            instr,
+            target_pc,
         ) {
             return None;
         }
 
         // Advance proof-check state
-        pcs.current_i = *to_i;
-        pcs.current_j = *to_j;
+        pcs.current_left = *post_left_reg;
+        pcs.current_right = *post_right_reg;
         pcs.accumulated_bound = pcs.accumulated_bound.checked_add(*delta)?;
     }
 
     // Final checks
-    if pcs.current_i != entry.i || pcs.current_j != entry.j {
+    if pcs.current_left != entry.left_reg || pcs.current_right != entry.right_reg {
         debug!(
             target: "pcc",
             "[PCC] target={}: final ({},{}) != entry ({},{}) — REJECTED",
             target_pc,
-            reg_name(pcs.current_i), reg_name(pcs.current_j),
-            reg_name(entry.i), reg_name(entry.j),
+            reg_name(pcs.current_left), reg_name(pcs.current_right),
+            reg_name(entry.left_reg), reg_name(entry.right_reg),
         );
         return None;
     }
@@ -525,11 +550,11 @@ pub fn verify_proof_chain_replay(
     info!(
         target: "pcc",
         "[PCC] target={}: proof verified [{} - {} <= {}]",
-        target_pc, reg_name(entry.i), reg_name(entry.j), entry.bound,
+        target_pc, reg_name(entry.left_reg), reg_name(entry.right_reg), entry.bound,
     );
     Some(VerifiedEntry {
-        i: entry.i,
-        j: entry.j,
+        left_reg: entry.left_reg,
+        right_reg: entry.right_reg,
         bound: entry.bound,
     })
 }

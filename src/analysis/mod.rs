@@ -76,7 +76,11 @@ pub fn analyze_program_full(
             );
             env.certificate = None;
         } else {
-            let pcs: Vec<String> = cert.pc_annotations.iter().map(|a| a.pc.to_string()).collect();
+            let pcs: Vec<String> = cert
+                .pc_annotations
+                .iter()
+                .map(|a| a.pc.to_string())
+                .collect();
             info!(
                 target: "app",
                 "[PCC] Certificate accepted: v{}, hash={}, {} annotation(s) at PC(s): [{}]",
@@ -237,12 +241,9 @@ pub fn analyze_program_full(
                         continue;
                     }
                     for entry in &ann.entries {
-                        if let Some(v) = verify_proof_chain_replay(
-                            entry,
-                            ann.pc,
-                            &env.explored_states,
-                            prog,
-                        ) {
+                        if let Some(v) =
+                            verify_proof_chain_replay(entry, ann.pc, &env.explored_states, prog)
+                        {
                             verified.push(v);
                         }
                     }

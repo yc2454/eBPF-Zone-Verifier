@@ -53,9 +53,15 @@ fn usage() {
     eprintln!("  cargo run -- selftest-single <json_file> <test_name>");
     eprintln!("  cargo run -- selftest-run <json_file>");
     eprintln!("  cargo run -- selftest-suite <json_dir>");
-    eprintln!("  cargo run -- pcc-gen pcc-tests/pcc_examples.json \"pcc motivating: var add packet access (zone ok, kernel reject)\"");
-    eprintln!("  cargo run -- pcc-check pcc-tests/pcc_examples.json \"pcc motivating: var add packet access (zone ok, kernel reject)\" pcc-tests/certs/pcc_examples.valid.cert.json");
-    eprintln!("  cargo run -- pcc-cycle pcc-tests/pcc_examples.json \"pcc motivating: var add packet access (zone ok, kernel reject)\"");
+    eprintln!(
+        "  cargo run -- pcc-gen pcc-tests/pcc_examples.json \"pcc motivating: var add packet access (zone ok, kernel reject)\""
+    );
+    eprintln!(
+        "  cargo run -- pcc-check pcc-tests/pcc_examples.json \"pcc motivating: var add packet access (zone ok, kernel reject)\" pcc-tests/certs/pcc_examples.valid.cert.json"
+    );
+    eprintln!(
+        "  cargo run -- pcc-cycle pcc-tests/pcc_examples.json \"pcc motivating: var add packet access (zone ok, kernel reject)\""
+    );
     eprintln!("  cargo run -- pcc-regress");
 }
 
@@ -111,9 +117,7 @@ fn main() {
     let cmd = &remaining[0];
 
     if config.certificate_output.is_some() && cmd != "pcc-gen" && cmd != "pcc-cycle" {
-        eprintln!(
-            "Error: --generate-certificate is supported only with pcc-gen or pcc-cycle"
-        );
+        eprintln!("Error: --generate-certificate is supported only with pcc-gen or pcc-cycle");
         return;
     }
 
@@ -472,7 +476,10 @@ fn main() {
             let cert = match ProgramCertificate::load_from_path(&cert_out) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("Error: generated certificate is invalid '{}': {e:#}", cert_out);
+                    eprintln!(
+                        "Error: generated certificate is invalid '{}': {e:#}",
+                        cert_out
+                    );
                     return;
                 }
             };
