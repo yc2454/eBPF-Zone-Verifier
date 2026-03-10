@@ -1,12 +1,14 @@
 # PCC — Proof-Carrying Code Module
 
-This module implements certificate-aided verification for eBPF programs. It lets a **zone-mode producer** attach a lightweight proof to a program so that a **interval-mode checker** can accept packet accesses that would otherwise be rejected — without running the full zone analysis at check time.
+This module implements certificate-aided verification for eBPF programs. It lets a **zone-mode producer** attach a lightweight proof to a program so that an **interval-mode checker** can verify safety properties that the interval domain alone cannot establish — without running the full zone analysis at check time.
 
 ## Background
 
-The kernel's interval verifier rejects programs that use variable-offset pointer arithmetic (e.g. `r5 += r4`) before a packet load, because it cannot track the resulting pointer offset precisely enough to prove the access is in bounds. The zone domain *can* prove these accesses safe using relational constraints, but the zone domain is not available in the kernel verifier.
+The interval verifier tracks each register's value range independently. This works well for scalar arithmetic but loses precision whenever a safety property depends on the *relationship* between two registers — e.g. when the two have a fixed difference. The zone (DBM) domain captures exactly these relational constraints, but it is significantly more expensive and may not be available in all verification contexts.
 
-PCC bridges this gap: the zone analysis runs once (offline) and emits a certificate encoding the key relational facts it derived. The interval checker replays just those facts at the relevant program points, re-derives the safety bound, and admits the access.
+PCC bridges this precision gap: the zone analysis runs once (offline) and emits a certificate that encodes the key relational facts it derived — expressed as difference-bound constraints of the form `left_reg - right_reg <= bound`. The interval checker *replays* just those facts at the relevant program points, verifying each step against the instruction stream and its own interval abstract state, and uses the proven constraints to admit program behaviours it would otherwise reject.
+
+The current prototype focuses on packet-access safety (proving `base - @data_end <= -(offset + size)` at load instructions), but the certificate format and proof-step semantics are not inherently limited to this use case. Any relational invariant that the zone domain can derive and that can be expressed as a chain of Guard and Transfer steps over the interval pre-states is a valid candidate for PCC-assisted verification.
 
 ## Architecture
 
@@ -20,7 +22,7 @@ PCC bridges this gap: the zone analysis runs once (offline) and emits a certific
                      accepted / skipped (fail-closed)
 ```
 
-The **certificate is not trusted**. The checker independently verifies every step against the program's own instruction stream and the interval abstract state. A malformed or adversarial certificate can only cause entries to be silently skipped — it cannot cause an unsafe program to be accepted.
+The **certificate is not trusted**. The checker independently verifies every step against the program's own instruction stream and the interval abstract state. A malformed or adversarial certificate can only cause the proof to be silently skipped and we fall back to the plain interval verifier.
 
 ## Certificate Format
 
