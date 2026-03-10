@@ -25,8 +25,8 @@ mod injector;
 mod model;
 mod validate;
 
-pub use checker::verify_certificate_entries_for_edge;
-pub use generator::generate_prototype_certificate_from_zone;
+pub use checker::verify_proof_chain_replay;
+pub use generator::generate_certificate;
 pub use hash::program_hash;
 pub use injector::apply_verified_refinements;
 pub use model::ProgramCertificate;

@@ -1,20 +1,30 @@
 {
-  "version": 1,
+  "version": 2,
   "program_hash": "d0d6dee8fadea7a0",
   "pc_annotations": [
     {
       "pc": 10,
       "entries": [
         {
-          "i": 6,
-          "j": 14,
+          "left_reg": 6,
+          "right_reg": 14,
           "bound": -5,
           "proof": [
             {
               "kind": "Guard",
-              "i": 6,
-              "j": 14,
-              "c": -5
+              "pc": 7,
+              "left_reg": 6,
+              "right_reg": 14,
+              "c": -8
+            },
+            {
+              "kind": "Transfer",
+              "pc": 9,
+              "pre_left_reg": 6,
+              "pre_right_reg": 14,
+              "post_left_reg": 6,
+              "post_right_reg": 14,
+              "delta": 3
             }
           ]
         }

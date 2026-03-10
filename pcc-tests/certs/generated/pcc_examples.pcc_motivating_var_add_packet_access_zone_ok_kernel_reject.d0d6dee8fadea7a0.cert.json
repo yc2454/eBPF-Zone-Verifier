@@ -6,14 +6,14 @@
       "pc": 10,
       "entries": [
         {
-          "i": 6,
-          "j": 14,
+          "left_reg": 6,
+          "right_reg": 14,
           "bound": -5,
           "proof": [
             {
               "kind": "PredCarry",
-              "i": 6,
-              "j": 14,
+              "left_reg": 6,
+              "right_reg": 14,
               "c": -5
             }
           ]

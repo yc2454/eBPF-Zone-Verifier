@@ -3,9 +3,10 @@ use std::path::Path;
 
 use crate::analysis;
 use crate::common::config::{DomainMode, VerifierConfig};
+use crate::domains::dbm::Dbm;
 use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::parsing::bpf_to_ast::lower_raw_to_program;
-use crate::pcc::{ProgramCertificate, generate_prototype_certificate_from_zone};
+use crate::pcc::{ProgramCertificate, generate_certificate};
 use crate::testing::selftest::{
     JsonTestCase, TestOutcome, build_exec_context, make_entry_state, run_test,
 };
@@ -103,6 +104,7 @@ pub fn pcc_test_single(json_path: &str, test_name: &str, config: &VerifierConfig
             eprintln!("Warning: certificate generation skipped due to unsupported fixup type");
             return;
         }
+        // 1. Run zone analysis to get zone DBMs.
         let entry = make_entry_state();
         let zone_dbms = match analysis::analyze_program(&ctx, &program, entry, config) {
             Ok(v) => v,
@@ -114,7 +116,36 @@ pub fn pcc_test_single(json_path: &str, test_name: &str, config: &VerifierConfig
                 return;
             }
         };
-        let cert = generate_prototype_certificate_from_zone(&program, &zone_dbms);
+        // 2. Run interval analysis to get interval explored states.
+        // Note: interval analysis is expected to fail for PCC programs (that's
+        // the whole point — zone accepts but interval rejects). We still need
+        // the partial explored_states collected before the failure point.
+        let mut interval_config = config.clone();
+        interval_config.domain_mode = DomainMode::Interval;
+        interval_config.certificate = None;
+        let interval_entry = Dbm::new(); // Interval mode ignores the entry DBM
+        let interval_result =
+            analysis::analyze_program_full(&ctx, &program, interval_entry, &interval_config);
+        // Convert explored_states to a flat Vec<State> indexed by PC.
+        // For straightline programs: exactly 1 state per PC.
+        let n = program.instrs.len();
+        let interval_states: Vec<_> = (0..n)
+            .map(|pc| {
+                interval_result
+                    .explored_states
+                    .get(&pc)
+                    .and_then(|v| v.first())
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        crate::analysis::machine::state::State::new(
+                            crate::domains::numeric::NumericDomain::new_interval(),
+                            pc,
+                        )
+                    })
+            })
+            .collect();
+        // 3. Generate v2 certificate using backward tracing.
+        let cert = generate_certificate(&program, &zone_dbms, &interval_states);
         let output_path = config.certificate_output.clone().unwrap_or_else(|| {
             default_generated_cert_path(json_path, test_name, &cert.program_hash)
         });
