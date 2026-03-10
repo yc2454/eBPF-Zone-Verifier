@@ -147,16 +147,16 @@ The generator (`generator.rs`) produces the certificate automatically from the z
 
 ### Overview
 
-For each load instruction at `target_pc`, the generator:
+For any `target_pc` which requires access checking (such as a `Load` instruction), the generator:
 
-1. **Queries the zone** — checks whether the zone DBM at `target_pc` proves the access is safe (`base - @data_end <= -(off + size)`). If not, the load is skipped (nothing to certify).
-2. **Queries the interval** — checks whether the interval verifier already proves the access safe on its own. If so, PCC is not needed and the load is skipped.
+1. **Queries the zone** — checks whether the zone DBM at `target_pc` proves the access is safe (e.g., for packets, we check`base - @data_end <= -(off + size)`). If not, we skipped (nothing to certify).
+2. **Queries the interval** — checks whether the interval verifier already proves the access safe on its own. If so, PCC is not needed.
 3. **Backward-traces** from `target_pc - 1` toward the start of the program to find the **divergence point**: the instruction whose interval pre-state independently agrees with the zone on the tracked constraint.
 4. **Emits the proof chain** — reverses the backward steps into a forward `[Guard, Transfer, …, Transfer]` chain and writes it into the certificate.
 
 ### Generation and Verification: Two Directions of the Same Arithmetic
 
-The generator and checker both reason about the same instruction-level bound arithmetic, but from **opposite directions**:
+The generator and checker both reason about the same arithmetic, but from **opposite directions**:
 
 - The **generator** walks *backward* from the load. At each instruction it asks: "given that the constraint `L - R <= b` holds *after* this instruction, what must have held *before* it?" It uses the zone DBM (which has full relational precision) to bound variable-offset additions.
 - The **checker** walks *forward* through the emitted proof chain. At each Transfer it asks: "given that the constraint `L - R <= b` holds *before* this instruction, does `L' - R' <= b + delta` follow *after* it?" It uses the interval pre-state (available at check time, without the zone) to verify the bound on variable-offset additions.
