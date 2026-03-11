@@ -463,6 +463,7 @@ fn main() {
             gen_cfg.certificate_input = None;
             gen_cfg.certificate_output = Some(cert_out.clone());
 
+            println!("\n====== Phase 1 / Certificate Generation (zone mode) ======\n");
             pcc_test_single(&remaining[1], &remaining[2], &gen_cfg);
 
             if !Path::new(&cert_out).exists() {
@@ -492,6 +493,7 @@ fn main() {
             check_cfg.certificate_input = None;
             check_cfg.certificate = Some(cert);
 
+            println!("\n====== Phase 2 / PCC Certificate Check (interval mode) ======\n");
             pcc_test_single(&remaining[1], &remaining[2], &check_cfg);
         }
 

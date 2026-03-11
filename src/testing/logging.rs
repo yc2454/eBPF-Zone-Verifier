@@ -94,13 +94,13 @@ impl VerifierLogger {
     fn dump_buffer(&self) {
         let buffer = self.buffer.lock().unwrap();
         println!(
-            "\n=== CRASH TRACE (Last {} Relevant Steps) ===",
+            "\n--- CRASH TRACE (Last {} Relevant Steps) ---",
             buffer.len()
         );
         for line in buffer.iter() {
             print!("{}", line);
         }
-        println!("==============================================\n");
+        println!("------------------------------------------\n");
     }
 }
 

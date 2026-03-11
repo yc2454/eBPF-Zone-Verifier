@@ -45,7 +45,10 @@ fn default_generated_cert_path(json_path: &str, test_name: &str, program_hash: &
 }
 
 /// Run a single PCC test by exact name from a JSON file.
-/// Certificate generation is supported only here to keep workflow deterministic.
+///
+/// Orchestrates the full workflow:
+///   Stage 1 — primary verification (zone or interval+cert depending on `config`)
+///   Stages 2-4 — certificate generation pipeline, only when zone mode passes
 pub fn pcc_test_single(json_path: &str, test_name: &str, config: &VerifierConfig) {
     println!(
         "Running single PCC test: '{}' from {}\n",
@@ -83,109 +86,139 @@ pub fn pcc_test_single(json_path: &str, test_name: &str, config: &VerifierConfig
     println!("Instructions: {}", test.insns.len());
     println!();
 
+    // Stage 1: primary verification (zone or interval+cert).
+    let stage1_label = if config.domain_mode == DomainMode::Zone {
+        "Zone analysis"
+    } else {
+        "Interval + certificate verification"
+    };
+    println!("========= Stage 1: {} =========", stage1_label);
     let result = run_test(test, config);
 
+    // Stages 2-4: certificate generation (zone mode, passed only).
     let should_generate_cert =
         matches!(result.outcome, TestOutcome::Pass) && config.domain_mode == DomainMode::Zone;
     if should_generate_cert {
-        let raw_insns: Vec<RawBpfInsn> = test.insns.iter().map(|j| j.into()).collect();
-        let program = match lower_raw_to_program(&raw_insns) {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!(
-                    "Warning: cannot generate certificate, lowering failed: {:?}",
-                    e
-                );
-                return;
-            }
-        };
-        let (ctx, has_unsupported_fixup) = build_exec_context(test);
-        if has_unsupported_fixup {
-            eprintln!("Warning: certificate generation skipped due to unsupported fixup type");
-            return;
+        pcc_generate_cert(test, json_path, test_name, config);
+    }
+
+    println!();
+    match &result.outcome {
+        TestOutcome::Pass => println!("========= PASS ========= ({}ms)", result.time_ms),
+        TestOutcome::FalseNegative => {
+            println!("========= !!! SOUNDNESS ISSUE !!! ========= ({}ms)", result.time_ms)
         }
-        // 1. Run zone analysis to get zone DBMs.
-        let entry = make_entry_state();
-        let zone_dbms = match analysis::analyze_program(&ctx, &program, entry, config) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!(
-                    "Warning: certificate generation failed during zone analysis: {}",
-                    e.description()
-                );
-                return;
-            }
-        };
-        // 2. Run interval analysis to get interval explored states.
-        // Note: interval analysis is expected to fail for PCC programs (that's
-        // the whole point — zone accepts but interval rejects). We still need
-        // the partial explored_states collected before the failure point.
-        let mut interval_config = config.clone();
-        interval_config.domain_mode = DomainMode::Interval;
-        interval_config.certificate = None;
-        let interval_entry = Dbm::new(); // Interval mode ignores the entry DBM
-        let interval_result =
-            analysis::analyze_program_full(&ctx, &program, interval_entry, &interval_config);
-        // Convert explored_states to a flat Vec<State> indexed by PC.
-        // For straightline programs: exactly 1 state per PC.
-        let n = program.instrs.len();
-        let interval_states: Vec<_> = (0..n)
-            .map(|pc| {
-                interval_result
-                    .explored_states
-                    .get(&pc)
-                    .and_then(|v| v.first())
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        crate::analysis::machine::state::State::new(
-                            crate::domains::numeric::NumericDomain::new_interval(),
-                            pc,
-                        )
-                    })
-            })
-            .collect();
-        // 3. Generate v2 certificate using backward tracing.
-        let cert = generate_certificate(&program, &zone_dbms, &interval_states);
-        let output_path = config.certificate_output.clone().unwrap_or_else(|| {
-            default_generated_cert_path(json_path, test_name, &cert.program_hash)
-        });
-        if let Some(parent) = Path::new(&output_path).parent()
-            && let Err(e) = fs::create_dir_all(parent)
-        {
+        TestOutcome::FalsePositive => println!("========= PRECISION ISSUE ========= ({}ms)", result.time_ms),
+        TestOutcome::Skipped { reason } => {
+            println!("========= SKIPPED ========= ({}ms) {}", result.time_ms, reason)
+        }
+        TestOutcome::Error { message } => {
+            println!("========= ERROR ========= ({}ms) {}", result.time_ms, message)
+        }
+    }
+}
+
+/// Certificate generation pipeline (Stages 2–4).
+///
+/// Called only after Stage 1 zone verification has passed.  Runs zone analysis
+/// again to collect per-PC DBMs, runs interval analysis to collect pre-failure
+/// explored states, then combines them into a v2 certificate and writes it to
+/// disk.
+fn pcc_generate_cert(
+    test: &JsonTestCase,
+    json_path: &str,
+    test_name: &str,
+    config: &VerifierConfig,
+) {
+    let raw_insns: Vec<RawBpfInsn> = test.insns.iter().map(|j| j.into()).collect();
+    let program = match lower_raw_to_program(&raw_insns) {
+        Ok(p) => p,
+        Err(e) => {
             eprintln!(
-                "Warning: failed to create certificate directory '{}': {}",
-                parent.display(),
+                "Warning: cannot generate certificate, lowering failed: {:?}",
                 e
             );
             return;
         }
-        match cert.save_to_path(&output_path) {
-            Ok(()) => {
-                if config.certificate_output.is_some() {
-                    println!("Certificate written: {}", output_path);
-                } else {
-                    println!("Certificate auto-written: {}", output_path);
-                }
-            }
-            Err(e) => eprintln!(
-                "Warning: failed to write certificate '{}': {e:#}",
-                output_path
-            ),
-        }
+    };
+    let (ctx, has_unsupported_fixup) = build_exec_context(test);
+    if has_unsupported_fixup {
+        eprintln!("Warning: certificate generation skipped due to unsupported fixup type");
+        return;
     }
 
-    match &result.outcome {
-        TestOutcome::Pass => println!("=== PASS === ({}ms)", result.time_ms),
-        TestOutcome::FalseNegative => {
-            println!("=== !!! SOUNDNESS ISSUE !!! === ({}ms)", result.time_ms)
+    // Stage 2: run zone analysis to collect per-PC DBMs.
+    println!("\n========= Stage 2: Zone DBM collection (for certificate generation) =========");
+    let entry = make_entry_state();
+    let zone_dbms = match analysis::analyze_program(&ctx, &program, entry, config) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!(
+                "Warning: certificate generation failed during zone analysis: {}",
+                e.description()
+            );
+            return;
         }
-        TestOutcome::FalsePositive => println!("=== PRECISION ISSUE === ({}ms)", result.time_ms),
-        TestOutcome::Skipped { reason } => {
-            println!("=== SKIPPED === ({}ms) {}", result.time_ms, reason)
+    };
+
+    // Stage 3: run interval analysis to collect pre-failure explored states.
+    // Interval mode is expected to reject — that is the PCC motivation.
+    println!("\n========= Stage 3: Interval analysis =========");
+    println!("  (Interval mode is expected to reject — this is the PCC motivation.)");
+    let mut interval_config = config.clone();
+    interval_config.domain_mode = DomainMode::Interval;
+    interval_config.certificate = None;
+    let interval_entry = Dbm::new(); // Interval mode ignores the entry DBM
+    let interval_result =
+        analysis::analyze_program_full(&ctx, &program, interval_entry, &interval_config);
+    println!("  [ok] Interval analysis complete (reject is expected here).");
+    // Build a flat per-PC state vector from the explored_states map.
+    // For straightline programs there is exactly one state per PC.
+    let n = program.instrs.len();
+    let interval_states: Vec<_> = (0..n)
+        .map(|pc| {
+            interval_result
+                .explored_states
+                .get(&pc)
+                .and_then(|v| v.first())
+                .cloned()
+                .unwrap_or_else(|| {
+                    crate::analysis::machine::state::State::new(
+                        crate::domains::numeric::NumericDomain::new_interval(),
+                        pc,
+                    )
+                })
+        })
+        .collect();
+
+    // Stage 4: combine DBMs + interval states to produce and persist the cert.
+    println!("\n========= Stage 4: Certificate generation =========");
+    let cert = generate_certificate(&program, &zone_dbms, &interval_states);
+    let output_path = config.certificate_output.clone().unwrap_or_else(|| {
+        default_generated_cert_path(json_path, test_name, &cert.program_hash)
+    });
+    if let Some(parent) = Path::new(&output_path).parent()
+        && let Err(e) = fs::create_dir_all(parent)
+    {
+        eprintln!(
+            "Warning: failed to create certificate directory '{}': {}",
+            parent.display(),
+            e
+        );
+        return;
+    }
+    match cert.save_to_path(&output_path) {
+        Ok(()) => {
+            if config.certificate_output.is_some() {
+                println!("Certificate written: {}", output_path);
+            } else {
+                println!("Certificate auto-written: {}", output_path);
+            }
         }
-        TestOutcome::Error { message } => {
-            println!("=== ERROR === ({}ms) {}", result.time_ms, message)
-        }
+        Err(e) => eprintln!(
+            "Warning: failed to write certificate '{}': {e:#}",
+            output_path
+        ),
     }
 }
 
