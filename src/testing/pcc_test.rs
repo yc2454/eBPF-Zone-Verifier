@@ -220,6 +220,8 @@ fn pcc_generate_cert(
             output_path
         ),
     }
+    println!();
+    println!("{cert}");
 }
 
 #[derive(Debug, Deserialize)]

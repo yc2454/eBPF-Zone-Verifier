@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::fs;
 
 /// Top-level PCC certificate container for the prototype pipeline.
@@ -158,6 +159,126 @@ impl ProgramCertificate {
         let raw =
             serde_json::to_string_pretty(self).context("failed to serialize certificate JSON")?;
         fs::write(path, raw).with_context(|| format!("failed to write certificate file '{}'", path))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Human-readable display
+// ---------------------------------------------------------------------------
+
+/// Maps a register index to its canonical name.
+/// Mirrors `Reg::name()` without importing the analysis crate to avoid cycles.
+fn reg_name(idx: usize) -> &'static str {
+    match idx {
+        0 => "0",
+        1 => "r0",
+        2 => "r1",
+        3 => "r2",
+        4 => "r3",
+        5 => "r4",
+        6 => "r5",
+        7 => "r6",
+        8 => "r7",
+        9 => "r8",
+        10 => "r9",
+        11 => "r10",
+        12 => "@data_meta",
+        13 => "@data",
+        14 => "@data_end",
+        _ => "?",
+    }
+}
+
+impl fmt::Display for ProgramCertificate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            f,
+            "Certificate v{}  |  hash: {}  |  {} annotated PC(s)",
+            self.version,
+            self.program_hash,
+            self.pc_annotations.len()
+        )?;
+
+        for ann in &self.pc_annotations {
+            writeln!(f)?;
+            writeln!(
+                f,
+                "  pc {:>4}:  {} constraint(s)",
+                ann.pc,
+                ann.entries.len()
+            )?;
+
+            for (ei, entry) in ann.entries.iter().enumerate() {
+                let lname = reg_name(entry.left_reg);
+                let rname = reg_name(entry.right_reg);
+                let sum: i64 = entry.proof.iter().map(|s| s.bound_contribution()).sum();
+                writeln!(
+                    f,
+                    "    [entry {}]  {} - {} <= {}   ({} proof step(s), sum = {})",
+                    ei,
+                    lname,
+                    rname,
+                    entry.bound,
+                    entry.proof.len(),
+                    sum
+                )?;
+
+                let mut running: i64 = 0;
+                for (si, step) in entry.proof.iter().enumerate() {
+                    match step {
+                        ProofStep::Guard {
+                            pc,
+                            left_reg,
+                            right_reg,
+                            c,
+                        } => {
+                            running += c;
+                            writeln!(
+                                f,
+                                "      [{si}] Guard    @ pc {:>3}:  {} - {} <= {}",
+                                pc,
+                                reg_name(*left_reg),
+                                reg_name(*right_reg),
+                                c,
+                            )?;
+                        }
+                        ProofStep::Transfer {
+                            pc,
+                            pre_left_reg,
+                            pre_right_reg,
+                            post_left_reg,
+                            post_right_reg,
+                            delta,
+                        } => {
+                            running += delta;
+                            let constraint = if pre_left_reg != post_left_reg
+                                || pre_right_reg != post_right_reg
+                            {
+                                format!(
+                                    "{} - {}  ->  {} - {}",
+                                    reg_name(*pre_left_reg),
+                                    reg_name(*pre_right_reg),
+                                    reg_name(*post_left_reg),
+                                    reg_name(*post_right_reg),
+                                )
+                            } else {
+                                format!(
+                                    "{} - {}",
+                                    reg_name(*pre_left_reg),
+                                    reg_name(*pre_right_reg)
+                                )
+                            };
+                            writeln!(
+                                f,
+                                "      [{si}] Transfer @ pc {:>3}:  {}  delta={:+}   (running: {})",
+                                pc, constraint, delta, running,
+                            )?;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 
