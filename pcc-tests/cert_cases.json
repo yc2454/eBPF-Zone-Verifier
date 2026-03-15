@@ -47,5 +47,19 @@
     "test_name": "pcc motivating: var add packet access (zone ok, kernel reject)",
     "certificate": "pcc-tests/certs/pcc_examples.bad_guardstep.cert.json",
     "expected": "REJECT"
+  },
+  {
+    "name": "add-imm: var add + constant skip accepted with cert",
+    "json_file": "pcc-tests/pcc_examples.json",
+    "test_name": "pcc: var add + constant skip (add-imm, zone ok, interval reject)",
+    "certificate": "pcc-tests/certs/generated/pcc_examples.pcc_var_add_constant_skip_add_imm_zone_ok_interval_reject.7ba3b3ec7e18aac0.cert.json",
+    "expected": "ACCEPT"
+  },
+  {
+    "name": "mov-rename: var add + register copy accepted with cert",
+    "json_file": "pcc-tests/pcc_examples.json",
+    "test_name": "pcc: var add + mov rename (mov-rename, zone ok, interval reject)",
+    "certificate": "pcc-tests/certs/generated/pcc_examples.pcc_var_add_mov_rename_mov_rename_zone_ok_interval_reject.74d84cd11608bbf1.cert.json",
+    "expected": "ACCEPT"
   }
 ]

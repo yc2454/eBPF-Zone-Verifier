@@ -29,18 +29,21 @@ fn apply_verified_packet_end_fact(
     if po.anchor != Reg::AnchorData {
         return;
     }
-    let proven_end_from_i = (-c).max(0);
-    let proven_range = proven_end_from_i.saturating_sub(po.off);
+    // The PCC bound `reg_i - data_end <= c` means `data_end - reg_i >= |c|`,
+    // so |c| bytes are accessible from reg_i.  Unlike the branch handler's
+    // `proven_size` (which is relative to @data), the PCC bound is already
+    // relative to the register value, so we must NOT subtract po.off.
+    let proven_range = (-c).max(0);
     let reg = ivl.get_mut(i);
     if let Some(ref mut ptr_off) = reg.ptr_offset {
         ptr_off.range = Some(ptr_off.range.unwrap_or(proven_range).max(proven_range));
         info!(
             target: "pcc",
-            "[PCC] pc={}: strengthened {}.range to {} (packet accessible beyond fixed offset +{})",
+            "[PCC] pc={}: strengthened {}.range to {} (packet accessible: {} bytes from register)",
             succ_pc,
             i.name(),
             ptr_off.range.unwrap(),
-            po.off,
+            proven_range,
         );
     }
 }
