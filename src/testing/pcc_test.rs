@@ -96,8 +96,12 @@ pub fn pcc_test_single(json_path: &str, test_name: &str, config: &VerifierConfig
     let result = run_test(test, config);
 
     // Stages 2-4: certificate generation (zone mode, passed only).
+    // Generate certs when zone passes (traditional PCC: zone ok, interval reject)
+    // AND when zone has a precision issue (map PCC: zone's relational data is still
+    // useful even though zone's own access check fails for variable map offsets).
     let should_generate_cert =
-        matches!(result.outcome, TestOutcome::Pass) && config.domain_mode == DomainMode::Zone;
+        matches!(result.outcome, TestOutcome::Pass | TestOutcome::FalsePositive)
+            && config.domain_mode == DomainMode::Zone;
     if should_generate_cert {
         pcc_generate_cert(test, json_path, test_name, config);
     }
@@ -148,18 +152,13 @@ fn pcc_generate_cert(
     }
 
     // Stage 2: run zone analysis to collect per-PC DBMs.
+    // Use analyze_program_full so we keep DBMs even when zone rejects —
+    // the relational facts (e.g. r6-r7 from a branch) are still useful for
+    // PCC even if zone's own access check fails (e.g. variable map offsets).
     println!("\n========= Stage 2: Zone DBM collection (for certificate generation) =========");
     let entry = make_entry_state();
-    let zone_dbms = match analysis::analyze_program(&ctx, &program, entry, config) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!(
-                "Warning: certificate generation failed during zone analysis: {}",
-                e.description()
-            );
-            return;
-        }
-    };
+    let zone_result = analysis::analyze_program_full(&ctx, &program, entry, config);
+    let zone_dbms = zone_result.dbms;
 
     // Stage 3: run interval analysis to collect pre-failure explored states.
     // Interval mode is expected to reject — that is the PCC motivation.

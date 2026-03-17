@@ -1,4 +1,5 @@
 use crate::analysis::machine::reg::Reg;
+use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
 use log::info;
 
@@ -74,6 +75,36 @@ fn apply_verified_fact(
                 j.name(),
                 c,
             );
+        }
+    } else {
+        // Same-map transitive: j is a PtrToMapValue from the same map as i,
+        // with a known buffer offset. Cert says i - j <= c, so:
+        //   i.off + i.var_off <= c + j.off + j.var_off
+        //   i.var_off <= c + (j.off + j.var_off) - i.off
+        let i_type = succ_state.types.get(i);
+        let j_type = succ_state.types.get(j);
+        if let (
+            RegType::PtrToMapValue { map_idx: i_map, .. },
+            RegType::PtrToMapValue { map_idx: j_map, .. },
+        ) = (i_type, j_type)
+        {
+            if i_map == j_map {
+                if let Some(j_po) = ivl.get_ptr_offset(j).copied() {
+                    let j_max_off = j_po.off + j_po.var_off as i64;
+                    let new_var_off_ub = (c + j_max_off - po.off).max(0) as u64;
+                    let reg = ivl.get_mut(i);
+                    if let Some(ref mut ptr_off) = reg.ptr_offset {
+                        let old_var_off = ptr_off.var_off;
+                        ptr_off.var_off = ptr_off.var_off.min(new_var_off_ub);
+                        info!(
+                            target: "pcc",
+                            "[PCC] pc={}: tightened {}.var_off from {} to {} \
+                             (same-map reg={}, cert bound={})",
+                            succ_pc, i.name(), old_var_off, ptr_off.var_off, j.name(), c,
+                        );
+                    }
+                }
+            }
         }
     }
 }
