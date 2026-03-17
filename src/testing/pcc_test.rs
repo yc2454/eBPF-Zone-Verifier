@@ -193,7 +193,7 @@ fn pcc_generate_cert(
 
     // Stage 4: combine DBMs + interval states to produce and persist the cert.
     println!("\n========= Stage 4: Certificate generation =========");
-    let cert = generate_certificate(&program, &zone_dbms, &interval_states);
+    let cert = generate_certificate(&program, &zone_dbms, &interval_states, &ctx.map_defs);
     let output_path = config.certificate_output.clone().unwrap_or_else(|| {
         default_generated_cert_path(json_path, test_name, &cert.program_hash)
     });

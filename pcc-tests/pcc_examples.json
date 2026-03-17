@@ -109,5 +109,25 @@
       {"code": 183, "dst": 0, "src": 0, "off": 0,  "imm": 0},
       {"code": 149, "dst": 0, "src": 0, "off": 0,  "imm": 0}
     ]
+  },
+  {
+    "name": "pcc: stack var-offset access (branch-derived guard, zone ok, interval reject)",
+    "result": "ACCEPT",
+    "prog_type": 3,
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0, "off": -16, "imm": 0},
+      {"code": 122, "dst": 10, "src": 0, "off": -8,  "imm": 0},
+      {"code": 133, "dst": 0,  "src": 0, "off": 0,   "imm": 7},
+      {"code": 84,  "dst": 0,  "src": 0, "off": 0,   "imm": 255},
+      {"code": 191, "dst": 1,  "src": 10,"off": 0,   "imm": 0},
+      {"code": 7,   "dst": 1,  "src": 0, "off": 0,   "imm": -16},
+      {"code": 15,  "dst": 1,  "src": 0, "off": 0,   "imm": 0},
+      {"code": 125, "dst": 1,  "src": 10,"off": 3,   "imm": 0},
+      {"code": 113, "dst": 0,  "src": 1, "off": 0,   "imm": 0},
+      {"code": 183, "dst": 0,  "src": 0, "off": 0,   "imm": 0},
+      {"code": 149, "dst": 0,  "src": 0, "off": 0,   "imm": 0},
+      {"code": 183, "dst": 0,  "src": 0, "off": 0,   "imm": 0},
+      {"code": 149, "dst": 0,  "src": 0, "off": 0,   "imm": 0}
+    ]
   }
 ]

@@ -82,5 +82,12 @@
     "test_name": "pcc: var add + non-zero load offset (zone ok, interval reject)",
     "certificate": "pcc-tests/certs/generated/pcc_examples.pcc_var_add_non_zero_load_offset_zone_ok_interval_reject.0ae87c8604dc9408.cert.json",
     "expected": "ACCEPT"
+  },
+  {
+    "name": "stack-var-offset: branch-derived guard tightens var_off for stack access",
+    "json_file": "pcc-tests/pcc_examples.json",
+    "test_name": "pcc: stack var-offset access (branch-derived guard, zone ok, interval reject)",
+    "certificate": "pcc-tests/certs/generated/pcc_examples.pcc_stack_var_offset_access_branch_derived_guard_zone_ok_interval_reject.49325a141c1d4b66.cert.json",
+    "expected": "ACCEPT"
   }
 ]
