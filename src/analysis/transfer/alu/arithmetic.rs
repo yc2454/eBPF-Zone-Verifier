@@ -33,10 +33,14 @@ pub(crate) fn handle_add(
                     // Known constant: shift all relations exactly
                     state.domain.apply_add_imm(dst, lo);
                 } else {
-                    // Non-constant: fall back to interval
-                    if let Some(off) = RegType::get_ptr_offset(&in_types.get(dst)) {
-                        state.domain.forget(dst);
-                        state.domain.assign_interval(dst, off, off);
+                    // Non-constant: zone needs forget+assign to set up fresh
+                    // constraint-based tracking. Interval mode must skip this
+                    // to preserve PtrOffset (var_off updated by apply_add_reg).
+                    if !state.domain.is_interval_mode() {
+                        if let Some(off) = RegType::get_ptr_offset(&in_types.get(dst)) {
+                            state.domain.forget(dst);
+                            state.domain.assign_interval(dst, off, off);
+                        }
                     }
                     state.domain.apply_add_reg(dst, *r);
                 }

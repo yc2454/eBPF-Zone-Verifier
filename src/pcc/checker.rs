@@ -83,13 +83,13 @@ pub fn distance_upper_bound(state: &State, i: Reg, j: Reg) -> Option<i64> {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
-struct Constraint {
-    left_reg: usize,
-    right_reg: usize,
-    c: i64,
+pub(super) struct Constraint {
+    pub left_reg: usize,
+    pub right_reg: usize,
+    pub c: i64,
 }
 
-fn derive_guard_constraint_from_branch(
+pub(super) fn derive_guard_constraint_from_branch(
     pred_instr: &Instr,
     pred_pc: usize,
     succ_pc: usize,

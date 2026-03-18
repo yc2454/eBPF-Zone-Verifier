@@ -47,5 +47,54 @@
     "test_name": "pcc motivating: var add packet access (zone ok, kernel reject)",
     "certificate": "pcc-tests/certs/pcc_examples.bad_guardstep.cert.json",
     "expected": "REJECT"
+  },
+  {
+    "name": "add-imm: var add + constant skip accepted with cert",
+    "json_file": "pcc-tests/pcc_examples.json",
+    "test_name": "pcc: var add + constant skip (add-imm, zone ok, interval reject)",
+    "certificate": "pcc-tests/certs/generated/pcc_examples.pcc_var_add_constant_skip_add_imm_zone_ok_interval_reject.7ba3b3ec7e18aac0.cert.json",
+    "expected": "ACCEPT"
+  },
+  {
+    "name": "mov-rename: var add + register copy accepted with cert",
+    "json_file": "pcc-tests/pcc_examples.json",
+    "test_name": "pcc: var add + mov rename (mov-rename, zone ok, interval reject)",
+    "certificate": "pcc-tests/certs/generated/pcc_examples.pcc_var_add_mov_rename_mov_rename_zone_ok_interval_reject.74d84cd11608bbf1.cert.json",
+    "expected": "ACCEPT"
+  },
+  {
+    "name": "double-var-add: two variable fields accepted with cert",
+    "json_file": "pcc-tests/pcc_examples.json",
+    "test_name": "pcc: double var add (3-step chain, zone ok, interval reject)",
+    "certificate": "pcc-tests/certs/generated/pcc_examples.pcc_double_var_add_3_step_chain_zone_ok_interval_reject.fb21d88c47ecdc9c.cert.json",
+    "expected": "ACCEPT"
+  },
+  {
+    "name": "two-var-add-skip: two variable fields + fixed skip accepted with cert",
+    "json_file": "pcc-tests/pcc_snapshot_examples.json",
+    "test_name": "pcc snapshot: two var add + double field skip (zone ok, interval reject)",
+    "certificate": "pcc-tests/certs/generated/pcc_snapshot_examples.pcc_two_var_add_double_field_skip_zone_ok_interval_reject.b9d699320244b4fd.cert.json",
+    "expected": "ACCEPT"
+  },
+  {
+    "name": "non-zero-offset: var add + load at off=2 accepted with cert",
+    "json_file": "pcc-tests/pcc_examples.json",
+    "test_name": "pcc: var add + non-zero load offset (zone ok, interval reject)",
+    "certificate": "pcc-tests/certs/generated/pcc_examples.pcc_var_add_non_zero_load_offset_zone_ok_interval_reject.0ae87c8604dc9408.cert.json",
+    "expected": "ACCEPT"
+  },
+  {
+    "name": "stack-var-offset: branch-derived guard tightens var_off for stack access",
+    "json_file": "pcc-tests/pcc_examples.json",
+    "test_name": "pcc: stack var-offset access (branch-derived guard, zone ok, interval reject)",
+    "certificate": "pcc-tests/certs/generated/pcc_examples.pcc_stack_var_offset_access_branch_derived_guard_zone_ok_interval_reject.49325a141c1d4b66.cert.json",
+    "expected": "ACCEPT"
+  },
+  {
+    "name": "map-var-offset: same-map anchor tightens var_off for map access",
+    "json_file": "pcc-tests/pcc_examples.json",
+    "test_name": "pcc: map var-offset access (same-map anchor, zone ok, interval reject)",
+    "certificate": "pcc-tests/certs/generated/pcc_examples.pcc_map_var_offset_access_same_map_anchor_zone_ok_interval_reject.b7120f544a114dba.cert.json",
+    "expected": "ACCEPT"
   }
 ]

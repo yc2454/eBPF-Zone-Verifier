@@ -1,12 +1,16 @@
 use std::collections::BTreeMap;
 
 use crate::analysis::machine::reg::Reg;
+use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, Instr, MemSize, Operand, Program};
+use crate::common::constants;
 use crate::domains::dbm::{Dbm, INF};
+use crate::domains::numeric::NumericDomain;
+use crate::parsing::elf::BpfMapDef;
 use log::debug;
 
-use super::checker::distance_upper_bound;
+use super::checker::{derive_guard_constraint_from_branch, distance_upper_bound};
 use super::model::{AnnotationEntry, PcAnnotation, ProgramCertificate, ProofStep};
 use super::program_hash;
 
@@ -14,17 +18,82 @@ use super::program_hash;
 // Bound-query helpers (Step 5)
 // ---------------------------------------------------------------------------
 
-/// For a Load instruction, returns (base_reg, offset, size_bytes, required_bound) where
-/// required_bound = -(off + size). The access is safe iff
-/// base - @data_end <= required_bound.
-fn required_access_bound(instr: &Instr) -> Option<(Reg, i16, MemSize, i64)> {
+/// For a Load instruction, returns (base_reg, offset, size_bytes).
+/// The required bound is computed by the caller via `access_anchor_and_bound`.
+fn load_info(instr: &Instr) -> Option<(Reg, i16, MemSize)> {
     let Instr::Load {
         size, base, off, ..
     } = instr
     else {
         return None;
     };
-    Some((*base, *off, *size, -((*off as i64) + size.bytes() as i64)))
+    Some((*base, *off, *size))
+}
+
+/// Determine the anchor register and required bound for a load instruction
+/// based on the base register's pointer type.
+///
+/// Returns `(anchor_end, required_bound)` where the access is safe iff
+/// `base - anchor_end <= required_bound`.
+///
+/// - Packet: `base - @data_end <= -(off + size)` ⟹ `base + off + size <= @data_end`
+/// - Stack:  `base - R10 <= -(off + size)`       ⟹ `base + off + size <= R10 = 0`
+/// - Map:    `base - Zero <= limit - off - size`  ⟹ `base + off + size <= limit`
+fn access_anchor_and_bound(
+    state: &State,
+    base: Reg,
+    off: i64,
+    size: i64,
+    map_defs: &[BpfMapDef],
+) -> Option<(Reg, i64)> {
+    match state.types.get(base) {
+        RegType::PtrToPacket => Some((Reg::AnchorDataEnd, -(off + size))),
+        RegType::PtrToStack { .. } => Some((Reg::R10, -(off + size))),
+        RegType::PtrToMapValue { map_idx, .. } => {
+            let limit = map_defs.get(map_idx)?.value_size as i64;
+            Some((Reg::Zero, limit - off - size))
+        }
+        _ => None,
+    }
+}
+
+/// Check whether the interval domain already proves the access is safe
+/// (i.e. PCC is not needed for this load).
+fn interval_already_proves_access(
+    state: &State,
+    base: Reg,
+    off: i64,
+    size: i64,
+    map_defs: &[BpfMapDef],
+) -> bool {
+    match state.types.get(base) {
+        RegType::PtrToPacket => {
+            let (s, e) = state.domain.verify_packet_bounds(base, off, size);
+            s && e
+        }
+        RegType::PtrToStack { .. } => {
+            let (lo, hi) = state.domain.get_distance_interval(base, Reg::R10);
+            lo != i64::MIN
+                && hi != i64::MAX
+                && lo + off >= constants::BPF_STACK_MIN
+                && hi + off + size <= constants::BPF_STACK_MAX
+        }
+        RegType::PtrToMapValue { map_idx, .. } => {
+            if let NumericDomain::Interval(ref ivl) = state.domain {
+                if let Some(po) = ivl.get_ptr_offset(base) {
+                    let min = po.min_offset() + off;
+                    let max = po.max_offset() + off + size;
+                    let limit = map_defs
+                        .get(map_idx)
+                        .map(|d| d.value_size as i64)
+                        .unwrap_or(0);
+                    return min >= 0 && max <= limit;
+                }
+            }
+            false
+        }
+        _ => false,
+    }
 }
 
 /// Zone upper bound for `i - j` from a DBM. Returns None if unbounded.
@@ -38,6 +107,52 @@ fn zone_upper_bound(dbm: &Dbm, i: Reg, j: Reg) -> Option<i64> {
 fn interval_upper_bound(state: &State, i: Reg, j: Reg) -> Option<i64> {
     let ub = distance_upper_bound(state, i, j)?;
     if ub == i64::MAX { None } else { Some(ub) }
+}
+
+// ---------------------------------------------------------------------------
+// Same-map anchor search (Step 5b)
+// ---------------------------------------------------------------------------
+
+/// For a map-value base register, find another register `k` from the same map
+/// such that `zone_upper_bound(dbm, base, k) + k.type_offset <= required`.
+///
+/// This enables PCC for variable map accesses: zone tracks `base - k` relationally
+/// (e.g., from a branch comparing two same-map pointers), and `k.type_offset` is
+/// the constant buffer offset from the interval state's type info.
+///
+/// Returns `(k, zone_ub(base, k))` on success.
+fn find_same_map_anchor(
+    state: &State,
+    dbm: &Dbm,
+    base: Reg,
+    base_map_idx: usize,
+    required: i64,
+) -> Option<(Reg, i64)> {
+    for k in Reg::ALL {
+        if k == base || k == Reg::Zero {
+            continue;
+        }
+        // k must be PtrToMapValue from the same map with a known constant offset.
+        if let RegType::PtrToMapValue {
+            map_idx,
+            offset: Some(k_off),
+            ..
+        } = state.types.get(k)
+        {
+            if map_idx != base_map_idx {
+                continue;
+            }
+            // Check: zone_ub(base, k) + k_off <= required
+            if let Some(ub) = zone_upper_bound(dbm, base, k) {
+                if let Some(composed) = ub.checked_add(k_off) {
+                    if composed <= required {
+                        return Some((k, ub));
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -109,35 +224,61 @@ fn backward_trace(
         });
 
         // Now check: does the interval agree on the PRE-instruction constraint?
-        // The Guard checks the constraint at the pre-state of this PC.
+        // Two paths: (1) state-derived, (2) branch-derived.
         if pc < interval_states.len() {
+            // Path 1: State-derived — interval state directly proves the constraint.
+            let mut guard_found = false;
+            let mut guard_c = 0i64;
+
             if let Some(ivl_ub) = interval_upper_bound(&interval_states[pc], prev_i, prev_j) {
                 if ivl_ub <= pre_bound {
-                    // Divergence point found: interval agrees on the pre-instruction
-                    // constraint at this PC.
-                    let guard_c = ivl_ub;
-                    let mut proof = Vec::with_capacity(1 + backward_steps.len());
-                    proof.push(ProofStep::Guard {
-                        pc,
-                        left_reg: prev_i.idx(),
-                        right_reg: prev_j.idx(),
-                        c: guard_c,
-                    });
-
-                    // Reverse backward steps into forward order as Transfer steps
-                    for bs in backward_steps.into_iter().rev() {
-                        proof.push(ProofStep::Transfer {
-                            pc: bs.pc,
-                            pre_left_reg: bs.pre_left_reg,
-                            pre_right_reg: bs.pre_right_reg,
-                            post_left_reg: bs.post_left_reg,
-                            post_right_reg: bs.post_right_reg,
-                            delta: bs.delta,
-                        });
-                    }
-
-                    return Some((pc, prev_i.idx(), prev_j.idx(), guard_c, proof));
+                    guard_found = true;
+                    guard_c = ivl_ub;
                 }
+            }
+
+            // Path 2: Branch-derived — if the instruction at this PC is a branch
+            // whose fall-through condition matches the tracked constraint pair,
+            // derive the guard from the branch semantics. This handles the case
+            // where a branch refines a variable AFTER a variable add (e.g., stack
+            // variable-offset access where zone's closure captures the refinement
+            // but the interval's var_off is not retroactively tightened).
+            if !guard_found {
+                if let Some(branch_guard) =
+                    derive_guard_constraint_from_branch(instr, pc, pc + 1)
+                {
+                    if branch_guard.left_reg == prev_i.idx()
+                        && branch_guard.right_reg == prev_j.idx()
+                        && branch_guard.c <= pre_bound
+                    {
+                        guard_found = true;
+                        guard_c = branch_guard.c;
+                    }
+                }
+            }
+
+            if guard_found {
+                let mut proof = Vec::with_capacity(1 + backward_steps.len());
+                proof.push(ProofStep::Guard {
+                    pc,
+                    left_reg: prev_i.idx(),
+                    right_reg: prev_j.idx(),
+                    c: guard_c,
+                });
+
+                // Reverse backward steps into forward order as Transfer steps
+                for bs in backward_steps.into_iter().rev() {
+                    proof.push(ProofStep::Transfer {
+                        pc: bs.pc,
+                        pre_left_reg: bs.pre_left_reg,
+                        pre_right_reg: bs.pre_right_reg,
+                        post_left_reg: bs.post_left_reg,
+                        post_right_reg: bs.post_right_reg,
+                        delta: bs.delta,
+                    });
+                }
+
+                return Some((pc, prev_i.idx(), prev_j.idx(), guard_c, proof));
             }
         }
 
@@ -302,6 +443,7 @@ pub fn generate_certificate(
     prog: &Program,
     zone_dbms: &[Dbm],
     interval_states: &[State],
+    map_defs: &[BpfMapDef],
 ) -> ProgramCertificate {
     let mut cert = ProgramCertificate::empty(program_hash(prog));
     if prog.instrs.is_empty() {
@@ -312,7 +454,23 @@ pub fn generate_certificate(
 
     for target_pc in 0..prog.instrs.len() {
         let instr = &prog.instrs[target_pc];
-        let Some((base, off, size, required)) = required_access_bound(instr) else {
+        let Some((base, off, size)) = load_info(instr) else {
+            continue;
+        };
+
+        let off_i64 = off as i64;
+        let size_i64 = size.bytes() as i64;
+
+        // Determine anchor and required bound from the base register's pointer type.
+        // Use the interval state's type info (available at the load PC).
+        let state = if target_pc < interval_states.len() {
+            &interval_states[target_pc]
+        } else {
+            continue;
+        };
+        let Some((anchor_end, required)) =
+            access_anchor_and_bound(state, base, off_i64, size_i64, map_defs)
+        else {
             continue;
         };
 
@@ -321,41 +479,49 @@ pub fn generate_certificate(
         let Some(dbm) = zone_dbms.get(target_pc) else {
             continue;
         };
-        let Some(zone_ub) = zone_upper_bound(dbm, base, Reg::AnchorDataEnd) else {
-            continue;
+
+        // Try direct anchor first (works for packet/stack where zone tracks base-anchor).
+        // For maps, zone doesn't track base-Zero as a buffer offset, so the direct path
+        // typically returns Some but too large (255 from AND mask, not buffer-relative).
+        // Fall through to the transitive path: find a same-map register k where zone
+        // tracks base-k and k has a known type-level offset from the map buffer start.
+        let direct_ok = zone_upper_bound(dbm, base, anchor_end)
+            .filter(|&ub| ub <= required);
+        let (effective_anchor, zone_ub) = if let Some(ub) = direct_ok {
+            (anchor_end, ub)
+        } else if let RegType::PtrToMapValue { map_idx, .. } = state.types.get(base) {
+            // Transitive: scan for a same-map register k with finite zone_ub(base, k)
+            // such that zone_ub(base, k) + k.type_offset <= required.
+            match find_same_map_anchor(state, dbm, base, map_idx, required) {
+                Some(pair) => pair,
+                None => continue,
+            }
+        } else if zone_upper_bound(dbm, base, anchor_end).is_some() {
+            continue; // zone has a bound but it's not tight enough
+        } else {
+            continue; // zone doesn't track this pair
         };
-        if zone_ub > required {
-            continue; // zone doesn't prove it
-        }
 
         // Query interval: does the interval verifier already prove it?
-        // Use the actual verify_packet_bounds check (not distance_upper_bound,
-        // which can be tighter than what the verifier uses).
-        if target_pc < interval_states.len() {
-            let (start_ok, end_ok) = interval_states[target_pc].domain.verify_packet_bounds(
-                base,
-                off as i64,
-                size.bytes() as i64,
-            );
-            if start_ok && end_ok {
-                continue; // interval already sufficient, no PCC needed
-            }
+        if interval_already_proves_access(state, base, off_i64, size_i64, map_defs) {
+            continue; // interval already sufficient, no PCC needed
         }
 
         debug!(
             target: "pcc-gen",
-            "[PCC-GEN] target={}: candidate load {} + {} (zone_ub={}, required={})",
-            target_pc, base.name(), required, zone_ub, required,
+            "[PCC-GEN] target={}: candidate load {} anchor={} effective={} (zone_ub={}, required={})",
+            target_pc, base.name(), anchor_end.name(), effective_anchor.name(), zone_ub, required,
         );
 
         // Backward trace to find the divergence point.
+        // Use effective_anchor (may differ from anchor_end for maps).
         let Some((_, _, _, _, proof)) = backward_trace(
             prog,
             zone_dbms,
             interval_states,
             target_pc,
             base,
-            Reg::AnchorDataEnd,
+            effective_anchor,
             zone_ub,
         ) else {
             debug!(
@@ -371,7 +537,7 @@ pub fn generate_certificate(
 
         by_pc.entry(target_pc).or_default().push(AnnotationEntry {
             left_reg: base.idx(),
-            right_reg: Reg::AnchorDataEnd.idx(),
+            right_reg: effective_anchor.idx(),
             bound,
             proof,
         });
