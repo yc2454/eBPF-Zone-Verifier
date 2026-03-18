@@ -242,11 +242,16 @@ pub fn apply_add_reg(state: &mut IntervalState, dst: Reg, src: Reg) {
             po.range = po.range.map(|r| r.saturating_sub(src_const));
         }
     } else {
-        // Variable addition increases var_off uncertainty
-        // Also invalidates any proven range (we don't know where we are anymore)
+        // Variable addition: use signed bounds to properly track negative offsets
+        // The signed range [smin, smax] correctly represents the possible values
         if let Some(ref mut po) = state.get_mut(dst).ptr_offset {
-            let src_range = src_bounds.umax.saturating_sub(src_bounds.umin);
-            po.var_off = po.var_off.saturating_add(src_range);
+            // Add smin to base offset (handles negative values correctly)
+            po.off = po.off.saturating_add(src_bounds.smin);
+            // Add the signed range width to var_off (use saturating_sub to avoid overflow)
+            let signed_range = src_bounds.smax.saturating_sub(src_bounds.smin);
+            if signed_range >= 0 {
+                po.var_off = po.var_off.saturating_add(signed_range as u64);
+            }
             // Adding variable invalidates proven range
             po.range = None;
         }
@@ -319,8 +324,19 @@ pub fn apply_sub_reg(state: &mut IntervalState, dst: Reg, src: Reg) {
     dst_bounds.umax = dst_bounds.umax.saturating_sub(src_bounds.umin);
     dst_bounds.scalar_id = None; // Arithmetic breaks scalar relationship
 
-    // Subtracting variable destroys pointer offset info
-    state.get_mut(dst).ptr_offset = None;
+    // Update pointer offset if present: ptr -= [smin, smax]
+    // Minimum offset after sub: off - smax
+    // Maximum offset after sub: off + var_off - smin
+    // So new_off = off - smax, new_var_off = var_off + (smax - smin)
+    if let Some(ref mut po) = state.get_mut(dst).ptr_offset {
+        po.off = po.off.saturating_sub(src_bounds.smax);
+        // Use saturating_sub to avoid overflow when range is very large
+        let signed_range = src_bounds.smax.saturating_sub(src_bounds.smin);
+        if signed_range >= 0 {
+            po.var_off = po.var_off.saturating_add(signed_range as u64);
+        }
+        po.range = None;
+    }
 }
 
 /// Performs dst &= mask (0 <= result <= mask for non-negative mask)
