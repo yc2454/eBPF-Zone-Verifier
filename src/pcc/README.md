@@ -6,9 +6,9 @@ This module implements certificate-aided verification for eBPF programs. It lets
 
 The interval verifier tracks each register's value range independently. This works well for scalar arithmetic but loses precision whenever a safety property depends on the *relationship* between two registers — e.g. when the two have a fixed difference. The zone (DBM) domain captures exactly these relational constraints, but it is significantly more expensive and may not be available in all verification contexts.
 
-PCC bridges this precision gap: the zone analysis runs once (offline) and emits a certificate that encodes the key relational facts it derived — expressed as difference-bound constraints of the form `left_reg - right_reg <= bound`. The interval checker *replays* just those facts at the relevant program points, verifying each step against the instruction stream and its own interval abstract state, and uses the proven constraints to admit program behaviours it would otherwise reject.
+PCC bridges this precision gap: the zone analysis runs once (offline) and emits a certificate that encodes the key relational facts it derived — expressed as difference-bound constraints of the form `left_reg - right_reg <= bound`. The interval checker *replays* just those facts at the relevant program points, verifying each step against the instruction stream and its own interval abstract state, and uses the proven constraints to tighten `var_off` on pointer registers that it would otherwise reject.
 
-The current prototype focuses on packet-access safety (proving `base - @data_end <= -(offset + size)` at load instructions), but the certificate format and proof-step semantics are not inherently limited to this use case. Any relational invariant that the zone domain can derive and that can be expressed as a chain of Guard and Transfer steps over the interval pre-states is a valid candidate for PCC-assisted verification.
+PCC currently supports three access types: **packet**, **stack**, and **map value** accesses. The certificate format and proof-step semantics are not inherently limited to these — any relational invariant that the zone domain can derive and that can be expressed as a chain of Guard and Transfer steps over the interval pre-states is a valid candidate.
 
 ## Architecture
 
@@ -73,7 +73,7 @@ Certificates are JSON files with the following structure:
 | 13 | `@data` anchor |
 | 14 | `@end` anchor |
 
-Packet safety annotations almost always use `right_reg = 14` (`@end`), expressing that a register lies at least `|bound|` bytes before the end of the packet.
+Packet safety annotations use `right_reg = 14` (`@end`), expressing that a register lies at least `|bound|` bytes before the end of the packet. Stack annotations use `right_reg = 11` (R10, the frame pointer). Map value annotations use a real BPF register index — the same-map anchor register whose type-level offset is known.
 
 ## Proof Steps
 
@@ -95,8 +95,14 @@ The checker verifies this via two paths:
 |--------|------|------------|
 | `JGE dst, src` | fall-through | `dst - src <= -1` |
 | `JGT dst, src` | fall-through | `dst - src <= 0`  |
-| `JGE dst, src` | taken         | `src - dst <= 0`  |
-| `JGT dst, src` | taken         | `src - dst <= -1` |
+| `JSGE dst, src` | fall-through | `dst - src <= -1` |
+| `JSGT dst, src` | fall-through | `dst - src <= 0`  |
+| `JGE dst, src` | taken | `src - dst <= 0`  |
+| `JGT dst, src` | taken | `src - dst <= -1` |
+| `JSGE dst, src` | taken | `src - dst <= 0`  |
+| `JSGT dst, src` | taken | `src - dst <= -1` |
+
+Signed (`JS*`) and unsigned (`J*`) comparisons of the same kind produce the same difference-bound constraint. The distinction matters for the branch refinement in the type domain but not for the relational bound recorded in the certificate.
 
 ### `Transfer`
 
@@ -141,6 +147,28 @@ A valid proof chain must satisfy:
 4. **Sum** — `Guard.c + Σ Transfer.delta == entry.bound`.
 5. **PC ordering** — Guard PC <= first Transfer PC (may be equal); subsequent strictly increasing; all < target PC.
 
+## Supported Access Types
+
+### Packet Accesses
+
+For a load from register `base` with load size `sz`, the required constraint is `base - @end <= -(off + sz)`. The certificate's `right_reg` is the synthetic `@end` anchor (index 14).
+
+The injector tightens `base`'s `var_off` using: `new_var_off_ub = cert_bound - po.off`, where `po.off` is the constant component of `base`'s `PtrOffset`. This allows the interval access check to pass where it would have rejected due to an over-wide `var_off`.
+
+### Stack Accesses
+
+Stack accesses use the same `var_off` tightening as packets, but the right register is R10 (frame pointer, index 11) rather than `@end`. The access pointer's `PtrOffset.anchor` is R10, so the injector recognises the match and applies `new_var_off_ub = cert_bound - po.off`.
+
+A typical pattern: after a variable add like `r1 += r0` where `r1` starts as a stack pointer, a branch `JSGE r1, r10` on the fall-through path establishes `r1 - r10 <= -1`. The cert encodes this Guard + passthrough Transfer, and the injector narrows `r1.var_off` from the AND-mask worst case to the branch-constrained tight bound.
+
+### Map Value Accesses
+
+Map value pointers require a different strategy because there is no single synthetic anchor: the zone domain does not initialise map pointer registers relative to `Zero` (doing so across multiple maps would produce unsound cross-map relationships via Floyd-Warshall closure).
+
+Instead the generator scans for a **same-map anchor**: another register `k` with type `PtrToMapValue{ map_idx: same, offset: Some(k_off) }` for which `zone_upper_bound(base, k)` is finite. The cert encodes `base - k <= c`, and the injector composes: `new_var_off_ub = c + (k_off + k.var_off) - po.off`.
+
+Concretely: `r7 = map_ptr + 8` (end-of-value sentinel), and a branch `JSGE r6, r7` on the fall-through derives `r6 - r7 <= -1`. The cert records `(r6, r7, -1)`. The injector sees both registers are `PtrToMapValue` from the same map, looks up r7's type-level offset (8), and computes `var_off_ub = -1 + 8 - 0 = 7`. This lets `r6 + 0` pass the 8-byte value-size check.
+
 ## Certificate Generation
 
 The generator (`generator.rs`) produces the certificate automatically from the zone and interval analysis results. It runs offline and its output is not in the TCB.
@@ -149,7 +177,7 @@ The generator (`generator.rs`) produces the certificate automatically from the z
 
 For any `target_pc` which requires access checking (such as a `Load` instruction), the generator:
 
-1. **Queries the zone** — checks whether the zone DBM at `target_pc` proves the access is safe (e.g., for packets, we check`base - @data_end <= -(off + size)`). If not, we skipped (nothing to certify).
+1. **Queries the zone** — checks whether the zone DBM at `target_pc` proves the access is safe. For packet and stack accesses this means `base - anchor <= req` in zone's DBM. For map value accesses, zone's own per-register check may fail (because zone does not track `base - Zero` for map pointers), but zone's relational data is still useful: the generator instead searches for a same-map anchor register `k` such that `zone_upper_bound(base, k) + k.type_offset <= req`. If neither check finds a proof, nothing is certified.
 2. **Queries the interval** — checks whether the interval verifier already proves the access safe on its own. If so, PCC is not needed.
 3. **Backward-traces** from `target_pc - 1` toward the start of the program to find the **divergence point**: the instruction whose interval pre-state independently agrees with the zone on the tracked constraint.
 4. **Emits the proof chain** — reverses the backward steps into a forward `[Guard, Transfer, …, Transfer]` chain and writes it into the certificate.
@@ -177,6 +205,20 @@ The `delta` field in each Transfer is the shared language between them: the gene
 After each inversion, the generator checks whether the interval pre-state at that PC can independently prove the derived pre-constraint. The first PC where it can is the **divergence point**: the interval and zone agree there without any relational help. A `Guard` is placed at that PC, and all subsequent instructions become Transfer steps.
 
 See the [Transfer step verification table](#transfer) for the corresponding forward direction used by the checker.
+
+### Proof Chain Length
+
+A proof chain always contains exactly **one Guard** step. The number of Transfer steps equals the number of hops from the Guard's source PC to the annotation PC:
+
+```
+branch (or zone-proven point) @ pc G
+  ... k intermediate instructions ...
+load  @ pc L         ← annotation site
+
+steps = 1 Guard + (k + 1) Transfers
+```
+
+The Guard and the first Transfer both reference `pc G` — the Guard because that is where the constraint is established, and the Transfer because it models the edge `G → G+1`. In practice the generator finds zone has already propagated the constraint to the immediate predecessor of the load, so almost all current certs have exactly **2 steps** (k = 0): one Guard and one Transfer, both at `pc L - 1`.
 
 ### Example
 
@@ -227,7 +269,15 @@ At each annotated PC, the checker:
 
 1. Verifies the certificate hash matches the program.
 2. For each entry at that PC, replays the proof chain step by step, looking up the interval pre-state at each step's PC from `explored_states`.
-3. If all steps pass, the sum matches, and endpoint registers match, refines the successor interval state with the proven `left_reg - right_reg <= bound` fact (sets the pointer's `range` field).
+3. If all steps pass, the sum matches, and endpoint registers match, the injector (`injector.rs`) uses the proven `left_reg - right_reg <= bound` to tighten `var_off` on the access pointer:
+
+   | Case | Condition | Tightening |
+   |---|---|---|
+   | **Packet / same-anchor** | `right_reg == po.anchor` (e.g. `@end` or R10) | `var_off = min(var_off, bound - po.off)` |
+   | **Same-map transitive** | both regs are `PtrToMapValue` with same `map_idx` | `var_off = min(var_off, bound + j_max_off - po.off)` |
+
+   where `po` is the `PtrOffset` of the access pointer and `j_max_off = j.off + j.var_off` is the maximum offset of the anchor register.
+
 4. If any step fails, the entry is **silently skipped**. The interval verifier continues with its unrefined state.
 
 ## Validation vs. Checking
