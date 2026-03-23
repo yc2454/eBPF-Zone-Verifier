@@ -521,4 +521,88 @@ impl State {
         }
         parts.join(", ")
     }
+
+    /// Compact per-register interval summary for log lines.
+    ///
+    /// Format per register:
+    ///   `rN=V`          when the range is a single constant
+    ///   `rN=[lo,hi]`    when both bounds are finite
+    ///   `rN=[-inf,hi]`  / `rN=[lo,inf]`  when one side is unbounded
+    ///
+    /// Registers that are `NotInit` or fully unbounded `[-inf, inf]` are skipped.
+    /// `Zero` is always 0 and is skipped as structural noise.
+    /// Returns `"(all unbounded)"` when every register is skipped so the caller
+    /// always gets a non-empty string to embed in a log line.
+    pub fn reg_ranges_str(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+
+        for r in Reg::ALL {
+            if r == Reg::Zero {
+                continue;
+            }
+            if self.types.get(r) == RegType::NotInit {
+                continue;
+            }
+
+            let (lo, hi) = self.domain.get_interval(r);
+
+            // Skip fully unbounded registers — they carry no information.
+            if lo == i64::MIN && hi == i64::MAX {
+                continue;
+            }
+
+            let lo_str = if lo == i64::MIN {
+                "-inf".to_string()
+            } else {
+                lo.to_string()
+            };
+            let hi_str = if hi == i64::MAX {
+                "inf".to_string()
+            } else {
+                hi.to_string()
+            };
+
+            let token = if lo == hi {
+                format!("{}={}", r.name(), lo)
+            } else {
+                format!("{}=[{},{}]", r.name(), lo_str, hi_str)
+            };
+            parts.push(token);
+        }
+
+        if parts.is_empty() {
+            "(all unbounded)".to_string()
+        } else {
+            parts.join(" ")
+        }
+    }
+
+    /// Compact per-register tnum summary for log lines.
+    ///
+    /// Uses `Tnum::compact_str()` which emits:
+    ///   `V`              for constants (decimal ≤ 65535, else `0x<hex>`)
+    ///   `0x<V>/0x<M>`   for partially-known values
+    ///
+    /// Fully-unknown tnums and `NotInit` registers are skipped.
+    /// `Zero` is always structurally constant and is skipped.
+    /// Returns an empty string when nothing is worth logging.
+    pub fn reg_tnums_compact_str(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+
+        for r in Reg::ALL {
+            if r == Reg::Zero {
+                continue;
+            }
+            if self.types.get(r) == RegType::NotInit {
+                continue;
+            }
+            let tnum = self.get_tnum(r);
+            if tnum.is_unknown() {
+                continue;
+            }
+            parts.push(format!("{}={}", r.name(), tnum.compact_str()));
+        }
+
+        parts.join(" ")
+    }
 }

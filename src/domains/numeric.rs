@@ -567,13 +567,24 @@ impl NumericDomain {
         }
     }
 
-    /// Debug: dump the domain state
-    pub fn dump(&self) {
+    /// Returns a compact string of non-trivial relational constraints for log lines.
+    /// In Zone mode this delegates to `Dbm::relations_str()`; returns an empty
+    /// string in Interval mode (which has no register-register relations).
+    pub fn zone_relations_str(&self) -> String {
         match self {
-            NumericDomain::Zone(dbm) => dbm.pretty_print(),
-            NumericDomain::Interval(_ivl) => {
-                // TODO: Implement pretty print for interval domain
-            }
+            NumericDomain::Zone(dbm) => dbm.relations_str(),
+            NumericDomain::Interval(_) => String::new(),
+        }
+    }
+
+    /// Returns the full DBM matrix as a formatted string for deep debugging (verbosity ≥ 3).
+    /// Includes all registers and anchor variables.
+    /// The caller is responsible for logging the result at the desired level.
+    /// Returns an empty string in Interval mode (no matrix to show).
+    pub fn matrix_full_str(&self) -> String {
+        match self {
+            NumericDomain::Zone(dbm) => dbm.matrix_full_str(),
+            NumericDomain::Interval(_ivl) => String::new(),
         }
     }
 

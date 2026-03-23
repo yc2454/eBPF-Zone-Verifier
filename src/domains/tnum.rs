@@ -370,6 +370,30 @@ impl Tnum {
     }
 }
 
+impl Tnum {
+    /// Compact single-token representation for log lines.
+    ///
+    /// - Fully unknown  → caller should skip; returns `"?"` as a fallback
+    /// - Constant       → decimal if |value| ≤ 65535, else `0x<hex>`
+    /// - Partial        → `0x<value>/0x<mask>` (Rust's `{:#x}` strips leading zeros)
+    pub fn compact_str(self) -> String {
+        if self.is_unknown() {
+            return "?".to_string();
+        }
+        if self.is_const() {
+            let v = self.value as i64;
+            if v.unsigned_abs() <= 65535 {
+                return format!("{}", v);
+            } else {
+                return format!("{:#x}", self.value);
+            }
+        }
+        // Partial knowledge: show value/mask in hex.
+        // Use {:#x} so Rust strips leading zeros, keeping lines short.
+        format!("{:#x}/{:#x}", self.value, self.mask)
+    }
+}
+
 impl std::fmt::Display for Tnum {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = String::new();

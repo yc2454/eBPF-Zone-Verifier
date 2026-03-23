@@ -213,20 +213,49 @@ pub fn analyze_program_full(
         let instr = &prog.instrs[state.pc];
 
         let reg_types_str = state.types.reg_types_str();
+        let reg_ranges_str = state.reg_ranges_str();
         let current_step_idx = Some(env.history.record(
             state.pc,
             instr,
             reg_types_str,
+            reg_ranges_str,
             state.num_frames(),
             state.history_idx,
         ));
 
         // E. Logging
-        if config.verbosity >= 2 {
-            state.domain.dump();
+        if config.verbosity >= 3 {
+            // Full DBM matrix — only at highest verbosity to avoid flooding logs.
+            // The structured Ranges/Zone/Tnums lines below (v>=2) are logged first;
+            // the matrix adds the raw cell values for deep debugging.
+            let matrix = state.domain.matrix_full_str();
+            if !matrix.is_empty() {
+                debug!(target: "app", "[DBM@PC:{}]\n{}", state.pc, matrix);
+            }
         }
-        debug!(target: "app", "|PC:{}| Instr: [[{}]]\nRegs: {:?}\nTnums: {:?}\n", 
-               state.pc, instr, state.types.reg_types_str(), state.tnums_to_string());
+        if config.verbosity >= 2 || config.debug_pc == Some(state.pc) {
+            let ranges = state.reg_ranges_str();
+            let zone   = state.domain.zone_relations_str();
+            let tnums  = state.reg_tnums_compact_str();
+
+            let zone_line = if zone.is_empty() {
+                String::new()
+            } else {
+                format!("\n  Zone:   {}", zone)
+            };
+            let tnum_line = if tnums.is_empty() {
+                String::new()
+            } else {
+                format!("\n  Tnums:  {}", tnums)
+            };
+
+            debug!(target: "app",
+                "[PC:{}] {}\n  Types:  {}\n  Ranges: {}{}{}",
+                state.pc, instr,
+                state.types.reg_types_str(),
+                ranges, zone_line, tnum_line
+            );
+        }
 
         // F. Transfer Function
         let mut successors = transfer::transfer(&mut env, state, instr);
@@ -267,8 +296,10 @@ pub fn analyze_program_full(
                 );
                 for (i, step) in trace.iter().enumerate() {
                     println!(
-                        "[{:03}] PC {:<4} | {}\nReg Types: {}",
-                        i, step.pc, step.instr_str, step.reg_types_str
+                        "[{:03}] PC {:<4} | {}\n       Types:  {}\n       Ranges: {}",
+                        i, step.pc, step.instr_str,
+                        step.reg_types_str,
+                        step.reg_ranges_str,
                     );
                 }
                 println!("=============================================\n");

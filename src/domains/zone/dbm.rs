@@ -1,6 +1,5 @@
 // src/dbm.rs
 use crate::analysis::machine::reg::{REG_ENV, Reg};
-use log::debug;
 
 pub const INF: i64 = i64::MAX / 4;
 
@@ -181,8 +180,10 @@ impl Dbm {
         false
     }
 
+    /// Returns the DBM as a formatted matrix string (real registers only, no anchors).
+    /// The caller is responsible for logging the result at the desired level.
     #[allow(dead_code)]
-    pub fn dump_matrix(&self) {
+    pub fn matrix_str(&self) -> String {
         use std::fmt::Write;
         let vars = REG_ENV.all();
         let n = vars.len();
@@ -190,7 +191,6 @@ impl Dbm {
         let mut output = String::new();
         writeln!(output, "DBM [{} x {}]:", n, n).unwrap();
 
-        // header
         write!(output, "{:>8} ", "").unwrap();
         for v in vars {
             write!(output, "{:>12} ", v.name()).unwrap();
@@ -199,7 +199,7 @@ impl Dbm {
 
         for (row_idx, vi) in vars.iter().enumerate() {
             write!(output, "{:>8} ", vi.name()).unwrap();
-            for (col_idx, _vj) in vars.iter().enumerate() {
+            for col_idx in 0..n {
                 let v = self.data[row_idx][col_idx];
                 if v >= INF {
                     write!(output, "{:>12} ", "INF").unwrap();
@@ -210,17 +210,17 @@ impl Dbm {
             writeln!(output).unwrap();
         }
 
-        debug!("{}", output);
+        output
     }
 
-    #[allow(dead_code)]
-    pub fn dump_matrix_full(&self) {
+    /// Returns the full DBM as a formatted matrix string (all registers including anchors).
+    /// The caller is responsible for logging the result at the desired level.
+    pub fn matrix_full_str(&self) -> String {
         use std::fmt::Write;
         let n = self.num_vars();
         let mut output = String::new();
         writeln!(output, "DBM [{} x {}] (full, with anchors):", n, n).unwrap();
 
-        // header
         write!(output, "{:>12} ", "").unwrap();
         for j in 0..n {
             let name = Reg::idx_to_reg(j).map(|r| r.name()).unwrap_or("???");
@@ -242,123 +242,66 @@ impl Dbm {
             writeln!(output).unwrap();
         }
 
-        debug!("{}", output);
+        output
     }
 
-    pub fn pretty_print(&self) {
-        use std::fmt::Write;
-        let zero = Reg::Zero;
-        let mut output = String::new();
-        writeln!(output, "  Bounds:").unwrap();
-        for i in 0..self.dim() {
-            let Some(i) = Reg::idx_to_reg(i) else {
-                continue;
-            };
-            if i == zero || i.is_anchor() {
-                continue;
-            }
+    /// Returns a compact, single-line string of non-trivial relational constraints
+    /// suitable for embedding in a log line.
+    ///
+    /// Only register-register and register-anchor pairs are shown (pairs involving
+    /// `Zero` encode absolute bounds and are already covered by the Ranges section).
+    /// Each unique unordered pair `{ri, rj}` is emitted once (ri.idx() < rj.idx()),
+    /// so symmetric entries are collapsed:
+    ///
+    ///   `ri-rj=={k}`          when both sides pin to the same value
+    ///   `ri-rj in [lo,hi]`    when both sides are finite
+    ///   `ri-rj<={hi}`         upper bound only
+    ///   `ri-rj>={lo}`         lower bound only
+    pub fn relations_str(&self) -> String {
+        let n = self.dim();
 
-            let ub = self.get(i, zero); // x - 0 ≤ ub  →  x ≤ ub
-            let lb_neg = self.get(zero, i); // 0 - x ≤ lb_neg  →  x ≥ -lb_neg
+        // Collect all non-Zero registers in index order (real regs + anchors).
+        let regs: Vec<Reg> = (0..n)
+            .filter_map(Reg::idx_to_reg)
+            .filter(|r| *r != Reg::Zero)
+            .collect();
 
-            // let min_str = if lb_neg >= INF { "-INF".to_string() } else { format!("{:#x}", -lb_neg) };
-            // let max_str = if ub >= INF { "+INF".to_string() } else { format!("{:#x}", ub) };
-            let min_str = if lb_neg >= INF {
-                "-INF".to_string()
-            } else {
-                (-lb_neg).to_string()
-            };
-            let max_str = if ub >= INF {
-                "+INF".to_string()
-            } else {
-                ub.to_string()
-            };
+        let mut parts: Vec<String> = Vec::new();
 
-            if min_str != "-INF" || max_str != "+INF" {
-                writeln!(output, "    {}: [{}, {}]", i.name(), min_str, max_str).unwrap();
-            }
+        for (a, &ri) in regs.iter().enumerate() {
+            for &rj in &regs[a + 1..] {
+                // c_ij: ri - rj <= c_ij
+                // c_ji: rj - ri <= c_ji  (=> ri - rj >= -c_ji)
+                let c_ij = self.get(ri, rj);
+                let c_ji = self.get(rj, ri);
 
-            for j in 1..self.dim() {
-                let Some(j) = Reg::idx_to_reg(j) else {
-                    continue;
-                };
-                if j == zero || j == i {
-                    continue;
+                if c_ij >= INF && c_ji >= INF {
+                    continue; // no constraint between this pair
                 }
 
-                let val = self.get(i, j);
-                // let diff_str = if val >= INF || val <= -INF { "INF".to_string() } else { format!("{:#x}", val) };
-                let diff_str = if val >= INF || val <= -INF {
-                    "INF".to_string()
-                } else {
-                    val.to_string()
+                let hi = if c_ij >= INF { None } else { Some(c_ij) };
+                let lo = if c_ji >= INF { None } else { Some(-c_ji) };
+
+                let s = match (lo, hi) {
+                    (Some(lo), Some(hi)) if lo == hi => {
+                        format!("{}-{}=={}", ri.name(), rj.name(), lo)
+                    }
+                    (Some(lo), Some(hi)) => {
+                        format!("{}-{} in [{},{}]", ri.name(), rj.name(), lo, hi)
+                    }
+                    (None, Some(hi)) => {
+                        format!("{}-{}<={}", ri.name(), rj.name(), hi)
+                    }
+                    (Some(lo), None) => {
+                        format!("{}-{}>={}", ri.name(), rj.name(), lo)
+                    }
+                    _ => continue,
                 };
-                if diff_str != "INF" {
-                    writeln!(output, "    {} - {} <= {}", i.name(), j.name(), diff_str).unwrap();
-                }
+                parts.push(s);
             }
         }
-        let anchors = [Reg::AnchorDataMeta, Reg::AnchorData, Reg::AnchorDataEnd];
 
-        let mut has_anchor_info = false;
-        for i in 0..self.dim() {
-            let Some(reg) = Reg::idx_to_reg(i) else {
-                continue;
-            };
-            if reg == Reg::Zero {
-                continue;
-            }
-
-            for &anchor in &anchors {
-                let reg_minus_anchor = self.get(reg, anchor);
-                let anchor_minus_reg = self.get(anchor, reg);
-
-                if reg_minus_anchor < INF || anchor_minus_reg < INF {
-                    if !has_anchor_info {
-                        writeln!(output, "  Anchor offsets:").unwrap();
-                        has_anchor_info = true;
-                    }
-                    if reg_minus_anchor < INF && anchor_minus_reg < INF {
-                        // exact or range: -anchor_minus_reg <= reg - anchor <= reg_minus_anchor
-                        let lo = -anchor_minus_reg;
-                        let hi = reg_minus_anchor;
-                        if lo == hi {
-                            writeln!(output, "    {} - {} == {}", reg.name(), anchor.name(), lo)
-                                .unwrap();
-                        } else {
-                            writeln!(
-                                output,
-                                "    {} - {} in [{}, {}]",
-                                reg.name(),
-                                anchor.name(),
-                                lo,
-                                hi
-                            )
-                            .unwrap();
-                        }
-                    } else if reg_minus_anchor < INF {
-                        writeln!(
-                            output,
-                            "    {} - {} <= {}",
-                            reg.name(),
-                            anchor.name(),
-                            reg_minus_anchor
-                        )
-                        .unwrap();
-                    } else {
-                        writeln!(
-                            output,
-                            "    {} - {} >= {}",
-                            reg.name(),
-                            anchor.name(),
-                            -anchor_minus_reg
-                        )
-                        .unwrap();
-                    }
-                }
-            }
-        }
-        debug!("{}", output);
+        parts.join("  ")
     }
 
     /// Standard DBM widening: entries that loosen become INF.

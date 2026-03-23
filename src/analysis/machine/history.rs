@@ -8,6 +8,9 @@ pub struct Breadcrumb {
     /// The index of the previous step in the `History` vector
     pub parent_idx: Option<usize>,
     pub reg_types_str: String,
+    /// Compact per-register interval snapshot at the time of execution.
+    /// Formatted by `State::reg_ranges_str()`.
+    pub reg_ranges_str: String,
     pub depth: usize,
 }
 
@@ -29,6 +32,7 @@ impl History {
         pc: usize,
         instr: &Instr,
         reg_types_str: String,
+        reg_ranges_str: String,
         depth: usize,
         parent_idx: Option<usize>,
     ) -> usize {
@@ -37,6 +41,7 @@ impl History {
             pc,
             instr_str: format!("{:?}", instr),
             reg_types_str,
+            reg_ranges_str,
             depth,
             parent_idx,
         });
