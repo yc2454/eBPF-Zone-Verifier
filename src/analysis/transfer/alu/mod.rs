@@ -96,11 +96,11 @@ pub(crate) fn transfer_alu(
     // 7. Post-operation consistency check
     if state.domain.is_inconsistent() {
         env.fail(VerificationError::DbmInconsistent { pc: state.pc });
-        let zone = state.domain.zone_relations_str();
-        let zone_part = if zone.is_empty() {
+        let rel = state.domain.relations_str();
+        let zone_part = if rel.is_empty() {
             String::new()
         } else {
-            format!("  Zone:   {}\n", zone)
+            format!("  Rel:    {}\n", rel)
         };
         error!(target: "app",
             "[Verifier] Domain became inconsistent at pc {}\n  Ranges: {}\n{}",

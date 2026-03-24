@@ -235,13 +235,13 @@ pub fn analyze_program_full(
         }
         if config.verbosity >= 2 || config.debug_pc == Some(state.pc) {
             let ranges = state.reg_ranges_str();
-            let zone   = state.domain.zone_relations_str();
+            let rel    = state.domain.relations_str();
             let tnums  = state.reg_tnums_compact_str();
 
-            let zone_line = if zone.is_empty() {
+            let rel_line = if rel.is_empty() {
                 String::new()
             } else {
-                format!("\n  Zone:   {}", zone)
+                format!("\n  Rel:    {}", rel)
             };
             let tnum_line = if tnums.is_empty() {
                 String::new()
@@ -253,7 +253,7 @@ pub fn analyze_program_full(
                 "[PC:{}] {}\n  Types:  {}\n  Ranges: {}{}{}",
                 state.pc, instr,
                 state.types.reg_types_str(),
-                ranges, zone_line, tnum_line
+                ranges, rel_line, tnum_line
             );
         }
 

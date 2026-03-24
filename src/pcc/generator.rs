@@ -181,6 +181,8 @@ struct BackwardStep {
     post_left_reg: usize,
     post_right_reg: usize,
     delta: i64,
+    /// Human-readable description of why `delta` is what it is (see `backward_transfer`).
+    hint: Option<String>,
 }
 
 /// Trace backward from `target_pc` to find the divergence point where the
@@ -210,7 +212,8 @@ fn backward_trace(
         // First, compute the backward transfer through the instruction at this PC.
         // This tells us what the constraint looks like BEFORE this instruction.
         let instr = &prog.instrs[pc];
-        let (prev_i, prev_j, delta) = backward_transfer(instr, cur_i, cur_j, zone_dbms, pc)?;
+        let (prev_i, prev_j, delta, hint) =
+            backward_transfer(instr, cur_i, cur_j, zone_dbms, pc)?;
         let pre_bound = cur_bound.checked_sub(delta)?;
 
         // Record this as a backward step (instruction transforms constraint).
@@ -221,6 +224,7 @@ fn backward_trace(
             post_left_reg: cur_i.idx(),
             post_right_reg: cur_j.idx(),
             delta,
+            hint,
         });
 
         // Now check: does the interval agree on the PRE-instruction constraint?
@@ -275,6 +279,7 @@ fn backward_trace(
                         post_left_reg: bs.post_left_reg,
                         post_right_reg: bs.post_right_reg,
                         delta: bs.delta,
+                        hint: bs.hint,
                     });
                 }
 
@@ -340,7 +345,7 @@ fn backward_transfer(
     cur_j: Reg,
     zone_dbms: &[Dbm],
     pc: usize,
-) -> Option<(Reg, Reg, i64)> {
+) -> Option<(Reg, Reg, i64, Option<String>)> {
     match instr {
         // mov dst, src  →  dst_post = src_pre.
         // If cur_i == dst, the value now in dst came from src before the move.
@@ -354,7 +359,29 @@ fn backward_transfer(
         } => {
             let prev_i = if cur_i == *dst { *src } else { cur_i };
             let prev_j = if cur_j == *dst { *src } else { cur_j };
-            Some((prev_i, prev_j, 0))
+            // Build a hint only when a register rename actually happens.
+            let hint = if cur_i == *dst && cur_j != *dst {
+                Some(format!(
+                    "{} = {}  [{} renamed to {}; tracking {} now]",
+                    dst.name(),
+                    src.name(),
+                    src.name(),
+                    dst.name(),
+                    dst.name(),
+                ))
+            } else if cur_j == *dst && cur_i != *dst {
+                Some(format!(
+                    "{} = {}  [{} renamed to {}; tracking {} now]",
+                    dst.name(),
+                    src.name(),
+                    src.name(),
+                    dst.name(),
+                    dst.name(),
+                ))
+            } else {
+                None // passthrough (dst ∉ {cur_i, cur_j})
+            };
+            Some((prev_i, prev_j, 0, hint))
         }
 
         // add dst, imm  →  dst_post = dst_pre + imm.
@@ -369,12 +396,38 @@ fn backward_transfer(
             ..
         } => {
             if *dst == cur_i {
-                Some((cur_i, cur_j, *imm))
+                // Left side shifts: L += imm  →  L-R bound increases by imm.
+                let hint = if *imm >= 0 {
+                    Some(format!("{} += {}", dst.name(), imm))
+                } else {
+                    Some(format!("{} -= {}", dst.name(), -imm))
+                };
+                Some((cur_i, cur_j, *imm, hint))
             } else if *dst == cur_j {
-                Some((cur_i, cur_j, -(*imm)))
+                // Right side shifts: R += imm  →  L-R bound decreases by imm.
+                let hint = if *imm >= 0 {
+                    Some(format!(
+                        "{} += {}  (right side grows; {}-{} tightens by {})",
+                        dst.name(),
+                        imm,
+                        cur_i.name(),
+                        cur_j.name(),
+                        imm,
+                    ))
+                } else {
+                    Some(format!(
+                        "{} -= {}  (right side shrinks; {}-{} relaxes by {})",
+                        dst.name(),
+                        -imm,
+                        cur_i.name(),
+                        cur_j.name(),
+                        -imm,
+                    ))
+                };
+                Some((cur_i, cur_j, -(*imm), hint))
             } else {
                 // Passthrough: dst doesn't affect the tracked pair.
-                Some((cur_i, cur_j, 0))
+                Some((cur_i, cur_j, 0, None))
             }
         }
 
@@ -393,7 +446,15 @@ fn backward_transfer(
             if *dst == cur_i {
                 let dbm = zone_dbms.get(pc)?;
                 let src_ub = zone_upper_bound(dbm, *src, Reg::Zero)?;
-                Some((cur_i, cur_j, src_ub))
+                // Left side increases by at most src_ub.
+                let hint = Some(format!(
+                    "{} += {}  ({} <= {}, worst case)",
+                    dst.name(),
+                    src.name(),
+                    src.name(),
+                    src_ub,
+                ));
+                Some((cur_i, cur_j, src_ub, hint))
             } else if *dst == cur_j {
                 let dbm = zone_dbms.get(pc)?;
                 let src_lb = {
@@ -401,9 +462,17 @@ fn backward_transfer(
                     let neg_lb = zone_upper_bound(dbm, Reg::Zero, *src)?;
                     -neg_lb
                 };
-                Some((cur_i, cur_j, -src_lb))
+                // Right side increases by at least src_lb.
+                let hint = Some(format!(
+                    "{} += {}  ({} >= {}, worst case)",
+                    dst.name(),
+                    src.name(),
+                    src.name(),
+                    src_lb,
+                ));
+                Some((cur_i, cur_j, -src_lb, hint))
             } else {
-                Some((cur_i, cur_j, 0))
+                Some((cur_i, cur_j, 0, None))
             }
         }
 
@@ -423,8 +492,8 @@ fn backward_transfer(
                 // Unsupported: instruction modifies tracked register
                 None
             } else {
-                // Passthrough
-                Some((cur_i, cur_j, 0))
+                // Passthrough: instruction does not touch cur_i or cur_j.
+                Some((cur_i, cur_j, 0, None))
             }
         }
     }

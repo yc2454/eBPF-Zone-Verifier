@@ -568,13 +568,57 @@ impl NumericDomain {
     }
 
     /// Returns a compact string of non-trivial relational constraints for log lines.
-    /// In Zone mode this delegates to `Dbm::relations_str()`; returns an empty
-    /// string in Interval mode (which has no register-register relations).
-    pub fn zone_relations_str(&self) -> String {
+    ///
+    /// - Zone mode: pairwise DBM constraints, e.g. `r2-r10==-8  r4-@data in [0,100]`
+    /// - Interval mode: global packet / meta geometry, e.g. `pkt>=100  meta<20`
+    ///
+    /// Returns an empty string when there is nothing worth logging.
+    pub fn relations_str(&self) -> String {
         match self {
             NumericDomain::Zone(dbm) => dbm.relations_str(),
-            NumericDomain::Interval(_) => String::new(),
+            NumericDomain::Interval(ivl) => ivl.global_constraints_str(),
         }
+    }
+
+    /// Returns the PtrOffset of a register formatted as `@anchor[±off][+[lo,hi]]`,
+    /// or `None` if the register has no PtrOffset (Zone mode always returns `None`).
+    ///
+    /// Used by `State::reg_ranges_str()` to show stack / packet pointer relationships
+    /// in Interval mode, where scalar bounds are uninformative for pointer registers
+    /// (e.g. R10 is `[-inf,inf]` as a scalar but carries `PtrOffset{anchor:R10,off:0}`).
+    ///
+    /// Format rules:
+    ///   `@r10`            off=0, var_off=0
+    ///   `@r10-8`          off=-8, var_off=0
+    ///   `@data+[0,100]`   off=0, var_off=100  (variable offset shown as range)
+    ///   `@data+[-8,0]`    off=-8, var_off=8
+    pub fn ptr_offset_str(&self, r: Reg) -> Option<String> {
+        let NumericDomain::Interval(ivl) = self else {
+            return None;
+        };
+        let p = ivl.get_ptr_offset(r)?;
+
+        // Anchor registers (AnchorData etc.) already embed "@" in their name();
+        // real registers like R10 used as anchors need it added.
+        let base = if p.anchor.is_anchor() {
+            p.anchor.name().to_string()
+        } else {
+            format!("@{}", p.anchor.name())
+        };
+
+        let s = if p.var_off == 0 {
+            if p.off == 0 {
+                base
+            } else {
+                // {:+} always prints the sign, giving "@r10-8" or "@data+4"
+                format!("{}{:+}", base, p.off)
+            }
+        } else {
+            let min = p.off;
+            let max = p.off.saturating_add(p.var_off as i64);
+            format!("{}+[{},{}]", base, min, max)
+        };
+        Some(s)
     }
 
     /// Returns the full DBM matrix as a formatted string for deep debugging (verbosity ≥ 3).

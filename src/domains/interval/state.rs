@@ -432,6 +432,32 @@ impl IntervalState {
         );
     }
 
+    /// Compact string of global (non-per-register) constraints for log lines.
+    ///
+    /// The only relational state in Interval mode that is not captured by
+    /// per-register PtrOffset info is the packet / meta geometry learned from
+    /// bounds checks.  Outputs tokens like `pkt>=100` or `pkt in [100,200)`.
+    /// Returns an empty string when nothing is constrained.
+    pub fn global_constraints_str(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+
+        match (self.packet_size_lower_bound, self.packet_size_upper_bound) {
+            (Some(lo), Some(hi)) => parts.push(format!("pkt in [{},{})", lo, hi)),
+            (Some(lo), None) => parts.push(format!("pkt>={}", lo)),
+            (None, Some(hi)) => parts.push(format!("pkt<{}", hi)),
+            (None, None) => {}
+        }
+
+        match (self.meta_size_lower_bound, self.meta_size_upper_bound) {
+            (Some(lo), Some(hi)) => parts.push(format!("meta in [{},{})", lo, hi)),
+            (Some(lo), None) => parts.push(format!("meta>={}", lo)),
+            (None, Some(hi)) => parts.push(format!("meta<{}", hi)),
+            (None, None) => {}
+        }
+
+        parts.join("  ")
+    }
+
     /// Clear all packet and meta size bounds.
     /// Called when entering a function to ensure the callee starts fresh,
     /// matching kernel verifier behavior where each function tracks its own bounds.

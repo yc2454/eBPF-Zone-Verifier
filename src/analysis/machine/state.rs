@@ -510,27 +510,22 @@ impl State {
 
     // ── Display helpers ─────────────────────────────────────────
 
-    pub fn tnums_to_string(&self) -> String {
-        let mut parts = Vec::new();
-        for r in Reg::ALL {
-            let tnum = self.get_tnum(r);
-            if tnum.is_unknown() {
-                continue;
-            }
-            parts.push(format!("{:?}: {}", r, tnum.to_string()));
-        }
-        parts.join(", ")
-    }
-
-    /// Compact per-register interval summary for log lines.
+    /// Compact per-register summary for log lines.
     ///
-    /// Format per register:
-    ///   `rN=V`          when the range is a single constant
-    ///   `rN=[lo,hi]`    when both bounds are finite
-    ///   `rN=[-inf,hi]`  / `rN=[lo,inf]`  when one side is unbounded
+    /// Per-register format (first matching rule wins):
     ///
-    /// Registers that are `NotInit` or fully unbounded `[-inf, inf]` are skipped.
-    /// `Zero` is always 0 and is skipped as structural noise.
+    /// 1. **Interval mode pointer** — register has a `PtrOffset`:
+    ///    `rN=@anchor[±off][+[lo,hi]]`
+    ///    e.g. `r10=@r10`, `r2=@r10-8`, `r4=@data+[0,100]`
+    ///
+    /// 2. **Scalar constant** — `lo == hi`:
+    ///    `rN=V`
+    ///
+    /// 3. **Bounded scalar** — at least one finite bound:
+    ///    `rN=[lo,hi]`, `rN=[lo,inf]`, `rN=[-inf,hi]`
+    ///
+    /// Registers that are `NotInit`, fully unbounded `[-inf,inf]`, or `Zero`
+    /// (always 0 and structurally constant) are skipped.
     /// Returns `"(all unbounded)"` when every register is skipped so the caller
     /// always gets a non-empty string to embed in a log line.
     pub fn reg_ranges_str(&self) -> String {
@@ -541,6 +536,14 @@ impl State {
                 continue;
             }
             if self.types.get(r) == RegType::NotInit {
+                continue;
+            }
+
+            // Interval mode: PtrOffset captures the anchor relationship that
+            // scalar bounds cannot (e.g. R10 is [-inf,inf] as a scalar but
+            // carries PtrOffset{anchor:R10, off:0}).  Prefer it when present.
+            if let Some(ptr_str) = self.domain.ptr_offset_str(r) {
+                parts.push(format!("{}={}", r.name(), ptr_str));
                 continue;
             }
 

@@ -65,6 +65,11 @@ pub enum ProofStep {
     ///
     /// Here `ub(src)` and `lb(src)` are the interval upper/lower bounds of `src`
     /// read from the interval pre-state at `pc`.
+    ///
+    /// The optional `hint` is a human-readable description of the instruction and why
+    /// it causes `delta` to be what it is (e.g. `"r5 += r4  (r4 <= 3)"`).
+    /// It carries no semantic weight — the checker ignores it — but makes the proof
+    /// chain much easier to read.
     #[serde(rename = "Transfer")]
     Transfer {
         pc: usize,
@@ -73,6 +78,10 @@ pub enum ProofStep {
         post_left_reg: usize,
         post_right_reg: usize,
         delta: i64,
+        /// Human-readable explanation of why `delta` is what it is.
+        /// Informational only; omitted from JSON when absent.
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        hint: Option<String>,
     },
 }
 
@@ -211,16 +220,14 @@ impl fmt::Display for ProgramCertificate {
             for (ei, entry) in ann.entries.iter().enumerate() {
                 let lname = reg_name(entry.left_reg);
                 let rname = reg_name(entry.right_reg);
-                let sum: i64 = entry.proof.iter().map(|s| s.bound_contribution()).sum();
                 writeln!(
                     f,
-                    "    [entry {}]  {} - {} <= {}   ({} proof step(s), sum = {})",
+                    "    [entry {}]  {} - {} <= {}   ({} proof step(s))",
                     ei,
                     lname,
                     rname,
                     entry.bound,
                     entry.proof.len(),
-                    sum
                 )?;
 
                 let mut running: i64 = 0;
@@ -249,29 +256,59 @@ impl fmt::Display for ProgramCertificate {
                             post_left_reg,
                             post_right_reg,
                             delta,
+                            hint,
                         } => {
+                            let prev_running = running;
                             running += delta;
-                            let constraint = if pre_left_reg != post_left_reg
-                                || pre_right_reg != post_right_reg
-                            {
-                                format!(
-                                    "{} - {}  ->  {} - {}",
-                                    reg_name(*pre_left_reg),
-                                    reg_name(*pre_right_reg),
-                                    reg_name(*post_left_reg),
-                                    reg_name(*post_right_reg),
-                                )
+
+                            // Describe what the instruction did to the tracked pair.
+                            // Use the hint (filled in by the generator) when available;
+                            // fall back to a raw constraint-pair display otherwise.
+                            let constraint_str =
+                                if pre_left_reg != post_left_reg || pre_right_reg != post_right_reg
+                                {
+                                    format!(
+                                        "{}-{}  ->  {}-{}",
+                                        reg_name(*pre_left_reg),
+                                        reg_name(*pre_right_reg),
+                                        reg_name(*post_left_reg),
+                                        reg_name(*post_right_reg),
+                                    )
+                                } else {
+                                    format!(
+                                        "{}-{}",
+                                        reg_name(*pre_left_reg),
+                                        reg_name(*pre_right_reg),
+                                    )
+                                };
+                            let desc = if let Some(h) = hint {
+                                h.clone()
+                            } else if *delta != 0 {
+                                format!("{}  delta={:+}", constraint_str, delta)
                             } else {
+                                format!("{}  [passthrough]", constraint_str)
+                            };
+
+                            // Show the running-bound arithmetic explicitly so the
+                            // reader can follow the proof without mental arithmetic.
+                            // e.g. "-8 + 3 = -5" rather than "-8 +3 = -5".
+                            let arith = if *delta == 0 {
+                                format!("bound: {} (unchanged)", prev_running)
+                            } else {
+                                let sign = if *delta >= 0 { "+" } else { "-" };
                                 format!(
-                                    "{} - {}",
-                                    reg_name(*pre_left_reg),
-                                    reg_name(*pre_right_reg)
+                                    "bound: {} {} {} = {}",
+                                    prev_running,
+                                    sign,
+                                    delta.abs(),
+                                    running,
                                 )
                             };
+
                             writeln!(
                                 f,
-                                "      [{si}] Transfer @ pc {:>3}:  {}  delta={:+}   (running: {})",
-                                pc, constraint, delta, running,
+                                "      [{si}] Transfer @ pc {:>3}:  {}   =>  {}",
+                                pc, desc, arith,
                             )?;
                         }
                     }
@@ -310,6 +347,7 @@ mod tests {
             post_left_reg: 6,
             post_right_reg: 14,
             delta: 3,
+            hint: None,
         };
         let json = serde_json::to_string(&step).unwrap();
         assert!(json.contains("\"kind\":\"Transfer\""));
@@ -344,6 +382,7 @@ mod tests {
                             post_left_reg: 6,
                             post_right_reg: 14,
                             delta: 3,
+                            hint: None,
                         },
                     ],
                 }],
@@ -374,6 +413,7 @@ mod tests {
             post_left_reg: 6,
             post_right_reg: 14,
             delta: 3,
+            hint: None,
         };
         assert_eq!(transfer.pc(), 9);
         assert_eq!(transfer.output_left_reg(), 6);

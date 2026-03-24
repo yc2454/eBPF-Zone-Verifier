@@ -532,6 +532,7 @@ pub fn verify_proof_chain_replay(
             post_left_reg,
             post_right_reg,
             delta,
+            ..
         } = step
         else {
             debug!(
