@@ -1,0 +1,11 @@
+prevail*.json
+prevail*.txt
+log
+results/
+target/
+debug_trace.txt
+trace.log
+pcc_proof_steps.md
+docs/
+track.patch
+.DS_Store

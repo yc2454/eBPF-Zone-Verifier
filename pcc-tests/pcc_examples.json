@@ -160,6 +160,36 @@
     ]
   },
   {
+    "name": "pcc: derived-register guard (r3=r2+4, check r3, prove r2, zone ok, interval reject)",
+    "result": "ACCEPT",
+    "prog_type": 1,
+    "fixups": {
+      "fixup_map_hash_8b": [1]
+    },
+    "insns": [
+      {"code": 122, "dst": 10, "src": 0,  "off": -8, "imm": 0},
+      {"code": 24,  "dst": 1,  "src": 1,  "off": 0,  "imm": 0},
+      {"code": 0,   "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 191, "dst": 2,  "src": 10, "off": 0,  "imm": 0},
+      {"code": 7,   "dst": 2,  "src": 0,  "off": 0,  "imm": -8},
+      {"code": 133, "dst": 0,  "src": 0,  "off": 0,  "imm": 1},
+      {"code": 21,  "dst": 0,  "src": 0,  "off": 11, "imm": 0},
+      {"code": 191, "dst": 6,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 133, "dst": 0,  "src": 0,  "off": 0,  "imm": 7},
+      {"code": 87,  "dst": 0,  "src": 0,  "off": 0,  "imm": 15},
+      {"code": 191, "dst": 2,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 191, "dst": 3,  "src": 2,  "off": 0,  "imm": 0},
+      {"code": 7,   "dst": 3,  "src": 0,  "off": 0,  "imm": 4},
+      {"code": 37,  "dst": 3,  "src": 0,  "off": 4,  "imm": 8},
+      {"code": 15,  "dst": 6,  "src": 2,  "off": 0,  "imm": 0},
+      {"code": 113, "dst": 0,  "src": 6,  "off": 0,  "imm": 0},
+      {"code": 183, "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 149, "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 183, "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 149, "dst": 0,  "src": 0,  "off": 0,  "imm": 0}
+    ]
+  },
+  {
     "name": "pcc: branch guard + prestate chain for packet access",
     "result": "ACCEPT",
     "prog_type": 3,
