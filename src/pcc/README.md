@@ -233,8 +233,14 @@ The generator (`generator.rs`) produces certificates automatically from the zone
 For each `target_pc` that zone proves safe but interval rejects, the generator tries three strategies in order:
 
 1. **Backward trace** — linear `Fact + Transfer` chain.
-2. **Derive chain** — alias pattern `k = src + offset` guarded by a branch.
+2. **Derive chain** — alias pattern `r = src + offset` guarded by a branch.
 3. **Provenance-based Compose** — decomposes a transitive constraint into primitive edges using the DBM’s provenance and folds them into nested `Compose` nodes.
+
+**When each proof step appears (conceptual, code-agnostic)**
+- `Fact` — first step of any proof: placed at the earliest program point where the interval view already certifies the needed constraint (either directly from state or from the branch condition on its fall-through edge).
+- `Transfer` — added for each instruction you replay while walking backward from the load; records how that instruction changes the bound or tracked registers.
+- `Derive` — added only in the “alias” pattern: when a guarded register `r` is syntactically shown to equal `src + offset`, and the load uses `src`. The proof then switches from `r` to `src` with a single Derive step.
+- `Compose` — used only for transitive closures: when the relational fact between the load base and anchor is provable only by chaining multiple primitive constraints through intermediate registers. The generator breaks the path into per-edge sub-proofs and wraps them in one top-level Compose node.
 
 ### Strategy 1: Backward Trace
 
