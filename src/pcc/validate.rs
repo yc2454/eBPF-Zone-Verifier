@@ -86,6 +86,11 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
                         right_reg,
                         ..
                     } => vec![*left_reg, *right_reg],
+                    ProofStep::Derive {
+                        source_reg,
+                        target_reg,
+                        ..
+                    } => vec![*source_reg, *target_reg],
                     ProofStep::Transfer {
                         pre_left_reg,
                         pre_right_reg,
@@ -112,28 +117,42 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
                 }
             }
 
-            // Chain connectivity: Transfer[k].from == prev.output
+            // Chain connectivity: each step after Guard must be Transfer or Derive,
+            // and its input registers must match the previous step's output registers.
             for w in e.proof.windows(2) {
-                let ProofStep::Transfer {
-                    pre_left_reg,
-                    pre_right_reg,
-                    ..
-                } = &w[1]
-                else {
-                    anyhow::bail!(
-                        "pc_annotation #{} entry #{} has non-Transfer step after Guard",
-                        pc_idx,
-                        eidx
-                    );
-                };
-                if w[0].output_left_reg() != *pre_left_reg
-                    || w[0].output_right_reg() != *pre_right_reg
-                {
-                    anyhow::bail!(
-                        "pc_annotation #{} entry #{} proof chain disconnected",
-                        pc_idx,
-                        eidx
-                    );
+                match &w[1] {
+                    ProofStep::Guard { .. } => {
+                        anyhow::bail!(
+                            "pc_annotation #{} entry #{} has Guard step after first position",
+                            pc_idx,
+                            eidx
+                        );
+                    }
+                    ProofStep::Transfer {
+                        pre_left_reg,
+                        pre_right_reg,
+                        ..
+                    } => {
+                        if w[0].output_left_reg() != *pre_left_reg
+                            || w[0].output_right_reg() != *pre_right_reg
+                        {
+                            anyhow::bail!(
+                                "pc_annotation #{} entry #{} proof chain disconnected at Transfer",
+                                pc_idx,
+                                eidx
+                            );
+                        }
+                    }
+                    ProofStep::Derive { source_reg, .. } => {
+                        // Derive's source_reg must match the previous step's output_left_reg.
+                        if w[0].output_left_reg() != *source_reg {
+                            anyhow::bail!(
+                                "pc_annotation #{} entry #{} proof chain disconnected at Derive",
+                                pc_idx,
+                                eidx
+                            );
+                        }
+                    }
                 }
             }
 
@@ -147,11 +166,14 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
                 );
             }
 
-            // PC monotonicity: non-decreasing, all < ann.pc.
-            // The Guard and its immediately following Transfer may share the same PC
+            // PC ordering: all step PCs < target ann.pc.
+            // The Guard and its immediately following step may share the same PC
             // (Guard establishes the fact before the instruction; Transfer processes it).
-            // After the first Transfer, PCs must be strictly increasing.
+            // Derive steps may reference PCs before the Guard (they establish register
+            // aliases that the Guard relies on). After the first Transfer, PCs must be
+            // strictly increasing.
             let mut prev_pc = None;
+            let mut seen_transfer = false;
             for (sidx, step) in e.proof.iter().enumerate() {
                 let step_pc = step.pc();
                 if step_pc >= ann.pc {
@@ -165,8 +187,12 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
                     );
                 }
                 if let Some(prev) = prev_pc {
-                    if sidx == 1 {
-                        // Guard → first Transfer: allow same PC (non-decreasing)
+                    if matches!(step, ProofStep::Derive { .. }) && !seen_transfer {
+                        // Derive after Guard (before any Transfer): may reference
+                        // earlier PCs (the alias was established before the branch).
+                        // Only require step_pc < ann.pc (already checked above).
+                    } else if !seen_transfer {
+                        // Guard → first non-Derive step: allow same PC (non-decreasing)
                         if step_pc < prev {
                             anyhow::bail!(
                                 "pc_annotation #{} entry #{} step #{} pc={} < guard pc={}",
@@ -178,7 +204,7 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
                             );
                         }
                     } else {
-                        // Transfer → Transfer: strictly increasing
+                        // After first Transfer: strictly increasing
                         if step_pc <= prev {
                             anyhow::bail!(
                                 "pc_annotation #{} entry #{} step #{} pc={} not strictly increasing (prev={})",
@@ -190,6 +216,9 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
                             );
                         }
                     }
+                }
+                if matches!(step, ProofStep::Transfer { .. }) {
+                    seen_transfer = true;
                 }
                 prev_pc = Some(step_pc);
             }

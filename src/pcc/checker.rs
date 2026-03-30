@@ -20,6 +20,15 @@ pub struct VerifiedEntry {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Human-readable name for a register index, or "?" if unknown.
+fn reg_name(idx: usize) -> &'static str {
+    Reg::idx_to_reg(idx).map(|r| r.name()).unwrap_or("?")
+}
+
+// ---------------------------------------------------------------------------
 // Internal proof-check state (separate from verifier State)
 // ---------------------------------------------------------------------------
 
@@ -75,6 +84,14 @@ pub fn distance_upper_bound(state: &State, i: Reg, j: Reg) -> Option<i64> {
         }
     }
 
+    // Map pointers: if i has PtrOffset with anchor == j (typically Zero),
+    // the max distance is off + var_off (the maximum map-buffer offset).
+    if let Some(po) = ivl.get_ptr_offset(i) {
+        if po.anchor == j {
+            return Some(po.max_offset());
+        }
+    }
+
     Some(direct)
 }
 
@@ -98,7 +115,7 @@ pub(super) fn derive_guard_constraint_from_branch(
         width,
         left,
         op,
-        right: Operand::Reg(right),
+        right,
         target,
     } = pred_instr
     else {
@@ -114,26 +131,51 @@ pub(super) fn derive_guard_constraint_from_branch(
     } else {
         return None;
     };
-    let (left_reg, right_reg, c) = match (*op, branch_taken) {
-        (CmpOp::ULe | CmpOp::SLe, true) | (CmpOp::UGt | CmpOp::SGt, false) => {
-            (left.idx(), right.idx(), 0)
+
+    match right {
+        Operand::Reg(right_r) => {
+            let (left_reg, right_reg, c) = match (*op, branch_taken) {
+                (CmpOp::ULe | CmpOp::SLe, true) | (CmpOp::UGt | CmpOp::SGt, false) => {
+                    (left.idx(), right_r.idx(), 0)
+                }
+                (CmpOp::ULt | CmpOp::SLt, true) | (CmpOp::UGe | CmpOp::SGe, false) => {
+                    (left.idx(), right_r.idx(), -1)
+                }
+                (CmpOp::UGe | CmpOp::SGe, true) | (CmpOp::ULt | CmpOp::SLt, false) => {
+                    (right_r.idx(), left.idx(), 0)
+                }
+                (CmpOp::UGt | CmpOp::SGt, true) | (CmpOp::ULe | CmpOp::SLe, false) => {
+                    (right_r.idx(), left.idx(), -1)
+                }
+                _ => return None,
+            };
+            Some(Constraint {
+                left_reg,
+                right_reg,
+                c,
+            })
         }
-        (CmpOp::ULt | CmpOp::SLt, true) | (CmpOp::UGe | CmpOp::SGe, false) => {
-            (left.idx(), right.idx(), -1)
+        Operand::Imm(imm) => {
+            // Immediate comparison: `left op imm`.
+            // Constraint is `left - Zero <= c` where c depends on op and branch direction.
+            let c = match (*op, branch_taken) {
+                // left <= imm (fall-through of JGT, or taken JLE)
+                (CmpOp::ULe | CmpOp::SLe, true) | (CmpOp::UGt | CmpOp::SGt, false) => *imm,
+                // left < imm (fall-through of JGE, or taken JLT)
+                (CmpOp::ULt | CmpOp::SLt, true) | (CmpOp::UGe | CmpOp::SGe, false) => {
+                    imm.checked_sub(1)?
+                }
+                // left >= imm → Zero - left <= -imm → not a useful upper bound
+                // left > imm → not a useful upper bound
+                _ => return None,
+            };
+            Some(Constraint {
+                left_reg: left.idx(),
+                right_reg: Reg::Zero.idx(),
+                c,
+            })
         }
-        (CmpOp::UGe | CmpOp::SGe, true) | (CmpOp::ULt | CmpOp::SLt, false) => {
-            (right.idx(), left.idx(), 0)
-        }
-        (CmpOp::UGt | CmpOp::SGt, true) | (CmpOp::ULe | CmpOp::SLe, false) => {
-            (right.idx(), left.idx(), -1)
-        }
-        _ => return None,
-    };
-    Some(Constraint {
-        left_reg,
-        right_reg,
-        c,
-    })
+    }
 }
 
 /// Verify a Guard step against the interval pre-state at its PC.
@@ -252,7 +294,7 @@ fn verify_transfer(
     instr: &Instr,
     target_pc: usize,
 ) -> bool {
-    let reg_name = |idx: usize| Reg::idx_to_reg(idx).map(|r| r.name()).unwrap_or("?");
+
 
     match instr {
         // mov dst, src (register)
@@ -393,6 +435,27 @@ fn verify_transfer(
                     return false;
                 }
                 true
+            } else if src.idx() == pre_left
+                && di != pre_left
+                && di != pre_right
+                && post_left == di
+                && post_right == pre_right
+            {
+                // Absorb case: add dst, src_reg where src_reg == pre_left.
+                // Pre: src_reg - pre_right <= b. Post: dst_new = dst_old + src_reg.
+                // dst_new - pre_right = dst_old + (src_reg - pre_right) <= dst_old_ub + b.
+                // delta must be >= ub(dst - pre_right) from the interval pre-state.
+                let pre_right_reg = Reg::idx_to_reg(pre_right).unwrap_or(Reg::Zero);
+                let dst_ub = distance_upper_bound(state, *dst, pre_right_reg)
+                    .filter(|&ub| ub != i64::MAX);
+                let ok = dst_ub.map_or(false, |ub| delta >= ub);
+                debug!(
+                    target: "pcc",
+                    "[PCC] target={} Transfer(pc={}) add reg absorb: {} += {}, dst_ub={:?}, delta={} — {}",
+                    target_pc, step_pc, dst.name(), src.name(), dst_ub, delta,
+                    if ok { "OK" } else { "REJECTED" },
+                );
+                ok
             } else if di != pre_left && di != pre_right {
                 // Passthrough
                 if pre_left != post_left || pre_right != post_right || delta != 0 {
@@ -475,7 +538,7 @@ pub fn verify_proof_chain_replay(
         return None;
     }
 
-    let reg_name = |idx: usize| Reg::idx_to_reg(idx).map(|r| r.name()).unwrap_or("?");
+
 
     debug!(
         target: "pcc",
@@ -523,65 +586,102 @@ pub fn verify_proof_chain_replay(
         accumulated_bound: *gc,
     };
 
-    // Steps 1..n: Verify Transfer steps
+    // Steps 1..n: Verify Transfer and Derive steps
     for (sidx, step) in entry.proof.iter().enumerate().skip(1) {
-        let ProofStep::Transfer {
-            pc: step_pc,
-            pre_left_reg,
-            pre_right_reg,
-            post_left_reg,
-            post_right_reg,
-            delta,
-            ..
-        } = step
-        else {
-            debug!(
-                target: "pcc",
-                "[PCC] target={} step {}: expected Transfer, got Guard — REJECTED",
-                target_pc, sidx,
-            );
-            return None;
-        };
+        match step {
+            ProofStep::Guard { .. } => {
+                debug!(
+                    target: "pcc",
+                    "[PCC] target={} step {}: unexpected Guard after first position — REJECTED",
+                    target_pc, sidx,
+                );
+                return None;
+            }
+            ProofStep::Derive {
+                pc_start,
+                pc_end,
+                source_reg,
+                target_reg,
+                offset,
+            } => {
+                // Connectivity: source_reg must match current_left
+                if *source_reg != pcs.current_left {
+                    debug!(
+                        target: "pcc",
+                        "[PCC] target={} step {}: Derive source {} != current_left {} — REJECTED",
+                        target_pc, sidx, reg_name(*source_reg), reg_name(pcs.current_left),
+                    );
+                    return None;
+                }
 
-        // Connectivity check
-        if *pre_left_reg != pcs.current_left || *pre_right_reg != pcs.current_right {
-            debug!(
-                target: "pcc",
-                "[PCC] target={} step {}: chain disconnected ({},{}) != ({},{}) — REJECTED",
-                target_pc, sidx,
-                reg_name(*pre_left_reg), reg_name(*pre_right_reg),
-                reg_name(pcs.current_left), reg_name(pcs.current_right),
-            );
-            return None;
+                // Verify the instruction sequence establishes source = target + offset
+                if !verify_derive(*pc_start, *pc_end, *source_reg, *target_reg, *offset, prog, target_pc) {
+                    return None;
+                }
+
+                // Advance: switch tracked register from source to target
+                pcs.current_left = *target_reg;
+                pcs.current_right = 0; // Zero — Derive produces target_reg - Zero bound
+                pcs.accumulated_bound = pcs.accumulated_bound.checked_sub(*offset)?;
+
+                debug!(
+                    target: "pcc",
+                    "[PCC] target={} Derive(pc={}→{}, {}={}{:+}) — bound now {}",
+                    target_pc, pc_start, pc_end,
+                    reg_name(*source_reg), reg_name(*target_reg),
+                    *offset, pcs.accumulated_bound,
+                );
+            }
+            ProofStep::Transfer {
+                pc: step_pc,
+                pre_left_reg,
+                pre_right_reg,
+                post_left_reg,
+                post_right_reg,
+                delta,
+                ..
+            } => {
+                // Connectivity check
+                if *pre_left_reg != pcs.current_left || *pre_right_reg != pcs.current_right {
+                    debug!(
+                        target: "pcc",
+                        "[PCC] target={} step {}: chain disconnected ({},{}) != ({},{}) — REJECTED",
+                        target_pc, sidx,
+                        reg_name(*pre_left_reg), reg_name(*pre_right_reg),
+                        reg_name(pcs.current_left), reg_name(pcs.current_right),
+                    );
+                    return None;
+                }
+
+                // Look up interval pre-state at this step's PC
+                let step_state = get_unique_state(explored_states, *step_pc, target_pc)?;
+
+                // Look up instruction at this step's PC
+                if *step_pc >= prog.instrs.len() {
+                    return None;
+                }
+                let instr = &prog.instrs[*step_pc];
+
+                if !verify_transfer(
+                    *step_pc,
+                    *pre_left_reg,
+                    *pre_right_reg,
+                    *post_left_reg,
+                    *post_right_reg,
+                    *delta,
+                    step_state,
+                    instr,
+                    target_pc,
+                ) {
+                    return None;
+                }
+
+                // Advance proof-check state
+                pcs.current_left = *post_left_reg;
+                pcs.current_right = *post_right_reg;
+                pcs.accumulated_bound = pcs.accumulated_bound.checked_add(*delta)?;
+            }
         }
-
-        // Look up interval pre-state at this step's PC
-        let step_state = get_unique_state(explored_states, *step_pc, target_pc)?;
-
-        // Look up instruction at this step's PC
-        if *step_pc >= prog.instrs.len() {
-            return None;
-        }
-        let instr = &prog.instrs[*step_pc];
-
-        if !verify_transfer(
-            *step_pc,
-            *pre_left_reg,
-            *pre_right_reg,
-            *post_left_reg,
-            *post_right_reg,
-            *delta,
-            step_state,
-            instr,
-            target_pc,
-        ) {
-            return None;
-        }
-
-        // Advance proof-check state
-        pcs.current_left = *post_left_reg;
-        pcs.current_right = *post_right_reg;
-        pcs.accumulated_bound = pcs.accumulated_bound.checked_add(*delta)?;
     }
 
     // Final checks
@@ -614,6 +714,130 @@ pub fn verify_proof_chain_replay(
         right_reg: entry.right_reg,
         bound: entry.bound,
     })
+}
+
+/// Verify a Derive step by replaying instructions from `pc_start` to `pc_end`
+/// and confirming they establish `source_reg = target_reg + offset`.
+///
+/// The verification tracks how `source_reg` relates to `target_reg` through
+/// assignments and constant additions:
+///   - `mov source, target` establishes `source = target + 0`
+///   - `add source, imm` shifts the offset: `source = target + (prev_offset + imm)`
+fn verify_derive(
+    pc_start: usize,
+    pc_end: usize,
+    source_reg: usize,
+    target_reg: usize,
+    claimed_offset: i64,
+    prog: &Program,
+    target_pc: usize,
+) -> bool {
+
+
+    if pc_start > pc_end || pc_end >= prog.instrs.len() {
+        debug!(target: "pcc", "[PCC] target={}: Derive pc range {}..{} invalid — REJECTED", target_pc, pc_start, pc_end);
+        return false;
+    }
+
+    let source = Reg::idx_to_reg(source_reg);
+    let target = Reg::idx_to_reg(target_reg);
+    if source.is_none() || target.is_none() {
+        return false;
+    }
+    let source = source.unwrap();
+    let target = target.unwrap();
+
+    // Track: after replaying instructions, source should be target + accumulated_offset
+    let mut accumulated_offset: i64 = 0;
+    let mut linked = false; // have we seen the assignment that links source to target?
+
+    for pc in pc_start..=pc_end {
+        let instr = &prog.instrs[pc];
+        match instr {
+            // mov source, target — establishes the link
+            Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Mov,
+                dst,
+                src: Operand::Reg(src_r),
+            } if *dst == source && *src_r == target => {
+                accumulated_offset = 0;
+                linked = true;
+            }
+            // add source, imm — shifts the offset
+            Instr::Alu {
+                width: Width::W64,
+                op: AluOp::Add,
+                dst,
+                src: Operand::Imm(imm),
+            } if *dst == source && linked => {
+                accumulated_offset += *imm;
+            }
+            // Any instruction that overwrites source after link breaks it
+            _ if linked && instr_writes_reg(instr, source) => {
+                debug!(
+                    target: "pcc",
+                    "[PCC] target={}: Derive pc {}: {} overwritten after link — REJECTED",
+                    target_pc, pc, reg_name(source_reg),
+                );
+                return false;
+            }
+            // Any instruction that overwrites target after link breaks it
+            _ if linked && instr_writes_reg(instr, target) => {
+                debug!(
+                    target: "pcc",
+                    "[PCC] target={}: Derive pc {}: {} overwritten after link — REJECTED",
+                    target_pc, pc, reg_name(target_reg),
+                );
+                return false;
+            }
+            _ => {} // passthrough — doesn't affect the relationship
+        }
+    }
+
+    if !linked {
+        debug!(
+            target: "pcc",
+            "[PCC] target={}: Derive: no link from {} to {} in pcs {}..{} — REJECTED",
+            target_pc, reg_name(source_reg), reg_name(target_reg), pc_start, pc_end,
+        );
+        return false;
+    }
+
+    if accumulated_offset != claimed_offset {
+        debug!(
+            target: "pcc",
+            "[PCC] target={}: Derive: computed offset {} != claimed {} — REJECTED",
+            target_pc, accumulated_offset, claimed_offset,
+        );
+        return false;
+    }
+
+    debug!(
+        target: "pcc",
+        "[PCC] target={} Derive({}→{}, {}={}{:+}) — OK",
+        target_pc, pc_start, pc_end,
+        reg_name(source_reg), reg_name(target_reg), claimed_offset,
+    );
+    true
+}
+
+/// Returns true if `instr` writes to the given register.
+fn instr_writes_reg(instr: &Instr, reg: Reg) -> bool {
+    match instr {
+        Instr::Alu { dst, .. }
+        | Instr::Endian { dst, .. }
+        | Instr::Load { dst, .. }
+        | Instr::LoadMap { dst, .. } => *dst == reg,
+        Instr::Call { .. } | Instr::LoadPacket { .. } => {
+            // Function calls clobber R0-R5
+            matches!(
+                reg,
+                Reg::R0 | Reg::R1 | Reg::R2 | Reg::R3 | Reg::R4 | Reg::R5
+            )
+        }
+        _ => false,
+    }
 }
 
 /// Look up the unique interval pre-state at a PC from explored_states.

@@ -47,6 +47,26 @@ pub enum ProofStep {
         right_reg: usize,
         c: i64,
     },
+    /// Register aliasing step: instructions from `pc_start` to `pc_end` establish
+    /// that `source_reg = target_reg + offset`.
+    ///
+    /// This allows the proof chain to "switch" which register it tracks:
+    /// if the preceding Guard proved `source_reg <= c`, then after Derive
+    /// we know `target_reg <= c - offset`.
+    ///
+    /// The checker verifies by replaying the instructions `pc_start..=pc_end` and
+    /// confirming they establish the claimed constant relationship.
+    #[serde(rename = "Derive")]
+    Derive {
+        pc_start: usize,
+        pc_end: usize,
+        /// The register constrained by the preceding Guard.
+        source_reg: usize,
+        /// The register we need a bound on (used by a later Transfer).
+        target_reg: usize,
+        /// The constant offset: source_reg = target_reg + offset.
+        offset: i64,
+    },
     /// Inductive step: the instruction at `pc` transforms the pre-state constraint
     /// `pre_left_reg - pre_right_reg <= b` into the post-state constraint
     /// `post_left_reg - post_right_reg <= b + delta`.
@@ -90,33 +110,37 @@ impl ProofStep {
     pub fn pc(&self) -> usize {
         match self {
             ProofStep::Guard { pc, .. } | ProofStep::Transfer { pc, .. } => *pc,
+            ProofStep::Derive { pc_end, .. } => *pc_end,
         }
     }
 
     /// The output left register index after this step.
-    /// Guard: `left_reg`; Transfer: `post_left_reg`.
+    /// Guard: `left_reg`; Transfer: `post_left_reg`; Derive: `target_reg`.
     pub fn output_left_reg(&self) -> usize {
         match self {
             ProofStep::Guard { left_reg, .. } => *left_reg,
             ProofStep::Transfer { post_left_reg, .. } => *post_left_reg,
+            ProofStep::Derive { target_reg, .. } => *target_reg,
         }
     }
 
     /// The output right register index after this step.
-    /// Guard: `right_reg`; Transfer: `post_right_reg`.
+    /// Guard: `right_reg`; Transfer: `post_right_reg`; Derive: `0` (Zero).
     pub fn output_right_reg(&self) -> usize {
         match self {
             ProofStep::Guard { right_reg, .. } => *right_reg,
             ProofStep::Transfer { post_right_reg, .. } => *post_right_reg,
+            ProofStep::Derive { .. } => 0, // Derive switches to target_reg - Zero
         }
     }
 
     /// The bound contribution of this step.
-    /// Guard: `c`; Transfer: `delta`.
+    /// Guard: `c`; Transfer: `delta`; Derive: `-offset` (adjusts bound from source to target).
     pub fn bound_contribution(&self) -> i64 {
         match self {
             ProofStep::Guard { c, .. } => *c,
             ProofStep::Transfer { delta, .. } => *delta,
+            ProofStep::Derive { offset, .. } => -*offset,
         }
     }
 }
@@ -247,6 +271,26 @@ impl fmt::Display for ProgramCertificate {
                                 reg_name(*left_reg),
                                 reg_name(*right_reg),
                                 c,
+                            )?;
+                        }
+                        ProofStep::Derive {
+                            pc_start,
+                            pc_end,
+                            source_reg,
+                            target_reg,
+                            offset,
+                        } => {
+                            running -= offset;
+                            writeln!(
+                                f,
+                                "      [{si}] Derive   @ pc {}→{}:  {} = {} + {}   =>  {} <= {}",
+                                pc_start,
+                                pc_end,
+                                reg_name(*source_reg),
+                                reg_name(*target_reg),
+                                offset,
+                                reg_name(*target_reg),
+                                running,
                             )?;
                         }
                         ProofStep::Transfer {

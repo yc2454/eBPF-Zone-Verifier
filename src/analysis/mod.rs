@@ -133,7 +133,11 @@ pub fn analyze_program_full(
 
     // 2. Initialize Entry State based on domain mode
     let initial_domain = match config.domain_mode {
-        DomainMode::Zone => NumericDomain::Zone(entry_dbm),
+        DomainMode::Zone => {
+            let mut dbm = entry_dbm;
+            dbm.enable_provenance();
+            NumericDomain::Zone(dbm)
+        }
         DomainMode::Interval => NumericDomain::new_interval(),
     };
     let mut initial_state = State::new(initial_domain, 0);
@@ -258,6 +262,7 @@ pub fn analyze_program_full(
         }
 
         // F. Transfer Function
+        state.domain.set_current_pc(state.pc);
         let mut successors = transfer::transfer(&mut env, state, instr);
         // F.1 Certificate-Aided Refinement (optional)
         // Replay-verify proof chains for each successor PC using explored_states.
