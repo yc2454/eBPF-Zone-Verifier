@@ -51,13 +51,13 @@ At check time, the interval checker independently verifies each step and then ti
 
 The **certificate is not trusted**. The checker independently verifies every step against the program's own instruction stream and the interval abstract state. A malformed or adversarial certificate causes the proof to be silently skipped; the plain interval verifier continues.
 
-## Certificate Format
+## Certificate Format (v3)
 
-Certificates are JSON files with the following structure:
+Certificates are JSON with tagged proof steps. Schema highlights:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "program_hash": "<fnv1a hex>",
   "pc_annotations": [
     {
@@ -65,16 +65,14 @@ Certificates are JSON files with the following structure:
       "entries": [
         {
           "left_reg": 7,
-          "right_reg": 0,
-          "bound": 4,
+          "right_reg": 14,
+          "bound": -5,
           "proof": [
-            { "kind": "Fact",     "pc": 13, "left_reg": 4, "right_reg": 0, "c": 8 },
-            { "kind": "Derive",   "pc_start": 11, "pc_end": 12,
-              "source_reg": 4, "target_reg": 3, "offset": 4 },
-            { "kind": "Transfer", "pc": 14,
-              "pre_left_reg": 3, "pre_right_reg": 0,
-              "post_left_reg": 7, "post_right_reg": 0,
-              "delta": 0 }
+            { "kind": "Compose",
+              "via": 2,
+              "left":  [ { "kind": "Fact", "pc": 8, "left_reg": 7, "right_reg": 2, "c": 3 } ],
+              "right": [ { "kind": "Fact", "pc": 4, "left_reg": 2, "right_reg": 14, "c": -8 } ]
+            }
           ]
         }
       ]
@@ -83,15 +81,13 @@ Certificates are JSON files with the following structure:
 }
 ```
 
-### Fields
+Fields:
+- `program_hash` — FNV-1a over instruction bytes; must match at check time.
+- `pc` — load instruction being annotated.
+- `left_reg`, `right_reg`, `bound` — final constraint `left_reg - right_reg <= bound`.
+- `proof` — vector of proof steps (can be a linear chain or a single top-level `Compose`).
 
-- **`program_hash`** — FNV-1a hash of the program's instruction bytes. The checker rejects the certificate immediately if this does not match.
-- **`pc`** — the program counter of the load instruction being annotated.
-- **`left_reg`, `right_reg`** — register indices for the final constraint `left_reg - right_reg <= bound`. See the register index table below.
-- **`bound`** — the claimed upper bound. Must equal the sum of all step contributions.
-- **`proof`** — ordered chain of proof steps: one Fact, zero or more Derives, one or more Transfers. See [Proof Steps](#proof-steps).
-
-### Register Index Table
+Register indices:
 
 | Index | Register |
 |-------|----------|
@@ -104,7 +100,7 @@ Certificates are JSON files with the following structure:
 
 ## Proof Steps
 
-A proof chain proves `left_reg - right_reg <= bound` at the load site. Three step types are available.
+A proof chain proves `left_reg - right_reg <= bound` at the load site. Four step types:
 
 ### `Fact`
 
@@ -178,6 +174,21 @@ The **absorb** case handles `add dst, src_reg` where `src_reg` is the tracked le
 
 The optional `hint` field is a human-readable description of the instruction and its effect. It carries no semantic weight and is ignored by the checker.
 
+### `Compose`
+
+Combines two sub-proofs through an intermediate register `via`.
+
+```
+Compose {
+  left:  proves L - via <= a
+  right: proves via - R <= b
+  via: <register index>
+}
+⇒ proves L - R <= a + b
+```
+
+Both `left` and `right` are themselves valid proof chains (which can include nested Compose). Compose is needed when the zone DBM’s transitive closure combines multiple independent register pairs; linear replay cannot see this without reconstructing the provenance path.
+
 ## Chain Rules
 
 A valid proof chain must satisfy:
@@ -191,6 +202,7 @@ A valid proof chain must satisfy:
    - Derive steps may reference PCs before the Fact's PC (the alias is established before the branch).
    - The Fact and the step immediately following it may share the same PC.
    - After the first Transfer, PCs must be strictly increasing.
+   - Compose sub-proofs have their own internal PC ordering; top-level chain skips PC ordering for the Compose node.
 
 ## Supported Access Types
 
@@ -218,10 +230,11 @@ The generator (`generator.rs`) produces certificates automatically from the zone
 
 ### Overview
 
-For each `target_pc` that requires access checking (a `Load` instruction that zone proves safe but interval rejects), the generator tries two strategies in order:
+For each `target_pc` that zone proves safe but interval rejects, the generator tries three strategies in order:
 
-1. **Backward trace** — walk backward from `target_pc - 1`, inverting each instruction to find the divergence point.
-2. **Derive chain** — fallback for the derived-register pattern, when backward trace fails or produces an unsound proof.
+1. **Backward trace** — linear `Fact + Transfer` chain.
+2. **Derive chain** — alias pattern `k = src + offset` guarded by a branch.
+3. **Provenance-based Compose** — decomposes a transitive constraint into primitive edges using the DBM’s provenance and folds them into nested `Compose` nodes.
 
 ### Strategy 1: Backward Trace
 
@@ -281,15 +294,28 @@ This is the pattern from the motivating example: `r3 = r2 + 4; if r3 ≤ 8 → r
 
 **Transfer delta soundness filter:** backward trace may succeed but produce an unsound proof — the zone-derived delta for a variable-offset add may be tighter than what the interval can verify (the zone has relational precision the interval lacks). The generator filters out such proofs and falls through to Strategy 2.
 
+### Strategy 3: Provenance-based Compose
+
+Problem: zone’s Floyd–Warshall closure can prove `L - R` via multiple intermediate registers; linear replay can’t see the path. Solution: use the DBM’s provenance tracker.
+
+Algorithm (`try_provenance_compose`):
+1. With provenance enabled during zone analysis, call `dbm.reconstruct_path(L, R)` at `target_pc` to get primitive edges `(to, from, weight, pc)` that form the shortest path.
+2. For each edge, try `backward_trace` (with transfer-delta soundness check) to build a sub-proof of `to - from <= weight`.
+3. Fold sub-proofs right-associatively into nested `Compose` nodes so adjacent edges meet at the `via` register.
+4. Emit a single-step proof `[Compose { .. }]` if all segments succeed; otherwise skip Compose.
+
+Fail-closed: any missing provenance, failed segment proof, or overflow aborts the Compose attempt and the generator moves on.
+
 ## Checker Behavior
 
 At each annotated PC, the checker:
 
 1. Verifies the certificate hash matches the program.
-2. For each entry at that PC, replays the proof chain step by step:
-   - **Fact:** looks up the interval pre-state at the Fact's PC and verifies (state-derived or branch-derived).
-   - **Derive:** verifies the instruction sequence syntactically; adjusts tracked register and bound.
-   - **Transfer:** looks up the interval pre-state and instruction at the step's PC; verifies the delta and register mapping.
+2. For each entry at that PC, replays the proof chain recursively:
+   - **Fact:** interval pre-state or branch fall-through must prove the constraint.
+   - **Derive:** syntactically verifies alias slice; switches tracked left to target; subtracts offset.
+   - **Transfer:** uses interval pre-state + instruction semantics to check `delta` and post pair; adds `delta`.
+   - **Compose:** recursively verifies left and right; requires matching `via`; adds sub-bounds.
 3. If all steps pass, the sum matches, and endpoint registers match, the injector (`injector.rs`) tightens `var_off` on the access pointer:
 
    | Case | Condition | Tightening |
@@ -306,6 +332,24 @@ At each annotated PC, the checker:
 `validate` (run before the checker) performs **structural checks only**: schema version, register index bounds, chain structure (Fact must be first), connectivity, PC ordering, and overflow-safe bound sum. It does **not** verify the semantic correctness of any step.
 
 A certificate can pass validation and still be rejected at check time — for example, if the Fact's `c` is tighter than what the interval state supports, or a Transfer's `delta` is less than the interval's `ub(src)`. Validation failure is reported as an error; check-time failure is silent (fail-closed).
+
+## Worked Examples (run with `cargo run -- pcc-cycle …`)
+
+The suite `pcc-tests/pcc_examples.json` contains representative cases:
+
+1. **Direct branch fact (linear):** `"pcc: var add + constant skip (add-imm, zone ok, interval reject)"`  
+   Emits `Fact + Transfer`.
+2. **Alias guard (derive chain):** `"pcc: derived-register guard (r3=r2+4, check r3, prove r2, zone ok, interval reject)"`  
+   Emits `Fact + Derive + Transfer`.
+3. **Transitive closure (Compose):** `"pcc: transitive compose (r5=r4+r2, zone closure via r2, interval reject)"`  
+   Backward trace and derive chain fail on the full constraint; provenance reconstructs the path and emits a nested `Compose`.
+
+Command template:
+```
+cargo run -- pcc-cycle pcc-tests/pcc_examples.json "<test name>"
+```
+
+Certificates are written to `pcc-tests/certs/generated/<suite>.<test>.<hash>.cert.json` by default; use `--certificate-output` to override.
 
 ## Practical Limits
 

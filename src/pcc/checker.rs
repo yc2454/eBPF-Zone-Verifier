@@ -456,6 +456,20 @@ fn verify_transfer(
                     if ok { "OK" } else { "REJECTED" },
                 );
                 ok
+            } else if di == pre_left
+                && pre_right == Reg::Zero.idx()
+                && post_left == pre_left
+                && post_right == src.idx()
+                && delta == 0
+            {
+                // Pivot: add dst, src where pre tracks dst-Zero, post tracks dst-src, delta=0.
+                // Sound: dst_new - src = dst_old = dst_old - Zero.
+                debug!(
+                    target: "pcc",
+                    "[PCC] target={} Transfer(pc={}) add reg pivot: {} += {}, {}-Zero → {}-{} — OK",
+                    target_pc, step_pc, dst.name(), src.name(), dst.name(), dst.name(), src.name(),
+                );
+                true
             } else if di != pre_left && di != pre_right {
                 // Passthrough
                 if pre_left != post_left || pre_right != post_right || delta != 0 {
@@ -540,8 +554,6 @@ pub fn verify_proof_chain_replay(
         return None;
     }
 
-
-
     debug!(
         target: "pcc",
         "[PCC] target={}: replaying {}-step proof for [{} - {} <= {}]",
@@ -549,159 +561,24 @@ pub fn verify_proof_chain_replay(
         reg_name(entry.left_reg), reg_name(entry.right_reg), entry.bound,
     );
 
-    // Step 0: Verify Fact (must be proof[0])
-    let ProofStep::Fact {
-        pc: fact_pc,
-        left_reg: fact_left,
-        right_reg: fact_right,
-        c: fact_c,
-    } = &entry.proof[0]
-    else {
-        debug!(target: "pcc", "[PCC] target={}: proof[0] is not Fact — REJECTED", target_pc);
-        return None;
-    };
-
-    // Look up the interval pre-state at the fact's PC
-    let fact_state = get_unique_state(explored_states, *fact_pc, target_pc)?;
-
-    // Only verify in interval mode
-    if !matches!(fact_state.domain, NumericDomain::Interval(_)) {
-        return None;
-    }
-
-    if !verify_fact(
-        *fact_pc,
-        *fact_left,
-        *fact_right,
-        *fact_c,
-        fact_state,
-        prog,
-        target_pc,
-    ) {
-        return None;
-    }
-
-    // Initialize proof-check state
-    let mut pcs = ProofCheckState {
-        current_left: *fact_left,
-        current_right: *fact_right,
-        accumulated_bound: *fact_c,
-    };
-
-    // Steps 1..n: Verify Transfer and Derive steps
-    for (sidx, step) in entry.proof.iter().enumerate().skip(1) {
-        match step {
-            ProofStep::Fact { .. } => {
-                debug!(
-                    target: "pcc",
-                    "[PCC] target={} step {}: unexpected Fact after first position — REJECTED",
-                    target_pc, sidx,
-                );
-                return None;
-            }
-            ProofStep::Derive {
-                pc_start,
-                pc_end,
-                source_reg,
-                target_reg,
-                offset,
-            } => {
-                // Connectivity: source_reg must match current_left
-                if *source_reg != pcs.current_left {
-                    debug!(
-                        target: "pcc",
-                        "[PCC] target={} step {}: Derive source {} != current_left {} — REJECTED",
-                        target_pc, sidx, reg_name(*source_reg), reg_name(pcs.current_left),
-                    );
-                    return None;
-                }
-
-                // Verify the instruction sequence establishes source = target + offset
-                if !verify_derive(*pc_start, *pc_end, *source_reg, *target_reg, *offset, prog, target_pc) {
-                    return None;
-                }
-
-                // Advance: switch tracked register from source to target
-                pcs.current_left = *target_reg;
-                pcs.current_right = 0; // Zero — Derive produces target_reg - Zero bound
-                pcs.accumulated_bound = pcs.accumulated_bound.checked_sub(*offset)?;
-
-                debug!(
-                    target: "pcc",
-                    "[PCC] target={} Derive(pc={}→{}, {}={}{:+}) — bound now {}",
-                    target_pc, pc_start, pc_end,
-                    reg_name(*source_reg), reg_name(*target_reg),
-                    *offset, pcs.accumulated_bound,
-                );
-            }
-            ProofStep::Transfer {
-                pc: step_pc,
-                pre_left_reg,
-                pre_right_reg,
-                post_left_reg,
-                post_right_reg,
-                delta,
-                ..
-            } => {
-                // Connectivity check
-                if *pre_left_reg != pcs.current_left || *pre_right_reg != pcs.current_right {
-                    debug!(
-                        target: "pcc",
-                        "[PCC] target={} step {}: chain disconnected ({},{}) != ({},{}) — REJECTED",
-                        target_pc, sidx,
-                        reg_name(*pre_left_reg), reg_name(*pre_right_reg),
-                        reg_name(pcs.current_left), reg_name(pcs.current_right),
-                    );
-                    return None;
-                }
-
-                // Look up interval pre-state at this step's PC
-                let step_state = get_unique_state(explored_states, *step_pc, target_pc)?;
-
-                // Look up instruction at this step's PC
-                if *step_pc >= prog.instrs.len() {
-                    return None;
-                }
-                let instr = &prog.instrs[*step_pc];
-
-                if !verify_transfer(
-                    *step_pc,
-                    *pre_left_reg,
-                    *pre_right_reg,
-                    *post_left_reg,
-                    *post_right_reg,
-                    *delta,
-                    step_state,
-                    instr,
-                    target_pc,
-                ) {
-                    return None;
-                }
-
-                // Advance proof-check state
-                pcs.current_left = *post_left_reg;
-                pcs.current_right = *post_right_reg;
-                pcs.accumulated_bound = pcs.accumulated_bound.checked_add(*delta)?;
-            }
-        }
-    }
+    let result = verify_chain(&entry.proof, target_pc, explored_states, prog)?;
 
     // Final checks
-    if pcs.current_left != entry.left_reg || pcs.current_right != entry.right_reg {
+    if result.current_left != entry.left_reg || result.current_right != entry.right_reg {
         debug!(
             target: "pcc",
             "[PCC] target={}: final ({},{}) != entry ({},{}) — REJECTED",
             target_pc,
-            reg_name(pcs.current_left), reg_name(pcs.current_right),
+            reg_name(result.current_left), reg_name(result.current_right),
             reg_name(entry.left_reg), reg_name(entry.right_reg),
         );
         return None;
     }
-    if pcs.accumulated_bound != entry.bound {
+    if result.accumulated_bound != entry.bound {
         debug!(
             target: "pcc",
             "[PCC] target={}: accumulated bound {} != entry bound {} — REJECTED",
-            target_pc, pcs.accumulated_bound, entry.bound,
+            target_pc, result.accumulated_bound, entry.bound,
         );
         return None;
     }
@@ -715,6 +592,187 @@ pub fn verify_proof_chain_replay(
         left_reg: entry.left_reg,
         right_reg: entry.right_reg,
         bound: entry.bound,
+    })
+}
+
+/// Verify a proof chain (possibly containing Compose steps) and return the
+/// resulting proof-check state. This is the recursive core shared by both
+/// top-level `verify_proof_chain_replay` and Compose sub-proof verification.
+fn verify_chain(
+    proof: &[ProofStep],
+    target_pc: usize,
+    explored_states: &HashMap<usize, Vec<State>>,
+    prog: &Program,
+) -> Option<ProofCheckState> {
+    if proof.is_empty() {
+        return None;
+    }
+
+    // A single Compose step is a valid proof by itself
+    if proof.len() == 1 {
+        if let ProofStep::Compose { left, right, via } = &proof[0] {
+            return verify_compose(left, right, *via, target_pc, explored_states, prog);
+        }
+    }
+
+    // Step 0: Verify Fact (must be proof[0])
+    let ProofStep::Fact {
+        pc: fact_pc,
+        left_reg: fact_left,
+        right_reg: fact_right,
+        c: fact_c,
+    } = &proof[0]
+    else {
+        debug!(target: "pcc", "[PCC] target={}: proof[0] is not Fact — REJECTED", target_pc);
+        return None;
+    };
+
+    let fact_state = get_unique_state(explored_states, *fact_pc, target_pc)?;
+    if !matches!(fact_state.domain, NumericDomain::Interval(_)) {
+        return None;
+    }
+
+    if !verify_fact(*fact_pc, *fact_left, *fact_right, *fact_c, fact_state, prog, target_pc) {
+        return None;
+    }
+
+    let mut pcs = ProofCheckState {
+        current_left: *fact_left,
+        current_right: *fact_right,
+        accumulated_bound: *fact_c,
+    };
+
+    // Steps 1..n
+    for (sidx, step) in proof.iter().enumerate().skip(1) {
+        match step {
+            ProofStep::Fact { .. } => {
+                debug!(
+                    target: "pcc",
+                    "[PCC] target={} step {}: unexpected Fact after first position — REJECTED",
+                    target_pc, sidx,
+                );
+                return None;
+            }
+            ProofStep::Derive {
+                pc_start, pc_end, source_reg, target_reg, offset,
+            } => {
+                if *source_reg != pcs.current_left {
+                    debug!(
+                        target: "pcc",
+                        "[PCC] target={} step {}: Derive source {} != current_left {} — REJECTED",
+                        target_pc, sidx, reg_name(*source_reg), reg_name(pcs.current_left),
+                    );
+                    return None;
+                }
+                if !verify_derive(*pc_start, *pc_end, *source_reg, *target_reg, *offset, prog, target_pc) {
+                    return None;
+                }
+                pcs.current_left = *target_reg;
+                pcs.current_right = 0;
+                pcs.accumulated_bound = pcs.accumulated_bound.checked_sub(*offset)?;
+                debug!(
+                    target: "pcc",
+                    "[PCC] target={} Derive(pc={}→{}, {}={}{:+}) — bound now {}",
+                    target_pc, pc_start, pc_end,
+                    reg_name(*source_reg), reg_name(*target_reg),
+                    *offset, pcs.accumulated_bound,
+                );
+            }
+            ProofStep::Transfer {
+                pc: step_pc, pre_left_reg, pre_right_reg,
+                post_left_reg, post_right_reg, delta, ..
+            } => {
+                if *pre_left_reg != pcs.current_left || *pre_right_reg != pcs.current_right {
+                    debug!(
+                        target: "pcc",
+                        "[PCC] target={} step {}: chain disconnected ({},{}) != ({},{}) — REJECTED",
+                        target_pc, sidx,
+                        reg_name(*pre_left_reg), reg_name(*pre_right_reg),
+                        reg_name(pcs.current_left), reg_name(pcs.current_right),
+                    );
+                    return None;
+                }
+                let step_state = get_unique_state(explored_states, *step_pc, target_pc)?;
+                if *step_pc >= prog.instrs.len() {
+                    return None;
+                }
+                let instr = &prog.instrs[*step_pc];
+                if !verify_transfer(
+                    *step_pc, *pre_left_reg, *pre_right_reg,
+                    *post_left_reg, *post_right_reg, *delta,
+                    step_state, instr, target_pc,
+                ) {
+                    return None;
+                }
+                pcs.current_left = *post_left_reg;
+                pcs.current_right = *post_right_reg;
+                pcs.accumulated_bound = pcs.accumulated_bound.checked_add(*delta)?;
+            }
+            ProofStep::Compose { left, right, via } => {
+                let compose_result = verify_compose(left, right, *via, target_pc, explored_states, prog)?;
+                pcs.current_left = compose_result.current_left;
+                pcs.current_right = compose_result.current_right;
+                pcs.accumulated_bound = pcs.accumulated_bound.checked_add(compose_result.accumulated_bound)?;
+            }
+        }
+    }
+
+    Some(pcs)
+}
+
+/// Verify a Compose step by recursively verifying left and right sub-proofs
+/// and checking that they compose through the intermediate register `via`.
+fn verify_compose(
+    left: &[ProofStep],
+    right: &[ProofStep],
+    via: usize,
+    target_pc: usize,
+    explored_states: &HashMap<usize, Vec<State>>,
+    prog: &Program,
+) -> Option<ProofCheckState> {
+    debug!(
+        target: "pcc",
+        "[PCC] target={}: verifying Compose via {}",
+        target_pc, reg_name(via),
+    );
+
+    // Verify left sub-proof: should prove L - via <= a
+    let left_result = verify_chain(left, target_pc, explored_states, prog)?;
+    if left_result.current_right != via {
+        debug!(
+            target: "pcc",
+            "[PCC] target={}: Compose left output right {} != via {} — REJECTED",
+            target_pc, reg_name(left_result.current_right), reg_name(via),
+        );
+        return None;
+    }
+
+    // Verify right sub-proof: should prove via - R <= b
+    let right_result = verify_chain(right, target_pc, explored_states, prog)?;
+    if right_result.current_left != via {
+        debug!(
+            target: "pcc",
+            "[PCC] target={}: Compose right output left {} != via {} — REJECTED",
+            target_pc, reg_name(right_result.current_left), reg_name(via),
+        );
+        return None;
+    }
+
+    // Compose: L - R <= a + b
+    let composed_bound = left_result.accumulated_bound
+        .checked_add(right_result.accumulated_bound)?;
+
+    debug!(
+        target: "pcc",
+        "[PCC] target={}: Compose via {}: {} + {} = {}",
+        target_pc, reg_name(via),
+        left_result.accumulated_bound, right_result.accumulated_bound, composed_bound,
+    );
+
+    Some(ProofCheckState {
+        current_left: left_result.current_left,
+        current_right: right_result.current_right,
+        accumulated_bound: composed_bound,
     })
 }
 

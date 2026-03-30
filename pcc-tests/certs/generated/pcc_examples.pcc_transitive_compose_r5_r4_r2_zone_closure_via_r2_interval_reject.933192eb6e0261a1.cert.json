@@ -1,0 +1,143 @@
+{
+  "version": 3,
+  "program_hash": "933192eb6e0261a1",
+  "pc_annotations": [
+    {
+      "pc": 9,
+      "entries": [
+        {
+          "left_reg": 6,
+          "right_reg": 14,
+          "bound": -5,
+          "proof": [
+            {
+              "kind": "Compose",
+              "left": [
+                {
+                  "kind": "Fact",
+                  "pc": 8,
+                  "left_reg": 6,
+                  "right_reg": 0,
+                  "c": 3
+                },
+                {
+                  "kind": "Transfer",
+                  "pc": 8,
+                  "pre_left_reg": 6,
+                  "pre_right_reg": 0,
+                  "post_left_reg": 6,
+                  "post_right_reg": 3,
+                  "delta": 0,
+                  "hint": "r5 += r2  [pivot: r5-r2 → r5-Zero, delta=0]"
+                }
+              ],
+              "right": [
+                {
+                  "kind": "Compose",
+                  "left": [
+                    {
+                      "kind": "Fact",
+                      "pc": 8,
+                      "left_reg": 3,
+                      "right_reg": 1,
+                      "c": -8
+                    },
+                    {
+                      "kind": "Transfer",
+                      "pc": 8,
+                      "pre_left_reg": 3,
+                      "pre_right_reg": 1,
+                      "post_left_reg": 3,
+                      "post_right_reg": 1,
+                      "delta": 0
+                    }
+                  ],
+                  "right": [
+                    {
+                      "kind": "Compose",
+                      "left": [
+                        {
+                          "kind": "Fact",
+                          "pc": 4,
+                          "left_reg": 1,
+                          "right_reg": 4,
+                          "c": 0
+                        },
+                        {
+                          "kind": "Transfer",
+                          "pc": 4,
+                          "pre_left_reg": 1,
+                          "pre_right_reg": 4,
+                          "post_left_reg": 1,
+                          "post_right_reg": 4,
+                          "delta": 0
+                        },
+                        {
+                          "kind": "Transfer",
+                          "pc": 5,
+                          "pre_left_reg": 1,
+                          "pre_right_reg": 4,
+                          "post_left_reg": 1,
+                          "post_right_reg": 4,
+                          "delta": 0
+                        },
+                        {
+                          "kind": "Transfer",
+                          "pc": 6,
+                          "pre_left_reg": 1,
+                          "pre_right_reg": 4,
+                          "post_left_reg": 1,
+                          "post_right_reg": 4,
+                          "delta": 0
+                        },
+                        {
+                          "kind": "Transfer",
+                          "pc": 7,
+                          "pre_left_reg": 1,
+                          "pre_right_reg": 4,
+                          "post_left_reg": 1,
+                          "post_right_reg": 4,
+                          "delta": 0
+                        },
+                        {
+                          "kind": "Transfer",
+                          "pc": 8,
+                          "pre_left_reg": 1,
+                          "pre_right_reg": 4,
+                          "post_left_reg": 1,
+                          "post_right_reg": 4,
+                          "delta": 0
+                        }
+                      ],
+                      "right": [
+                        {
+                          "kind": "Fact",
+                          "pc": 8,
+                          "left_reg": 4,
+                          "right_reg": 14,
+                          "c": 0
+                        },
+                        {
+                          "kind": "Transfer",
+                          "pc": 8,
+                          "pre_left_reg": 4,
+                          "pre_right_reg": 14,
+                          "post_left_reg": 4,
+                          "post_right_reg": 14,
+                          "delta": 0
+                        }
+                      ],
+                      "via": 4
+                    }
+                  ],
+                  "via": 1
+                }
+              ],
+              "via": 3
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

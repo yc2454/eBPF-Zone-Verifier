@@ -443,7 +443,20 @@ fn backward_transfer(
             src: Operand::Reg(src),
             ..
         } => {
-            if *dst == cur_i {
+            if *dst == cur_i && cur_j == *src {
+                // Pivot: add dst, src where we're tracking dst-src.
+                // After: dst_new = dst_old + src. So dst_new - src = dst_old.
+                // The pre-constraint is dst_old - Zero <= b (delta=0).
+                let hint = Some(format!(
+                    "{} += {}  [pivot: {}-{} → {}-Zero, delta=0]",
+                    dst.name(),
+                    src.name(),
+                    cur_i.name(),
+                    cur_j.name(),
+                    cur_i.name(),
+                ));
+                Some((cur_i, Reg::Zero, 0, hint))
+            } else if *dst == cur_i {
                 let dbm = zone_dbms.get(pc)?;
                 let src_ub = zone_upper_bound(dbm, *src, Reg::Zero)?;
                 // Left side increases by at most src_ub.
@@ -766,6 +779,112 @@ fn instr_writes(instr: &Instr, reg: Reg) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Provenance-based Compose generation (for transitive closure)
+// ---------------------------------------------------------------------------
+
+/// Attempt to generate a proof using provenance-based transitive composition.
+///
+/// When the zone constraint `target_i - target_j <= target_bound` is derived by
+/// Floyd-Warshall closure through intermediate registers, `reconstruct_path`
+/// decomposes it into primitive edges. For each edge, we try `backward_trace`
+/// or `try_derive_chain` to generate a sub-proof. If all segments succeed,
+/// we fold them into nested `Compose` nodes.
+fn try_provenance_compose(
+    prog: &Program,
+    zone_dbms: &[Dbm],
+    interval_states: &[State],
+    target_pc: usize,
+    target_i: Reg,
+    target_j: Reg,
+    _target_bound: i64,
+) -> Option<Vec<ProofStep>> {
+    let dbm = zone_dbms.get(target_pc)?;
+    let edges = dbm.reconstruct_path(target_i, target_j)?;
+
+    // If only 1 primitive edge, backward_trace should handle it — don't compose.
+    if edges.len() < 2 {
+        return None;
+    }
+
+    {
+        let edge_list: Vec<String> = edges.iter()
+            .map(|e| format!("{}-{}≤{}@pc{}", e.to.name(), e.from.name(), e.weight, e.pc))
+            .collect();
+        debug!(
+            target: "pcc-gen",
+            "[PCC-GEN] target={}: provenance path {}-{} decomposed into {} edges: [{}]",
+            target_pc, target_i.name(), target_j.name(), edges.len(), edge_list.join(", "),
+        );
+    }
+
+    // Generate a sub-proof for each primitive edge.
+    // Each edge claims: edge.to - edge.from <= edge.weight
+    let mut sub_proofs: Vec<(Reg, Reg, Vec<ProofStep>)> = Vec::new();
+
+    for edge in &edges {
+        debug!(
+            target: "pcc-gen",
+            "[PCC-GEN] target={}: composing segment {}-{} <= {} (pc={})",
+            target_pc, edge.to.name(), edge.from.name(), edge.weight, edge.pc,
+        );
+
+        // Try backward_trace for this segment (only — derive-chain is not used here).
+        let segment_proof = if let Some((_, _, _, _, proof)) = backward_trace(
+            prog,
+            zone_dbms,
+            interval_states,
+            target_pc,
+            edge.to,
+            edge.from,
+            edge.weight,
+        )
+        .filter(|(_, _, _, _, proof)| transfer_deltas_sound(proof, prog, interval_states))
+        {
+            proof
+        } else {
+            debug!(
+                target: "pcc-gen",
+                "[PCC-GEN] target={}: compose segment {}-{} failed — aborting compose",
+                target_pc, edge.to.name(), edge.from.name(),
+            );
+            return None;
+        };
+
+        sub_proofs.push((edge.to, edge.from, segment_proof));
+    }
+
+    // Fold sub-proofs right-associatively into nested Compose nodes.
+    // For edges [A-K1, K1-K2, K2-B]:
+    //   Compose(A-K1, Compose(K1-K2, K2-B, via=K2), via=K1)
+    // Start from the rightmost pair and fold left.
+    let mut result = sub_proofs.pop().unwrap().2; // rightmost sub-proof
+    let mut result_left_reg = sub_proofs.last().map_or(target_i, |sp| sp.0);
+
+    while let Some((left_to, _left_from, left_proof)) = sub_proofs.pop() {
+        // The `via` register is where left's right meets right's left.
+        // left proves: left_to - via <= a
+        // result (right) proves: via - ... <= b
+        let via = left_proof.last().unwrap().output_right_reg();
+
+        result = vec![ProofStep::Compose {
+            left: left_proof,
+            right: result,
+            via,
+        }];
+        result_left_reg = left_to;
+    }
+    let _ = result_left_reg;
+
+    debug!(
+        target: "pcc-gen",
+        "[PCC-GEN] target={}: provenance compose succeeded for {}-{}",
+        target_pc, target_i.name(), target_j.name(),
+    );
+
+    Some(result)
+}
+
+// ---------------------------------------------------------------------------
 // Certificate generation entry point
 // ---------------------------------------------------------------------------
 
@@ -875,10 +994,20 @@ pub fn generate_certificate(
             zone_ub,
         ) {
             proof
+        } else if let Some(proof) = try_provenance_compose(
+            prog,
+            zone_dbms,
+            interval_states,
+            target_pc,
+            base,
+            effective_anchor,
+            zone_ub,
+        ) {
+            proof
         } else {
             debug!(
                 target: "pcc-gen",
-                "[PCC-GEN] target={}: backward trace and derive chain both failed, skipping",
+                "[PCC-GEN] target={}: all generation strategies failed, skipping",
                 target_pc,
             );
             continue;

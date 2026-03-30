@@ -511,6 +511,7 @@ impl NumericDomain {
     }
 
     /// Activates provenance tracking for PCC certificate generation (Zone only).
+    #[allow(dead_code)]
     pub fn enable_provenance(&mut self) {
         if let NumericDomain::Zone(dbm) = self {
             dbm.enable_provenance();

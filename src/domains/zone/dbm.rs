@@ -35,6 +35,7 @@ impl ProvenanceTracker {
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub fn get(&self, i: usize, j: usize) -> EdgeOrigin {
         self.edges[i][j]
     }
@@ -69,6 +70,29 @@ pub fn clamped_add(a: i64, b: i64) -> i64 {
     match a.checked_add(b) {
         Some(sum) => clamp_upper_bound(sum),
         None => INF,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provenance_can_be_enabled_for_path_reconstruction() {
+        let mut dbm = Dbm::new();
+        dbm.enable_provenance();
+        dbm.set_current_pc(42);
+        dbm.add_constraint(Reg::R2, Reg::R3, 5);
+        dbm.close();
+
+        let path =
+            dbm.reconstruct_path(Reg::R2, Reg::R3).expect("provenance should be active");
+        assert_eq!(path.len(), 1);
+        let edge = &path[0];
+        assert_eq!(edge.to, Reg::R2);
+        assert_eq!(edge.from, Reg::R3);
+        assert_eq!(edge.weight, 5);
+        assert_eq!(edge.pc, 42);
     }
 }
 
@@ -137,6 +161,7 @@ impl Dbm {
     }
 
     /// Returns a reference to the provenance tracker, if active.
+    #[allow(dead_code)]
     pub fn provenance(&self) -> Option<&ProvenanceTracker> {
         self.provenance.as_deref()
     }
@@ -171,6 +196,26 @@ impl Dbm {
     #[inline]
     pub fn set(&mut self, i: Reg, j: Reg, val: i64) {
         self.data[i.idx()][j.idx()] = val;
+    }
+
+    /// Stamps all finite edges involving `reg_idx` with `Primitive{pc: current_pc}`.
+    /// Called after `set_idx` shifts in `apply_add_reg` to keep provenance
+    /// consistent with the shifted constraint values.
+    pub fn stamp_provenance_for_var(&mut self, reg_idx: usize) {
+        // Detach provenance to avoid borrow conflict with self.data
+        let mut prov = self.provenance.take();
+        if let Some(p) = &mut prov {
+            let n = self.data.len();
+            for j in 0..n {
+                if self.data[reg_idx][j] < INF && reg_idx != j {
+                    p.edges[reg_idx][j] = EdgeOrigin::Primitive { pc: p.current_pc };
+                }
+                if self.data[j][reg_idx] < INF && reg_idx != j {
+                    p.edges[j][reg_idx] = EdgeOrigin::Primitive { pc: p.current_pc };
+                }
+            }
+        }
+        self.provenance = prov;
     }
 
     pub fn add_constraint(&mut self, i: Reg, j: Reg, c: i64) {

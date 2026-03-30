@@ -132,10 +132,16 @@ pub fn analyze_program_full(
     liveness::compute_liveness(prog, &mut env);
 
     // 2. Initialize Entry State based on domain mode
+    let pcc_mode = config.certificate_output.is_some()
+        || config.certificate_input.is_some()
+        || config.certificate.is_some();
+
     let initial_domain = match config.domain_mode {
         DomainMode::Zone => {
             let mut dbm = entry_dbm;
-            dbm.enable_provenance();
+            if pcc_mode {
+                dbm.enable_provenance();
+            }
             NumericDomain::Zone(dbm)
         }
         DomainMode::Interval => NumericDomain::new_interval(),
