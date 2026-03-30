@@ -10,7 +10,7 @@ use crate::domains::numeric::NumericDomain;
 use crate::parsing::elf::BpfMapDef;
 use log::debug;
 
-use super::checker::{derive_guard_constraint_from_branch, distance_upper_bound};
+use super::checker::{derive_fact_from_branch, distance_upper_bound};
 use super::model::{AnnotationEntry, PcAnnotation, ProgramCertificate, ProofStep};
 use super::program_hash;
 
@@ -188,7 +188,7 @@ struct BackwardStep {
 /// Trace backward from `target_pc` to find the divergence point where the
 /// interval state agrees with the zone on the tracked constraint.
 ///
-/// Returns `Some((guard_pc, guard_i, guard_j, guard_c, steps))` on success,
+/// Returns `Some((guard_pc, guard_i, guard_j, fact_c, steps))` on success,
 /// where `steps` is in **forward** order (ready for the certificate).
 /// Returns `None` if tracing fails (unsupported instruction, etc.).
 fn backward_trace(
@@ -231,13 +231,13 @@ fn backward_trace(
         // Two paths: (1) state-derived, (2) branch-derived.
         if pc < interval_states.len() {
             // Path 1: State-derived — interval state directly proves the constraint.
-            let mut guard_found = false;
-            let mut guard_c = 0i64;
+            let mut fact_found = false;
+            let mut fact_c = 0i64;
 
             if let Some(ivl_ub) = interval_upper_bound(&interval_states[pc], prev_i, prev_j) {
                 if ivl_ub <= pre_bound {
-                    guard_found = true;
-                    guard_c = ivl_ub;
+                    fact_found = true;
+                    fact_c = ivl_ub;
                 }
             }
 
@@ -247,27 +247,27 @@ fn backward_trace(
             // where a branch refines a variable AFTER a variable add (e.g., stack
             // variable-offset access where zone's closure captures the refinement
             // but the interval's var_off is not retroactively tightened).
-            if !guard_found {
-                if let Some(branch_guard) =
-                    derive_guard_constraint_from_branch(instr, pc, pc + 1)
+            if !fact_found {
+                if let Some(branch_fact) =
+                    derive_fact_from_branch(instr, pc, pc + 1)
                 {
-                    if branch_guard.left_reg == prev_i.idx()
-                        && branch_guard.right_reg == prev_j.idx()
-                        && branch_guard.c <= pre_bound
+                    if branch_fact.left_reg == prev_i.idx()
+                        && branch_fact.right_reg == prev_j.idx()
+                        && branch_fact.c <= pre_bound
                     {
-                        guard_found = true;
-                        guard_c = branch_guard.c;
+                        fact_found = true;
+                        fact_c = branch_fact.c;
                     }
                 }
             }
 
-            if guard_found {
+            if fact_found {
                 let mut proof = Vec::with_capacity(1 + backward_steps.len());
-                proof.push(ProofStep::Guard {
+                proof.push(ProofStep::Fact {
                     pc,
                     left_reg: prev_i.idx(),
                     right_reg: prev_j.idx(),
-                    c: guard_c,
+                    c: fact_c,
                 });
 
                 // Reverse backward steps into forward order as Transfer steps
@@ -283,7 +283,7 @@ fn backward_trace(
                     });
                 }
 
-                return Some((pc, prev_i.idx(), prev_j.idx(), guard_c, proof));
+                return Some((pc, prev_i.idx(), prev_j.idx(), fact_c, proof));
             }
         }
 
@@ -547,7 +547,7 @@ fn transfer_deltas_sound(
 ///   `k = src_reg + offset` (established by `mov k, src_reg; add k, imm`)
 ///   and a branch constrains `k <= C`
 ///
-/// Produces: Guard(k <= C) + Derive(k = src + offset) + Transfer(base += src, delta)
+/// Produces: Fact(k <= C) + Derive(k = src + offset) + Transfer(base += src, delta)
 fn try_derive_chain(
     prog: &Program,
     zone_dbms: &[Dbm],
@@ -623,7 +623,7 @@ fn try_derive_chain(
         let branch_instr = &prog.instrs[branch_pc];
 
         // Check if this is a branch with a fall-through constraint
-        let guard = derive_guard_constraint_from_branch(branch_instr, branch_pc, branch_pc + 1)?;
+        let guard = derive_fact_from_branch(branch_instr, branch_pc, branch_pc + 1)?;
         let k = Reg::idx_to_reg(guard.left_reg)?;
         if guard.right_reg != anchor.idx() {
             continue; // we need k - anchor <= c
@@ -641,10 +641,10 @@ fn try_derive_chain(
                 continue; // derived bound too loose
             }
 
-            // Build proof chain: Guard + Derive + Transfer(absorb)
+            // Build proof chain: Fact + Derive + Transfer(absorb)
             let mut proof = Vec::with_capacity(3);
 
-            proof.push(ProofStep::Guard {
+            proof.push(ProofStep::Fact {
                 pc: branch_pc,
                 left_reg: k.idx(),
                 right_reg: anchor.idx(),
@@ -678,7 +678,7 @@ fn try_derive_chain(
 
             debug!(
                 target: "pcc-gen",
-                "[PCC-GEN] target={}: derive chain found: Guard(pc={}, {}≤{}) + Derive({}={}+{}) + Transfer(pc={})",
+                "[PCC-GEN] target={}: derive chain found: Fact(pc={}, {}≤{}) + Derive({}={}+{}) + Transfer(pc={})",
                 target_pc, branch_pc, k.name(), branch_c, k.name(), src_reg.name(), offset, add_pc,
             );
 
@@ -773,7 +773,7 @@ fn instr_writes(instr: &Instr, reg: Reg) -> bool {
 ///
 /// For each candidate load instruction, traces backward to the divergence
 /// point where zone and interval first disagree, emitting a proof chain
-/// of [Guard, Transfer, ..., Transfer].
+/// of [Fact, Derive*, Transfer+].
 pub fn generate_certificate(
     prog: &Program,
     zone_dbms: &[Dbm],
@@ -902,7 +902,7 @@ pub fn generate_certificate(
     cert
 }
 
-/// Legacy generator (Guard-only, no Transfer steps) — kept for backward compatibility.
+/// Legacy generator (Fact-only, no Transfer steps) — kept for backward compatibility.
 #[allow(dead_code)]
 pub fn generate_prototype_certificate_from_zone(
     prog: &Program,
@@ -963,7 +963,7 @@ pub fn generate_prototype_certificate_from_zone(
             left_reg: dst.idx(),
             right_reg: Reg::AnchorDataEnd.idx(),
             bound: target_c,
-            proof: vec![ProofStep::Guard {
+            proof: vec![ProofStep::Fact {
                 pc: pred_pc,
                 left_reg: dst.idx(),
                 right_reg: Reg::AnchorDataEnd.idx(),

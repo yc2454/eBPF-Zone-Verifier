@@ -38,10 +38,11 @@ pub struct AnnotationEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind")]
 pub enum ProofStep {
-    /// Base fact: the interval state at `pc` proves `left_reg - right_reg <= c`.
-    /// Placed at the divergence point where zone and interval agree.
-    #[serde(rename = "Guard")]
-    Guard {
+    /// Base fact: the interval state at `pc` proves `left_reg - right_reg <= c`,
+    /// either directly from the abstract state or from a branch condition visible
+    /// to the interval verifier. Always the first step in a proof chain.
+    #[serde(rename = "Fact")]
+    Fact {
         pc: usize,
         left_reg: usize,
         right_reg: usize,
@@ -109,36 +110,36 @@ impl ProofStep {
     /// The PC this step refers to.
     pub fn pc(&self) -> usize {
         match self {
-            ProofStep::Guard { pc, .. } | ProofStep::Transfer { pc, .. } => *pc,
+            ProofStep::Fact { pc, .. } | ProofStep::Transfer { pc, .. } => *pc,
             ProofStep::Derive { pc_end, .. } => *pc_end,
         }
     }
 
     /// The output left register index after this step.
-    /// Guard: `left_reg`; Transfer: `post_left_reg`; Derive: `target_reg`.
+    /// Fact: `left_reg`; Transfer: `post_left_reg`; Derive: `target_reg`.
     pub fn output_left_reg(&self) -> usize {
         match self {
-            ProofStep::Guard { left_reg, .. } => *left_reg,
+            ProofStep::Fact { left_reg, .. } => *left_reg,
             ProofStep::Transfer { post_left_reg, .. } => *post_left_reg,
             ProofStep::Derive { target_reg, .. } => *target_reg,
         }
     }
 
     /// The output right register index after this step.
-    /// Guard: `right_reg`; Transfer: `post_right_reg`; Derive: `0` (Zero).
+    /// Fact: `right_reg`; Transfer: `post_right_reg`; Derive: `0` (Zero).
     pub fn output_right_reg(&self) -> usize {
         match self {
-            ProofStep::Guard { right_reg, .. } => *right_reg,
+            ProofStep::Fact { right_reg, .. } => *right_reg,
             ProofStep::Transfer { post_right_reg, .. } => *post_right_reg,
             ProofStep::Derive { .. } => 0, // Derive switches to target_reg - Zero
         }
     }
 
     /// The bound contribution of this step.
-    /// Guard: `c`; Transfer: `delta`; Derive: `-offset` (adjusts bound from source to target).
+    /// Fact: `c`; Transfer: `delta`; Derive: `-offset` (adjusts bound from source to target).
     pub fn bound_contribution(&self) -> i64 {
         match self {
-            ProofStep::Guard { c, .. } => *c,
+            ProofStep::Fact { c, .. } => *c,
             ProofStep::Transfer { delta, .. } => *delta,
             ProofStep::Derive { offset, .. } => -*offset,
         }
@@ -257,7 +258,7 @@ impl fmt::Display for ProgramCertificate {
                 let mut running: i64 = 0;
                 for (si, step) in entry.proof.iter().enumerate() {
                     match step {
-                        ProofStep::Guard {
+                        ProofStep::Fact {
                             pc,
                             left_reg,
                             right_reg,
@@ -266,7 +267,7 @@ impl fmt::Display for ProgramCertificate {
                             running += c;
                             writeln!(
                                 f,
-                                "      [{si}] Guard    @ pc {:>3}:  {} - {} <= {}",
+                                "      [{si}] Fact     @ pc {:>3}:  {} - {} <= {}",
                                 pc,
                                 reg_name(*left_reg),
                                 reg_name(*right_reg),
@@ -368,18 +369,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn proof_step_guard_json_round_trip() {
-        let step = ProofStep::Guard {
+    fn proof_step_fact_json_round_trip() {
+        let step = ProofStep::Fact {
             pc: 5,
             left_reg: 6,
             right_reg: 14,
             c: -8,
         };
         let json = serde_json::to_string(&step).unwrap();
-        assert!(json.contains("\"kind\":\"Guard\""));
+        assert!(json.contains("\"kind\":\"Fact\""));
         assert!(json.contains("\"pc\":5"));
         let back: ProofStep = serde_json::from_str(&json).unwrap();
         assert_eq!(step, back);
+    }
+
+    #[test]
+    fn proof_step_fact_accessors() {
+        let fact = ProofStep::Fact {
+            pc: 5,
+            left_reg: 6,
+            right_reg: 14,
+            c: -8,
+        };
+        assert_eq!(fact.pc(), 5);
+        assert_eq!(fact.output_left_reg(), 6);
+        assert_eq!(fact.output_right_reg(), 14);
+        assert_eq!(fact.bound_contribution(), -8);
     }
 
     #[test]
@@ -413,7 +428,7 @@ mod tests {
                     right_reg: 14,
                     bound: -5,
                     proof: vec![
-                        ProofStep::Guard {
+                        ProofStep::Fact {
                             pc: 5,
                             left_reg: 6,
                             right_reg: 14,
@@ -438,18 +453,7 @@ mod tests {
     }
 
     #[test]
-    fn proof_step_accessors() {
-        let guard = ProofStep::Guard {
-            pc: 5,
-            left_reg: 6,
-            right_reg: 14,
-            c: -8,
-        };
-        assert_eq!(guard.pc(), 5);
-        assert_eq!(guard.output_left_reg(), 6);
-        assert_eq!(guard.output_right_reg(), 14);
-        assert_eq!(guard.bound_contribution(), -8);
-
+    fn proof_step_transfer_accessors() {
         let transfer = ProofStep::Transfer {
             pc: 9,
             pre_left_reg: 5,

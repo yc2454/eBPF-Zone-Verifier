@@ -40,10 +40,10 @@ fn reg_name(idx: usize) -> &'static str {
 ///
 /// **Invariant:** after processing step `k` of the chain,
 /// `current_left - current_right <= accumulated_bound` is the bound derivable
-/// from all steps seen so far. The chain starts from the Guard's `c` (the base fact
-/// independently verified against the interval state at the divergence point) and
-/// accumulates each Transfer's `delta`. At the end of the chain,
-/// `accumulated_bound` must equal `entry.bound`.
+/// from all steps seen so far. The chain starts from the Fact's `c` (the base
+/// constraint independently verified against the interval state), adjusted by each
+/// Derive's offset, and accumulated by each Transfer's `delta`. At the end of the
+/// chain, `accumulated_bound` must equal `entry.bound`.
 struct ProofCheckState {
     /// The left register of the currently tracked constraint pair.
     current_left: usize,
@@ -96,7 +96,7 @@ pub fn distance_upper_bound(state: &State, i: Reg, j: Reg) -> Option<i64> {
 }
 
 // ---------------------------------------------------------------------------
-// Guard verification
+// Fact verification
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
@@ -106,7 +106,7 @@ pub(super) struct Constraint {
     pub c: i64,
 }
 
-pub(super) fn derive_guard_constraint_from_branch(
+pub(super) fn derive_fact_from_branch(
     pred_instr: &Instr,
     pred_pc: usize,
     succ_pc: usize,
@@ -178,16 +178,16 @@ pub(super) fn derive_guard_constraint_from_branch(
     }
 }
 
-/// Verify a Guard step against the interval pre-state at its PC.
+/// Verify a Fact step against the interval pre-state at its PC.
 ///
 /// Two verification paths:
-/// 1. Branch-derived: the instruction at guard_pc is a branch and the guard
-///    matches the branch condition (for the edge leading to guard_pc + 1).
+/// 1. Branch-derived: the instruction at `fact_pc` is a branch and the claimed
+///    constraint matches the branch condition on the fall-through edge.
 /// 2. State-derived: `distance_upper_bound(state, i, j) <= c` holds directly
-///    in the interval state at guard_pc. This covers the divergence-point case
+///    in the interval state at `fact_pc`. This is the divergence-point case
 ///    where zone and interval agree on the constraint.
-fn verify_guard(
-    guard_pc: usize,
+fn verify_fact(
+    fact_pc: usize,
     left_idx: usize,
     right_idx: usize,
     c: i64,
@@ -202,45 +202,45 @@ fn verify_guard(
         return false;
     };
 
-    // Path 1: branch-derived guard.
-    // Check if the instruction at guard_pc is a branch and the guard matches
-    // the condition on the edge toward the target.
-    let instr = &prog.instrs[guard_pc];
-    if let Some(branch_guard) = derive_guard_constraint_from_branch(instr, guard_pc, guard_pc + 1) {
-        if left_idx == branch_guard.left_reg
-            && right_idx == branch_guard.right_reg
-            && c == branch_guard.c
+    // Path 1: branch-derived fact.
+    // Check if the instruction at fact_pc is a branch whose fall-through condition
+    // matches the claimed constraint.
+    let instr = &prog.instrs[fact_pc];
+    if let Some(branch_fact) = derive_fact_from_branch(instr, fact_pc, fact_pc + 1) {
+        if left_idx == branch_fact.left_reg
+            && right_idx == branch_fact.right_reg
+            && c == branch_fact.c
         {
             debug!(
                 target: "pcc",
-                "[PCC] target={} Guard(pc={}, {}, {}, {}): branch-derived — OK",
-                target_pc, guard_pc, i.name(), j.name(), c,
+                "[PCC] target={} Fact(pc={}, {}, {}, {}): branch-derived — OK",
+                target_pc, fact_pc, i.name(), j.name(), c,
             );
             return true;
         }
     }
 
-    // Path 2: state-derived guard.
-    // The interval state at guard_pc directly proves i - j <= c.
+    // Path 2: state-derived fact.
+    // The interval state at fact_pc directly proves i - j <= c.
     if let Some(ub) = distance_upper_bound(state, i, j) {
         if ub <= c {
             debug!(
                 target: "pcc",
-                "[PCC] target={} Guard(pc={}, {}, {}, {}): state-derived (ub={}) — OK",
-                target_pc, guard_pc, i.name(), j.name(), c, ub,
+                "[PCC] target={} Fact(pc={}, {}, {}, {}): state-derived (ub={}) — OK",
+                target_pc, fact_pc, i.name(), j.name(), c, ub,
             );
             return true;
         }
         debug!(
             target: "pcc",
-            "[PCC] target={} Guard(pc={}, {}, {}, {}): state ub={} > {} — REJECTED",
-            target_pc, guard_pc, i.name(), j.name(), c, ub, c,
+            "[PCC] target={} Fact(pc={}, {}, {}, {}): state ub={} > {} — REJECTED",
+            target_pc, fact_pc, i.name(), j.name(), c, ub, c,
         );
     } else {
         debug!(
             target: "pcc",
-            "[PCC] target={} Guard(pc={}, {}, {}, {}): cannot compute distance — REJECTED",
-            target_pc, guard_pc, i.name(), j.name(), c,
+            "[PCC] target={} Fact(pc={}, {}, {}, {}): cannot compute distance — REJECTED",
+            target_pc, fact_pc, i.name(), j.name(), c,
         );
     }
     false
@@ -513,18 +513,20 @@ fn verify_transfer(
 /// Verify a proof chain by replaying each step against the interval pre-states
 /// stored in `explored_states` at each step's PC.
 ///
-/// The chain must begin with a [`ProofStep::Guard`] and be followed by zero or more
-/// [`ProofStep::Transfer`] steps. Replay maintains the running invariant:
-/// `current_left - current_right <= accumulated_bound`, starting from the Guard's
-/// independently verified base case and accumulating `delta` from each Transfer.
+/// The chain must begin with a [`ProofStep::Fact`] and be followed by zero or more
+/// [`ProofStep::Derive`] and [`ProofStep::Transfer`] steps. Replay maintains the running
+/// invariant: `current_left - current_right <= accumulated_bound`, starting from the
+/// Fact's independently verified base case, adjusted by each Derive, and accumulated
+/// by each Transfer's `delta`.
 ///
 /// Returns `Some(VerifiedEntry)` only when **all** of the following hold:
-/// 1. `proof[0]` is a Guard whose claimed constraint is verified against the interval
-///    pre-state at the guard's PC (state-derived or branch-derived — see [`verify_guard`]).
-/// 2. Every subsequent Transfer is connected (its `pre_*` matches the previous step's
-///    output) and sound for the instruction and interval pre-state at its PC.
-/// 3. The chain endpoint `(current_left, current_right)` matches `entry.(left_reg, right_reg)`.
-/// 4. The final `accumulated_bound` equals `entry.bound`.
+/// 1. `proof[0]` is a Fact whose claimed constraint is verified against the interval
+///    pre-state at the fact's PC (state-derived or branch-derived — see [`verify_fact`]).
+/// 2. Every subsequent Derive is connected and its instruction sequence is verified.
+/// 3. Every subsequent Transfer is connected and sound for the instruction and interval
+///    pre-state at its PC.
+/// 4. The chain endpoint `(current_left, current_right)` matches `entry.(left_reg, right_reg)`.
+/// 5. The final `accumulated_bound` equals `entry.bound`.
 ///
 /// Fail-closed: returns `None` if any check fails or a required state is missing.
 /// The caller skips this entry; the interval verifier proceeds without refinement.
@@ -547,32 +549,32 @@ pub fn verify_proof_chain_replay(
         reg_name(entry.left_reg), reg_name(entry.right_reg), entry.bound,
     );
 
-    // Step 0: Verify Guard (must be proof[0])
-    let ProofStep::Guard {
-        pc: guard_pc,
-        left_reg: g_left,
-        right_reg: g_right,
-        c: gc,
+    // Step 0: Verify Fact (must be proof[0])
+    let ProofStep::Fact {
+        pc: fact_pc,
+        left_reg: fact_left,
+        right_reg: fact_right,
+        c: fact_c,
     } = &entry.proof[0]
     else {
-        debug!(target: "pcc", "[PCC] target={}: proof[0] is not Guard — REJECTED", target_pc);
+        debug!(target: "pcc", "[PCC] target={}: proof[0] is not Fact — REJECTED", target_pc);
         return None;
     };
 
-    // Look up the interval pre-state at the guard's PC
-    let guard_state = get_unique_state(explored_states, *guard_pc, target_pc)?;
+    // Look up the interval pre-state at the fact's PC
+    let fact_state = get_unique_state(explored_states, *fact_pc, target_pc)?;
 
     // Only verify in interval mode
-    if !matches!(guard_state.domain, NumericDomain::Interval(_)) {
+    if !matches!(fact_state.domain, NumericDomain::Interval(_)) {
         return None;
     }
 
-    if !verify_guard(
-        *guard_pc,
-        *g_left,
-        *g_right,
-        *gc,
-        guard_state,
+    if !verify_fact(
+        *fact_pc,
+        *fact_left,
+        *fact_right,
+        *fact_c,
+        fact_state,
         prog,
         target_pc,
     ) {
@@ -581,18 +583,18 @@ pub fn verify_proof_chain_replay(
 
     // Initialize proof-check state
     let mut pcs = ProofCheckState {
-        current_left: *g_left,
-        current_right: *g_right,
-        accumulated_bound: *gc,
+        current_left: *fact_left,
+        current_right: *fact_right,
+        accumulated_bound: *fact_c,
     };
 
     // Steps 1..n: Verify Transfer and Derive steps
     for (sidx, step) in entry.proof.iter().enumerate().skip(1) {
         match step {
-            ProofStep::Guard { .. } => {
+            ProofStep::Fact { .. } => {
                 debug!(
                     target: "pcc",
-                    "[PCC] target={} step {}: unexpected Guard after first position — REJECTED",
+                    "[PCC] target={} step {}: unexpected Fact after first position — REJECTED",
                     target_pc, sidx,
                 );
                 return None;

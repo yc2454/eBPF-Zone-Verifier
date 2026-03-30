@@ -11,7 +11,7 @@
           "bound": -5,
           "proof": [
             {
-              "kind": "Guard",
+              "kind": "Fact",
               "pc": 7,
               "left_reg": 6,
               "right_reg": 14,

@@ -69,10 +69,10 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
                 );
             }
 
-            // proof[0] must be a Guard
-            let ProofStep::Guard { .. } = &e.proof[0] else {
+            // proof[0] must be a Fact
+            let ProofStep::Fact { .. } = &e.proof[0] else {
                 anyhow::bail!(
-                    "pc_annotation #{} entry #{} proof must start with a Guard step",
+                    "pc_annotation #{} entry #{} proof must start with a Fact step",
                     pc_idx,
                     eidx
                 );
@@ -81,7 +81,7 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
             // Validate register indices in all steps
             for (sidx, step) in e.proof.iter().enumerate() {
                 let indices = match step {
-                    ProofStep::Guard {
+                    ProofStep::Fact {
                         left_reg,
                         right_reg,
                         ..
@@ -117,13 +117,13 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
                 }
             }
 
-            // Chain connectivity: each step after Guard must be Transfer or Derive,
+            // Chain connectivity: each step after Fact must be Derive or Transfer,
             // and its input registers must match the previous step's output registers.
             for w in e.proof.windows(2) {
                 match &w[1] {
-                    ProofStep::Guard { .. } => {
+                    ProofStep::Fact { .. } => {
                         anyhow::bail!(
-                            "pc_annotation #{} entry #{} has Guard step after first position",
+                            "pc_annotation #{} entry #{} has Fact step after first position",
                             pc_idx,
                             eidx
                         );
@@ -167,11 +167,11 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
             }
 
             // PC ordering: all step PCs < target ann.pc.
-            // The Guard and its immediately following step may share the same PC
-            // (Guard establishes the fact before the instruction; Transfer processes it).
-            // Derive steps may reference PCs before the Guard (they establish register
-            // aliases that the Guard relies on). After the first Transfer, PCs must be
-            // strictly increasing.
+            // The Fact and its immediately following step may share the same PC
+            // (Fact establishes the constraint before the instruction executes).
+            // Derive steps may reference PCs before the Fact (the register alias is
+            // established in earlier instructions). After the first Transfer, PCs must
+            // be strictly increasing.
             let mut prev_pc = None;
             let mut seen_transfer = false;
             for (sidx, step) in e.proof.iter().enumerate() {
@@ -188,11 +188,11 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
                 }
                 if let Some(prev) = prev_pc {
                     if matches!(step, ProofStep::Derive { .. }) && !seen_transfer {
-                        // Derive after Guard (before any Transfer): may reference
-                        // earlier PCs (the alias was established before the branch).
+                        // Derive before first Transfer: may reference PCs before the
+                        // Fact (the alias was established before the branch).
                         // Only require step_pc < ann.pc (already checked above).
                     } else if !seen_transfer {
-                        // Guard → first non-Derive step: allow same PC (non-decreasing)
+                        // Fact → first non-Derive step: allow same PC (non-decreasing)
                         if step_pc < prev {
                             anyhow::bail!(
                                 "pc_annotation #{} entry #{} step #{} pc={} < guard pc={}",
@@ -236,7 +236,7 @@ pub fn validate_certificate_for_program(cert: &ProgramCertificate, prog: &Progra
                 }
             }
 
-            // Sum: Guard.c + sum(Transfer.delta) == entry.bound
+            // Sum: Fact.c + sum(Derive/Transfer contributions) == entry.bound
             let mut sum = 0i64;
             for step in &e.proof {
                 sum = match sum.checked_add(step.bound_contribution()) {
