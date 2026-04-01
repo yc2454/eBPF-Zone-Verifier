@@ -12,8 +12,7 @@ use crate::common::config::{DomainMode, VerifierConfig};
 use crate::domains::dbm::Dbm;
 use crate::domains::numeric::NumericDomain;
 use crate::pcc::{
-    apply_verified_refinements, program_hash, validate_certificate_for_program,
-    verify_proof_chain_replay,
+    apply_verified_refinements, check_proof, program_hash, validate_certificate_for_program,
 };
 use log::{debug, error, info};
 use std::collections::{HashMap, VecDeque};
@@ -282,7 +281,7 @@ pub fn analyze_program_full(
                     }
                     for entry in &ann.entries {
                         if let Some(v) =
-                            verify_proof_chain_replay(entry, ann.pc, &env.explored_states, prog)
+                            check_proof(entry, ann.pc, &env.explored_states, prog)
                         {
                             verified.push(v);
                         }

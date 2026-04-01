@@ -339,7 +339,7 @@ zovia pcc-regress [cert_cases.json]
 Only the following are in the TCB:
 
 - The baseline interval verifier.
-- `verify_proof_chain_replay` — step-by-step proof checker using `explored_states`.
+- `check_proof` — step-by-step proof checker using `explored_states`.
 - `apply_verified_refinements` — state refinement on verified entries.
 
 The certificate file, the generator, and the zone analysis are **not** in the TCB. Compromise of the certificate or generator cannot cause the checker to accept an unsafe program.
