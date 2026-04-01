@@ -12,6 +12,92 @@ use crate::testing::selftest::{
 };
 use serde::Deserialize;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pcc::ProofStep;
+
+    fn proof_has_compose(steps: &[ProofStep]) -> bool {
+        for step in steps {
+            match step {
+                ProofStep::Compose { left, right, .. } => {
+                    return true || proof_has_compose(left) || proof_has_compose(right);
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    fn cert_has_compose(cert: &ProgramCertificate) -> bool {
+        cert.pc_annotations.iter().any(|ann| {
+            ann.entries
+                .iter()
+                .any(|e| proof_has_compose(&e.proof))
+        })
+    }
+
+    #[test]
+    fn transitive_compose_example_emits_compose_step() {
+        let json_path = "pcc-tests/pcc_examples.json";
+        let content = fs::read_to_string(json_path).expect("read pcc_examples.json");
+        let tests: Vec<JsonTestCase> =
+            serde_json::from_str(&content).expect("parse pcc_examples.json");
+        let test = tests
+            .into_iter()
+            .find(|t| t.name.contains("transitive compose"))
+            .expect("transitive compose case present");
+
+        let raw_insns: Vec<RawBpfInsn> = test.insns.iter().map(|j| j.into()).collect();
+        let program = lower_raw_to_program(&raw_insns).expect("lower program");
+        let (ctx, has_unsupported_fixup) = build_exec_context(&test);
+        assert!(
+            !has_unsupported_fixup,
+            "transitive compose case should not need unsupported fixups"
+        );
+
+        let mut config = VerifierConfig::default();
+        config.domain_mode = DomainMode::Zone;
+
+        // Zone analysis with provenance enabled for PCC.
+        let mut entry = make_entry_state();
+        entry.enable_provenance();
+        let zone_result = analysis::analyze_program_full(&ctx, &program, entry, &config);
+        let zone_dbms = zone_result.dbms;
+
+        // Interval analysis to collect states.
+        let mut interval_config = config.clone();
+        interval_config.domain_mode = DomainMode::Interval;
+        interval_config.certificate = None;
+        let interval_entry = Dbm::new();
+        let interval_result =
+            analysis::analyze_program_full(&ctx, &program, interval_entry, &interval_config);
+        let n = program.instrs.len();
+        let interval_states: Vec<_> = (0..n)
+            .map(|pc| {
+                interval_result
+                    .explored_states
+                    .get(&pc)
+                    .and_then(|v| v.first())
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        crate::analysis::machine::state::State::new(
+                            crate::domains::numeric::NumericDomain::new_interval(),
+                            pc,
+                        )
+                    })
+            })
+            .collect();
+
+        let cert = generate_certificate(&program, &zone_dbms, &interval_states, &ctx.map_defs);
+
+        assert!(
+            cert_has_compose(&cert),
+            "expected generated certificate to include a Compose proof step"
+        );
+    }
+}
+
 fn slugify_test_name(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     let mut last_was_sep = false;
@@ -156,7 +242,8 @@ fn pcc_generate_cert(
     // the relational facts (e.g. r6-r7 from a branch) are still useful for
     // PCC even if zone's own access check fails (e.g. variable map offsets).
     println!("\n========= Stage 2: Zone DBM collection (for certificate generation) =========");
-    let entry = make_entry_state();
+    let mut entry = make_entry_state();
+    entry.enable_provenance(); // PCC generation needs provenance for Compose proofs
     let zone_result = analysis::analyze_program_full(&ctx, &program, entry, config);
     let zone_dbms = zone_result.dbms;
 

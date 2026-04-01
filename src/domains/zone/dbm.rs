@@ -3,6 +3,44 @@ use crate::analysis::machine::reg::{REG_ENV, Reg};
 
 pub const INF: i64 = i64::MAX / 4;
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  Provenance tracking for PCC certificate generation
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Tracks how a DBM cell got its current value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeOrigin {
+    /// Default: diagonal (0) or unconstrained (INF).
+    Init,
+    /// Set directly by `add_constraint` at the given program counter.
+    Primitive { pc: usize },
+    /// Derived by Floyd-Warshall transitive closure through intermediate index `via`.
+    Derived { via: usize },
+}
+
+/// Shadow matrix that records provenance for each DBM cell.
+/// Only allocated when PCC certificate generation is active.
+#[derive(Debug, Clone)]
+pub struct ProvenanceTracker {
+    edges: Vec<Vec<EdgeOrigin>>,
+    current_pc: usize,
+}
+
+impl ProvenanceTracker {
+    fn new(n: usize) -> Self {
+        Self {
+            edges: vec![vec![EdgeOrigin::Init; n]; n],
+            current_pc: 0,
+        }
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    pub fn get(&self, i: usize, j: usize) -> EdgeOrigin {
+        self.edges[i][j]
+    }
+}
+
 // Bounds for finite constraints inside the DBM.
 // We never store anything > POS_BOUND or < NEG_BOUND.
 const POS_BOUND: i64 = INF / 2;
@@ -35,6 +73,29 @@ pub fn clamped_add(a: i64, b: i64) -> i64 {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provenance_can_be_enabled_for_path_reconstruction() {
+        let mut dbm = Dbm::new();
+        dbm.enable_provenance();
+        dbm.set_current_pc(42);
+        dbm.add_constraint(Reg::R2, Reg::R3, 5);
+        dbm.close();
+
+        let path =
+            dbm.reconstruct_path(Reg::R2, Reg::R3).expect("provenance should be active");
+        assert_eq!(path.len(), 1);
+        let edge = &path[0];
+        assert_eq!(edge.to, Reg::R2);
+        assert_eq!(edge.from, Reg::R3);
+        assert_eq!(edge.weight, 5);
+        assert_eq!(edge.pc, 42);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bounds {
     pub s32_min: i32,
@@ -62,10 +123,12 @@ impl Bounds {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Dbm {
     pub data: Vec<Vec<i64>>,
     pub bounds: Vec<Bounds>,
+    /// Shadow provenance matrix — None when PCC is not active, zero overhead.
+    provenance: Option<Box<ProvenanceTracker>>,
 }
 
 impl Dbm {
@@ -78,7 +141,29 @@ impl Dbm {
         Self {
             data,
             bounds: vec![Bounds::unknown(); n],
+            provenance: None,
         }
+    }
+
+    /// Activates provenance tracking. Call once before analysis when PCC generation is needed.
+    pub fn enable_provenance(&mut self) {
+        let n = self.num_vars();
+        self.provenance = Some(Box::new(ProvenanceTracker::new(n)));
+    }
+
+    /// Sets the current program counter for provenance attribution.
+    /// Call before each instruction's transfer function.
+    #[inline]
+    pub fn set_current_pc(&mut self, pc: usize) {
+        if let Some(prov) = &mut self.provenance {
+            prov.current_pc = pc;
+        }
+    }
+
+    /// Returns a reference to the provenance tracker, if active.
+    #[allow(dead_code)]
+    pub fn provenance(&self) -> Option<&ProvenanceTracker> {
+        self.provenance.as_deref()
     }
 
     pub fn num_vars(&self) -> usize {
@@ -113,6 +198,26 @@ impl Dbm {
         self.data[i.idx()][j.idx()] = val;
     }
 
+    /// Stamps all finite edges involving `reg_idx` with `Primitive{pc: current_pc}`.
+    /// Called after `set_idx` shifts in `apply_add_reg` to keep provenance
+    /// consistent with the shifted constraint values.
+    pub fn stamp_provenance_for_var(&mut self, reg_idx: usize) {
+        // Detach provenance to avoid borrow conflict with self.data
+        let mut prov = self.provenance.take();
+        if let Some(p) = &mut prov {
+            let n = self.data.len();
+            for j in 0..n {
+                if self.data[reg_idx][j] < INF && reg_idx != j {
+                    p.edges[reg_idx][j] = EdgeOrigin::Primitive { pc: p.current_pc };
+                }
+                if self.data[j][reg_idx] < INF && reg_idx != j {
+                    p.edges[j][reg_idx] = EdgeOrigin::Primitive { pc: p.current_pc };
+                }
+            }
+        }
+        self.provenance = prov;
+    }
+
     pub fn add_constraint(&mut self, i: Reg, j: Reg, c: i64) {
         // Constraint: i - j <= c
         let c = clamp_upper_bound(c);
@@ -124,6 +229,9 @@ impl Dbm {
         }
         if c < old {
             self.set(i, j, c);
+            if let Some(prov) = &mut self.provenance {
+                prov.edges[i.idx()][j.idx()] = EdgeOrigin::Primitive { pc: prov.current_pc };
+            }
         }
     }
 
@@ -146,10 +254,18 @@ impl Dbm {
             }
         }
         self.bounds[i] = Bounds::unknown();
+        if let Some(prov) = &mut self.provenance {
+            for j in 0..n {
+                prov.edges[i][j] = EdgeOrigin::Init;
+                prov.edges[j][i] = EdgeOrigin::Init;
+            }
+        }
     }
 
     pub fn close(&mut self) {
         let n = self.num_vars();
+        // Detach provenance to avoid borrow conflict with self.data
+        let mut prov = self.provenance.take();
         for k in 0..n {
             for i in 0..n {
                 let dik = self.data[i][k];
@@ -165,10 +281,14 @@ impl Dbm {
                     let via = clamped_add(dik, dkj);
                     if via < self.data[i][j] {
                         self.data[i][j] = via;
+                        if let Some(p) = &mut prov {
+                            p.edges[i][j] = EdgeOrigin::Derived { via: k };
+                        }
                     }
                 }
             }
         }
+        self.provenance = prov;
     }
 
     pub fn is_inconsistent(&self) -> bool {
@@ -309,6 +429,7 @@ impl Dbm {
     pub fn widen(&self, newer: &Dbm) -> Dbm {
         let n = self.num_vars();
         let mut result = self.clone();
+        result.provenance = None; // provenance doesn't survive widening
         for i in 0..n {
             for j in 0..n {
                 if newer.data[i][j] > self.data[i][j] {
@@ -369,6 +490,7 @@ impl Dbm {
     pub fn narrow(&self, other: &Dbm) -> Dbm {
         let n = self.num_vars();
         let mut result = self.clone();
+        result.provenance = None; // provenance doesn't survive narrowing
         for i in 0..n {
             for j in 0..n {
                 // Take the tighter constraint (smaller value = tighter bound)
@@ -387,7 +509,81 @@ impl Dbm {
         }
         result
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  Provenance: path reconstruction
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// Decomposes the shortest path for `dbm[i][j]` into primitive edges.
+    /// Returns `None` if provenance is not active or no constraint exists.
+    pub fn reconstruct_path(&self, i: Reg, j: Reg) -> Option<Vec<PrimitiveEdge>> {
+        let prov = self.provenance.as_ref()?;
+        let val = self.get(i, j);
+        if val >= INF {
+            return None; // no constraint
+        }
+        let mut edges = Vec::new();
+        self.decompose(prov, i.idx(), j.idx(), &mut edges);
+        Some(edges)
+    }
+
+    fn decompose(
+        &self,
+        prov: &ProvenanceTracker,
+        i: usize,
+        j: usize,
+        out: &mut Vec<PrimitiveEdge>,
+    ) {
+        match prov.edges[i][j] {
+            EdgeOrigin::Primitive { pc } => {
+                out.push(PrimitiveEdge {
+                    to: Reg::idx_to_reg(i).unwrap(),
+                    from: Reg::idx_to_reg(j).unwrap(),
+                    weight: self.data[i][j],
+                    pc,
+                });
+            }
+            EdgeOrigin::Derived { via } => {
+                self.decompose(prov, i, via, out);
+                self.decompose(prov, via, j, out);
+            }
+            EdgeOrigin::Init => {
+                // Diagonal (i==j, weight 0) or initial anchor constraint.
+                // Emit as a trivial edge if meaningful.
+                if i != j && self.data[i][j] < INF {
+                    out.push(PrimitiveEdge {
+                        to: Reg::idx_to_reg(i).unwrap(),
+                        from: Reg::idx_to_reg(j).unwrap(),
+                        weight: self.data[i][j],
+                        pc: 0,
+                    });
+                }
+            }
+        }
+    }
 }
+
+/// A primitive edge in a DBM shortest-path decomposition.
+#[derive(Debug, Clone)]
+pub struct PrimitiveEdge {
+    /// The "to" register: constraint is `to - from <= weight`.
+    pub to: Reg,
+    /// The "from" register.
+    pub from: Reg,
+    /// The weight of this edge.
+    pub weight: i64,
+    /// The program counter of the instruction that established this edge.
+    #[allow(dead_code)]
+    pub pc: usize,
+}
+
+// Provenance is metadata — it should not affect semantic equality of DBMs.
+impl PartialEq for Dbm {
+    fn eq(&self, other: &Self) -> bool {
+        self.data == other.data && self.bounds == other.bounds
+    }
+}
+impl Eq for Dbm {}
 
 impl Default for Dbm {
     fn default() -> Self {

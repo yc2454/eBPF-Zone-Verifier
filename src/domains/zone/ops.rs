@@ -208,6 +208,11 @@ pub fn apply_add_reg(dbm: &mut Dbm, dst: Reg, src: Reg) {
         }
         dbm.set_idx(di, di, 0);
 
+        // Stamp provenance for all shifted edges so that reconstruct_path
+        // attributes them to the current instruction (the add-reg), not to
+        // stale pre-shift origins.
+        dbm.stamp_provenance_for_var(di);
+
         let b = &mut dbm.bounds[di];
         b.s64_min = b.s64_min.saturating_add(src_lo);
         b.s64_max = b.s64_max.saturating_add(src_hi);

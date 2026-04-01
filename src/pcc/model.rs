@@ -38,14 +38,50 @@ pub struct AnnotationEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind")]
 pub enum ProofStep {
-    /// Base fact: the interval state at `pc` proves `left_reg - right_reg <= c`.
-    /// Placed at the divergence point where zone and interval agree.
-    #[serde(rename = "Guard")]
-    Guard {
+    /// Base fact: the interval state at `pc` proves `left_reg - right_reg <= c`,
+    /// either directly from the abstract state or from a branch condition visible
+    /// to the interval verifier. Always the first step in a proof chain.
+    #[serde(rename = "Fact")]
+    Fact {
         pc: usize,
         left_reg: usize,
         right_reg: usize,
         c: i64,
+    },
+    /// Register aliasing step: instructions from `pc_start` to `pc_end` establish
+    /// that `source_reg = target_reg + offset`.
+    ///
+    /// This allows the proof chain to "switch" which register it tracks:
+    /// if the preceding Guard proved `source_reg <= c`, then after Derive
+    /// we know `target_reg <= c - offset`.
+    ///
+    /// The checker verifies by replaying the instructions `pc_start..=pc_end` and
+    /// confirming they establish the claimed constant relationship.
+    #[serde(rename = "Derive")]
+    Derive {
+        pc_start: usize,
+        pc_end: usize,
+        /// The register constrained by the preceding Guard.
+        source_reg: usize,
+        /// The register we need a bound on (used by a later Transfer).
+        target_reg: usize,
+        /// The constant offset: source_reg = target_reg + offset.
+        offset: i64,
+    },
+    /// Transitive composition: combines two sub-proofs through an intermediate
+    /// register to establish a bound that neither sub-proof can prove alone.
+    ///
+    /// If `left` proves `L - K ≤ a` and `right` proves `K - R ≤ b`, then
+    /// `Compose` proves `L - R ≤ a + b` via the intermediate index `K = via`.
+    ///
+    /// Sub-proofs are themselves valid proof chains (`[Fact, Derive*, Transfer+]`)
+    /// or nested Compose nodes.
+    #[serde(rename = "Compose")]
+    Compose {
+        left: Vec<ProofStep>,
+        right: Vec<ProofStep>,
+        /// Intermediate register index K that connects left and right sub-proofs.
+        via: usize,
     },
     /// Inductive step: the instruction at `pc` transforms the pre-state constraint
     /// `pre_left_reg - pre_right_reg <= b` into the post-state constraint
@@ -89,41 +125,77 @@ impl ProofStep {
     /// The PC this step refers to.
     pub fn pc(&self) -> usize {
         match self {
-            ProofStep::Guard { pc, .. } | ProofStep::Transfer { pc, .. } => *pc,
+            ProofStep::Fact { pc, .. } | ProofStep::Transfer { pc, .. } => *pc,
+            ProofStep::Derive { pc_end, .. } => *pc_end,
+            ProofStep::Compose { left, right, .. } => {
+                // Return the max PC across both sub-proofs.
+                let l = left.last().map_or(0, |s| s.pc());
+                let r = right.last().map_or(0, |s| s.pc());
+                l.max(r)
+            }
         }
     }
 
     /// The output left register index after this step.
-    /// Guard: `left_reg`; Transfer: `post_left_reg`.
+    /// Fact: `left_reg`; Transfer: `post_left_reg`; Derive: `target_reg`;
+    /// Compose: left sub-proof's output left register.
     pub fn output_left_reg(&self) -> usize {
         match self {
-            ProofStep::Guard { left_reg, .. } => *left_reg,
+            ProofStep::Fact { left_reg, .. } => *left_reg,
             ProofStep::Transfer { post_left_reg, .. } => *post_left_reg,
+            ProofStep::Derive { target_reg, .. } => *target_reg,
+            ProofStep::Compose { left, .. } => {
+                left.last().map_or(0, |s| s.output_left_reg())
+            }
         }
     }
 
     /// The output right register index after this step.
-    /// Guard: `right_reg`; Transfer: `post_right_reg`.
+    /// Fact: `right_reg`; Transfer: `post_right_reg`; Derive: `0` (Zero);
+    /// Compose: right sub-proof's output right register.
     pub fn output_right_reg(&self) -> usize {
         match self {
-            ProofStep::Guard { right_reg, .. } => *right_reg,
+            ProofStep::Fact { right_reg, .. } => *right_reg,
             ProofStep::Transfer { post_right_reg, .. } => *post_right_reg,
+            ProofStep::Derive { .. } => 0, // Derive switches to target_reg - Zero
+            ProofStep::Compose { right, .. } => {
+                right.last().map_or(0, |s| s.output_right_reg())
+            }
         }
     }
 
     /// The bound contribution of this step.
-    /// Guard: `c`; Transfer: `delta`.
+    /// Fact: `c`; Transfer: `delta`; Derive: `-offset`;
+    /// Compose: sum of all bound contributions across both sub-proofs.
     pub fn bound_contribution(&self) -> i64 {
         match self {
-            ProofStep::Guard { c, .. } => *c,
+            ProofStep::Fact { c, .. } => *c,
             ProofStep::Transfer { delta, .. } => *delta,
+            ProofStep::Derive { offset, .. } => -*offset,
+            ProofStep::Compose { left, right, .. } => {
+                let left_sum: i64 = left.iter().map(|s| s.bound_contribution()).sum();
+                let right_sum: i64 = right.iter().map(|s| s.bound_contribution()).sum();
+                left_sum + right_sum
+            }
+        }
+    }
+
+    /// Total number of nodes in the proof step tree, counting recursively
+    /// into Compose sub-proofs. Used for enforcing MAX_STEPS_PER_ENTRY.
+    pub fn node_count(&self) -> usize {
+        match self {
+            ProofStep::Fact { .. } | ProofStep::Transfer { .. } | ProofStep::Derive { .. } => 1,
+            ProofStep::Compose { left, right, .. } => {
+                1 + left.iter().map(|s| s.node_count()).sum::<usize>()
+                  + right.iter().map(|s| s.node_count()).sum::<usize>()
+            }
         }
     }
 }
 
 /// Maximum proof steps allowed per annotation entry.
 /// Shared between the validator and checker to ensure they agree.
-pub const MAX_STEPS_PER_ENTRY: usize = 16;
+pub const MAX_STEPS_PER_ENTRY: usize = 32;
 
 /// Maximum annotation entries allowed per PC.
 ///
@@ -145,7 +217,7 @@ pub fn checked_sum(weights: impl Iterator<Item = i64>) -> Option<i64> {
 
 impl ProgramCertificate {
     /// Prototype certificate schema version.
-    pub const VERSION: u32 = 2;
+    pub const VERSION: u32 = 3;
 
     #[allow(dead_code)]
     pub fn empty(program_hash: String) -> Self {
@@ -198,6 +270,135 @@ fn reg_name(idx: usize) -> &'static str {
     }
 }
 
+/// Recursively display proof steps with indentation.
+/// Returns the running bound sum across all displayed steps.
+fn display_proof_steps(
+    f: &mut fmt::Formatter<'_>,
+    steps: &[ProofStep],
+    indent: usize,
+) -> fmt::Result {
+    let pad = " ".repeat(indent);
+    let mut running: i64 = 0;
+    for (si, step) in steps.iter().enumerate() {
+        match step {
+            ProofStep::Fact {
+                pc,
+                left_reg,
+                right_reg,
+                c,
+            } => {
+                running += c;
+                writeln!(
+                    f,
+                    "{pad}[{si}] Fact     @ pc {:>3}:  {} - {} <= {}",
+                    pc,
+                    reg_name(*left_reg),
+                    reg_name(*right_reg),
+                    c,
+                )?;
+            }
+            ProofStep::Derive {
+                pc_start,
+                pc_end,
+                source_reg,
+                target_reg,
+                offset,
+            } => {
+                running -= offset;
+                writeln!(
+                    f,
+                    "{pad}[{si}] Derive   @ pc {}→{}:  {} = {} + {}   =>  {} <= {}",
+                    pc_start,
+                    pc_end,
+                    reg_name(*source_reg),
+                    reg_name(*target_reg),
+                    offset,
+                    reg_name(*target_reg),
+                    running,
+                )?;
+            }
+            ProofStep::Compose {
+                left,
+                right,
+                via,
+            } => {
+                let left_bound: i64 = left.iter().map(|s| s.bound_contribution()).sum();
+                let right_bound: i64 = right.iter().map(|s| s.bound_contribution()).sum();
+                let composed = left_bound + right_bound;
+                running += composed;
+                writeln!(
+                    f,
+                    "{pad}[{si}] Compose  via {}:  {} + {} = {}",
+                    reg_name(*via),
+                    left_bound,
+                    right_bound,
+                    composed,
+                )?;
+                writeln!(f, "{pad}  left:")?;
+                display_proof_steps(f, left, indent + 4)?;
+                writeln!(f, "{pad}  right:")?;
+                display_proof_steps(f, right, indent + 4)?;
+            }
+            ProofStep::Transfer {
+                pc,
+                pre_left_reg,
+                pre_right_reg,
+                post_left_reg,
+                post_right_reg,
+                delta,
+                hint,
+            } => {
+                let prev_running = running;
+                running += delta;
+
+                let constraint_str =
+                    if pre_left_reg != post_left_reg || pre_right_reg != post_right_reg {
+                        format!(
+                            "{}-{}  ->  {}-{}",
+                            reg_name(*pre_left_reg),
+                            reg_name(*pre_right_reg),
+                            reg_name(*post_left_reg),
+                            reg_name(*post_right_reg),
+                        )
+                    } else {
+                        format!(
+                            "{}-{}",
+                            reg_name(*pre_left_reg),
+                            reg_name(*pre_right_reg),
+                        )
+                    };
+                let desc = if let Some(h) = hint {
+                    h.clone()
+                } else if *delta != 0 {
+                    format!("{}  delta={:+}", constraint_str, delta)
+                } else {
+                    format!("{}  [passthrough]", constraint_str)
+                };
+
+                let arith = if *delta == 0 {
+                    format!("bound: {} (unchanged)", prev_running)
+                } else {
+                    let sign = if *delta >= 0 { "+" } else { "-" };
+                    format!(
+                        "bound: {} {} {} = {}",
+                        prev_running,
+                        sign,
+                        delta.abs(),
+                        running,
+                    )
+                };
+
+                writeln!(
+                    f,
+                    "{pad}[{si}] Transfer @ pc {:>3}:  {}   =>  {}",
+                    pc, desc, arith,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
 impl fmt::Display for ProgramCertificate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(
@@ -230,89 +431,7 @@ impl fmt::Display for ProgramCertificate {
                     entry.proof.len(),
                 )?;
 
-                let mut running: i64 = 0;
-                for (si, step) in entry.proof.iter().enumerate() {
-                    match step {
-                        ProofStep::Guard {
-                            pc,
-                            left_reg,
-                            right_reg,
-                            c,
-                        } => {
-                            running += c;
-                            writeln!(
-                                f,
-                                "      [{si}] Guard    @ pc {:>3}:  {} - {} <= {}",
-                                pc,
-                                reg_name(*left_reg),
-                                reg_name(*right_reg),
-                                c,
-                            )?;
-                        }
-                        ProofStep::Transfer {
-                            pc,
-                            pre_left_reg,
-                            pre_right_reg,
-                            post_left_reg,
-                            post_right_reg,
-                            delta,
-                            hint,
-                        } => {
-                            let prev_running = running;
-                            running += delta;
-
-                            // Describe what the instruction did to the tracked pair.
-                            // Use the hint (filled in by the generator) when available;
-                            // fall back to a raw constraint-pair display otherwise.
-                            let constraint_str =
-                                if pre_left_reg != post_left_reg || pre_right_reg != post_right_reg
-                                {
-                                    format!(
-                                        "{}-{}  ->  {}-{}",
-                                        reg_name(*pre_left_reg),
-                                        reg_name(*pre_right_reg),
-                                        reg_name(*post_left_reg),
-                                        reg_name(*post_right_reg),
-                                    )
-                                } else {
-                                    format!(
-                                        "{}-{}",
-                                        reg_name(*pre_left_reg),
-                                        reg_name(*pre_right_reg),
-                                    )
-                                };
-                            let desc = if let Some(h) = hint {
-                                h.clone()
-                            } else if *delta != 0 {
-                                format!("{}  delta={:+}", constraint_str, delta)
-                            } else {
-                                format!("{}  [passthrough]", constraint_str)
-                            };
-
-                            // Show the running-bound arithmetic explicitly so the
-                            // reader can follow the proof without mental arithmetic.
-                            // e.g. "-8 + 3 = -5" rather than "-8 +3 = -5".
-                            let arith = if *delta == 0 {
-                                format!("bound: {} (unchanged)", prev_running)
-                            } else {
-                                let sign = if *delta >= 0 { "+" } else { "-" };
-                                format!(
-                                    "bound: {} {} {} = {}",
-                                    prev_running,
-                                    sign,
-                                    delta.abs(),
-                                    running,
-                                )
-                            };
-
-                            writeln!(
-                                f,
-                                "      [{si}] Transfer @ pc {:>3}:  {}   =>  {}",
-                                pc, desc, arith,
-                            )?;
-                        }
-                    }
-                }
+                display_proof_steps(f, &entry.proof, 6)?;
             }
         }
         Ok(())
@@ -324,18 +443,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn proof_step_guard_json_round_trip() {
-        let step = ProofStep::Guard {
+    fn proof_step_fact_json_round_trip() {
+        let step = ProofStep::Fact {
             pc: 5,
             left_reg: 6,
             right_reg: 14,
             c: -8,
         };
         let json = serde_json::to_string(&step).unwrap();
-        assert!(json.contains("\"kind\":\"Guard\""));
+        assert!(json.contains("\"kind\":\"Fact\""));
         assert!(json.contains("\"pc\":5"));
         let back: ProofStep = serde_json::from_str(&json).unwrap();
         assert_eq!(step, back);
+    }
+
+    #[test]
+    fn proof_step_fact_accessors() {
+        let fact = ProofStep::Fact {
+            pc: 5,
+            left_reg: 6,
+            right_reg: 14,
+            c: -8,
+        };
+        assert_eq!(fact.pc(), 5);
+        assert_eq!(fact.output_left_reg(), 6);
+        assert_eq!(fact.output_right_reg(), 14);
+        assert_eq!(fact.bound_contribution(), -8);
     }
 
     #[test]
@@ -358,9 +491,9 @@ mod tests {
     }
 
     #[test]
-    fn certificate_v2_round_trip() {
+    fn certificate_v3_round_trip() {
         let cert = ProgramCertificate {
-            version: 2,
+            version: 3,
             program_hash: "abc123".to_string(),
             pc_annotations: vec![PcAnnotation {
                 pc: 10,
@@ -369,7 +502,7 @@ mod tests {
                     right_reg: 14,
                     bound: -5,
                     proof: vec![
-                        ProofStep::Guard {
+                        ProofStep::Fact {
                             pc: 5,
                             left_reg: 6,
                             right_reg: 14,
@@ -394,18 +527,7 @@ mod tests {
     }
 
     #[test]
-    fn proof_step_accessors() {
-        let guard = ProofStep::Guard {
-            pc: 5,
-            left_reg: 6,
-            right_reg: 14,
-            c: -8,
-        };
-        assert_eq!(guard.pc(), 5);
-        assert_eq!(guard.output_left_reg(), 6);
-        assert_eq!(guard.output_right_reg(), 14);
-        assert_eq!(guard.bound_contribution(), -8);
-
+    fn proof_step_transfer_accessors() {
         let transfer = ProofStep::Transfer {
             pc: 9,
             pre_left_reg: 5,
@@ -419,5 +541,107 @@ mod tests {
         assert_eq!(transfer.output_left_reg(), 6);
         assert_eq!(transfer.output_right_reg(), 14);
         assert_eq!(transfer.bound_contribution(), 3);
+    }
+
+    #[test]
+    fn proof_step_compose_json_round_trip() {
+        let step = ProofStep::Compose {
+            left: vec![
+                ProofStep::Fact {
+                    pc: 7,
+                    left_reg: 5,
+                    right_reg: 2,
+                    c: 3,
+                },
+            ],
+            right: vec![
+                ProofStep::Fact {
+                    pc: 4,
+                    left_reg: 2,
+                    right_reg: 14,
+                    c: -8,
+                },
+            ],
+            via: 2,
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        assert!(json.contains("\"kind\":\"Compose\""));
+        assert!(json.contains("\"via\":2"));
+        let back: ProofStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(step, back);
+    }
+
+    #[test]
+    fn proof_step_compose_accessors() {
+        // left proves r4 - r1 ≤ 3, right proves r1 - @end ≤ -8
+        let compose = ProofStep::Compose {
+            left: vec![
+                ProofStep::Fact {
+                    pc: 7,
+                    left_reg: 5,  // r4
+                    right_reg: 2, // r1
+                    c: 3,
+                },
+            ],
+            right: vec![
+                ProofStep::Fact {
+                    pc: 4,
+                    left_reg: 2,   // r1
+                    right_reg: 14, // @data_end
+                    c: -8,
+                },
+            ],
+            via: 2, // r1
+        };
+        assert_eq!(compose.pc(), 7); // max of sub-proof PCs
+        assert_eq!(compose.output_left_reg(), 5);  // r4 from left
+        assert_eq!(compose.output_right_reg(), 14); // @data_end from right
+        assert_eq!(compose.bound_contribution(), -5); // 3 + (-8)
+        assert_eq!(compose.node_count(), 3); // 1 Compose + 1 Fact + 1 Fact
+    }
+
+    #[test]
+    fn certificate_with_compose_round_trip() {
+        let cert = ProgramCertificate {
+            version: 3,
+            program_hash: "def456".to_string(),
+            pc_annotations: vec![PcAnnotation {
+                pc: 8,
+                entries: vec![AnnotationEntry {
+                    left_reg: 5,
+                    right_reg: 14,
+                    bound: -5,
+                    proof: vec![ProofStep::Compose {
+                        left: vec![
+                            ProofStep::Fact {
+                                pc: 7,
+                                left_reg: 5,
+                                right_reg: 2,
+                                c: 3,
+                            },
+                            ProofStep::Transfer {
+                                pc: 7,
+                                pre_left_reg: 5,
+                                pre_right_reg: 2,
+                                post_left_reg: 5,
+                                post_right_reg: 2,
+                                delta: 0,
+                                hint: None,
+                            },
+                        ],
+                        right: vec![ProofStep::Fact {
+                            pc: 4,
+                            left_reg: 2,
+                            right_reg: 14,
+                            c: -8,
+                        }],
+                        via: 2,
+                    }],
+                }],
+            }],
+        };
+        let json = serde_json::to_string_pretty(&cert).unwrap();
+        let back: ProgramCertificate = serde_json::from_str(&json).unwrap();
+        assert_eq!(cert, back);
     }
 }

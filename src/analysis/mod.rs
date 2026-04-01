@@ -12,8 +12,7 @@ use crate::common::config::{DomainMode, VerifierConfig};
 use crate::domains::dbm::Dbm;
 use crate::domains::numeric::NumericDomain;
 use crate::pcc::{
-    apply_verified_refinements, program_hash, validate_certificate_for_program,
-    verify_proof_chain_replay,
+    apply_verified_refinements, check_proof, program_hash, validate_certificate_for_program,
 };
 use log::{debug, error, info};
 use std::collections::{HashMap, VecDeque};
@@ -132,8 +131,18 @@ pub fn analyze_program_full(
     liveness::compute_liveness(prog, &mut env);
 
     // 2. Initialize Entry State based on domain mode
+    let pcc_mode = config.certificate_output.is_some()
+        || config.certificate_input.is_some()
+        || config.certificate.is_some();
+
     let initial_domain = match config.domain_mode {
-        DomainMode::Zone => NumericDomain::Zone(entry_dbm),
+        DomainMode::Zone => {
+            let mut dbm = entry_dbm;
+            if pcc_mode {
+                dbm.enable_provenance();
+            }
+            NumericDomain::Zone(dbm)
+        }
         DomainMode::Interval => NumericDomain::new_interval(),
     };
     let mut initial_state = State::new(initial_domain, 0);
@@ -258,6 +267,7 @@ pub fn analyze_program_full(
         }
 
         // F. Transfer Function
+        state.domain.set_current_pc(state.pc);
         let mut successors = transfer::transfer(&mut env, state, instr);
         // F.1 Certificate-Aided Refinement (optional)
         // Replay-verify proof chains for each successor PC using explored_states.
@@ -271,7 +281,7 @@ pub fn analyze_program_full(
                     }
                     for entry in &ann.entries {
                         if let Some(v) =
-                            verify_proof_chain_replay(entry, ann.pc, &env.explored_states, prog)
+                            check_proof(entry, ann.pc, &env.explored_states, prog)
                         {
                             verified.push(v);
                         }

@@ -25,9 +25,10 @@ mod injector;
 mod model;
 mod validate;
 
-pub use checker::verify_proof_chain_replay;
+pub use checker::check_proof;
 pub use generator::generate_certificate;
 pub use hash::program_hash;
 pub use injector::apply_verified_refinements;
-pub use model::ProgramCertificate;
+#[allow(unused_imports)]
+pub use model::{ProgramCertificate, ProofStep};
 pub use validate::validate_certificate_for_program;

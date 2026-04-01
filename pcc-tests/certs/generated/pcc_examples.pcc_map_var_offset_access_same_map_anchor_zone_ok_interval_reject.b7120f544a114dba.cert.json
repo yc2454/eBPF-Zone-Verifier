@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "program_hash": "b7120f544a114dba",
   "pc_annotations": [
     {
@@ -11,7 +11,7 @@
           "bound": -1,
           "proof": [
             {
-              "kind": "Guard",
+              "kind": "Fact",
               "pc": 13,
               "left_reg": 7,
               "right_reg": 8,

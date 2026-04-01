@@ -510,6 +510,22 @@ impl NumericDomain {
         }
     }
 
+    /// Activates provenance tracking for PCC certificate generation (Zone only).
+    #[allow(dead_code)]
+    pub fn enable_provenance(&mut self) {
+        if let NumericDomain::Zone(dbm) = self {
+            dbm.enable_provenance();
+        }
+    }
+
+    /// Sets the current program counter for provenance attribution (Zone only).
+    #[inline]
+    pub fn set_current_pc(&mut self, pc: usize) {
+        if let NumericDomain::Zone(dbm) = self {
+            dbm.set_current_pc(pc);
+        }
+    }
+
     /// Add a raw constraint i - j <= c (Zone-specific)
     pub fn add_constraint(&mut self, i: Reg, j: Reg, c: i64) {
         match self {
