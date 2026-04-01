@@ -789,47 +789,75 @@ fn instr_writes(instr: &Instr, reg: Reg) -> bool {
 /// decomposes it into primitive edges. For each edge, we try `backward_trace`
 /// or `try_derive_chain` to generate a sub-proof. If all segments succeed,
 /// we fold them into nested `Compose` nodes.
-fn try_provenance_compose(
+// Recursive constraint solver: tries linear replay, alias substitution, and
+// provenance-guided composition in one search tree.
+fn solve_constraint(
     prog: &Program,
     zone_dbms: &[Dbm],
     interval_states: &[State],
     target_pc: usize,
-    target_i: Reg,
-    target_j: Reg,
-    _target_bound: i64,
+    left: Reg,
+    right: Reg,
+    bound: i64,
+    depth: usize,
+    base_reg_for_alias: Option<Reg>,
+    anchor_for_alias: Option<Reg>,
 ) -> Option<Vec<ProofStep>> {
-    let dbm = zone_dbms.get(target_pc)?;
-    let edges = dbm.reconstruct_path(target_i, target_j)?;
-
-    // If only 1 primitive edge, backward_trace should handle it — don't compose.
-    if edges.len() < 2 {
+    const MAX_DEPTH: usize = 4;
+    if depth > MAX_DEPTH {
         return None;
     }
 
+    // 1) Linear backward replay (Fact + Transfer chain)
+    if let Some((_, _, _, _, proof)) = backward_trace(
+        prog,
+        zone_dbms,
+        interval_states,
+        target_pc,
+        left,
+        right,
+        bound,
+    )
+    .filter(|(_, _, _, _, proof)| transfer_deltas_sound(proof, prog, interval_states))
     {
-        let edge_list: Vec<String> = edges.iter()
-            .map(|e| format!("{}-{}≤{}@pc{}", e.to.name(), e.from.name(), e.weight, e.pc))
-            .collect();
-        debug!(
-            target: "pcc-gen",
-            "[PCC-GEN] target={}: provenance path {}-{} decomposed into {} edges: [{}]",
-            target_pc, target_i.name(), target_j.name(), edges.len(), edge_list.join(", "),
-        );
+        return Some(proof);
     }
 
-    // Generate a sub-proof for each primitive edge.
-    // Each edge claims: edge.to - edge.from <= edge.weight
-    let mut sub_proofs: Vec<(Reg, Reg, Vec<ProofStep>)> = Vec::new();
+    // 2) Alias substitution (Derive) when pattern fits the load shape
+    if let (Some(base), Some(anchor)) = (base_reg_for_alias, anchor_for_alias) {
+        if let Some(proof) = try_derive_chain(
+            prog,
+            zone_dbms,
+            interval_states,
+            target_pc,
+            base,
+            anchor,
+            bound,
+        ) {
+            return Some(proof);
+        }
+    }
 
+    // 3) Provenance-guided composition (transitive closure)
+    let dbm = zone_dbms.get(target_pc)?;
+    let edges = dbm.reconstruct_path(left, right)?;
+    if edges.len() < 2 {
+        return None; // single-edge path already handled by replay
+    }
+
+    // Build sub-proofs for each primitive edge.
+    let mut sub_proofs: Vec<Vec<ProofStep>> = Vec::new();
     for edge in &edges {
         debug!(
             target: "pcc-gen",
-            "[PCC-GEN] target={}: composing segment {}-{} <= {} (pc={})",
-            target_pc, edge.to.name(), edge.from.name(), edge.weight, edge.pc,
+            "[PCC-GEN] target={}: compose edge {}-{} <= {} (pc={})",
+            target_pc,
+            edge.to.name(),
+            edge.from.name(),
+            edge.weight,
+            edge.pc,
         );
-
-        // Try backward_trace for this segment (only — derive-chain is not used here).
-        let segment_proof = if let Some((_, _, _, _, proof)) = backward_trace(
+        let sub = solve_constraint(
             prog,
             zone_dbms,
             interval_states,
@@ -837,49 +865,29 @@ fn try_provenance_compose(
             edge.to,
             edge.from,
             edge.weight,
-        )
-        .filter(|(_, _, _, _, proof)| transfer_deltas_sound(proof, prog, interval_states))
-        {
-            proof
-        } else {
-            debug!(
-                target: "pcc-gen",
-                "[PCC-GEN] target={}: compose segment {}-{} failed — aborting compose",
-                target_pc, edge.to.name(), edge.from.name(),
-            );
-            return None;
-        };
-
-        sub_proofs.push((edge.to, edge.from, segment_proof));
+            depth + 1,
+            None,
+            None,
+        )?;
+        sub_proofs.push(sub);
     }
 
     // Fold sub-proofs right-associatively into nested Compose nodes.
     // For edges [A-K1, K1-K2, K2-B]:
     //   Compose(A-K1, Compose(K1-K2, K2-B, via=K2), via=K1)
-    // Start from the rightmost pair and fold left.
-    let mut result = sub_proofs.pop().unwrap().2; // rightmost sub-proof
-    let mut result_left_reg = sub_proofs.last().map_or(target_i, |sp| sp.0);
-
-    while let Some((left_to, _left_from, left_proof)) = sub_proofs.pop() {
-        // The `via` register is where left's right meets right's left.
-        // left proves: left_to - via <= a
-        // result (right) proves: via - ... <= b
-        let via = left_proof.last().unwrap().output_right_reg();
-
+    let mut it = sub_proofs.into_iter().rev();
+    let mut result = it.next().unwrap(); // rightmost
+    for left_proof in it {
+        let via = left_proof
+            .last()
+            .map(|s| s.output_right_reg())
+            .unwrap_or(0);
         result = vec![ProofStep::Compose {
             left: left_proof,
             right: result,
             via,
         }];
-        result_left_reg = left_to;
     }
-    let _ = result_left_reg;
-
-    debug!(
-        target: "pcc-gen",
-        "[PCC-GEN] target={}: provenance compose succeeded for {}-{}",
-        target_pc, target_i.name(), target_j.name(),
-    );
 
     Some(result)
 }
@@ -969,7 +977,7 @@ pub fn generate_certificate(
 
         // Backward trace to find the divergence point.
         // Use effective_anchor (may differ from anchor_end for maps).
-        let proof = if let Some((_, _, _, _, proof)) = backward_trace(
+        let proof = if let Some(proof) = solve_constraint(
             prog,
             zone_dbms,
             interval_states,
@@ -977,31 +985,9 @@ pub fn generate_certificate(
             base,
             effective_anchor,
             zone_ub,
-        )
-        .filter(|(_, _, _, _, proof)| {
-            // Quick soundness check: verify Transfer deltas for add-reg steps
-            // against the interval state (the checker will reject unsound deltas).
-            transfer_deltas_sound(proof, prog, interval_states)
-        }) {
-            proof
-        } else if let Some(proof) = try_derive_chain(
-            prog,
-            zone_dbms,
-            interval_states,
-            target_pc,
-            base,
-            effective_anchor,
-            zone_ub,
-        ) {
-            proof
-        } else if let Some(proof) = try_provenance_compose(
-            prog,
-            zone_dbms,
-            interval_states,
-            target_pc,
-            base,
-            effective_anchor,
-            zone_ub,
+            0,
+            Some(base),
+            Some(effective_anchor),
         ) {
             proof
         } else {

@@ -230,87 +230,39 @@ The generator (`generator.rs`) produces certificates automatically from the zone
 
 ### Overview
 
-For each `target_pc` that zone proves safe but interval rejects, the generator tries three strategies in order:
+For each load that zone proves safe but interval rejects, the generator runs one search that may take three shapes:
 
-1. **Backward trace** — linear `Fact + Transfer` chain.
-2. **Derive chain** — alias pattern `r = src + offset` guarded by a branch.
-3. **Provenance-based Compose** — decomposes a transitive constraint into primitive edges using the DBM’s provenance and folds them into nested `Compose` nodes.
+1. **Linear replay** — walk backward over the instruction stream, inverting each step until the constraint becomes interval-provable. Produces `Fact + Transfer*`.
+2. **Alias substitution** — if the bound lives on a different register `r = src + offset` guarded earlier, insert one `Derive` to move the bound from `r` to `src`, then keep replaying.
+3. **Transitive composition** — if the bound is only present as a multi-leg path in the DBM (visible via provenance), split it into primitive edges, solve each edge the same way, then wrap the sub-proofs in a nested `Compose`.
 
-**When each proof step appears (conceptual, code-agnostic)**
-- `Fact` — first step of any proof: placed at the earliest program point where the interval view already certifies the needed constraint (either directly from state or from the branch condition on its fall-through edge).
-- `Transfer` — added for each instruction you replay while walking backward from the load; records how that instruction changes the bound or tracked registers.
-- `Derive` — added only in the “alias” pattern: when a guarded register `r` is syntactically shown to equal `src + offset`, and the load uses `src`. The proof then switches from `r` to `src` with a single Derive step.
-- `Compose` — used only for transitive closures: when the relational fact between the load base and anchor is provable only by chaining multiple primitive constraints through intermediate registers. The generator breaks the path into per-edge sub-proofs and wraps them in one top-level Compose node.
+**When each proof step appears (conceptual)**
+- `Fact` — first step; placed where the interval view already certifies the current bound (state-derived or branch-derived).
+- `Transfer` — one per instruction replayed while walking backward; captures how that instruction shifts the bound or tracked registers.
+- `Derive` — only when a guarded alias `r = src + offset` is needed to move the bound onto the register used by the load.
+- `Compose` — only when provenance shows the target bound is a chain of primitive constraints across intermediate registers; sub-proofs for each edge are solved and then composed. Provenance records the PC that set each primitive edge; these PCs are logged when composing to aid debugging.
 
-### Strategy 1: Backward Trace
+### Unified generator: how constraints are solved
 
-The generator walks *backward* from the load. At each instruction it asks: "given that the constraint `L - R <= b` holds *after* this instruction, what must have held *before* it?" The zone DBM provides tight bounds for variable-offset additions.
+The generator answers one question: “prove `L - R <= bound` before the load” — with a single recursive search that can use three operations:
 
-**Generator — backward transfer** (given post-constraint `L - R <= b`, derive pre-constraint):
+1) **Replay backwards over instructions**  
+   - Invert each instruction to a pre-constraint (e.g., undo an `add` by subtracting its delta).  
+   - Record a `Transfer` for each inverted step.  
+   - Stop at the earliest PC where the interval view already proves the current constraint; place a `Fact` there.  
+   - This yields a linear `Fact + Transfer*` chain when sufficient.
 
-| Instruction | Inversion | Recorded `delta` |
-|---|---|---|
-| `add dst, imm` (`dst == L`) | pre-bound: `b - imm` | `imm` |
-| `add dst, imm` (`dst == R`) | pre-bound: `b + imm` | `-imm` |
-| `add dst, src` (`dst == L`) | pre-bound: `b - ub(src)`, using `ub(src)` from **zone DBM** | `ub(src)` |
-| `add dst, src` (`dst == R`) | pre-bound: `b + lb(src)`, using `lb(src)` from **zone DBM** | `-lb(src)` |
-| `mov dst, src` (`dst == L`) | track `src` instead; bound unchanged | `0` |
-| passthrough | constraint unchanged | `0` |
+2) **Switch to a guarded alias**  
+   - If the useful bound sits on a different register `r = src + offset` that was guarded earlier, insert one `Derive` to move tracking from `r` to `src`, then continue replay.  
+   - This is only used when an alias is syntactically established between the guard and the load.
 
-At each step, the generator checks whether the interval pre-state at that PC independently agrees with the derived pre-constraint. The first PC where it does is the **divergence point**: a Fact is placed there, and all subsequent instructions become Transfer steps.
+3) **Split a transitive path**  
+   - When the constraint only exists as a multi-leg path in the DBM (seen via provenance), decompose it into primitive edges.  
+   - Solve each edge with the same search (steps 1–2 as needed).  
+   - Wrap the edge proofs in a nested `Compose`, right-associative.  
+   - Provenance carries the PC that stamped each primitive edge; these PCs are logged while composing for debugging.
 
-**Example:** `r4` is a packet pointer and `r3` is a variable offset known by zone to be at most 3:
-
-```
-pc  instruction     zone pre-state      interval pre-state
-──────────────────────────────────────────────────────────
-5   r5 = r4         r4 - @end ≤ -12    r4 - @end ≤ -12  ← interval agrees here
-6   r5 += 4         r5 - @end ≤ -12    r5 - @end = ∞
-7   r5 += r3        r5 - @end ≤ -8     r5 - @end = ∞
-8   load *(r5 + 0)  r5 - @end ≤ -5 ✓  r5 - @end = ∞ → REJECTED
-```
-
-Backward trace from `r5 - @end <= -5` at pc 8:
-- Invert pc 7 (`add r5, r3`): `ub(r3)=3` from zone → pre-bound `-8`. Interval: `r5-@end=∞`. Continue.
-- Invert pc 6 (`add r5, 4`): pre-bound `-12`. Interval: `r5-@end=∞`. Continue.
-- Invert pc 5 (`mov r5, r4`): track r4, pre-bound `-12`. Interval: `r4-@end ≤ -12` ✓ — **divergence point**.
-
-Emitted chain:
-```
-Fact     @ pc 5:  r4 - @end ≤ -12
-Transfer @ pc 5:  (r4,@end)→(r5,@end),  delta=0    [mov r5,r4]
-Transfer @ pc 6:  (r5,@end)→(r5,@end),  delta=4    [add r5,4]
-Transfer @ pc 7:  (r5,@end)→(r5,@end),  delta=3    [add r5,r3; ub(r3)=3]
-```
-
-Accumulated bound: `-12 + 0 + 4 + 3 = -5`.
-
-### Strategy 2: Derive Chain
-
-Used when backward trace fails because the tracked register is itself *derived* from another — the branch constrains register `k` but the memory access uses `src_reg`, connected by `k = src_reg + offset`.
-
-The generator:
-1. Scans backward from the load to find the `add base, src_reg` instruction.
-2. Scans backward from there for a branch that constrains some `k` with `k - anchor <= c`.
-3. Calls `find_derive_sequence` to verify that instructions between the branch and the add establish `k = src_reg + offset` via `mov k, src_reg; add k, imm`.
-4. Verifies the derived bound: `c - offset <= required_src_bound`.
-5. Emits: `Fact(k ≤ c) + Derive(k = src_reg + offset) + Transfer(base += src_reg, absorb)`.
-
-This is the pattern from the motivating example: `r3 = r2 + 4; if r3 ≤ 8 → r2 ≤ 4; r6 += r2`.
-
-**Transfer delta soundness filter:** backward trace may succeed but produce an unsound proof — the zone-derived delta for a variable-offset add may be tighter than what the interval can verify (the zone has relational precision the interval lacks). The generator filters out such proofs and falls through to Strategy 2.
-
-### Strategy 3: Provenance-based Compose
-
-Problem: zone’s Floyd–Warshall closure can prove `L - R` via multiple intermediate registers; linear replay can’t see the path. Solution: use the DBM’s provenance tracker.
-
-Algorithm (`try_provenance_compose`):
-1. With provenance enabled during zone analysis, call `dbm.reconstruct_path(L, R)` at `target_pc` to get primitive edges `(to, from, weight, pc)` that form the shortest path.
-2. For each edge, try `backward_trace` (with transfer-delta soundness check) to build a sub-proof of `to - from <= weight`.
-3. Fold sub-proofs right-associatively into nested `Compose` nodes so adjacent edges meet at the `via` register.
-4. Emit a single-step proof `[Compose { .. }]` if all segments succeed; otherwise skip Compose.
-
-Fail-closed: any missing provenance, failed segment proof, or overflow aborts the Compose attempt and the generator moves on.
+Fail-closed: if any replay step is unsupported, an alias cannot be established, or a sub-path proof fails, that branch aborts and the annotation is skipped.
 
 ## Checker Behavior
 

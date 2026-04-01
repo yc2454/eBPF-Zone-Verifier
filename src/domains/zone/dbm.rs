@@ -573,6 +573,7 @@ pub struct PrimitiveEdge {
     /// The weight of this edge.
     pub weight: i64,
     /// The program counter of the instruction that established this edge.
+    #[allow(dead_code)]
     pub pc: usize,
 }
 
