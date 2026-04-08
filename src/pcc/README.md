@@ -20,7 +20,7 @@ pc  instruction           purpose
 12  r3 += 4               r3 = r2 + 4
 13  if r3 > 8 goto end    branch: fall-through means r3 ≤ 8, so r2 ≤ 4
 14  r6 += r2              r6 = map_ptr + r2
-15  load *(u8 *)(r6 + 0)  needs r6 - Zero ≤ 4 (map size = 5)
+15  load *(u8 *)(r6 + 0)  needs r6's buffer offset ≤ 4 (map value size = 5)
 ```
 
 The branch on `r3` at pc 13 implies `r2 ≤ 4`, which makes pc 15 safe. The zone domain tracks the relationship `r3 = r2 + 4` and closes the bound across the branch. The interval domain does not: it sees `r2 ∈ [0,15]` and rejects pc 15.
@@ -163,14 +163,14 @@ Let `L = pre_left_reg` and `R = pre_right_reg`. The checker verifies the step by
 | `add dst, imm` | `dst == R` | `L - (R+imm) = (L-R) - imm <= b - imm` | exactly `-imm` |
 | `add dst, src` | `dst == L` | `(L+src) - R <= b + ub(src)` since `src <= ub(src)` | `>= ub(src)` |
 | `add dst, src` | `dst == R` | `L - (R+src) <= b - lb(src)` since `src >= lb(src)` | `>= -lb(src)` |
-| `add dst, src` | `src == L`, `dst` ∉ {`L`,`R`} | absorb: `dst_new - R <= ub(dst_old) + b` | `>= ub(dst_old - R)` |
+| `add dst, src` | `src == L`, `dst` ∉ {`L`,`R`} | `dst_new = dst_old + src`; track `dst`: `dst_new - R <= ub(dst_old - R) + b` | `>= ub(dst_old - R)` |
 | `mov dst, src` | `src == L` | value copied; track `dst`: `post_left = dst`, bound unchanged | exactly `0` |
 | passthrough | `dst` ∉ {`L`,`R`} | constraint registers untouched | exactly `0` |
 | other | writes `L` or `R` | **Rejected** | — |
 
 Here `ub(x)` and `lb(x)` are the interval upper and lower bounds of register `x` from the interval pre-state at `pc`.
 
-The **absorb** case handles `add dst, src_reg` where `src_reg` is the tracked left register `L`. The new register `dst` (which was bounded at `ub(dst - R)`) absorbs `L`, and the tracked pair switches to `(dst, R)`. This arises in the derived-register pattern when the map pointer accumulates the variable offset: `r6 += r2` where r2 is the tracked register.
+The **add-into-fresh** case handles `add dst, src` where `src` is the tracked left register `L` and `dst` is not currently tracked. After the instruction `dst_new = dst_old + src`; the tracked pair switches to `(dst, R)`. The extra contribution from `dst_old` is bounded by looking up `ub(dst_old - R)` from the interval pre-state. This arises in the derived-register pattern when a pointer accumulates a variable offset: `r6 += r2` where `r2` is the tracked register.
 
 The optional `hint` field is a human-readable description of the instruction and its effect. It carries no semantic weight and is ignored by the checker.
 
@@ -226,7 +226,7 @@ For **derived-register** accesses (the motivating example above): the generator 
 
 ## Certificate Generation
 
-The generator (`generator.rs`) produces certificates automatically from the zone and interval analysis results. It runs offline and its output is not in the TCB.
+The generator (`generator/`) produces certificates automatically from the zone and interval analysis results. It runs offline and its output is not in the TCB.
 
 ### Overview
 
@@ -278,10 +278,12 @@ At each annotated PC, the checker:
 
    | Case | Condition | Tightening |
    |---|---|---|
-   | **Packet / same-anchor** | `right_reg == po.anchor` (e.g. `@data_end` or R10) | `var_off = min(var_off, bound - po.off)` |
+   | **Packet** | `right_reg == @data_end` | `var_off = min(var_off, bound - po.off)` |
+   | **Stack** | `right_reg == R10` | `var_off = min(var_off, bound - po.off)` |
+   | **Map value (buffer offset)** | `right_reg == 0` and access reg is `PtrToMapValue` | `var_off = min(var_off, bound - po.off)` — bound is interpreted as a limit on `off + var_off`, the register's offset into the map value buffer |
    | **Same-map transitive** | both regs are `PtrToMapValue` with same `map_idx` | `var_off = min(var_off, bound + j_max_off - po.off)` |
 
-   where `po` is the `PtrOffset` of the access pointer.
+   where `po` is the per-register offset record tracking `off` (constant) and `var_off` (variable) from the buffer base. The kernel verifier maintains equivalent fields directly in `bpf_reg_state`; no anchor register is involved for map or stack pointers.
 
 4. If any step fails, the entry is **silently skipped**. The interval verifier continues with its unrefined state.
 
