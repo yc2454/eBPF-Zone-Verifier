@@ -13,7 +13,7 @@ BIN="./target/release/zovia"
 capture_selftest() {
     local mode="$1" flag="$2"
     echo "== capturing selftest ($mode) =="
-    $BIN -q $flag --max-insn 100000 selftest-suite ./selftests > /dev/null 2>&1
+    $BIN -q $flag --max-insn 100000 selftest-suite ./selftests/legacy/verifier > /dev/null 2>&1
     python3 tests/baselines/canonicalize.py \
         results/selftest/selftest_report.json \
         "tests/baselines/selftest_${mode}.json"

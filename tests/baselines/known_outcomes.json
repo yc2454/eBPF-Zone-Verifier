@@ -38,13 +38,13 @@
         "actual": "ACCEPT",
         "expected": "REJECT",
         "outcome": "FalseNegative",
-        "test": "./selftests/calls.json::calls: pkt_ptr spill into caller stack 9"
+        "test": "./selftests/legacy/verifier/calls.json::calls: pkt_ptr spill into caller stack 9"
       },
       {
         "actual": "ACCEPT",
         "expected": "REJECT",
         "outcome": "FalseNegative",
-        "test": "./selftests/loops1.json::bounded loop, start in the middle"
+        "test": "./selftests/legacy/verifier/loops1.json::bounded loop, start in the middle"
       }
     ],
     "totals": {

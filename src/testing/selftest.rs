@@ -3,8 +3,8 @@
 // Runner for kernel BPF verifier selftests converted to JSON format.
 //
 // Usage:
-//   cargo run -- selftest-run tests/array_access.json
-//   cargo run -- selftest-suite tests/
+//   cargo run -- selftest-run selftests/legacy/verifier/array_access.json
+//   cargo run -- selftest-suite selftests/legacy/verifier/
 
 use std::collections::HashMap;
 use std::fs;

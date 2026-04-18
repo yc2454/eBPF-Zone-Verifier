@@ -245,7 +245,7 @@ cargo run -- elf-analyze ./bpf_host.o tc
 
 **3. Run the "calls" selftest suite:**
 ```bash
-cargo run -- selftest-run ./selftests/calls.json
+cargo run -- selftest-run ./selftests/legacy/verifier/calls.json
 ```
 
 **4. Run the BCF benchmark with filters:**
@@ -268,7 +268,7 @@ cargo run -- prevail-benchmark ~/ebpf-samples --project invalid
 **6. Run selftests in kernel-compatible mode:**
 ```bash
 # Simulate kernel verifier behavior (interval domain + strict loop checks)
-cargo run -- --kernel-mode selftest-suite ./selftests
+cargo run -- --kernel-mode selftest-suite ./selftests/legacy/verifier
 ```
 
 ## Troubleshooting

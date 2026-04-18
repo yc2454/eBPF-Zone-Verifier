@@ -28,7 +28,7 @@ run_selftest() {
     local flag="$2"
     local baseline="tests/baselines/selftest_${mode}.json"
     echo "== selftest ($mode) =="
-    $BIN -q $flag --max-insn 100000 selftest-suite ./selftests > "$TMP/$mode.log" 2>&1
+    $BIN -q $flag --max-insn 100000 selftest-suite ./selftests/legacy/verifier > "$TMP/$mode.log" 2>&1
     python3 tests/baselines/canonicalize.py results/selftest/selftest_report.json "$TMP/selftest_$mode.json"
     if ! diff -u "$baseline" "$TMP/selftest_$mode.json"; then
         echo "DIFF in selftest $mode"
