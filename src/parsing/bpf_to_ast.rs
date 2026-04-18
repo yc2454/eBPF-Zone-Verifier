@@ -1,8 +1,8 @@
 // src/bpf_to_ast.rs
 use crate::analysis::machine::reg::Reg;
 use crate::ast::{
-    AluOp, AtomicOp, CmpOp, EndianOp, Instr, MapLoadKind, MemSize, Operand, PacketLoadMode,
-    Program, Width,
+    AluOp, AtomicOp, CallKind, CmpOp, EndianOp, Instr, MapLoadKind, MemSize, Operand,
+    PacketLoadMode, Program, Width,
 };
 use crate::parsing::bpf_insn::RawBpfInsn;
 use std::collections::HashSet;
@@ -74,16 +74,20 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
         let src = reg_to_var(insn, insn.src, pc)?;
 
         if insn.code == 0x18 {
-            // src_reg encoding:
+            // src_reg encoding (kernel uapi/linux/bpf.h BPF_PSEUDO_*):
             //   0 = immediate value
-            //   1 = BPF_PSEUDO_MAP_FD (map pointer)
-            //   2 = BPF_PSEUDO_MAP_VALUE (map value pointer, e.g., for .bss/.data/.rodata)
-            if (src != Reg::R0 && src != Reg::R1 && src != Reg::R2) || insn.off != 0 {
+            //   1 = BPF_PSEUDO_MAP_FD         (map pointer)
+            //   2 = BPF_PSEUDO_MAP_VALUE      (map value, e.g. .bss/.data/.rodata)
+            //   3 = BPF_PSEUDO_BTF_ID         (ksym / percpu var, v5.10+)
+            //   4 = BPF_PSEUDO_FUNC           (callback function pointer, v5.13+)
+            //   5 = BPF_PSEUDO_MAP_IDX        (aux table index, v5.17+)
+            //   6 = BPF_PSEUDO_MAP_IDX_VALUE  (aux table map value, v5.17+)
+            if (insn.src > 6) || insn.off != 0 {
                 return Err(LowerError {
                     pc,
                     code: insn.code,
                     msg: format!(
-                        "invalid BPF_LD_IMM insn: src_reg={} off={} (expected src 0/1/2 and off 0)",
+                        "invalid BPF_LD_IMM insn: src_reg={} off={} (expected src 0..=6 and off 0)",
                         insn.src, insn.off
                     ),
                     kind: LowerErrorKind::InvalidLDIMM64,
@@ -155,6 +159,61 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     instrs.push(Instr::LoadMap {
                         dst,
                         kind: MapLoadKind::MapValue,
+                        map_fd: imm_i64 as i32,
+                        off,
+                    });
+                }
+                // BPF_PSEUDO_BTF_ID (src=3): imm holds the BTF id of a ksym / percpu var.
+                Reg::R3 => {
+                    instrs.push(Instr::LoadMap {
+                        dst,
+                        kind: MapLoadKind::PseudoBtfId {
+                            btf_id: imm_i64 as u32,
+                        },
+                        map_fd: 0,
+                        off: 0,
+                    });
+                }
+                // BPF_PSEUDO_FUNC (src=4): imm holds a PC-relative offset to a subprog.
+                Reg::R4 => {
+                    let next_pc = pc as i64 + 2; // LD_IMM64 is a 2-slot insn
+                    let target = next_pc + imm_i64;
+                    if target < 0 || target as usize >= raw.len() {
+                        return Err(LowerError {
+                            pc,
+                            code: cont.code,
+                            msg: "BPF_PSEUDO_FUNC target out of bounds".to_string(),
+                            kind: LowerErrorKind::InvalidLDIMM64,
+                        });
+                    }
+                    instrs.push(Instr::LoadMap {
+                        dst,
+                        kind: MapLoadKind::PseudoFunc {
+                            subprog_pc: target as u32,
+                        },
+                        map_fd: 0,
+                        off: 0,
+                    });
+                }
+                // BPF_PSEUDO_MAP_IDX (src=5): map index in aux table (pre-relocation).
+                Reg::R5 => {
+                    instrs.push(Instr::LoadMap {
+                        dst,
+                        kind: MapLoadKind::PseudoMapIdx,
+                        map_fd: imm_i64 as i32,
+                        off: 0,
+                    });
+                }
+                // BPF_PSEUDO_MAP_IDX_VALUE (src=6): like MAP_VALUE but by aux index.
+                Reg::R6 => {
+                    let off = if pc + 1 < raw.len() {
+                        raw[pc + 1].imm
+                    } else {
+                        0
+                    };
+                    instrs.push(Instr::LoadMap {
+                        dst,
+                        kind: MapLoadKind::PseudoMapIdxValue,
                         map_fd: imm_i64 as i32,
                         off,
                     });
@@ -1260,7 +1319,10 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
 
             // 0x85: call imm (JMP | CALL)
             0x85 => {
-                if insn.off != 0 || insn.dst != 0 {
+                // off is a reserved field for helper calls and subprog calls,
+                // but kfunc calls (src=2) repurpose off as the BTF module index.
+                let off_reserved = insn.src != 2;
+                if (off_reserved && insn.off != 0) || insn.dst != 0 {
                     return Err(LowerError {
                         pc,
                         code: insn.code,
@@ -1270,12 +1332,14 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     });
                 }
                 if src == Reg::R0 {
-                    // Standard Helper Call
+                    // Standard Helper Call (src_reg=0)
                     Instr::Call {
-                        helper: insn.imm as u32,
+                        kind: CallKind::Helper {
+                            id: insn.imm as u32,
+                        },
                     }
                 } else if src == Reg::R1 {
-                    // BPF_PSEUDO_CALL (BPF-to-BPF Call)
+                    // BPF_PSEUDO_CALL (src_reg=1): BPF-to-BPF subprog call.
                     // imm is a 32-bit PC-relative offset
                     let next_pc = pc as i64 + 1;
                     let offset = insn.imm as i64;
@@ -1293,6 +1357,17 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
 
                     Instr::CallRel {
                         target: target as usize,
+                    }
+                } else if src == Reg::R2 {
+                    // BPF_PSEUDO_KFUNC_CALL (src_reg=2): kfunc dispatched via BTF id.
+                    // imm = BTF id of the kfunc; off = index into BTF module table
+                    // (0 = vmlinux). Transfer semantics are unimplemented today;
+                    // the decoder only recognizes the shape.
+                    Instr::Call {
+                        kind: CallKind::Kfunc {
+                            btf_id: insn.imm as u32,
+                            offset: insn.off,
+                        },
                     }
                 } else {
                     return Err(LowerError {
@@ -1426,4 +1501,148 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
         instrs,
         invalid_pc_set,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Build a 2-slot LD_IMM64 insn pair with the given src_reg and imm.
+    fn ld_imm64(src: u8, imm_lo: i32, imm_hi: i32) -> Vec<RawBpfInsn> {
+        vec![
+            RawBpfInsn {
+                code: 0x18,
+                dst: 0,
+                src,
+                off: 0,
+                imm: imm_lo,
+            },
+            RawBpfInsn {
+                code: 0x00,
+                dst: 0,
+                src: 0,
+                off: 0,
+                imm: imm_hi,
+            },
+        ]
+    }
+
+    fn exit() -> RawBpfInsn {
+        RawBpfInsn {
+            code: 0x95,
+            dst: 0,
+            src: 0,
+            off: 0,
+            imm: 0,
+        }
+    }
+
+    #[test]
+    fn decodes_helper_call() {
+        let raw = vec![
+            RawBpfInsn {
+                code: 0x85,
+                dst: 0,
+                src: 0,
+                off: 0,
+                imm: 1,
+            },
+            exit(),
+        ];
+        let prog = lower_raw_to_program(&raw).unwrap();
+        assert_eq!(
+            prog.instrs[0],
+            Instr::Call {
+                kind: CallKind::Helper { id: 1 }
+            }
+        );
+    }
+
+    #[test]
+    fn decodes_kfunc_call() {
+        // src=2 → BPF_PSEUDO_KFUNC_CALL; imm = btf_id, off = module index
+        let raw = vec![
+            RawBpfInsn {
+                code: 0x85,
+                dst: 0,
+                src: 2,
+                off: 3,
+                imm: 42,
+            },
+            exit(),
+        ];
+        let prog = lower_raw_to_program(&raw).unwrap();
+        assert_eq!(
+            prog.instrs[0],
+            Instr::Call {
+                kind: CallKind::Kfunc {
+                    btf_id: 42,
+                    offset: 3
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn decodes_pseudo_btf_id() {
+        // src=3 → BPF_PSEUDO_BTF_ID
+        let mut raw = ld_imm64(3, 99, 0);
+        raw.push(exit());
+        let prog = lower_raw_to_program(&raw).unwrap();
+        assert!(matches!(
+            prog.instrs[0],
+            Instr::LoadMap {
+                kind: MapLoadKind::PseudoBtfId { btf_id: 99 },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn decodes_pseudo_func() {
+        // src=4 → BPF_PSEUDO_FUNC; imm is PC-relative offset to subprog.
+        // pc=0, LD_IMM64 is 2 slots, so next_pc=2. imm=1 → target=3.
+        // Need at least 4 insns to keep target in-bounds.
+        let mut raw = ld_imm64(4, 1, 0);
+        raw.push(exit()); // pc=2
+        raw.push(exit()); // pc=3 (the "subprog" target)
+        let prog = lower_raw_to_program(&raw).unwrap();
+        assert!(matches!(
+            prog.instrs[0],
+            Instr::LoadMap {
+                kind: MapLoadKind::PseudoFunc { subprog_pc: 3 },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn decodes_pseudo_map_idx() {
+        let mut raw = ld_imm64(5, 7, 0);
+        raw.push(exit());
+        let prog = lower_raw_to_program(&raw).unwrap();
+        assert!(matches!(
+            prog.instrs[0],
+            Instr::LoadMap {
+                kind: MapLoadKind::PseudoMapIdx,
+                map_fd: 7,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn decodes_pseudo_map_idx_value() {
+        let mut raw = ld_imm64(6, 11, 0);
+        raw.push(exit());
+        let prog = lower_raw_to_program(&raw).unwrap();
+        assert!(matches!(
+            prog.instrs[0],
+            Instr::LoadMap {
+                kind: MapLoadKind::PseudoMapIdxValue,
+                map_fd: 11,
+                ..
+            }
+        ));
+    }
 }

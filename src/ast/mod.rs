@@ -3,7 +3,7 @@
 pub mod instr;
 pub mod prog;
 
-pub use self::instr::{Instr, Program};
+pub use self::instr::{CallKind, Instr, Program};
 pub use self::prog::{AttachKind, ContextKind, ProgramKind};
 
 use crate::analysis::machine::reg::Reg;
@@ -97,8 +97,18 @@ pub enum PacketLoadMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapLoadKind {
+    /// BPF_PSEUDO_MAP_FD: r1 = map_fd
     MapPtr,
+    /// BPF_PSEUDO_MAP_VALUE: r2 = map_fd + offset (points into map value)
     MapValue,
+    /// BPF_PSEUDO_FUNC (src=4): r4 = callback function pointer (another subprog)
+    PseudoFunc { subprog_pc: u32 },
+    /// BPF_PSEUDO_BTF_ID (src=3): r3 = per-cpu var / ksym address via BTF id
+    PseudoBtfId { btf_id: u32 },
+    /// BPF_PSEUDO_MAP_IDX (src=5): map index in the aux table (pre-relocation)
+    PseudoMapIdx,
+    /// BPF_PSEUDO_MAP_IDX_VALUE (src=6): map value via index (pre-relocation)
+    PseudoMapIdxValue,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

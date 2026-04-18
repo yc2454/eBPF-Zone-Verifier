@@ -15,7 +15,7 @@ use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
-use crate::ast::{EndianOp, Instr, Width};
+use crate::ast::{CallKind, EndianOp, Instr, Width};
 use log::warn;
 
 /// Main transfer function - dispatches to appropriate handler based on instruction type.
@@ -84,7 +84,16 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
             src,
         } => memory::transfer_atomic(env, state, *op, *fetch, *size, *base, *off, *src),
 
-        Instr::Call { helper } => call::transfer_call(env, state, *helper),
+        Instr::Call { kind } => match *kind {
+            CallKind::Helper { id } => call::transfer_call(env, state, id),
+            CallKind::Kfunc { .. } => {
+                env.fail(VerificationError::UnsupportedModernFeature {
+                    pc: state.pc,
+                    feature: "kfunc call (BPF_PSEUDO_KFUNC_CALL)",
+                });
+                vec![]
+            }
+        },
 
         Instr::CallRel { target } => call::transfer_call_rel(env, state, *target),
 

@@ -565,6 +565,19 @@ pub(crate) fn update_map_load_types(
             map_idx: map_fd,
             offset: Some(0),
         },
+        // Modern kinds are filtered upstream in transfer_map_load; reaching
+        // them here would be a bug.
+        MapLoadKind::PseudoFunc { .. }
+        | MapLoadKind::PseudoBtfId { .. }
+        | MapLoadKind::PseudoMapIdx
+        | MapLoadKind::PseudoMapIdxValue => {
+            debug_assert!(
+                false,
+                "update_map_load_types reached with unsupported kind: {:?}",
+                kind
+            );
+            return;
+        }
     };
 
     types.set(dst, new_type);
