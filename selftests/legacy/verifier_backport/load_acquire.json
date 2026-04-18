@@ -1,0 +1,107 @@
+[
+  {
+    "name": "load-acquire, 8-bit",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 180, "dst": 1, "src": 0, "off": 0, "imm": 18},
+      {"code": 115, "dst": 10, "src": 1, "off": -1, "imm": 0},
+      {"code": 211, "dst": 0, "src": 10, "off": -1, "imm": 256},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "load-acquire, 16-bit",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 180, "dst": 1, "src": 0, "off": 0, "imm": 4660},
+      {"code": 107, "dst": 10, "src": 1, "off": -2, "imm": 0},
+      {"code": 203, "dst": 0, "src": 10, "off": -2, "imm": 256},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "load-acquire, 32-bit",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 180, "dst": 1, "src": 0, "off": 0, "imm": 305419896},
+      {"code": 99, "dst": 10, "src": 1, "off": -4, "imm": 0},
+      {"code": 195, "dst": 0, "src": 10, "off": -4, "imm": 256},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "load-acquire, 64-bit",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 24, "dst": 1, "src": 0, "off": 0, "imm": -1867788817},
+      {"code": 0, "dst": 0, "src": 0, "off": 0, "imm": 305419896},
+      {"code": 123, "dst": 10, "src": 1, "off": -8, "imm": 0},
+      {"code": 219, "dst": 0, "src": 10, "off": -8, "imm": 256},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "load-acquire with uninitialized src_reg",
+    "result": "REJECT",
+    "errstr": "R2 !read_ok",
+    "insns": [
+      {"code": 219, "dst": 0, "src": 2, "off": 0, "imm": 256},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "load-acquire with non-pointer src_reg",
+    "result": "REJECT",
+    "errstr": "R1 invalid mem access 'scalar'",
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 0},
+      {"code": 219, "dst": 0, "src": 1, "off": 0, "imm": 256},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "load-acquire with invalid register R15",
+    "result": "REJECT",
+    "errstr": "R15 is invalid",
+    "insns": [
+      {"code": 219, "dst": 0, "src": 15, "off": 0, "imm": 256},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "load-acquire from ctx pointer",
+    "result": "REJECT",
+    "errstr": "BPF_ATOMIC loads from R1 ctx is not allowed",
+    "insns": [
+      {"code": 211, "dst": 0, "src": 1, "off": 0, "imm": 256},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "load-acquire from pkt pointer",
+    "result": "REJECT",
+    "errstr": "BPF_ATOMIC loads from R2 pkt is not allowed",
+    "prog_type": 6,
+    "insns": [
+      {"code": 97, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 97, "dst": 3, "src": 1, "off": 4, "imm": 0},
+      {"code": 191, "dst": 1, "src": 2, "off": 0, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": 8},
+      {"code": 61, "dst": 1, "src": 3, "off": 1, "imm": 0},
+      {"code": 211, "dst": 0, "src": 2, "off": 0, "imm": 256},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "load-acquire from flow_keys pointer",
+    "result": "REJECT",
+    "errstr": "BPF_ATOMIC loads from R2 flow_keys is not allowed",
+    "prog_type": 22,
+    "insns": [
+      {"code": 121, "dst": 2, "src": 1, "off": 144, "imm": 0},
+      {"code": 211, "dst": 0, "src": 2, "off": 0, "imm": 256},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]
