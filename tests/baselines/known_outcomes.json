@@ -1,0 +1,60 @@
+{
+  "prevail": {
+    "non_matching": [
+      {
+        "expected_accept": true,
+        "file": "bpf_lxc.o",
+        "matches": false,
+        "passed": false,
+        "project": "cilium"
+      }
+    ],
+    "summary": {
+      "false_negatives": 0,
+      "false_positives": 0,
+      "files_failed": 0,
+      "files_passed": 81,
+      "files_timeout": 1,
+      "sections_passed": 258,
+      "total_files": 82,
+      "total_sections": 260
+    }
+  },
+  "selftest_kernel": {
+    "non_passing": [],
+    "totals": {
+      "errors": 0,
+      "false_negatives": 0,
+      "false_positives": 0,
+      "passed": 1203,
+      "skipped": 0,
+      "total_files": 81,
+      "total_tests": 1203
+    }
+  },
+  "selftest_zone": {
+    "non_passing": [
+      {
+        "actual": "ACCEPT",
+        "expected": "REJECT",
+        "outcome": "FalseNegative",
+        "test": "./selftests/calls.json::calls: pkt_ptr spill into caller stack 9"
+      },
+      {
+        "actual": "ACCEPT",
+        "expected": "REJECT",
+        "outcome": "FalseNegative",
+        "test": "./selftests/loops1.json::bounded loop, start in the middle"
+      }
+    ],
+    "totals": {
+      "errors": 0,
+      "false_negatives": 2,
+      "false_positives": 0,
+      "passed": 1201,
+      "skipped": 0,
+      "total_files": 81,
+      "total_tests": 1203
+    }
+  }
+}

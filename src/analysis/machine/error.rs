@@ -198,6 +198,13 @@ pub enum VerificationError {
         pc: usize,
         helper: u32,
     },
+    /// A valid-shape construct the verifier recognizes but has not implemented
+    /// transfer semantics for yet (e.g. kfunc calls, BPF_PSEUDO_FUNC / BTF_ID
+    /// LD_IMM64 subtypes added by kernels newer than 5.15).
+    UnsupportedModernFeature {
+        pc: usize,
+        feature: &'static str,
+    },
 }
 
 impl VerificationError {
@@ -443,6 +450,9 @@ impl VerificationError {
                     "Invalid helper ID {} at pc {}: exceeds maximum known helper ID",
                     helper, pc
                 )
+            }
+            VerificationError::UnsupportedModernFeature { pc, feature } => {
+                format!("Unsupported modern BPF feature at pc {}: {}", pc, feature)
             }
         }
     }

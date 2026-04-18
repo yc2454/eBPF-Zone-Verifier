@@ -3,7 +3,7 @@ use crate::analysis::machine::error::VerificationError;
 
 use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg::Reg;
-use crate::analysis::machine::reg_types::RegType;
+use crate::analysis::machine::reg_types::{PtrFlags, RegType};
 use crate::analysis::machine::state::State;
 use crate::analysis::transfer::types::{
     helper_invalidates_packets, update_call_rel_types, update_call_types,
@@ -286,7 +286,7 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
                 Reg::R0,
                 RegType::PtrToBtfId {
                     type_name: "unknown",
-                    trusted: false,
+                    flags: PtrFlags::UNTRUSTED,
                 },
             );
         }

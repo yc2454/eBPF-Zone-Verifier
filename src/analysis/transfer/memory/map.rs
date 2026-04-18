@@ -209,6 +209,23 @@ pub(crate) fn transfer_map_load(
     kind: MapLoadKind,
     _map_fd: i32,
 ) -> Vec<State> {
+    // Modern LD_IMM64 subtypes are recognized by the decoder but not yet
+    // supported by the transfer domain. Fail cleanly here.
+    let feature = match kind {
+        MapLoadKind::MapPtr | MapLoadKind::MapValue => None,
+        MapLoadKind::PseudoFunc { .. } => Some("LD_IMM64 BPF_PSEUDO_FUNC (callback pointer)"),
+        MapLoadKind::PseudoBtfId { .. } => Some("LD_IMM64 BPF_PSEUDO_BTF_ID (ksym/percpu)"),
+        MapLoadKind::PseudoMapIdx => Some("LD_IMM64 BPF_PSEUDO_MAP_IDX"),
+        MapLoadKind::PseudoMapIdxValue => Some("LD_IMM64 BPF_PSEUDO_MAP_IDX_VALUE"),
+    };
+    if let Some(feature) = feature {
+        env.fail(VerificationError::UnsupportedModernFeature {
+            pc: state.pc,
+            feature,
+        });
+        return vec![];
+    }
+
     let reloc_info = env.ctx.pc_to_reloc.get(&state.pc);
     if let Some(reloc) = reloc_info {
         crate::analysis::transfer::types::update_map_load_types(

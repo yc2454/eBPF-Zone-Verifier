@@ -7,6 +7,30 @@ use crate::analysis::machine::reg::Reg;
 use std::collections::HashSet;
 use std::fmt;
 
+/// What kind of call is this? Kernel distinguishes the three via the `src_reg`
+/// field of the BPF_CALL insn: 0 = helper, 1 = subprog (lowered as `CallRel`),
+/// 2 = kfunc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallKind {
+    Helper { id: u32 },
+    /// `btf_id` names the kfunc in its owning BTF module; `offset` selects the
+    /// module (0 = vmlinux). Transfer semantics are unimplemented today.
+    Kfunc { btf_id: u32, offset: i16 },
+}
+
+impl CallKind {
+    pub fn helper_id(self) -> Option<u32> {
+        match self {
+            CallKind::Helper { id } => Some(id),
+            _ => None,
+        }
+    }
+
+    pub fn is_kfunc(self) -> bool {
+        matches!(self, CallKind::Kfunc { .. })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Instr {
     Alu {
@@ -52,7 +76,7 @@ pub enum Instr {
         src: Reg,
     },
     Call {
-        helper: u32,
+        kind: CallKind,
     },
     CallRel {
         target: usize,
@@ -254,7 +278,10 @@ impl fmt::Display for Instr {
                     src.name()
                 )
             }
-            Call { helper } => write!(f, "call {}", helper),
+            Call { kind } => match kind {
+                CallKind::Helper { id } => write!(f, "call {}", id),
+                CallKind::Kfunc { btf_id, offset } => write!(f, "call kfunc #{}:{}", offset, btf_id),
+            },
             CallRel { target } => write!(f, "call {}", target),
             LoadPacket { .. } => write!(f, "ld_abs or ld_ind"),
             LoadMap { map_fd, .. } => write!(f, "load map {}", map_fd),
