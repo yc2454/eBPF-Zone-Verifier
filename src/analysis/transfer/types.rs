@@ -4,7 +4,7 @@
 
 use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg::Reg;
-use crate::analysis::machine::reg_types::{RegType, TypeState, new_ptr_id};
+use crate::analysis::machine::reg_types::{PtrFlags, RegType, TypeState, new_ptr_id};
 use crate::analysis::machine::stack_state::StackState;
 use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, MapLoadKind, MemSize, Operand, Width};
@@ -253,7 +253,7 @@ pub(crate) fn update_load_types(
                                 RegType::PtrToBtfIdOrNull {
                                     id: new_ptr_id(),
                                     type_name,
-                                    trusted: true,
+                                    flags: PtrFlags::TRUSTED,
                                 },
                             );
                         } else {
@@ -261,7 +261,7 @@ pub(crate) fn update_load_types(
                                 dst,
                                 RegType::PtrToBtfId {
                                     type_name,
-                                    trusted: true,
+                                    flags: PtrFlags::TRUSTED,
                                 },
                             );
                         }

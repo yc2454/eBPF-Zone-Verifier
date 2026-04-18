@@ -24,9 +24,11 @@ trap 'rm -rf "$TMP"' EXIT
 fail=0
 
 run_selftest() {
-    local mode="$1" flag="$2" baseline="tests/baselines/selftest_${mode}.json"
+    local mode="$1"
+    local flag="$2"
+    local baseline="tests/baselines/selftest_${mode}.json"
     echo "== selftest ($mode) =="
-    $BIN -q $flag selftest-suite ./selftests > "$TMP/$mode.log" 2>&1
+    $BIN -q $flag --max-insn 100000 selftest-suite ./selftests > "$TMP/$mode.log" 2>&1
     python3 tests/baselines/canonicalize.py results/selftest/selftest_report.json "$TMP/selftest_$mode.json"
     if ! diff -u "$baseline" "$TMP/selftest_$mode.json"; then
         echo "DIFF in selftest $mode"

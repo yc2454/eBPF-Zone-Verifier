@@ -731,7 +731,7 @@ fn get_region_fields(reg_type: RegType) -> Option<&'static [MemRegionField]> {
         RegType::PtrToSocket { .. } => Some(BPF_SOCK_FIELDS),
         RegType::PtrToBtfId {
             type_name: "bpf_iter_meta",
-            trusted: _,
+            flags: _,
         } => Some(BPF_ITER_META_FIELDS),
         RegType::PtrToMapObject { .. } => Some(BPF_MAP_FIELDS),
         _ => None,

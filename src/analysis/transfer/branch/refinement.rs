@@ -98,13 +98,13 @@ fn maybe_promote_btf_id(state: &mut State, reg: Reg) {
         if let RegType::PtrToBtfIdOrNull {
             id,
             type_name,
-            trusted,
+            flags,
         } = state.types.get(r)
             && id == target_id
         {
             state
                 .types
-                .set(r, RegType::PtrToBtfId { type_name, trusted });
+                .set(r, RegType::PtrToBtfId { type_name, flags });
         }
     }
     promote_stack_slots_all_frames(
@@ -114,10 +114,10 @@ fn maybe_promote_btf_id(state: &mut State, reg: Reg) {
             RegType::PtrToBtfIdOrNull {
                 id: _,
                 type_name,
-                trusted,
+                flags,
             } => RegType::PtrToBtfId {
                 type_name,
-                trusted: *trusted,
+                flags: *flags,
             },
             _ => unreachable!(),
         },

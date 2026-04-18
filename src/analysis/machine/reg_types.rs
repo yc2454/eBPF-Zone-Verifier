@@ -4,6 +4,58 @@ use crate::analysis::machine::reg::Reg;
 
 pub const NUM_REGS: usize = 11;
 
+/// Orthogonal pointer-type flags, modeled after the kernel's `bpf_type_flag`.
+///
+/// Kernel layout packs these into the high bits of `enum bpf_reg_type`; we keep
+/// them in a dedicated field on variants that need them. New variants added by
+/// later phases (dynptr, arena, refcounted kptrs, …) grow a `flags` field on
+/// demand — not every variant needs one.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Default)]
+pub struct PtrFlags(u16);
+
+impl PtrFlags {
+    pub const TRUSTED: PtrFlags = PtrFlags(1 << 0);
+    pub const UNTRUSTED: PtrFlags = PtrFlags(1 << 1);
+    pub const RCU: PtrFlags = PtrFlags(1 << 2);
+    pub const RDONLY: PtrFlags = PtrFlags(1 << 3);
+    pub const PERCPU: PtrFlags = PtrFlags(1 << 4);
+    pub const MEM_ALLOC: PtrFlags = PtrFlags(1 << 5);
+    pub const NON_OWN_REF: PtrFlags = PtrFlags(1 << 6);
+
+    pub const fn empty() -> Self {
+        PtrFlags(0)
+    }
+
+    pub const fn contains(self, other: PtrFlags) -> bool {
+        (self.0 & other.0) == other.0
+    }
+
+    pub const fn union(self, other: PtrFlags) -> Self {
+        PtrFlags(self.0 | other.0)
+    }
+
+    pub const fn difference(self, other: PtrFlags) -> Self {
+        PtrFlags(self.0 & !other.0)
+    }
+
+    pub const fn bits(self) -> u16 {
+        self.0
+    }
+}
+
+impl std::ops::BitOr for PtrFlags {
+    type Output = PtrFlags;
+    fn bitor(self, rhs: PtrFlags) -> PtrFlags {
+        self.union(rhs)
+    }
+}
+
+impl std::ops::BitOrAssign for PtrFlags {
+    fn bitor_assign(&mut self, rhs: PtrFlags) {
+        self.0 |= rhs.0;
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
 pub enum RegType {
     #[default]
@@ -48,12 +100,12 @@ pub enum RegType {
     },
     PtrToBtfId {
         type_name: &'static str,
-        trusted: bool,
+        flags: PtrFlags,
     },
     PtrToBtfIdOrNull {
         id: u32, // For null-tracking across branches
         type_name: &'static str,
-        trusted: bool,
+        flags: PtrFlags,
     },
     PtrToAllocMemOrNull {
         id: u32,
@@ -152,6 +204,25 @@ impl RegType {
         )
     }
 
+    /// Returns the flag set for variants that carry one, else empty.
+    pub fn ptr_flags(&self) -> PtrFlags {
+        match *self {
+            RegType::PtrToBtfId { flags, .. } | RegType::PtrToBtfIdOrNull { flags, .. } => flags,
+            _ => PtrFlags::empty(),
+        }
+    }
+
+    /// True when the pointer is known-trusted (kfunc return, ctx trusted field, …).
+    /// Preserves the meaning of the former `trusted: bool` field.
+    pub fn is_trusted(&self) -> bool {
+        self.ptr_flags().contains(PtrFlags::TRUSTED)
+    }
+
+    /// True when the pointer is known-untrusted (e.g. result of a pointer walk).
+    pub fn is_untrusted(&self) -> bool {
+        self.ptr_flags().contains(PtrFlags::UNTRUSTED)
+    }
+
     /// Returns the ref_id if this type holds a reference
     pub fn get_ref_id(&self) -> Option<u32> {
         match *self {
@@ -240,5 +311,82 @@ impl TypeState {
 impl Default for TypeState {
     fn default() -> Self {
         Self::new_not_init()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ptr_flags_empty_and_contains() {
+        let e = PtrFlags::empty();
+        assert!(!e.contains(PtrFlags::TRUSTED));
+        assert!(!e.contains(PtrFlags::UNTRUSTED));
+        assert_eq!(e.bits(), 0);
+    }
+
+    #[test]
+    fn ptr_flags_union_and_contains() {
+        let f = PtrFlags::TRUSTED | PtrFlags::RCU;
+        assert!(f.contains(PtrFlags::TRUSTED));
+        assert!(f.contains(PtrFlags::RCU));
+        assert!(!f.contains(PtrFlags::UNTRUSTED));
+        assert!(f.contains(PtrFlags::TRUSTED | PtrFlags::RCU));
+    }
+
+    #[test]
+    fn ptr_flags_difference() {
+        let f = PtrFlags::TRUSTED | PtrFlags::RCU;
+        let d = f.difference(PtrFlags::RCU);
+        assert!(d.contains(PtrFlags::TRUSTED));
+        assert!(!d.contains(PtrFlags::RCU));
+    }
+
+    #[test]
+    fn reg_type_is_trusted_matches_flag() {
+        let trusted = RegType::PtrToBtfId {
+            type_name: "x",
+            flags: PtrFlags::TRUSTED,
+        };
+        let untrusted = RegType::PtrToBtfId {
+            type_name: "x",
+            flags: PtrFlags::UNTRUSTED,
+        };
+        let empty = RegType::PtrToBtfId {
+            type_name: "x",
+            flags: PtrFlags::empty(),
+        };
+        assert!(trusted.is_trusted());
+        assert!(!trusted.is_untrusted());
+        assert!(untrusted.is_untrusted());
+        assert!(!untrusted.is_trusted());
+        assert!(!empty.is_trusted());
+        assert!(!empty.is_untrusted());
+    }
+
+    #[test]
+    fn reg_type_is_trusted_false_for_non_btf_variants() {
+        assert!(!RegType::ScalarValue.is_trusted());
+        assert!(!RegType::PtrToCtx.is_trusted());
+        assert!(!RegType::PtrToMapValue {
+            id: 1,
+            offset: None,
+            map_idx: 0,
+        }
+        .is_trusted());
+    }
+
+    #[test]
+    fn reg_type_equality_distinguishes_flags() {
+        let a = RegType::PtrToBtfId {
+            type_name: "x",
+            flags: PtrFlags::TRUSTED,
+        };
+        let b = RegType::PtrToBtfId {
+            type_name: "x",
+            flags: PtrFlags::UNTRUSTED,
+        };
+        assert_ne!(a, b, "flags must participate in PartialEq to preserve old trusted-bool semantics");
     }
 }
