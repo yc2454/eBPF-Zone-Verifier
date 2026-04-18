@@ -1,0 +1,16 @@
+[
+  {
+    "name": "gotol, small_imm",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 21, "dst": 0, "src": 0, "off": 4, "imm": 0},
+      {"code": 6, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 6, "dst": 0, "src": 0, "off": 0, "imm": 3},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 6, "dst": 0, "src": 0, "off": 0, "imm": -3},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]
