@@ -446,7 +446,7 @@ pub fn create_spin_lock_btf() -> BtfContext {
         },
     );
 
-    BtfContext { types, strings }
+    BtfContext::from_types_and_strings(types, strings)
 }
 
 pub(crate) fn build_exec_context(

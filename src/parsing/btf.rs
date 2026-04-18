@@ -89,18 +89,67 @@ impl BtfType {
     }
 }
 
+/// A BTF_KIND_DECL_TAG: an annotation attached to a type (or a specific struct
+/// member / function argument). Used by the kernel to register kfuncs, mark
+/// map-value fields as `__kptr`/`__rcu`/`__uptr`, and carry CO-RE hints.
+#[derive(Debug, Clone)]
+pub struct DeclTag {
+    pub name: String,
+    pub target_type_id: u32,
+    /// -1 for whole-type tags; otherwise the 0-based member/argument index.
+    pub component_idx: i32,
+}
+
 #[derive(Clone, Default, Debug)]
 pub struct BtfContext {
     pub types: HashMap<u32, BtfType>,
     pub strings: Vec<u8>,
+    /// All DECL_TAGs parsed from the BTF section. Populated by `parse_btf`.
+    decl_tags: Vec<DeclTag>,
+    /// Index of kfunc FUNC types by name: name -> FUNC btf_id. A FUNC is
+    /// considered a kfunc when it carries a DECL_TAG whose name is "kfunc"
+    /// or "bpf_kfunc".
+    kfuncs: HashMap<String, u32>,
 }
 
 impl BtfContext {
     pub fn new() -> Self {
+        BtfContext::default()
+    }
+
+    /// Construct a BtfContext from just `types` and `strings`, with an empty
+    /// decl_tag / kfunc registry. Used by synthetic tests.
+    pub fn from_types_and_strings(types: HashMap<u32, BtfType>, strings: Vec<u8>) -> Self {
         BtfContext {
-            types: HashMap::new(),
-            strings: Vec::new(),
+            types,
+            strings,
+            decl_tags: Vec::new(),
+            kfuncs: HashMap::new(),
         }
+    }
+
+    /// All DECL_TAGs attached to `target_type_id` (whole-type or any member).
+    pub fn decl_tags_for(&self, target_type_id: u32) -> impl Iterator<Item = &DeclTag> {
+        self.decl_tags
+            .iter()
+            .filter(move |t| t.target_type_id == target_type_id)
+    }
+
+    /// Returns the FUNC btf_id of a registered kfunc by name, if any.
+    pub fn lookup_kfunc(&self, name: &str) -> Option<u32> {
+        self.kfuncs.get(name).copied()
+    }
+
+    /// If `type_id` names a BTF_KIND_TYPE_TAG, returns the tag name and the
+    /// inner type it wraps. Used by later phases to recognize `__kptr`,
+    /// `__rcu`, `__percpu`, etc.
+    pub fn type_tag_name(&self, type_id: u32) -> Option<(&str, u32)> {
+        let ty = self.types.get(&type_id)?;
+        if ty.kind() != BTF_KIND_TYPE_TAG {
+            return None;
+        }
+        let name = self.get_string(ty.name_off)?;
+        Some((name, ty.size_or_type))
     }
 
     /// Looks up a struct member at a specific byte offset.
@@ -209,6 +258,7 @@ pub fn parse_btf(bytes: &[u8]) -> Result<BtfContext, String> {
 
     let strings = bytes[str_start..str_end].to_vec();
     let mut types = HashMap::new();
+    let mut decl_tags = Vec::new();
     let mut cursor = type_start;
     let mut type_id = 1;
 
@@ -262,7 +312,33 @@ pub fn parse_btf(bytes: &[u8]) -> Result<BtfContext, String> {
                 cursor += vlen * 8;
             }
             BTF_KIND_DECL_TAG => {
-                cursor += 4;
+                if cursor + 4 <= type_end {
+                    let component_idx = i32::from_le_bytes(
+                        bytes[cursor..cursor + 4].try_into().unwrap(),
+                    );
+                    // Defer resolving the tag name string until after the
+                    // full strings blob is installed on BtfContext.
+                    decl_tags.push(DeclTag {
+                        name: String::new(), // filled in below
+                        target_type_id: size_or_type,
+                        component_idx,
+                    });
+                    // Stash the name_off on the last decl_tag via a sentinel:
+                    // we use a fresh field on the parsed type (below) to
+                    // carry the string offset. Simpler: look up strings now.
+                    let last = decl_tags.last_mut().unwrap();
+                    let start = name_off as usize;
+                    if start < strings.len() {
+                        if let Some(end) =
+                            strings[start..].iter().position(|&b| b == 0).map(|e| e + start)
+                        {
+                            if let Ok(s) = std::str::from_utf8(&strings[start..end]) {
+                                last.name = s.to_string();
+                            }
+                        }
+                    }
+                    cursor += 4;
+                }
             }
             _ => {}
         }
@@ -281,7 +357,38 @@ pub fn parse_btf(bytes: &[u8]) -> Result<BtfContext, String> {
         type_id += 1;
     }
 
-    Ok(BtfContext { types, strings })
+    // Build the kfunc registry: FUNC types targeted by a DECL_TAG whose name
+    // is "kfunc" or "bpf_kfunc" get indexed by the FUNC's own name.
+    let mut kfuncs: HashMap<String, u32> = HashMap::new();
+    for tag in &decl_tags {
+        if tag.name != "kfunc" && tag.name != "bpf_kfunc" {
+            continue;
+        }
+        let Some(func_ty) = types.get(&tag.target_type_id) else {
+            continue;
+        };
+        if func_ty.kind() != BTF_KIND_FUNC {
+            continue;
+        }
+        let start = func_ty.name_off as usize;
+        if start >= strings.len() {
+            continue;
+        }
+        let Some(end) = strings[start..].iter().position(|&b| b == 0).map(|e| e + start) else {
+            continue;
+        };
+        let Ok(name) = std::str::from_utf8(&strings[start..end]) else {
+            continue;
+        };
+        kfuncs.insert(name.to_string(), tag.target_type_id);
+    }
+
+    Ok(BtfContext {
+        types,
+        strings,
+        decl_tags,
+        kfuncs,
+    })
 }
 
 // -----------------------------------------------------------------------------
@@ -557,4 +664,97 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
     }
 
     Ok(map_defs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a minimal BTF blob exercising DECL_TAG + kfunc registry + TYPE_TAG.
+    ///
+    /// Layout:
+    ///   id 1: FUNC     name="my_kfunc"
+    ///   id 2: DECL_TAG name="kfunc",   target=1, component_idx=-1
+    ///   id 3: INT      name="inner",   size=4
+    ///   id 4: TYPE_TAG name="__kptr",  inner=3
+    fn synthetic_btf() -> Vec<u8> {
+        // String table. Offsets matter.
+        //   0  ""
+        //   1  "my_kfunc\0"   (9 bytes)
+        //  10  "kfunc\0"      (6 bytes)
+        //  16  "__kptr\0"     (7 bytes)
+        //  23  "inner\0"      (6 bytes) -> end 29
+        let mut strings: Vec<u8> = Vec::new();
+        strings.push(0);
+        strings.extend_from_slice(b"my_kfunc\0");
+        strings.extend_from_slice(b"kfunc\0");
+        strings.extend_from_slice(b"__kptr\0");
+        strings.extend_from_slice(b"inner\0");
+        assert_eq!(strings.len(), 29);
+
+        let mut types: Vec<u8> = Vec::new();
+        let push_hdr = |out: &mut Vec<u8>, name_off: u32, info: u32, size_or_type: u32| {
+            out.extend_from_slice(&name_off.to_le_bytes());
+            out.extend_from_slice(&info.to_le_bytes());
+            out.extend_from_slice(&size_or_type.to_le_bytes());
+        };
+
+        // Type 1: FUNC "my_kfunc"
+        push_hdr(&mut types, 1, (BTF_KIND_FUNC as u32) << 24, 0);
+        // Type 2: DECL_TAG "kfunc" target=1, extra i32 component_idx = -1
+        push_hdr(&mut types, 10, (BTF_KIND_DECL_TAG as u32) << 24, 1);
+        types.extend_from_slice(&(-1i32).to_le_bytes());
+        // Type 3: INT "inner" size=4, extra 4 bytes of int encoding (zeros ok)
+        push_hdr(&mut types, 23, (BTF_KIND_INT as u32) << 24, 4);
+        types.extend_from_slice(&0u32.to_le_bytes());
+        // Type 4: TYPE_TAG "__kptr" inner=3
+        push_hdr(&mut types, 16, (BTF_KIND_TYPE_TAG as u32) << 24, 3);
+
+        let hdr_len: u32 = 24;
+        let type_len = types.len() as u32;
+        let str_len = strings.len() as u32;
+
+        let mut out = Vec::new();
+        out.extend_from_slice(&0xEB9Fu16.to_le_bytes()); // magic
+        out.push(1); // version
+        out.push(0); // flags
+        out.extend_from_slice(&hdr_len.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes()); // type_off
+        out.extend_from_slice(&type_len.to_le_bytes());
+        out.extend_from_slice(&type_len.to_le_bytes()); // str_off = after types
+        out.extend_from_slice(&str_len.to_le_bytes());
+        out.extend_from_slice(&types);
+        out.extend_from_slice(&strings);
+        out
+    }
+
+    #[test]
+    fn parse_decl_tag_populates_kfunc_registry() {
+        let blob = synthetic_btf();
+        let ctx = parse_btf(&blob).expect("parse");
+
+        // kfunc registered by FUNC name
+        assert_eq!(ctx.lookup_kfunc("my_kfunc"), Some(1));
+        assert!(ctx.lookup_kfunc("nonexistent").is_none());
+
+        // decl_tags_for returns the tag attached to the FUNC
+        let tags: Vec<_> = ctx.decl_tags_for(1).collect();
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].name, "kfunc");
+        assert_eq!(tags[0].component_idx, -1);
+
+        // No tags on unrelated types
+        assert_eq!(ctx.decl_tags_for(3).count(), 0);
+    }
+
+    #[test]
+    fn type_tag_name_returns_tag_and_inner() {
+        let ctx = parse_btf(&synthetic_btf()).expect("parse");
+        let (name, inner) = ctx.type_tag_name(4).expect("type tag");
+        assert_eq!(name, "__kptr");
+        assert_eq!(inner, 3);
+        // Non-TYPE_TAG ids return None
+        assert!(ctx.type_tag_name(1).is_none());
+        assert!(ctx.type_tag_name(3).is_none());
+    }
 }
