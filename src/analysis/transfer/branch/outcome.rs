@@ -112,11 +112,75 @@ pub(crate) fn condition_outcome(
                         None
                     }
                 }
-                // Signed comparisons - only if we can trust the bounds
+                // Signed comparisons — compare as i64 or s32 depending on width.
                 CmpOp::SLt | CmpOp::SLe | CmpOp::SGt | CmpOp::SGe => {
-                    // More complex - need signed interpretation
-                    // Skip for now, or handle carefully
-                    None
+                    let imm_s = *imm; // signed immediate
+                    if width == Width::W32 {
+                        // For W32, use the s32 interpretation of the register.
+                        // `get_s32_bounds` may not have tight bounds when the u64
+                        // interval is in the "negative u32" quadrant (>= 0x8000_0000),
+                        // so also derive bounds from the u64 combined range.
+                        let (s32_lo, s32_hi) = u64_combined_to_s32(min, max)
+                            .unwrap_or_else(|| {
+                                let (a, b) = state.domain.get_s32_bounds(left);
+                                (a as i64, b as i64)
+                            });
+                        let imm_s32 = imm_s as i32 as i64;
+                        match op {
+                            CmpOp::SGe => {
+                                if s32_lo >= imm_s32 { Some(true) }
+                                else if s32_hi < imm_s32 { Some(false) }
+                                else { None }
+                            }
+                            CmpOp::SGt => {
+                                if s32_lo > imm_s32 { Some(true) }
+                                else if s32_hi <= imm_s32 { Some(false) }
+                                else { None }
+                            }
+                            CmpOp::SLe => {
+                                if s32_hi <= imm_s32 { Some(true) }
+                                else if s32_lo > imm_s32 { Some(false) }
+                                else { None }
+                            }
+                            CmpOp::SLt => {
+                                if s32_hi < imm_s32 { Some(true) }
+                                else if s32_lo >= imm_s32 { Some(false) }
+                                else { None }
+                            }
+                            _ => unreachable!(),
+                        }
+                    } else {
+                        // W64 signed comparison: use i64 bounds directly.
+                        // `min` and `max` are u64; for W64 signed we need them as i64.
+                        // Only safe if both fit in i64 (top bit = 0, i.e., no wrap).
+                        if max > i64::MAX as u64 {
+                            return None; // range spans sign boundary — conservative
+                        }
+                        let (s64_lo, s64_hi) = (min as i64, max as i64);
+                        match op {
+                            CmpOp::SGe => {
+                                if s64_lo >= imm_s { Some(true) }
+                                else if s64_hi < imm_s { Some(false) }
+                                else { None }
+                            }
+                            CmpOp::SGt => {
+                                if s64_lo > imm_s { Some(true) }
+                                else if s64_hi <= imm_s { Some(false) }
+                                else { None }
+                            }
+                            CmpOp::SLe => {
+                                if s64_hi <= imm_s { Some(true) }
+                                else if s64_lo > imm_s { Some(false) }
+                                else { None }
+                            }
+                            CmpOp::SLt => {
+                                if s64_hi < imm_s { Some(true) }
+                                else if s64_lo >= imm_s { Some(false) }
+                                else { None }
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
                 }
                 CmpOp::Test => {
                     // 1. Get the Abstract State (TNum)
@@ -142,6 +206,23 @@ pub(crate) fn condition_outcome(
         }
         Operand::Reg(_r) => None,
     }
+}
+
+/// Convert u64 combined bounds (from `get_combined_bounds` for W32) to a signed
+/// i64 range representing the s32 interpretation of those u32 values.
+/// Returns None if the range spans the u32 sign boundary (0x7FFF_FFFF → 0x8000_0000),
+/// since the signed range would then be the whole i32 domain.
+fn u64_combined_to_s32(min: u64, max: u64) -> Option<(i64, i64)> {
+    if min > 0xFFFF_FFFF || max > 0xFFFF_FFFF {
+        return None; // not a u32 range
+    }
+    let lo_u32 = min as u32;
+    let hi_u32 = max as u32;
+    // Does the range cross the sign boundary?
+    if lo_u32 <= 0x7FFF_FFFF && hi_u32 >= 0x8000_0000 {
+        return None;
+    }
+    Some((lo_u32 as i32 as i64, hi_u32 as i32 as i64))
 }
 
 /// Get combined bounds from tnum and DBM, as unsigned values.

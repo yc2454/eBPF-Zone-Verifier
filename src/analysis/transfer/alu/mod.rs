@@ -183,10 +183,49 @@ pub(crate) fn transfer_mov_sx(
             state.domain.assume_le_imm(dst, hi);
         }
         Width::W32 => {
-            // 32-bit MOVSX: sign-extend src_bits → 32-bit, then zero-extend
-            // to 64-bit. The 64-bit view is in [0, 2^32 - 1].
-            state.domain.assume_ge_imm(dst, 0);
-            state.domain.assume_le_imm(dst, 0xFFFF_FFFF);
+            // 32-bit MOVSX: sign-extend low src_bits of src → 32-bit signed,
+            // then zero-extend to 64-bit.  Conservative default [0, 2^32-1].
+            //
+            // Precision: when the source interval is entirely within one
+            // half of the N-bit signed range we can compute exact bounds:
+            //
+            //  Positive half [0, 2^(N-1)-1]: sign-extension is a no-op
+            //    → result bounds equal source bounds.
+            //  Negative half [2^(N-1), 2^N-1]: every value sign-extends to
+            //    v | ~mask in 32-bit (i.e., v + (0x1_0000_0000 - 2^N)).
+            //    Since the high bits of the result are constant 0xFF…,
+            //    the result range is [src_lo + ext, src_hi + ext].
+            let n = match src_bits {
+                SxWidth::B8 => 8i64,
+                SxWidth::B16 => 16i64,
+                SxWidth::B32 => 32i64,
+            };
+            let max_positive = (1i64 << (n - 1)) - 1; // 127 / 32767 / 2^31-1
+            let mask = (1i64 << n) - 1;               // 255 / 65535 / 2^32-1
+            let sign_bit = 1i64 << (n - 1);            // 128 / 32768 / 2^31
+            // Amount to add when zero-extending a negative N-bit value to 32-bit:
+            // fills the bits above N with 1s (two's-complement).
+            let ext = (0x1_0000_0000i64) - (1i64 << n); // 0xFFFF_FF00 for S8
+
+            let (src_lo, src_hi) = match &src {
+                Operand::Reg(r) => state.domain.get_interval(*r),
+                Operand::Imm(v) => (*v, *v),
+            };
+
+            if src_lo >= 0 && src_hi <= max_positive {
+                // Positive half: sign-extension leaves value unchanged.
+                state.domain.assume_ge_imm(dst, src_lo);
+                state.domain.assume_le_imm(dst, src_hi);
+            } else if src_lo >= sign_bit && src_hi <= mask {
+                // Negative half: all values have the sign bit set; adding `ext`
+                // fills the upper bits with 1s to produce the 32-bit negative
+                // representation, then zero-extends to u64.
+                state.domain.assume_ge_imm(dst, src_lo + ext);
+                state.domain.assume_le_imm(dst, src_hi + ext);
+            } else {
+                state.domain.assume_ge_imm(dst, 0);
+                state.domain.assume_le_imm(dst, 0xFFFF_FFFF);
+            }
         }
     }
     state.set_tnum(dst, Tnum::unknown());
