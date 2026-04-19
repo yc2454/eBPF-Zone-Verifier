@@ -20,6 +20,29 @@ pub enum Width {
     W64,
 }
 
+/// Source-value width for sign-extending instructions (LDSX, MOVSX).
+///
+/// LDSX (v6.6) encodes this via the BPF_MEMSX mode bit combined with size
+/// in the opcode byte. MOVSX (v6.6) encodes it in the `off` field of an
+/// otherwise-normal BPF_MOV: off ∈ {8, 16, 32}. An off of 0 on MOV means
+/// a regular (non-sign-extending) move.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SxWidth {
+    B8,
+    B16,
+    B32,
+}
+
+impl SxWidth {
+    pub fn bits(self) -> u32 {
+        match self {
+            SxWidth::B8 => 8,
+            SxWidth::B16 => 16,
+            SxWidth::B32 => 32,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum AluOp {

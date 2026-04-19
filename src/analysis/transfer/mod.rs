@@ -15,7 +15,7 @@ use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
-use crate::ast::{CallKind, EndianOp, Instr, Width};
+use crate::ast::{CallKind, EndianOp, Instr, Operand, Width};
 use log::warn;
 
 /// Main transfer function - dispatches to appropriate handler based on instruction type.
@@ -54,12 +54,50 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
             off,
         } => memory::transfer_load(env, state, *size, *dst, *base, *off),
 
+        Instr::LoadSx {
+            size,
+            dst,
+            base,
+            off,
+        } => memory::transfer_load_sx(env, state, *size, *dst, *base, *off),
+
+        Instr::MovSx {
+            width,
+            src_bits,
+            dst,
+            src,
+        } => alu::transfer_mov_sx(env, state, *width, *src_bits, *dst, *src),
+
         Instr::Store {
             size,
             base,
             off,
             src,
         } => memory::transfer_store(env, state, *size, *base, *off, src),
+
+        Instr::LoadAcq {
+            size,
+            dst,
+            base,
+            off,
+        } => {
+            if reject_atomic_on_typed_ptr(env, &state, *base) {
+                return vec![];
+            }
+            memory::transfer_load(env, state, *size, *dst, *base, *off)
+        }
+
+        Instr::StoreRel {
+            size,
+            base,
+            off,
+            src,
+        } => {
+            if reject_atomic_on_typed_ptr(env, &state, *base) {
+                return vec![];
+            }
+            memory::transfer_store(env, state, *size, *base, *off, &Operand::Reg(*src))
+        }
 
         Instr::LoadPacket {
             size,
@@ -102,8 +140,37 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
             vec![state]
         }
 
+        Instr::MayGoto { .. } => {
+            env.fail(VerificationError::UnsupportedModernFeature {
+                pc: state.pc,
+                feature: "may_goto / BPF_JCOND (v6.8; counter semantics Phase 3)",
+            });
+            vec![]
+        }
+
         Instr::Exit => transfer_exit(env, state),
     }
+}
+
+/// Kernel rejects BPF_ATOMIC (including LOAD_ACQ / STORE_REL) against
+/// ctx/packet/flow_keys pointer bases. Returns true if the program should
+/// be rejected — caller then bails out without running the transfer.
+fn reject_atomic_on_typed_ptr(env: &mut VerifierEnv, state: &State, base: Reg) -> bool {
+    let base_ty = state.types.get(base);
+    let rejected = matches!(
+        base_ty,
+        RegType::PtrToCtx
+            | RegType::PtrToPacket
+            | RegType::PtrToPacketMeta
+            | RegType::PtrToPacketEnd
+    );
+    if rejected {
+        env.fail(VerificationError::UnsupportedModernFeature {
+            pc: state.pc,
+            feature: "BPF_ATOMIC (LOAD_ACQ / STORE_REL) against ctx/packet pointer",
+        });
+    }
+    rejected
 }
 
 /// Transfer function for Endian (byte swap) instructions.

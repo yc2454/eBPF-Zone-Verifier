@@ -11,6 +11,8 @@ BIN="./target/release/zovia"
 
 for f in tests/baselines/selftest_zone.json \
          tests/baselines/selftest_kernel.json \
+         tests/baselines/selftest_zone_backport.json \
+         tests/baselines/selftest_kernel_backport.json \
          tests/baselines/prevail.json; do
     if [ ! -f "$f" ]; then
         echo "Missing $f — run tests/baselines/capture_baseline.sh first." >&2
@@ -26,12 +28,15 @@ fail=0
 run_selftest() {
     local mode="$1"
     local flag="$2"
-    local baseline="tests/baselines/selftest_${mode}.json"
-    echo "== selftest ($mode) =="
-    $BIN -q $flag --max-insn 100000 selftest-suite ./selftests > "$TMP/$mode.log" 2>&1
-    python3 tests/baselines/canonicalize.py results/selftest/selftest_report.json "$TMP/selftest_$mode.json"
-    if ! diff -u "$baseline" "$TMP/selftest_$mode.json"; then
-        echo "DIFF in selftest $mode"
+    local suite="$3"
+    local dir="$4"
+    local tag="${mode}${suite:+_$suite}"
+    local baseline="tests/baselines/selftest_${tag}.json"
+    echo "== selftest ($mode${suite:+, $suite}) =="
+    $BIN -q $flag --max-insn 100000 selftest-suite "$dir" > "$TMP/$tag.log" 2>&1
+    python3 tests/baselines/canonicalize.py results/selftest/selftest_report.json "$TMP/selftest_$tag.json"
+    if ! diff -u "$baseline" "$TMP/selftest_$tag.json"; then
+        echo "DIFF in selftest $tag"
         fail=1
     fi
 }
@@ -61,8 +66,10 @@ PY
     fi
 }
 
-run_selftest zone ""
-run_selftest kernel "--kernel-mode"
+run_selftest zone ""          ""        ./selftests/legacy/verifier
+run_selftest kernel "--kernel-mode" ""  ./selftests/legacy/verifier
+run_selftest zone ""          backport  ./selftests/legacy/verifier_backport
+run_selftest kernel "--kernel-mode" backport ./selftests/legacy/verifier_backport
 run_prevail
 
 if [ $fail -eq 0 ]; then

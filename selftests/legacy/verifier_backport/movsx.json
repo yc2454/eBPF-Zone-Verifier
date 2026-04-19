@@ -1,0 +1,219 @@
+[
+  {
+    "name": "MOV32SX, S8",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 65315},
+      {"code": 188, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "MOV32SX, S16",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 65315},
+      {"code": 188, "dst": 0, "src": 0, "off": 16, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "MOV64SX, S8",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 510},
+      {"code": 191, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "MOV64SX, S16",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 986915},
+      {"code": 191, "dst": 0, "src": 0, "off": 16, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "MOV64SX, S32",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": -2},
+      {"code": 191, "dst": 0, "src": 0, "off": 32, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "MOV32SX, S8, range_check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 188, "dst": 1, "src": 0, "off": 8, "imm": 0},
+      {"code": 102, "dst": 1, "src": 0, "off": 4, "imm": 127},
+      {"code": 198, "dst": 1, "src": 0, "off": 3, "imm": -128},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "MOV32SX, S16, range_check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 188, "dst": 1, "src": 0, "off": 16, "imm": 0},
+      {"code": 102, "dst": 1, "src": 0, "off": 4, "imm": 32767},
+      {"code": 198, "dst": 1, "src": 0, "off": 3, "imm": -33023},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "MOV32SX, S16, range_check 2",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 65535},
+      {"code": 188, "dst": 2, "src": 1, "off": 16, "imm": 0},
+      {"code": 119, "dst": 2, "src": 0, "off": 0, "imm": 1},
+      {"code": 85, "dst": 2, "src": 0, "off": 2, "imm": 2147483647},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "MOV64SX, S8, range_check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 191, "dst": 1, "src": 0, "off": 8, "imm": 0},
+      {"code": 101, "dst": 1, "src": 0, "off": 4, "imm": 127},
+      {"code": 197, "dst": 1, "src": 0, "off": 3, "imm": -128},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "MOV64SX, S16, range_check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 191, "dst": 1, "src": 0, "off": 16, "imm": 0},
+      {"code": 101, "dst": 1, "src": 0, "off": 4, "imm": 32767},
+      {"code": 197, "dst": 1, "src": 0, "off": 3, "imm": -32768},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "MOV64SX, S32, range_check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 191, "dst": 1, "src": 0, "off": 32, "imm": 0},
+      {"code": 101, "dst": 1, "src": 0, "off": 4, "imm": 2147483647},
+      {"code": 197, "dst": 1, "src": 0, "off": 3, "imm": -2147483648},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "MOV64SX, S16, R10 Sign Extension",
+    "result": "REJECT",
+    "errstr": "R1 type=scalar expected=",
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 553656332},
+      {"code": 99, "dst": 10, "src": 1, "off": -8, "imm": 0},
+      {"code": 191, "dst": 1, "src": 10, "off": 16, "imm": 0},
+      {"code": 7, "dst": 1, "src": 0, "off": 0, "imm": -8},
+      {"code": 183, "dst": 2, "src": 0, "off": 0, "imm": 3},
+      {"code": 189, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 6},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "MOV32SX, S8, var_off u32_max",
+    "result": "REJECT",
+    "errstr": "infinite loop detected",
+    "insns": [
+      {"code": 113, "dst": 3, "src": 10, "off": -387, "imm": 0},
+      {"code": 188, "dst": 7, "src": 3, "off": 8, "imm": 0},
+      {"code": 54, "dst": 7, "src": 0, "off": -3, "imm": 624132667},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "MOV32SX, S8, var_off not u32_max, positive after s8 extension",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 191, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 3, "src": 0, "off": 0, "imm": 15},
+      {"code": 188, "dst": 7, "src": 3, "off": 8, "imm": 0},
+      {"code": 118, "dst": 7, "src": 0, "off": 2, "imm": 16},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 10, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "MOV32SX, S8, var_off not u32_max, negative after s8 extension",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 191, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 87, "dst": 3, "src": 0, "off": 0, "imm": 15},
+      {"code": 71, "dst": 3, "src": 0, "off": 0, "imm": 128},
+      {"code": 188, "dst": 7, "src": 3, "off": 8, "imm": 0},
+      {"code": 118, "dst": 7, "src": 0, "off": 2, "imm": -5},
+      {"code": 180, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 10, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "MOV64SX, S8, unsigned range_check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 87, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 7, "dst": 0, "src": 0, "off": 0, "imm": 254},
+      {"code": 191, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 165, "dst": 0, "src": 0, "off": 2, "imm": -2},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "MOV32SX, S8, unsigned range_check",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 84, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 4, "dst": 0, "src": 0, "off": 0, "imm": 254},
+      {"code": 188, "dst": 0, "src": 0, "off": 8, "imm": 0},
+      {"code": 166, "dst": 0, "src": 0, "off": 2, "imm": -2},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

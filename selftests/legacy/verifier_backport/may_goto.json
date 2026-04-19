@@ -1,0 +1,53 @@
+[
+  {
+    "name": "may_goto 0",
+    "result": "ACCEPT",
+    "prog_type": 17,
+    "insns": [
+      {"code": 229, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 229, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "batch 2 of may_goto 0",
+    "result": "ACCEPT",
+    "prog_type": 17,
+    "insns": [
+      {"code": 229, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 229, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 229, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 229, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "may_goto batch with offsets 2/1/0",
+    "result": "ACCEPT",
+    "prog_type": 17,
+    "insns": [
+      {"code": 229, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 229, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 229, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 229, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 229, "dst": 0, "src": 0, "off": 1, "imm": 0},
+      {"code": 229, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "may_goto batch with offsets 2/0",
+    "result": "ACCEPT",
+    "prog_type": 17,
+    "insns": [
+      {"code": 229, "dst": 0, "src": 0, "off": 2, "imm": 0},
+      {"code": 229, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

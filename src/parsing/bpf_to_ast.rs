@@ -2,7 +2,7 @@
 use crate::analysis::machine::reg::Reg;
 use crate::ast::{
     AluOp, AtomicOp, CallKind, CmpOp, EndianOp, Instr, MapLoadKind, MemSize, Operand,
-    PacketLoadMode, Program, Width,
+    PacketLoadMode, Program, SxWidth, Width,
 };
 use crate::parsing::bpf_insn::RawBpfInsn;
 use std::collections::HashSet;
@@ -50,8 +50,14 @@ fn reg_to_var(insn: &RawBpfInsn, r: u8, pc: usize) -> Result<Reg, LowerError> {
 }
 
 fn branch_target(pc: usize, off: i16, len: usize, code: u8) -> Result<usize, LowerError> {
-    // eBPF branch encoding: target = pc + 1 + off
-    let t = pc as isize + 1 + off as isize;
+    branch_target_disp(pc, off as i32, len, code)
+}
+
+/// `gotol` (v6.7, opcode 0x06) widens the 16-bit displacement to a signed
+/// 32-bit displacement carried in the `imm` field. This helper takes the
+/// wider form; the classic 16-bit variant goes through `branch_target`.
+fn branch_target_disp(pc: usize, disp: i32, len: usize, code: u8) -> Result<usize, LowerError> {
+    let t = pc as isize + 1 + disp as isize;
     if t < 0 || (t as usize) >= len {
         return Err(LowerError {
             pc,
@@ -247,19 +253,59 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             // --- ALU64 ---
 
             // 0xbc: MOV32 reg  (w_dst = w_src)
-            0xbc => Instr::Alu {
-                width: Width::W32,
-                op: AluOp::Mov,
-                dst,
-                src: Operand::Reg(src),
+            // v6.6 overloads `off` ∈ {8, 16, 32} to select MOVSX width; off=0
+            // is the classic zero-extending MOV32.
+            0xbc => match insn.off {
+                0 => Instr::Alu {
+                    width: Width::W32,
+                    op: AluOp::Mov,
+                    dst,
+                    src: Operand::Reg(src),
+                },
+                8 | 16 => Instr::MovSx {
+                    width: Width::W32,
+                    src_bits: if insn.off == 8 { SxWidth::B8 } else { SxWidth::B16 },
+                    dst,
+                    src: Operand::Reg(src),
+                },
+                _ => {
+                    return Err(LowerError {
+                        pc,
+                        code: insn.code,
+                        msg: format!("invalid MOV32 off field: {} (expected 0, 8, or 16)", insn.off),
+                        kind: LowerErrorKind::UnknownOpcode,
+                    });
+                }
             },
 
             // 0xbf: rX = rY   (ALU64 | MOV | X)
-            0xbf => Instr::Alu {
-                width: Width::W64,
-                op: AluOp::Mov,
-                dst,
-                src: Operand::Reg(src),
+            // v6.6 overloads `off` ∈ {8, 16, 32} to select MOVSX width; off=0
+            // is the classic 64-bit MOV.
+            0xbf => match insn.off {
+                0 => Instr::Alu {
+                    width: Width::W64,
+                    op: AluOp::Mov,
+                    dst,
+                    src: Operand::Reg(src),
+                },
+                8 | 16 | 32 => Instr::MovSx {
+                    width: Width::W64,
+                    src_bits: match insn.off {
+                        8 => SxWidth::B8,
+                        16 => SxWidth::B16,
+                        _ => SxWidth::B32,
+                    },
+                    dst,
+                    src: Operand::Reg(src),
+                },
+                _ => {
+                    return Err(LowerError {
+                        pc,
+                        code: insn.code,
+                        msg: format!("invalid MOV64 off field: {} (expected 0, 8, 16, or 32)", insn.off),
+                        kind: LowerErrorKind::UnknownOpcode,
+                    });
+                }
             },
 
             // 0xb7: rX = imm  (ALU64 | MOV | K)
@@ -1218,6 +1264,37 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 Instr::Jmp { target }
             }
 
+            // 0xe5: may_goto (v6.8) — BPF_JMP | BPF_JCOND | BPF_K.
+            // Target = pc + 1 + off; src, dst, imm must be zero.
+            0xe5 => {
+                if insn.src != 0 || insn.dst != 0 || insn.imm != 0 {
+                    return Err(LowerError {
+                        pc,
+                        code: insn.code,
+                        msg: "may_goto requires src=0, dst=0, imm=0".to_string(),
+                        kind: LowerErrorKind::UnknownOpcode,
+                    });
+                }
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::MayGoto { target }
+            }
+
+            // 0x06: gotol (v6.7) — BPF_JMP32 | BPF_JA | BPF_K.
+            // Target = pc + 1 + imm (signed 32-bit displacement, in `imm`,
+            // not `off`). `off` must be zero.
+            0x06 => {
+                if insn.off != 0 {
+                    return Err(LowerError {
+                        pc,
+                        code: insn.code,
+                        msg: format!("gotol requires off=0 (got {})", insn.off),
+                        kind: LowerErrorKind::UnknownOpcode,
+                    });
+                }
+                let target = branch_target_disp(pc, insn.imm, raw.len(), insn.code)?;
+                Instr::Jmp { target }
+            }
+
             // --- LD/LDX --- (minimal support for your current 0x61 case)
 
             // 0x61: LDXW dst = *(u32 *)(src + off)
@@ -1248,6 +1325,29 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             // 0x79: LDXDW dst = *(u64 *)(src + off)
             0x79 => Instr::Load {
                 size: MemSize::U64,
+                dst,
+                base: src,
+                off: insn.off,
+            },
+
+            // --- LDSX (v6.6): BPF_LDX | BPF_MEMSX ---
+            // 0x91: LDSXB  dst = (s64)*(s8  *)(src + off)
+            0x91 => Instr::LoadSx {
+                size: MemSize::U8,
+                dst,
+                base: src,
+                off: insn.off,
+            },
+            // 0x89: LDSXH  dst = (s64)*(s16 *)(src + off)
+            0x89 => Instr::LoadSx {
+                size: MemSize::U16,
+                dst,
+                base: src,
+                off: insn.off,
+            },
+            // 0x81: LDSXW  dst = (s64)*(s32 *)(src + off)
+            0x81 => Instr::LoadSx {
+                size: MemSize::U32,
                 dst,
                 base: src,
                 off: insn.off,
@@ -1379,14 +1479,55 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 }
             }
 
-            // 0xDB (64-bit) and 0xC3 (32-bit)
-            0xDB | 0xC3 => {
-                let size = if insn.code == 0xDB {
-                    MemSize::U64
-                } else {
-                    MemSize::U32
+            // BPF_STX | BPF_ATOMIC: 0xDB (DW), 0xC3 (W), plus 0xCB (H) and
+            // 0xD3 (B) which v6.11 added for BPF_LOAD_ACQ / BPF_STORE_REL.
+            // Historical atomic ops (ADD/OR/AND/XOR/XCHG/CMPXCHG) are only
+            // defined for W and DW; B/H on those imm values is rejected.
+            0xDB | 0xC3 | 0xCB | 0xD3 => {
+                let size = match insn.code {
+                    0xDB => MemSize::U64,
+                    0xC3 => MemSize::U32,
+                    0xCB => MemSize::U16,
+                    0xD3 => MemSize::U8,
+                    _ => unreachable!(),
                 };
 
+                // BPF_LOAD_ACQ (0x100) / BPF_STORE_REL (0x110), v6.11.
+                // Acquire/release ordering does not affect the static-analysis
+                // view of memory safety, but the kernel rejects BPF_ATOMIC
+                // against ctx/pkt/flow_keys pointers — we use dedicated
+                // variants so transfer can enforce that before delegating to
+                // plain load/store semantics.
+                // Register-role convention matches the kernel's BPF_ATOMIC
+                // encoding: for LOAD_ACQ, dst is the destination register and
+                // src is the address; for STORE_REL, dst is the address and
+                // src is the value.
+                if insn.imm == 0x100 {
+                    Instr::LoadAcq {
+                        size,
+                        dst,
+                        base: src,
+                        off: insn.off,
+                    }
+                } else if insn.imm == 0x110 {
+                    Instr::StoreRel {
+                        size,
+                        base: dst,
+                        off: insn.off,
+                        src,
+                    }
+                } else if matches!(insn.code, 0xCB | 0xD3) {
+                    // Historical atomic RMW ops only support W / DW sizes.
+                    return Err(LowerError {
+                        pc,
+                        code: insn.code,
+                        msg: format!(
+                            "unknown atomic opcode imm: 0x{:x} (B/H atomics are only defined for LOAD_ACQ/STORE_REL)",
+                            insn.imm
+                        ),
+                        kind: LowerErrorKind::UnknownAtomicOp,
+                    });
+                } else {
                 // 1. Check for Complex Ops (XCHG, CMPXCHG)
                 // These specific values are hardcoded in the kernel spec.
                 let (op, fetch) = match insn.imm {
@@ -1429,6 +1570,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     base: dst, // In BPF STX, 'dst' is the memory pointer
                     off: insn.off,
                     src, // In BPF STX, 'src' is the value
+                }
                 }
             }
 

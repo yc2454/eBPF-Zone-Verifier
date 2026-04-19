@@ -1,0 +1,166 @@
+[
+  {
+    "name": "LDSX, S8",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 1022},
+      {"code": 123, "dst": 10, "src": 1, "off": -8, "imm": 0},
+      {"code": 145, "dst": 0, "src": 10, "off": -8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "LDSX, S16",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 262142},
+      {"code": 123, "dst": 10, "src": 1, "off": -8, "imm": 0},
+      {"code": 137, "dst": 0, "src": 10, "off": -8, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "LDSX, S32",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": -2},
+      {"code": 123, "dst": 10, "src": 1, "off": -8, "imm": 0},
+      {"code": 129, "dst": 0, "src": 10, "off": -8, "imm": 0},
+      {"code": 119, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "LDSX, S8 range checking, privileged",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 123, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 145, "dst": 1, "src": 10, "off": -8, "imm": 0},
+      {"code": 101, "dst": 1, "src": 0, "off": 4, "imm": 127},
+      {"code": 197, "dst": 1, "src": 0, "off": 3, "imm": -128},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "LDSX, S16 range checking",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 123, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 137, "dst": 1, "src": 10, "off": -8, "imm": 0},
+      {"code": 101, "dst": 1, "src": 0, "off": 4, "imm": 32767},
+      {"code": 197, "dst": 1, "src": 0, "off": 3, "imm": -32768},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "LDSX, S32 range checking",
+    "result": "ACCEPT",
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 7},
+      {"code": 123, "dst": 10, "src": 0, "off": -8, "imm": 0},
+      {"code": 129, "dst": 1, "src": 10, "off": -8, "imm": 0},
+      {"code": 101, "dst": 1, "src": 0, "off": 4, "imm": 2147483647},
+      {"code": 197, "dst": 1, "src": 0, "off": 3, "imm": -2147483648},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 1},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 2},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "LDSX, xdp s32 xdp_md->data",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 6,
+    "insns": [
+      {"code": 129, "dst": 2, "src": 1, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "LDSX, xdp s32 xdp_md->data_end",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 6,
+    "insns": [
+      {"code": 129, "dst": 2, "src": 1, "off": 4, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "LDSX, xdp s32 xdp_md->data_meta",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 6,
+    "insns": [
+      {"code": 129, "dst": 2, "src": 1, "off": 8, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "LDSX, tcx s32 __sk_buff->data",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 3,
+    "insns": [
+      {"code": 129, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "LDSX, tcx s32 __sk_buff->data_end",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 3,
+    "insns": [
+      {"code": 129, "dst": 2, "src": 1, "off": 80, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "LDSX, tcx s32 __sk_buff->data_meta",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 3,
+    "insns": [
+      {"code": 129, "dst": 2, "src": 1, "off": 84, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "LDSX, flow_dissector s32 __sk_buff->data",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 22,
+    "insns": [
+      {"code": 129, "dst": 2, "src": 1, "off": 76, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "LDSX, flow_dissector s32 __sk_buff->data_end",
+    "result": "REJECT",
+    "errstr": "invalid bpf_context access",
+    "prog_type": 22,
+    "insns": [
+      {"code": 129, "dst": 2, "src": 1, "off": 80, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]
