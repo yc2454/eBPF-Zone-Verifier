@@ -113,27 +113,27 @@
         "test": "./selftests/legacy/verifier_backport/load_acquire.json::load-acquire, 8-bit"
       },
       {
-        "actual": "ERROR",
+        "actual": "REJECT",
         "expected": "ACCEPT",
-        "outcome": "Error(opcode=0xe5)",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/may_goto.json::batch 2 of may_goto 0"
       },
       {
-        "actual": "ERROR",
+        "actual": "REJECT",
         "expected": "ACCEPT",
-        "outcome": "Error(opcode=0xe5)",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/may_goto.json::may_goto 0"
       },
       {
-        "actual": "ERROR",
+        "actual": "REJECT",
         "expected": "ACCEPT",
-        "outcome": "Error(opcode=0xe5)",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/may_goto.json::may_goto batch with offsets 2/0"
       },
       {
-        "actual": "ERROR",
+        "actual": "REJECT",
         "expected": "ACCEPT",
-        "outcome": "Error(opcode=0xe5)",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/may_goto.json::may_goto batch with offsets 2/1/0"
       },
       {
@@ -252,9 +252,9 @@
       }
     ],
     "totals": {
-      "errors": 25,
+      "errors": 21,
       "false_negatives": 1,
-      "false_positives": 10,
+      "false_positives": 14,
       "passed": 23,
       "skipped": 0,
       "total_files": 6,
@@ -367,27 +367,27 @@
         "test": "./selftests/legacy/verifier_backport/load_acquire.json::load-acquire, 8-bit"
       },
       {
-        "actual": "ERROR",
+        "actual": "REJECT",
         "expected": "ACCEPT",
-        "outcome": "Error(opcode=0xe5)",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/may_goto.json::batch 2 of may_goto 0"
       },
       {
-        "actual": "ERROR",
+        "actual": "REJECT",
         "expected": "ACCEPT",
-        "outcome": "Error(opcode=0xe5)",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/may_goto.json::may_goto 0"
       },
       {
-        "actual": "ERROR",
+        "actual": "REJECT",
         "expected": "ACCEPT",
-        "outcome": "Error(opcode=0xe5)",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/may_goto.json::may_goto batch with offsets 2/0"
       },
       {
-        "actual": "ERROR",
+        "actual": "REJECT",
         "expected": "ACCEPT",
-        "outcome": "Error(opcode=0xe5)",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/may_goto.json::may_goto batch with offsets 2/1/0"
       },
       {
@@ -506,9 +506,9 @@
       }
     ],
     "totals": {
-      "errors": 25,
+      "errors": 21,
       "false_negatives": 1,
-      "false_positives": 10,
+      "false_positives": 14,
       "passed": 23,
       "skipped": 0,
       "total_files": 6,

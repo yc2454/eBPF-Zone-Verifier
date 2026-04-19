@@ -290,7 +290,7 @@ fn get_use_def(instr: &Instr) -> UseDef {
             }
         }
 
-        Instr::Jmp { .. } => {
+        Instr::Jmp { .. } | Instr::MayGoto { .. } => {
             // No register use/def.
         }
 

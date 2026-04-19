@@ -1264,6 +1264,21 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 Instr::Jmp { target }
             }
 
+            // 0xe5: may_goto (v6.8) — BPF_JMP | BPF_JCOND | BPF_K.
+            // Target = pc + 1 + off; src, dst, imm must be zero.
+            0xe5 => {
+                if insn.src != 0 || insn.dst != 0 || insn.imm != 0 {
+                    return Err(LowerError {
+                        pc,
+                        code: insn.code,
+                        msg: "may_goto requires src=0, dst=0, imm=0".to_string(),
+                        kind: LowerErrorKind::UnknownOpcode,
+                    });
+                }
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::MayGoto { target }
+            }
+
             // 0x06: gotol (v6.7) — BPF_JMP32 | BPF_JA | BPF_K.
             // Target = pc + 1 + imm (signed 32-bit displacement, in `imm`,
             // not `off`). `off` must be zero.

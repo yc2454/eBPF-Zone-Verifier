@@ -116,6 +116,14 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
             vec![state]
         }
 
+        Instr::MayGoto { .. } => {
+            env.fail(VerificationError::UnsupportedModernFeature {
+                pc: state.pc,
+                feature: "may_goto / BPF_JCOND (v6.8; counter semantics Phase 3)",
+            });
+            vec![]
+        }
+
         Instr::Exit => transfer_exit(env, state),
     }
 }

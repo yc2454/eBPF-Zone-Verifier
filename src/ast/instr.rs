@@ -65,6 +65,14 @@ pub enum Instr {
     Jmp {
         target: usize,
     },
+    /// may_goto / BPF_JCOND (v6.8). A conditional jump that may transfer
+    /// control to `target` or fall through; the kernel models the choice
+    /// with an iteration-bounded counter, capping loop iterations at ~8M.
+    /// Phase 1 decodes the instruction but does not implement counter
+    /// semantics — transfer rejects with UnsupportedModernFeature.
+    MayGoto {
+        target: usize,
+    },
     Load {
         size: MemSize,
         dst: Reg,
@@ -220,6 +228,7 @@ impl fmt::Display for Instr {
                 )
             }
             Jmp { target } => write!(f, "goto {}", target),
+            MayGoto { target } => write!(f, "may_goto {}", target),
             Load {
                 size,
                 dst,
