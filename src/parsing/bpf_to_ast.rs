@@ -1479,14 +1479,55 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 }
             }
 
-            // 0xDB (64-bit) and 0xC3 (32-bit)
-            0xDB | 0xC3 => {
-                let size = if insn.code == 0xDB {
-                    MemSize::U64
-                } else {
-                    MemSize::U32
+            // BPF_STX | BPF_ATOMIC: 0xDB (DW), 0xC3 (W), plus 0xCB (H) and
+            // 0xD3 (B) which v6.11 added for BPF_LOAD_ACQ / BPF_STORE_REL.
+            // Historical atomic ops (ADD/OR/AND/XOR/XCHG/CMPXCHG) are only
+            // defined for W and DW; B/H on those imm values is rejected.
+            0xDB | 0xC3 | 0xCB | 0xD3 => {
+                let size = match insn.code {
+                    0xDB => MemSize::U64,
+                    0xC3 => MemSize::U32,
+                    0xCB => MemSize::U16,
+                    0xD3 => MemSize::U8,
+                    _ => unreachable!(),
                 };
 
+                // BPF_LOAD_ACQ (0x100) / BPF_STORE_REL (0x110), v6.11.
+                // Acquire/release ordering does not affect the static-analysis
+                // view of memory safety, but the kernel rejects BPF_ATOMIC
+                // against ctx/pkt/flow_keys pointers — we use dedicated
+                // variants so transfer can enforce that before delegating to
+                // plain load/store semantics.
+                // Register-role convention matches the kernel's BPF_ATOMIC
+                // encoding: for LOAD_ACQ, dst is the destination register and
+                // src is the address; for STORE_REL, dst is the address and
+                // src is the value.
+                if insn.imm == 0x100 {
+                    Instr::LoadAcq {
+                        size,
+                        dst,
+                        base: src,
+                        off: insn.off,
+                    }
+                } else if insn.imm == 0x110 {
+                    Instr::StoreRel {
+                        size,
+                        base: dst,
+                        off: insn.off,
+                        src,
+                    }
+                } else if matches!(insn.code, 0xCB | 0xD3) {
+                    // Historical atomic RMW ops only support W / DW sizes.
+                    return Err(LowerError {
+                        pc,
+                        code: insn.code,
+                        msg: format!(
+                            "unknown atomic opcode imm: 0x{:x} (B/H atomics are only defined for LOAD_ACQ/STORE_REL)",
+                            insn.imm
+                        ),
+                        kind: LowerErrorKind::UnknownAtomicOp,
+                    });
+                } else {
                 // 1. Check for Complex Ops (XCHG, CMPXCHG)
                 // These specific values are hardcoded in the kernel spec.
                 let (op, fetch) = match insn.imm {
@@ -1529,6 +1570,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     base: dst, // In BPF STX, 'dst' is the memory pointer
                     off: insn.off,
                     src, // In BPF STX, 'src' is the value
+                }
                 }
             }
 

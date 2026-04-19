@@ -59,60 +59,6 @@
         "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, tcx s32 __sk_buff->data_meta"
       },
       {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0xd3)",
-        "test": "./selftests/legacy/verifier_backport/load_acquire.json::load-acquire from ctx pointer"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0xd3)",
-        "test": "./selftests/legacy/verifier_backport/load_acquire.json::load-acquire from flow_keys pointer"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0xd3)",
-        "test": "./selftests/legacy/verifier_backport/load_acquire.json::load-acquire from pkt pointer"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(atomic_imm=0x100)",
-        "test": "./selftests/legacy/verifier_backport/load_acquire.json::load-acquire with non-pointer src_reg"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(atomic_imm=0x100)",
-        "test": "./selftests/legacy/verifier_backport/load_acquire.json::load-acquire with uninitialized src_reg"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(opcode=0xcb)",
-        "test": "./selftests/legacy/verifier_backport/load_acquire.json::load-acquire, 16-bit"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(atomic_imm=0x100)",
-        "test": "./selftests/legacy/verifier_backport/load_acquire.json::load-acquire, 32-bit"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(atomic_imm=0x100)",
-        "test": "./selftests/legacy/verifier_backport/load_acquire.json::load-acquire, 64-bit"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(opcode=0xd3)",
-        "test": "./selftests/legacy/verifier_backport/load_acquire.json::load-acquire, 8-bit"
-      },
-      {
         "actual": "REJECT",
         "expected": "ACCEPT",
         "outcome": "FalsePositive",
@@ -177,85 +123,13 @@
         "expected": "ACCEPT",
         "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S8, range_check"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0xd3)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release to ctx pointer"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0xd3)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release to flow_keys pointer"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0xd3)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release to pkt pointer"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(atomic_imm=0x110)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release with non-pointer dst_reg"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(atomic_imm=0x110)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release with uninitialized dst_reg"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(atomic_imm=0x110)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release with uninitialized src_reg"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(opcode=0xcb)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release, 16-bit"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(atomic_imm=0x110)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release, 32-bit"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(atomic_imm=0x110)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release, 64-bit"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(opcode=0xd3)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release, 8-bit"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(atomic_imm=0x110)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release, leak pointer to map"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(atomic_imm=0x110)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release, leak pointer to stack"
       }
     ],
     "totals": {
-      "errors": 21,
+      "errors": 0,
       "false_negatives": 1,
       "false_positives": 14,
-      "passed": 23,
+      "passed": 44,
       "skipped": 0,
       "total_files": 6,
       "total_tests": 59
@@ -313,60 +187,6 @@
         "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, tcx s32 __sk_buff->data_meta"
       },
       {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0xd3)",
-        "test": "./selftests/legacy/verifier_backport/load_acquire.json::load-acquire from ctx pointer"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0xd3)",
-        "test": "./selftests/legacy/verifier_backport/load_acquire.json::load-acquire from flow_keys pointer"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0xd3)",
-        "test": "./selftests/legacy/verifier_backport/load_acquire.json::load-acquire from pkt pointer"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(atomic_imm=0x100)",
-        "test": "./selftests/legacy/verifier_backport/load_acquire.json::load-acquire with non-pointer src_reg"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(atomic_imm=0x100)",
-        "test": "./selftests/legacy/verifier_backport/load_acquire.json::load-acquire with uninitialized src_reg"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(opcode=0xcb)",
-        "test": "./selftests/legacy/verifier_backport/load_acquire.json::load-acquire, 16-bit"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(atomic_imm=0x100)",
-        "test": "./selftests/legacy/verifier_backport/load_acquire.json::load-acquire, 32-bit"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(atomic_imm=0x100)",
-        "test": "./selftests/legacy/verifier_backport/load_acquire.json::load-acquire, 64-bit"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(opcode=0xd3)",
-        "test": "./selftests/legacy/verifier_backport/load_acquire.json::load-acquire, 8-bit"
-      },
-      {
         "actual": "REJECT",
         "expected": "ACCEPT",
         "outcome": "FalsePositive",
@@ -431,85 +251,13 @@
         "expected": "ACCEPT",
         "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S8, range_check"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0xd3)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release to ctx pointer"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0xd3)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release to flow_keys pointer"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0xd3)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release to pkt pointer"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(atomic_imm=0x110)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release with non-pointer dst_reg"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(atomic_imm=0x110)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release with uninitialized dst_reg"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(atomic_imm=0x110)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release with uninitialized src_reg"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(opcode=0xcb)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release, 16-bit"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(atomic_imm=0x110)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release, 32-bit"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(atomic_imm=0x110)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release, 64-bit"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(opcode=0xd3)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release, 8-bit"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(atomic_imm=0x110)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release, leak pointer to map"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(atomic_imm=0x110)",
-        "test": "./selftests/legacy/verifier_backport/store_release.json::store-release, leak pointer to stack"
       }
     ],
     "totals": {
-      "errors": 21,
+      "errors": 0,
       "false_negatives": 1,
       "false_positives": 14,
-      "passed": 23,
+      "passed": 44,
       "skipped": 0,
       "total_files": 6,
       "total_tests": 59

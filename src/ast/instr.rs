@@ -95,6 +95,26 @@ pub enum Instr {
         off: i16,
         src: Operand,
     },
+    /// Load-acquire (BPF_LOAD_ACQ, v6.11). Semantically a typed load with
+    /// acquire ordering; ordering does not affect static memory-safety
+    /// analysis, so the value transfer is identical to Load. The kernel
+    /// additionally bans BPF_ATOMIC reads from ctx/pkt/flow_keys pointers,
+    /// which is what separates this variant from a plain Load.
+    LoadAcq {
+        size: MemSize,
+        dst: Reg,
+        base: Reg,
+        off: i16,
+    },
+    /// Store-release (BPF_STORE_REL, v6.11). Mirror of LoadAcq on the store
+    /// side: identical value transfer to Store, but BPF_ATOMIC writes into
+    /// ctx/pkt/flow_keys pointers are rejected.
+    StoreRel {
+        size: MemSize,
+        base: Reg,
+        off: i16,
+        src: Reg,
+    },
     Atomic {
         op: AtomicOp,
         size: MemSize,
@@ -312,6 +332,48 @@ impl fmt::Display for Instr {
                     base.name(),
                     off,
                     src_str
+                )
+            }
+            LoadAcq {
+                size,
+                dst,
+                base,
+                off,
+            } => {
+                let size_str = match size {
+                    MemSize::U8 => "u8",
+                    MemSize::U16 => "u16",
+                    MemSize::U32 => "u32",
+                    MemSize::U64 => "u64",
+                };
+                write!(
+                    f,
+                    "{} = load_acquire *({} *)({} + {})",
+                    dst.name(),
+                    size_str,
+                    base.name(),
+                    off
+                )
+            }
+            StoreRel {
+                size,
+                base,
+                off,
+                src,
+            } => {
+                let size_str = match size {
+                    MemSize::U8 => "u8",
+                    MemSize::U16 => "u16",
+                    MemSize::U32 => "u32",
+                    MemSize::U64 => "u64",
+                };
+                write!(
+                    f,
+                    "store_release *({} *)({} + {}) = {}",
+                    size_str,
+                    base.name(),
+                    off,
+                    src.name()
                 )
             }
             Atomic {
