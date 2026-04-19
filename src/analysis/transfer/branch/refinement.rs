@@ -4,7 +4,6 @@ use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
 use crate::ast::{CmpOp, Instr, Operand};
-
 /// Promote a pointer type across all stack frames by ref/ptr id.
 /// `should_promote` checks if a slot's type matches, `promote` returns the new type.
 fn promote_stack_slots_all_frames(
@@ -18,6 +17,93 @@ fn promote_stack_slots_all_frames(
             let ty = frame.stack.get_slot_type(k);
             if should_promote(&ty) {
                 frame.stack.set_slot_type(k, promote(&ty), None);
+            }
+        }
+    }
+}
+
+/// After `apply_jmp_constraints` tightens bounds on `left` in both branch
+/// states, propagate those same refinements to every register and stack slot
+/// that shares `left`'s scalar id.  Called once per branch in `transfer_if`.
+pub(crate) fn propagate_scalar_links(then_s: &mut State, else_s: &mut State, left: Reg) {
+    fanout_scalar_bounds(then_s, left);
+    fanout_scalar_bounds(else_s, left);
+}
+
+/// Tighten every scalar-linked register/slot in `state` to the bounds that
+/// `left` has *after* the branch constraint was applied.
+fn fanout_scalar_bounds(state: &mut State, left: Reg) {
+    let id = match state.scalar_id(left) {
+        Some(id) => id,
+        None => return,
+    };
+
+    let linked: Vec<Reg> = state
+        .regs_with_scalar_id(id)
+        .into_iter()
+        .filter(|&r| r != left && r != Reg::Zero)
+        .collect();
+
+    let (lo, hi) = state.domain.get_interval(left);
+    let tnum = state.get_tnum(left);
+
+    // ── Registers ───────────────────────────────────────────────────────────
+    for r in &linked {
+        let r = *r;
+        // Skip registers that have since become pointers: the zone domain
+        // stores packet-pointer offsets as huge sentinel values in its DBM,
+        // and intersecting them with scalar bounds corrupts the domain.
+        if state.types.get(r) != RegType::ScalarValue {
+            continue;
+        }
+        let (r_lo, r_hi) = state.domain.get_interval(r);
+        // Guard: skip if the new bound would make this register's
+        // interval empty.  That can happen when the zone domain has
+        // accumulated anchor-relative constraints that manifest as
+        // large sentinel values in the scalar interval.  In those
+        // cases the fan-out is either a no-op (if IDs are stale) or
+        // would produce a false inconsistency.  A future pass
+        // (W2.1d) will clean up stale IDs at merge points; for now
+        // we be conservative and only tighten when it's safe.
+        if lo > r_hi || hi < r_lo {
+            continue;
+        }
+        // Tighten (intersect) only.
+        if lo > r_lo {
+            state.domain.assume_ge_imm(r, lo);
+        }
+        if hi < r_hi {
+            state.domain.assume_le_imm(r, hi);
+        }
+        let r_tnum = state.get_tnum(r);
+        if let Some(t) = r_tnum.intersect(tnum) {
+            state.set_tnum(r, t);
+        }
+    }
+
+    // ── Stack slots ──────────────────────────────────────────────────────────
+    // Only propagate to scalar slots; apply the same consistency guard as for
+    // registers so that a subsequent fill_at doesn't load inconsistent bounds.
+    for frame in state.frames.iter_mut() {
+        for (_, slot) in frame.stack.slots.iter_mut() {
+            if slot.scalar_id != Some(id) {
+                continue;
+            }
+            if slot.reg_type != RegType::ScalarValue {
+                continue;
+            }
+            if lo > slot.bounds.max || hi < slot.bounds.min {
+                continue;
+            }
+            let new_min = if lo > slot.bounds.min { lo } else { slot.bounds.min };
+            let new_max = if hi < slot.bounds.max { hi } else { slot.bounds.max };
+            if new_min > new_max {
+                continue; // Would make bounds inconsistent — skip
+            }
+            slot.bounds.min = new_min;
+            slot.bounds.max = new_max;
+            if let Some(t) = slot.tnum.intersect(tnum) {
+                slot.tnum = t;
             }
         }
     }

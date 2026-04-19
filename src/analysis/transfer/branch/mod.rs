@@ -17,7 +17,7 @@ use crate::ast::{CmpOp, Instr, Operand, Width};
 use self::constraints::apply_jmp_constraints;
 use self::interval_packet::refine_packet_bounds_on_branch;
 use self::outcome::condition_outcome;
-use self::refinement::refine_branch;
+use self::refinement::{propagate_scalar_links, refine_branch};
 use super::common::{check_operand_readable, check_reg_readable};
 
 /// Transfer function for conditional branch instructions.
@@ -61,6 +61,10 @@ pub(crate) fn transfer_if(
             refine_packet_bounds_on_branch(&mut state_then, &mut state_else, left, *r, op);
         }
     }
+
+    // Scalar ID fan-out: propagate the constraint just applied to `left` to
+    // every register and stack slot sharing its scalar id.
+    propagate_scalar_links(&mut state_then, &mut state_else, left);
 
     // Branch Type Refinement (For map and socket pointers)
     let instr = Instr::If {
