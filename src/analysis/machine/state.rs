@@ -280,7 +280,12 @@ impl State {
             bounds: ScalarBounds { min, max },
             size,
             ptr_bounds,
-            scalar_id: None,
+            // Carry the scalar id so fill_at can re-link the destination register.
+            scalar_id: if size == MemSize::U64 && is_aligned {
+                self.scalar_ids.get(&reg).copied()
+            } else {
+                None
+            },
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -412,6 +417,15 @@ impl State {
             self.domain
                 .assign_interval(dst, spilled.bounds.min, spilled.bounds.max);
 
+            // Restore scalar id so the filled register remains part of any
+            // existing copy chain (e.g. a spilled then reloaded r1 shares the
+            // same id as copies of it that stayed in registers).
+            if let Some(id) = spilled.scalar_id {
+                self.scalar_ids.insert(dst, id);
+            } else {
+                self.scalar_ids.remove(&dst);
+            }
+
             // Only restore anchors for U64 (pointers need full 64-bit)
             if size == MemSize::U64 {
                 self.restore_anchor_info(dst, &spilled);
@@ -422,6 +436,7 @@ impl State {
             let (min, max) = size.unbounded_scalar_bounds();
             self.tnums.insert(dst, Tnum::unknown());
             self.domain.assign_interval(dst, min, max);
+            self.scalar_ids.remove(&dst);
         }
 
         true

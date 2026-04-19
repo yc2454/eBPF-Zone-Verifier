@@ -146,6 +146,19 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     // 2. Apply return value bounds for specific helpers
     apply_return_bounds(&mut state, helper);
 
+    // 2.1 Scalar ID for helper return value.
+    // An unknown scalar R0 gets a fresh id so that copies of it can later
+    // be linked and refined together (W2.1c).  Pointer or constant returns
+    // don't need scalar linking.
+    use crate::analysis::machine::reg_types::RegType;
+    if state.types.get(Reg::R0) == RegType::ScalarValue
+        && state.get_tnum(Reg::R0).is_unknown()
+    {
+        state.alloc_scalar_id(Reg::R0);
+    } else {
+        state.clear_scalar_id(Reg::R0);
+    }
+
     // 2.5 Initialize memory buffers for PtrToUninitMem arguments
     initialize_uninit_mem_args(&mut state, &in_types, helper);
 
@@ -153,6 +166,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
         state.domain.forget(r);
         state.set_tnum(r, Tnum::unknown());
+        state.clear_scalar_id(r);
     }
 
     // 4. Forget packet pointer DBM entries if they were invalidated

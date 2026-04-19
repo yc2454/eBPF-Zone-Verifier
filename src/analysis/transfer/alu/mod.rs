@@ -94,6 +94,26 @@ pub(crate) fn transfer_alu(
         pc,
     );
 
+    // 6.5 Scalar ID lifecycle: link on identity copies, clear on value changes.
+    // Done after update_alu_types so we see the final destination type.
+    if state.types.get(dst) == crate::analysis::machine::reg_types::RegType::ScalarValue {
+        match (op, &src) {
+            (AluOp::Mov, Operand::Reg(r)) if width == crate::ast::Width::W64 => {
+                // 64-bit reg→reg copy: dst shares src's scalar id.
+                state.link_scalar_id(dst, *r);
+            }
+            _ => {
+                // Immediate copy, 32-bit MOV (zero-extend changes value), or any
+                // arithmetic/bitwise/shift op: value at dst is now different from
+                // any prior copy chain, so unlink.
+                state.clear_scalar_id(dst);
+            }
+        }
+    } else {
+        // dst became a pointer — no scalar id.
+        state.clear_scalar_id(dst);
+    }
+
     // 7. Post-operation consistency check
     if state.domain.is_inconsistent() {
         env.fail(VerificationError::DbmInconsistent { pc: state.pc });
@@ -170,6 +190,8 @@ pub(crate) fn transfer_mov_sx(
         }
     }
     state.set_tnum(dst, Tnum::unknown());
+    // MOVSX always produces a fresh unknown scalar — not a copy of src.
+    state.alloc_scalar_id(dst);
 
     let next_pc = if env.invalid_pc_set.contains(&(state.pc + 1)) {
         state.pc + 2
