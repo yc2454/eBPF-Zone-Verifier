@@ -391,7 +391,7 @@ fn state_subsumed_by(
             return false;
         }
     } else if !(types_subsumed_by(&cur.types, &old.types, live_regs)
-        && domain_subsumed_by(&cur.domain, &old.domain, live_regs)
+        && domain_subsumed_by(&cur.domain, &old.domain, live_regs, &cur.precise_regs)
         && stack_subsumed_by(cur, old)
         && tnum_subsumed_by(cur, old, live_regs))
     {
@@ -408,7 +408,12 @@ fn state_subsumed_by(
             return false;
         }
         if !config.skip_dbm_check
-            && !domain_subsumed_by(&cur_frame.caller_domain, &old_frame.caller_domain, &saved)
+            && !domain_subsumed_by(
+                &cur_frame.caller_domain,
+                &old_frame.caller_domain,
+                &saved,
+                &HashSet::new(),
+            )
         {
             return false;
         }
@@ -493,11 +498,25 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
 }
 
 /// Check if cur numeric domain is subsumed by old domain.
-fn domain_subsumed_by(cur: &NumericDomain, old: &NumericDomain, live_regs: &HashSet<Reg>) -> bool {
+///
+/// For registers listed in `precise`, subsumption requires *exact* interval
+/// equality rather than superset coverage: a bound-check refinement that
+/// W2.2 flagged as precision-critical must not be generalised away by
+/// pruning against a looser cached state.
+fn domain_subsumed_by(
+    cur: &NumericDomain,
+    old: &NumericDomain,
+    live_regs: &HashSet<Reg>,
+    precise: &HashSet<Reg>,
+) -> bool {
     for &r in live_regs {
         let (old_min, old_max) = old.get_interval(r);
         let (cur_min, cur_max) = cur.get_interval(r);
-        if !(old_min <= cur_min && old_max >= cur_max) {
+        if precise.contains(&r) {
+            if old_min != cur_min || old_max != cur_max {
+                return false;
+            }
+        } else if !(old_min <= cur_min && old_max >= cur_max) {
             return false;
         }
     }
@@ -572,6 +591,19 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
                 return false;
             }
 
+            // Precision (W2.3): a spilled scalar marked precise must match
+            // the cached slot exactly on tnum and bounds. Prevents pruning
+            // a bound-check-refined slot against a looser cached one.
+            let old_slot = old_frame.stack.get_slot(offset);
+            let new_slot = new_frame.stack.get_slot(offset);
+            if let (Some(old_s), Some(new_s)) = (old_slot, new_slot) {
+                if new_s.precise
+                    && (old_s.tnum != new_s.tnum || old_s.bounds != new_s.bounds)
+                {
+                    return false;
+                }
+            }
+
             // For packet pointers, also check interval_range subsumption.
             // If old has a proven range but cur doesn't, old does NOT subsume cur,
             // because cur might fail a packet access that old would pass.
@@ -609,7 +641,11 @@ fn tnum_subsumed_by(cur_state: &State, old_state: &State, live_regs: &HashSet<Re
     for &r in live_regs {
         let cur = cur_state.get_tnum(r);
         let old = old_state.get_tnum(r);
-        if !tnum_covers(&cur, &old) {
+        if cur_state.is_reg_precise(r) {
+            if cur.mask != old.mask || cur.value != old.value {
+                return false;
+            }
+        } else if !tnum_covers(&cur, &old) {
             return false;
         }
     }
