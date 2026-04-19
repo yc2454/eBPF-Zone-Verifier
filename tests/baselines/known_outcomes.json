@@ -41,88 +41,40 @@
         "test": "./selftests/legacy/verifier_backport/gotol.json::gotol, small_imm"
       },
       {
-        "actual": "ERROR",
+        "actual": "REJECT",
         "expected": "ACCEPT",
-        "outcome": "Error(opcode=0x89)",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, S16"
       },
       {
-        "actual": "ERROR",
+        "actual": "REJECT",
         "expected": "ACCEPT",
-        "outcome": "Error(opcode=0x89)",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, S16 range checking"
       },
       {
-        "actual": "ERROR",
+        "actual": "REJECT",
         "expected": "ACCEPT",
-        "outcome": "Error(opcode=0x81)",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, S32"
       },
       {
-        "actual": "ERROR",
+        "actual": "REJECT",
         "expected": "ACCEPT",
-        "outcome": "Error(opcode=0x81)",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, S32 range checking"
       },
       {
-        "actual": "ERROR",
+        "actual": "REJECT",
         "expected": "ACCEPT",
-        "outcome": "Error(opcode=0x91)",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, S8"
       },
       {
-        "actual": "ERROR",
+        "actual": "REJECT",
         "expected": "ACCEPT",
-        "outcome": "Error(opcode=0x91)",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, S8 range checking, privileged"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0x81)",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, flow_dissector s32 __sk_buff->data"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0x81)",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, flow_dissector s32 __sk_buff->data_end"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0x81)",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, tcx s32 __sk_buff->data"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0x81)",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, tcx s32 __sk_buff->data_end"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0x81)",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, tcx s32 __sk_buff->data_meta"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0x81)",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, xdp s32 xdp_md->data"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0x81)",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, xdp s32 xdp_md->data_end"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0x81)",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, xdp s32 xdp_md->data_meta"
       },
       {
         "actual": "ERROR",
@@ -206,7 +158,25 @@
         "actual": "REJECT",
         "expected": "ACCEPT",
         "outcome": "FalsePositive",
+        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S16"
+      },
+      {
+        "actual": "REJECT",
+        "expected": "ACCEPT",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S16, range_check"
+      },
+      {
+        "actual": "REJECT",
+        "expected": "ACCEPT",
+        "outcome": "FalsePositive",
+        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S16, range_check 2"
+      },
+      {
+        "actual": "REJECT",
+        "expected": "ACCEPT",
+        "outcome": "FalsePositive",
+        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S8"
       },
       {
         "actual": "REJECT",
@@ -218,13 +188,25 @@
         "actual": "REJECT",
         "expected": "ACCEPT",
         "outcome": "FalsePositive",
+        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S8, unsigned range_check"
+      },
+      {
+        "actual": "REJECT",
+        "expected": "ACCEPT",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S8, var_off not u32_max, negative after s8 extension"
       },
       {
-        "actual": "ACCEPT",
-        "expected": "REJECT",
-        "outcome": "FalseNegative",
-        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S16, R10 Sign Extension"
+        "actual": "REJECT",
+        "expected": "ACCEPT",
+        "outcome": "FalsePositive",
+        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S8, var_off not u32_max, positive after s8 extension"
+      },
+      {
+        "actual": "REJECT",
+        "expected": "ACCEPT",
+        "outcome": "FalsePositive",
+        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S16"
       },
       {
         "actual": "REJECT",
@@ -236,13 +218,31 @@
         "actual": "REJECT",
         "expected": "ACCEPT",
         "outcome": "FalsePositive",
+        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S32"
+      },
+      {
+        "actual": "REJECT",
+        "expected": "ACCEPT",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S32, range_check"
       },
       {
         "actual": "REJECT",
         "expected": "ACCEPT",
         "outcome": "FalsePositive",
+        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S8"
+      },
+      {
+        "actual": "REJECT",
+        "expected": "ACCEPT",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S8, range_check"
+      },
+      {
+        "actual": "REJECT",
+        "expected": "ACCEPT",
+        "outcome": "FalsePositive",
+        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S8, unsigned range_check"
       },
       {
         "actual": "ERROR",
@@ -318,9 +318,9 @@
       }
     ],
     "totals": {
-      "errors": 40,
-      "false_negatives": 1,
-      "false_positives": 6,
+      "errors": 26,
+      "false_negatives": 0,
+      "false_positives": 21,
       "passed": 12,
       "skipped": 0,
       "total_files": 6,
@@ -361,88 +361,40 @@
         "test": "./selftests/legacy/verifier_backport/gotol.json::gotol, small_imm"
       },
       {
-        "actual": "ERROR",
+        "actual": "REJECT",
         "expected": "ACCEPT",
-        "outcome": "Error(opcode=0x89)",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, S16"
       },
       {
-        "actual": "ERROR",
+        "actual": "REJECT",
         "expected": "ACCEPT",
-        "outcome": "Error(opcode=0x89)",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, S16 range checking"
       },
       {
-        "actual": "ERROR",
+        "actual": "REJECT",
         "expected": "ACCEPT",
-        "outcome": "Error(opcode=0x81)",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, S32"
       },
       {
-        "actual": "ERROR",
+        "actual": "REJECT",
         "expected": "ACCEPT",
-        "outcome": "Error(opcode=0x81)",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, S32 range checking"
       },
       {
-        "actual": "ERROR",
+        "actual": "REJECT",
         "expected": "ACCEPT",
-        "outcome": "Error(opcode=0x91)",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, S8"
       },
       {
-        "actual": "ERROR",
+        "actual": "REJECT",
         "expected": "ACCEPT",
-        "outcome": "Error(opcode=0x91)",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, S8 range checking, privileged"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0x81)",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, flow_dissector s32 __sk_buff->data"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0x81)",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, flow_dissector s32 __sk_buff->data_end"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0x81)",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, tcx s32 __sk_buff->data"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0x81)",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, tcx s32 __sk_buff->data_end"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0x81)",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, tcx s32 __sk_buff->data_meta"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0x81)",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, xdp s32 xdp_md->data"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0x81)",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, xdp s32 xdp_md->data_end"
-      },
-      {
-        "actual": "ERROR",
-        "expected": "REJECT",
-        "outcome": "Error(opcode=0x81)",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, xdp s32 xdp_md->data_meta"
       },
       {
         "actual": "ERROR",
@@ -526,7 +478,25 @@
         "actual": "REJECT",
         "expected": "ACCEPT",
         "outcome": "FalsePositive",
+        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S16"
+      },
+      {
+        "actual": "REJECT",
+        "expected": "ACCEPT",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S16, range_check"
+      },
+      {
+        "actual": "REJECT",
+        "expected": "ACCEPT",
+        "outcome": "FalsePositive",
+        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S16, range_check 2"
+      },
+      {
+        "actual": "REJECT",
+        "expected": "ACCEPT",
+        "outcome": "FalsePositive",
+        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S8"
       },
       {
         "actual": "REJECT",
@@ -538,13 +508,25 @@
         "actual": "REJECT",
         "expected": "ACCEPT",
         "outcome": "FalsePositive",
+        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S8, unsigned range_check"
+      },
+      {
+        "actual": "REJECT",
+        "expected": "ACCEPT",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S8, var_off not u32_max, negative after s8 extension"
       },
       {
-        "actual": "ACCEPT",
-        "expected": "REJECT",
-        "outcome": "FalseNegative",
-        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S16, R10 Sign Extension"
+        "actual": "REJECT",
+        "expected": "ACCEPT",
+        "outcome": "FalsePositive",
+        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S8, var_off not u32_max, positive after s8 extension"
+      },
+      {
+        "actual": "REJECT",
+        "expected": "ACCEPT",
+        "outcome": "FalsePositive",
+        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S16"
       },
       {
         "actual": "REJECT",
@@ -556,13 +538,31 @@
         "actual": "REJECT",
         "expected": "ACCEPT",
         "outcome": "FalsePositive",
+        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S32"
+      },
+      {
+        "actual": "REJECT",
+        "expected": "ACCEPT",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S32, range_check"
       },
       {
         "actual": "REJECT",
         "expected": "ACCEPT",
         "outcome": "FalsePositive",
+        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S8"
+      },
+      {
+        "actual": "REJECT",
+        "expected": "ACCEPT",
+        "outcome": "FalsePositive",
         "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S8, range_check"
+      },
+      {
+        "actual": "REJECT",
+        "expected": "ACCEPT",
+        "outcome": "FalsePositive",
+        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S8, unsigned range_check"
       },
       {
         "actual": "ERROR",
@@ -638,9 +638,9 @@
       }
     ],
     "totals": {
-      "errors": 40,
-      "false_negatives": 1,
-      "false_positives": 6,
+      "errors": 26,
+      "false_negatives": 0,
+      "false_positives": 21,
       "passed": 12,
       "skipped": 0,
       "total_files": 6,

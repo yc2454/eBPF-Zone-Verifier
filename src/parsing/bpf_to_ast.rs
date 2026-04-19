@@ -2,7 +2,7 @@
 use crate::analysis::machine::reg::Reg;
 use crate::ast::{
     AluOp, AtomicOp, CallKind, CmpOp, EndianOp, Instr, MapLoadKind, MemSize, Operand,
-    PacketLoadMode, Program, Width,
+    PacketLoadMode, Program, SxWidth, Width,
 };
 use crate::parsing::bpf_insn::RawBpfInsn;
 use std::collections::HashSet;
@@ -247,19 +247,59 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             // --- ALU64 ---
 
             // 0xbc: MOV32 reg  (w_dst = w_src)
-            0xbc => Instr::Alu {
-                width: Width::W32,
-                op: AluOp::Mov,
-                dst,
-                src: Operand::Reg(src),
+            // v6.6 overloads `off` ∈ {8, 16, 32} to select MOVSX width; off=0
+            // is the classic zero-extending MOV32.
+            0xbc => match insn.off {
+                0 => Instr::Alu {
+                    width: Width::W32,
+                    op: AluOp::Mov,
+                    dst,
+                    src: Operand::Reg(src),
+                },
+                8 | 16 => Instr::MovSx {
+                    width: Width::W32,
+                    src_bits: if insn.off == 8 { SxWidth::B8 } else { SxWidth::B16 },
+                    dst,
+                    src: Operand::Reg(src),
+                },
+                _ => {
+                    return Err(LowerError {
+                        pc,
+                        code: insn.code,
+                        msg: format!("invalid MOV32 off field: {} (expected 0, 8, or 16)", insn.off),
+                        kind: LowerErrorKind::UnknownOpcode,
+                    });
+                }
             },
 
             // 0xbf: rX = rY   (ALU64 | MOV | X)
-            0xbf => Instr::Alu {
-                width: Width::W64,
-                op: AluOp::Mov,
-                dst,
-                src: Operand::Reg(src),
+            // v6.6 overloads `off` ∈ {8, 16, 32} to select MOVSX width; off=0
+            // is the classic 64-bit MOV.
+            0xbf => match insn.off {
+                0 => Instr::Alu {
+                    width: Width::W64,
+                    op: AluOp::Mov,
+                    dst,
+                    src: Operand::Reg(src),
+                },
+                8 | 16 | 32 => Instr::MovSx {
+                    width: Width::W64,
+                    src_bits: match insn.off {
+                        8 => SxWidth::B8,
+                        16 => SxWidth::B16,
+                        _ => SxWidth::B32,
+                    },
+                    dst,
+                    src: Operand::Reg(src),
+                },
+                _ => {
+                    return Err(LowerError {
+                        pc,
+                        code: insn.code,
+                        msg: format!("invalid MOV64 off field: {} (expected 0, 8, 16, or 32)", insn.off),
+                        kind: LowerErrorKind::UnknownOpcode,
+                    });
+                }
             },
 
             // 0xb7: rX = imm  (ALU64 | MOV | K)
@@ -1248,6 +1288,29 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             // 0x79: LDXDW dst = *(u64 *)(src + off)
             0x79 => Instr::Load {
                 size: MemSize::U64,
+                dst,
+                base: src,
+                off: insn.off,
+            },
+
+            // --- LDSX (v6.6): BPF_LDX | BPF_MEMSX ---
+            // 0x91: LDSXB  dst = (s64)*(s8  *)(src + off)
+            0x91 => Instr::LoadSx {
+                size: MemSize::U8,
+                dst,
+                base: src,
+                off: insn.off,
+            },
+            // 0x89: LDSXH  dst = (s64)*(s16 *)(src + off)
+            0x89 => Instr::LoadSx {
+                size: MemSize::U16,
+                dst,
+                base: src,
+                off: insn.off,
+            },
+            // 0x81: LDSXW  dst = (s64)*(s32 *)(src + off)
+            0x81 => Instr::LoadSx {
+                size: MemSize::U32,
                 dst,
                 base: src,
                 off: insn.off,

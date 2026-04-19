@@ -384,6 +384,29 @@ fn get_use_def(instr: &Instr) -> UseDef {
         Instr::LoadMap { dst, .. } => {
             ud.def_regs.insert(*dst);
         }
+
+        Instr::LoadSx {
+            size,
+            dst,
+            base,
+            off,
+        } => {
+            ud.use_regs.insert(*base);
+            ud.def_regs.insert(*dst);
+            if *base == Reg::R10 {
+                let byte_count = size.bytes();
+                for i in 0..byte_count {
+                    ud.use_slots.insert(*off + i as i16);
+                }
+            }
+        }
+
+        Instr::MovSx { dst, src, .. } => {
+            ud.def_regs.insert(*dst);
+            if let Operand::Reg(r) = src {
+                ud.use_regs.insert(*r);
+            }
+        }
     }
 
     ud

@@ -1,7 +1,8 @@
 // src/ast/instr.rs
 
 use super::{
-    AluOp, AtomicOp, CmpOp, EndianOp, MapLoadKind, MemSize, Operand, PacketLoadMode, Width,
+    AluOp, AtomicOp, CmpOp, EndianOp, MapLoadKind, MemSize, Operand, PacketLoadMode, SxWidth,
+    Width,
 };
 use crate::analysis::machine::reg::Reg;
 use std::collections::HashSet;
@@ -39,6 +40,15 @@ pub enum Instr {
         dst: Reg,
         src: Operand,
     },
+    /// Sign-extending move (MOVSX, v6.6). Takes the low `src_bits` of `src`,
+    /// sign-extends to `width` (W32 or W64), and writes to `dst`. Encoded in
+    /// the kernel as BPF_MOV with off ∈ {8, 16, 32}.
+    MovSx {
+        width: Width,
+        src_bits: SxWidth,
+        dst: Reg,
+        src: Operand,
+    },
     Endian {
         dst: Reg,
         width: Width,
@@ -56,6 +66,16 @@ pub enum Instr {
         target: usize,
     },
     Load {
+        size: MemSize,
+        dst: Reg,
+        base: Reg,
+        off: i16,
+    },
+    /// Sign-extending load (LDSX, v6.6). Loads `size` bytes from
+    /// `[base + off]` and sign-extends the result to 64 bits in `dst`.
+    /// Only B/H/W sizes are defined by the ISA; U64 is not a valid LDSX
+    /// size and is rejected at decode time.
+    LoadSx {
         size: MemSize,
         dst: Reg,
         base: Reg,
@@ -220,6 +240,45 @@ impl fmt::Display for Instr {
                     base.name(),
                     off
                 )
+            }
+            LoadSx {
+                size,
+                dst,
+                base,
+                off,
+            } => {
+                let size_str = match size {
+                    MemSize::U8 => "s8",
+                    MemSize::U16 => "s16",
+                    MemSize::U32 => "s32",
+                    MemSize::U64 => "s64",
+                };
+                write!(
+                    f,
+                    "{} = *({} *)({} + {})",
+                    dst.name(),
+                    size_str,
+                    base.name(),
+                    off
+                )
+            }
+            MovSx {
+                width,
+                src_bits,
+                dst,
+                src,
+            } => {
+                let base = dst.name();
+                let idx = &base[1..];
+                let lhs = match width {
+                    Width::W32 => format!("w{}", idx),
+                    Width::W64 => format!("r{}", idx),
+                };
+                let src_str = match src {
+                    Operand::Reg(r) => r.name().to_string(),
+                    Operand::Imm(i) => format!("0x{:016x}", i),
+                };
+                write!(f, "{} = (s{}) {}", lhs, src_bits.bits(), src_str)
             }
             Store {
                 size,

@@ -54,6 +54,22 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
             off,
         } => memory::transfer_load(env, state, *size, *dst, *base, *off),
 
+        Instr::LoadSx { .. } => {
+            env.fail(VerificationError::UnsupportedModernFeature {
+                pc: state.pc,
+                feature: "sign-extending load (LDSX, v6.6)",
+            });
+            vec![]
+        }
+
+        Instr::MovSx { .. } => {
+            env.fail(VerificationError::UnsupportedModernFeature {
+                pc: state.pc,
+                feature: "sign-extending move (MOVSX, v6.6)",
+            });
+            vec![]
+        }
+
         Instr::Store {
             size,
             base,
