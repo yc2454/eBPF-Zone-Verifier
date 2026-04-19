@@ -46,6 +46,16 @@ pub struct State {
     /// W2.1c consumes it in branch refinement.
     pub scalar_ids: HashMap<Reg, u32>,
 
+    /// Registers whose exact scalar bounds are "precision-critical" — i.e. a
+    /// safety check downstream depends on the tight value rather than a
+    /// coarser widened bound. Populated by
+    /// [`State::mark_reg_precise`] at branch comparisons and at
+    /// variable-offset memory accesses. Propagated forward through ALU
+    /// (W2.2) and persisted across spills via [`SpilledReg::precise`].
+    /// Consumed in W2.3 to block state pruning from over-generalising
+    /// across precision-marked registers.
+    pub precise_regs: HashSet<Reg>,
+
     /// Call stack for BPF-to-BPF function calls.
     /// Always has at least one frame (main). The current frame is
     /// always the last element; caller frames sit below it.
@@ -78,6 +88,7 @@ impl State {
             history_idx: None,
             tnums: tnums.clone(),
             scalar_ids: HashMap::new(),
+            precise_regs: HashSet::new(),
             frames: FrameStack::new(),
             frame_depth: 0,
             active_refs: HashSet::new(),
@@ -165,6 +176,46 @@ impl State {
     /// Drop any scalar id on `r` (e.g. constant assignment or value-mutating ALU).
     pub fn clear_scalar_id(&mut self, r: Reg) {
         self.scalar_ids.remove(&r);
+    }
+
+    // ── Precision marking (W2.2) ───────────────────────────────
+    //
+    // `mark_reg_precise` is the entry point for callers that recognise a
+    // register's exact bounds matter for safety (e.g. a branch comparison
+    // that will refine bounds, or a variable offset feeding a memory
+    // access). Marks propagate along scalar-id equivalence classes and
+    // forward through arithmetic; the field is consumed in W2.3 to block
+    // pruning that would generalise the marked register.
+
+    /// Mark `r` as precision-critical. Also marks any other register
+    /// currently sharing `r`'s scalar id, so spills and copies keep the
+    /// mark. Safe to call on registers of any type; no-op for `Zero`.
+    pub fn mark_reg_precise(&mut self, r: Reg) {
+        if r == Reg::Zero {
+            return;
+        }
+        self.precise_regs.insert(r);
+        if let Some(id) = self.scalar_ids.get(&r).copied() {
+            let linked: Vec<Reg> = self
+                .scalar_ids
+                .iter()
+                .filter_map(|(&other, &oid)| if oid == id { Some(other) } else { None })
+                .collect();
+            for other in linked {
+                self.precise_regs.insert(other);
+            }
+        }
+    }
+
+    /// Whether `r` has been marked precise on the current path.
+    pub fn is_reg_precise(&self, r: Reg) -> bool {
+        r != Reg::Zero && self.precise_regs.contains(&r)
+    }
+
+    /// Drop any precision mark on `r` (e.g. overwritten by an immediate
+    /// or a load that introduces a fresh unknown scalar).
+    pub fn clear_reg_precise(&mut self, r: Reg) {
+        self.precise_regs.remove(&r);
     }
 
     /// All registers currently carrying `id`. Useful for refinement fan-out.
@@ -286,6 +337,7 @@ impl State {
             } else {
                 None
             },
+            precise: is_aligned && size == MemSize::U64 && self.precise_regs.contains(&reg),
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -307,6 +359,7 @@ impl State {
                         size,
                         ptr_bounds: None,
                         scalar_id: None,
+                        precise: false,
                     },
                 );
             }
@@ -350,6 +403,7 @@ impl State {
             size,
             ptr_bounds: None,
             scalar_id: None,
+            precise: false,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -371,6 +425,7 @@ impl State {
                         size,
                         ptr_bounds: None,
                         scalar_id: None,
+                        precise: false,
                     },
                 );
             }
@@ -426,6 +481,13 @@ impl State {
                 self.scalar_ids.remove(&dst);
             }
 
+            // Restore precision mark carried at spill time (W2.2).
+            if spilled.precise {
+                self.precise_regs.insert(dst);
+            } else {
+                self.precise_regs.remove(&dst);
+            }
+
             // Only restore anchors for U64 (pointers need full 64-bit)
             if size == MemSize::U64 {
                 self.restore_anchor_info(dst, &spilled);
@@ -437,6 +499,7 @@ impl State {
             self.tnums.insert(dst, Tnum::unknown());
             self.domain.assign_interval(dst, min, max);
             self.scalar_ids.remove(&dst);
+            self.precise_regs.remove(&dst);
         }
 
         true

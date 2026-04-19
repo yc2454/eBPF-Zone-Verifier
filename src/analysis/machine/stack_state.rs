@@ -36,6 +36,10 @@ pub struct SpilledReg {
     /// wires assignment/linking; refinement (W2.1c) propagates bound/tnum
     /// tightenings across all slots and registers sharing the same id.
     pub scalar_id: Option<u32>,
+    /// Precision mark carried from the source register at spill time
+    /// (W2.2). Restored on fill so a register reloaded from the stack
+    /// stays on the precise chain.
+    pub precise: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -108,6 +112,7 @@ impl StackState {
                     size: MemSize::U64,
                     ptr_bounds: None,
                     scalar_id: None,
+                    precise: false,
                 },
             );
         }
@@ -139,6 +144,7 @@ impl StackState {
                 size: MemSize::U64,
                 ptr_bounds: None,
                 scalar_id: None,
+                precise: false,
             },
         );
     }

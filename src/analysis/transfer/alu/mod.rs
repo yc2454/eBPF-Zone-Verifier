@@ -96,22 +96,54 @@ pub(crate) fn transfer_alu(
 
     // 6.5 Scalar ID lifecycle: link on identity copies, clear on value changes.
     // Done after update_alu_types so we see the final destination type.
+    // Also forward-propagate the W2.2 precision mark: any ALU result whose
+    // computation drew on a precise operand is itself precision-critical.
+    let dst_prev_precise = state.is_reg_precise(dst);
+    let src_precise = match &src {
+        Operand::Reg(r) => state.is_reg_precise(*r),
+        Operand::Imm(_) => false,
+    };
     if state.types.get(dst) == crate::analysis::machine::reg_types::RegType::ScalarValue {
         match (op, &src) {
             (AluOp::Mov, Operand::Reg(r)) if width == crate::ast::Width::W64 => {
                 // 64-bit reg→reg copy: dst shares src's scalar id.
                 state.link_scalar_id(dst, *r);
+                // MOV overwrites dst entirely — precision follows src.
+                if src_precise {
+                    state.mark_reg_precise(dst);
+                } else {
+                    state.clear_reg_precise(dst);
+                }
+            }
+            (AluOp::Mov, _) => {
+                // 32-bit MOV zero-extends (value changes) or MOV with immediate
+                // (value is a constant): drop dst's copy chain and any prior
+                // precision mark; the new value doesn't depend on the old one.
+                state.clear_scalar_id(dst);
+                if matches!(&src, Operand::Reg(_)) && src_precise {
+                    // 32-bit reg→reg mov: still propagate precision forward
+                    // because dst's value is derived from src.
+                    state.mark_reg_precise(dst);
+                } else {
+                    state.clear_reg_precise(dst);
+                }
             }
             _ => {
-                // Immediate copy, 32-bit MOV (zero-extend changes value), or any
-                // arithmetic/bitwise/shift op: value at dst is now different from
-                // any prior copy chain, so unlink.
+                // Arithmetic/bitwise/shift op: value at dst is now different
+                // from any prior copy chain, so unlink.
                 state.clear_scalar_id(dst);
+                if src_precise || dst_prev_precise {
+                    state.mark_reg_precise(dst);
+                } else {
+                    state.clear_reg_precise(dst);
+                }
             }
         }
     } else {
-        // dst became a pointer — no scalar id.
+        // dst became a pointer — no scalar id, and precision doesn't apply
+        // (we only track scalar precision for W2.3 pruning).
         state.clear_scalar_id(dst);
+        state.clear_reg_precise(dst);
     }
 
     // 7. Post-operation consistency check
@@ -231,6 +263,8 @@ pub(crate) fn transfer_mov_sx(
     state.set_tnum(dst, Tnum::unknown());
     // MOVSX always produces a fresh unknown scalar — not a copy of src.
     state.alloc_scalar_id(dst);
+    // The old dst value is gone; any prior precision mark doesn't transfer.
+    state.clear_reg_precise(dst);
 
     let next_pc = if env.invalid_pc_set.contains(&(state.pc + 1)) {
         state.pc + 2
