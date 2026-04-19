@@ -35,12 +35,6 @@
   "selftest_kernel_backport": {
     "non_passing": [
       {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(opcode=0x06)",
-        "test": "./selftests/legacy/verifier_backport/gotol.json::gotol, small_imm"
-      },
-      {
         "actual": "REJECT",
         "expected": "ACCEPT",
         "outcome": "FalsePositive",
@@ -258,10 +252,10 @@
       }
     ],
     "totals": {
-      "errors": 26,
+      "errors": 25,
       "false_negatives": 1,
       "false_positives": 10,
-      "passed": 22,
+      "passed": 23,
       "skipped": 0,
       "total_files": 6,
       "total_tests": 59
@@ -295,12 +289,6 @@
   "selftest_zone_backport": {
     "non_passing": [
       {
-        "actual": "ERROR",
-        "expected": "ACCEPT",
-        "outcome": "Error(opcode=0x06)",
-        "test": "./selftests/legacy/verifier_backport/gotol.json::gotol, small_imm"
-      },
-      {
         "actual": "REJECT",
         "expected": "ACCEPT",
         "outcome": "FalsePositive",
@@ -518,10 +506,10 @@
       }
     ],
     "totals": {
-      "errors": 26,
+      "errors": 25,
       "false_negatives": 1,
       "false_positives": 10,
-      "passed": 22,
+      "passed": 23,
       "skipped": 0,
       "total_files": 6,
       "total_tests": 59

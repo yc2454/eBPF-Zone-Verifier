@@ -50,8 +50,14 @@ fn reg_to_var(insn: &RawBpfInsn, r: u8, pc: usize) -> Result<Reg, LowerError> {
 }
 
 fn branch_target(pc: usize, off: i16, len: usize, code: u8) -> Result<usize, LowerError> {
-    // eBPF branch encoding: target = pc + 1 + off
-    let t = pc as isize + 1 + off as isize;
+    branch_target_disp(pc, off as i32, len, code)
+}
+
+/// `gotol` (v6.7, opcode 0x06) widens the 16-bit displacement to a signed
+/// 32-bit displacement carried in the `imm` field. This helper takes the
+/// wider form; the classic 16-bit variant goes through `branch_target`.
+fn branch_target_disp(pc: usize, disp: i32, len: usize, code: u8) -> Result<usize, LowerError> {
+    let t = pc as isize + 1 + disp as isize;
     if t < 0 || (t as usize) >= len {
         return Err(LowerError {
             pc,
@@ -1255,6 +1261,22 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             // 0x05: JA (unconditional jump): goto pc + 1 + off
             0x05 => {
                 let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::Jmp { target }
+            }
+
+            // 0x06: gotol (v6.7) — BPF_JMP32 | BPF_JA | BPF_K.
+            // Target = pc + 1 + imm (signed 32-bit displacement, in `imm`,
+            // not `off`). `off` must be zero.
+            0x06 => {
+                if insn.off != 0 {
+                    return Err(LowerError {
+                        pc,
+                        code: insn.code,
+                        msg: format!("gotol requires off=0 (got {})", insn.off),
+                        kind: LowerErrorKind::UnknownOpcode,
+                    });
+                }
+                let target = branch_target_disp(pc, insn.imm, raw.len(), insn.code)?;
                 Instr::Jmp { target }
             }
 
