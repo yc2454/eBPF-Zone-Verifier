@@ -13,4 +13,6 @@ track.patch
 # Local-only full-scale baselines (regenerate via tests/baselines/capture_baseline.sh)
 tests/baselines/selftest_zone.json
 tests/baselines/selftest_kernel.json
+tests/baselines/selftest_zone_backport.json
+tests/baselines/selftest_kernel_backport.json
 tests/baselines/prevail.json

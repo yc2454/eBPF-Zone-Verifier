@@ -11,12 +11,12 @@ BIN="./target/release/zovia"
 [ -x "$BIN" ] || cargo build --release
 
 capture_selftest() {
-    local mode="$1" flag="$2"
-    echo "== capturing selftest ($mode) =="
-    $BIN -q $flag --max-insn 100000 selftest-suite ./selftests/legacy/verifier > /dev/null 2>&1
+    local mode="$1" flag="$2" suite="$3" dir="$4"
+    echo "== capturing selftest ($mode${suite:+, $suite}) =="
+    $BIN -q $flag --max-insn 100000 selftest-suite "$dir" > /dev/null 2>&1
     python3 tests/baselines/canonicalize.py \
         results/selftest/selftest_report.json \
-        "tests/baselines/selftest_${mode}.json"
+        "tests/baselines/selftest_${mode}${suite:+_$suite}.json"
 }
 
 capture_prevail() {
@@ -40,8 +40,10 @@ open(sys.argv[2], 'a').write('\n')
 PY
 }
 
-capture_selftest zone ""
-capture_selftest kernel "--kernel-mode"
+capture_selftest zone ""          ""        ./selftests/legacy/verifier
+capture_selftest kernel "--kernel-mode" ""  ./selftests/legacy/verifier
+capture_selftest zone ""          backport  ./selftests/legacy/verifier_backport
+capture_selftest kernel "--kernel-mode" backport ./selftests/legacy/verifier_backport
 capture_prevail
 
 echo
