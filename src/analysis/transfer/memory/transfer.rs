@@ -82,6 +82,63 @@ pub(crate) fn transfer_load(
     vec![state]
 }
 
+/// Sign-extending load (LDSX, v6.6).
+///
+/// Semantically: load `size` bytes from `[base + off]` and sign-extend the
+/// result to 64 bits in `dst`. Access checks (readability of base, type-of-ptr
+/// rules, stack fills, fault reporting) mirror a regular load; the only
+/// difference is the bounds we assign to `dst` after the load. Instead of the
+/// unsigned [0, 2^n - 1] range that a zero-extending load produces, LDSX
+/// produces a two's-complement sign-extended value in the range
+/// [-(2^(n-1)), 2^(n-1) - 1].
+///
+/// Precision loss: we always forget `dst` and re-clamp, even on stack-fill
+/// paths where a constant value might otherwise be preserved. Threading the
+/// sign extension through every fill path is future work; correctness is
+/// the priority here.
+pub(crate) fn transfer_load_sx(
+    env: &mut VerifierEnv,
+    state: State,
+    size: MemSize,
+    dst: Reg,
+    base: Reg,
+    off: i16,
+) -> Vec<State> {
+    let (lo, hi) = match size {
+        MemSize::U8 => (i8::MIN as i64, i8::MAX as i64),
+        MemSize::U16 => (i16::MIN as i64, i16::MAX as i64),
+        MemSize::U32 => (i32::MIN as i64, i32::MAX as i64),
+        // LDSX DW doesn't exist in the ISA; decode rejects it. Defensive clamp.
+        MemSize::U64 => (i64::MIN, i64::MAX),
+    };
+
+    let origin_pc = state.pc;
+    let mut results = transfer_load(env, state, size, dst, base, off);
+
+    // LDSX of a location that would yield a pointer (e.g. __sk_buff->data via
+    // ctx narrow-load, or a spilled pointer on stack) is rejected by the
+    // kernel verifier: sign-extending a pointer produces meaningless bits.
+    let any_ptr_load = results
+        .iter()
+        .any(|s| !matches!(s.types.get(dst), RegType::ScalarValue | RegType::NotInit));
+    if any_ptr_load {
+        env.fail(VerificationError::UnsupportedModernFeature {
+            pc: origin_pc,
+            feature: "LDSX of a pointer-typed field",
+        });
+        return vec![];
+    }
+
+    for s in results.iter_mut() {
+        s.types.set(dst, RegType::ScalarValue);
+        s.domain.forget(dst);
+        s.domain.assume_ge_imm(dst, lo);
+        s.domain.assume_le_imm(dst, hi);
+        s.set_tnum(dst, Tnum::unknown());
+    }
+    results
+}
+
 pub(crate) fn transfer_store(
     env: &mut VerifierEnv,
     mut state: State,

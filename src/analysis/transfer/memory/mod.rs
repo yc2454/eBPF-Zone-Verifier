@@ -14,4 +14,4 @@ pub(crate) use self::stack::{
 
 pub(crate) use self::map::transfer_map_load;
 pub(crate) use self::packet::transfer_packet_load;
-pub(crate) use self::transfer::{transfer_atomic, transfer_load, transfer_store};
+pub(crate) use self::transfer::{transfer_atomic, transfer_load, transfer_load_sx, transfer_store};

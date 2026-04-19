@@ -11,7 +11,8 @@ use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
-use crate::ast::{AluOp, Operand, Width};
+use crate::ast::{AluOp, Operand, SxWidth, Width};
+use crate::domains::tnum::Tnum;
 use log::error;
 
 use super::common::{check_operand_readable, check_reg_readable, check_reg_writable};
@@ -118,4 +119,63 @@ pub(crate) fn transfer_alu(
         state.pc = next_pc;
         vec![state]
     }
+}
+
+/// Sign-extending move (MOVSX, v6.6).
+///
+/// Width semantics:
+/// - MOV64SX (ALU64): sign-extend low `src_bits` of src to full 64-bit dst.
+///   Result range: [-(2^(n-1)), 2^(n-1) - 1] where n = src_bits.bits().
+/// - MOV32SX (ALU32): sign-extend low `src_bits` of src to a 32-bit value,
+///   then zero-extend to the 64-bit dst. The 32-bit result as an unsigned
+///   value lies in [0, 2^32 - 1] but its set is disjoint — either the
+///   non-negative half of the sign-extended range or a high wrap. We
+///   conservatively clamp to the u32 range and rely on tnum imprecision
+///   for further reasoning.
+///
+/// MOVSX always produces a scalar; pointer dst types are scrubbed.
+pub(crate) fn transfer_mov_sx(
+    env: &mut VerifierEnv,
+    mut state: State,
+    width: Width,
+    src_bits: SxWidth,
+    dst: Reg,
+    src: Operand,
+) -> Vec<State> {
+    if !check_operand_readable(env, &state, &src) {
+        return vec![];
+    }
+    if !check_reg_writable(env, &state, dst) {
+        return vec![];
+    }
+
+    state.types.set(dst, RegType::ScalarValue);
+    state.domain.forget(dst);
+
+    match width {
+        Width::W64 => {
+            let (lo, hi) = match src_bits {
+                SxWidth::B8 => (i8::MIN as i64, i8::MAX as i64),
+                SxWidth::B16 => (i16::MIN as i64, i16::MAX as i64),
+                SxWidth::B32 => (i32::MIN as i64, i32::MAX as i64),
+            };
+            state.domain.assume_ge_imm(dst, lo);
+            state.domain.assume_le_imm(dst, hi);
+        }
+        Width::W32 => {
+            // 32-bit MOVSX: sign-extend src_bits → 32-bit, then zero-extend
+            // to 64-bit. The 64-bit view is in [0, 2^32 - 1].
+            state.domain.assume_ge_imm(dst, 0);
+            state.domain.assume_le_imm(dst, 0xFFFF_FFFF);
+        }
+    }
+    state.set_tnum(dst, Tnum::unknown());
+
+    let next_pc = if env.invalid_pc_set.contains(&(state.pc + 1)) {
+        state.pc + 2
+    } else {
+        state.pc + 1
+    };
+    state.pc = next_pc;
+    vec![state]
 }
