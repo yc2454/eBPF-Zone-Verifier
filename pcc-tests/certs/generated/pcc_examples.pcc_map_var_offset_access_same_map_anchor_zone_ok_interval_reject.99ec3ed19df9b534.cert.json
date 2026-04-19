@@ -1,0 +1,34 @@
+{
+  "version": 3,
+  "program_hash": "99ec3ed19df9b534",
+  "pc_annotations": [
+    {
+      "pc": 14,
+      "entries": [
+        {
+          "left_reg": 7,
+          "right_reg": 8,
+          "bound": -1,
+          "proof": [
+            {
+              "kind": "Fact",
+              "pc": 13,
+              "left_reg": 7,
+              "right_reg": 8,
+              "c": -1
+            },
+            {
+              "kind": "Transfer",
+              "pc": 13,
+              "pre_left_reg": 7,
+              "pre_right_reg": 8,
+              "post_left_reg": 7,
+              "post_right_reg": 8,
+              "delta": 0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

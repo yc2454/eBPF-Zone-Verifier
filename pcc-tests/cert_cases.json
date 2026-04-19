@@ -94,21 +94,21 @@
     "name": "[stack] stack-var-offset: branch-derived guard tightens var_off for stack access",
     "json_file": "pcc-tests/pcc_examples.json",
     "test_name": "pcc: stack var-offset access (branch-derived guard, zone ok, interval reject)",
-    "certificate": "pcc-tests/certs/generated/pcc_examples.pcc_stack_var_offset_access_branch_derived_guard_zone_ok_interval_reject.49325a141c1d4b66.cert.json",
+    "certificate": "pcc-tests/certs/generated/pcc_examples.pcc_stack_var_offset_access_branch_derived_guard_zone_ok_interval_reject.57bbde66748e2bb1.cert.json",
     "expected": "ACCEPT"
   },
   {
     "name": "[map] map-var-offset: same-map anchor tightens var_off for map access",
     "json_file": "pcc-tests/pcc_examples.json",
     "test_name": "pcc: map var-offset access (same-map anchor, zone ok, interval reject)",
-    "certificate": "pcc-tests/certs/generated/pcc_examples.pcc_map_var_offset_access_same_map_anchor_zone_ok_interval_reject.b7120f544a114dba.cert.json",
+    "certificate": "pcc-tests/certs/generated/pcc_examples.pcc_map_var_offset_access_same_map_anchor_zone_ok_interval_reject.99ec3ed19df9b534.cert.json",
     "expected": "ACCEPT"
   },
   {
     "name": "[map] derived-register guard: Derive chain proves map var-offset access",
     "json_file": "pcc-tests/pcc_examples.json",
     "test_name": "pcc: derived-register guard (r3=r2+4, check r3, prove r2, zone ok, interval reject)",
-    "certificate": "pcc-tests/certs/generated/pcc_examples.pcc_derived_register_guard_r3_r2_4_check_r3_prove_r2_zone_ok_interval_reject.e6bca32050489998.cert.json",
+    "certificate": "pcc-tests/certs/generated/pcc_examples.pcc_derived_register_guard_r3_r2_4_check_r3_prove_r2_zone_ok_interval_reject.3ee933596175846c.cert.json",
     "expected": "ACCEPT"
   },
   {
