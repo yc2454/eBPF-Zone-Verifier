@@ -38,6 +38,14 @@ pub struct State {
 
     pub tnums: HashMap<Reg, Tnum>, // tnum info for R0-R10
 
+    /// Identity tokens for scalar values. Two registers (or a register and
+    /// a stack slot via `SpilledReg::scalar_id`) that share an id are the
+    /// same underlying unknown scalar; refining one propagates to the
+    /// others. See `new_scalar_id` / `alloc_scalar_id` / `link_scalar_id`.
+    /// Sparse: absent entry = unlinked. Phase-2 W2.1b wires assignment;
+    /// W2.1c consumes it in branch refinement.
+    pub scalar_ids: HashMap<Reg, u32>,
+
     /// Call stack for BPF-to-BPF function calls.
     /// Always has at least one frame (main). The current frame is
     /// always the last element; caller frames sit below it.
@@ -69,6 +77,7 @@ impl State {
             pc,
             history_idx: None,
             tnums: tnums.clone(),
+            scalar_ids: HashMap::new(),
             frames: FrameStack::new(),
             frame_depth: 0,
             active_refs: HashSet::new(),
@@ -111,6 +120,59 @@ impl State {
         if r != Reg::Zero {
             self.tnums.insert(r, t);
         }
+    }
+
+    // ── Scalar id helpers ──────────────────────────────────────
+    //
+    // Identity tokens for unknown scalars. Call sites use these helpers
+    // instead of touching `scalar_ids` / `SpilledReg::scalar_id` directly
+    // (encapsulation). Semantics are wired in W2.1b/c; today these are
+    // plumbing only and the maps stay empty during verification.
+
+    /// Current scalar id of register `r`, or None if unlinked / not a scalar.
+    pub fn scalar_id(&self, r: Reg) -> Option<u32> {
+        if r == Reg::Zero {
+            return None;
+        }
+        self.scalar_ids.get(&r).copied()
+    }
+
+    /// Allocate a fresh scalar id for `r` and return it. Any previous id on
+    /// `r` is replaced (the old value is now unrelated to the new one).
+    pub fn alloc_scalar_id(&mut self, r: Reg) -> u32 {
+        let id = crate::analysis::machine::reg_types::new_scalar_id();
+        self.scalar_ids.insert(r, id);
+        id
+    }
+
+    /// Make `dst` share `src`'s scalar id (copy edge). If `src` has no id,
+    /// one is allocated first so both registers end up linked.
+    pub fn link_scalar_id(&mut self, dst: Reg, src: Reg) {
+        if dst == Reg::Zero || src == Reg::Zero {
+            return;
+        }
+        let id = match self.scalar_ids.get(&src).copied() {
+            Some(id) => id,
+            None => {
+                let id = crate::analysis::machine::reg_types::new_scalar_id();
+                self.scalar_ids.insert(src, id);
+                id
+            }
+        };
+        self.scalar_ids.insert(dst, id);
+    }
+
+    /// Drop any scalar id on `r` (e.g. constant assignment or value-mutating ALU).
+    pub fn clear_scalar_id(&mut self, r: Reg) {
+        self.scalar_ids.remove(&r);
+    }
+
+    /// All registers currently carrying `id`. Useful for refinement fan-out.
+    pub fn regs_with_scalar_id(&self, id: u32) -> Vec<Reg> {
+        self.scalar_ids
+            .iter()
+            .filter_map(|(&r, &rid)| if rid == id { Some(r) } else { None })
+            .collect()
     }
 
     // ── Reference tracking ──────────────────────────────────────
@@ -218,6 +280,7 @@ impl State {
             bounds: ScalarBounds { min, max },
             size,
             ptr_bounds,
+            scalar_id: None,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -238,6 +301,7 @@ impl State {
                         },
                         size,
                         ptr_bounds: None,
+                        scalar_id: None,
                     },
                 );
             }
@@ -280,6 +344,7 @@ impl State {
             bounds,
             size,
             ptr_bounds: None,
+            scalar_id: None,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -300,6 +365,7 @@ impl State {
                         },
                         size,
                         ptr_bounds: None,
+                        scalar_id: None,
                     },
                 );
             }

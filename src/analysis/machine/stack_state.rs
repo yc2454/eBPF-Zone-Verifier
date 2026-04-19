@@ -32,6 +32,10 @@ pub struct SpilledReg {
     pub bounds: ScalarBounds,
     pub size: MemSize,
     pub ptr_bounds: Option<PointerBounds>,
+    /// Identity token for this scalar value. `None` until Phase-2 W2.1b
+    /// wires assignment/linking; refinement (W2.1c) propagates bound/tnum
+    /// tightenings across all slots and registers sharing the same id.
+    pub scalar_id: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -103,6 +107,7 @@ impl StackState {
                     },
                     size: MemSize::U64,
                     ptr_bounds: None,
+                    scalar_id: None,
                 },
             );
         }
@@ -133,6 +138,7 @@ impl StackState {
                 },
                 size: MemSize::U64,
                 ptr_bounds: None,
+                scalar_id: None,
             },
         );
     }
