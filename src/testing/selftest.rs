@@ -467,6 +467,9 @@ pub fn create_spin_lock_btf() -> BtfContext {
         "bpf_iter_bits_new",
         "bpf_iter_bits_next",
         "bpf_iter_bits_destroy",
+        // W3.3b: exception-frame kfuncs.
+        "bpf_throw",
+        "bpf_set_exception_callback",
     ]
     .iter()
     .enumerate()

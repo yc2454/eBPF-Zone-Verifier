@@ -45,6 +45,16 @@ pub(crate) fn transfer_kfunc(env: &mut VerifierEnv, state: State, btf_id: u32) -
         Some("bpf_iter_css_destroy") => iter_destroy(env, state, IterKind::Css),
         Some("bpf_iter_bits_destroy") => iter_destroy(env, state, IterKind::Bits),
 
+        // W3.3b: exception-frame kfuncs. `bpf_throw` is terminal on this
+        // path (unwinds out of the program / into the handler); we don't
+        // attempt to re-enter at the handler PC here because that requires
+        // PSEUDO_FUNC callback-frame plumbing from W3.4. The plumbed
+        // program_exception_cb slot (W3.3a) is still useful for future
+        // work — `set_exception_callback` writes to it once W3.4 can
+        // resolve the handler target.
+        Some("bpf_throw") => throw(env, state),
+        Some("bpf_set_exception_callback") => set_exception_callback(env, state),
+
         _ => {
             env.fail(VerificationError::UnsupportedModernFeature {
                 pc,
@@ -232,6 +242,36 @@ fn iter_destroy(env: &mut VerifierEnv, mut state: State, kind: IterKind) -> Vec<
 
     // destroy returns void in the kernel, but BPF calls get an R0 — set
     // to scalar unknown and clobber caller-saved like any kfunc.
+    state.types.set(Reg::R0, RegType::ScalarValue);
+    state.domain.forget(Reg::R0);
+    state.set_tnum(Reg::R0, Tnum::unknown());
+    state.clear_scalar_id(Reg::R0);
+
+    clobber_caller_saved(&mut state);
+    state.pc += 1;
+    vec![state]
+}
+
+/// `bpf_throw(cookie)`: terminates execution on this path. The kernel
+/// either dispatches to the program-default exception callback (if
+/// registered) or unwinds out of the program returning 0. Either way
+/// the throw site has no in-program successor — we drop the path.
+///
+/// Exit-style cleanup checks (unreleased refs / iterators / locks) are
+/// intentionally skipped: the kernel releases resources for us on the
+/// unwind path. R1 (cookie) can be any scalar; we don't validate it.
+fn throw(_env: &mut VerifierEnv, _state: State) -> Vec<State> {
+    vec![]
+}
+
+/// `bpf_set_exception_callback(fn)`: registers the program-default
+/// exception handler. R1 is a PSEUDO_FUNC subprog pointer whose target
+/// PC we cannot resolve until W3.4 wires PSEUDO_FUNC into the typed
+/// register state. For now we accept the call as a no-op on the handler
+/// slot — `bpf_throw` is terminal regardless, so the unresolved handler
+/// is not observably wrong. Caller-saved regs are clobbered like any
+/// kfunc; R0 is a scalar return (0 on success in the kernel).
+fn set_exception_callback(_env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     state.types.set(Reg::R0, RegType::ScalarValue);
     state.domain.forget(Reg::R0);
     state.set_tnum(Reg::R0, Tnum::unknown());
