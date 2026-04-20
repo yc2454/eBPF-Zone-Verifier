@@ -19,12 +19,15 @@ pub enum IterKind {
 }
 
 /// Lifecycle state for an open-coded iterator slot. Transitions:
-/// Uninit -`*_new`-> Active -`*_next`=NULL-> Drained -`*_destroy`-> Uninit.
+/// (no annotation) -`*_new`-> Active -`*_next`=NULL-> Drained -`*_destroy`-> (no annotation).
 /// `*_next` non-NULL keeps Active. Exit with any Active/Drained slot
 /// is a REJECT (analogous to unreleased refs).
+///
+/// "Uninit" in the design doc corresponds to `SpilledReg::iterator ==
+/// None` — no explicit enum variant, since the annotation's absence is
+/// the authoritative signal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum IterState {
-    Uninit,
     Active,
     Drained,
 }
@@ -228,13 +231,9 @@ impl StackState {
     /// reject programs that leak iterators.
     pub fn has_active_iterators(&self) -> bool {
         self.slots.values().any(|s| {
-            matches!(
-                s.iterator,
-                Some(IteratorSlot {
-                    state: IterState::Active | IterState::Drained,
-                    ..
-                })
-            )
+            // Any annotation at all means Active or Drained — Uninit
+            // is represented by the absence of the annotation.
+            s.iterator.is_some()
         })
     }
 

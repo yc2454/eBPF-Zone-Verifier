@@ -124,13 +124,7 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
 
         Instr::Call { kind } => match *kind {
             CallKind::Helper { id } => call::transfer_call(env, state, id),
-            CallKind::Kfunc { .. } => {
-                env.fail(VerificationError::UnsupportedModernFeature {
-                    pc: state.pc,
-                    feature: "kfunc call (BPF_PSEUDO_KFUNC_CALL)",
-                });
-                vec![]
-            }
+            CallKind::Kfunc { btf_id, .. } => call::transfer_kfunc(env, state, btf_id),
         },
 
         Instr::CallRel { target } => call::transfer_call_rel(env, state, *target),
@@ -256,6 +250,19 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     if state.at_main_frame() && state.has_unreleased_refs() {
         warn!("Unreleased reference: {:?}", state.active_refs);
         env.fail(VerificationError::UnreleasedReference);
+        return vec![];
+    }
+
+    // W3.2b: open-coded iterators must be destroyed on every exit path.
+    // An Active or Drained iterator slot anywhere in the frame stack is
+    // a leak — parallel to unreleased refs above.
+    if state.at_main_frame()
+        && state
+            .frames
+            .iter()
+            .any(|f| f.stack.has_active_iterators())
+    {
+        env.fail(VerificationError::UnreleasedIterator);
         return vec![];
     }
 

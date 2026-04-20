@@ -260,6 +260,16 @@ pub fn new_scalar_id() -> u32 {
     SCALAR_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
+/// Fresh identity token for an open-coded iterator (Phase 3 W3.2b).
+/// Minted at `*_new` time and stored on the iterator's stack slot.
+/// Subsumption (W3.2c) matches states by this id to recognize "same
+/// iterator loop" across revisits.
+pub fn new_iter_id() -> u32 {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static ITER_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
+    ITER_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
+}
+
 /// Classify types into families. Pointer and pointer-or-null variants
 /// of the same kind share a family (e.g. PtrToMapValue and PtrToMapValueOrNull).
 pub fn type_family(ty: &RegType) -> u8 {
