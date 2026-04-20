@@ -16,7 +16,10 @@
 // - No kernel rewriting of access offsets
 // - No scratch regions
 
-use crate::{analysis::machine::reg_types::RegType, ast::MemSize};
+use crate::{
+    analysis::machine::{reg_types::RegType, stack_state::IterKind},
+    ast::MemSize,
+};
 
 // ===========================================================================
 // Core Types
@@ -681,6 +684,33 @@ const BPF_MAP_FIELDS: &[MemRegionField] = &[
         kind: MemFieldKind::Scalar,
     },
 ];
+
+// ===========================================================================
+// Open-coded iterator struct sizes (Phase 3 W3.2)
+// ===========================================================================
+//
+// The four `bpf_iter_*` families are stack-allocated by the BPF program and
+// passed by pointer to `*_new`/`*_next`/`*_destroy`. Programs treat the
+// struct body as opaque — there are no field accessors — so we only need
+// the size to reserve/annotate the right span of stack bytes.
+//
+// Sizes are taken from `include/uapi/linux/bpf.h` in mainline
+// (struct bpf_iter_num / _task / _css / _bits).
+
+pub const BPF_ITER_NUM_SIZE: usize = 8;
+pub const BPF_ITER_TASK_SIZE: usize = 40;
+pub const BPF_ITER_CSS_SIZE: usize = 24;
+pub const BPF_ITER_BITS_SIZE: usize = 16;
+
+/// Stack footprint of an open-coded iterator struct, in bytes.
+pub fn bpf_iter_size(kind: IterKind) -> usize {
+    match kind {
+        IterKind::Num => BPF_ITER_NUM_SIZE,
+        IterKind::Task => BPF_ITER_TASK_SIZE,
+        IterKind::Css => BPF_ITER_CSS_SIZE,
+        IterKind::Bits => BPF_ITER_BITS_SIZE,
+    }
+}
 
 // ===========================================================================
 // Field Lookup

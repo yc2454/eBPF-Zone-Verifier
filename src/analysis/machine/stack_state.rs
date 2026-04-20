@@ -3,6 +3,41 @@ use crate::domains::tnum::Tnum;
 use crate::{analysis::machine::reg_types::RegType, ast::MemSize};
 use std::collections::{BTreeMap, HashSet};
 
+/// Open-coded iterator families (Phase 3 W3.2).
+///
+/// Mirrors the four in-tree `bpf_iter_*` structs created by `*_new`,
+/// advanced by `*_next` and released by `*_destroy`. The iterator's
+/// abstract state rides on the stack slot holding the struct (see
+/// `IteratorSlot`), not on a register type — registers pointing at the
+/// struct remain plain `PtrToStack`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum IterKind {
+    Num,
+    Task,
+    Css,
+    Bits,
+}
+
+/// Lifecycle state for an open-coded iterator slot. Transitions:
+/// Uninit -`*_new`-> Active -`*_next`=NULL-> Drained -`*_destroy`-> Uninit.
+/// `*_next` non-NULL keeps Active. Exit with any Active/Drained slot
+/// is a REJECT (analogous to unreleased refs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum IterState {
+    Uninit,
+    Active,
+    Drained,
+}
+
+/// Per-slot iterator annotation. `id` is a fresh token minted at `*_new`
+/// time (used by subsumption in W3.2c to match "same loop").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct IteratorSlot {
+    pub kind: IterKind,
+    pub state: IterState,
+    pub id: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScalarBounds {
     pub min: i64,
@@ -40,6 +75,11 @@ pub struct SpilledReg {
     /// (W2.2). Restored on fill so a register reloaded from the stack
     /// stays on the precise chain.
     pub precise: bool,
+    /// Open-coded iterator annotation (W3.2). Set only on the base byte
+    /// of the iterator struct at `*_new` time; trailing bytes of the
+    /// struct stay as ordinary spill sentinels. Private — all access
+    /// outside this module goes through `stack_{get,set,clear}_iterator`.
+    pub(crate) iterator: Option<IteratorSlot>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -113,6 +153,7 @@ impl StackState {
                     ptr_bounds: None,
                     scalar_id: None,
                     precise: false,
+                    iterator: None,
                 },
             );
         }
@@ -145,6 +186,7 @@ impl StackState {
                 ptr_bounds: None,
                 scalar_id: None,
                 precise: false,
+                iterator: None,
             },
         );
     }
@@ -155,6 +197,45 @@ impl StackState {
         if let Some(spilled) = self.slots.get_mut(&offset) {
             spilled.reg_type = RegType::ScalarValue;
         }
+    }
+
+    /// Read the open-coded iterator annotation at a stack offset, if any
+    /// (W3.2). Only the base byte of a multi-byte iterator struct carries
+    /// the annotation.
+    pub fn stack_get_iterator(&self, offset: i16) -> Option<IteratorSlot> {
+        self.slots.get(&offset).and_then(|s| s.iterator)
+    }
+
+    /// Set the open-coded iterator annotation on an already-initialized
+    /// slot (W3.2). The slot must exist — callers are expected to have
+    /// reserved the iterator struct bytes on the stack first.
+    pub fn stack_set_iterator(&mut self, offset: i16, iter: IteratorSlot) {
+        if let Some(spilled) = self.slots.get_mut(&offset) {
+            spilled.iterator = Some(iter);
+        }
+    }
+
+    /// Clear the iterator annotation at a stack offset (W3.2). No-op if
+    /// the slot doesn't exist or doesn't carry one.
+    pub fn stack_clear_iterator(&mut self, offset: i16) {
+        if let Some(spilled) = self.slots.get_mut(&offset) {
+            spilled.iterator = None;
+        }
+    }
+
+    /// True if any slot currently holds an Active or Drained iterator
+    /// (W3.2). Parallel to `has_unreleased_refs` — used at exit to
+    /// reject programs that leak iterators.
+    pub fn has_active_iterators(&self) -> bool {
+        self.slots.values().any(|s| {
+            matches!(
+                s.iterator,
+                Some(IteratorSlot {
+                    state: IterState::Active | IterState::Drained,
+                    ..
+                })
+            )
+        })
     }
 
     pub fn live_slot_offsets(&self, live_regs: &HashSet<Reg>) -> Vec<i16> {
