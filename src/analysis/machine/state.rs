@@ -17,6 +17,14 @@ pub struct LockState {
     pub lock_offset: u32, // offset of spin_lock within value (e.g., 4)
 }
 
+/// Per-program `may_goto` iteration budget. Mirrors the kernel's
+/// `BPF_MAY_GOTO_LIMIT` (see `kernel/bpf/verifier.c`). Each time the
+/// verifier takes a `may_goto` back-edge it decrements this counter; the
+/// back-edge becomes infeasible once the counter hits zero, which is what
+/// lets the analysis terminate on unbounded-looking loops. Plumbing only in
+/// W3.1a — transfer semantics land in W3.1b, subsumption in W3.1c.
+pub const BPF_MAY_GOTO_LIMIT: u32 = 8_388_608;
+
 /// Mirrors `struct bpf_verifier_state` (partially).
 /// Holds the snapshot of execution at a specific PC.
 #[derive(Clone, Debug)]
@@ -69,6 +77,13 @@ pub struct State {
 
     // Active lock that is being held
     pub active_lock: Option<LockState>,
+
+    /// Remaining `may_goto` iterations on this path. Initialised to
+    /// [`BPF_MAY_GOTO_LIMIT`] at entry. Decremented by the `may_goto`
+    /// transfer function on the taken branch (W3.1b); once zero the
+    /// taken edge is infeasible. Subsumption will require the pruned
+    /// state's budget to be ≥ the candidate's (W3.1c).
+    pub goto_budget: u32,
 }
 
 impl State {
@@ -93,7 +108,30 @@ impl State {
             frame_depth: 0,
             active_refs: HashSet::new(),
             active_lock: None,
+            goto_budget: BPF_MAY_GOTO_LIMIT,
         }
+    }
+
+    // ── may_goto budget (W3.1a plumbing) ───────────────────────
+    //
+    // Helpers mirror the spin_lock / ref_id conventions: call sites go
+    // through these methods rather than touching `goto_budget` directly.
+    // Semantics (decrement on taken edge, reject on empty must-take) land
+    // in W3.1b.
+
+    pub fn goto_budget(&self) -> u32 {
+        self.goto_budget
+    }
+
+    /// Returns `false` if the budget is already exhausted (caller should
+    /// treat the taken edge as infeasible); otherwise decrements and
+    /// returns `true`.
+    pub fn consume_goto_budget(&mut self) -> bool {
+        if self.goto_budget == 0 {
+            return false;
+        }
+        self.goto_budget -= 1;
+        true
     }
 
     /// Create a new State with Zone domain (for backwards compatibility)
