@@ -42,6 +42,14 @@ pub struct CallFrame {
     pub caller_types: TypeState,
     pub caller_domain: NumericDomain,
     pub caller_tnums: HashMap<Reg, Tnum>,
+
+    /// Innermost exception callback entry PC set on this frame (W3.3a).
+    /// `bpf_throw` unwinds to the nearest enclosing frame with a handler;
+    /// if none is set on any frame, the state's program-default handler
+    /// is used (see [`State::program_exception_cb`]). Plumbing only in
+    /// W3.3a — transfer semantics land in W3.3b. Read through
+    /// [`CallFrame::exception_cb`] rather than touching the field.
+    exception_cb: Option<usize>,
 }
 
 impl Default for CallFrame {
@@ -53,7 +61,28 @@ impl Default for CallFrame {
             caller_types: TypeState::default(),
             caller_domain: NumericDomain::default(),
             caller_tnums: HashMap::new(),
+            exception_cb: None,
         }
+    }
+}
+
+impl CallFrame {
+    /// Exception callback registered on this frame, if any.
+    pub fn exception_cb(&self) -> Option<usize> {
+        self.exception_cb
+    }
+
+    /// Register an exception callback entry PC on this frame. Overwrites
+    /// any prior handler (matches kernel semantics: the most recent
+    /// `bpf_set_exception_callback` wins).
+    pub fn set_exception_cb(&mut self, pc: usize) {
+        self.exception_cb = Some(pc);
+    }
+
+    /// Drop any exception callback on this frame.
+    #[allow(dead_code)]
+    pub fn clear_exception_cb(&mut self) {
+        self.exception_cb = None;
     }
 }
 
@@ -140,6 +169,7 @@ impl FrameStack {
             caller_types,
             caller_domain,
             caller_tnums,
+            exception_cb: None,
         };
         self.frames.push(frame);
         self.current_level()

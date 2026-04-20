@@ -84,6 +84,15 @@ pub struct State {
     /// taken edge is infeasible. Subsumption will require the pruned
     /// state's budget to be ≥ the candidate's (W3.1c).
     pub goto_budget: u32,
+
+    /// Program-default exception callback entry PC (W3.3a plumbing).
+    /// Used when `bpf_throw` unwinds past every frame without finding a
+    /// frame-local `exception_cb` (see [`CallFrame::exception_cb`]). A
+    /// modern BPF program registers this via `bpf_set_exception_callback`
+    /// at a well-known point; unset means an unhandled throw exits the
+    /// program with the throw value in R0. Read through
+    /// [`State::effective_exception_cb`] rather than touching the field.
+    program_exception_cb: Option<usize>,
 }
 
 impl State {
@@ -109,7 +118,50 @@ impl State {
             active_refs: HashSet::new(),
             active_lock: None,
             goto_budget: BPF_MAY_GOTO_LIMIT,
+            program_exception_cb: None,
         }
+    }
+
+    // ── Exception handler (W3.3a plumbing) ──────────────────────
+    //
+    // Handler resolution mirrors the kernel: `bpf_throw` walks the frame
+    // stack from innermost outward looking for a frame-local
+    // `exception_cb`; if none is set, fall back to the program-default
+    // slot. Call sites go through these helpers rather than touching
+    // `program_exception_cb` / `CallFrame::exception_cb` directly.
+    // Semantics (throw/unwind, callback frame push) land in W3.3b.
+
+    /// Program-default exception callback, if registered.
+    #[allow(dead_code)]
+    pub fn program_exception_cb(&self) -> Option<usize> {
+        self.program_exception_cb
+    }
+
+    /// Register the program-default exception callback. Overwrites any
+    /// prior default (kernel: last registration wins).
+    #[allow(dead_code)]
+    pub fn set_program_exception_cb(&mut self, pc: usize) {
+        self.program_exception_cb = Some(pc);
+    }
+
+    /// Resolve the handler that a `bpf_throw` from the current frame
+    /// would unwind to: innermost frame-local `exception_cb`, else the
+    /// program-default, else `None` (unhandled → program exit).
+    #[allow(dead_code)]
+    pub fn effective_exception_cb(&self) -> Option<usize> {
+        let depth = self.frames.depth();
+        for i in (0..depth).rev() {
+            if let Some(pc) = self.frames.get(FrameLevel::from_index(i)).exception_cb() {
+                return Some(pc);
+            }
+        }
+        self.program_exception_cb
+    }
+
+    /// Install an exception callback on the current frame.
+    #[allow(dead_code)]
+    pub fn set_current_frame_exception_cb(&mut self, pc: usize) {
+        self.frames.current_mut().set_exception_cb(pc);
     }
 
     // ── may_goto budget (W3.1a plumbing) ───────────────────────
