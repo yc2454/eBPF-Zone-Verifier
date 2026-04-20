@@ -614,6 +614,27 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
                 }
             }
 
+            // W3.2c: open-coded iterator identity.
+            //
+            // An Active/Drained iterator slot represents a specific
+            // loop instance (id minted at `*_new`). A cached state
+            // subsumes the current one at this slot only when both
+            // carry the exact same annotation — matching kind, state,
+            // and id. Mismatched iterator state, mismatched id, or one
+            // side carrying an annotation and the other not are all
+            // semantically distinct program points and must not
+            // collapse into a single pruned state.
+            //
+            // Non-precise loop-varying scalars are allowed to converge
+            // via the existing W2.3 non-precise superset rule above —
+            // this check is about the iterator identity itself, not
+            // the loop variable.
+            let old_iter = old_slot.and_then(|s| s.iterator);
+            let new_iter = new_slot.and_then(|s| s.iterator);
+            if old_iter != new_iter {
+                return false;
+            }
+
             // For packet pointers, also check interval_range subsumption.
             // If old has a proven range but cur doesn't, old does NOT subsume cur,
             // because cur might fail a packet access that old would pass.
