@@ -98,9 +98,19 @@ fn clobber_caller_saved(state: &mut State) {
 /// in both outcomes — the program must call `*_destroy` on all paths
 /// regardless, matching kernel semantics.
 fn iter_new(env: &mut VerifierEnv, mut state: State, kind: IterKind) -> Vec<State> {
+    let pc = state.pc;
     let Some((frame, base_off)) = resolve_iter_arg(env, &state) else {
         return vec![];
     };
+
+    // Double-init: the slot must be Uninit (annotation absent) before
+    // `*_new`. Calling `*_new` on an Active or Drained slot leaks the
+    // prior iterator — kernel rejects this, so do we.
+    if state.stack_at(frame).stack_get_iterator(base_off).is_some() {
+        env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+        return vec![];
+    }
+
     let size_bytes = bpf_iter_size(kind);
 
     let stack = state.stack_at_mut(frame);

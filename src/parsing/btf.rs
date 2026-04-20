@@ -151,6 +151,14 @@ impl BtfContext {
             .map(|(name, _)| name.as_str())
     }
 
+    /// Directly register a kfunc name → btf_id mapping. Used by the
+    /// test harness to seed the registry without parsing a real BTF
+    /// blob with DECL_TAGs; production code populates `kfuncs` during
+    /// `parse_btf`.
+    pub fn register_kfunc(&mut self, name: &str, btf_id: u32) {
+        self.kfuncs.insert(name.to_string(), btf_id);
+    }
+
     /// If `type_id` names a BTF_KIND_TYPE_TAG, returns the tag name and the
     /// inner type it wraps. Used by later phases to recognize `__kptr`,
     /// `__rcu`, `__percpu`, etc.
