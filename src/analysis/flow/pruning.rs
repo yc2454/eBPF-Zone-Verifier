@@ -398,6 +398,16 @@ fn state_subsumed_by(
         return false;
     }
 
+    // W3.1c: `old` must have at least as much may_goto budget remaining as
+    // `cur`, otherwise pruning would let `cur` continue under behaviours
+    // `old` never explored (old already exhausted the budget on a path cur
+    // hasn't yet reached). Monotone: budget only ever decreases, so once
+    // cur's future iterations are covered by an old state with a larger or
+    // equal counter, pruning is sound.
+    if old.goto_budget < cur.goto_budget {
+        return false;
+    }
+
     // Check caller frames: callee-saved registers (r6-r9) persist across
     // calls and determine post-return control flow. Without this check,
     // two states that differ only in caller-frame r6-r9 values get pruned
