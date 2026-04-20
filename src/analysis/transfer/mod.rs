@@ -140,12 +140,28 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
             vec![state]
         }
 
-        Instr::MayGoto { .. } => {
-            env.fail(VerificationError::UnsupportedModernFeature {
-                pc: state.pc,
-                feature: "may_goto / BPF_JCOND (v6.8; counter semantics Phase 3)",
-            });
-            vec![]
+        Instr::MayGoto { target } => {
+            // `may_goto` models a bounded back-edge: the kernel inlines a
+            // per-program counter check that either takes the jump (counter
+            // positive, decrement) or falls through (counter exhausted).
+            // We fork two successors accordingly. When the budget on this
+            // path is already zero, the taken edge is infeasible and only
+            // the fallthrough survives — this is what guarantees
+            // termination of the abstract interpreter on otherwise
+            // unbounded loops. No REJECT: the kernel itself doesn't reject
+            // here, it just stops iterating.
+            let fallthrough_pc = state.pc + 1;
+            let mut state_fall = state.clone();
+            state_fall.pc = fallthrough_pc;
+
+            if state.goto_budget() == 0 {
+                return vec![state_fall];
+            }
+
+            let mut state_taken = state;
+            state_taken.consume_goto_budget();
+            state_taken.pc = *target;
+            vec![state_taken, state_fall]
         }
 
         Instr::Exit => transfer_exit(env, state),
