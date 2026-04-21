@@ -732,12 +732,14 @@ impl State {
     /// Push a callback frame entered via a callback-taking helper (W3.4b).
     /// Caller state is captured like a normal push, but the frame is
     /// flagged so Exit drops the path instead of resuming the caller.
-    pub fn push_callback_frame(&mut self, return_pc: usize) {
+    /// `helper` is stashed on the frame for return-value tightening.
+    pub fn push_callback_frame(&mut self, return_pc: usize, helper: u32) {
         self.frames.push_callback(
             return_pc,
             self.types.clone(),
             self.domain.clone(),
             self.tnums.clone(),
+            helper,
         );
     }
 

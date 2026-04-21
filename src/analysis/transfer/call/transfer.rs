@@ -358,6 +358,18 @@ fn transfer_callback_helper(
     };
     let cb_entry = subprog_pc as usize;
 
+    // W3.4c: bpf_timer_set_callback must be registered with no held locks
+    // and no unreleased refs — the callback runs asynchronously, so any
+    // state the verifier is still tracking on the caller frame would be
+    // leaked. (Other callback helpers are synchronous and rely on the
+    // generic active-lock check in `transfer_call` above.)
+    if helper == constants::BPF_TIMER_SET_CALLBACK
+        && (state.has_active_lock() || state.has_unreleased_refs())
+    {
+        env.fail(VerificationError::InvalidArgType { pc, reg: cb_reg });
+        return vec![];
+    }
+
     // Successor A: skip the callback and emit the helper's post-state.
     let mut skip_state = state.clone();
     update_call_types(env, in_types, &mut skip_state, helper);
@@ -383,7 +395,7 @@ fn transfer_callback_helper(
     }
 
     let mut cb_state = state;
-    cb_state.push_callback_frame(pc + 1);
+    cb_state.push_callback_frame(pc + 1, helper);
     update_call_rel_types(&mut cb_state);
     cb_state.domain.clear_packet_size_bounds();
 

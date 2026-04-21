@@ -57,6 +57,11 @@ pub struct CallFrame {
     /// path is dropped instead of merging back into the caller — the
     /// helper's post-call state is emitted separately at the call site.
     is_callback: bool,
+
+    /// The helper id that entered this callback frame, when `is_callback`.
+    /// Used on Exit to tighten the callback's return-value contract
+    /// (e.g. bpf_loop requires R0 ∈ {0, 1}) — W3.4c.
+    callback_helper: Option<u32>,
 }
 
 impl Default for CallFrame {
@@ -70,6 +75,7 @@ impl Default for CallFrame {
             caller_tnums: HashMap::new(),
             exception_cb: None,
             is_callback: false,
+            callback_helper: None,
         }
     }
 }
@@ -83,6 +89,11 @@ impl CallFrame {
     /// True when this frame was entered through a callback-taking helper.
     pub fn is_callback(&self) -> bool {
         self.is_callback
+    }
+
+    /// Helper id that entered this callback frame, if `is_callback`.
+    pub fn callback_helper(&self) -> Option<u32> {
+        self.callback_helper
     }
 
     /// Register an exception callback entry PC on this frame. Overwrites
@@ -175,19 +186,27 @@ impl FrameStack {
         caller_domain: NumericDomain,
         caller_tnums: HashMap<Reg, Tnum>,
     ) -> FrameLevel {
-        self.push_inner(return_pc, caller_types, caller_domain, caller_tnums, false)
+        self.push_inner(return_pc, caller_types, caller_domain, caller_tnums, None)
     }
 
     /// Push a callback frame (W3.4b). Same as [`push`] but flagged so
-    /// Exit drops the path instead of merging into the caller.
+    /// Exit drops the path instead of merging into the caller; the
+    /// originating helper id is stored for return-value tightening.
     pub fn push_callback(
         &mut self,
         return_pc: usize,
         caller_types: TypeState,
         caller_domain: NumericDomain,
         caller_tnums: HashMap<Reg, Tnum>,
+        helper: u32,
     ) -> FrameLevel {
-        self.push_inner(return_pc, caller_types, caller_domain, caller_tnums, true)
+        self.push_inner(
+            return_pc,
+            caller_types,
+            caller_domain,
+            caller_tnums,
+            Some(helper),
+        )
     }
 
     fn push_inner(
@@ -196,7 +215,7 @@ impl FrameStack {
         caller_types: TypeState,
         caller_domain: NumericDomain,
         caller_tnums: HashMap<Reg, Tnum>,
-        is_callback: bool,
+        callback_helper: Option<u32>,
     ) -> FrameLevel {
         let frame = CallFrame {
             return_pc,
@@ -206,7 +225,8 @@ impl FrameStack {
             caller_domain,
             caller_tnums,
             exception_cb: None,
-            is_callback,
+            is_callback: callback_helper.is_some(),
+            callback_helper,
         };
         self.frames.push(frame);
         self.current_level()

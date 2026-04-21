@@ -46,5 +46,22 @@
       {"code": 191, "dst": 0, "src": 10, "off": 0, "imm": 0},
       {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
     ]
+  },
+  {
+    "name": "bpf_loop callback returning scalar outside {0,1} is rejected",
+    "result": "REJECT",
+    "prog_type": 17,
+    "insns": [
+      {"code": 183, "dst": 1, "src": 0, "off": 0, "imm": 10},
+      {"code": 24,  "dst": 2, "src": 4, "off": 0, "imm": 5},
+      {"code": 0,   "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 3, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 4, "src": 0, "off": 0, "imm": 0},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 181},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 5},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
   }
 ]

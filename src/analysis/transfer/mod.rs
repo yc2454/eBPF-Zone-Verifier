@@ -290,6 +290,18 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     if state.frames.current().is_callback() {
         if state.types.get(Reg::R0) != RegType::ScalarValue {
             env.fail(VerificationError::InvalidReturnCode { pc });
+            return vec![];
+        }
+        // W3.4c: bpf_loop callback must return 0 (continue) or 1 (break).
+        // Other callback helpers use their return value differently
+        // (for_each_map_elem: 0/1 too; timer: void) — only tighten what
+        // we know is kernel-enforced.
+        if state.frames.current().callback_helper() == Some(crate::common::constants::BPF_LOOP) {
+            let (lo, hi) = state.domain.get_interval(Reg::R0);
+            if lo < 0 || hi > 1 {
+                env.fail(VerificationError::InvalidReturnCode { pc });
+                return vec![];
+            }
         }
         return vec![];
     }
