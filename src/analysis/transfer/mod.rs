@@ -282,6 +282,18 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         return vec![];
     }
 
+    // W3.4b: a callback frame's Exit doesn't return into the caller —
+    // the helper's post-call state is emitted separately at the call
+    // site. We only validate the callback's R0 (must be a scalar — for
+    // bpf_loop specifically the kernel requires 0 or 1; we keep the
+    // check loose here and let future work tighten) and drop the path.
+    if state.frames.current().is_callback() {
+        if state.types.get(Reg::R0) != RegType::ScalarValue {
+            env.fail(VerificationError::InvalidReturnCode { pc });
+        }
+        return vec![];
+    }
+
     if let Some(frame) = state.pop_frame() {
         // Save callee's R0 (the return value) before restoring caller state
         let ret_type = state.types.get(Reg::R0);

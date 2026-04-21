@@ -50,6 +50,13 @@ pub struct CallFrame {
     /// W3.3a — transfer semantics land in W3.3b. Read through
     /// [`CallFrame::exception_cb`] rather than touching the field.
     exception_cb: Option<usize>,
+
+    /// True when this frame was entered through a callback-taking helper
+    /// (`bpf_loop` / `bpf_for_each_map_elem` / `bpf_timer_set_callback`)
+    /// rather than via a subprog CallRel (W3.4b). On Exit the callback
+    /// path is dropped instead of merging back into the caller — the
+    /// helper's post-call state is emitted separately at the call site.
+    is_callback: bool,
 }
 
 impl Default for CallFrame {
@@ -62,6 +69,7 @@ impl Default for CallFrame {
             caller_domain: NumericDomain::default(),
             caller_tnums: HashMap::new(),
             exception_cb: None,
+            is_callback: false,
         }
     }
 }
@@ -70,6 +78,11 @@ impl CallFrame {
     /// Exception callback registered on this frame, if any.
     pub fn exception_cb(&self) -> Option<usize> {
         self.exception_cb
+    }
+
+    /// True when this frame was entered through a callback-taking helper.
+    pub fn is_callback(&self) -> bool {
+        self.is_callback
     }
 
     /// Register an exception callback entry PC on this frame. Overwrites
@@ -162,6 +175,29 @@ impl FrameStack {
         caller_domain: NumericDomain,
         caller_tnums: HashMap<Reg, Tnum>,
     ) -> FrameLevel {
+        self.push_inner(return_pc, caller_types, caller_domain, caller_tnums, false)
+    }
+
+    /// Push a callback frame (W3.4b). Same as [`push`] but flagged so
+    /// Exit drops the path instead of merging into the caller.
+    pub fn push_callback(
+        &mut self,
+        return_pc: usize,
+        caller_types: TypeState,
+        caller_domain: NumericDomain,
+        caller_tnums: HashMap<Reg, Tnum>,
+    ) -> FrameLevel {
+        self.push_inner(return_pc, caller_types, caller_domain, caller_tnums, true)
+    }
+
+    fn push_inner(
+        &mut self,
+        return_pc: usize,
+        caller_types: TypeState,
+        caller_domain: NumericDomain,
+        caller_tnums: HashMap<Reg, Tnum>,
+        is_callback: bool,
+    ) -> FrameLevel {
         let frame = CallFrame {
             return_pc,
             stack: StackState::default(),
@@ -170,6 +206,7 @@ impl FrameStack {
             caller_domain,
             caller_tnums,
             exception_cb: None,
+            is_callback,
         };
         self.frames.push(frame);
         self.current_level()

@@ -729,6 +729,18 @@ impl State {
         );
     }
 
+    /// Push a callback frame entered via a callback-taking helper (W3.4b).
+    /// Caller state is captured like a normal push, but the frame is
+    /// flagged so Exit drops the path instead of resuming the caller.
+    pub fn push_callback_frame(&mut self, return_pc: usize) {
+        self.frames.push_callback(
+            return_pc,
+            self.types.clone(),
+            self.domain.clone(),
+            self.tnums.clone(),
+        );
+    }
+
     /// Pop the current frame, returning it owned. Returns None at main.
     pub fn pop_frame(&mut self) -> Option<CallFrame> {
         self.frames.pop()
