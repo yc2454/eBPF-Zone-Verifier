@@ -156,7 +156,10 @@ pub const BPF_SKC_TO_TCP_REQUEST_SOCK: u32 = 139;
 pub const BPF_SKC_TO_UDP6_SOCK: u32 = 140;
 pub const BPF_GET_TASK_STACK: u32 = 141;
 pub const BPF_D_PATH: u32 = 147;
+pub const BPF_FOR_EACH_MAP_ELEM: u32 = 164;
+pub const BPF_TIMER_SET_CALLBACK: u32 = 170;
 pub const BPF_SKC_TO_UNIX_SOCK: u32 = 178;
+pub const BPF_LOOP: u32 = 181;
 pub const BPF_KFUNC_CALL_DUMMY: u32 = 213;
 
 /// Maximum valid helper ID (used for validation)

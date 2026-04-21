@@ -115,6 +115,14 @@ pub enum RegType {
         id: u32,
         mem_size: u64,
     },
+    /// Pointer to a callback subprogram, produced by `LD_IMM64 BPF_PSEUDO_FUNC`
+    /// (W3.4a). Consumed by callback-taking helpers (`bpf_loop`,
+    /// `bpf_for_each_map_elem`, `bpf_timer_set_callback`) and by the
+    /// `bpf_set_exception_callback` kfunc to register an exception handler.
+    /// Not dereferenceable as data; arithmetic on it produces a scalar.
+    PtrToCallback {
+        subprog_pc: u32,
+    },
 }
 
 impl RegType {
@@ -289,6 +297,7 @@ pub fn type_family(ty: &RegType) -> u8 {
         PtrToTcpSock { .. } | PtrToTcpSockOrNull { .. } => 11,
         PtrToBtfId { .. } | PtrToBtfIdOrNull { .. } => 12,
         PtrToAllocMem { .. } | PtrToAllocMemOrNull { .. } => 13,
+        PtrToCallback { .. } => 14,
     }
 }
 

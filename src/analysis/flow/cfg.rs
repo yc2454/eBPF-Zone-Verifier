@@ -1,7 +1,54 @@
 // src/analysis/cfg.rs
 use crate::analysis::machine::env::VerifierEnv;
-use crate::ast::{Instr, Program};
+use crate::analysis::machine::reg::Reg;
+use crate::ast::{CallKind, Instr, MapLoadKind, Program};
 use crate::common::config::VerifierConfig;
+use crate::common::constants;
+
+/// Which argument register carries the callback pointer for a given helper.
+/// Returns None for helpers that don't take a callback.
+fn callback_arg_reg(helper_id: u32) -> Option<Reg> {
+    match helper_id {
+        // bpf_for_each_map_elem(map, callback_fn, ctx, flags)
+        constants::BPF_FOR_EACH_MAP_ELEM => Some(Reg::R2),
+        // bpf_timer_set_callback(timer, callback_fn)
+        constants::BPF_TIMER_SET_CALLBACK => Some(Reg::R2),
+        // bpf_loop(nr_loops, callback_fn, ctx, flags)
+        constants::BPF_LOOP => Some(Reg::R2),
+        _ => None,
+    }
+}
+
+/// Scan backward from `call_pc` through the current linear run of
+/// instructions to find the PSEUDO_FUNC load that feeds `cb_reg`.
+/// Stops at the first branch/exit/call we see (simple basic-block walk);
+/// if later dataflow proves richer feeders, W3.4b can revisit.
+fn find_pseudo_func_for_call(prog: &Program, call_pc: usize, cb_reg: Reg) -> Option<u32> {
+    let mut pc = call_pc;
+    while pc > 0 {
+        pc -= 1;
+        match &prog.instrs[pc] {
+            Instr::LoadMap {
+                dst,
+                kind: MapLoadKind::PseudoFunc { subprog_pc },
+                ..
+            } if *dst == cb_reg => return Some(*subprog_pc),
+            // Any write to cb_reg that isn't the PSEUDO_FUNC load breaks
+            // the direct feed — bail out conservatively.
+            Instr::Alu { dst, .. } | Instr::MovSx { dst, .. } | Instr::Load { dst, .. }
+            | Instr::LoadSx { dst, .. } | Instr::LoadMap { dst, .. }
+                if *dst == cb_reg =>
+            {
+                return None;
+            }
+            // Leave the basic block: stop scanning.
+            Instr::Jmp { .. } | Instr::If { .. } | Instr::Exit
+            | Instr::Call { .. } | Instr::CallRel { .. } | Instr::MayGoto { .. } => return None,
+            _ => {}
+        }
+    }
+    None
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum VisitState {
@@ -47,11 +94,22 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
             // Kernel: return DONE_EXPLORING
             Ok(vec![])
         }
-        Instr::Call { .. } => {
-            // Kernel: visit_func_call_insn.
-            // For now, we treat standard calls as falling through.
-            // If we supported callbacks (timer_set_callback), we'd mark 'pc' here.
-            // Assuming standard helper call:
+        Instr::Call { kind } => {
+            // W3.4a: callback-taking helpers (bpf_loop, bpf_for_each_map_elem,
+            // bpf_timer_set_callback) emit an extra successor edge into the
+            // callback subprog so DFS explores it. The callback arg's
+            // PSEUDO_FUNC feed is resolved by a backward scan within the
+            // current basic block.
+            if let CallKind::Helper { id } = kind
+                && let Some(cb_reg) = callback_arg_reg(*id)
+                && let Some(subprog_pc) = find_pseudo_func_for_call(prog, pc, cb_reg)
+            {
+                let target = subprog_pc as usize;
+                if target < n {
+                    succs.push(target);
+                    init_explored_state(env, target);
+                }
+            }
             if pc + 1 < n {
                 succs.push(pc + 1);
             }

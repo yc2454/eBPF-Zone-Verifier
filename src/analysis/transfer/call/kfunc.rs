@@ -265,13 +265,22 @@ fn throw(_env: &mut VerifierEnv, _state: State) -> Vec<State> {
 }
 
 /// `bpf_set_exception_callback(fn)`: registers the program-default
-/// exception handler. R1 is a PSEUDO_FUNC subprog pointer whose target
-/// PC we cannot resolve until W3.4 wires PSEUDO_FUNC into the typed
-/// register state. For now we accept the call as a no-op on the handler
-/// slot — `bpf_throw` is terminal regardless, so the unresolved handler
-/// is not observably wrong. Caller-saved regs are clobbered like any
-/// kfunc; R0 is a scalar return (0 on success in the kernel).
-fn set_exception_callback(_env: &mut VerifierEnv, mut state: State) -> Vec<State> {
+/// exception handler. R1 must be a PSEUDO_FUNC subprog pointer
+/// (`RegType::PtrToCallback`), resolved at LD_IMM64 time in W3.4a; we
+/// pull the target PC off that type and stash it on the state's
+/// program-default handler slot. A non-callback R1 is a REJECT — the
+/// kernel enforces the same type constraint on this kfunc.
+///
+/// Caller-saved regs are clobbered like any kfunc; R0 is a scalar return
+/// (0 on success in the kernel).
+fn set_exception_callback(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
+    let pc = state.pc;
+    let RegType::PtrToCallback { subprog_pc } = state.types.get(Reg::R1) else {
+        env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+        return vec![];
+    };
+    state.set_program_exception_cb(subprog_pc as usize);
+
     state.types.set(Reg::R0, RegType::ScalarValue);
     state.domain.forget(Reg::R0);
     state.set_tnum(Reg::R0, Tnum::unknown());
