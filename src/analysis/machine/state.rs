@@ -17,6 +17,14 @@ pub struct LockState {
     pub lock_offset: u32, // offset of spin_lock within value (e.g., 4)
 }
 
+/// Per-program `may_goto` iteration budget. Mirrors the kernel's
+/// `BPF_MAY_GOTO_LIMIT` (see `kernel/bpf/verifier.c`). Each time the
+/// verifier takes a `may_goto` back-edge it decrements this counter; the
+/// back-edge becomes infeasible once the counter hits zero, which is what
+/// lets the analysis terminate on unbounded-looking loops. Plumbing only in
+/// W3.1a — transfer semantics land in W3.1b, subsumption in W3.1c.
+pub const BPF_MAY_GOTO_LIMIT: u32 = 8_388_608;
+
 /// Mirrors `struct bpf_verifier_state` (partially).
 /// Holds the snapshot of execution at a specific PC.
 #[derive(Clone, Debug)]
@@ -38,6 +46,24 @@ pub struct State {
 
     pub tnums: HashMap<Reg, Tnum>, // tnum info for R0-R10
 
+    /// Identity tokens for scalar values. Two registers (or a register and
+    /// a stack slot via `SpilledReg::scalar_id`) that share an id are the
+    /// same underlying unknown scalar; refining one propagates to the
+    /// others. See `new_scalar_id` / `alloc_scalar_id` / `link_scalar_id`.
+    /// Sparse: absent entry = unlinked. Phase-2 W2.1b wires assignment;
+    /// W2.1c consumes it in branch refinement.
+    pub scalar_ids: HashMap<Reg, u32>,
+
+    /// Registers whose exact scalar bounds are "precision-critical" — i.e. a
+    /// safety check downstream depends on the tight value rather than a
+    /// coarser widened bound. Populated by
+    /// [`State::mark_reg_precise`] at branch comparisons and at
+    /// variable-offset memory accesses. Propagated forward through ALU
+    /// (W2.2) and persisted across spills via [`SpilledReg::precise`].
+    /// Consumed in W2.3 to block state pruning from over-generalising
+    /// across precision-marked registers.
+    pub precise_regs: HashSet<Reg>,
+
     /// Call stack for BPF-to-BPF function calls.
     /// Always has at least one frame (main). The current frame is
     /// always the last element; caller frames sit below it.
@@ -51,6 +77,22 @@ pub struct State {
 
     // Active lock that is being held
     pub active_lock: Option<LockState>,
+
+    /// Remaining `may_goto` iterations on this path. Initialised to
+    /// [`BPF_MAY_GOTO_LIMIT`] at entry. Decremented by the `may_goto`
+    /// transfer function on the taken branch (W3.1b); once zero the
+    /// taken edge is infeasible. Subsumption will require the pruned
+    /// state's budget to be ≥ the candidate's (W3.1c).
+    pub goto_budget: u32,
+
+    /// Program-default exception callback entry PC (W3.3a plumbing).
+    /// Used when `bpf_throw` unwinds past every frame without finding a
+    /// frame-local `exception_cb` (see [`CallFrame::exception_cb`]). A
+    /// modern BPF program registers this via `bpf_set_exception_callback`
+    /// at a well-known point; unset means an unhandled throw exits the
+    /// program with the throw value in R0. Read through
+    /// [`State::effective_exception_cb`] rather than touching the field.
+    program_exception_cb: Option<usize>,
 }
 
 impl State {
@@ -69,11 +111,79 @@ impl State {
             pc,
             history_idx: None,
             tnums: tnums.clone(),
+            scalar_ids: HashMap::new(),
+            precise_regs: HashSet::new(),
             frames: FrameStack::new(),
             frame_depth: 0,
             active_refs: HashSet::new(),
             active_lock: None,
+            goto_budget: BPF_MAY_GOTO_LIMIT,
+            program_exception_cb: None,
         }
+    }
+
+    // ── Exception handler (W3.3a plumbing) ──────────────────────
+    //
+    // Handler resolution mirrors the kernel: `bpf_throw` walks the frame
+    // stack from innermost outward looking for a frame-local
+    // `exception_cb`; if none is set, fall back to the program-default
+    // slot. Call sites go through these helpers rather than touching
+    // `program_exception_cb` / `CallFrame::exception_cb` directly.
+    // Semantics (throw/unwind, callback frame push) land in W3.3b.
+
+    /// Program-default exception callback, if registered.
+    #[allow(dead_code)]
+    pub fn program_exception_cb(&self) -> Option<usize> {
+        self.program_exception_cb
+    }
+
+    /// Register the program-default exception callback. Overwrites any
+    /// prior default (kernel: last registration wins).
+    #[allow(dead_code)]
+    pub fn set_program_exception_cb(&mut self, pc: usize) {
+        self.program_exception_cb = Some(pc);
+    }
+
+    /// Resolve the handler that a `bpf_throw` from the current frame
+    /// would unwind to: innermost frame-local `exception_cb`, else the
+    /// program-default, else `None` (unhandled → program exit).
+    #[allow(dead_code)]
+    pub fn effective_exception_cb(&self) -> Option<usize> {
+        let depth = self.frames.depth();
+        for i in (0..depth).rev() {
+            if let Some(pc) = self.frames.get(FrameLevel::from_index(i)).exception_cb() {
+                return Some(pc);
+            }
+        }
+        self.program_exception_cb
+    }
+
+    /// Install an exception callback on the current frame.
+    #[allow(dead_code)]
+    pub fn set_current_frame_exception_cb(&mut self, pc: usize) {
+        self.frames.current_mut().set_exception_cb(pc);
+    }
+
+    // ── may_goto budget (W3.1a plumbing) ───────────────────────
+    //
+    // Helpers mirror the spin_lock / ref_id conventions: call sites go
+    // through these methods rather than touching `goto_budget` directly.
+    // Semantics (decrement on taken edge, reject on empty must-take) land
+    // in W3.1b.
+
+    pub fn goto_budget(&self) -> u32 {
+        self.goto_budget
+    }
+
+    /// Returns `false` if the budget is already exhausted (caller should
+    /// treat the taken edge as infeasible); otherwise decrements and
+    /// returns `true`.
+    pub fn consume_goto_budget(&mut self) -> bool {
+        if self.goto_budget == 0 {
+            return false;
+        }
+        self.goto_budget -= 1;
+        true
     }
 
     /// Create a new State with Zone domain (for backwards compatibility)
@@ -111,6 +221,99 @@ impl State {
         if r != Reg::Zero {
             self.tnums.insert(r, t);
         }
+    }
+
+    // ── Scalar id helpers ──────────────────────────────────────
+    //
+    // Identity tokens for unknown scalars. Call sites use these helpers
+    // instead of touching `scalar_ids` / `SpilledReg::scalar_id` directly
+    // (encapsulation). Semantics are wired in W2.1b/c; today these are
+    // plumbing only and the maps stay empty during verification.
+
+    /// Current scalar id of register `r`, or None if unlinked / not a scalar.
+    pub fn scalar_id(&self, r: Reg) -> Option<u32> {
+        if r == Reg::Zero {
+            return None;
+        }
+        self.scalar_ids.get(&r).copied()
+    }
+
+    /// Allocate a fresh scalar id for `r` and return it. Any previous id on
+    /// `r` is replaced (the old value is now unrelated to the new one).
+    pub fn alloc_scalar_id(&mut self, r: Reg) -> u32 {
+        let id = crate::analysis::machine::reg_types::new_scalar_id();
+        self.scalar_ids.insert(r, id);
+        id
+    }
+
+    /// Make `dst` share `src`'s scalar id (copy edge). If `src` has no id,
+    /// one is allocated first so both registers end up linked.
+    pub fn link_scalar_id(&mut self, dst: Reg, src: Reg) {
+        if dst == Reg::Zero || src == Reg::Zero {
+            return;
+        }
+        let id = match self.scalar_ids.get(&src).copied() {
+            Some(id) => id,
+            None => {
+                let id = crate::analysis::machine::reg_types::new_scalar_id();
+                self.scalar_ids.insert(src, id);
+                id
+            }
+        };
+        self.scalar_ids.insert(dst, id);
+    }
+
+    /// Drop any scalar id on `r` (e.g. constant assignment or value-mutating ALU).
+    pub fn clear_scalar_id(&mut self, r: Reg) {
+        self.scalar_ids.remove(&r);
+    }
+
+    // ── Precision marking (W2.2) ───────────────────────────────
+    //
+    // `mark_reg_precise` is the entry point for callers that recognise a
+    // register's exact bounds matter for safety (e.g. a branch comparison
+    // that will refine bounds, or a variable offset feeding a memory
+    // access). Marks propagate along scalar-id equivalence classes and
+    // forward through arithmetic; the field is consumed in W2.3 to block
+    // pruning that would generalise the marked register.
+
+    /// Mark `r` as precision-critical. Also marks any other register
+    /// currently sharing `r`'s scalar id, so spills and copies keep the
+    /// mark. Safe to call on registers of any type; no-op for `Zero`.
+    pub fn mark_reg_precise(&mut self, r: Reg) {
+        if r == Reg::Zero {
+            return;
+        }
+        self.precise_regs.insert(r);
+        if let Some(id) = self.scalar_ids.get(&r).copied() {
+            let linked: Vec<Reg> = self
+                .scalar_ids
+                .iter()
+                .filter_map(|(&other, &oid)| if oid == id { Some(other) } else { None })
+                .collect();
+            for other in linked {
+                self.precise_regs.insert(other);
+            }
+        }
+    }
+
+    /// Whether `r` has been marked precise on the current path.
+    pub fn is_reg_precise(&self, r: Reg) -> bool {
+        r != Reg::Zero && self.precise_regs.contains(&r)
+    }
+
+    /// Drop any precision mark on `r` (e.g. overwritten by an immediate
+    /// or a load that introduces a fresh unknown scalar).
+    pub fn clear_reg_precise(&mut self, r: Reg) {
+        self.precise_regs.remove(&r);
+    }
+
+    /// All registers currently carrying `id`. Useful for refinement fan-out.
+    pub fn regs_with_scalar_id(&self, id: u32) -> Vec<Reg> {
+        self.scalar_ids
+            .iter()
+            .filter_map(|(&r, &rid)| if rid == id { Some(r) } else { None })
+            .collect()
     }
 
     // ── Reference tracking ──────────────────────────────────────
@@ -218,6 +421,14 @@ impl State {
             bounds: ScalarBounds { min, max },
             size,
             ptr_bounds,
+            // Carry the scalar id so fill_at can re-link the destination register.
+            scalar_id: if size == MemSize::U64 && is_aligned {
+                self.scalar_ids.get(&reg).copied()
+            } else {
+                None
+            },
+            precise: is_aligned && size == MemSize::U64 && self.precise_regs.contains(&reg),
+            iterator: None,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -238,6 +449,9 @@ impl State {
                         },
                         size,
                         ptr_bounds: None,
+                        scalar_id: None,
+                        precise: false,
+                        iterator: None,
                     },
                 );
             }
@@ -280,6 +494,9 @@ impl State {
             bounds,
             size,
             ptr_bounds: None,
+            scalar_id: None,
+            precise: false,
+            iterator: None,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -300,6 +517,9 @@ impl State {
                         },
                         size,
                         ptr_bounds: None,
+                        scalar_id: None,
+                        precise: false,
+                        iterator: None,
                     },
                 );
             }
@@ -346,6 +566,22 @@ impl State {
             self.domain
                 .assign_interval(dst, spilled.bounds.min, spilled.bounds.max);
 
+            // Restore scalar id so the filled register remains part of any
+            // existing copy chain (e.g. a spilled then reloaded r1 shares the
+            // same id as copies of it that stayed in registers).
+            if let Some(id) = spilled.scalar_id {
+                self.scalar_ids.insert(dst, id);
+            } else {
+                self.scalar_ids.remove(&dst);
+            }
+
+            // Restore precision mark carried at spill time (W2.2).
+            if spilled.precise {
+                self.precise_regs.insert(dst);
+            } else {
+                self.precise_regs.remove(&dst);
+            }
+
             // Only restore anchors for U64 (pointers need full 64-bit)
             if size == MemSize::U64 {
                 self.restore_anchor_info(dst, &spilled);
@@ -356,6 +592,8 @@ impl State {
             let (min, max) = size.unbounded_scalar_bounds();
             self.tnums.insert(dst, Tnum::unknown());
             self.domain.assign_interval(dst, min, max);
+            self.scalar_ids.remove(&dst);
+            self.precise_regs.remove(&dst);
         }
 
         true
@@ -488,6 +726,20 @@ impl State {
             self.types.clone(),
             self.domain.clone(),
             self.tnums.clone(),
+        );
+    }
+
+    /// Push a callback frame entered via a callback-taking helper (W3.4b).
+    /// Caller state is captured like a normal push, but the frame is
+    /// flagged so Exit drops the path instead of resuming the caller.
+    /// `helper` is stashed on the frame for return-value tightening.
+    pub fn push_callback_frame(&mut self, return_pc: usize, helper: u32) {
+        self.frames.push_callback(
+            return_pc,
+            self.types.clone(),
+            self.domain.clone(),
+            self.tnums.clone(),
+            helper,
         );
     }
 

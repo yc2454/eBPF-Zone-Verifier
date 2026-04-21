@@ -115,6 +115,14 @@ pub enum RegType {
         id: u32,
         mem_size: u64,
     },
+    /// Pointer to a callback subprogram, produced by `LD_IMM64 BPF_PSEUDO_FUNC`
+    /// (W3.4a). Consumed by callback-taking helpers (`bpf_loop`,
+    /// `bpf_for_each_map_elem`, `bpf_timer_set_callback`) and by the
+    /// `bpf_set_exception_callback` kfunc to register an exception handler.
+    /// Not dereferenceable as data; arithmetic on it produces a scalar.
+    PtrToCallback {
+        subprog_pc: u32,
+    },
 }
 
 impl RegType {
@@ -251,6 +259,25 @@ pub fn new_ref_id() -> u32 {
     REF_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
+/// Fresh identity token for a scalar value. Two registers/slots that share
+/// an id represent the same underlying unknown scalar, so refining one
+/// (e.g. via a conditional) can be propagated to the others.
+pub fn new_scalar_id() -> u32 {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static SCALAR_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
+    SCALAR_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
+}
+
+/// Fresh identity token for an open-coded iterator (Phase 3 W3.2b).
+/// Minted at `*_new` time and stored on the iterator's stack slot.
+/// Subsumption (W3.2c) matches states by this id to recognize "same
+/// iterator loop" across revisits.
+pub fn new_iter_id() -> u32 {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static ITER_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
+    ITER_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
+}
+
 /// Classify types into families. Pointer and pointer-or-null variants
 /// of the same kind share a family (e.g. PtrToMapValue and PtrToMapValueOrNull).
 pub fn type_family(ty: &RegType) -> u8 {
@@ -270,6 +297,7 @@ pub fn type_family(ty: &RegType) -> u8 {
         PtrToTcpSock { .. } | PtrToTcpSockOrNull { .. } => 11,
         PtrToBtfId { .. } | PtrToBtfIdOrNull { .. } => 12,
         PtrToAllocMem { .. } | PtrToAllocMemOrNull { .. } => 13,
+        PtrToCallback { .. } => 14,
     }
 }
 

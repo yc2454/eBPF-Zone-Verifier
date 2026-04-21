@@ -42,6 +42,26 @@ pub struct CallFrame {
     pub caller_types: TypeState,
     pub caller_domain: NumericDomain,
     pub caller_tnums: HashMap<Reg, Tnum>,
+
+    /// Innermost exception callback entry PC set on this frame (W3.3a).
+    /// `bpf_throw` unwinds to the nearest enclosing frame with a handler;
+    /// if none is set on any frame, the state's program-default handler
+    /// is used (see [`State::program_exception_cb`]). Plumbing only in
+    /// W3.3a — transfer semantics land in W3.3b. Read through
+    /// [`CallFrame::exception_cb`] rather than touching the field.
+    exception_cb: Option<usize>,
+
+    /// True when this frame was entered through a callback-taking helper
+    /// (`bpf_loop` / `bpf_for_each_map_elem` / `bpf_timer_set_callback`)
+    /// rather than via a subprog CallRel (W3.4b). On Exit the callback
+    /// path is dropped instead of merging back into the caller — the
+    /// helper's post-call state is emitted separately at the call site.
+    is_callback: bool,
+
+    /// The helper id that entered this callback frame, when `is_callback`.
+    /// Used on Exit to tighten the callback's return-value contract
+    /// (e.g. bpf_loop requires R0 ∈ {0, 1}) — W3.4c.
+    callback_helper: Option<u32>,
 }
 
 impl Default for CallFrame {
@@ -53,7 +73,40 @@ impl Default for CallFrame {
             caller_types: TypeState::default(),
             caller_domain: NumericDomain::default(),
             caller_tnums: HashMap::new(),
+            exception_cb: None,
+            is_callback: false,
+            callback_helper: None,
         }
+    }
+}
+
+impl CallFrame {
+    /// Exception callback registered on this frame, if any.
+    pub fn exception_cb(&self) -> Option<usize> {
+        self.exception_cb
+    }
+
+    /// True when this frame was entered through a callback-taking helper.
+    pub fn is_callback(&self) -> bool {
+        self.is_callback
+    }
+
+    /// Helper id that entered this callback frame, if `is_callback`.
+    pub fn callback_helper(&self) -> Option<u32> {
+        self.callback_helper
+    }
+
+    /// Register an exception callback entry PC on this frame. Overwrites
+    /// any prior handler (matches kernel semantics: the most recent
+    /// `bpf_set_exception_callback` wins).
+    pub fn set_exception_cb(&mut self, pc: usize) {
+        self.exception_cb = Some(pc);
+    }
+
+    /// Drop any exception callback on this frame.
+    #[allow(dead_code)]
+    pub fn clear_exception_cb(&mut self) {
+        self.exception_cb = None;
     }
 }
 
@@ -133,6 +186,37 @@ impl FrameStack {
         caller_domain: NumericDomain,
         caller_tnums: HashMap<Reg, Tnum>,
     ) -> FrameLevel {
+        self.push_inner(return_pc, caller_types, caller_domain, caller_tnums, None)
+    }
+
+    /// Push a callback frame (W3.4b). Same as [`push`] but flagged so
+    /// Exit drops the path instead of merging into the caller; the
+    /// originating helper id is stored for return-value tightening.
+    pub fn push_callback(
+        &mut self,
+        return_pc: usize,
+        caller_types: TypeState,
+        caller_domain: NumericDomain,
+        caller_tnums: HashMap<Reg, Tnum>,
+        helper: u32,
+    ) -> FrameLevel {
+        self.push_inner(
+            return_pc,
+            caller_types,
+            caller_domain,
+            caller_tnums,
+            Some(helper),
+        )
+    }
+
+    fn push_inner(
+        &mut self,
+        return_pc: usize,
+        caller_types: TypeState,
+        caller_domain: NumericDomain,
+        caller_tnums: HashMap<Reg, Tnum>,
+        callback_helper: Option<u32>,
+    ) -> FrameLevel {
         let frame = CallFrame {
             return_pc,
             stack: StackState::default(),
@@ -140,6 +224,9 @@ impl FrameStack {
             caller_types,
             caller_domain,
             caller_tnums,
+            exception_cb: None,
+            is_callback: callback_helper.is_some(),
+            callback_helper,
         };
         self.frames.push(frame);
         self.current_level()

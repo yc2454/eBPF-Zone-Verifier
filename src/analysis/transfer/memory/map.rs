@@ -3,6 +3,7 @@ use crate::analysis::machine::error::VerificationError;
 
 use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg::Reg;
+use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
 use crate::ast::MapLoadKind;
 use crate::common::constants;
@@ -213,7 +214,8 @@ pub(crate) fn transfer_map_load(
     // supported by the transfer domain. Fail cleanly here.
     let feature = match kind {
         MapLoadKind::MapPtr | MapLoadKind::MapValue => None,
-        MapLoadKind::PseudoFunc { .. } => Some("LD_IMM64 BPF_PSEUDO_FUNC (callback pointer)"),
+        // W3.4a: BPF_PSEUDO_FUNC is now handled below as PtrToCallback.
+        MapLoadKind::PseudoFunc { .. } => None,
         MapLoadKind::PseudoBtfId { .. } => Some("LD_IMM64 BPF_PSEUDO_BTF_ID (ksym/percpu)"),
         MapLoadKind::PseudoMapIdx => Some("LD_IMM64 BPF_PSEUDO_MAP_IDX"),
         MapLoadKind::PseudoMapIdxValue => Some("LD_IMM64 BPF_PSEUDO_MAP_IDX_VALUE"),
@@ -224,6 +226,17 @@ pub(crate) fn transfer_map_load(
             feature,
         });
         return vec![];
+    }
+
+    // BPF_PSEUDO_FUNC: materialize a callback pointer. Target PC was
+    // resolved at decode time; no relocation lookup is needed. Consumed
+    // by bpf_loop / bpf_for_each_map_elem / bpf_timer_set_callback and
+    // by bpf_set_exception_callback (W3.4).
+    if let MapLoadKind::PseudoFunc { subprog_pc } = kind {
+        state.types.set(dst, RegType::PtrToCallback { subprog_pc });
+        state.domain.forget(dst);
+        state.pc += 2;
+        return vec![state];
     }
 
     let reloc_info = env.ctx.pc_to_reloc.get(&state.pc);

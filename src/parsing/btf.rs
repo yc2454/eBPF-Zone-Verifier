@@ -140,6 +140,25 @@ impl BtfContext {
         self.kfuncs.get(name).copied()
     }
 
+    /// Reverse lookup: given a kfunc FUNC btf_id, return its registered
+    /// name. Linear in the kfunc-registry size — only called on kfunc
+    /// call sites, of which there are few. Used by call transfer to
+    /// dispatch on well-known kfunc names (e.g. `bpf_iter_num_new`).
+    pub fn kfunc_name(&self, btf_id: u32) -> Option<&str> {
+        self.kfuncs
+            .iter()
+            .find(|(_, id)| **id == btf_id)
+            .map(|(name, _)| name.as_str())
+    }
+
+    /// Directly register a kfunc name → btf_id mapping. Used by the
+    /// test harness to seed the registry without parsing a real BTF
+    /// blob with DECL_TAGs; production code populates `kfuncs` during
+    /// `parse_btf`.
+    pub fn register_kfunc(&mut self, name: &str, btf_id: u32) {
+        self.kfuncs.insert(name.to_string(), btf_id);
+    }
+
     /// If `type_id` names a BTF_KIND_TYPE_TAG, returns the tag name and the
     /// inner type it wraps. Used by later phases to recognize `__kptr`,
     /// `__rcu`, `__percpu`, etc.

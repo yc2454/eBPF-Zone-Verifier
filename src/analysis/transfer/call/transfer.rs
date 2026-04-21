@@ -121,6 +121,19 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
         }
     }
 
+    // W3.4b: callback-taking helpers (bpf_loop / bpf_for_each_map_elem /
+    // bpf_timer_set_callback) split into two successors:
+    //   - "skip": helper returns to pc+1 with its normal return-value
+    //     bounds; the callback body is not treated as executing along
+    //     this path (abstractly: zero iterations).
+    //   - "enter callback": push a callback-flagged frame at the
+    //     subprog entry with typed args. On the callback's Exit we
+    //     drop the path (see `transfer_exit`), so only the skip path
+    //     carries helper post-state forward.
+    if is_callback_helper(helper) {
+        return transfer_callback_helper(env, state, &in_types, helper);
+    }
+
     // bpf_get_local_storage doesn't not support type 1 map and flag must be 0
     if helper == constants::BPF_GET_LOCAL_STORAGE {
         if let RegType::PtrToMapObject { map_idx } = state.types.get(Reg::R1)
@@ -146,6 +159,19 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     // 2. Apply return value bounds for specific helpers
     apply_return_bounds(&mut state, helper);
 
+    // 2.1 Scalar ID for helper return value.
+    // An unknown scalar R0 gets a fresh id so that copies of it can later
+    // be linked and refined together (W2.1c).  Pointer or constant returns
+    // don't need scalar linking.
+    use crate::analysis::machine::reg_types::RegType;
+    if state.types.get(Reg::R0) == RegType::ScalarValue
+        && state.get_tnum(Reg::R0).is_unknown()
+    {
+        state.alloc_scalar_id(Reg::R0);
+    } else {
+        state.clear_scalar_id(Reg::R0);
+    }
+
     // 2.5 Initialize memory buffers for PtrToUninitMem arguments
     initialize_uninit_mem_args(&mut state, &in_types, helper);
 
@@ -153,6 +179,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
         state.domain.forget(r);
         state.set_tnum(r, Tnum::unknown());
+        state.clear_scalar_id(r);
     }
 
     // 4. Forget packet pointer DBM entries if they were invalidated
@@ -292,6 +319,105 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
         }
         _ => {}
     }
+}
+
+/// True when `helper` takes a callback pointer argument (W3.4b).
+fn is_callback_helper(helper: u32) -> bool {
+    matches!(
+        helper,
+        constants::BPF_LOOP
+            | constants::BPF_FOR_EACH_MAP_ELEM
+            | constants::BPF_TIMER_SET_CALLBACK
+    )
+}
+
+/// Which register holds the callback pointer for `helper`.
+fn callback_arg_reg(helper: u32) -> Reg {
+    match helper {
+        constants::BPF_LOOP => Reg::R2,
+        constants::BPF_FOR_EACH_MAP_ELEM => Reg::R2,
+        constants::BPF_TIMER_SET_CALLBACK => Reg::R2,
+        _ => unreachable!(),
+    }
+}
+
+/// Transfer for callback-taking helpers. Emits the skip successor (normal
+/// helper post-state at pc+1) and the enter-callback successor (pushes a
+/// callback frame at subprog_pc with typed args). See `is_callback_helper`.
+fn transfer_callback_helper(
+    env: &mut VerifierEnv,
+    state: State,
+    in_types: &crate::analysis::machine::reg_types::TypeState,
+    helper: u32,
+) -> Vec<State> {
+    let pc = state.pc;
+    let cb_reg = callback_arg_reg(helper);
+    let RegType::PtrToCallback { subprog_pc } = state.types.get(cb_reg) else {
+        env.fail(VerificationError::InvalidArgType { pc, reg: cb_reg });
+        return vec![];
+    };
+    let cb_entry = subprog_pc as usize;
+
+    // W3.4c: bpf_timer_set_callback must be registered with no held locks
+    // and no unreleased refs — the callback runs asynchronously, so any
+    // state the verifier is still tracking on the caller frame would be
+    // leaked. (Other callback helpers are synchronous and rely on the
+    // generic active-lock check in `transfer_call` above.)
+    if helper == constants::BPF_TIMER_SET_CALLBACK
+        && (state.has_active_lock() || state.has_unreleased_refs())
+    {
+        env.fail(VerificationError::InvalidArgType { pc, reg: cb_reg });
+        return vec![];
+    }
+
+    // Successor A: skip the callback and emit the helper's post-state.
+    let mut skip_state = state.clone();
+    update_call_types(env, in_types, &mut skip_state, helper);
+    apply_return_bounds(&mut skip_state, helper);
+    if skip_state.types.get(Reg::R0) == RegType::ScalarValue
+        && skip_state.get_tnum(Reg::R0).is_unknown()
+    {
+        skip_state.alloc_scalar_id(Reg::R0);
+    } else {
+        skip_state.clear_scalar_id(Reg::R0);
+    }
+    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+        skip_state.domain.forget(r);
+        skip_state.set_tnum(r, Tnum::unknown());
+        skip_state.clear_scalar_id(r);
+    }
+    skip_state.pc = pc + 1;
+
+    // Successor B: enter the callback with a fresh frame. Bail with the
+    // skip state only if we're already at the kernel's max call depth.
+    if state.num_frames() >= 8 {
+        return vec![skip_state];
+    }
+
+    let mut cb_state = state;
+    cb_state.push_callback_frame(pc + 1, helper);
+    update_call_rel_types(&mut cb_state);
+    cb_state.domain.clear_packet_size_bounds();
+
+    // Minimal arg typing: R1 is always a scalar (iteration index / map
+    // pointer / map-elem pointer depending on helper); R2+ are left
+    // unsupported for now so callbacks that dereference them REJECT.
+    // Full per-helper arg typing lands alongside richer signature
+    // validation in a follow-up.
+    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+        cb_state.types.set(r, RegType::NotInit);
+        cb_state.domain.forget(r);
+        cb_state.set_tnum(r, Tnum::unknown());
+        cb_state.clear_scalar_id(r);
+    }
+    cb_state.types.set(Reg::R1, RegType::ScalarValue);
+    cb_state.domain.forget(Reg::R1);
+    cb_state.set_tnum(Reg::R1, Tnum::unknown());
+    cb_state.alloc_scalar_id(Reg::R1);
+
+    cb_state.pc = cb_entry;
+
+    vec![skip_state, cb_state]
 }
 
 fn allowed_while_in_active_lock(helper: u32) -> bool {

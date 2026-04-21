@@ -21,12 +21,19 @@
     }
   },
   "selftest_kernel": {
-    "non_passing": [],
+    "non_passing": [
+      {
+        "actual": "REJECT",
+        "expected": "ACCEPT",
+        "outcome": "FalsePositive",
+        "test": "./selftests/legacy/verifier/search_pruning.json::search pruning: all branches should be verified (invalid stack access)"
+      }
+    ],
     "totals": {
       "errors": 0,
       "false_negatives": 0,
-      "false_positives": 0,
-      "passed": 1203,
+      "false_positives": 1,
+      "passed": 1202,
       "skipped": 0,
       "total_files": 81,
       "total_tests": 1203
@@ -35,101 +42,17 @@
   "selftest_kernel_backport": {
     "non_passing": [
       {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, S16 range checking"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, S32 range checking"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, S8 range checking, privileged"
-      },
-      {
         "actual": "ACCEPT",
         "expected": "REJECT",
         "outcome": "FalseNegative",
         "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, tcx s32 __sk_buff->data_meta"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/may_goto.json::batch 2 of may_goto 0"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/may_goto.json::may_goto 0"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/may_goto.json::may_goto batch with offsets 2/0"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/may_goto.json::may_goto batch with offsets 2/1/0"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S16, range_check"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S8, range_check"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S8, var_off not u32_max, negative after s8 extension"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S8, var_off not u32_max, positive after s8 extension"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S16, range_check"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S32, range_check"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S8, range_check"
       }
     ],
     "totals": {
       "errors": 0,
       "false_negatives": 1,
-      "false_positives": 14,
-      "passed": 44,
+      "false_positives": 0,
+      "passed": 58,
       "skipped": 0,
       "total_files": 6,
       "total_tests": 59
@@ -148,13 +71,19 @@
         "expected": "REJECT",
         "outcome": "FalseNegative",
         "test": "./selftests/legacy/verifier/loops1.json::bounded loop, start in the middle"
+      },
+      {
+        "actual": "REJECT",
+        "expected": "ACCEPT",
+        "outcome": "FalsePositive",
+        "test": "./selftests/legacy/verifier/search_pruning.json::search pruning: all branches should be verified (invalid stack access)"
       }
     ],
     "totals": {
       "errors": 0,
       "false_negatives": 2,
-      "false_positives": 0,
-      "passed": 1201,
+      "false_positives": 1,
+      "passed": 1200,
       "skipped": 0,
       "total_files": 81,
       "total_tests": 1203
@@ -163,101 +92,17 @@
   "selftest_zone_backport": {
     "non_passing": [
       {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, S16 range checking"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, S32 range checking"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, S8 range checking, privileged"
-      },
-      {
         "actual": "ACCEPT",
         "expected": "REJECT",
         "outcome": "FalseNegative",
         "test": "./selftests/legacy/verifier_backport/ldsx.json::LDSX, tcx s32 __sk_buff->data_meta"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/may_goto.json::batch 2 of may_goto 0"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/may_goto.json::may_goto 0"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/may_goto.json::may_goto batch with offsets 2/0"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/may_goto.json::may_goto batch with offsets 2/1/0"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S16, range_check"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S8, range_check"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S8, var_off not u32_max, negative after s8 extension"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV32SX, S8, var_off not u32_max, positive after s8 extension"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S16, range_check"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S32, range_check"
-      },
-      {
-        "actual": "REJECT",
-        "expected": "ACCEPT",
-        "outcome": "FalsePositive",
-        "test": "./selftests/legacy/verifier_backport/movsx.json::MOV64SX, S8, range_check"
       }
     ],
     "totals": {
       "errors": 0,
       "false_negatives": 1,
-      "false_positives": 14,
-      "passed": 44,
+      "false_positives": 0,
+      "passed": 58,
       "skipped": 0,
       "total_files": 6,
       "total_tests": 59

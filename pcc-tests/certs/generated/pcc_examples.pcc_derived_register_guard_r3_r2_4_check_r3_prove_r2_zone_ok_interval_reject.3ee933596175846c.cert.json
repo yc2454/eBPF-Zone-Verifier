@@ -1,0 +1,43 @@
+{
+  "version": 3,
+  "program_hash": "3ee933596175846c",
+  "pc_annotations": [
+    {
+      "pc": 15,
+      "entries": [
+        {
+          "left_reg": 7,
+          "right_reg": 0,
+          "bound": 4,
+          "proof": [
+            {
+              "kind": "Fact",
+              "pc": 13,
+              "left_reg": 4,
+              "right_reg": 0,
+              "c": 8
+            },
+            {
+              "kind": "Derive",
+              "pc_start": 11,
+              "pc_end": 12,
+              "source_reg": 4,
+              "target_reg": 3,
+              "offset": 4
+            },
+            {
+              "kind": "Transfer",
+              "pc": 14,
+              "pre_left_reg": 3,
+              "pre_right_reg": 0,
+              "post_left_reg": 7,
+              "post_right_reg": 0,
+              "delta": 0,
+              "hint": "r6 += r2  [absorb: r6 offset=0, pair switches to r6]"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

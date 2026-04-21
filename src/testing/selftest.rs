@@ -446,7 +446,38 @@ pub fn create_spin_lock_btf() -> BtfContext {
         },
     );
 
-    BtfContext::from_types_and_strings(types, strings)
+    let mut ctx = BtfContext::from_types_and_strings(types, strings);
+
+    // W3.2d: seed open-coded iterator kfunc names with stable btf_ids so
+    // selftest JSON can issue `BPF_PSEUDO_KFUNC_CALL` with imm = these ids
+    // and the transfer dispatcher can reverse-resolve the name. btf_ids
+    // here are synthetic (not backed by a FUNC type in `types`); the
+    // dispatcher only consults the kfunc_name map. Keep the ids
+    // contiguous starting at 100 so test authors can memorize them.
+    for (idx, name) in [
+        "bpf_iter_num_new",
+        "bpf_iter_num_next",
+        "bpf_iter_num_destroy",
+        "bpf_iter_task_new",
+        "bpf_iter_task_next",
+        "bpf_iter_task_destroy",
+        "bpf_iter_css_new",
+        "bpf_iter_css_next",
+        "bpf_iter_css_destroy",
+        "bpf_iter_bits_new",
+        "bpf_iter_bits_next",
+        "bpf_iter_bits_destroy",
+        // W3.3b: exception-frame kfuncs.
+        "bpf_throw",
+        "bpf_set_exception_callback",
+    ]
+    .iter()
+    .enumerate()
+    {
+        ctx.register_kfunc(name, 100 + idx as u32);
+    }
+
+    ctx
 }
 
 pub(crate) fn build_exec_context(

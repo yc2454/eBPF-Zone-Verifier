@@ -391,10 +391,20 @@ fn state_subsumed_by(
             return false;
         }
     } else if !(types_subsumed_by(&cur.types, &old.types, live_regs)
-        && domain_subsumed_by(&cur.domain, &old.domain, live_regs)
+        && domain_subsumed_by(&cur.domain, &old.domain, live_regs, &cur.precise_regs)
         && stack_subsumed_by(cur, old)
         && tnum_subsumed_by(cur, old, live_regs))
     {
+        return false;
+    }
+
+    // W3.1c: `old` must have at least as much may_goto budget remaining as
+    // `cur`, otherwise pruning would let `cur` continue under behaviours
+    // `old` never explored (old already exhausted the budget on a path cur
+    // hasn't yet reached). Monotone: budget only ever decreases, so once
+    // cur's future iterations are covered by an old state with a larger or
+    // equal counter, pruning is sound.
+    if old.goto_budget < cur.goto_budget {
         return false;
     }
 
@@ -408,7 +418,12 @@ fn state_subsumed_by(
             return false;
         }
         if !config.skip_dbm_check
-            && !domain_subsumed_by(&cur_frame.caller_domain, &old_frame.caller_domain, &saved)
+            && !domain_subsumed_by(
+                &cur_frame.caller_domain,
+                &old_frame.caller_domain,
+                &saved,
+                &HashSet::new(),
+            )
         {
             return false;
         }
@@ -493,11 +508,25 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
 }
 
 /// Check if cur numeric domain is subsumed by old domain.
-fn domain_subsumed_by(cur: &NumericDomain, old: &NumericDomain, live_regs: &HashSet<Reg>) -> bool {
+///
+/// For registers listed in `precise`, subsumption requires *exact* interval
+/// equality rather than superset coverage: a bound-check refinement that
+/// W2.2 flagged as precision-critical must not be generalised away by
+/// pruning against a looser cached state.
+fn domain_subsumed_by(
+    cur: &NumericDomain,
+    old: &NumericDomain,
+    live_regs: &HashSet<Reg>,
+    precise: &HashSet<Reg>,
+) -> bool {
     for &r in live_regs {
         let (old_min, old_max) = old.get_interval(r);
         let (cur_min, cur_max) = cur.get_interval(r);
-        if !(old_min <= cur_min && old_max >= cur_max) {
+        if precise.contains(&r) {
+            if old_min != cur_min || old_max != cur_max {
+                return false;
+            }
+        } else if !(old_min <= cur_min && old_max >= cur_max) {
             return false;
         }
     }
@@ -572,6 +601,40 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
                 return false;
             }
 
+            // Precision (W2.3): a spilled scalar marked precise must match
+            // the cached slot exactly on tnum and bounds. Prevents pruning
+            // a bound-check-refined slot against a looser cached one.
+            let old_slot = old_frame.stack.get_slot(offset);
+            let new_slot = new_frame.stack.get_slot(offset);
+            if let (Some(old_s), Some(new_s)) = (old_slot, new_slot) {
+                if new_s.precise
+                    && (old_s.tnum != new_s.tnum || old_s.bounds != new_s.bounds)
+                {
+                    return false;
+                }
+            }
+
+            // W3.2c: open-coded iterator identity.
+            //
+            // An Active/Drained iterator slot represents a specific
+            // loop instance (id minted at `*_new`). A cached state
+            // subsumes the current one at this slot only when both
+            // carry the exact same annotation — matching kind, state,
+            // and id. Mismatched iterator state, mismatched id, or one
+            // side carrying an annotation and the other not are all
+            // semantically distinct program points and must not
+            // collapse into a single pruned state.
+            //
+            // Non-precise loop-varying scalars are allowed to converge
+            // via the existing W2.3 non-precise superset rule above —
+            // this check is about the iterator identity itself, not
+            // the loop variable.
+            let old_iter = old_slot.and_then(|s| s.iterator);
+            let new_iter = new_slot.and_then(|s| s.iterator);
+            if old_iter != new_iter {
+                return false;
+            }
+
             // For packet pointers, also check interval_range subsumption.
             // If old has a proven range but cur doesn't, old does NOT subsume cur,
             // because cur might fail a packet access that old would pass.
@@ -609,7 +672,11 @@ fn tnum_subsumed_by(cur_state: &State, old_state: &State, live_regs: &HashSet<Re
     for &r in live_regs {
         let cur = cur_state.get_tnum(r);
         let old = old_state.get_tnum(r);
-        if !tnum_covers(&cur, &old) {
+        if cur_state.is_reg_precise(r) {
+            if cur.mask != old.mask || cur.value != old.value {
+                return false;
+            }
+        } else if !tnum_covers(&cur, &old) {
             return false;
         }
     }
