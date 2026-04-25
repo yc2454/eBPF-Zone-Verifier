@@ -20,7 +20,7 @@ use crate::analysis::machine::state::State;
 use crate::analysis::transfer::types::update_store_types;
 use crate::ast::MemSize;
 use crate::common::constants::MAX_ERRNO;
-use crate::common::mem_region_model::bpf_iter_size;
+use crate::common::stack_objects::bpf_iter_size;
 use crate::domains::tnum::Tnum;
 
 use super::side_effects::apply_call_proto_r0;
