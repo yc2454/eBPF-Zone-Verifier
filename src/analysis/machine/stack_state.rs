@@ -306,12 +306,16 @@ impl StackState {
         }
     }
 
-    /// True if any slot currently holds a dynptr annotation (W4.2).
-    /// Parallel to `has_active_iterators` — used at exit to reject
-    /// programs that leak acquired dynptrs (e.g. unreleased ringbuf
-    /// reservations).
-    pub fn has_active_dynptrs(&self) -> bool {
-        self.slots.values().any(|s| s.dynptr.is_some())
+    /// True if any slot holds a dynptr that carries an acquire/release
+    /// ref (W4.2). Parallel to `has_active_iterators` / `has_unreleased_refs`
+    /// — used at exit to reject programs that leak ringbuf reservations
+    /// or other ref-bearing dynptrs. Non-ref dynptrs (`Local`, `Skb`,
+    /// `Xdp`) carry `ref_id == 0` and are allowed at exit (they're just
+    /// metadata; the kernel auto-releases them with the frame).
+    pub fn has_unreleased_dynptr_refs(&self) -> bool {
+        self.slots
+            .values()
+            .any(|s| s.dynptr.is_some_and(|d| d.ref_id != 0))
     }
 
     pub fn live_slot_offsets(&self, live_regs: &HashSet<Reg>) -> Vec<i16> {

@@ -470,6 +470,10 @@ pub fn create_spin_lock_btf() -> BtfContext {
         // W3.3b: exception-frame kfuncs.
         "bpf_throw",
         "bpf_set_exception_callback",
+        // W4.2c: ringbuf dynptr kfuncs.
+        "bpf_ringbuf_reserve_dynptr",
+        "bpf_ringbuf_submit_dynptr",
+        "bpf_ringbuf_discard_dynptr",
     ]
     .iter()
     .enumerate()

@@ -217,12 +217,10 @@ pub(crate) fn validate_single_arg(
         ArgKind::PtrToLong => validate_ptr_to_long(&mut ctx),
         ArgKind::PtrToCallback => validate_ptr_to_callback(&mut ctx),
 
-        // ---- Dynptr (W4.2) ----
-        // Semantic validator (slot lookup, two-slot invariant, kind/
-        // rdonly checks) lands in W4.2c alongside the first kfunc proto
-        // entries that exercise it. Until then, no caller produces this
-        // ArgKind, so the conservative true is unreachable in practice.
-        ArgKind::DynptrArg { .. } => true,
+        // ---- Dynptr (W4.2c) ----
+        ArgKind::DynptrArg { uninit, rdwr_only } => {
+            validate_dynptr_arg(&mut ctx, uninit, rdwr_only)
+        }
 
         // ---- Anything (just needs to be readable) ----
         ArgKind::Anything => true,
@@ -308,6 +306,128 @@ fn validate_ptr_to_stack(ctx: &mut ValidationContext) -> bool {
                 ctx.pc,
                 ctx.arg_index + 1,
                 ctx.actual
+            ),
+        );
+    }
+    true
+}
+
+/// Validate `ArgKind::DynptrArg` (W4.2c).
+///
+/// The actual reg must be a `PtrToStack` aimed at the dynptr's first
+/// slot. Behavior splits on `uninit`:
+///
+/// - `uninit = true` (constructor sink): neither the base slot nor its
+///   trailing partner may carry a prior dynptr annotation. A pre-
+///   existing annotation means the program would overwrite an active
+///   dynptr — for `Ringbuf` this leaks the reservation; for the others
+///   we follow the kernel's defensive REJECT.
+///
+/// - `uninit = false` (consumer): the base slot must hold a dynptr with
+///   `first_slot == true`. Mid-pair pointers (someone aimed `+8` at the
+///   second slot) are rejected. If `rdwr_only` is set, an `rdonly`
+///   dynptr is rejected (e.g. `bpf_dynptr_write` on an `Skb` dynptr).
+fn validate_dynptr_arg(ctx: &mut ValidationContext, uninit: bool, rdwr_only: bool) -> bool {
+    let RegType::PtrToStack { frame_level } = ctx.actual else {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} expected &bpf_dynptr (PTR_TO_STACK), got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                ctx.actual
+            ),
+        );
+    };
+
+    let Some(off) = ctx.state.domain.get_distance_fixed(ctx.reg, Reg::R10) else {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} dynptr arg has non-fixed stack offset",
+                ctx.pc,
+                ctx.arg_index + 1
+            ),
+        );
+    };
+    let Ok(base_off) = i16::try_from(off) else {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} dynptr arg offset {} out of i16 range",
+                ctx.pc,
+                ctx.arg_index + 1,
+                off
+            ),
+        );
+    };
+
+    let stack = ctx.state.stack_at(frame_level);
+    let base = stack.stack_get_dynptr(base_off);
+    let trail = stack.stack_get_dynptr(base_off + 8);
+
+    if uninit {
+        if base.is_some() || trail.is_some() {
+            return ctx.fail_with_log(
+                VerificationError::InvalidArgType {
+                    pc: ctx.pc,
+                    reg: ctx.reg,
+                },
+                &format!(
+                    "[Verifier] pc {}: R{} dynptr ctor target already initialized",
+                    ctx.pc,
+                    ctx.arg_index + 1
+                ),
+            );
+        }
+        return true;
+    }
+
+    let Some(slot) = base else {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} dynptr arg points at uninitialized stack",
+                ctx.pc,
+                ctx.arg_index + 1
+            ),
+        );
+    };
+    if !slot.first_slot {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} dynptr arg aimed at trailing slot of pair",
+                ctx.pc,
+                ctx.arg_index + 1
+            ),
+        );
+    }
+    if rdwr_only && slot.rdonly {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} rdonly dynptr passed where rdwr required",
+                ctx.pc,
+                ctx.arg_index + 1
             ),
         );
     }

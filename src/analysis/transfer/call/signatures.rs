@@ -694,6 +694,51 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Scalar)
         .side_effects(&[SideEffect::SetExceptionCallbackFromArg { arg: 0 }]),
 
+        // ---- Ringbuf dynptrs (W4.2c) ----
+        //
+        // void bpf_ringbuf_reserve_dynptr(struct bpf_map *rb, u32 size,
+        //                                 u64 flags, struct bpf_dynptr *ptr)
+        //
+        // R4 is the dynptr ctor sink. Mints a ref_id, stamps a
+        // `Ringbuf` annotation on the stack pair. Returns 0/-errno;
+        // failure path leaves the slot initialized but the dynptr's
+        // internal data NULL — runtime concern, not a verifier one.
+        "bpf_ringbuf_reserve_dynptr" => CallProto::with_args([
+            ConstMapPtr, // R1: ringbuf map
+            Anything,    // R2: size
+            Anything,    // R3: flags
+            DynptrArg { uninit: true, rdwr_only: false }, // R4: &dynptr
+            DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::DynptrInitOnArg {
+            arg: 3,
+            kind: DynptrKind::Ringbuf,
+            rdonly: false,
+        }]),
+
+        // void bpf_ringbuf_submit_dynptr(struct bpf_dynptr *ptr, u64 flags)
+        "bpf_ringbuf_submit_dynptr" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false }, // R1: &dynptr
+            Anything,                                       // R2: flags
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Void)
+        .side_effects(&[SideEffect::DynptrReleaseFromArg { arg: 0 }]),
+
+        // void bpf_ringbuf_discard_dynptr(struct bpf_dynptr *ptr, u64 flags)
+        "bpf_ringbuf_discard_dynptr" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false }, // R1: &dynptr
+            Anything,                                       // R2: flags
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Void)
+        .side_effects(&[SideEffect::DynptrReleaseFromArg { arg: 0 }]),
+
         _ => return None,
     })
 }

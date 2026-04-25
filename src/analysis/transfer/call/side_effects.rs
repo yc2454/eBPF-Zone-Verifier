@@ -8,9 +8,14 @@
 // done, kfuncs will plug into the same applier through a parallel
 // proto producer in `signatures::kfuncs`.
 
+use crate::analysis::machine::frame_stack::FrameLevel;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::state::State;
+use crate::analysis::machine::stack_state::{DynptrKind, DynptrSlot};
+use crate::analysis::transfer::types::update_store_types;
+use crate::ast::MemSize;
+use crate::common::stack_objects::BPF_DYNPTR_SIZE;
 
 use super::signatures::{CallFlags, CallProto, RetKind, SideEffect};
 
@@ -49,12 +54,59 @@ pub(crate) fn apply_call_proto_r0(
                     state.set_program_exception_cb(subprog_pc as usize);
                 }
             }
-            // Dynptr init/release semantics (W4.2c) — implementation
-            // requires generalized arg-to-stack-offset resolution and
-            // lands together with the first dynptr kfunc proto entries.
-            // No caller produces these variants today, so the no-op is
-            // unreachable in practice.
-            SideEffect::DynptrInitOnArg { .. } | SideEffect::DynptrReleaseFromArg { .. } => {}
+            SideEffect::DynptrInitOnArg { arg, kind, rdonly } => {
+                let reg = arg_reg(arg);
+                let Some((frame, base_off)) = resolve_stack_arg(state, reg) else {
+                    // Validator already accepted the arg, so we expect a
+                    // resolvable PtrToStack here. If the offset went
+                    // symbolic between validator and applier we'd skip
+                    // the init silently, which is conservatively safe
+                    // (the slot stays uninitialized → next consumer
+                    // rejects it).
+                    continue;
+                };
+                let ref_id = if dynptr_kind_acquires(kind) {
+                    state.acquire_ref()
+                } else {
+                    0
+                };
+
+                // Initialize 16 stack bytes as scalar (the kernel's
+                // STACK_DYNPTR mark; programs may not read the body).
+                let stack = state.stack_at_mut(frame);
+                for i in 0..BPF_DYNPTR_SIZE {
+                    let byte_off = base_off as i64 + i as i64;
+                    update_store_types(stack, RegType::ScalarValue, MemSize::U8, Some(byte_off));
+                }
+
+                // Stamp annotation on both 8-byte slots of the pair.
+                stack.stack_set_dynptr(
+                    base_off,
+                    DynptrSlot { kind, ref_id, rdonly, first_slot: true },
+                );
+                stack.stack_set_dynptr(
+                    base_off + 8,
+                    DynptrSlot { kind, ref_id, rdonly, first_slot: false },
+                );
+            }
+            SideEffect::DynptrReleaseFromArg { arg } => {
+                let reg = arg_reg(arg);
+                let Some((frame, base_off)) = resolve_stack_arg(state, reg) else {
+                    continue;
+                };
+                // Validator already verified an initialized first-slot
+                // dynptr lives here.
+                let slot = state.stack_at(frame).stack_get_dynptr(base_off);
+                if let Some(slot) = slot
+                    && slot.ref_id != 0
+                {
+                    state.release_ref(slot.ref_id);
+                    state.invalidate_ref(slot.ref_id);
+                }
+                let stack = state.stack_at_mut(frame);
+                stack.stack_clear_dynptr(base_off);
+                stack.stack_clear_dynptr(base_off + 8);
+            }
         }
     }
 
@@ -97,8 +149,28 @@ pub(crate) fn apply_call_proto_r0(
     }
 }
 
+/// True if a dynptr of this kind carries an acquire/release ref
+/// (currently `Ringbuf` only — `Local`/`Skb`/`Xdp` have no release
+/// kfunc).
+fn dynptr_kind_acquires(kind: DynptrKind) -> bool {
+    matches!(kind, DynptrKind::Ringbuf)
+}
+
+/// Resolve a stack-pointer register to `(frame_level, base_offset)`.
+/// Returns `None` if the register isn't a `PtrToStack` or its offset
+/// to `R10` isn't a fixed integer that fits in `i16`. Used by both the
+/// dynptr applier (here) and the dynptr arg validator (in `checks.rs`).
+pub(super) fn resolve_stack_arg(state: &State, reg: Reg) -> Option<(FrameLevel, i16)> {
+    let RegType::PtrToStack { frame_level } = state.types.get(reg) else {
+        return None;
+    };
+    let off = state.domain.get_distance_fixed(reg, Reg::R10)?;
+    let off16 = i16::try_from(off).ok()?;
+    Some((frame_level, off16))
+}
+
 /// Map a 0-indexed arg slot (0..=4) to its register (R1..R5).
-fn arg_reg(arg: u8) -> Reg {
+pub(super) fn arg_reg(arg: u8) -> Reg {
     match arg {
         0 => Reg::R1,
         1 => Reg::R2,
