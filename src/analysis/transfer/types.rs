@@ -354,15 +354,22 @@ pub(crate) fn update_call_types(
     // Default to scalar value
     state.types.set(Reg::R0, RegType::ScalarValue);
 
-    // Release socket reference
-    if helper == constants::BPF_SK_RELEASE
-        && let Some(ref_id) = state.types.get(Reg::R1).get_ref_id()
+    // Try the proto-driven path first (W4.1b). For helpers whose proto
+    // populates `ret`/`flags`/`side_effects`, this sets R0 and handles
+    // acquire/release uniformly so kfuncs can reuse the same applier.
+    // Returns false for helpers still on the legacy per-id match below.
+    let routed = if let Some(proto) =
+        crate::analysis::transfer::call::signatures::get_helper_proto(helper)
     {
-        state.release_ref(ref_id);
-        state.invalidate_ref(ref_id);
-    }
+        crate::analysis::transfer::call::side_effects::apply_call_proto_r0(
+            in_types, state, &proto,
+        )
+    } else {
+        false
+    };
 
-    // Set R0 based on helper return type
+    // Set R0 based on helper return type (legacy path for non-migrated helpers)
+    if !routed {
     match helper {
         constants::BPF_MAP_LOOKUP_ELEM | constants::BPF_GET_LOCAL_STORAGE => {
             let map_idx = match in_types.get(Reg::R1) {
@@ -508,6 +515,7 @@ pub(crate) fn update_call_types(
             state.types.set(Reg::R0, RegType::ScalarValue);
         }
     }
+    } // end if !routed
 
     // Clobber caller-saved registers - they are NOT readable after the call
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {

@@ -8,17 +8,17 @@ use super::super::checks::ValidationContext;
 use super::super::compat::{
     BTF_SOCK_COMMON_COMPAT, SOCK_COMMON_COMPAT, SOCKET_COMPAT, is_compatible,
 };
-use super::super::signatures::BpfArgType;
+use super::super::signatures::ArgKind;
 
 /// Validates socket-related argument types.
 /// Handles PtrToSocket, PtrToSockCommon, and PtrToBTFIdSockCommon.
-pub fn validate_socket_arg(ctx: &mut ValidationContext, expected: BpfArgType) -> bool {
+pub fn validate_socket_arg(ctx: &mut ValidationContext, expected: ArgKind) -> bool {
     let actual = &ctx.actual;
 
     let (compat_table, type_name) = match expected {
-        BpfArgType::PtrToSocket => (SOCKET_COMPAT, "PTR_TO_SOCKET"),
-        BpfArgType::PtrToSockCommon => (SOCK_COMMON_COMPAT, "PTR_TO_SOCK_COMMON"),
-        BpfArgType::PtrToBTFIdSockCommon => (BTF_SOCK_COMMON_COMPAT, "PTR_TO_BTF_ID_SOCK_COMMON"),
+        ArgKind::PtrToSocket => (SOCKET_COMPAT, "PTR_TO_SOCKET"),
+        ArgKind::PtrToSockCommon => (SOCK_COMMON_COMPAT, "PTR_TO_SOCK_COMMON"),
+        ArgKind::PtrToBTFIdSockCommon => (BTF_SOCK_COMMON_COMPAT, "PTR_TO_BTF_ID_SOCK_COMMON"),
         _ => {
             // Should not happen if called correctly
             return true;

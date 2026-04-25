@@ -3,6 +3,7 @@
 pub mod checks;
 pub mod compat;
 pub mod kfunc;
+pub mod side_effects;
 pub mod signatures;
 pub mod transfer;
 pub mod validators;

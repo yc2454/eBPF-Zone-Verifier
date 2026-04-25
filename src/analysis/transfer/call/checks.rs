@@ -17,7 +17,7 @@ use crate::common::constants;
 use log::{error, info, warn};
 
 use super::compat::is_nullable_arg_type;
-use super::signatures::{BpfArgType, get_helper_signature, get_mem_size_pairs};
+use super::signatures::{ArgKind, get_helper_proto, get_mem_size_pairs};
 use super::validators;
 
 // ============================================================================
@@ -116,7 +116,7 @@ pub(crate) fn validate_helper_args(
     types: &TypeState,
     pc: usize,
 ) {
-    let Some(sig) = get_helper_signature(helper) else {
+    let Some(sig) = get_helper_proto(helper) else {
         warn!(
             "[Verifier] Unknown helper {} at pc {}, skipping arg validation",
             helper, pc
@@ -125,7 +125,7 @@ pub(crate) fn validate_helper_args(
     };
 
     // Get map info if first arg is a map (needed for key/value size validation)
-    let map_info = if sig.args[0] == BpfArgType::ConstMapPtr {
+    let map_info = if sig.args[0] == ArgKind::ConstMapPtr {
         get_map_info(types.get(Reg::R1), env)
     } else {
         None
@@ -141,7 +141,7 @@ pub(crate) fn validate_helper_args(
             i + 1,
             arg_type
         );
-        if arg_type == BpfArgType::DontCare {
+        if arg_type == ArgKind::DontCare {
             break; // No more arguments
         }
 
@@ -167,7 +167,7 @@ pub(crate) fn validate_single_arg(
     helper: u32,
     pc: usize,
     reg: Reg,
-    expected: BpfArgType,
+    expected: ArgKind,
     actual: RegType,
     map_info: &Option<MapInfo>,
     arg_index: usize,
@@ -184,46 +184,46 @@ pub(crate) fn validate_single_arg(
 
     // Dispatch to category-specific validators
     match expected {
-        BpfArgType::DontCare => true,
+        ArgKind::DontCare => true,
 
         // ---- Map-related types ----
-        BpfArgType::ConstMapPtr => validators::validate_const_map_ptr(&mut ctx),
-        BpfArgType::PtrToMapKey => validators::validate_ptr_to_map_key(&mut ctx),
-        BpfArgType::PtrToMapValue => validators::validate_ptr_to_map_value(&mut ctx),
-        BpfArgType::PtrToUninitMapValue => {
+        ArgKind::ConstMapPtr => validators::validate_const_map_ptr(&mut ctx),
+        ArgKind::PtrToMapKey => validators::validate_ptr_to_map_key(&mut ctx),
+        ArgKind::PtrToMapValue => validators::validate_ptr_to_map_value(&mut ctx),
+        ArgKind::PtrToUninitMapValue => {
             validators::map::validate_ptr_to_uninit_map_value(&mut ctx)
         }
 
         // ---- Memory types ----
-        BpfArgType::PtrToMem => validators::validate_ptr_to_mem(&mut ctx),
-        BpfArgType::PtrToUninitMem => validators::validate_ptr_to_uninit_mem(&mut ctx),
-        BpfArgType::PtrToAllocMem => validators::validate_ptr_to_alloc_mem(&mut ctx),
+        ArgKind::PtrToMem => validators::validate_ptr_to_mem(&mut ctx),
+        ArgKind::PtrToUninitMem => validators::validate_ptr_to_uninit_mem(&mut ctx),
+        ArgKind::PtrToAllocMem => validators::validate_ptr_to_alloc_mem(&mut ctx),
 
         // ---- Socket types ----
-        BpfArgType::PtrToSocket
-        | BpfArgType::PtrToSockCommon
-        | BpfArgType::PtrToBTFIdSockCommon => validators::validate_socket_arg(&mut ctx, expected),
+        ArgKind::PtrToSocket
+        | ArgKind::PtrToSockCommon
+        | ArgKind::PtrToBTFIdSockCommon => validators::validate_socket_arg(&mut ctx, expected),
 
         // ---- Scalar/size types ----
-        BpfArgType::ConstSize => validators::validate_const_size(&mut ctx),
-        BpfArgType::ConstSizeOrZero | BpfArgType::ConstAllocSizeOrZero => {
+        ArgKind::ConstSize => validators::validate_const_size(&mut ctx),
+        ArgKind::ConstSizeOrZero | ArgKind::ConstAllocSizeOrZero => {
             validators::validate_const_size_or_zero(&mut ctx)
         }
 
         // ---- Simple pointer types (inline validation) ----
-        BpfArgType::PtrToCtx => validate_ptr_to_ctx(&mut ctx),
-        BpfArgType::PtrToBtfId => validate_ptr_to_btf_id(&mut ctx),
-        BpfArgType::PtrToStack => validate_ptr_to_stack(&mut ctx),
-        BpfArgType::PtrToLong => validate_ptr_to_long(&mut ctx),
+        ArgKind::PtrToCtx => validate_ptr_to_ctx(&mut ctx),
+        ArgKind::PtrToBtfId => validate_ptr_to_btf_id(&mut ctx),
+        ArgKind::PtrToStack => validate_ptr_to_stack(&mut ctx),
+        ArgKind::PtrToLong => validate_ptr_to_long(&mut ctx),
 
         // ---- Anything (just needs to be readable) ----
-        BpfArgType::Anything => true,
+        ArgKind::Anything => true,
 
         // Nullable variants are handled above
-        BpfArgType::PtrToCtxOrNull
-        | BpfArgType::PtrToMemOrNull
-        | BpfArgType::PtrToStackOrNull
-        | BpfArgType::PtrToMapValueOrNull => {
+        ArgKind::PtrToCtxOrNull
+        | ArgKind::PtrToMemOrNull
+        | ArgKind::PtrToStackOrNull
+        | ArgKind::PtrToMapValueOrNull => {
             // Should not reach here due to is_nullable_arg_type check
             true
         }
@@ -238,7 +238,7 @@ pub(crate) fn validate_single_arg_inner(
     helper: u32,
     pc: usize,
     reg: Reg,
-    expected: BpfArgType,
+    expected: ArgKind,
     actual: RegType,
     map_info: &Option<MapInfo>,
     arg_index: usize,
@@ -601,7 +601,7 @@ pub(crate) fn check_single_mem_size_pair(
     }
 
     // Validate pointer can accommodate the access
-    let sig = get_helper_signature(helper).unwrap();
+    let sig = get_helper_proto(helper).unwrap();
     let ptr_arg_type = sig.args.get(pair.ptr_reg.idx() - 2).unwrap();
     check_ptr_access_size(
         env,
@@ -632,7 +632,7 @@ pub(crate) fn check_ptr_access_size(
     state: &State,
     ptr_reg: Reg,
     ptr_type: RegType,
-    ptr_arg_type: BpfArgType,
+    ptr_arg_type: ArgKind,
     size: u32,
     pc: usize,
 ) -> bool {
@@ -655,7 +655,7 @@ pub(crate) fn check_ptr_access_size(
                     return false;
                 }
                 // Also check stack slots are initialized for reads
-                if !matches!(ptr_arg_type, BpfArgType::PtrToUninitMem) {
+                if !matches!(ptr_arg_type, ArgKind::PtrToUninitMem) {
                     check_stack_arg_readable(
                         env,
                         state,
@@ -679,7 +679,7 @@ pub(crate) fn check_ptr_access_size(
                         });
                         return false;
                     }
-                    if !matches!(ptr_arg_type, BpfArgType::PtrToUninitMem) {
+                    if !matches!(ptr_arg_type, ArgKind::PtrToUninitMem) {
                         for off_candidate in lo..=hi {
                             check_stack_arg_readable(
                                 env,

@@ -208,14 +208,14 @@ fn initialize_uninit_mem_args(
     in_types: &crate::analysis::machine::reg_types::TypeState,
     helper: u32,
 ) {
-    use super::signatures::{BpfArgType, get_helper_signature, get_mem_size_pairs};
+    use super::signatures::{ArgKind, get_helper_proto, get_mem_size_pairs};
     use crate::analysis::transfer::types::update_store_types;
     use crate::ast::MemSize;
 
-    if let Some(sig) = get_helper_signature(helper) {
+    if let Some(sig) = get_helper_proto(helper) {
         for pair in get_mem_size_pairs(helper) {
             if let Some(ptr_arg_type) = sig.args.get(pair.ptr_reg.idx().saturating_sub(2))
-                && matches!(ptr_arg_type, BpfArgType::PtrToUninitMem)
+                && matches!(ptr_arg_type, ArgKind::PtrToUninitMem)
             {
                 if let RegType::PtrToStack { frame_level } = in_types.get(pair.ptr_reg) {
                     if let Some(off) = state.domain.get_distance_fixed(pair.ptr_reg, Reg::R10) {
