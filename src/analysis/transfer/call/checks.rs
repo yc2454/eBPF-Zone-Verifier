@@ -215,6 +215,7 @@ pub(crate) fn validate_single_arg(
         ArgKind::PtrToBtfId => validate_ptr_to_btf_id(&mut ctx),
         ArgKind::PtrToStack => validate_ptr_to_stack(&mut ctx),
         ArgKind::PtrToLong => validate_ptr_to_long(&mut ctx),
+        ArgKind::PtrToCallback => validate_ptr_to_callback(&mut ctx),
 
         // ---- Anything (just needs to be readable) ----
         ArgKind::Anything => true,
@@ -297,6 +298,24 @@ fn validate_ptr_to_stack(ctx: &mut ValidationContext) -> bool {
             },
             &format!(
                 "[Verifier] pc {}: R{} expected PTR_TO_STACK, got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                ctx.actual
+            ),
+        );
+    }
+    true
+}
+
+fn validate_ptr_to_callback(ctx: &mut ValidationContext) -> bool {
+    if !matches!(ctx.actual, RegType::PtrToCallback { .. }) {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} expected PTR_TO_CALLBACK, got {:?}",
                 ctx.pc,
                 ctx.arg_index + 1,
                 ctx.actual

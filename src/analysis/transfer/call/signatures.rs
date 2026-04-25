@@ -66,6 +66,11 @@ pub enum ArgKind {
 
     // ---- Fixed-size pointer ----
     PtrToLong,
+
+    // ---- Callback (W4.1c) ----
+    /// Subprog pointer (`RegType::PtrToCallback`). Used by callback-
+    /// taking kfuncs like `bpf_set_exception_callback`.
+    PtrToCallback,
 }
 
 // ============================================================================
@@ -157,6 +162,10 @@ pub enum SideEffect {
     /// Drop & invalidate the ref carried on the given arg index (0..=4
     /// → R1..R5). Drives `bpf_sk_release` and ref-release kfuncs.
     ReleaseRefFromArg { arg: u8 },
+    /// Read a `PtrToCallback { subprog_pc }` from the given arg and
+    /// register that subprog as the program-default exception handler.
+    /// Drives `bpf_set_exception_callback`.
+    SetExceptionCallbackFromArg { arg: u8 },
 }
 
 // ============================================================================
@@ -627,6 +636,35 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             Anything, // R4: to
             Anything, // R5: flags
         ]),
+
+        _ => return None,
+    })
+}
+
+// ============================================================================
+// Kfunc Prototypes (W4.1c)
+// ============================================================================
+//
+// Today this is a name-keyed override table — a small set of kfuncs whose
+// arg shape and side effects can't (yet) be derived purely from BTF +
+// KF_* flags. W4.2 (dynptr) and W4.3 (open-coded iterators) will populate
+// it heavily; eventually most kfuncs should fall through to a generic
+// BTF-driven producer that reads the func-proto BTF + KF flags directly.
+
+/// Kfunc prototypes indexed by kfunc name. Returns `None` for kfuncs not
+/// yet on the proto path — the caller falls back to the legacy bespoke
+/// dispatch in `kfunc.rs`.
+pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
+    Some(match name {
+        "bpf_set_exception_callback" => CallProto::with_args([
+            PtrToCallback, // R1: subprog ptr (PSEUDO_FUNC)
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::SetExceptionCallbackFromArg { arg: 0 }]),
 
         _ => return None,
     })

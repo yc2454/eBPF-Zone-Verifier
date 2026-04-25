@@ -23,12 +23,32 @@ use crate::common::constants::MAX_ERRNO;
 use crate::common::mem_region_model::bpf_iter_size;
 use crate::domains::tnum::Tnum;
 
+use super::side_effects::apply_call_proto_r0;
+use super::signatures::get_kfunc_proto;
+
 /// Top-level kfunc dispatch. Looks up the kfunc name in BTF and routes
-/// to the matching transfer. Unknown kfuncs fail loudly.
+/// it. Resolution order (W4.1c):
+///
+///   1. `get_kfunc_proto(name)` — proto-driven path. If a proto is
+///      registered, run the generic checker + shared post-call applier
+///      from `side_effects.rs`. This is the target architecture; W4.2/
+///      W4.3 will move iter/dynptr kfuncs onto it.
+///   2. Bespoke handlers (legacy) — iterators, `bpf_throw`. These have
+///      special control-flow / slot-state semantics that don't yet fit
+///      the flat `RetKind`/`SideEffect` model.
+///   3. Unknown kfunc → REJECT.
 pub(crate) fn transfer_kfunc(env: &mut VerifierEnv, state: State, btf_id: u32) -> Vec<State> {
     let pc = state.pc;
     let name = env.ctx.btf.kfunc_name(btf_id).map(|s| s.to_string());
 
+    // (1) Proto-driven path
+    if let Some(n) = name.as_deref()
+        && let Some(proto) = get_kfunc_proto(n)
+    {
+        return transfer_kfunc_proto(env, state, &proto);
+    }
+
+    // (2) Bespoke handlers
     match name.as_deref() {
         Some("bpf_iter_num_new") => iter_new(env, state, IterKind::Num),
         Some("bpf_iter_task_new") => iter_new(env, state, IterKind::Task),
@@ -45,15 +65,10 @@ pub(crate) fn transfer_kfunc(env: &mut VerifierEnv, state: State, btf_id: u32) -
         Some("bpf_iter_css_destroy") => iter_destroy(env, state, IterKind::Css),
         Some("bpf_iter_bits_destroy") => iter_destroy(env, state, IterKind::Bits),
 
-        // W3.3b: exception-frame kfuncs. `bpf_throw` is terminal on this
-        // path (unwinds out of the program / into the handler); we don't
-        // attempt to re-enter at the handler PC here because that requires
-        // PSEUDO_FUNC callback-frame plumbing from W3.4. The plumbed
-        // program_exception_cb slot (W3.3a) is still useful for future
-        // work — `set_exception_callback` writes to it once W3.4 can
-        // resolve the handler target.
+        // W3.3b: `bpf_throw` is terminal on this path. Stays bespoke
+        // because the proto applier currently produces a single
+        // continuing successor, not an empty drop.
         Some("bpf_throw") => throw(env, state),
-        Some("bpf_set_exception_callback") => set_exception_callback(env, state),
 
         _ => {
             env.fail(VerificationError::UnsupportedModernFeature {
@@ -63,6 +78,62 @@ pub(crate) fn transfer_kfunc(env: &mut VerifierEnv, state: State, btf_id: u32) -
             vec![]
         }
     }
+}
+
+/// Generic kfunc transfer driven by `CallProto`. Mirrors the helper
+/// post-call sequence in `transfer_call`: validate args → apply side
+/// effects + R0 → clobber caller-saved → advance pc.
+fn transfer_kfunc_proto(
+    env: &mut VerifierEnv,
+    mut state: State,
+    proto: &super::signatures::CallProto,
+) -> Vec<State> {
+    let pc = state.pc;
+    let in_types = state.types.clone();
+
+    // Arg validation. Reuses the helper checker by passing helper=0
+    // (the validators only read `helper` for helper-specific quirks
+    // none of the ArgKind variants used by kfuncs touch).
+    let arg_regs = [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
+    for (i, (&arg_kind, &reg)) in proto.args.iter().zip(arg_regs.iter()).enumerate() {
+        if matches!(arg_kind, super::signatures::ArgKind::DontCare) {
+            break;
+        }
+        let actual = in_types.get(reg);
+        if !super::checks::validate_single_arg(
+            env,
+            &state,
+            &in_types,
+            /* helper */ 0,
+            pc,
+            reg,
+            arg_kind,
+            actual,
+            &None,
+            i,
+        ) {
+            return vec![];
+        }
+    }
+
+    // Apply side effects + R0 typing. For kfunc protos `RetKind` is
+    // always concrete (never `Unknown`), so the applier always returns
+    // true here.
+    apply_call_proto_r0(&in_types, &mut state, proto);
+
+    // Clobber caller-saved like any call.
+    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+        state.types.set(r, RegType::NotInit);
+        state.domain.forget(r);
+        state.set_tnum(r, Tnum::unknown());
+        state.clear_scalar_id(r);
+    }
+    state.domain.forget(Reg::R0);
+    state.set_tnum(Reg::R0, Tnum::unknown());
+    state.clear_scalar_id(Reg::R0);
+
+    state.pc += 1;
+    vec![state]
 }
 
 /// Resolve R1 to `(frame_level, base_offset)` for a PtrToStack argument.
@@ -264,29 +335,5 @@ fn throw(_env: &mut VerifierEnv, _state: State) -> Vec<State> {
     vec![]
 }
 
-/// `bpf_set_exception_callback(fn)`: registers the program-default
-/// exception handler. R1 must be a PSEUDO_FUNC subprog pointer
-/// (`RegType::PtrToCallback`), resolved at LD_IMM64 time in W3.4a; we
-/// pull the target PC off that type and stash it on the state's
-/// program-default handler slot. A non-callback R1 is a REJECT — the
-/// kernel enforces the same type constraint on this kfunc.
-///
-/// Caller-saved regs are clobbered like any kfunc; R0 is a scalar return
-/// (0 on success in the kernel).
-fn set_exception_callback(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
-    let pc = state.pc;
-    let RegType::PtrToCallback { subprog_pc } = state.types.get(Reg::R1) else {
-        env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
-        return vec![];
-    };
-    state.set_program_exception_cb(subprog_pc as usize);
-
-    state.types.set(Reg::R0, RegType::ScalarValue);
-    state.domain.forget(Reg::R0);
-    state.set_tnum(Reg::R0, Tnum::unknown());
-    state.clear_scalar_id(Reg::R0);
-
-    clobber_caller_saved(&mut state);
-    state.pc += 1;
-    vec![state]
-}
+// `bpf_set_exception_callback` migrated to the proto path in W4.1c —
+// see `signatures::get_kfunc_proto` and `side_effects::SetExceptionCallbackFromArg`.

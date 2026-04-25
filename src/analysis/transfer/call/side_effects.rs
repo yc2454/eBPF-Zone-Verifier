@@ -41,6 +41,14 @@ pub(crate) fn apply_call_proto_r0(
                     state.invalidate_ref(ref_id);
                 }
             }
+            SideEffect::SetExceptionCallbackFromArg { arg } => {
+                let reg = arg_reg(arg);
+                // Caller already validated R1 as PtrToCallback via
+                // ArgKind::PtrToCallback; pull the subprog target out.
+                if let RegType::PtrToCallback { subprog_pc } = in_types.get(reg) {
+                    state.set_program_exception_cb(subprog_pc as usize);
+                }
+            }
         }
     }
 
