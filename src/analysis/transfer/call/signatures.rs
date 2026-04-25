@@ -215,6 +215,12 @@ pub struct CallProto {
     pub flags: CallFlags,
     /// Post-call state mutations to apply in order.
     pub side_effects: &'static [SideEffect],
+    /// Pointer-size pairs to validate before the call: each pair links a
+    /// pointer arg with the size arg that bounds its access. Drives the
+    /// `check_mem_size_pairs` pass and the `validate_ptr_to_mem` skip
+    /// for paired pointers (W4.2d: was helper-id-keyed; now lives on
+    /// the proto so kfuncs reuse the same machinery).
+    pub mem_size_pairs: &'static [MemSizePair],
 }
 
 impl CallProto {
@@ -226,6 +232,7 @@ impl CallProto {
             ret: RetKind::Unknown,
             flags: CallFlags::empty(),
             side_effects: &[],
+            mem_size_pairs: &[],
         }
     }
 
@@ -244,6 +251,12 @@ impl CallProto {
     /// Builder: set post-call side effects.
     const fn side_effects(mut self, side_effects: &'static [SideEffect]) -> Self {
         self.side_effects = side_effects;
+        self
+    }
+
+    /// Builder: set pointer-size pair list.
+    const fn mem_size_pairs(mut self, pairs: &'static [MemSizePair]) -> Self {
+        self.mem_size_pairs = pairs;
         self
     }
 }
@@ -330,7 +343,8 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             ConstSizeOrZero,
             Anything,
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::GET_STACK),
 
         // ---- Tail call ----
         constants::BPF_TAIL_CALL => CallProto::with_args([
@@ -358,7 +372,8 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             PtrToMemOrNull,  // R3: to
             ConstSizeOrZero, // R4: to_size
             Anything,        // R5: seed
-        ]),
+        ])
+        .mem_size_pairs(&pairs::CSUM_DIFF),
 
         constants::BPF_SKB_ECN_SET_CE => CallProto::with_args([
             PtrToCtxOrNull, // R1: skb (can be NULL)
@@ -380,7 +395,8 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             PtrToUninitMem, // R3: to (destination buffer)
             ConstSize,      // R4: len
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::SKB_LOAD_BYTES),
 
         constants::BPF_SKB_VLAN_PUSH => CallProto::with_args([
             PtrToCtx, // R1: skb
@@ -395,7 +411,8 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             ConstSize,      // R3: size
             Anything,       // R4: flags
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::SKB_GET_TUNNEL_KEY),
 
         constants::BPF_SKB_SET_TUNNEL_KEY => CallProto::with_args([
             PtrToCtx,  // R1: skb
@@ -403,7 +420,8 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             ConstSize, // R3: size
             Anything,  // R4: flags
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::SKB_SET_TUNNEL_KEY),
 
         constants::BPF_SKB_VLAN_POP => CallProto::with_args([
             PtrToCtx, // R1: skb
@@ -416,7 +434,8 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             PtrToMem,  // R3: from (source buffer)
             ConstSize, // R4: len
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::SKB_STORE_BYTES),
 
         // ---- Redirect ----
         constants::BPF_REDIRECT => CallProto::with_args([
@@ -450,7 +469,8 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             DontCare, DontCare,
         ])
         .ret(RetKind::PtrToSockCommon)
-        .flags(CallFlags::ACQUIRE.union(CallFlags::RET_NULL)),
+        .flags(CallFlags::ACQUIRE.union(CallFlags::RET_NULL))
+        .mem_size_pairs(&pairs::SK_LOOKUP_TCP),
 
         constants::BPF_SK_LOOKUP_TCP => CallProto::with_args([
             PtrToCtx,  // R1: ctx
@@ -460,7 +480,8 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             Anything,  // R5: flags
         ])
         .ret(RetKind::PtrToSocket)
-        .flags(CallFlags::ACQUIRE.union(CallFlags::RET_NULL)),
+        .flags(CallFlags::ACQUIRE.union(CallFlags::RET_NULL))
+        .mem_size_pairs(&pairs::SK_LOOKUP_TCP),
 
         constants::BPF_SK_LOOKUP_UDP => CallProto::with_args([
             PtrToCtx,  // R1: ctx
@@ -470,7 +491,8 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             Anything,  // R5: flags
         ])
         .ret(RetKind::PtrToSocket)
-        .flags(CallFlags::ACQUIRE.union(CallFlags::RET_NULL)),
+        .flags(CallFlags::ACQUIRE.union(CallFlags::RET_NULL))
+        .mem_size_pairs(&pairs::SK_LOOKUP_UDP),
 
         constants::BPF_SK_RELEASE => CallProto::with_args([
             PtrToSocket, // R1: socket
@@ -514,6 +536,7 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
 
         constants::BPF_GET_SOCKOPT => {
             CallProto::with_args([PtrToCtx, Anything, Anything, PtrToUninitMem, ConstSize])
+                .mem_size_pairs(&pairs::GET_SOCKOPT)
         }
 
         // ---- FIB lookup ----
@@ -533,7 +556,8 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             Anything,        // R3: unsafe_ptr (user address)
             DontCare,
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::PROBE_READ),
 
         constants::BPF_PROBE_READ_KERNEL => CallProto::with_args([
             PtrToUninitMem,  // R1: dst (output buffer)
@@ -541,7 +565,8 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             Anything,        // R3: unsafe_ptr (kernel address, not validated)
             DontCare,
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::PROBE_READ),
 
         constants::BPF_PERF_EVENT_READ_VALUE => CallProto::with_args([
             ConstMapPtr,     // R1: map
@@ -549,7 +574,8 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             PtrToUninitMem,  // R3: buf
             ConstSizeOrZero, // R4: buf_size
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::PERF_EVENT_READ_VALUE),
 
         constants::BPF_PERF_PROG_READ_VALUE => CallProto::with_args([
             PtrToCtx,        // R1: ctx
@@ -557,7 +583,8 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             ConstSizeOrZero, // R3: buf_size
             DontCare,        // R4: flags (not verified here)
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::PERF_PROG_READ_VALUE),
 
         // ---- Spin lock related ----
         constants::BPF_SPIN_LOCK => {
@@ -601,7 +628,8 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             ConstSizeOrZero,
             Anything,
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::GET_TASK_STACK),
 
         // ---- Sockmap operations ----
         constants::BPF_SOCK_MAP_UPDATE => CallProto::with_args([
@@ -639,7 +667,8 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             DontCare,
             DontCare,
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::GET_CURRENT_COMM),
 
         constants::BPF_PERF_EVENT_OUTPUT => CallProto::with_args([
             PtrToCtx,    // R1: ctx
@@ -647,7 +676,8 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             Anything,    // R3: flags
             PtrToMem,    // R4: data
             ConstSize,   // R5: size
-        ]),
+        ])
+        .mem_size_pairs(&pairs::PERF_EVENT_OUTPUT),
 
         constants::BPF_L3_CSUM_REPLACE => CallProto::with_args([
             PtrToCtx, // R1: skb
@@ -743,86 +773,34 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
     })
 }
 
-/// Returns all pointer-size pairs for a given helper.
-/// Returns empty slice if helper has no such pairs (e.g., map ops use fixed sizes).
-pub fn get_mem_size_pairs(helper: u32) -> &'static [MemSizePair] {
-    use Reg::*;
-
-    // Define static arrays for each helper pattern
-    static PROBE_READ: [MemSizePair; 1] = [MemSizePair::new_nullable(R1, R2)];
-
-    static SKB_LOAD_BYTES: [MemSizePair; 1] = [MemSizePair::new(R3, R4)];
-
-    static SKB_STORE_BYTES: [MemSizePair; 1] = [MemSizePair::new(R3, R4)];
-
-    static SKB_GET_TUNNEL_KEY: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
-
-    static SKB_SET_TUNNEL_KEY: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
-
-    static CSUM_DIFF: [MemSizePair; 2] = [
-        MemSizePair::new_nullable(R1, R2),
-        MemSizePair::new_nullable(R3, R4),
+// Static mem-size-pair arrays referenced inline by helper / kfunc protos
+// (W4.2d: was helper-id-keyed via the now-deleted `get_mem_size_pairs`;
+// pairs now ride on `CallProto::mem_size_pairs` so the same machinery
+// serves both helpers and kfuncs).
+//
+// BPF_RINGBUF_OUTPUT is intentionally absent — the kernel allows
+// reading uninitialized stack data in privileged mode; restoring this
+// pair needs privileged/unprivileged-mode support.
+pub(super) mod pairs {
+    use super::{MemSizePair, Reg};
+    pub static PROBE_READ: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R1, Reg::R2)];
+    pub static SKB_LOAD_BYTES: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+    pub static SKB_STORE_BYTES: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+    pub static SKB_GET_TUNNEL_KEY: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    pub static SKB_SET_TUNNEL_KEY: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    pub static CSUM_DIFF: [MemSizePair; 2] = [
+        MemSizePair::new_nullable(Reg::R1, Reg::R2),
+        MemSizePair::new_nullable(Reg::R3, Reg::R4),
     ];
-
-    static SK_LOOKUP_TCP: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
-
-    static SK_LOOKUP_UDP: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
-
-    static GET_SOCKOPT: [MemSizePair; 1] = [MemSizePair::new(R4, R5)];
-
-    static GET_TASK_STACK: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
-
-    static GET_STACK: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
-
-    static PERF_EVENT_OUTPUT: [MemSizePair; 1] = [MemSizePair::new(R4, R5)];
-
-    static GET_CURRENT_COMM: [MemSizePair; 1] = [MemSizePair::new(R1, R2)];
-
-    static PERF_EVENT_READ_VALUE: [MemSizePair; 1] = [MemSizePair::new(R3, R4)];
-
-    static PERF_PROG_READ_VALUE: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
-
-    static EMPTY: [MemSizePair; 0] = [];
-
-    match helper {
-        constants::BPF_PROBE_READ
-        | constants::BPF_PROBE_READ_STR
-        | constants::BPF_PROBE_READ_USER
-        | constants::BPF_PROBE_READ_KERNEL => &PROBE_READ,
-
-        constants::BPF_SKB_LOAD_BYTES => &SKB_LOAD_BYTES,
-
-        constants::BPF_SKB_STORE_BYTES => &SKB_STORE_BYTES,
-
-        constants::BPF_SKB_GET_TUNNEL_KEY => &SKB_GET_TUNNEL_KEY,
-
-        constants::BPF_SKB_SET_TUNNEL_KEY => &SKB_SET_TUNNEL_KEY,
-
-        constants::BPF_CSUM_DIFF => &CSUM_DIFF,
-
-        constants::BPF_SK_LOOKUP_TCP => &SK_LOOKUP_TCP,
-
-        constants::BPF_SK_LOOKUP_UDP => &SK_LOOKUP_UDP,
-
-        constants::BPF_GET_SOCKOPT => &GET_SOCKOPT,
-
-        constants::BPF_GET_TASK_STACK => &GET_TASK_STACK,
-
-        constants::BPF_GET_STACK => &GET_STACK,
-
-        constants::BPF_PERF_EVENT_OUTPUT => &PERF_EVENT_OUTPUT,
-
-        constants::BPF_PERF_EVENT_READ_VALUE => &PERF_EVENT_READ_VALUE,
-
-        constants::BPF_PERF_PROG_READ_VALUE => &PERF_PROG_READ_VALUE,
-
-        constants::BPF_GET_CURRENT_COMM => &GET_CURRENT_COMM,
-
-        // Note: BPF_RINGBUF_OUTPUT mem-size pair check is skipped because
-        // the kernel allows reading uninitialized stack data in privileged mode.
-        // TODO: Add privileged/unprivileged mode support to enable this check.
-        _ => &EMPTY,
-    }
+    pub static SK_LOOKUP_TCP: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    pub static SK_LOOKUP_UDP: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    pub static GET_SOCKOPT: [MemSizePair; 1] = [MemSizePair::new(Reg::R4, Reg::R5)];
+    pub static GET_TASK_STACK: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    pub static GET_STACK: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    pub static PERF_EVENT_OUTPUT: [MemSizePair; 1] = [MemSizePair::new(Reg::R4, Reg::R5)];
+    pub static GET_CURRENT_COMM: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
+    pub static PERF_EVENT_READ_VALUE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+    pub static PERF_PROG_READ_VALUE: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
 }
 
 /// Returns true if the helper rejects packet pointers for the given argument index.

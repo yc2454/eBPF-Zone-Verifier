@@ -91,6 +91,12 @@ fn transfer_kfunc_proto(
     let pc = state.pc;
     let in_types = state.types.clone();
 
+    // Validate pointer-size pairs (W4.2d: same machinery as helpers,
+    // now that pairs ride on the proto).
+    if !super::checks::check_mem_size_pairs(env, &state, proto, pc) {
+        return vec![];
+    }
+
     // Arg validation. Reuses the helper checker by passing helper=0
     // (the validators only read `helper` for helper-specific quirks
     // none of the ArgKind variants used by kfuncs touch).
@@ -111,6 +117,7 @@ fn transfer_kfunc_proto(
             actual,
             &None,
             i,
+            proto.mem_size_pairs,
         ) {
             return vec![];
         }

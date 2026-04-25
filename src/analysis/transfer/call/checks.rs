@@ -17,7 +17,7 @@ use crate::common::constants;
 use log::{error, info, warn};
 
 use super::compat::is_nullable_arg_type;
-use super::signatures::{ArgKind, get_helper_proto, get_mem_size_pairs};
+use super::signatures::{ArgKind, CallProto, MemSizePair, get_helper_proto};
 use super::validators;
 
 // ============================================================================
@@ -67,6 +67,11 @@ pub(crate) struct ValidationContext<'a, 'b> {
     pub arg_index: usize,
     pub map_info: &'a Option<MapInfo>,
     pub actual: RegType,
+    /// Pointer-size pairs for the call being validated (W4.2d). Lifted
+    /// off the proto at call entry so validators can short-circuit
+    /// readability checks for pointers covered by an explicit pair
+    /// without re-querying by helper id.
+    pub mem_size_pairs: &'static [MemSizePair],
 }
 
 impl<'a, 'b> ValidationContext<'a, 'b> {
@@ -81,6 +86,7 @@ impl<'a, 'b> ValidationContext<'a, 'b> {
         arg_index: usize,
         map_info: &'a Option<MapInfo>,
         actual: RegType,
+        mem_size_pairs: &'static [MemSizePair],
     ) -> Self {
         Self {
             env,
@@ -92,6 +98,7 @@ impl<'a, 'b> ValidationContext<'a, 'b> {
             arg_index,
             map_info,
             actual,
+            mem_size_pairs,
         }
     }
 
@@ -148,7 +155,17 @@ pub(crate) fn validate_helper_args(
         let reg_type = types.get(reg);
 
         if !validate_single_arg(
-            env, state, types, helper, pc, reg, arg_type, reg_type, &map_info, i,
+            env,
+            state,
+            types,
+            helper,
+            pc,
+            reg,
+            arg_type,
+            reg_type,
+            &map_info,
+            i,
+            sig.mem_size_pairs,
         ) {
             // Validation failed, error already reported
             return;
@@ -171,10 +188,20 @@ pub(crate) fn validate_single_arg(
     actual: RegType,
     map_info: &Option<MapInfo>,
     arg_index: usize,
+    mem_size_pairs: &'static [MemSizePair],
 ) -> bool {
     // Create validation context
     let mut ctx = ValidationContext::new(
-        env, state, types, helper, pc, reg, arg_index, map_info, actual,
+        env,
+        state,
+        types,
+        helper,
+        pc,
+        reg,
+        arg_index,
+        map_info,
+        actual,
+        mem_size_pairs,
     );
 
     // Handle nullable types first (unified pattern)
@@ -248,9 +275,20 @@ pub(crate) fn validate_single_arg_inner(
     actual: RegType,
     map_info: &Option<MapInfo>,
     arg_index: usize,
+    mem_size_pairs: &'static [MemSizePair],
 ) -> bool {
     validate_single_arg(
-        env, state, types, helper, pc, reg, expected, actual, map_info, arg_index,
+        env,
+        state,
+        types,
+        helper,
+        pc,
+        reg,
+        expected,
+        actual,
+        map_info,
+        arg_index,
+        mem_size_pairs,
     )
 }
 
@@ -648,29 +686,26 @@ pub(crate) fn validate_writable_mem(
 // Pointer-Size Pair Validation
 // ============================================================================
 
-/// Validates all pointer-size pairs for a helper call.
+/// Validates all pointer-size pairs declared on a call proto.
 /// Returns true if all pairs are valid, false otherwise (error reported).
 pub(crate) fn check_mem_size_pairs(
     env: &mut VerifierEnv,
     state: &State,
-    helper: u32,
+    proto: &CallProto,
     pc: usize,
 ) -> bool {
-    let pairs = get_mem_size_pairs(helper);
-
-    for pair in pairs {
-        if !check_single_mem_size_pair(env, helper, state, pair, pc) {
+    for pair in proto.mem_size_pairs {
+        if !check_single_mem_size_pair(env, proto, state, pair, pc) {
             return false;
         }
     }
-
     true
 }
 
 /// Validates a single pointer-size pair.
 pub(crate) fn check_single_mem_size_pair(
     env: &mut VerifierEnv,
-    helper: u32,
+    proto: &CallProto,
     state: &State,
     pair: &super::signatures::MemSizePair,
     pc: usize,
@@ -747,8 +782,7 @@ pub(crate) fn check_single_mem_size_pair(
     }
 
     // Validate pointer can accommodate the access
-    let sig = get_helper_proto(helper).unwrap();
-    let ptr_arg_type = sig.args.get(pair.ptr_reg.idx() - 2).unwrap();
+    let ptr_arg_type = proto.args.get(pair.ptr_reg.idx() - 2).unwrap();
     check_ptr_access_size(
         env,
         state,
@@ -760,16 +794,8 @@ pub(crate) fn check_single_mem_size_pair(
     )
 }
 
-pub(crate) fn checked_by_mem_size_pairs(helper: u32, reg: Reg) -> bool {
-    let pairs = get_mem_size_pairs(helper);
-
-    for pair in pairs {
-        if pair.ptr_reg == reg {
-            return true;
-        }
-    }
-
-    false
+pub(crate) fn checked_by_mem_size_pairs(pairs: &[MemSizePair], reg: Reg) -> bool {
+    pairs.iter().any(|pair| pair.ptr_reg == reg)
 }
 
 /// Checks that a pointer can safely access `size` bytes.

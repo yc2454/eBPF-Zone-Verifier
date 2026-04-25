@@ -42,6 +42,7 @@ pub fn validate_nullable(ctx: &mut ValidationContext, expected: ArgKind) -> bool
                 actual,
                 ctx.map_info,
                 ctx.arg_index,
+                ctx.mem_size_pairs,
             )
         }
     }

@@ -17,7 +17,7 @@ use crate::parsing::btf::SpecialFieldKind;
 use log::{debug, error, trace};
 
 use super::checks::{check_mem_size_pairs, is_valid_helper_id, validate_helper_args};
-use super::signatures::get_mem_size_pairs;
+use super::signatures::get_helper_proto;
 
 /// Transfer function for helper Call instructions.
 pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32) -> Vec<State> {
@@ -44,7 +44,9 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     // Validate pointer-size pairs
     // ========================================================================
     debug!("[Verifier] pc {}: checking mem size pairs", pc);
-    if !check_mem_size_pairs(env, &state, helper, pc) {
+    if let Some(p) = get_helper_proto(helper)
+        && !check_mem_size_pairs(env, &state, &p, pc)
+    {
         return vec![];
     }
 
@@ -208,12 +210,12 @@ fn initialize_uninit_mem_args(
     in_types: &crate::analysis::machine::reg_types::TypeState,
     helper: u32,
 ) {
-    use super::signatures::{ArgKind, get_helper_proto, get_mem_size_pairs};
+    use super::signatures::ArgKind;
     use crate::analysis::transfer::types::update_store_types;
     use crate::ast::MemSize;
 
     if let Some(sig) = get_helper_proto(helper) {
-        for pair in get_mem_size_pairs(helper) {
+        for pair in sig.mem_size_pairs {
             if let Some(ptr_arg_type) = sig.args.get(pair.ptr_reg.idx().saturating_sub(2))
                 && matches!(ptr_arg_type, ArgKind::PtrToUninitMem)
             {
@@ -295,14 +297,14 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
             state.set_tnum(Reg::R0, Tnum::u32_unknown());
         }
         constants::BPF_GET_TASK_STACK => {
-            let mem_size_pairs = get_mem_size_pairs(helper);
-            let size_reg = mem_size_pairs[0].size_reg;
+            let pairs = get_helper_proto(helper).map(|p| p.mem_size_pairs).unwrap_or(&[]);
+            let size_reg = pairs[0].size_reg;
             let (_, hi) = state.domain.get_interval(size_reg);
             state.domain.assume_le_imm(Reg::R0, hi);
         }
         constants::BPF_GET_STACK => {
-            let mem_size_pairs = get_mem_size_pairs(helper);
-            let size_reg = mem_size_pairs[0].size_reg;
+            let pairs = get_helper_proto(helper).map(|p| p.mem_size_pairs).unwrap_or(&[]);
+            let size_reg = pairs[0].size_reg;
             let (_, hi) = state.domain.get_interval(size_reg);
             state.domain.assume_le_imm(Reg::R0, hi);
             state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);

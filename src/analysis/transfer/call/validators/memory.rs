@@ -16,7 +16,7 @@ pub fn validate_ptr_to_mem(ctx: &mut ValidationContext) -> bool {
     let actual = ctx.actual;
 
     // If this pointer is checked by a mem-size pair, defer to that check
-    if checked_by_mem_size_pairs(ctx.helper, ctx.reg) {
+    if checked_by_mem_size_pairs(ctx.mem_size_pairs, ctx.reg) {
         return true;
     }
 
