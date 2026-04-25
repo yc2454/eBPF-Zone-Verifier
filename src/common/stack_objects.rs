@@ -9,7 +9,7 @@
 //
 // Members so far:
 //   - Open-coded iterators (Phase 3 W3.2): bpf_iter_num/_task/_css/_bits
-//   - (Phase 4 W4.2 will add bpf_dynptr here.)
+//   - Dynamic pointers (Phase 4 W4.2): bpf_dynptr
 //
 // Distinct from `mem_region_model`, which describes pointer-reachable kernel
 // structs whose individual fields the program is allowed to read.
@@ -37,3 +37,14 @@ pub fn bpf_iter_size(kind: IterKind) -> usize {
         IterKind::Bits => BPF_ITER_BITS_SIZE,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Dynamic pointers (W4.2)
+// ---------------------------------------------------------------------------
+//
+// A dynptr occupies a fixed 16 bytes on the stack regardless of which
+// `DynptrKind` it carries (matching the kernel's two-slot `STACK_DYNPTR`
+// invariant). Programs treat the body as opaque — all access goes through
+// `bpf_dynptr_*` kfuncs.
+
+pub const BPF_DYNPTR_SIZE: usize = 16;

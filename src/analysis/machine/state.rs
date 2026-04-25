@@ -429,6 +429,7 @@ impl State {
             },
             precise: is_aligned && size == MemSize::U64 && self.precise_regs.contains(&reg),
             iterator: None,
+            dynptr: None,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -452,6 +453,7 @@ impl State {
                         scalar_id: None,
                         precise: false,
                         iterator: None,
+                        dynptr: None,
                     },
                 );
             }
@@ -497,6 +499,7 @@ impl State {
             scalar_id: None,
             precise: false,
             iterator: None,
+            dynptr: None,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -520,6 +523,7 @@ impl State {
                         scalar_id: None,
                         precise: false,
                         iterator: None,
+                        dynptr: None,
                     },
                 );
             }

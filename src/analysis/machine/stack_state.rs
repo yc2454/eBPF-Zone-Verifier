@@ -41,6 +41,42 @@ pub struct IteratorSlot {
     pub id: u32,
 }
 
+/// Dynptr families (Phase 4 W4.2).
+///
+/// Mirrors the kernel's `enum bpf_dynptr_type`. The kind is fixed at
+/// construction by the producer kfunc and constrains which consumer
+/// kfuncs the slot can flow into (e.g. `bpf_dynptr_data` rejects
+/// non-`Local`/`Ringbuf` kinds).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DynptrKind {
+    /// `bpf_dynptr_from_mem` over a stack/map buffer.
+    Local,
+    /// `bpf_ringbuf_reserve_dynptr` — acquire/release tracked.
+    Ringbuf,
+    /// `bpf_dynptr_from_skb` — read-only into skb data.
+    Skb,
+    /// `bpf_dynptr_from_xdp` — into xdp frame data.
+    Xdp,
+}
+
+/// Per-slot dynptr annotation (W4.2). A dynptr occupies two adjacent
+/// 8-byte stack slots; both carry an annotation so the verifier can
+/// reject reads/writes that touch only one of the pair.
+///
+/// `ref_id` is non-zero only for kinds with acquire/release semantics
+/// (`Ringbuf`); `Local`/`Skb`/`Xdp` dynptrs have no release kfunc and
+/// carry `ref_id == 0`.
+///
+/// `first_slot` distinguishes the base byte (slot 0 of the pair) from
+/// the trailing slot — only the base may be passed to dynptr kfuncs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DynptrSlot {
+    pub kind: DynptrKind,
+    pub ref_id: u32,
+    pub rdonly: bool,
+    pub first_slot: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScalarBounds {
     pub min: i64,
@@ -83,6 +119,11 @@ pub struct SpilledReg {
     /// struct stay as ordinary spill sentinels. Private — all access
     /// outside this module goes through `stack_{get,set,clear}_iterator`.
     pub(crate) iterator: Option<IteratorSlot>,
+    /// Dynptr annotation (W4.2). Set on both 8-byte slots of the dynptr
+    /// pair at construction; cleared on release / overwrite. Private —
+    /// all access outside this module goes through
+    /// `stack_{get,set,clear}_dynptr`.
+    pub(crate) dynptr: Option<DynptrSlot>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -157,6 +198,7 @@ impl StackState {
                     scalar_id: None,
                     precise: false,
                     iterator: None,
+                    dynptr: None,
                 },
             );
         }
@@ -190,6 +232,7 @@ impl StackState {
                 scalar_id: None,
                 precise: false,
                 iterator: None,
+                dynptr: None,
             },
         );
     }
@@ -235,6 +278,40 @@ impl StackState {
             // is represented by the absence of the annotation.
             s.iterator.is_some()
         })
+    }
+
+    /// Read the dynptr annotation at a stack offset, if any (W4.2). Both
+    /// the base and trailing slot of a dynptr pair carry an annotation;
+    /// inspect `DynptrSlot::first_slot` to tell them apart.
+    pub fn stack_get_dynptr(&self, offset: i16) -> Option<DynptrSlot> {
+        self.slots.get(&offset).and_then(|s| s.dynptr)
+    }
+
+    /// Set the dynptr annotation on an already-initialized slot (W4.2).
+    /// Callers are expected to have reserved the dynptr's 16 stack bytes
+    /// first and to write *both* slots of the pair (base with
+    /// `first_slot: true`, trailing with `first_slot: false`).
+    pub fn stack_set_dynptr(&mut self, offset: i16, dynptr: DynptrSlot) {
+        if let Some(spilled) = self.slots.get_mut(&offset) {
+            spilled.dynptr = Some(dynptr);
+        }
+    }
+
+    /// Clear the dynptr annotation at a stack offset (W4.2). No-op if
+    /// the slot doesn't exist or doesn't carry one. Callers releasing a
+    /// dynptr should clear both slots of the pair.
+    pub fn stack_clear_dynptr(&mut self, offset: i16) {
+        if let Some(spilled) = self.slots.get_mut(&offset) {
+            spilled.dynptr = None;
+        }
+    }
+
+    /// True if any slot currently holds a dynptr annotation (W4.2).
+    /// Parallel to `has_active_iterators` — used at exit to reject
+    /// programs that leak acquired dynptrs (e.g. unreleased ringbuf
+    /// reservations).
+    pub fn has_active_dynptrs(&self) -> bool {
+        self.slots.values().any(|s| s.dynptr.is_some())
     }
 
     pub fn live_slot_offsets(&self, live_regs: &HashSet<Reg>) -> Vec<i16> {
