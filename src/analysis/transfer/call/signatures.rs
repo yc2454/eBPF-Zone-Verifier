@@ -10,6 +10,7 @@
 // act as infrastructure for W4.1b+.
 
 use crate::analysis::machine::reg::Reg;
+use crate::analysis::machine::stack_state::DynptrKind;
 use crate::common::constants;
 
 // ============================================================================
@@ -71,6 +72,19 @@ pub enum ArgKind {
     /// Subprog pointer (`RegType::PtrToCallback`). Used by callback-
     /// taking kfuncs like `bpf_set_exception_callback`.
     PtrToCallback,
+
+    // ---- Dynptr (W4.2) ----
+    /// `&bpf_dynptr` on the stack (a `PtrToStack` aimed at a 16-byte
+    /// dynptr pair).
+    ///
+    /// `uninit = true` means the kfunc is the *constructor* — the slot
+    /// must be uninitialized (no prior dynptr annotation). `false` means
+    /// the kfunc is a *consumer* — the slot must hold an initialized
+    /// dynptr at its first slot.
+    ///
+    /// `rdwr_only = true` rejects rdonly dynptrs (e.g. `bpf_dynptr_write`,
+    /// `bpf_dynptr_slice_rdwr`). `false` accepts both rdonly and rdwr.
+    DynptrArg { uninit: bool, rdwr_only: bool },
 }
 
 // ============================================================================
@@ -166,6 +180,20 @@ pub enum SideEffect {
     /// register that subprog as the program-default exception handler.
     /// Drives `bpf_set_exception_callback`.
     SetExceptionCallbackFromArg { arg: u8 },
+    /// Stamp a fresh dynptr annotation on the stack pair pointed to by
+    /// `arg` (W4.2). For acquire-tracked kinds (`Ringbuf`) the applier
+    /// mints a ref_id and links it onto the slot; for non-acquire kinds
+    /// the ref_id is 0. Drives `bpf_dynptr_from_mem`,
+    /// `bpf_ringbuf_reserve_dynptr`, etc.
+    DynptrInitOnArg {
+        arg: u8,
+        kind: DynptrKind,
+        rdonly: bool,
+    },
+    /// Clear the dynptr annotation on the stack pair pointed to by `arg`
+    /// and drop its ref_id (W4.2). Drives `bpf_ringbuf_submit_dynptr` and
+    /// `bpf_ringbuf_discard_dynptr`.
+    DynptrReleaseFromArg { arg: u8 },
 }
 
 // ============================================================================

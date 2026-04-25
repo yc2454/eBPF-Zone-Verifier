@@ -49,6 +49,12 @@ pub(crate) fn apply_call_proto_r0(
                     state.set_program_exception_cb(subprog_pc as usize);
                 }
             }
+            // Dynptr init/release semantics (W4.2c) — implementation
+            // requires generalized arg-to-stack-offset resolution and
+            // lands together with the first dynptr kfunc proto entries.
+            // No caller produces these variants today, so the no-op is
+            // unreachable in practice.
+            SideEffect::DynptrInitOnArg { .. } | SideEffect::DynptrReleaseFromArg { .. } => {}
         }
     }
 

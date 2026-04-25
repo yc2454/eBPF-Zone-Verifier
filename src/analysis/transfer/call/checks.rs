@@ -217,6 +217,13 @@ pub(crate) fn validate_single_arg(
         ArgKind::PtrToLong => validate_ptr_to_long(&mut ctx),
         ArgKind::PtrToCallback => validate_ptr_to_callback(&mut ctx),
 
+        // ---- Dynptr (W4.2) ----
+        // Semantic validator (slot lookup, two-slot invariant, kind/
+        // rdonly checks) lands in W4.2c alongside the first kfunc proto
+        // entries that exercise it. Until then, no caller produces this
+        // ArgKind, so the conservative true is unreachable in practice.
+        ArgKind::DynptrArg { .. } => true,
+
         // ---- Anything (just needs to be readable) ----
         ArgKind::Anything => true,
 
