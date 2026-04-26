@@ -184,6 +184,14 @@ pub enum VerificationError {
     },
     /// Program exit reached with one or more open RCU read-side sections.
     UnreleasedRcuRead,
+    /// Helper / kfunc marked `CallFlags::SPIN_LOCK_HELD` invoked
+    /// without an active spin_lock (W5.4). rbtree / list mutators
+    /// require a held lock to prevent races on the per-map-value
+    /// head/root.
+    NotInSpinLockSection {
+        pc: usize,
+        helper: u32,
+    },
     LoadAbsUnderLock {
         pc: usize,
     },
@@ -429,6 +437,12 @@ impl VerificationError {
             }
             VerificationError::UnreleasedRcuRead => {
                 "Unreleased RCU read-side section in program".to_string()
+            }
+            VerificationError::NotInSpinLockSection { pc, helper } => {
+                format!(
+                    "Helper/kfunc {} at pc {} requires an active spin_lock",
+                    helper, pc
+                )
             }
             VerificationError::LoadAbsUnderLock { pc } => {
                 format!("ld_abs with an active lock at pc {}", pc)

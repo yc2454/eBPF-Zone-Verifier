@@ -206,6 +206,20 @@ pub(crate) fn apply_call_proto_r0(
             // here means a caller invoked the wrong path.
             unreachable!("RetKind::IterNextElem must be handled by the kfunc dispatcher fork");
         }
+        RetKind::PtrToOwnedKptr => {
+            let ref_id = if proto.flags.contains(CallFlags::ACQUIRE) {
+                Some(state.acquire_ref())
+            } else {
+                None
+            };
+            let ty = if proto.flags.contains(CallFlags::RET_NULL) {
+                RegType::PtrToOwnedKptrOrNull { ref_id }
+            } else {
+                RegType::PtrToOwnedKptr { ref_id }
+            };
+            state.types.set(Reg::R0, ty);
+            true
+        }
         RetKind::PtrToArenaFromArg { page_cnt_arg } => {
             // mem_size = page_cnt * PAGE_SIZE (4096). Read upper bound
             // from the page_cnt arg (R(page_cnt_arg+1)); same convention

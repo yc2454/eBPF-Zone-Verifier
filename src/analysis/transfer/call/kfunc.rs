@@ -37,7 +37,7 @@ pub(crate) fn transfer_kfunc(env: &mut VerifierEnv, state: State, btf_id: u32) -
     if let Some(n) = name.as_deref()
         && let Some(proto) = get_kfunc_proto(n)
     {
-        return transfer_kfunc_proto(env, state, &proto);
+        return transfer_kfunc_proto(env, state, btf_id, &proto);
     }
 
     match name.as_deref() {
@@ -66,12 +66,20 @@ pub(crate) fn transfer_kfunc(env: &mut VerifierEnv, state: State, btf_id: u32) -
 fn transfer_kfunc_proto(
     env: &mut VerifierEnv,
     mut state: State,
+    btf_id: u32,
     proto: &CallProto,
 ) -> Vec<State> {
     let pc = state.pc;
     let in_types = state.types.clone();
 
     if !super::checks::check_mem_size_pairs(env, &state, proto, pc) {
+        return vec![];
+    }
+
+    // W5.4: enforce SPIN_LOCK_HELD / RCU / lock-acquire-release proto
+    // flags before arg validation. Done here (not in side_effects)
+    // because rejection short-circuits the whole call.
+    if !super::transfer::apply_pre_call_lock_flags(env, &mut state, btf_id, proto) {
         return vec![];
     }
 

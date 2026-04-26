@@ -113,6 +113,14 @@ pub enum ArgKind {
     /// future arena-consumer kfuncs.
     PtrToArena,
 
+    // ---- Owned kptr (W5.4) ----
+    /// Refcounted heap-allocated kernel object. The actual reg must be
+    /// a non-null, ref-tracked `RegType::PtrToOwnedKptr` (the program
+    /// has already null-checked an alloc / pop / refcount_acquire
+    /// result). Drives `bpf_obj_drop_impl`, `bpf_refcount_acquire_impl`,
+    /// and the list/rbtree push kfuncs (which release the ref).
+    PtrToOwnedKptr,
+
     // ---- Map-value special field (W5.1) ----
     /// Pointer into a map value, aimed at a specific kernel-defined
     /// field embedded in the value (e.g. `bpf_timer`, `bpf_spin_lock`).
@@ -179,6 +187,11 @@ impl CallFlags {
     /// decrementing `state.rcu_read_depth`. Rejects if depth is already
     /// zero. W5.2.
     pub const RCU_READ_UNLOCK: Self = Self(1 << 10);
+    /// Pre-call precondition: a spin_lock must be held (W5.4). Drives
+    /// rbtree / list mutation kfuncs which would race on the per-map-
+    /// value head/root without the lock. Rejects with
+    /// `NotInSpinLockSection` when `state.active_lock.is_none()`.
+    pub const SPIN_LOCK_HELD: Self = Self(1 << 11);
 
     pub const fn empty() -> Self {
         Self(0)
@@ -252,6 +265,12 @@ pub enum RetKind {
     /// a fresh ref_id; combined with `CallFlags::RET_NULL` the result
     /// wraps as `PtrToArenaOrNull`.
     PtrToArenaFromArg { page_cnt_arg: u8 },
+    /// `RegType::PtrToOwnedKptr` (W5.4). Used by `bpf_obj_new_impl`,
+    /// `bpf_refcount_acquire_impl`, and the list/rbtree pop/remove
+    /// kfuncs. Combined with `CallFlags::ACQUIRE` the applier mints a
+    /// fresh ref_id; combined with `CallFlags::RET_NULL` the result
+    /// wraps as `PtrToOwnedKptrOrNull`.
+    PtrToOwnedKptr,
     /// `bpf_iter_*_next(&it)` (W4.3b): forks the call into two
     /// successors. Non-NULL: R0 = `PtrToAllocMem { mem_size = elem_size }`,
     /// iterator slot at `iter_arg` stays Active. NULL: R0 = scalar 0,
@@ -1267,6 +1286,92 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Void)
         .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 1 }]),
+
+        // ---- Owned-kptr alloc / drop / refcount (W5.4a) ----
+        //
+        // void *bpf_obj_new_impl(u64 local_type_id, void *meta__ign)
+        // KF_ACQUIRE | KF_RET_NULL — heap-allocates a refcounted kernel
+        // object of the BTF-described type. The meta pointer is compiler-
+        // generated and not modeled here (Anything). Returns NULL on
+        // alloc failure; program must null-check before using.
+        "bpf_obj_new_impl" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToOwnedKptr)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        // void bpf_obj_drop_impl(void *kptr, void *meta__ign)
+        // KF_RELEASE — drops the refcount. R1 must be a non-null,
+        // ref-tracked PtrToOwnedKptr; ReleaseRefFromArg invalidates the
+        // ref everywhere it's still aliased.
+        "bpf_obj_drop_impl" => CallProto::with_args([
+            PtrToOwnedKptr, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+
+        // void *bpf_refcount_acquire_impl(void *kptr, void *meta__ign)
+        // KF_ACQUIRE | KF_RET_NULL — bumps the refcount and returns a
+        // fresh ref to the same object. The input ref stays valid (no
+        // RELEASE flag); the new ref must be independently dropped or
+        // pushed into a container.
+        "bpf_refcount_acquire_impl" => CallProto::with_args([
+            PtrToOwnedKptr, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToOwnedKptr)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        // ---- List + rbtree kfuncs (W5.4b) ----
+        //
+        // int bpf_list_push_front_impl(struct bpf_list_head *head,
+        //                              struct bpf_list_node *node,
+        //                              void *meta__ign, u64 off__ign)
+        // KF_RELEASE on the node — transfers ownership into the list.
+        // KF_LOCK_HELD: must be called under a spin_lock (real kernel
+        // requires the lock that protects this list head; lite scope
+        // accepts any held lock). R1 must point at a SpecialField{ListHead}
+        // inside a map value.
+        "bpf_list_push_front_impl" => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::ListHead },
+            PtrToOwnedKptr,
+            Anything,
+            Anything,
+            DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE | CallFlags::SPIN_LOCK_HELD)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 1 }]),
+
+        // struct bpf_list_node *bpf_list_pop_front(struct bpf_list_head *head)
+        // KF_ACQUIRE | KF_RET_NULL | KF_LOCK_HELD — pops a node out of
+        // the list and hands ownership to the caller. NULL on empty list.
+        "bpf_list_pop_front" => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::ListHead },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToOwnedKptr)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL | CallFlags::SPIN_LOCK_HELD),
+
+        // int bpf_rbtree_add_impl(struct bpf_rb_root *root,
+        //                         struct bpf_rb_node *node,
+        //                         bool (*less)(struct bpf_rb_node *,
+        //                                      const struct bpf_rb_node *),
+        //                         void *meta__ign, u64 off__ign)
+        // KF_RELEASE on the node + KF_LOCK_HELD. Lite scope: the `less`
+        // callback (R3) is accepted as Anything — we don't walk into the
+        // cb subprog for ordering-correctness checks. Tech-debt: future
+        // precision should validate it as `PtrToCallback` and explore.
+        "bpf_rbtree_add_impl" => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::RbRoot },
+            PtrToOwnedKptr,
+            Anything,
+            Anything,
+            DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE | CallFlags::SPIN_LOCK_HELD)
         .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 1 }]),
 
         _ => return None,

@@ -467,7 +467,7 @@ pub(crate) fn transfer_call_rel(
 /// machine rejects this call. Arg-shape checks already ran in
 /// `validate_helper_args`; here we only mutate `state.active_lock` /
 /// `state.rcu_read_depth` and reject mismatched ordering.
-fn apply_pre_call_lock_flags(
+pub(crate) fn apply_pre_call_lock_flags(
     env: &mut VerifierEnv,
     state: &mut State,
     helper: u32,
@@ -479,6 +479,14 @@ fn apply_pre_call_lock_flags(
     // Helpers/kfuncs marked RCU require an active read-side section.
     if proto.flags.contains(CallFlags::RCU) && !state.in_rcu_read_section() {
         env.fail(VerificationError::NotInRcuReadSection { pc, helper });
+        return false;
+    }
+
+    // W5.4: kfuncs marked SPIN_LOCK_HELD (rbtree / list mutation)
+    // require any spin_lock to be active. Lite scope doesn't match the
+    // lock to a specific map's lock — any held lock satisfies.
+    if proto.flags.contains(CallFlags::SPIN_LOCK_HELD) && !state.has_active_lock() {
+        env.fail(VerificationError::NotInSpinLockSection { pc, helper });
         return false;
     }
 

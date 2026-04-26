@@ -395,6 +395,20 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
         }),
+        // W5.4b: hash map whose value (`struct val_graph`, BTF id 8)
+        // embeds spin_lock @0, list_head @8, rb_root @24. Backs the
+        // list/rbtree backport corpora.
+        "fixup_map_graph" => Some(BpfMapDef {
+            type_: BPF_MAP_TYPE_HASH,
+            key_size: 4,
+            value_size: 40,
+            max_entries: 1,
+            map_flags: 0,
+            name: "graph_map".to_string(),
+            btf_val_type_id: Some(8),
+            initial_data: None,
+            inner_map_idx: None,
+        }),
         // Add more fixup types as needed
         _ => None,
     }
@@ -414,7 +428,13 @@ pub fn create_spin_lock_btf() -> BtfContext {
     //  25: "bpf_timer"      (id 4 name) — W5.1c
     //  35: "val_t"          (id 5 name) — W5.1c
     //  41: "t"              (id 5 member 0) — W5.1c
-    let strings = b"\0bpf_spin_lock\0val\0cnt\0l\0bpf_timer\0val_t\0t\0".to_vec();
+    //  43: "bpf_list_head"  (id 6 name) — W5.4b
+    //  57: "bpf_rb_root"    (id 7 name) — W5.4b
+    //  69: "val_graph"      (id 8 name) — W5.4b
+    //  79: "lk"             (id 8 member 0 — spin_lock) — W5.4b
+    //  82: "lh"             (id 8 member 1 — list_head) — W5.4b
+    //  85: "rt"             (id 8 member 2 — rb_root) — W5.4b
+    let strings = b"\0bpf_spin_lock\0val\0cnt\0l\0bpf_timer\0val_t\0t\0bpf_list_head\0bpf_rb_root\0val_graph\0lk\0lh\0rt\0".to_vec();
 
     let mut types = HashMap::new();
 
@@ -501,6 +521,64 @@ pub fn create_spin_lock_btf() -> BtfContext {
         },
     );
 
+    // W5.4b: type 6 = struct bpf_list_head (16 bytes, opaque). Same
+    // pattern as bpf_timer above — only the name drives ListHead
+    // detection in `find_special_fields`.
+    types.insert(
+        6,
+        BtfType {
+            id: 6,
+            name_off: 43,        // "bpf_list_head"
+            info: 4 << 24,       // BTF_KIND_STRUCT, vlen=0
+            size_or_type: 16,
+            members: vec![],
+        },
+    );
+
+    // W5.4b: type 7 = struct bpf_rb_root (16 bytes, opaque).
+    types.insert(
+        7,
+        BtfType {
+            id: 7,
+            name_off: 57,        // "bpf_rb_root"
+            info: 4 << 24,       // BTF_KIND_STRUCT, vlen=0
+            size_or_type: 16,
+            members: vec![],
+        },
+    );
+
+    // W5.4b: type 8 = struct val_graph — map value embedding all three
+    // special fields. Layout (40 bytes):
+    //   spin_lock @ byte 0  (4 bytes)
+    //   list_head @ byte 8  (16 bytes)
+    //   rb_root   @ byte 24 (16 bytes)
+    types.insert(
+        8,
+        BtfType {
+            id: 8,
+            name_off: 69,        // "val_graph"
+            info: (4 << 24) | 3, // BTF_KIND_STRUCT, 3 members
+            size_or_type: 40,
+            members: vec![
+                BtfMember {
+                    name_off: 79,     // "lk"
+                    type_id: 2,       // struct bpf_spin_lock
+                    offset: 0,        // byte 0
+                },
+                BtfMember {
+                    name_off: 82,     // "lh"
+                    type_id: 6,       // struct bpf_list_head
+                    offset: 8 * 8,    // byte 8
+                },
+                BtfMember {
+                    name_off: 85,     // "rt"
+                    type_id: 7,       // struct bpf_rb_root
+                    offset: 24 * 8,   // byte 24
+                },
+            ],
+        },
+    );
+
     let mut ctx = BtfContext::from_types_and_strings(types, strings);
 
     // W3.2d: seed open-coded iterator kfunc names with stable btf_ids so
@@ -548,6 +626,14 @@ pub fn create_spin_lock_btf() -> BtfContext {
         // W5.5: arena kfuncs (ids 129, 130).
         "bpf_arena_alloc_pages",
         "bpf_arena_free_pages",
+        // W5.4a: owned-kptr alloc/drop/refcount kfuncs (ids 131..133).
+        "bpf_obj_new_impl",
+        "bpf_obj_drop_impl",
+        "bpf_refcount_acquire_impl",
+        // W5.4b: list / rbtree mutation kfuncs (ids 134..136).
+        "bpf_list_push_front_impl",
+        "bpf_list_pop_front",
+        "bpf_rbtree_add_impl",
     ]
     .iter()
     .enumerate()

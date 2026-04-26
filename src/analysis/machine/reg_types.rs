@@ -141,6 +141,19 @@ pub enum RegType {
         ref_id: Option<u32>,
         mem_size: u64,
     },
+    /// Refcounted pointer to a heap-allocated kernel object (W5.4).
+    /// Minted by `bpf_obj_new_impl` / `bpf_refcount_acquire_impl` and by
+    /// list/rbtree pop kfuncs; consumed by `bpf_obj_drop_impl` and by
+    /// list/rbtree push kfuncs (which transfer ownership into the
+    /// container). One unified variant covers list_node / rb_node /
+    /// generic kptr in this lite scope; future precision can branch on
+    /// btf_id.
+    PtrToOwnedKptr {
+        ref_id: Option<u32>,
+    },
+    PtrToOwnedKptrOrNull {
+        ref_id: Option<u32>,
+    },
     /// Pointer to a callback subprogram, produced by `LD_IMM64 BPF_PSEUDO_FUNC`
     /// (W3.4a). Consumed by callback-taking helpers (`bpf_loop`,
     /// `bpf_for_each_map_elem`, `bpf_timer_set_callback`) and by the
@@ -167,12 +180,14 @@ impl RegType {
                 | PtrToTcpSockOrNull { .. }
                 | PtrToCpumaskOrNull { .. }
                 | PtrToArenaOrNull { .. }
+                | PtrToOwnedKptrOrNull { .. }
                 | PtrToMapValue { .. }
                 | PtrToSocket { .. }
                 | PtrToSockCommon { .. }
                 | PtrToTcpSock { .. }
                 | PtrToCpumask { .. }
                 | PtrToArena { .. }
+                | PtrToOwnedKptr { .. }
         )
     }
 
@@ -198,6 +213,9 @@ impl RegType {
             RegType::PtrToArenaOrNull { ref_id, mem_size } => {
                 Some(RegType::PtrToArena { ref_id, mem_size })
             }
+            RegType::PtrToOwnedKptrOrNull { ref_id } => {
+                Some(RegType::PtrToOwnedKptr { ref_id })
+            }
             _ => None,
         }
     }
@@ -212,6 +230,7 @@ impl RegType {
                 | RegType::PtrToTcpSockOrNull { .. }
                 | RegType::PtrToCpumaskOrNull { .. }
                 | RegType::PtrToArenaOrNull { .. }
+                | RegType::PtrToOwnedKptrOrNull { .. }
         )
     }
 
@@ -279,7 +298,9 @@ impl RegType {
             | RegType::PtrToCpumask { ref_id: id }
             | RegType::PtrToCpumaskOrNull { ref_id: id }
             | RegType::PtrToArena { ref_id: id, .. }
-            | RegType::PtrToArenaOrNull { ref_id: id, .. } => id,
+            | RegType::PtrToArenaOrNull { ref_id: id, .. }
+            | RegType::PtrToOwnedKptr { ref_id: id }
+            | RegType::PtrToOwnedKptrOrNull { ref_id: id } => id,
             _ => None,
         }
     }
@@ -340,6 +361,7 @@ pub fn type_family(ty: &RegType) -> u8 {
         PtrToCallback { .. } => 14,
         PtrToCpumask { .. } | PtrToCpumaskOrNull { .. } => 15,
         PtrToArena { .. } | PtrToArenaOrNull { .. } => 16,
+        PtrToOwnedKptr { .. } | PtrToOwnedKptrOrNull { .. } => 17,
     }
 }
 

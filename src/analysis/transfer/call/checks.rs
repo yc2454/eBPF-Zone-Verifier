@@ -261,6 +261,9 @@ pub(crate) fn validate_single_arg(
         // ---- Arena (W5.5) ----
         ArgKind::PtrToArena => validate_ptr_to_arena(&mut ctx),
 
+        // ---- Owned kptr (W5.4) ----
+        ArgKind::PtrToOwnedKptr => validate_ptr_to_owned_kptr(&mut ctx),
+
         // ---- Anything (just needs to be readable) ----
         ArgKind::Anything => true,
 
@@ -383,6 +386,29 @@ fn validate_ptr_to_arena(ctx: &mut ValidationContext) -> bool {
             },
             &format!(
                 "[Verifier] pc {}: R{} expected PTR_TO_ARENA, got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                ctx.actual
+            ),
+        );
+    }
+    true
+}
+
+/// Validate `ArgKind::PtrToOwnedKptr` (W5.4).
+///
+/// Only the non-null `RegType::PtrToOwnedKptr` is accepted: drop /
+/// refcount_acquire / list-push / rbtree-add all require the program
+/// to have null-checked the freshly-allocated kptr first.
+fn validate_ptr_to_owned_kptr(ctx: &mut ValidationContext) -> bool {
+    if !matches!(ctx.actual, RegType::PtrToOwnedKptr { .. }) {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} expected PTR_TO_OWNED_KPTR, got {:?}",
                 ctx.pc,
                 ctx.arg_index + 1,
                 ctx.actual
