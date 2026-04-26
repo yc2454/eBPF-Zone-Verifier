@@ -654,6 +654,52 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             CallProto::with_args([Anything, DontCare, DontCare, DontCare, DontCare])
         }
 
+        // ---- Timers (W5.1) ----
+        // long bpf_timer_init(struct bpf_timer *timer, struct bpf_map *map, u64 flags)
+        constants::BPF_TIMER_INIT => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::Timer }, // R1: &timer field
+            ConstMapPtr,                                       // R2: map the cb will operate on
+            Anything,                                          // R3: flags
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // long bpf_timer_set_callback(struct bpf_timer *timer,
+        //                             void *callback_fn)
+        // Routed through is_callback_helper → transfer_callback_helper for
+        // the cb-frame fork; this proto just covers the arg validation
+        // (timer field + PtrToCallback) and post-call R0 typing for the
+        // skip successor (the cb-frame branch updates R0 separately).
+        constants::BPF_TIMER_SET_CALLBACK => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::Timer }, // R1: &timer field
+            PtrToCallback,                                     // R2: callback subprog
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // long bpf_timer_start(struct bpf_timer *timer, u64 nsecs, u64 flags)
+        constants::BPF_TIMER_START => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::Timer }, // R1: &timer field
+            Anything,                                          // R2: nsecs
+            Anything,                                          // R3: flags
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // long bpf_timer_cancel(struct bpf_timer *timer)
+        constants::BPF_TIMER_CANCEL => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::Timer }, // R1: &timer field
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
         // ---- Ringbuf helpers ----
         constants::BPF_RINGBUF_OUTPUT => CallProto::with_args([
             ConstMapPtr,     // R1: ringbuf map
