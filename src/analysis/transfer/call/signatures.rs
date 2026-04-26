@@ -196,6 +196,14 @@ pub enum RetKind {
     /// is per-iter-kind, not driven by an arg. Combined with
     /// `CallFlags::RET_NULL` the applier wraps as `PtrToAllocMemOrNull`.
     PtrToAllocMem { mem_size: u64 },
+    /// `bpf_iter_*_next(&it)` (W4.3b): forks the call into two
+    /// successors. Non-NULL: R0 = `PtrToAllocMem { mem_size = elem_size }`,
+    /// iterator slot at `iter_arg` stays Active. NULL: R0 = scalar 0,
+    /// slot transitions Active → Drained. The kfunc dispatcher in
+    /// `transfer_kfunc_proto` recognizes this variant and produces both
+    /// successors; the flat-state applier `apply_call_proto_r0` does
+    /// not handle it (would assert).
+    IterNextElem { iter_arg: u8, elem_size: u64 },
 }
 
 /// Post-call side effect entries — applied in order by the shared
@@ -949,6 +957,36 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar)
         .side_effects(&[SideEffect::IterInitOnArg { arg: 0, kind: IterKind::Bits }]),
+
+        // `bpf_iter_*_next(&it)` — requires Active; the dispatcher
+        // forks into non-NULL (R0 = PtrToAllocMem{elem_size}, slot
+        // stays Active) and NULL (R0 = 0, slot → Drained) successors.
+        // Element sizes mirror the bespoke handler: num=4 (int*),
+        // bits=8 (u64*), task/css=8 (placeholder pointer-width until
+        // PtrToBtfId per-kind typing in a future phase).
+        "bpf_iter_num_next" => CallProto::with_args([
+            IterArg { kind: IterKind::Num, expected: IterArgExpect::Active },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::IterNextElem { iter_arg: 0, elem_size: 4 }),
+
+        "bpf_iter_task_next" => CallProto::with_args([
+            IterArg { kind: IterKind::Task, expected: IterArgExpect::Active },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::IterNextElem { iter_arg: 0, elem_size: 8 }),
+
+        "bpf_iter_css_next" => CallProto::with_args([
+            IterArg { kind: IterKind::Css, expected: IterArgExpect::Active },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::IterNextElem { iter_arg: 0, elem_size: 8 }),
+
+        "bpf_iter_bits_next" => CallProto::with_args([
+            IterArg { kind: IterKind::Bits, expected: IterArgExpect::Active },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::IterNextElem { iter_arg: 0, elem_size: 8 }),
 
         // `bpf_iter_*_destroy(&it)` — accept Active|Drained, transition
         // back to Uninit. Calling on an Uninit slot is a REJECT (mirrors

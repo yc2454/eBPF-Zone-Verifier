@@ -186,6 +186,12 @@ pub(crate) fn apply_call_proto_r0(
             state.types.set(Reg::R0, ty);
             true
         }
+        RetKind::IterNextElem { .. } => {
+            // The kfunc dispatcher forks IterNextElem into two
+            // successors before the flat-state applier runs; reaching
+            // here means a caller invoked the wrong path.
+            unreachable!("RetKind::IterNextElem must be handled by the kfunc dispatcher fork");
+        }
         RetKind::PtrToAllocMemFromArg { size_arg } => {
             // Read the size arg's upper bound from the pre-call domain
             // (apply_call_proto_r0 runs before caller-saved clobber, so
