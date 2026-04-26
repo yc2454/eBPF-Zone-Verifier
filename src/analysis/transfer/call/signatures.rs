@@ -825,6 +825,49 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Scalar)
         .mem_size_pairs(&pairs::DYNPTR_WRITE),
 
+        // ---- skb / xdp dynptrs (W4.2f) ----
+        //
+        // int bpf_dynptr_from_skb(struct __sk_buff *skb, u64 flags,
+        //                         struct bpf_dynptr *ptr)
+        //
+        // Wraps skb data as a dynptr. We force rdonly=true here:
+        // matches kernel default for read-only skb program types
+        // (socket filter, tracing); SCHED_CLS / SCHED_ACT wrap as
+        // rdwr but require per-program-type modeling we defer.
+        "bpf_dynptr_from_skb" => CallProto::with_args([
+            PtrToCtx,    // R1: skb context
+            Anything,    // R2: flags
+            DynptrArg { uninit: true, rdwr_only: false }, // R3: &dynptr
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::DynptrInitOnArg {
+            arg: 2,
+            kind: DynptrKind::Skb,
+            rdonly: true,
+        }]),
+
+        // int bpf_dynptr_from_xdp(struct xdp_md *xdp, u64 flags,
+        //                         struct bpf_dynptr *ptr)
+        //
+        // Wraps xdp frame data as a dynptr. Same conservative
+        // rdonly=true posture as from_skb pending program-type
+        // refinement.
+        "bpf_dynptr_from_xdp" => CallProto::with_args([
+            PtrToCtx,    // R1: xdp context
+            Anything,    // R2: flags
+            DynptrArg { uninit: true, rdwr_only: false }, // R3: &dynptr
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::DynptrInitOnArg {
+            arg: 2,
+            kind: DynptrKind::Xdp,
+            rdonly: true,
+        }]),
+
         _ => return None,
     })
 }
