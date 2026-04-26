@@ -474,6 +474,10 @@ pub fn create_spin_lock_btf() -> BtfContext {
         "bpf_ringbuf_reserve_dynptr",
         "bpf_ringbuf_submit_dynptr",
         "bpf_ringbuf_discard_dynptr",
+        // W4.2e: Local-cluster dynptr kfuncs.
+        "bpf_dynptr_from_mem",
+        "bpf_dynptr_read",
+        "bpf_dynptr_write",
     ]
     .iter()
     .enumerate()

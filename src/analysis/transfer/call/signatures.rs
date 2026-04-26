@@ -769,6 +769,62 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Void)
         .side_effects(&[SideEffect::DynptrReleaseFromArg { arg: 0 }]),
 
+        // ---- Local-cluster dynptrs (W4.2e) ----
+        //
+        // int bpf_dynptr_from_mem(void *data, u32 size, u64 flags,
+        //                         struct bpf_dynptr *ptr)
+        //
+        // Wraps a caller-owned buffer (stack/map/packet) in a Local
+        // dynptr. R1 is the buffer; mem-size-pair (R1,R2) proves that
+        // `size` bytes are accessible. No ref tracking — Local dynptrs
+        // are pure metadata and need no release.
+        "bpf_dynptr_from_mem" => CallProto::with_args([
+            PtrToMem,    // R1: source buffer
+            ConstSize,   // R2: size
+            Anything,    // R3: flags (rdonly bit etc. — not modeled yet)
+            DynptrArg { uninit: true, rdwr_only: false }, // R4: &dynptr
+            DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::DynptrInitOnArg {
+            arg: 3,
+            kind: DynptrKind::Local,
+            rdonly: false,
+        }])
+        .mem_size_pairs(&pairs::DYNPTR_FROM_MEM),
+
+        // int bpf_dynptr_read(void *dst, u32 len, const struct bpf_dynptr *src,
+        //                     u32 offset, u64 flags)
+        //
+        // Copies `len` bytes from `src` dynptr (at `offset`) into `dst`.
+        // Pair (R1,R2) bounds the dst write. Reads from any dynptr kind
+        // including rdonly.
+        "bpf_dynptr_read" => CallProto::with_args([
+            PtrToUninitMem, // R1: dst
+            ConstSize,      // R2: len
+            DynptrArg { uninit: false, rdwr_only: false }, // R3: src dynptr
+            Anything,       // R4: offset
+            Anything,       // R5: flags
+        ])
+        .ret(RetKind::Scalar)
+        .mem_size_pairs(&pairs::DYNPTR_READ),
+
+        // int bpf_dynptr_write(const struct bpf_dynptr *dst, u32 offset,
+        //                      void *src, u32 len, u64 flags)
+        //
+        // Copies `len` bytes from `src` into `dst` dynptr at `offset`.
+        // `rdwr_only` rejects rdonly dynptrs (e.g. would-be skb/xdp
+        // dynptrs). Pair (R3,R4) bounds the src read.
+        "bpf_dynptr_write" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: true }, // R1: dst dynptr
+            Anything,                                      // R2: offset
+            PtrToMem,                                      // R3: src
+            ConstSize,                                     // R4: len
+            Anything,                                      // R5: flags
+        ])
+        .ret(RetKind::Scalar)
+        .mem_size_pairs(&pairs::DYNPTR_WRITE),
+
         _ => return None,
     })
 }
@@ -801,6 +857,11 @@ pub(super) mod pairs {
     pub static GET_CURRENT_COMM: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
     pub static PERF_EVENT_READ_VALUE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
     pub static PERF_PROG_READ_VALUE: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+
+    // ---- Local-cluster dynptr kfuncs (W4.2e) ----
+    pub static DYNPTR_FROM_MEM: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
+    pub static DYNPTR_READ: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
+    pub static DYNPTR_WRITE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
 }
 
 /// Returns true if the helper rejects packet pointers for the given argument index.
