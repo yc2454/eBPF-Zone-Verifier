@@ -97,6 +97,14 @@ pub enum ArgKind {
     /// - `ActiveOrDrained`   — accept either (destructor sink).
     IterArg { kind: IterKind, expected: IterArgExpect },
 
+    // ---- Cpumask (W5.3) ----
+    /// `struct bpf_cpumask *` argument. The actual reg must be a
+    /// non-null, ref-tracked `RegType::PtrToCpumask` (i.e. the program
+    /// has already null-checked a freshly created cpumask). Consumers
+    /// `bpf_cpumask_set_cpu` / `bpf_cpumask_test_cpu` / `bpf_cpumask_first`
+    /// / `bpf_cpumask_release` all use this shape.
+    PtrToCpumask,
+
     // ---- Map-value special field (W5.1) ----
     /// Pointer into a map value, aimed at a specific kernel-defined
     /// field embedded in the value (e.g. `bpf_timer`, `bpf_spin_lock`).
@@ -224,6 +232,11 @@ pub enum RetKind {
     /// is per-iter-kind, not driven by an arg. Combined with
     /// `CallFlags::RET_NULL` the applier wraps as `PtrToAllocMemOrNull`.
     PtrToAllocMem { mem_size: u64 },
+    /// `RegType::PtrToCpumask` (W5.3). `bpf_cpumask_create` returns a
+    /// freshly-acquired cpumask. Combined with `CallFlags::ACQUIRE` the
+    /// applier mints a fresh ref_id; combined with `CallFlags::RET_NULL`
+    /// the result wraps as `PtrToCpumaskOrNull`.
+    PtrToCpumask,
     /// `bpf_iter_*_next(&it)` (W4.3b): forks the call into two
     /// successors. Non-NULL: R0 = `PtrToAllocMem { mem_size = elem_size }`,
     /// iterator slot at `iter_arg` stays Active. NULL: R0 = scalar 0,
@@ -1168,6 +1181,50 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::PtrToAllocMemFromArg { size_arg: 3 })
         .flags(CallFlags::RET_NULL)
         .mem_size_pairs(&pairs::DYNPTR_SLICE),
+
+        // ---- Cpumask kfuncs (W5.3) ----
+        //
+        // struct bpf_cpumask *bpf_cpumask_create(void)
+        // KF_ACQUIRE | KF_RET_NULL — fresh refcounted cpumask, may be
+        // NULL on alloc failure. Applier mints a ref_id and returns
+        // PtrToCpumaskOrNull; the program must null-check before use.
+        "bpf_cpumask_create" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToCpumask)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        // void bpf_cpumask_release(struct bpf_cpumask *cpumask)
+        // KF_RELEASE — drops the refcount. R1 must be a non-null,
+        // ref-tracked PtrToCpumask; ReleaseRefFromArg invalidates the
+        // ref_id everywhere it's still aliased.
+        "bpf_cpumask_release" => CallProto::with_args([
+            PtrToCpumask, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+
+        // void bpf_cpumask_set_cpu(u32 cpu, struct bpf_cpumask *cpumask)
+        // Mutates the cpumask. R1 = cpu (scalar), R2 = cpumask.
+        "bpf_cpumask_set_cpu" => CallProto::with_args([
+            Anything, PtrToCpumask, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        // bool bpf_cpumask_test_cpu(u32 cpu, const struct cpumask *cpumask)
+        // Read-only query. We accept PtrToCpumask for R2 — the const
+        // cpumask vs bpf_cpumask distinction isn't modeled here.
+        "bpf_cpumask_test_cpu" => CallProto::with_args([
+            Anything, PtrToCpumask, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // u32 bpf_cpumask_first(const struct cpumask *cpumask)
+        "bpf_cpumask_first" => CallProto::with_args([
+            PtrToCpumask, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
 
         _ => return None,
     })

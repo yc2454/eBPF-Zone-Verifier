@@ -115,6 +115,17 @@ pub enum RegType {
         id: u32,
         mem_size: u64,
     },
+    /// Refcounted pointer to a `struct bpf_cpumask` (W5.3). Mirrors
+    /// `PtrToSocket` ref-tracking: `bpf_cpumask_create` mints a fresh
+    /// `ref_id` on the OrNull form; null-check refinement promotes to
+    /// the non-null form on the success branch and drops the ref on
+    /// the null branch; `bpf_cpumask_release` consumes the ref.
+    PtrToCpumask {
+        ref_id: Option<u32>,
+    },
+    PtrToCpumaskOrNull {
+        ref_id: Option<u32>,
+    },
     /// Pointer to a callback subprogram, produced by `LD_IMM64 BPF_PSEUDO_FUNC`
     /// (W3.4a). Consumed by callback-taking helpers (`bpf_loop`,
     /// `bpf_for_each_map_elem`, `bpf_timer_set_callback`) and by the
@@ -139,10 +150,12 @@ impl RegType {
                 | PtrToSocketOrNull { .. }
                 | PtrToSockCommonOrNull { .. }
                 | PtrToTcpSockOrNull { .. }
+                | PtrToCpumaskOrNull { .. }
                 | PtrToMapValue { .. }
                 | PtrToSocket { .. }
                 | PtrToSockCommon { .. }
                 | PtrToTcpSock { .. }
+                | PtrToCpumask { .. }
         )
     }
 
@@ -164,6 +177,7 @@ impl RegType {
                 Some(RegType::PtrToSockCommon { ref_id: id })
             }
             RegType::PtrToTcpSockOrNull { id } => Some(RegType::PtrToTcpSock { id }),
+            RegType::PtrToCpumaskOrNull { ref_id } => Some(RegType::PtrToCpumask { ref_id }),
             _ => None,
         }
     }
@@ -176,6 +190,7 @@ impl RegType {
                 | RegType::PtrToSocketOrNull { .. }
                 | RegType::PtrToSockCommonOrNull { .. }
                 | RegType::PtrToTcpSockOrNull { .. }
+                | RegType::PtrToCpumaskOrNull { .. }
         )
     }
 
@@ -239,7 +254,9 @@ impl RegType {
             | RegType::PtrToSockCommon { ref_id: id }
             | RegType::PtrToSockCommonOrNull { ref_id: id }
             | RegType::PtrToTcpSock { id }
-            | RegType::PtrToTcpSockOrNull { id } => id,
+            | RegType::PtrToTcpSockOrNull { id }
+            | RegType::PtrToCpumask { ref_id: id }
+            | RegType::PtrToCpumaskOrNull { ref_id: id } => id,
             _ => None,
         }
     }
@@ -298,6 +315,7 @@ pub fn type_family(ty: &RegType) -> u8 {
         PtrToBtfId { .. } | PtrToBtfIdOrNull { .. } => 12,
         PtrToAllocMem { .. } | PtrToAllocMemOrNull { .. } => 13,
         PtrToCallback { .. } => 14,
+        PtrToCpumask { .. } | PtrToCpumaskOrNull { .. } => 15,
     }
 }
 

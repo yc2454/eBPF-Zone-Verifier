@@ -539,6 +539,12 @@ pub fn create_spin_lock_btf() -> BtfContext {
         // W4.2g: slice / slice_rdwr.
         "bpf_dynptr_slice",
         "bpf_dynptr_slice_rdwr",
+        // W5.3: cpumask kfuncs.
+        "bpf_cpumask_create",
+        "bpf_cpumask_release",
+        "bpf_cpumask_set_cpu",
+        "bpf_cpumask_test_cpu",
+        "bpf_cpumask_first",
     ]
     .iter()
     .enumerate()

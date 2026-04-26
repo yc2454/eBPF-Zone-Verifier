@@ -255,6 +255,9 @@ pub(crate) fn validate_single_arg(
         // ---- Map-value special field (W5.1) ----
         ArgKind::MapValueSpecial { kind } => validate_map_value_special(&mut ctx, kind),
 
+        // ---- Cpumask (W5.3) ----
+        ArgKind::PtrToCpumask => validate_ptr_to_cpumask(&mut ctx),
+
         // ---- Anything (just needs to be readable) ----
         ArgKind::Anything => true,
 
@@ -329,6 +332,31 @@ fn validate_ptr_to_btf_id(ctx: &mut ValidationContext) -> bool {
             },
             &format!(
                 "[Verifier] pc {}: R{} expected PTR_TO_BTF_ID, got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                ctx.actual
+            ),
+        );
+    }
+    true
+}
+
+/// Validate `ArgKind::PtrToCpumask` (W5.3).
+///
+/// Only the non-null `RegType::PtrToCpumask` is accepted: cpumask
+/// kfuncs (set_cpu / test_cpu / first / release) all require the
+/// program to have null-checked the freshly-created pointer first.
+/// `PtrToCpumaskOrNull` would short-circuit fail because the pointer
+/// could legitimately be null at the call site.
+fn validate_ptr_to_cpumask(ctx: &mut ValidationContext) -> bool {
+    if !matches!(ctx.actual, RegType::PtrToCpumask { .. }) {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} expected PTR_TO_CPUMASK, got {:?}",
                 ctx.pc,
                 ctx.arg_index + 1,
                 ctx.actual
