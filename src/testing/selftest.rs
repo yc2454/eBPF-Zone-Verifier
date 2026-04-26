@@ -481,6 +481,9 @@ pub fn create_spin_lock_btf() -> BtfContext {
         // W4.2f: skb / xdp dynptr kfuncs.
         "bpf_dynptr_from_skb",
         "bpf_dynptr_from_xdp",
+        // W4.2g: slice / slice_rdwr.
+        "bpf_dynptr_slice",
+        "bpf_dynptr_slice_rdwr",
     ]
     .iter()
     .enumerate()

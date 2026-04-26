@@ -10,9 +10,9 @@
 
 use crate::analysis::machine::frame_stack::FrameLevel;
 use crate::analysis::machine::reg::Reg;
-use crate::analysis::machine::reg_types::{RegType, TypeState};
-use crate::analysis::machine::state::State;
+use crate::analysis::machine::reg_types::{RegType, TypeState, new_ptr_id};
 use crate::analysis::machine::stack_state::{DynptrKind, DynptrSlot};
+use crate::analysis::machine::state::State;
 use crate::analysis::transfer::types::update_store_types;
 use crate::ast::MemSize;
 use crate::common::stack_objects::BPF_DYNPTR_SIZE;
@@ -142,6 +142,22 @@ pub(crate) fn apply_call_proto_r0(
                 RegType::PtrToSockCommonOrNull { ref_id }
             } else {
                 RegType::PtrToSockCommon { ref_id }
+            };
+            state.types.set(Reg::R0, ty);
+            true
+        }
+        RetKind::PtrToAllocMemFromArg { size_arg } => {
+            // Read the size arg's upper bound from the pre-call domain
+            // (apply_call_proto_r0 runs before caller-saved clobber, so
+            // R1..R5 still hold their pre-call values here).
+            let size_reg = arg_reg(size_arg);
+            let (_, max_size) = state.domain.get_interval(size_reg);
+            let mem_size = max_size.max(0) as u64;
+            let id = new_ptr_id();
+            let ty = if proto.flags.contains(CallFlags::RET_NULL) {
+                RegType::PtrToAllocMemOrNull { id, mem_size }
+            } else {
+                RegType::PtrToAllocMem { id, mem_size }
             };
             state.types.set(Reg::R0, ty);
             true

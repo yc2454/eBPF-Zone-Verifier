@@ -165,6 +165,13 @@ pub enum RetKind {
     PtrToSocket,
     /// `RegType::PtrToSockCommon`. Same acquire/null semantics as above.
     PtrToSockCommon,
+    /// `RegType::PtrToAllocMem` sized by the value of the arg at index
+    /// `size_arg` (W4.2g). Used by `bpf_dynptr_slice`/`slice_rdwr`,
+    /// which return a pointer into the dynptr's backing memory whose
+    /// length matches the caller-supplied scratch-buffer size. Combined
+    /// with `CallFlags::RET_NULL` the applier wraps as
+    /// `PtrToAllocMemOrNull`.
+    PtrToAllocMemFromArg { size_arg: u8 },
 }
 
 /// Post-call side effect entries — applied in order by the shared
@@ -868,6 +875,48 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             rdonly: true,
         }]),
 
+        // ---- Slice cluster (W4.2g) ----
+        //
+        // const void *bpf_dynptr_slice(const struct bpf_dynptr *p,
+        //                              u32 offset,
+        //                              void *buffer, u32 buffer_size)
+        //
+        // Returns a pointer into the dynptr's backing memory (fast
+        // path, contiguous case) or copies into the caller-provided
+        // `buffer` (slow path, fragmented). May be NULL if the slice
+        // straddles a non-copyable boundary. Pair (R3,R4) bounds the
+        // scratch buffer; the returned pointer is bounded by `R4` —
+        // RetKind::PtrToAllocMemFromArg{size_arg=3}.
+        "bpf_dynptr_slice" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false }, // R1: src dynptr
+            Anything,       // R2: offset
+            PtrToUninitMem, // R3: scratch buffer (write target on slow path)
+            ConstSize,      // R4: buffer size
+            DontCare,
+        ])
+        .ret(RetKind::PtrToAllocMemFromArg { size_arg: 3 })
+        .flags(CallFlags::RET_NULL)
+        .mem_size_pairs(&pairs::DYNPTR_SLICE),
+
+        // void *bpf_dynptr_slice_rdwr(const struct bpf_dynptr *p,
+        //                             u32 offset,
+        //                             void *buffer, u32 buffer_size)
+        //
+        // Same as `slice` but rejects rdonly dynptrs. Returns a writable
+        // pointer; rdonly tracking on the *result* isn't modeled yet
+        // (`PtrToAllocMem` carries no rdonly bit) — defer until a
+        // real consumer needs it.
+        "bpf_dynptr_slice_rdwr" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: true }, // R1: src dynptr
+            Anything,       // R2: offset
+            PtrToUninitMem, // R3: scratch buffer (write target on slow path)
+            ConstSize,      // R4: buffer size
+            DontCare,
+        ])
+        .ret(RetKind::PtrToAllocMemFromArg { size_arg: 3 })
+        .flags(CallFlags::RET_NULL)
+        .mem_size_pairs(&pairs::DYNPTR_SLICE),
+
         _ => return None,
     })
 }
@@ -905,6 +954,9 @@ pub(super) mod pairs {
     pub static DYNPTR_FROM_MEM: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
     pub static DYNPTR_READ: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
     pub static DYNPTR_WRITE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+
+    // ---- Slice cluster (W4.2g) ----
+    pub static DYNPTR_SLICE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
 }
 
 /// Returns true if the helper rejects packet pointers for the given argument index.

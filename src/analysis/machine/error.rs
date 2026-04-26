@@ -55,6 +55,12 @@ pub enum VerificationError {
         off: i16,
         size: i64,
     },
+    UnsafeMemoryLoad {
+        pc: usize,
+        base: Reg,
+        off: i16,
+        size: i64,
+    },
     MapStoreForbidden {
         pc: usize,
         map_idx: usize,
@@ -429,6 +435,17 @@ impl VerificationError {
             } => {
                 format!(
                     "Unsafe memory store at pc {}: base {:?}, offset {}, size {}",
+                    pc, base, off, size
+                )
+            }
+            VerificationError::UnsafeMemoryLoad {
+                pc,
+                base,
+                off,
+                size,
+            } => {
+                format!(
+                    "Unsafe memory load at pc {}: base {:?}, offset {}, size {}",
                     pc, base, off, size
                 )
             }
