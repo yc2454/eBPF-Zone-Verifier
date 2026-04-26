@@ -1,0 +1,119 @@
+[
+  {
+    "name": "bpf_timer_init at correct offset (0)",
+    "result": "ACCEPT",
+    "prog_type": 17,
+    "fixups": {
+      "fixup_map_timer": [3, 9]
+    },
+    "insns": [
+      {"code": 98,  "dst": 10, "src": 0,  "off": -4, "imm": 0},
+      {"code": 191, "dst": 2,  "src": 10, "off": 0,  "imm": 0},
+      {"code": 7,   "dst": 2,  "src": 0,  "off": 0,  "imm": -4},
+      {"code": 24,  "dst": 1,  "src": 1,  "off": 0,  "imm": 0},
+      {"code": 0,   "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 133, "dst": 0,  "src": 0,  "off": 0,  "imm": 1},
+      {"code": 85,  "dst": 0,  "src": 0,  "off": 1,  "imm": 0},
+      {"code": 149, "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 191, "dst": 1,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 24,  "dst": 2,  "src": 1,  "off": 0,  "imm": 0},
+      {"code": 0,   "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 183, "dst": 3,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 133, "dst": 0,  "src": 0,  "off": 0,  "imm": 169},
+      {"code": 183, "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 149, "dst": 0,  "src": 0,  "off": 0,  "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_timer_cancel at correct offset",
+    "result": "ACCEPT",
+    "prog_type": 17,
+    "fixups": {
+      "fixup_map_timer": [3]
+    },
+    "insns": [
+      {"code": 98,  "dst": 10, "src": 0,  "off": -4, "imm": 0},
+      {"code": 191, "dst": 2,  "src": 10, "off": 0,  "imm": 0},
+      {"code": 7,   "dst": 2,  "src": 0,  "off": 0,  "imm": -4},
+      {"code": 24,  "dst": 1,  "src": 1,  "off": 0,  "imm": 0},
+      {"code": 0,   "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 133, "dst": 0,  "src": 0,  "off": 0,  "imm": 1},
+      {"code": 85,  "dst": 0,  "src": 0,  "off": 1,  "imm": 0},
+      {"code": 149, "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 191, "dst": 1,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 133, "dst": 0,  "src": 0,  "off": 0,  "imm": 172},
+      {"code": 183, "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 149, "dst": 0,  "src": 0,  "off": 0,  "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_timer_set_callback with PSEUDO_FUNC subprog",
+    "result": "ACCEPT",
+    "prog_type": 17,
+    "fixups": {
+      "fixup_map_timer": [3]
+    },
+    "insns": [
+      {"code": 98,  "dst": 10, "src": 0,  "off": -4, "imm": 0},
+      {"code": 191, "dst": 2,  "src": 10, "off": 0,  "imm": 0},
+      {"code": 7,   "dst": 2,  "src": 0,  "off": 0,  "imm": -4},
+      {"code": 24,  "dst": 1,  "src": 1,  "off": 0,  "imm": 0},
+      {"code": 0,   "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 133, "dst": 0,  "src": 0,  "off": 0,  "imm": 1},
+      {"code": 85,  "dst": 0,  "src": 0,  "off": 1,  "imm": 0},
+      {"code": 149, "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 191, "dst": 1,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 24,  "dst": 2,  "src": 4,  "off": 0,  "imm": 3},
+      {"code": 0,   "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 133, "dst": 0,  "src": 0,  "off": 0,  "imm": 170},
+      {"code": 183, "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 149, "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 183, "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 149, "dst": 0,  "src": 0,  "off": 0,  "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_timer_init at wrong offset rejects",
+    "result": "REJECT",
+    "prog_type": 17,
+    "fixups": {
+      "fixup_map_timer": [3, 10]
+    },
+    "insns": [
+      {"code": 98,  "dst": 10, "src": 0,  "off": -4, "imm": 0},
+      {"code": 191, "dst": 2,  "src": 10, "off": 0,  "imm": 0},
+      {"code": 7,   "dst": 2,  "src": 0,  "off": 0,  "imm": -4},
+      {"code": 24,  "dst": 1,  "src": 1,  "off": 0,  "imm": 0},
+      {"code": 0,   "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 133, "dst": 0,  "src": 0,  "off": 0,  "imm": 1},
+      {"code": 85,  "dst": 0,  "src": 0,  "off": 1,  "imm": 0},
+      {"code": 149, "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 191, "dst": 1,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 7,   "dst": 1,  "src": 0,  "off": 0,  "imm": 4},
+      {"code": 24,  "dst": 2,  "src": 1,  "off": 0,  "imm": 0},
+      {"code": 0,   "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 183, "dst": 3,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 133, "dst": 0,  "src": 0,  "off": 0,  "imm": 169},
+      {"code": 183, "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 149, "dst": 0,  "src": 0,  "off": 0,  "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_timer_init on stack pointer rejects",
+    "result": "REJECT",
+    "prog_type": 17,
+    "fixups": {
+      "fixup_map_timer": [2]
+    },
+    "insns": [
+      {"code": 191, "dst": 1,  "src": 10, "off": 0,  "imm": 0},
+      {"code": 7,   "dst": 1,  "src": 0,  "off": 0,  "imm": -16},
+      {"code": 24,  "dst": 2,  "src": 1,  "off": 0,  "imm": 0},
+      {"code": 0,   "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 183, "dst": 3,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 133, "dst": 0,  "src": 0,  "off": 0,  "imm": 169},
+      {"code": 183, "dst": 0,  "src": 0,  "off": 0,  "imm": 0},
+      {"code": 149, "dst": 0,  "src": 0,  "off": 0,  "imm": 0}
+    ]
+  }
+]

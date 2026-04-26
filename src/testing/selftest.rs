@@ -381,6 +381,20 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
         }),
+        // W5.1c: hash map whose value embeds a `struct bpf_timer` at byte 0.
+        // Value layout: 16 bytes (matches struct bpf_timer footprint). BTF
+        // value type id 5 is registered by create_spin_lock_btf.
+        "fixup_map_timer" => Some(BpfMapDef {
+            type_: BPF_MAP_TYPE_HASH,
+            key_size: 4,
+            value_size: 16,
+            max_entries: 1,
+            map_flags: 0,
+            name: "timer_map".to_string(),
+            btf_val_type_id: Some(5),
+            initial_data: None,
+            inner_map_idx: None,
+        }),
         // Add more fixup types as needed
         _ => None,
     }
@@ -391,7 +405,16 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
 // ============================================================================
 
 pub fn create_spin_lock_btf() -> BtfContext {
-    let strings = b"\0bpf_spin_lock\0val\0cnt\0l".to_vec();
+    // String table layout (offsets into `strings`):
+    //   0: \0
+    //   1: "bpf_spin_lock"  (id 2 name)
+    //  15: "val"            (id 3 name; reused as id 2's `l` member name? no: id 3)
+    //  19: "cnt"            (id 3 member 0)
+    //  23: "l"              (id 3 member 1)
+    //  25: "bpf_timer"      (id 4 name) — W5.1c
+    //  35: "val_t"          (id 5 name) — W5.1c
+    //  41: "t"              (id 5 member 0) — W5.1c
+    let strings = b"\0bpf_spin_lock\0val\0cnt\0l\0bpf_timer\0val_t\0t\0".to_vec();
 
     let mut types = HashMap::new();
 
@@ -443,6 +466,38 @@ pub fn create_spin_lock_btf() -> BtfContext {
                     offset: 32,
                 }, // lock @ byte 4
             ],
+        },
+    );
+
+    // W5.1c: type 4 = struct bpf_timer (16 bytes, opaque). Only the type
+    // *name* matters for SpecialFieldKind detection; vlen=0 (no members)
+    // is fine because find_special_fields only inspects the container's
+    // members and looks up the member's type name.
+    types.insert(
+        4,
+        BtfType {
+            id: 4,
+            name_off: 25,        // "bpf_timer"
+            info: 4 << 24,       // BTF_KIND_STRUCT, vlen=0
+            size_or_type: 16,
+            members: vec![],
+        },
+    );
+
+    // W5.1c: type 5 = struct val_t (the timer-bearing map value type;
+    // 16 bytes, struct bpf_timer at byte 0).
+    types.insert(
+        5,
+        BtfType {
+            id: 5,
+            name_off: 35,        // "val_t"
+            info: (4 << 24) | 1, // BTF_KIND_STRUCT, 1 member
+            size_or_type: 16,
+            members: vec![BtfMember {
+                name_off: 41,    // "t"
+                type_id: 4,      // struct bpf_timer
+                offset: 0,       // bit offset 0 → byte 0
+            }],
         },
     );
 
