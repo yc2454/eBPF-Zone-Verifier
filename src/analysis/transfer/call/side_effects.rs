@@ -10,8 +10,11 @@
 
 use crate::analysis::machine::frame_stack::FrameLevel;
 use crate::analysis::machine::reg::Reg;
-use crate::analysis::machine::reg_types::{RegType, TypeState, new_ptr_id};
-use crate::analysis::machine::stack_state::{DynptrKind, DynptrSlot};
+use crate::analysis::machine::reg_types::{RegType, TypeState, new_iter_id, new_ptr_id};
+use crate::analysis::machine::stack_state::{
+    DynptrKind, DynptrSlot, IterState, IteratorSlot,
+};
+use crate::common::stack_objects::bpf_iter_size;
 use crate::analysis::machine::state::State;
 use crate::analysis::transfer::types::update_store_types;
 use crate::ast::MemSize;
@@ -89,6 +92,33 @@ pub(crate) fn apply_call_proto_r0(
                     DynptrSlot { kind, ref_id, rdonly, first_slot: false },
                 );
             }
+            SideEffect::IterInitOnArg { arg, kind } => {
+                let reg = arg_reg(arg);
+                let Some((frame, base_off)) = resolve_stack_arg(state, reg) else {
+                    continue;
+                };
+                let size_bytes = bpf_iter_size(kind);
+                let stack = state.stack_at_mut(frame);
+                for i in 0..size_bytes {
+                    let byte_off = base_off as i64 + i as i64;
+                    update_store_types(stack, RegType::ScalarValue, MemSize::U8, Some(byte_off));
+                }
+                stack.stack_set_iterator(
+                    base_off,
+                    IteratorSlot {
+                        kind,
+                        state: IterState::Active,
+                        id: new_iter_id(),
+                    },
+                );
+            }
+            SideEffect::IterDestroyOnArg { arg } => {
+                let reg = arg_reg(arg);
+                let Some((frame, base_off)) = resolve_stack_arg(state, reg) else {
+                    continue;
+                };
+                state.stack_at_mut(frame).stack_clear_iterator(base_off);
+            }
             SideEffect::DynptrReleaseFromArg { arg } => {
                 let reg = arg_reg(arg);
                 let Some((frame, base_off)) = resolve_stack_arg(state, reg) else {
@@ -142,6 +172,16 @@ pub(crate) fn apply_call_proto_r0(
                 RegType::PtrToSockCommonOrNull { ref_id }
             } else {
                 RegType::PtrToSockCommon { ref_id }
+            };
+            state.types.set(Reg::R0, ty);
+            true
+        }
+        RetKind::PtrToAllocMem { mem_size } => {
+            let id = new_ptr_id();
+            let ty = if proto.flags.contains(CallFlags::RET_NULL) {
+                RegType::PtrToAllocMemOrNull { id, mem_size }
+            } else {
+                RegType::PtrToAllocMem { id, mem_size }
             };
             state.types.set(Reg::R0, ty);
             true

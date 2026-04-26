@@ -17,7 +17,7 @@ use crate::common::constants;
 use log::{error, info, warn};
 
 use super::compat::is_nullable_arg_type;
-use super::signatures::{ArgKind, CallProto, MemSizePair, get_helper_proto};
+use super::signatures::{ArgKind, CallProto, IterArgExpect, MemSizePair, get_helper_proto};
 use super::validators;
 
 // ============================================================================
@@ -249,6 +249,9 @@ pub(crate) fn validate_single_arg(
             validate_dynptr_arg(&mut ctx, uninit, rdwr_only)
         }
 
+        // ---- Iterator (W4.3) ----
+        ArgKind::IterArg { kind, expected } => validate_iter_arg(&mut ctx, kind, expected),
+
         // ---- Anything (just needs to be readable) ----
         ArgKind::Anything => true,
 
@@ -466,6 +469,80 @@ fn validate_dynptr_arg(ctx: &mut ValidationContext, uninit: bool, rdwr_only: boo
                 "[Verifier] pc {}: R{} rdonly dynptr passed where rdwr required",
                 ctx.pc,
                 ctx.arg_index + 1
+            ),
+        );
+    }
+    true
+}
+
+/// Validate `ArgKind::IterArg` (W4.3).
+///
+/// The actual reg must be a `PtrToStack` aimed at the iterator slot's
+/// base offset. The slot's recorded `kind` must match `kind`, and its
+/// state must satisfy `expected`:
+///
+/// - `Uninit`            — no annotation present (constructor sink).
+/// - `Active`            — slot exists, `state == Active` (`*_next`).
+/// - `ActiveOrDrained`   — slot exists, any state (`*_destroy`).
+fn validate_iter_arg(
+    ctx: &mut ValidationContext,
+    kind: crate::analysis::machine::stack_state::IterKind,
+    expected: IterArgExpect,
+) -> bool {
+    use crate::analysis::machine::stack_state::IterState;
+
+    let RegType::PtrToStack { frame_level } = ctx.actual else {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
+            &format!(
+                "[Verifier] pc {}: R{} expected &bpf_iter_* (PTR_TO_STACK), got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                ctx.actual
+            ),
+        );
+    };
+    let Some(off) = ctx.state.domain.get_distance_fixed(ctx.reg, Reg::R10) else {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
+            &format!(
+                "[Verifier] pc {}: R{} iter arg has non-fixed stack offset",
+                ctx.pc,
+                ctx.arg_index + 1
+            ),
+        );
+    };
+    let Ok(base_off) = i16::try_from(off) else {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
+            &format!(
+                "[Verifier] pc {}: R{} iter arg offset {} out of i16 range",
+                ctx.pc,
+                ctx.arg_index + 1,
+                off
+            ),
+        );
+    };
+
+    let cur = ctx.state.stack_at(frame_level).stack_get_iterator(base_off);
+    let ok = match (expected, cur) {
+        (IterArgExpect::Uninit, None) => true,
+        (IterArgExpect::Active, Some(slot)) => {
+            slot.kind == kind && matches!(slot.state, IterState::Active)
+        }
+        (IterArgExpect::ActiveOrDrained, Some(slot)) => slot.kind == kind,
+        _ => false,
+    };
+    if !ok {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
+            &format!(
+                "[Verifier] pc {}: R{} iter arg kind/state mismatch (expected {:?} {:?}, got {:?})",
+                ctx.pc,
+                ctx.arg_index + 1,
+                kind,
+                expected,
+                cur
             ),
         );
     }

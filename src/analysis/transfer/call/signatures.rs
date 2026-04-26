@@ -10,7 +10,7 @@
 // act as infrastructure for W4.1b+.
 
 use crate::analysis::machine::reg::Reg;
-use crate::analysis::machine::stack_state::DynptrKind;
+use crate::analysis::machine::stack_state::{DynptrKind, IterKind};
 use crate::common::constants;
 
 // ============================================================================
@@ -85,6 +85,25 @@ pub enum ArgKind {
     /// `rdwr_only = true` rejects rdonly dynptrs (e.g. `bpf_dynptr_write`,
     /// `bpf_dynptr_slice_rdwr`). `false` accepts both rdonly and rdwr.
     DynptrArg { uninit: bool, rdwr_only: bool },
+
+    // ---- Iterator (W4.3) ----
+    /// `&bpf_iter_*` on the stack. The iterator's kind and lifecycle
+    /// state are tracked via `IteratorSlot`; this arg shape encodes both
+    /// the expected `kind` and what slot states the kfunc accepts.
+    ///
+    /// - `Uninit`            — no prior annotation (constructor sink).
+    /// - `Active`            — slot must be live (consumer: `*_next`).
+    /// - `ActiveOrDrained`   — accept either (destructor sink).
+    IterArg { kind: IterKind, expected: IterArgExpect },
+}
+
+/// Required slot state for an `IterArg`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum IterArgExpect {
+    Uninit,
+    Active,
+    ActiveOrDrained,
 }
 
 // ============================================================================
@@ -172,6 +191,11 @@ pub enum RetKind {
     /// with `CallFlags::RET_NULL` the applier wraps as
     /// `PtrToAllocMemOrNull`.
     PtrToAllocMemFromArg { size_arg: u8 },
+    /// `RegType::PtrToAllocMem` with a const element size baked in
+    /// (W4.3). Used by `bpf_iter_*_next` whose returned pointer width
+    /// is per-iter-kind, not driven by an arg. Combined with
+    /// `CallFlags::RET_NULL` the applier wraps as `PtrToAllocMemOrNull`.
+    PtrToAllocMem { mem_size: u64 },
 }
 
 /// Post-call side effect entries — applied in order by the shared
@@ -201,6 +225,15 @@ pub enum SideEffect {
     /// and drop its ref_id (W4.2). Drives `bpf_ringbuf_submit_dynptr` and
     /// `bpf_ringbuf_discard_dynptr`.
     DynptrReleaseFromArg { arg: u8 },
+    /// Initialize an iterator slot (W4.3). Validator already accepted
+    /// the arg as Uninit; the applier zeros `bpf_iter_size(kind)` bytes
+    /// (matching the kernel's STACK_ITER mark) and stamps an `Active`
+    /// annotation with a fresh `iter_id`. Drives `bpf_iter_*_new`.
+    IterInitOnArg { arg: u8, kind: IterKind },
+    /// Clear an iterator slot (W4.3). Validator accepted Active|Drained
+    /// at this slot; the applier wipes the annotation. Drives
+    /// `bpf_iter_*_destroy`.
+    IterDestroyOnArg { arg: u8 },
 }
 
 // ============================================================================
@@ -874,6 +907,79 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             kind: DynptrKind::Xdp,
             rdonly: true,
         }]),
+
+        // ---- Open-coded iterators (W4.3a) ----
+        //
+        // `bpf_iter_*_new(&it, ...)` — Uninit→Active. The iter struct is
+        // stack-allocated by the program; the side-effect zero-inits its
+        // bytes and stamps a fresh iter_id. Returns 0/-errno: applier
+        // sets R0 = scalar; legacy bespoke handler tightened the bound to
+        // [-MAX_ERRNO, 0] which the proto applier doesn't reproduce —
+        // dropping that bound is intentional (matches dynptr ctor bounds
+        // and isn't load-bearing for the test corpus).
+        //
+        // R2..R5 vary per-kind (num: start/end/step, task/css: opaque
+        // ptrs). We accept any scalar/ptr there with `Anything`; the
+        // kernel does deeper checks but those don't affect our
+        // soundness for the slot-state model.
+        "bpf_iter_num_new" => CallProto::with_args([
+            IterArg { kind: IterKind::Num, expected: IterArgExpect::Uninit },
+            Anything, Anything, Anything, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::IterInitOnArg { arg: 0, kind: IterKind::Num }]),
+
+        "bpf_iter_task_new" => CallProto::with_args([
+            IterArg { kind: IterKind::Task, expected: IterArgExpect::Uninit },
+            Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::IterInitOnArg { arg: 0, kind: IterKind::Task }]),
+
+        "bpf_iter_css_new" => CallProto::with_args([
+            IterArg { kind: IterKind::Css, expected: IterArgExpect::Uninit },
+            Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::IterInitOnArg { arg: 0, kind: IterKind::Css }]),
+
+        "bpf_iter_bits_new" => CallProto::with_args([
+            IterArg { kind: IterKind::Bits, expected: IterArgExpect::Uninit },
+            Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::IterInitOnArg { arg: 0, kind: IterKind::Bits }]),
+
+        // `bpf_iter_*_destroy(&it)` — accept Active|Drained, transition
+        // back to Uninit. Calling on an Uninit slot is a REJECT (mirrors
+        // kernel "destroy on uninitialized").
+        "bpf_iter_num_destroy" => CallProto::with_args([
+            IterArg { kind: IterKind::Num, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
+
+        "bpf_iter_task_destroy" => CallProto::with_args([
+            IterArg { kind: IterKind::Task, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
+
+        "bpf_iter_css_destroy" => CallProto::with_args([
+            IterArg { kind: IterKind::Css, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
+
+        "bpf_iter_bits_destroy" => CallProto::with_args([
+            IterArg { kind: IterKind::Bits, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
 
         // ---- Slice cluster (W4.2g) ----
         //
