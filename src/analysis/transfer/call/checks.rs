@@ -252,6 +252,9 @@ pub(crate) fn validate_single_arg(
         // ---- Iterator (W4.3) ----
         ArgKind::IterArg { kind, expected } => validate_iter_arg(&mut ctx, kind, expected),
 
+        // ---- Map-value special field (W5.1) ----
+        ArgKind::MapValueSpecial { kind } => validate_map_value_special(&mut ctx, kind),
+
         // ---- Anything (just needs to be readable) ----
         ArgKind::Anything => true,
 
@@ -543,6 +546,83 @@ fn validate_iter_arg(
                 kind,
                 expected,
                 cur
+            ),
+        );
+    }
+    true
+}
+
+/// Validate `ArgKind::MapValueSpecial` (W5.1).
+///
+/// The actual reg must be `PtrToMapValue { offset, map_idx }` where the
+/// map's value BTF carries a `SpecialField` of the requested `kind` at
+/// exactly `offset`. Drives `bpf_timer_*` arg validation and is reusable
+/// for any kfunc/helper that takes a pointer aimed at a kernel-defined
+/// embedded field (spin_lock, rb_root, list_head, refcount, ...).
+fn validate_map_value_special(
+    ctx: &mut ValidationContext,
+    kind: crate::parsing::btf::SpecialFieldKind,
+) -> bool {
+    let RegType::PtrToMapValue { offset, map_idx, .. } = ctx.actual else {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
+            &format!(
+                "[Verifier] pc {}: R{} expected PTR_TO_MAP_VALUE aimed at {:?} field, got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                kind,
+                ctx.actual
+            ),
+        );
+    };
+    let Some(off) = offset else {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
+            &format!(
+                "[Verifier] pc {}: R{} {:?}-field arg has variable offset",
+                ctx.pc,
+                ctx.arg_index + 1,
+                kind
+            ),
+        );
+    };
+    let Some(map_def) = ctx.env.ctx.map_defs.get(map_idx) else {
+        return ctx.fail_with_log(
+            VerificationError::MapNotFound { pc: ctx.pc, map_idx },
+            &format!(
+                "[Verifier] pc {}: R{} {:?}-field arg references unknown map idx {}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                kind,
+                map_idx
+            ),
+        );
+    };
+    let Some(val_type_id) = map_def.btf_val_type_id else {
+        return ctx.fail_with_log(
+            VerificationError::InvalidBtfType,
+            &format!(
+                "[Verifier] pc {}: R{} {:?}-field arg's map has no value-type BTF",
+                ctx.pc,
+                ctx.arg_index + 1,
+                kind
+            ),
+        );
+    };
+    let fields = ctx.env.ctx.btf.find_special_fields(val_type_id);
+    let matched = fields
+        .iter()
+        .any(|f| f.kind == kind && f.offset as i64 == off);
+    if !matched {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
+            &format!(
+                "[Verifier] pc {}: R{} {:?}-field arg offset {} doesn't match any {:?} field in map value",
+                ctx.pc,
+                ctx.arg_index + 1,
+                kind,
+                off,
+                kind
             ),
         );
     }

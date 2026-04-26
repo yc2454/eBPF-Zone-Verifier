@@ -12,6 +12,7 @@
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::stack_state::{DynptrKind, IterKind};
 use crate::common::constants;
+use crate::parsing::btf::SpecialFieldKind;
 
 // ============================================================================
 // ArgKind — per-argument expected shape
@@ -95,6 +96,16 @@ pub enum ArgKind {
     /// - `Active`            — slot must be live (consumer: `*_next`).
     /// - `ActiveOrDrained`   — accept either (destructor sink).
     IterArg { kind: IterKind, expected: IterArgExpect },
+
+    // ---- Map-value special field (W5.1) ----
+    /// Pointer into a map value, aimed at a specific kernel-defined
+    /// field embedded in the value (e.g. `bpf_timer`, `bpf_spin_lock`).
+    /// The actual reg must be `PtrToMapValue { offset, map_idx }` where
+    /// the map's value BTF carries a `SpecialField` of `kind` at exactly
+    /// `offset`. Drives `bpf_timer_*` arg validation; future use will
+    /// cover real `bpf_spin_lock` pointer args (W5.2) and rbtree/list
+    /// roots (W5.4).
+    MapValueSpecial { kind: SpecialFieldKind },
 }
 
 /// Required slot state for an `IterArg`.
