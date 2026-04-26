@@ -179,10 +179,23 @@ pub(crate) fn check_stack_initialization(
             }
         }
         AccessKind::HelperBuffer | AccessKind::HelperPrimitive => {
-            let any_initialized =
-                (0..size).any(|i| stack.is_slot_initialized((actual_offset + i) as i16));
+            // Kernel verifier requires every byte of the helper buffer
+            // range to be initialized for non-uninit pointer kinds (see
+            // check_helper_mem_access). The previous `any_initialized`
+            // gate let partially-initialized buffers slip through —
+            // surfaced on the W4.2e bpf_dynptr_from_mem(buf=R10-24,
+            // size=16) test where bytes -16..-9 were uninit.
+            //
+            // Privileged-mode exception: `int_ptr.json::ARG_PTR_TO_LONG
+            // half-uninitialized` exercises an 8-byte helper read where
+            // only the lower 4 bytes are initialized. Kernel accepts in
+            // privileged mode, rejects in unpriv (matches the same
+            // exception already applied to direct reads above via
+            // `allow_privileged_partial_u64_read`).
+            let all_initialized =
+                (0..size).all(|i| stack.is_slot_initialized((actual_offset + i) as i16));
 
-            if !any_initialized {
+            if !all_initialized && !allow_privileged_partial_u64_read(actual_offset, size) {
                 env.fail(VerificationError::UninitializedStackRead {
                     pc,
                     offset: actual_offset,

@@ -204,26 +204,26 @@ pub fn check_map_type_for_helper(helper: u32, map_type: u32) -> Result<(), &'sta
 // Nullable Type Helpers
 // ============================================================================
 
-use super::signatures::BpfArgType;
+use super::signatures::ArgKind;
 
 /// Returns true if this argument type is a nullable variant (*OrNull).
-pub fn is_nullable_arg_type(arg_type: BpfArgType) -> bool {
+pub fn is_nullable_arg_type(arg_type: ArgKind) -> bool {
     matches!(
         arg_type,
-        BpfArgType::PtrToCtxOrNull
-            | BpfArgType::PtrToMemOrNull
-            | BpfArgType::PtrToStackOrNull
-            | BpfArgType::PtrToMapValueOrNull
+        ArgKind::PtrToCtxOrNull
+            | ArgKind::PtrToMemOrNull
+            | ArgKind::PtrToStackOrNull
+            | ArgKind::PtrToMapValueOrNull
     )
 }
 
 /// Returns the base (non-nullable) type for a nullable argument type.
-pub fn base_arg_type(arg_type: BpfArgType) -> BpfArgType {
+pub fn base_arg_type(arg_type: ArgKind) -> ArgKind {
     match arg_type {
-        BpfArgType::PtrToCtxOrNull => BpfArgType::PtrToCtx,
-        BpfArgType::PtrToMemOrNull => BpfArgType::PtrToMem,
-        BpfArgType::PtrToStackOrNull => BpfArgType::PtrToStack,
-        BpfArgType::PtrToMapValueOrNull => BpfArgType::PtrToMapValue,
+        ArgKind::PtrToCtxOrNull => ArgKind::PtrToCtx,
+        ArgKind::PtrToMemOrNull => ArgKind::PtrToMem,
+        ArgKind::PtrToStackOrNull => ArgKind::PtrToStack,
+        ArgKind::PtrToMapValueOrNull => ArgKind::PtrToMapValue,
         other => other,
     }
 }

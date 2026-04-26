@@ -8,12 +8,12 @@ use crate::analysis::machine::reg_types::RegType;
 
 use super::super::checks::{ValidationContext, validate_readable_mem};
 use super::super::compat::{MAP_VALUE_OR_NULL_COMPAT, base_arg_type, is_compatible};
-use super::super::signatures::{BpfArgType, get_nullable_ptr_size_pair};
+use super::super::signatures::{ArgKind, get_nullable_ptr_size_pair};
 
 /// Validates a nullable argument type (*OrNull variants).
 /// If the register is provably NULL, validation passes.
 /// Otherwise, validates against the base (non-null) type.
-pub fn validate_nullable(ctx: &mut ValidationContext, expected: BpfArgType) -> bool {
+pub fn validate_nullable(ctx: &mut ValidationContext, expected: ArgKind) -> bool {
     let actual = ctx.actual;
     let types = ctx.types;
 
@@ -24,10 +24,10 @@ pub fn validate_nullable(ctx: &mut ValidationContext, expected: BpfArgType) -> b
 
     // Route to type-specific nullable validation
     match expected {
-        BpfArgType::PtrToCtxOrNull => validate_ctx_or_null(ctx),
-        BpfArgType::PtrToStackOrNull => validate_stack_or_null(ctx),
-        BpfArgType::PtrToMemOrNull => validate_mem_or_null(ctx),
-        BpfArgType::PtrToMapValueOrNull => validate_map_value_or_null(ctx),
+        ArgKind::PtrToCtxOrNull => validate_ctx_or_null(ctx),
+        ArgKind::PtrToStackOrNull => validate_stack_or_null(ctx),
+        ArgKind::PtrToMemOrNull => validate_mem_or_null(ctx),
+        ArgKind::PtrToMapValueOrNull => validate_map_value_or_null(ctx),
         _ => {
             // Fallback to base type validation
             let base = base_arg_type(expected);
@@ -42,6 +42,7 @@ pub fn validate_nullable(ctx: &mut ValidationContext, expected: BpfArgType) -> b
                 actual,
                 ctx.map_info,
                 ctx.arg_index,
+                ctx.mem_size_pairs,
             )
         }
     }

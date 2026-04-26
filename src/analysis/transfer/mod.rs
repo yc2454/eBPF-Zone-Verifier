@@ -266,9 +266,29 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         return vec![];
     }
 
+    // W4.2c: ref-bearing dynptr slots (today: ringbuf reservations)
+    // must be submitted or discarded on every exit path. Non-ref
+    // dynptrs (Local/Skb/Xdp) are pure metadata over a pointer and
+    // need no release.
+    if state.at_main_frame()
+        && state
+            .frames
+            .iter()
+            .any(|f| f.stack.has_unreleased_dynptr_refs())
+    {
+        env.fail(VerificationError::UnreleasedDynptr);
+        return vec![];
+    }
+
     // Check if there is any unreleased locks
     if state.has_active_lock() {
         env.fail(VerificationError::UnreleasedLock);
+        return vec![];
+    }
+
+    // Check if any RCU read-side section is still open (W5.2)
+    if state.in_rcu_read_section() {
+        env.fail(VerificationError::UnreleasedRcuRead);
         return vec![];
     }
 

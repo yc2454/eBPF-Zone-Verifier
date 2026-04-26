@@ -235,7 +235,11 @@ fn maybe_promote_mem(state: &mut State, reg: Reg) {
     );
 }
 
-fn same_socket_nullable_pointer(t1: &RegType, t2: &RegType) -> bool {
+/// True if two reg types are the same nullable acquire-tracked
+/// pointer family with the same ref_id — i.e. a null check on one
+/// should refine the other along the same branch. Covers all
+/// acquire-style RegTypes (sockets / cpumask / arena / owned-kptr).
+fn same_acquired_pointer(t1: &RegType, t2: &RegType) -> bool {
     match (t1, t2) {
         (
             RegType::PtrToSocketOrNull { ref_id: id1 },
@@ -248,6 +252,18 @@ fn same_socket_nullable_pointer(t1: &RegType, t2: &RegType) -> bool {
         (RegType::PtrToTcpSockOrNull { id: id1 }, RegType::PtrToTcpSockOrNull { id: id2 }) => {
             id1 == id2
         }
+        (
+            RegType::PtrToCpumaskOrNull { ref_id: id1 },
+            RegType::PtrToCpumaskOrNull { ref_id: id2 },
+        ) => id1 == id2,
+        (
+            RegType::PtrToArenaOrNull { ref_id: id1, .. },
+            RegType::PtrToArenaOrNull { ref_id: id2, .. },
+        ) => id1 == id2,
+        (
+            RegType::PtrToOwnedKptrOrNull { ref_id: id1 },
+            RegType::PtrToOwnedKptrOrNull { ref_id: id2 },
+        ) => id1 == id2,
         _ => false,
     }
 }
@@ -259,20 +275,23 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
     let target_ref_id = match reg_type {
         RegType::PtrToSocketOrNull { ref_id }
         | RegType::PtrToSockCommonOrNull { ref_id }
-        | RegType::PtrToTcpSockOrNull { id: ref_id } => ref_id,
+        | RegType::PtrToTcpSockOrNull { id: ref_id }
+        | RegType::PtrToCpumaskOrNull { ref_id }
+        | RegType::PtrToArenaOrNull { ref_id, .. }
+        | RegType::PtrToOwnedKptrOrNull { ref_id } => ref_id,
         _ => return,
     };
 
     if is_non_null {
         for r in Reg::ALL {
             let ty = state.types.get(r);
-            if same_socket_nullable_pointer(&reg_type, &ty) {
+            if same_acquired_pointer(&reg_type, &ty) {
                 state.types.set(r, ty.to_non_null().unwrap());
             }
         }
         promote_stack_slots_all_frames(
             state,
-            |ty| same_socket_nullable_pointer(&reg_type, ty),
+            |ty| same_acquired_pointer(&reg_type, ty),
             |ty| ty.to_non_null().unwrap_or(RegType::ScalarValue),
         );
     } else {
@@ -281,13 +300,13 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
         }
         for r in Reg::ALL {
             let ty = state.types.get(r);
-            if same_socket_nullable_pointer(&reg_type, &ty) {
+            if same_acquired_pointer(&reg_type, &ty) {
                 state.types.set(r, RegType::ScalarValue);
             }
         }
         promote_stack_slots_all_frames(
             state,
-            |ty| same_socket_nullable_pointer(&reg_type, ty),
+            |ty| same_acquired_pointer(&reg_type, ty),
             |_ty| RegType::ScalarValue,
         );
     }

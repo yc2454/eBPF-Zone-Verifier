@@ -55,6 +55,12 @@ pub enum VerificationError {
         off: i16,
         size: i64,
     },
+    UnsafeMemoryLoad {
+        pc: usize,
+        base: Reg,
+        off: i16,
+        size: i64,
+    },
     MapStoreForbidden {
         pc: usize,
         map_idx: usize,
@@ -157,6 +163,7 @@ pub enum VerificationError {
     },
     UnreleasedReference,
     UnreleasedIterator,
+    UnreleasedDynptr,
     InvalidBtfType,
     LockAlreadyHeld {
         pc: usize,
@@ -165,6 +172,26 @@ pub enum VerificationError {
         pc: usize,
     },
     UnreleasedLock,
+    /// `bpf_rcu_read_unlock` called outside an RCU read-side section.
+    RcuReadNotHeld {
+        pc: usize,
+    },
+    /// Helper / kfunc marked `CallFlags::RCU` invoked while
+    /// `state.rcu_read_depth == 0`.
+    NotInRcuReadSection {
+        pc: usize,
+        helper: u32,
+    },
+    /// Program exit reached with one or more open RCU read-side sections.
+    UnreleasedRcuRead,
+    /// Helper / kfunc marked `CallFlags::SPIN_LOCK_HELD` invoked
+    /// without an active spin_lock (W5.4). rbtree / list mutators
+    /// require a held lock to prevent races on the per-map-value
+    /// head/root.
+    NotInSpinLockSection {
+        pc: usize,
+        helper: u32,
+    },
     LoadAbsUnderLock {
         pc: usize,
     },
@@ -390,6 +417,7 @@ impl VerificationError {
             }
             VerificationError::UnreleasedReference => "Unreleased reference in program".to_string(),
             VerificationError::UnreleasedIterator => "Unreleased open-coded iterator in program".to_string(),
+            VerificationError::UnreleasedDynptr => "Unreleased dynptr in program".to_string(),
             VerificationError::UnreleasedLock => "Unreleased lock in program".to_string(),
             VerificationError::InvalidBtfType => "Invalid BTF type".to_string(),
             VerificationError::LockAlreadyHeld { pc } => {
@@ -397,6 +425,24 @@ impl VerificationError {
             }
             VerificationError::LockNotHeld { pc } => {
                 format!("Lock not held at pc {}, cannot release", pc)
+            }
+            VerificationError::RcuReadNotHeld { pc } => {
+                format!("RCU read-side section not held at pc {}, cannot unlock", pc)
+            }
+            VerificationError::NotInRcuReadSection { pc, helper } => {
+                format!(
+                    "Helper {} at pc {} requires an RCU read-side critical section",
+                    helper, pc
+                )
+            }
+            VerificationError::UnreleasedRcuRead => {
+                "Unreleased RCU read-side section in program".to_string()
+            }
+            VerificationError::NotInSpinLockSection { pc, helper } => {
+                format!(
+                    "Helper/kfunc {} at pc {} requires an active spin_lock",
+                    helper, pc
+                )
             }
             VerificationError::LoadAbsUnderLock { pc } => {
                 format!("ld_abs with an active lock at pc {}", pc)
@@ -427,6 +473,17 @@ impl VerificationError {
             } => {
                 format!(
                     "Unsafe memory store at pc {}: base {:?}, offset {}, size {}",
+                    pc, base, off, size
+                )
+            }
+            VerificationError::UnsafeMemoryLoad {
+                pc,
+                base,
+                off,
+                size,
+            } => {
+                format!(
+                    "Unsafe memory load at pc {}: base {:?}, offset {}, size {}",
                     pc, base, off, size
                 )
             }

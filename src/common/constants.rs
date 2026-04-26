@@ -157,13 +157,18 @@ pub const BPF_SKC_TO_UDP6_SOCK: u32 = 140;
 pub const BPF_GET_TASK_STACK: u32 = 141;
 pub const BPF_D_PATH: u32 = 147;
 pub const BPF_FOR_EACH_MAP_ELEM: u32 = 164;
+pub const BPF_TIMER_INIT: u32 = 169;
 pub const BPF_TIMER_SET_CALLBACK: u32 = 170;
+pub const BPF_TIMER_START: u32 = 171;
+pub const BPF_TIMER_CANCEL: u32 = 172;
 pub const BPF_SKC_TO_UNIX_SOCK: u32 = 178;
 pub const BPF_LOOP: u32 = 181;
 pub const BPF_KFUNC_CALL_DUMMY: u32 = 213;
+pub const BPF_RCU_READ_LOCK: u32 = 217;
+pub const BPF_RCU_READ_UNLOCK: u32 = 218;
 
 /// Maximum valid helper ID (used for validation)
-pub const BPF_HELPER_MAX: u32 = 213;
+pub const BPF_HELPER_MAX: u32 = 218;
 
 // ============================================================================
 // Limits & Defaults

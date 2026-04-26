@@ -1,0 +1,58 @@
+[
+  {
+    "name": "bpf_rcu_read_lock + _unlock balanced",
+    "result": "ACCEPT",
+    "prog_type": 17,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 217},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 218},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_rcu_read_lock nested + 2x _unlock",
+    "result": "ACCEPT",
+    "prog_type": 17,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 217},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 217},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 218},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 218},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_rcu_read_unlock with no prior read_lock rejects",
+    "result": "REJECT",
+    "prog_type": 17,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 218},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_rcu_read_lock without _unlock at exit rejects",
+    "result": "REJECT",
+    "prog_type": 17,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 217},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  },
+  {
+    "name": "bpf_rcu_read_lock + 2x _unlock imbalanced rejects",
+    "result": "REJECT",
+    "prog_type": 17,
+    "insns": [
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 217},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 218},
+      {"code": 133, "dst": 0, "src": 0, "off": 0, "imm": 218},
+      {"code": 183, "dst": 0, "src": 0, "off": 0, "imm": 0},
+      {"code": 149, "dst": 0, "src": 0, "off": 0, "imm": 0}
+    ]
+  }
+]

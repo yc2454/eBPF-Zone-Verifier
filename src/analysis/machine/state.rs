@@ -78,6 +78,12 @@ pub struct State {
     // Active lock that is being held
     pub active_lock: Option<LockState>,
 
+    /// RCU read-side critical section nesting depth (W5.2). Incremented
+    /// by `bpf_rcu_read_lock`, decremented by `bpf_rcu_read_unlock`.
+    /// Helpers/kfuncs marked with `CallFlags::RCU` require depth > 0.
+    /// Program exit rejects if depth > 0 (`UnreleasedRcuRead`).
+    pub rcu_read_depth: u32,
+
     /// Remaining `may_goto` iterations on this path. Initialised to
     /// [`BPF_MAY_GOTO_LIMIT`] at entry. Decremented by the `may_goto`
     /// transfer function on the taken branch (W3.1b); once zero the
@@ -117,6 +123,7 @@ impl State {
             frame_depth: 0,
             active_refs: HashSet::new(),
             active_lock: None,
+            rcu_read_depth: 0,
             goto_budget: BPF_MAY_GOTO_LIMIT,
             program_exception_cb: None,
         }
@@ -368,6 +375,26 @@ impl State {
         self.active_lock.as_ref()
     }
 
+    // ── RCU read-side tracking (W5.2) ───────────────────────────
+
+    pub fn rcu_read_lock(&mut self) {
+        self.rcu_read_depth = self.rcu_read_depth.saturating_add(1);
+    }
+
+    /// Decrement RCU read-side nesting depth. Returns `false` if no
+    /// section is active (caller must reject).
+    pub fn rcu_read_unlock(&mut self) -> bool {
+        if self.rcu_read_depth == 0 {
+            return false;
+        }
+        self.rcu_read_depth -= 1;
+        true
+    }
+
+    pub fn in_rcu_read_section(&self) -> bool {
+        self.rcu_read_depth > 0
+    }
+
     // ── Stack spill/reload (current frame) ──────────────────────
 
     /// Spill into a specific frame (cross-frame, e.g. store via PtrToStack)
@@ -429,6 +456,7 @@ impl State {
             },
             precise: is_aligned && size == MemSize::U64 && self.precise_regs.contains(&reg),
             iterator: None,
+            dynptr: None,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -452,6 +480,7 @@ impl State {
                         scalar_id: None,
                         precise: false,
                         iterator: None,
+                        dynptr: None,
                     },
                 );
             }
@@ -497,6 +526,7 @@ impl State {
             scalar_id: None,
             precise: false,
             iterator: None,
+            dynptr: None,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -520,6 +550,7 @@ impl State {
                         scalar_id: None,
                         precise: false,
                         iterator: None,
+                        dynptr: None,
                     },
                 );
             }

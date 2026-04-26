@@ -1,80 +1,387 @@
 // src/analysis/transfer/call/signatures.rs
+//
+// Unified call-proto representation (Phase 4 W4.1a).
+//
+// `CallProto` is the single shape consumed by the arg checker for both
+// helpers and (Phase 4+) kfuncs. For helpers it's built statically from
+// the table below; for kfuncs it'll be built at load time from BTF +
+// kfunc flags. Today (W4.1a) only the helper producer exists — the new
+// `ret`/`flags`/`side_effects` fields are populated with defaults and
+// act as infrastructure for W4.1b+.
 
 use crate::analysis::machine::reg::Reg;
+use crate::analysis::machine::stack_state::{DynptrKind, IterKind};
 use crate::common::constants;
+use crate::parsing::btf::SpecialFieldKind;
 
 // ============================================================================
-// BPF Argument Types
+// ArgKind — per-argument expected shape
 // ============================================================================
 
-/// BPF helper function argument type constraints.
-/// Based on Linux kernel's `enum bpf_arg_type` from include/linux/bpf.h
+/// Expected shape of a call argument (R1..R5).
+///
+/// Classic helper kinds today; Phase 4 will extend with `BtfPtr`,
+/// `DynptrArg`, `IterArg`, `CallbackArg` variants consumed by the same
+/// checker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
-pub enum BpfArgType {
-    /// Unused argument in helper function
+pub enum ArgKind {
+    /// Unused argument slot
     DontCare,
 
-    // ---- Map-related argument types ----
-    /// const argument used as pointer to bpf_map
+    // ---- Map-related ----
     ConstMapPtr,
-    /// pointer to stack used as map key
     PtrToMapKey,
-    /// pointer to stack used as map value
     PtrToMapValue,
-    /// pointer to valid memory used to store a map value (output)
     PtrToUninitMapValue,
 
-    // ---- Memory access argument types ----
-    /// pointer to valid memory (stack, packet, map value)
+    // ---- Memory access ----
     PtrToMem,
-    /// pointer to memory that doesn't need to be initialized (helper fills it)
     PtrToUninitMem,
-    /// pointer to dynamically allocated memory
     PtrToAllocMem,
 
-    // ---- Size argument types ----
-    /// number of bytes accessed from memory
+    // ---- Size ----
     ConstSize,
-    /// number of bytes accessed from memory or 0
     ConstSizeOrZero,
-    /// number of allocated bytes requested
     ConstAllocSizeOrZero,
 
-    // ---- Context and general types ----
-    /// pointer to context (sk_buff, xdp_md, etc.)
+    // ---- Context / general ----
     PtrToCtx,
-    /// any (initialized) argument is ok
     Anything,
 
-    // ---- Socket types ----
-    /// pointer to sock_common
+    // ---- Socket ----
     PtrToSockCommon,
-    /// pointer to bpf_sock (fullsock)
     PtrToSocket,
-    /// pointer to in-kernel sock_common or bpf-mirrored bpf_sock
     PtrToBTFIdSockCommon,
 
-    // ---- BTF ID types ----
+    // ---- BTF ID ----
     PtrToBtfId,
 
-    // ---- Stack types ----
-    /// pointer to stack
+    // ---- Stack ----
     PtrToStack,
 
     // ---- Nullable variants ----
-    /// PTR_TO_CTX | PTR_MAYBE_NULL
     PtrToCtxOrNull,
-    /// PTR_TO_MEM | PTR_MAYBE_NULL
     PtrToMemOrNull,
-    /// PTR_TO_STACK | PTR_MAYBE_NULL
     PtrToStackOrNull,
-    /// PTR_TO_MAP_VALUE | PTR_MAYBE_NULL
     PtrToMapValueOrNull,
 
-    // ---- Fixed-size pointer types ----
-    /// pointer to initialized long/u64 value (helper reads from it)
+    // ---- Fixed-size pointer ----
     PtrToLong,
+
+    // ---- Callback (W4.1c) ----
+    /// Subprog pointer (`RegType::PtrToCallback`). Used by callback-
+    /// taking kfuncs like `bpf_set_exception_callback`.
+    PtrToCallback,
+
+    // ---- Dynptr (W4.2) ----
+    /// `&bpf_dynptr` on the stack (a `PtrToStack` aimed at a 16-byte
+    /// dynptr pair).
+    ///
+    /// `uninit = true` means the kfunc is the *constructor* — the slot
+    /// must be uninitialized (no prior dynptr annotation). `false` means
+    /// the kfunc is a *consumer* — the slot must hold an initialized
+    /// dynptr at its first slot.
+    ///
+    /// `rdwr_only = true` rejects rdonly dynptrs (e.g. `bpf_dynptr_write`,
+    /// `bpf_dynptr_slice_rdwr`). `false` accepts both rdonly and rdwr.
+    DynptrArg { uninit: bool, rdwr_only: bool },
+
+    // ---- Iterator (W4.3) ----
+    /// `&bpf_iter_*` on the stack. The iterator's kind and lifecycle
+    /// state are tracked via `IteratorSlot`; this arg shape encodes both
+    /// the expected `kind` and what slot states the kfunc accepts.
+    ///
+    /// - `Uninit`            — no prior annotation (constructor sink).
+    /// - `Active`            — slot must be live (consumer: `*_next`).
+    /// - `ActiveOrDrained`   — accept either (destructor sink).
+    IterArg { kind: IterKind, expected: IterArgExpect },
+
+    // ---- Cpumask (W5.3) ----
+    /// `struct bpf_cpumask *` argument. The actual reg must be a
+    /// non-null, ref-tracked `RegType::PtrToCpumask` (i.e. the program
+    /// has already null-checked a freshly created cpumask). Consumers
+    /// `bpf_cpumask_set_cpu` / `bpf_cpumask_test_cpu` / `bpf_cpumask_first`
+    /// / `bpf_cpumask_release` all use this shape.
+    PtrToCpumask,
+
+    // ---- Arena (W5.5) ----
+    /// Bounded arena memory pointer. The actual reg must be a non-null,
+    /// ref-tracked `RegType::PtrToArena` (i.e. the program has already
+    /// null-checked a freshly allocated arena range). Drives
+    /// `bpf_arena_free_pages`'s pointer-arg validation; also reused by
+    /// future arena-consumer kfuncs.
+    PtrToArena,
+
+    // ---- Owned kptr (W5.4) ----
+    /// Refcounted heap-allocated kernel object. The actual reg must be
+    /// a non-null, ref-tracked `RegType::PtrToOwnedKptr` (the program
+    /// has already null-checked an alloc / pop / refcount_acquire
+    /// result). Drives `bpf_obj_drop_impl`, `bpf_refcount_acquire_impl`,
+    /// and the list/rbtree push kfuncs (which release the ref).
+    PtrToOwnedKptr,
+
+    // ---- Map-value special field (W5.1) ----
+    /// Pointer into a map value, aimed at a specific kernel-defined
+    /// field embedded in the value (e.g. `bpf_timer`, `bpf_spin_lock`).
+    /// The actual reg must be `PtrToMapValue { offset, map_idx }` where
+    /// the map's value BTF carries a `SpecialField` of `kind` at exactly
+    /// `offset`. Drives `bpf_timer_*` arg validation; future use will
+    /// cover real `bpf_spin_lock` pointer args (W5.2) and rbtree/list
+    /// roots (W5.4).
+    MapValueSpecial { kind: SpecialFieldKind },
+}
+
+/// Required slot state for an `IterArg`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum IterArgExpect {
+    Uninit,
+    Active,
+    ActiveOrDrained,
+}
+
+// ============================================================================
+// CallFlags / RetKind / SideEffect — post-call semantics
+// ============================================================================
+
+/// Behavioral flags attached to a call proto.
+///
+/// For helpers these are currently all unset — existing post-call
+/// logic in `transfer.rs` / `types.rs` handles acquire/release/
+/// ret-null by helper-id switch. W4.1b migrates that logic to be
+/// flag-driven (so kfuncs can reuse it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CallFlags(u16);
+
+#[allow(dead_code)]
+impl CallFlags {
+    /// Return value is a freshly-acquired reference (track it).
+    pub const ACQUIRE: Self = Self(1 << 0);
+    /// One arg (by convention the first ref-typed ptr) is released.
+    pub const RELEASE: Self = Self(1 << 1);
+    /// Return value may be NULL — fork null / non-null successors.
+    pub const RET_NULL: Self = Self(1 << 2);
+    /// All pointer args must be trusted (kfunc KF_TRUSTED_ARGS).
+    pub const TRUSTED_ARGS: Self = Self(1 << 3);
+    /// Must run inside an RCU read-side critical section. Pre-call check
+    /// rejects if `state.rcu_read_depth == 0` (W5.2).
+    pub const RCU: Self = Self(1 << 4);
+    /// Callable only from sleepable programs.
+    pub const SLEEPABLE: Self = Self(1 << 5);
+    /// Destructive kfunc (KF_DESTRUCTIVE).
+    pub const DESTRUCTIVE: Self = Self(1 << 6);
+    /// Pre-call: acquires the spin_lock pointed to by R1 (which the
+    /// `MapValueSpecial { SpinLock }` arg validator has already shape-
+    /// checked). Rejects if a lock is already held; otherwise records
+    /// `(ptr_id, lock_offset)` in `state.active_lock`. W5.2.
+    pub const SPIN_LOCK_ACQUIRE: Self = Self(1 << 7);
+    /// Pre-call: releases the spin_lock pointed to by R1. Rejects if no
+    /// lock is held or if the held lock's `ptr_id` doesn't match R1's.
+    /// W5.2.
+    pub const SPIN_LOCK_RELEASE: Self = Self(1 << 8);
+    /// Pre-call: enters an RCU read-side critical section by
+    /// incrementing `state.rcu_read_depth`. W5.2.
+    pub const RCU_READ_LOCK: Self = Self(1 << 9);
+    /// Pre-call: exits an RCU read-side critical section by
+    /// decrementing `state.rcu_read_depth`. Rejects if depth is already
+    /// zero. W5.2.
+    pub const RCU_READ_UNLOCK: Self = Self(1 << 10);
+    /// Pre-call precondition: a spin_lock must be held (W5.4). Drives
+    /// rbtree / list mutation kfuncs which would race on the per-map-
+    /// value head/root without the lock. Rejects with
+    /// `NotInSpinLockSection` when `state.active_lock.is_none()`.
+    pub const SPIN_LOCK_HELD: Self = Self(1 << 11);
+
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    pub const fn contains(self, other: Self) -> bool {
+        (self.0 & other.0) == other.0
+    }
+
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+}
+
+impl core::ops::BitOr for CallFlags {
+    type Output = Self;
+    fn bitor(self, rhs: Self) -> Self {
+        self.union(rhs)
+    }
+}
+
+impl core::ops::BitOrAssign for CallFlags {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+
+/// Shape of R0 after the call.
+///
+/// `Unknown` = legacy `update_call_types` arm decides R0's type by
+/// helper-id. Concrete variants drive R0 typing through the shared
+/// post-call applier (`call::side_effects`) so kfuncs can reuse it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(dead_code)]
+pub enum RetKind {
+    /// Legacy fallback — leave R0 alone; per-helper logic sets it.
+    #[default]
+    Unknown,
+    /// Kfunc returns `void`. Post-call applier leaves R0 = Scalar (BPF
+    /// ABI gives every callee an R0; we don't expose any constraints).
+    Void,
+    /// Generic scalar return.
+    Scalar,
+    /// `RegType::PtrToSocket`. Combined with `CallFlags::ACQUIRE` the
+    /// applier mints a fresh ref_id; combined with `CallFlags::RET_NULL`
+    /// the result wraps as `PtrToSocketOrNull`.
+    PtrToSocket,
+    /// `RegType::PtrToSockCommon`. Same acquire/null semantics as above.
+    PtrToSockCommon,
+    /// `RegType::PtrToAllocMem` sized by the value of the arg at index
+    /// `size_arg` (W4.2g). Used by `bpf_dynptr_slice`/`slice_rdwr`,
+    /// which return a pointer into the dynptr's backing memory whose
+    /// length matches the caller-supplied scratch-buffer size. Combined
+    /// with `CallFlags::RET_NULL` the applier wraps as
+    /// `PtrToAllocMemOrNull`.
+    PtrToAllocMemFromArg { size_arg: u8 },
+    /// `RegType::PtrToAllocMem` with a const element size baked in
+    /// (W4.3). Used by `bpf_iter_*_next` whose returned pointer width
+    /// is per-iter-kind, not driven by an arg. Combined with
+    /// `CallFlags::RET_NULL` the applier wraps as `PtrToAllocMemOrNull`.
+    PtrToAllocMem { mem_size: u64 },
+    /// `RegType::PtrToCpumask` (W5.3). `bpf_cpumask_create` returns a
+    /// freshly-acquired cpumask. Combined with `CallFlags::ACQUIRE` the
+    /// applier mints a fresh ref_id; combined with `CallFlags::RET_NULL`
+    /// the result wraps as `PtrToCpumaskOrNull`.
+    PtrToCpumask,
+    /// `RegType::PtrToArena` (W5.5). Used by `bpf_arena_alloc_pages`
+    /// whose returned bounded-memory size is `R(page_cnt_arg+1) * PAGE_SIZE`
+    /// — i.e. the page count argument scaled by the architectural page
+    /// size (4096). Combined with `CallFlags::ACQUIRE` the applier mints
+    /// a fresh ref_id; combined with `CallFlags::RET_NULL` the result
+    /// wraps as `PtrToArenaOrNull`.
+    PtrToArenaFromArg { page_cnt_arg: u8 },
+    /// `RegType::PtrToOwnedKptr` (W5.4). Used by `bpf_obj_new_impl`,
+    /// `bpf_refcount_acquire_impl`, and the list/rbtree pop/remove
+    /// kfuncs. Combined with `CallFlags::ACQUIRE` the applier mints a
+    /// fresh ref_id; combined with `CallFlags::RET_NULL` the result
+    /// wraps as `PtrToOwnedKptrOrNull`.
+    PtrToOwnedKptr,
+    /// `bpf_iter_*_next(&it)` (W4.3b): forks the call into two
+    /// successors. Non-NULL: R0 = `PtrToAllocMem { mem_size = elem_size }`,
+    /// iterator slot at `iter_arg` stays Active. NULL: R0 = scalar 0,
+    /// slot transitions Active → Drained. The kfunc dispatcher in
+    /// `transfer_kfunc_proto` recognizes this variant and produces both
+    /// successors; the flat-state applier `apply_call_proto_r0` does
+    /// not handle it (would assert).
+    IterNextElem { iter_arg: u8, elem_size: u64 },
+}
+
+/// Post-call side effect entries — applied in order by the shared
+/// applier. Today only the release pattern; W4.2/W4.3 add dynptr/iter
+/// transitions, stack-buffer init, etc.
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
+pub enum SideEffect {
+    /// Drop & invalidate the ref carried on the given arg index (0..=4
+    /// → R1..R5). Drives `bpf_sk_release` and ref-release kfuncs.
+    ReleaseRefFromArg { arg: u8 },
+    /// Read a `PtrToCallback { subprog_pc }` from the given arg and
+    /// register that subprog as the program-default exception handler.
+    /// Drives `bpf_set_exception_callback`.
+    SetExceptionCallbackFromArg { arg: u8 },
+    /// Stamp a fresh dynptr annotation on the stack pair pointed to by
+    /// `arg` (W4.2). For acquire-tracked kinds (`Ringbuf`) the applier
+    /// mints a ref_id and links it onto the slot; for non-acquire kinds
+    /// the ref_id is 0. Drives `bpf_dynptr_from_mem`,
+    /// `bpf_ringbuf_reserve_dynptr`, etc.
+    DynptrInitOnArg {
+        arg: u8,
+        kind: DynptrKind,
+        rdonly: bool,
+    },
+    /// Clear the dynptr annotation on the stack pair pointed to by `arg`
+    /// and drop its ref_id (W4.2). Drives `bpf_ringbuf_submit_dynptr` and
+    /// `bpf_ringbuf_discard_dynptr`.
+    DynptrReleaseFromArg { arg: u8 },
+    /// Initialize an iterator slot (W4.3). Validator already accepted
+    /// the arg as Uninit; the applier zeros `bpf_iter_size(kind)` bytes
+    /// (matching the kernel's STACK_ITER mark) and stamps an `Active`
+    /// annotation with a fresh `iter_id`. Drives `bpf_iter_*_new`.
+    IterInitOnArg { arg: u8, kind: IterKind },
+    /// Clear an iterator slot (W4.3). Validator accepted Active|Drained
+    /// at this slot; the applier wipes the annotation. Drives
+    /// `bpf_iter_*_destroy`.
+    IterDestroyOnArg { arg: u8 },
+}
+
+// ============================================================================
+// CallProto — unified shape for helpers and kfuncs
+// ============================================================================
+
+/// Maximum number of arguments for a BPF call (helper or kfunc).
+pub const MAX_BPF_FUNC_ARGS: usize = 5;
+
+/// Unified proto for a helper or kfunc call.
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)] // W4.1b migrates post-call logic onto ret/flags/side_effects
+pub struct CallProto {
+    /// Argument shapes for R1..R5 (use `DontCare` for unused).
+    pub args: [ArgKind; MAX_BPF_FUNC_ARGS],
+    /// Return value shape; `Unknown` defers to legacy post-call logic.
+    pub ret: RetKind,
+    /// Behavioral flags (acquire/release/ret-null/trust/rcu/...).
+    pub flags: CallFlags,
+    /// Post-call state mutations to apply in order.
+    pub side_effects: &'static [SideEffect],
+    /// Pointer-size pairs to validate before the call: each pair links a
+    /// pointer arg with the size arg that bounds its access. Drives the
+    /// `check_mem_size_pairs` pass and the `validate_ptr_to_mem` skip
+    /// for paired pointers (W4.2d: was helper-id-keyed; now lives on
+    /// the proto so kfuncs reuse the same machinery).
+    pub mem_size_pairs: &'static [MemSizePair],
+}
+
+impl CallProto {
+    /// Minimal constructor — args only, everything else default.
+    /// Used by helper table entries that haven't been flag-migrated yet.
+    const fn with_args(args: [ArgKind; MAX_BPF_FUNC_ARGS]) -> Self {
+        Self {
+            args,
+            ret: RetKind::Unknown,
+            flags: CallFlags::empty(),
+            side_effects: &[],
+            mem_size_pairs: &[],
+        }
+    }
+
+    /// Builder: set return shape.
+    const fn ret(mut self, ret: RetKind) -> Self {
+        self.ret = ret;
+        self
+    }
+
+    /// Builder: set behavioral flags.
+    const fn flags(mut self, flags: CallFlags) -> Self {
+        self.flags = flags;
+        self
+    }
+
+    /// Builder: set post-call side effects.
+    const fn side_effects(mut self, side_effects: &'static [SideEffect]) -> Self {
+        self.side_effects = side_effects;
+        self
+    }
+
+    /// Builder: set pointer-size pair list.
+    const fn mem_size_pairs(mut self, pairs: &'static [MemSizePair]) -> Self {
+        self.mem_size_pairs = pairs;
+        self
+    }
 }
 
 // ============================================================================
@@ -109,34 +416,18 @@ impl MemSizePair {
 }
 
 // ============================================================================
-// Helper Function Signatures
+// Helper Function Prototypes
 // ============================================================================
 
-/// Maximum number of arguments for a BPF helper function.
-pub const MAX_BPF_FUNC_ARGS: usize = 5;
-
-/// Signature of a BPF helper function.
-#[derive(Debug, Clone, Copy)]
-pub struct HelperSignature {
-    /// Argument types for R1-R5 (use DontCare for unused args)
-    pub args: [BpfArgType; MAX_BPF_FUNC_ARGS],
-}
-
-impl HelperSignature {
-    const fn new(args: [BpfArgType; MAX_BPF_FUNC_ARGS]) -> Self {
-        Self { args }
-    }
-}
-
 // Convenience aliases
-use BpfArgType::*;
+use ArgKind::*;
 
-/// Helper function signatures indexed by helper ID.
+/// Helper function prototypes indexed by helper ID.
 /// Returns None for unknown helpers.
-pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
+pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
     Some(match helper {
         // ---- Map operations ----
-        constants::BPF_MAP_LOOKUP_ELEM => HelperSignature::new([
+        constants::BPF_MAP_LOOKUP_ELEM => CallProto::with_args([
             ConstMapPtr, // R1: map
             PtrToMapKey, // R2: key
             DontCare,
@@ -144,7 +435,7 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
-        constants::BPF_MAP_UPDATE_ELEM => HelperSignature::new([
+        constants::BPF_MAP_UPDATE_ELEM => CallProto::with_args([
             ConstMapPtr,   // R1: map
             PtrToMapKey,   // R2: key
             PtrToMapValue, // R3: value
@@ -152,7 +443,7 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
-        constants::BPF_MAP_DELETE_ELEM => HelperSignature::new([
+        constants::BPF_MAP_DELETE_ELEM => CallProto::with_args([
             ConstMapPtr, // R1: map
             PtrToMapKey, // R2: key
             DontCare,
@@ -160,7 +451,7 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
-        constants::BPF_GET_LOCAL_STORAGE => HelperSignature::new([
+        constants::BPF_GET_LOCAL_STORAGE => CallProto::with_args([
             ConstMapPtr, // R1: map
             Anything,    // R2: index
             DontCare,
@@ -169,16 +460,17 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
         ]),
 
         // ---- Memory helpers ----
-        constants::BPF_GET_STACK => HelperSignature::new([
+        constants::BPF_GET_STACK => CallProto::with_args([
             PtrToCtx,
             PtrToUninitMem,
             ConstSizeOrZero,
             Anything,
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::GET_STACK),
 
         // ---- Tail call ----
-        constants::BPF_TAIL_CALL => HelperSignature::new([
+        constants::BPF_TAIL_CALL => CallProto::with_args([
             PtrToCtx,    // R1: ctx
             ConstMapPtr, // R2: prog_array_map
             Anything,    // R3: index
@@ -187,25 +479,26 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
         ]),
 
         // ---- Socket/context helpers ----
-        constants::BPF_GET_SOCKET_COOKIE => HelperSignature::new([
+        constants::BPF_GET_SOCKET_COOKIE => CallProto::with_args([
             PtrToCtx, // R1: ctx
             DontCare, DontCare, DontCare, DontCare,
         ]),
 
-        constants::BPF_CSUM_UPDATE => HelperSignature::new([
+        constants::BPF_CSUM_UPDATE => CallProto::with_args([
             PtrToCtx, // R1: skb
             DontCare, DontCare, DontCare, DontCare,
         ]),
 
-        constants::BPF_CSUM_DIFF => HelperSignature::new([
+        constants::BPF_CSUM_DIFF => CallProto::with_args([
             PtrToMemOrNull,  // R1: from
             ConstSizeOrZero, // R2: from_size
             PtrToMemOrNull,  // R3: to
             ConstSizeOrZero, // R4: to_size
             Anything,        // R5: seed
-        ]),
+        ])
+        .mem_size_pairs(&pairs::CSUM_DIFF),
 
-        constants::BPF_SKB_ECN_SET_CE => HelperSignature::new([
+        constants::BPF_SKB_ECN_SET_CE => CallProto::with_args([
             PtrToCtxOrNull, // R1: skb (can be NULL)
             DontCare,
             DontCare,
@@ -213,58 +506,62 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
-        constants::BPF_GET_HASH_RECALC => HelperSignature::new([
+        constants::BPF_GET_HASH_RECALC => CallProto::with_args([
             PtrToCtx, // R1: ctx
             DontCare, DontCare, DontCare, DontCare,
         ]),
 
         // ---- SKB data access ----
-        constants::BPF_SKB_LOAD_BYTES => HelperSignature::new([
+        constants::BPF_SKB_LOAD_BYTES => CallProto::with_args([
             PtrToCtx,       // R1: skb
             Anything,       // R2: offset
             PtrToUninitMem, // R3: to (destination buffer)
             ConstSize,      // R4: len
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::SKB_LOAD_BYTES),
 
-        constants::BPF_SKB_VLAN_PUSH => HelperSignature::new([
+        constants::BPF_SKB_VLAN_PUSH => CallProto::with_args([
             PtrToCtx, // R1: skb
             Anything, // R2: vlan_proto
             Anything, // R3: vlan_tci
             DontCare, DontCare,
         ]),
 
-        constants::BPF_SKB_GET_TUNNEL_KEY => HelperSignature::new([
+        constants::BPF_SKB_GET_TUNNEL_KEY => CallProto::with_args([
             PtrToCtx,       // R1: skb
             PtrToUninitMem, // R2: key (buffer to store key)
             ConstSize,      // R3: size
             Anything,       // R4: flags
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::SKB_GET_TUNNEL_KEY),
 
-        constants::BPF_SKB_SET_TUNNEL_KEY => HelperSignature::new([
+        constants::BPF_SKB_SET_TUNNEL_KEY => CallProto::with_args([
             PtrToCtx,  // R1: skb
             PtrToMem,  // R2: key
             ConstSize, // R3: size
             Anything,  // R4: flags
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::SKB_SET_TUNNEL_KEY),
 
-        constants::BPF_SKB_VLAN_POP => HelperSignature::new([
+        constants::BPF_SKB_VLAN_POP => CallProto::with_args([
             PtrToCtx, // R1: skb
             DontCare, DontCare, DontCare, DontCare,
         ]),
 
-        constants::BPF_SKB_STORE_BYTES => HelperSignature::new([
+        constants::BPF_SKB_STORE_BYTES => CallProto::with_args([
             PtrToCtx,  // R1: skb
             Anything,  // R2: offset
             PtrToMem,  // R3: from (source buffer)
             ConstSize, // R4: len
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::SKB_STORE_BYTES),
 
         // ---- Redirect ----
-        constants::BPF_REDIRECT => HelperSignature::new([
+        constants::BPF_REDIRECT => CallProto::with_args([
             Anything, // R1: ifindex
             Anything, // R2: flags
             DontCare, DontCare, DontCare,
@@ -273,14 +570,14 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
         // ---- XDP helpers ----
         constants::BPF_XDP_ADJUST_HEAD
         | constants::BPF_XDP_ADJUST_TAIL
-        | constants::BPF_XDP_ADJUST_META => HelperSignature::new([
+        | constants::BPF_XDP_ADJUST_META => CallProto::with_args([
             PtrToCtx, // R1: xdp_md
             Anything, // R2: delta
             DontCare, DontCare, DontCare,
         ]),
 
         // ---- Tail modification ----
-        constants::BPF_SKB_CHANGE_TAIL => HelperSignature::new([
+        constants::BPF_SKB_CHANGE_TAIL => CallProto::with_args([
             PtrToCtx, // R1: skb
             Anything, // R2: len
             Anything, // R3: flags
@@ -288,30 +585,50 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
         ]),
 
         // ---- Socket lookup ----
-        constants::BPF_SKC_LOOKUP_TCP => HelperSignature::new([
+        constants::BPF_SKC_LOOKUP_TCP => CallProto::with_args([
             PtrToCtx, // R1: ctx
             PtrToMem, // R2: tuple
             Anything, // R3: tuple_size
             DontCare, DontCare,
-        ]),
+        ])
+        .ret(RetKind::PtrToSockCommon)
+        .flags(CallFlags::ACQUIRE.union(CallFlags::RET_NULL))
+        .mem_size_pairs(&pairs::SK_LOOKUP_TCP),
 
-        constants::BPF_SK_LOOKUP_TCP => HelperSignature::new([
+        constants::BPF_SK_LOOKUP_TCP => CallProto::with_args([
             PtrToCtx,  // R1: ctx
             PtrToMem,  // R2: tuple
             ConstSize, // R3: tuple_size
             Anything,  // R4: netns
             Anything,  // R5: flags
-        ]),
+        ])
+        .ret(RetKind::PtrToSocket)
+        .flags(CallFlags::ACQUIRE.union(CallFlags::RET_NULL))
+        .mem_size_pairs(&pairs::SK_LOOKUP_TCP),
 
-        constants::BPF_SK_LOOKUP_UDP => HelperSignature::new([
+        constants::BPF_SK_LOOKUP_UDP => CallProto::with_args([
             PtrToCtx,  // R1: ctx
             PtrToMem,  // R2: tuple
             ConstSize, // R3: tuple_size
             Anything,  // R4: netns
             Anything,  // R5: flags
-        ]),
+        ])
+        .ret(RetKind::PtrToSocket)
+        .flags(CallFlags::ACQUIRE.union(CallFlags::RET_NULL))
+        .mem_size_pairs(&pairs::SK_LOOKUP_UDP),
 
-        constants::BPF_SK_RELEASE => HelperSignature::new([
+        constants::BPF_SK_RELEASE => CallProto::with_args([
+            PtrToSocket, // R1: socket
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+
+        constants::BPF_SKC_TO_UDP6_SOCK => CallProto::with_args([
             PtrToSocket, // R1: socket
             DontCare,
             DontCare,
@@ -319,15 +636,7 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
-        constants::BPF_SKC_TO_UDP6_SOCK => HelperSignature::new([
-            PtrToSocket, // R1: socket
-            DontCare,
-            DontCare,
-            DontCare,
-            DontCare,
-        ]),
-
-        constants::BPF_SK_FULLSOCK => HelperSignature::new([
+        constants::BPF_SK_FULLSOCK => CallProto::with_args([
             PtrToSockCommon, // R1: sock_common
             DontCare,
             DontCare,
@@ -336,11 +645,11 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
         ]),
 
         constants::BPF_TCP_SOCK => {
-            HelperSignature::new([PtrToSockCommon, DontCare, DontCare, DontCare, DontCare])
+            CallProto::with_args([PtrToSockCommon, DontCare, DontCare, DontCare, DontCare])
         }
 
         // ---- Socket storage helpers ----
-        constants::BPF_SK_STORAGE_GET => HelperSignature::new([
+        constants::BPF_SK_STORAGE_GET => CallProto::with_args([
             ConstMapPtr,
             PtrToBTFIdSockCommon,
             PtrToMapValueOrNull,
@@ -349,11 +658,12 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
         ]),
 
         constants::BPF_GET_SOCKOPT => {
-            HelperSignature::new([PtrToCtx, Anything, Anything, PtrToUninitMem, ConstSize])
+            CallProto::with_args([PtrToCtx, Anything, Anything, PtrToUninitMem, ConstSize])
+                .mem_size_pairs(&pairs::GET_SOCKOPT)
         }
 
         // ---- FIB lookup ----
-        constants::BPF_FIB_LOOKUP => HelperSignature::new([
+        constants::BPF_FIB_LOOKUP => CallProto::with_args([
             PtrToCtx, // R1: ctx
             PtrToMem, // R2: params (bpf_fib_lookup struct)
             Anything, // R3: plen
@@ -363,49 +673,133 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
 
         constants::BPF_PROBE_READ
         | constants::BPF_PROBE_READ_STR
-        | constants::BPF_PROBE_READ_USER => HelperSignature::new([
+        | constants::BPF_PROBE_READ_USER => CallProto::with_args([
             PtrToUninitMem,  // R1: dst
             ConstSizeOrZero, // R2: size
             Anything,        // R3: unsafe_ptr (user address)
             DontCare,
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::PROBE_READ),
 
-        constants::BPF_PROBE_READ_KERNEL => HelperSignature::new([
+        constants::BPF_PROBE_READ_KERNEL => CallProto::with_args([
             PtrToUninitMem,  // R1: dst (output buffer)
             ConstSizeOrZero, // R2: size
             Anything,        // R3: unsafe_ptr (kernel address, not validated)
             DontCare,
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::PROBE_READ),
 
-        constants::BPF_PERF_EVENT_READ_VALUE => HelperSignature::new([
+        constants::BPF_PERF_EVENT_READ_VALUE => CallProto::with_args([
             ConstMapPtr,     // R1: map
             Anything,        // R2: flags
             PtrToUninitMem,  // R3: buf
             ConstSizeOrZero, // R4: buf_size
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::PERF_EVENT_READ_VALUE),
 
-        constants::BPF_PERF_PROG_READ_VALUE => HelperSignature::new([
+        constants::BPF_PERF_PROG_READ_VALUE => CallProto::with_args([
             PtrToCtx,        // R1: ctx
             PtrToUninitMem,  // R2: buf
             ConstSizeOrZero, // R3: buf_size
             DontCare,        // R4: flags (not verified here)
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::PERF_PROG_READ_VALUE),
 
-        // ---- Spin lock related ----
-        constants::BPF_SPIN_LOCK => {
-            HelperSignature::new([Anything, DontCare, DontCare, DontCare, DontCare])
-        }
+        // ---- Spin lock (W5.2) ----
+        // void bpf_spin_lock(struct bpf_spin_lock *lock)
+        // void bpf_spin_unlock(struct bpf_spin_lock *lock)
+        // R1 must be a PtrToMapValue aimed at a `bpf_spin_lock` field
+        // recorded in the map's value-type BTF. The shape check rides
+        // `MapValueSpecial { SpinLock }`; the lock-state mutation
+        // (`active_lock` acquire / release) is driven by the
+        // `SPIN_LOCK_{ACQUIRE,RELEASE}` flags in the pre-call hook.
+        constants::BPF_SPIN_LOCK => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::SpinLock },
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::SPIN_LOCK_ACQUIRE),
 
-        constants::BPF_SPIN_UNLOCK => {
-            HelperSignature::new([Anything, DontCare, DontCare, DontCare, DontCare])
-        }
+        constants::BPF_SPIN_UNLOCK => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::SpinLock },
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::SPIN_LOCK_RELEASE),
+
+        // ---- RCU read-side critical section (W5.2) ----
+        // void bpf_rcu_read_lock(void)
+        // void bpf_rcu_read_unlock(void)
+        constants::BPF_RCU_READ_LOCK => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::RCU_READ_LOCK),
+
+        constants::BPF_RCU_READ_UNLOCK => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::RCU_READ_UNLOCK),
+
+        // ---- Timers (W5.1) ----
+        // long bpf_timer_init(struct bpf_timer *timer, struct bpf_map *map, u64 flags)
+        constants::BPF_TIMER_INIT => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::Timer }, // R1: &timer field
+            ConstMapPtr,                                       // R2: map the cb will operate on
+            Anything,                                          // R3: flags
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // long bpf_timer_set_callback(struct bpf_timer *timer,
+        //                             void *callback_fn)
+        // Routed through is_callback_helper → transfer_callback_helper for
+        // the cb-frame fork; this proto just covers the arg validation
+        // (timer field + PtrToCallback) and post-call R0 typing for the
+        // skip successor (the cb-frame branch updates R0 separately).
+        constants::BPF_TIMER_SET_CALLBACK => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::Timer }, // R1: &timer field
+            PtrToCallback,                                     // R2: callback subprog
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // long bpf_timer_start(struct bpf_timer *timer, u64 nsecs, u64 flags)
+        constants::BPF_TIMER_START => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::Timer }, // R1: &timer field
+            Anything,                                          // R2: nsecs
+            Anything,                                          // R3: flags
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // long bpf_timer_cancel(struct bpf_timer *timer)
+        constants::BPF_TIMER_CANCEL => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::Timer }, // R1: &timer field
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
 
         // ---- Ringbuf helpers ----
-        constants::BPF_RINGBUF_OUTPUT => HelperSignature::new([
+        constants::BPF_RINGBUF_OUTPUT => CallProto::with_args([
             ConstMapPtr,     // R1: ringbuf map
             PtrToMem,        // R2: data to copy (must be initialized)
             ConstSizeOrZero, // R3: size
@@ -413,7 +807,7 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             DontCare,
         ]),
 
-        constants::BPF_RINGBUF_RESERVE => HelperSignature::new([
+        constants::BPF_RINGBUF_RESERVE => CallProto::with_args([
             ConstMapPtr,
             ConstAllocSizeOrZero,
             Anything,
@@ -422,25 +816,26 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
         ]),
 
         constants::BPF_RINGBUF_SUBMIT => {
-            HelperSignature::new([PtrToAllocMem, Anything, DontCare, DontCare, DontCare])
+            CallProto::with_args([PtrToAllocMem, Anything, DontCare, DontCare, DontCare])
         }
 
         // ---- Information helpers ----
         constants::BPF_KTIME_GET_NS => {
-            HelperSignature::new([DontCare, DontCare, DontCare, DontCare, DontCare])
+            CallProto::with_args([DontCare, DontCare, DontCare, DontCare, DontCare])
         }
 
         // ---- Process info helpers ----
-        constants::BPF_GET_TASK_STACK => HelperSignature::new([
+        constants::BPF_GET_TASK_STACK => CallProto::with_args([
             PtrToBtfId,
             PtrToUninitMem,
             ConstSizeOrZero,
             Anything,
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::GET_TASK_STACK),
 
         // ---- Sockmap operations ----
-        constants::BPF_SOCK_MAP_UPDATE => HelperSignature::new([
+        constants::BPF_SOCK_MAP_UPDATE => CallProto::with_args([
             PtrToCtx,    // R1: bpf_sock_ops context (SockOps only)
             ConstMapPtr, // R2: sockmap
             PtrToMapKey, // R3: key
@@ -450,10 +845,10 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
 
         // ---- Miscellaneous ----
         constants::BPF_GET_PRANDOM_U32 => {
-            HelperSignature::new([DontCare, DontCare, DontCare, DontCare, DontCare])
+            CallProto::with_args([DontCare, DontCare, DontCare, DontCare, DontCare])
         }
 
-        constants::BPF_TRACE_PRINTK => HelperSignature::new([
+        constants::BPF_TRACE_PRINTK => CallProto::with_args([
             PtrToMem,  // R1: fmt string
             ConstSize, // R2: fmt_size (MUST BE > 0)
             Anything,  // R3: arg1
@@ -462,30 +857,32 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
         ]),
 
         constants::BPF_STRTOUL => {
-            HelperSignature::new([PtrToMem, ConstSize, Anything, PtrToLong, DontCare])
+            CallProto::with_args([PtrToMem, ConstSize, Anything, PtrToLong, DontCare])
         }
 
         constants::BPF_GET_CGROUP_CLASS_ID => {
-            HelperSignature::new([PtrToCtx, DontCare, DontCare, DontCare, DontCare])
+            CallProto::with_args([PtrToCtx, DontCare, DontCare, DontCare, DontCare])
         }
 
-        constants::BPF_GET_CURRENT_COMM => HelperSignature::new([
+        constants::BPF_GET_CURRENT_COMM => CallProto::with_args([
             PtrToUninitMem, // R1: buf (output buffer for comm string)
             ConstSize,      // R2: size_of_buf
             DontCare,
             DontCare,
             DontCare,
-        ]),
+        ])
+        .mem_size_pairs(&pairs::GET_CURRENT_COMM),
 
-        constants::BPF_PERF_EVENT_OUTPUT => HelperSignature::new([
+        constants::BPF_PERF_EVENT_OUTPUT => CallProto::with_args([
             PtrToCtx,    // R1: ctx
             ConstMapPtr, // R2: map
             Anything,    // R3: flags
             PtrToMem,    // R4: data
             ConstSize,   // R5: size
-        ]),
+        ])
+        .mem_size_pairs(&pairs::PERF_EVENT_OUTPUT),
 
-        constants::BPF_L3_CSUM_REPLACE => HelperSignature::new([
+        constants::BPF_L3_CSUM_REPLACE => CallProto::with_args([
             PtrToCtx, // R1: skb
             Anything, // R2: offset
             Anything, // R3: from
@@ -493,7 +890,7 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
             Anything, // R5: flags
         ]),
 
-        constants::BPF_L4_CSUM_REPLACE => HelperSignature::new([
+        constants::BPF_L4_CSUM_REPLACE => CallProto::with_args([
             PtrToCtx, // R1: skb
             Anything, // R2: offset
             Anything, // R3: from
@@ -505,86 +902,518 @@ pub fn get_helper_signature(helper: u32) -> Option<HelperSignature> {
     })
 }
 
-/// Returns all pointer-size pairs for a given helper.
-/// Returns empty slice if helper has no such pairs (e.g., map ops use fixed sizes).
-pub fn get_mem_size_pairs(helper: u32) -> &'static [MemSizePair] {
-    use Reg::*;
+// ============================================================================
+// Kfunc Prototypes (W4.1c)
+// ============================================================================
+//
+// Today this is a name-keyed override table — a small set of kfuncs whose
+// arg shape and side effects can't (yet) be derived purely from BTF +
+// KF_* flags. W4.2 (dynptr) and W4.3 (open-coded iterators) will populate
+// it heavily; eventually most kfuncs should fall through to a generic
+// BTF-driven producer that reads the func-proto BTF + KF flags directly.
 
-    // Define static arrays for each helper pattern
-    static PROBE_READ: [MemSizePair; 1] = [MemSizePair::new_nullable(R1, R2)];
+/// Kfunc prototypes indexed by kfunc name. Returns `None` for kfuncs not
+/// yet on the proto path — the caller falls back to the legacy bespoke
+/// dispatch in `kfunc.rs`.
+pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
+    Some(match name {
+        "bpf_set_exception_callback" => CallProto::with_args([
+            PtrToCallback, // R1: subprog ptr (PSEUDO_FUNC)
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::SetExceptionCallbackFromArg { arg: 0 }]),
 
-    static SKB_LOAD_BYTES: [MemSizePair; 1] = [MemSizePair::new(R3, R4)];
+        // ---- Ringbuf dynptrs (W4.2c) ----
+        //
+        // void bpf_ringbuf_reserve_dynptr(struct bpf_map *rb, u32 size,
+        //                                 u64 flags, struct bpf_dynptr *ptr)
+        //
+        // R4 is the dynptr ctor sink. Mints a ref_id, stamps a
+        // `Ringbuf` annotation on the stack pair. Returns 0/-errno;
+        // failure path leaves the slot initialized but the dynptr's
+        // internal data NULL — runtime concern, not a verifier one.
+        "bpf_ringbuf_reserve_dynptr" => CallProto::with_args([
+            ConstMapPtr, // R1: ringbuf map
+            Anything,    // R2: size
+            Anything,    // R3: flags
+            DynptrArg { uninit: true, rdwr_only: false }, // R4: &dynptr
+            DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::DynptrInitOnArg {
+            arg: 3,
+            kind: DynptrKind::Ringbuf,
+            rdonly: false,
+        }]),
 
-    static SKB_STORE_BYTES: [MemSizePair; 1] = [MemSizePair::new(R3, R4)];
+        // void bpf_ringbuf_submit_dynptr(struct bpf_dynptr *ptr, u64 flags)
+        "bpf_ringbuf_submit_dynptr" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false }, // R1: &dynptr
+            Anything,                                       // R2: flags
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Void)
+        .side_effects(&[SideEffect::DynptrReleaseFromArg { arg: 0 }]),
 
-    static SKB_GET_TUNNEL_KEY: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
+        // void bpf_ringbuf_discard_dynptr(struct bpf_dynptr *ptr, u64 flags)
+        "bpf_ringbuf_discard_dynptr" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false }, // R1: &dynptr
+            Anything,                                       // R2: flags
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Void)
+        .side_effects(&[SideEffect::DynptrReleaseFromArg { arg: 0 }]),
 
-    static SKB_SET_TUNNEL_KEY: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
+        // ---- Local-cluster dynptrs (W4.2e) ----
+        //
+        // int bpf_dynptr_from_mem(void *data, u32 size, u64 flags,
+        //                         struct bpf_dynptr *ptr)
+        //
+        // Wraps a caller-owned buffer (stack/map/packet) in a Local
+        // dynptr. R1 is the buffer; mem-size-pair (R1,R2) proves that
+        // `size` bytes are accessible. No ref tracking — Local dynptrs
+        // are pure metadata and need no release.
+        "bpf_dynptr_from_mem" => CallProto::with_args([
+            PtrToMem,    // R1: source buffer
+            ConstSize,   // R2: size
+            Anything,    // R3: flags (rdonly bit etc. — not modeled yet)
+            DynptrArg { uninit: true, rdwr_only: false }, // R4: &dynptr
+            DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::DynptrInitOnArg {
+            arg: 3,
+            kind: DynptrKind::Local,
+            rdonly: false,
+        }])
+        .mem_size_pairs(&pairs::DYNPTR_FROM_MEM),
 
-    static CSUM_DIFF: [MemSizePair; 2] = [
-        MemSizePair::new_nullable(R1, R2),
-        MemSizePair::new_nullable(R3, R4),
+        // int bpf_dynptr_read(void *dst, u32 len, const struct bpf_dynptr *src,
+        //                     u32 offset, u64 flags)
+        //
+        // Copies `len` bytes from `src` dynptr (at `offset`) into `dst`.
+        // Pair (R1,R2) bounds the dst write. Reads from any dynptr kind
+        // including rdonly.
+        "bpf_dynptr_read" => CallProto::with_args([
+            PtrToUninitMem, // R1: dst
+            ConstSize,      // R2: len
+            DynptrArg { uninit: false, rdwr_only: false }, // R3: src dynptr
+            Anything,       // R4: offset
+            Anything,       // R5: flags
+        ])
+        .ret(RetKind::Scalar)
+        .mem_size_pairs(&pairs::DYNPTR_READ),
+
+        // int bpf_dynptr_write(const struct bpf_dynptr *dst, u32 offset,
+        //                      void *src, u32 len, u64 flags)
+        //
+        // Copies `len` bytes from `src` into `dst` dynptr at `offset`.
+        // `rdwr_only` rejects rdonly dynptrs (e.g. would-be skb/xdp
+        // dynptrs). Pair (R3,R4) bounds the src read.
+        "bpf_dynptr_write" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: true }, // R1: dst dynptr
+            Anything,                                      // R2: offset
+            PtrToMem,                                      // R3: src
+            ConstSize,                                     // R4: len
+            Anything,                                      // R5: flags
+        ])
+        .ret(RetKind::Scalar)
+        .mem_size_pairs(&pairs::DYNPTR_WRITE),
+
+        // ---- skb / xdp dynptrs (W4.2f) ----
+        //
+        // int bpf_dynptr_from_skb(struct __sk_buff *skb, u64 flags,
+        //                         struct bpf_dynptr *ptr)
+        //
+        // Wraps skb data as a dynptr. We force rdonly=true here:
+        // matches kernel default for read-only skb program types
+        // (socket filter, tracing); SCHED_CLS / SCHED_ACT wrap as
+        // rdwr but require per-program-type modeling we defer.
+        "bpf_dynptr_from_skb" => CallProto::with_args([
+            PtrToCtx,    // R1: skb context
+            Anything,    // R2: flags
+            DynptrArg { uninit: true, rdwr_only: false }, // R3: &dynptr
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::DynptrInitOnArg {
+            arg: 2,
+            kind: DynptrKind::Skb,
+            rdonly: true,
+        }]),
+
+        // int bpf_dynptr_from_xdp(struct xdp_md *xdp, u64 flags,
+        //                         struct bpf_dynptr *ptr)
+        //
+        // Wraps xdp frame data as a dynptr. Same conservative
+        // rdonly=true posture as from_skb pending program-type
+        // refinement.
+        "bpf_dynptr_from_xdp" => CallProto::with_args([
+            PtrToCtx,    // R1: xdp context
+            Anything,    // R2: flags
+            DynptrArg { uninit: true, rdwr_only: false }, // R3: &dynptr
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::DynptrInitOnArg {
+            arg: 2,
+            kind: DynptrKind::Xdp,
+            rdonly: true,
+        }]),
+
+        // ---- Open-coded iterators (W4.3a) ----
+        //
+        // `bpf_iter_*_new(&it, ...)` — Uninit→Active. The iter struct is
+        // stack-allocated by the program; the side-effect zero-inits its
+        // bytes and stamps a fresh iter_id. Returns 0/-errno: applier
+        // sets R0 = scalar; legacy bespoke handler tightened the bound to
+        // [-MAX_ERRNO, 0] which the proto applier doesn't reproduce —
+        // dropping that bound is intentional (matches dynptr ctor bounds
+        // and isn't load-bearing for the test corpus).
+        //
+        // R2..R5 vary per-kind (num: start/end/step, task/css: opaque
+        // ptrs). We accept any scalar/ptr there with `Anything`; the
+        // kernel does deeper checks but those don't affect our
+        // soundness for the slot-state model.
+        "bpf_iter_num_new" => CallProto::with_args([
+            IterArg { kind: IterKind::Num, expected: IterArgExpect::Uninit },
+            Anything, Anything, Anything, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::IterInitOnArg { arg: 0, kind: IterKind::Num }]),
+
+        "bpf_iter_task_new" => CallProto::with_args([
+            IterArg { kind: IterKind::Task, expected: IterArgExpect::Uninit },
+            Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::IterInitOnArg { arg: 0, kind: IterKind::Task }]),
+
+        "bpf_iter_css_new" => CallProto::with_args([
+            IterArg { kind: IterKind::Css, expected: IterArgExpect::Uninit },
+            Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::IterInitOnArg { arg: 0, kind: IterKind::Css }]),
+
+        "bpf_iter_bits_new" => CallProto::with_args([
+            IterArg { kind: IterKind::Bits, expected: IterArgExpect::Uninit },
+            Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::IterInitOnArg { arg: 0, kind: IterKind::Bits }]),
+
+        // `bpf_iter_*_next(&it)` — requires Active; the dispatcher
+        // forks into non-NULL (R0 = PtrToAllocMem{elem_size}, slot
+        // stays Active) and NULL (R0 = 0, slot → Drained) successors.
+        // Element sizes mirror the bespoke handler: num=4 (int*),
+        // bits=8 (u64*), task/css=8 (placeholder pointer-width until
+        // PtrToBtfId per-kind typing in a future phase).
+        "bpf_iter_num_next" => CallProto::with_args([
+            IterArg { kind: IterKind::Num, expected: IterArgExpect::Active },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::IterNextElem { iter_arg: 0, elem_size: 4 }),
+
+        "bpf_iter_task_next" => CallProto::with_args([
+            IterArg { kind: IterKind::Task, expected: IterArgExpect::Active },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::IterNextElem { iter_arg: 0, elem_size: 8 }),
+
+        "bpf_iter_css_next" => CallProto::with_args([
+            IterArg { kind: IterKind::Css, expected: IterArgExpect::Active },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::IterNextElem { iter_arg: 0, elem_size: 8 }),
+
+        "bpf_iter_bits_next" => CallProto::with_args([
+            IterArg { kind: IterKind::Bits, expected: IterArgExpect::Active },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::IterNextElem { iter_arg: 0, elem_size: 8 }),
+
+        // `bpf_iter_*_destroy(&it)` — accept Active|Drained, transition
+        // back to Uninit. Calling on an Uninit slot is a REJECT (mirrors
+        // kernel "destroy on uninitialized").
+        "bpf_iter_num_destroy" => CallProto::with_args([
+            IterArg { kind: IterKind::Num, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
+
+        "bpf_iter_task_destroy" => CallProto::with_args([
+            IterArg { kind: IterKind::Task, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
+
+        "bpf_iter_css_destroy" => CallProto::with_args([
+            IterArg { kind: IterKind::Css, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
+
+        "bpf_iter_bits_destroy" => CallProto::with_args([
+            IterArg { kind: IterKind::Bits, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
+
+        // ---- Slice cluster (W4.2g) ----
+        //
+        // const void *bpf_dynptr_slice(const struct bpf_dynptr *p,
+        //                              u32 offset,
+        //                              void *buffer, u32 buffer_size)
+        //
+        // Returns a pointer into the dynptr's backing memory (fast
+        // path, contiguous case) or copies into the caller-provided
+        // `buffer` (slow path, fragmented). May be NULL if the slice
+        // straddles a non-copyable boundary. Pair (R3,R4) bounds the
+        // scratch buffer; the returned pointer is bounded by `R4` —
+        // RetKind::PtrToAllocMemFromArg{size_arg=3}.
+        "bpf_dynptr_slice" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false }, // R1: src dynptr
+            Anything,       // R2: offset
+            PtrToUninitMem, // R3: scratch buffer (write target on slow path)
+            ConstSize,      // R4: buffer size
+            DontCare,
+        ])
+        .ret(RetKind::PtrToAllocMemFromArg { size_arg: 3 })
+        .flags(CallFlags::RET_NULL)
+        .mem_size_pairs(&pairs::DYNPTR_SLICE),
+
+        // void *bpf_dynptr_slice_rdwr(const struct bpf_dynptr *p,
+        //                             u32 offset,
+        //                             void *buffer, u32 buffer_size)
+        //
+        // Same as `slice` but rejects rdonly dynptrs. Returns a writable
+        // pointer; rdonly tracking on the *result* isn't modeled yet
+        // (`PtrToAllocMem` carries no rdonly bit) — defer until a
+        // real consumer needs it.
+        "bpf_dynptr_slice_rdwr" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: true }, // R1: src dynptr
+            Anything,       // R2: offset
+            PtrToUninitMem, // R3: scratch buffer (write target on slow path)
+            ConstSize,      // R4: buffer size
+            DontCare,
+        ])
+        .ret(RetKind::PtrToAllocMemFromArg { size_arg: 3 })
+        .flags(CallFlags::RET_NULL)
+        .mem_size_pairs(&pairs::DYNPTR_SLICE),
+
+        // ---- Cpumask kfuncs (W5.3) ----
+        //
+        // struct bpf_cpumask *bpf_cpumask_create(void)
+        // KF_ACQUIRE | KF_RET_NULL — fresh refcounted cpumask, may be
+        // NULL on alloc failure. Applier mints a ref_id and returns
+        // PtrToCpumaskOrNull; the program must null-check before use.
+        "bpf_cpumask_create" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToCpumask)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        // void bpf_cpumask_release(struct bpf_cpumask *cpumask)
+        // KF_RELEASE — drops the refcount. R1 must be a non-null,
+        // ref-tracked PtrToCpumask; ReleaseRefFromArg invalidates the
+        // ref_id everywhere it's still aliased.
+        "bpf_cpumask_release" => CallProto::with_args([
+            PtrToCpumask, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+
+        // void bpf_cpumask_set_cpu(u32 cpu, struct bpf_cpumask *cpumask)
+        // Mutates the cpumask. R1 = cpu (scalar), R2 = cpumask.
+        "bpf_cpumask_set_cpu" => CallProto::with_args([
+            Anything, PtrToCpumask, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        // bool bpf_cpumask_test_cpu(u32 cpu, const struct cpumask *cpumask)
+        // Read-only query. We accept PtrToCpumask for R2 — the const
+        // cpumask vs bpf_cpumask distinction isn't modeled here.
+        "bpf_cpumask_test_cpu" => CallProto::with_args([
+            Anything, PtrToCpumask, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // u32 bpf_cpumask_first(const struct cpumask *cpumask)
+        "bpf_cpumask_first" => CallProto::with_args([
+            PtrToCpumask, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- Arena kfuncs (W5.5) ----
+        //
+        // void __arena *bpf_arena_alloc_pages(void *map, void __arena *addr,
+        //                                     u32 page_cnt, int node_id, u64 flags)
+        // KF_ACQUIRE | KF_RET_NULL — allocates `page_cnt` pages from the
+        // arena map and returns a refcounted bounded pointer; may be NULL
+        // on alloc failure. The arena-map and addr-hint args are not
+        // shape-validated here (lite scope: the verifier doesn't model
+        // BPF_MAP_TYPE_ARENA yet).
+        "bpf_arena_alloc_pages" => CallProto::with_args([
+            Anything, Anything, Anything, Anything, Anything,
+        ])
+        .ret(RetKind::PtrToArenaFromArg { page_cnt_arg: 2 })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        // void bpf_arena_free_pages(void *map, void __arena *ptr, u32 page_cnt)
+        // KF_RELEASE — drops the refcount on the arena allocation. R2
+        // must be a non-null, ref-tracked PtrToArena. Lite scope: the
+        // entire allocation is invalidated even if `page_cnt` is a
+        // strict sub-range of the original alloc; partial-free precision
+        // is deferred (real programs that need it are rare).
+        "bpf_arena_free_pages" => CallProto::with_args([
+            Anything, PtrToArena, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 1 }]),
+
+        // ---- Owned-kptr alloc / drop / refcount (W5.4a) ----
+        //
+        // void *bpf_obj_new_impl(u64 local_type_id, void *meta__ign)
+        // KF_ACQUIRE | KF_RET_NULL — heap-allocates a refcounted kernel
+        // object of the BTF-described type. The meta pointer is compiler-
+        // generated and not modeled here (Anything). Returns NULL on
+        // alloc failure; program must null-check before using.
+        "bpf_obj_new_impl" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToOwnedKptr)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        // void bpf_obj_drop_impl(void *kptr, void *meta__ign)
+        // KF_RELEASE — drops the refcount. R1 must be a non-null,
+        // ref-tracked PtrToOwnedKptr; ReleaseRefFromArg invalidates the
+        // ref everywhere it's still aliased.
+        "bpf_obj_drop_impl" => CallProto::with_args([
+            PtrToOwnedKptr, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+
+        // void *bpf_refcount_acquire_impl(void *kptr, void *meta__ign)
+        // KF_ACQUIRE | KF_RET_NULL — bumps the refcount and returns a
+        // fresh ref to the same object. The input ref stays valid (no
+        // RELEASE flag); the new ref must be independently dropped or
+        // pushed into a container.
+        "bpf_refcount_acquire_impl" => CallProto::with_args([
+            PtrToOwnedKptr, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToOwnedKptr)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        // ---- List + rbtree kfuncs (W5.4b) ----
+        //
+        // int bpf_list_push_front_impl(struct bpf_list_head *head,
+        //                              struct bpf_list_node *node,
+        //                              void *meta__ign, u64 off__ign)
+        // KF_RELEASE on the node — transfers ownership into the list.
+        // KF_LOCK_HELD: must be called under a spin_lock (real kernel
+        // requires the lock that protects this list head; lite scope
+        // accepts any held lock). R1 must point at a SpecialField{ListHead}
+        // inside a map value.
+        "bpf_list_push_front_impl" => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::ListHead },
+            PtrToOwnedKptr,
+            Anything,
+            Anything,
+            DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE | CallFlags::SPIN_LOCK_HELD)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 1 }]),
+
+        // struct bpf_list_node *bpf_list_pop_front(struct bpf_list_head *head)
+        // KF_ACQUIRE | KF_RET_NULL | KF_LOCK_HELD — pops a node out of
+        // the list and hands ownership to the caller. NULL on empty list.
+        "bpf_list_pop_front" => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::ListHead },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToOwnedKptr)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL | CallFlags::SPIN_LOCK_HELD),
+
+        // int bpf_rbtree_add_impl(struct bpf_rb_root *root,
+        //                         struct bpf_rb_node *node,
+        //                         bool (*less)(struct bpf_rb_node *,
+        //                                      const struct bpf_rb_node *),
+        //                         void *meta__ign, u64 off__ign)
+        // KF_RELEASE on the node + KF_LOCK_HELD. Lite scope: the `less`
+        // callback (R3) is accepted as Anything — we don't walk into the
+        // cb subprog for ordering-correctness checks. Tech-debt: future
+        // precision should validate it as `PtrToCallback` and explore.
+        "bpf_rbtree_add_impl" => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::RbRoot },
+            PtrToOwnedKptr,
+            Anything,
+            Anything,
+            DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE | CallFlags::SPIN_LOCK_HELD)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 1 }]),
+
+        _ => return None,
+    })
+}
+
+// Static mem-size-pair arrays referenced inline by helper / kfunc protos
+// (W4.2d: was helper-id-keyed via the now-deleted `get_mem_size_pairs`;
+// pairs now ride on `CallProto::mem_size_pairs` so the same machinery
+// serves both helpers and kfuncs).
+//
+// BPF_RINGBUF_OUTPUT is intentionally absent — the kernel allows
+// reading uninitialized stack data in privileged mode; restoring this
+// pair needs privileged/unprivileged-mode support.
+pub(super) mod pairs {
+    use super::{MemSizePair, Reg};
+    pub static PROBE_READ: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R1, Reg::R2)];
+    pub static SKB_LOAD_BYTES: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+    pub static SKB_STORE_BYTES: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+    pub static SKB_GET_TUNNEL_KEY: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    pub static SKB_SET_TUNNEL_KEY: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    pub static CSUM_DIFF: [MemSizePair; 2] = [
+        MemSizePair::new_nullable(Reg::R1, Reg::R2),
+        MemSizePair::new_nullable(Reg::R3, Reg::R4),
     ];
+    pub static SK_LOOKUP_TCP: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    pub static SK_LOOKUP_UDP: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    pub static GET_SOCKOPT: [MemSizePair; 1] = [MemSizePair::new(Reg::R4, Reg::R5)];
+    pub static GET_TASK_STACK: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    pub static GET_STACK: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    pub static PERF_EVENT_OUTPUT: [MemSizePair; 1] = [MemSizePair::new(Reg::R4, Reg::R5)];
+    pub static GET_CURRENT_COMM: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
+    pub static PERF_EVENT_READ_VALUE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+    pub static PERF_PROG_READ_VALUE: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
 
-    static SK_LOOKUP_TCP: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
+    // ---- Local-cluster dynptr kfuncs (W4.2e) ----
+    pub static DYNPTR_FROM_MEM: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
+    pub static DYNPTR_READ: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
+    pub static DYNPTR_WRITE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
 
-    static SK_LOOKUP_UDP: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
-
-    static GET_SOCKOPT: [MemSizePair; 1] = [MemSizePair::new(R4, R5)];
-
-    static GET_TASK_STACK: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
-
-    static GET_STACK: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
-
-    static PERF_EVENT_OUTPUT: [MemSizePair; 1] = [MemSizePair::new(R4, R5)];
-
-    static GET_CURRENT_COMM: [MemSizePair; 1] = [MemSizePair::new(R1, R2)];
-
-    static PERF_EVENT_READ_VALUE: [MemSizePair; 1] = [MemSizePair::new(R3, R4)];
-
-    static PERF_PROG_READ_VALUE: [MemSizePair; 1] = [MemSizePair::new(R2, R3)];
-
-    static EMPTY: [MemSizePair; 0] = [];
-
-    match helper {
-        constants::BPF_PROBE_READ
-        | constants::BPF_PROBE_READ_STR
-        | constants::BPF_PROBE_READ_USER
-        | constants::BPF_PROBE_READ_KERNEL => &PROBE_READ,
-
-        constants::BPF_SKB_LOAD_BYTES => &SKB_LOAD_BYTES,
-
-        constants::BPF_SKB_STORE_BYTES => &SKB_STORE_BYTES,
-
-        constants::BPF_SKB_GET_TUNNEL_KEY => &SKB_GET_TUNNEL_KEY,
-
-        constants::BPF_SKB_SET_TUNNEL_KEY => &SKB_SET_TUNNEL_KEY,
-
-        constants::BPF_CSUM_DIFF => &CSUM_DIFF,
-
-        constants::BPF_SK_LOOKUP_TCP => &SK_LOOKUP_TCP,
-
-        constants::BPF_SK_LOOKUP_UDP => &SK_LOOKUP_UDP,
-
-        constants::BPF_GET_SOCKOPT => &GET_SOCKOPT,
-
-        constants::BPF_GET_TASK_STACK => &GET_TASK_STACK,
-
-        constants::BPF_GET_STACK => &GET_STACK,
-
-        constants::BPF_PERF_EVENT_OUTPUT => &PERF_EVENT_OUTPUT,
-
-        constants::BPF_PERF_EVENT_READ_VALUE => &PERF_EVENT_READ_VALUE,
-
-        constants::BPF_PERF_PROG_READ_VALUE => &PERF_PROG_READ_VALUE,
-
-        constants::BPF_GET_CURRENT_COMM => &GET_CURRENT_COMM,
-
-        // Note: BPF_RINGBUF_OUTPUT mem-size pair check is skipped because
-        // the kernel allows reading uninitialized stack data in privileged mode.
-        // TODO: Add privileged/unprivileged mode support to enable this check.
-        _ => &EMPTY,
-    }
+    // ---- Slice cluster (W4.2g) ----
+    pub static DYNPTR_SLICE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
 }
 
 /// Returns true if the helper rejects packet pointers for the given argument index.
