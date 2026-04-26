@@ -252,6 +252,10 @@ fn same_socket_nullable_pointer(t1: &RegType, t2: &RegType) -> bool {
             RegType::PtrToCpumaskOrNull { ref_id: id1 },
             RegType::PtrToCpumaskOrNull { ref_id: id2 },
         ) => id1 == id2,
+        (
+            RegType::PtrToArenaOrNull { ref_id: id1, .. },
+            RegType::PtrToArenaOrNull { ref_id: id2, .. },
+        ) => id1 == id2,
         _ => false,
     }
 }
@@ -264,7 +268,8 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
         RegType::PtrToSocketOrNull { ref_id }
         | RegType::PtrToSockCommonOrNull { ref_id }
         | RegType::PtrToTcpSockOrNull { id: ref_id }
-        | RegType::PtrToCpumaskOrNull { ref_id } => ref_id,
+        | RegType::PtrToCpumaskOrNull { ref_id }
+        | RegType::PtrToArenaOrNull { ref_id, .. } => ref_id,
         _ => return,
     };
 

@@ -119,6 +119,7 @@ fn is_readable_ptr(ty: &RegType) -> bool {
             | PtrToPacket
             | PtrToPacketMeta
             | PtrToAllocMem { .. }
+            | PtrToArena { .. }
     )
 }
 

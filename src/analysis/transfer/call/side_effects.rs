@@ -206,6 +206,27 @@ pub(crate) fn apply_call_proto_r0(
             // here means a caller invoked the wrong path.
             unreachable!("RetKind::IterNextElem must be handled by the kfunc dispatcher fork");
         }
+        RetKind::PtrToArenaFromArg { page_cnt_arg } => {
+            // mem_size = page_cnt * PAGE_SIZE (4096). Read upper bound
+            // from the page_cnt arg (R(page_cnt_arg+1)); same convention
+            // as PtrToAllocMemFromArg.
+            const PAGE_SIZE: u64 = 4096;
+            let size_reg = arg_reg(page_cnt_arg);
+            let (_, max_pages) = state.domain.get_interval(size_reg);
+            let mem_size = (max_pages.max(0) as u64).saturating_mul(PAGE_SIZE);
+            let ref_id = if proto.flags.contains(CallFlags::ACQUIRE) {
+                Some(state.acquire_ref())
+            } else {
+                None
+            };
+            let ty = if proto.flags.contains(CallFlags::RET_NULL) {
+                RegType::PtrToArenaOrNull { ref_id, mem_size }
+            } else {
+                RegType::PtrToArena { ref_id, mem_size }
+            };
+            state.types.set(Reg::R0, ty);
+            true
+        }
         RetKind::PtrToAllocMemFromArg { size_arg } => {
             // Read the size arg's upper bound from the pre-call domain
             // (apply_call_proto_r0 runs before caller-saved clobber, so

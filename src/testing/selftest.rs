@@ -545,6 +545,9 @@ pub fn create_spin_lock_btf() -> BtfContext {
         "bpf_cpumask_set_cpu",
         "bpf_cpumask_test_cpu",
         "bpf_cpumask_first",
+        // W5.5: arena kfuncs (ids 129, 130).
+        "bpf_arena_alloc_pages",
+        "bpf_arena_free_pages",
     ]
     .iter()
     .enumerate()

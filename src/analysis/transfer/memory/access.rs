@@ -168,6 +168,21 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
                 });
             }
         }
+        PtrToArena { ref_id: _, mem_size } => {
+            let access_end = off as i64 + size;
+            if off < 0 || access_end > mem_size as i64 {
+                error!(
+                    "Unsafe arena load at pc {}: base {:?}+{} size {} exceeds arena allocation size {}",
+                    pc, base, off, size, mem_size
+                );
+                env.fail(VerificationError::UnsafeMemoryLoad {
+                    pc,
+                    base,
+                    off,
+                    size,
+                });
+            }
+        }
         ScalarValue | NotInit => {
             error!(
                 "Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})",
@@ -290,6 +305,21 @@ pub fn check_store(
             if access_end > mem_size as i64 {
                 error!(
                     "Unsafe memory store at pc {}: base {:?}+{} size {} exceeds allocated memory size {}",
+                    pc, base, off, size, mem_size
+                );
+                env.fail(VerificationError::UnsafeMemoryStore {
+                    pc,
+                    base,
+                    off,
+                    size,
+                });
+            }
+        }
+        PtrToArena { ref_id: _, mem_size } => {
+            let access_end = off as i64 + size;
+            if off < 0 || access_end > mem_size as i64 {
+                error!(
+                    "Unsafe arena store at pc {}: base {:?}+{} size {} exceeds arena allocation size {}",
                     pc, base, off, size, mem_size
                 );
                 env.fail(VerificationError::UnsafeMemoryStore {

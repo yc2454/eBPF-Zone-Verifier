@@ -258,6 +258,9 @@ pub(crate) fn validate_single_arg(
         // ---- Cpumask (W5.3) ----
         ArgKind::PtrToCpumask => validate_ptr_to_cpumask(&mut ctx),
 
+        // ---- Arena (W5.5) ----
+        ArgKind::PtrToArena => validate_ptr_to_arena(&mut ctx),
+
         // ---- Anything (just needs to be readable) ----
         ArgKind::Anything => true,
 
@@ -357,6 +360,29 @@ fn validate_ptr_to_cpumask(ctx: &mut ValidationContext) -> bool {
             },
             &format!(
                 "[Verifier] pc {}: R{} expected PTR_TO_CPUMASK, got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                ctx.actual
+            ),
+        );
+    }
+    true
+}
+
+/// Validate `ArgKind::PtrToArena` (W5.5).
+///
+/// Only the non-null `RegType::PtrToArena` is accepted: arena
+/// consumers (free_pages, future arena-aware kfuncs) all require the
+/// program to have null-checked the freshly-allocated pointer first.
+fn validate_ptr_to_arena(ctx: &mut ValidationContext) -> bool {
+    if !matches!(ctx.actual, RegType::PtrToArena { .. }) {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} expected PTR_TO_ARENA, got {:?}",
                 ctx.pc,
                 ctx.arg_index + 1,
                 ctx.actual

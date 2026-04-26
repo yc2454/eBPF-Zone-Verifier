@@ -126,6 +126,21 @@ pub enum RegType {
     PtrToCpumaskOrNull {
         ref_id: Option<u32>,
     },
+    /// Bounded pointer to memory allocated from a BPF arena (W5.5).
+    /// `bpf_arena_alloc_pages` mints a fresh `ref_id` on the OrNull form
+    /// with `mem_size = page_cnt * PAGE_SIZE`; null-check refinement
+    /// promotes to the non-null form on the success branch and drops the
+    /// ref on the null branch; `bpf_arena_free_pages` consumes the ref.
+    /// Memory access through the non-null form is bounds-checked against
+    /// `mem_size`, mirroring `PtrToAllocMem`.
+    PtrToArena {
+        ref_id: Option<u32>,
+        mem_size: u64,
+    },
+    PtrToArenaOrNull {
+        ref_id: Option<u32>,
+        mem_size: u64,
+    },
     /// Pointer to a callback subprogram, produced by `LD_IMM64 BPF_PSEUDO_FUNC`
     /// (W3.4a). Consumed by callback-taking helpers (`bpf_loop`,
     /// `bpf_for_each_map_elem`, `bpf_timer_set_callback`) and by the
@@ -151,11 +166,13 @@ impl RegType {
                 | PtrToSockCommonOrNull { .. }
                 | PtrToTcpSockOrNull { .. }
                 | PtrToCpumaskOrNull { .. }
+                | PtrToArenaOrNull { .. }
                 | PtrToMapValue { .. }
                 | PtrToSocket { .. }
                 | PtrToSockCommon { .. }
                 | PtrToTcpSock { .. }
                 | PtrToCpumask { .. }
+                | PtrToArena { .. }
         )
     }
 
@@ -178,6 +195,9 @@ impl RegType {
             }
             RegType::PtrToTcpSockOrNull { id } => Some(RegType::PtrToTcpSock { id }),
             RegType::PtrToCpumaskOrNull { ref_id } => Some(RegType::PtrToCpumask { ref_id }),
+            RegType::PtrToArenaOrNull { ref_id, mem_size } => {
+                Some(RegType::PtrToArena { ref_id, mem_size })
+            }
             _ => None,
         }
     }
@@ -191,6 +211,7 @@ impl RegType {
                 | RegType::PtrToSockCommonOrNull { .. }
                 | RegType::PtrToTcpSockOrNull { .. }
                 | RegType::PtrToCpumaskOrNull { .. }
+                | RegType::PtrToArenaOrNull { .. }
         )
     }
 
@@ -256,7 +277,9 @@ impl RegType {
             | RegType::PtrToTcpSock { id }
             | RegType::PtrToTcpSockOrNull { id }
             | RegType::PtrToCpumask { ref_id: id }
-            | RegType::PtrToCpumaskOrNull { ref_id: id } => id,
+            | RegType::PtrToCpumaskOrNull { ref_id: id }
+            | RegType::PtrToArena { ref_id: id, .. }
+            | RegType::PtrToArenaOrNull { ref_id: id, .. } => id,
             _ => None,
         }
     }
@@ -316,6 +339,7 @@ pub fn type_family(ty: &RegType) -> u8 {
         PtrToAllocMem { .. } | PtrToAllocMemOrNull { .. } => 13,
         PtrToCallback { .. } => 14,
         PtrToCpumask { .. } | PtrToCpumaskOrNull { .. } => 15,
+        PtrToArena { .. } | PtrToArenaOrNull { .. } => 16,
     }
 }
 

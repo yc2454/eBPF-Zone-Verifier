@@ -105,6 +105,14 @@ pub enum ArgKind {
     /// / `bpf_cpumask_release` all use this shape.
     PtrToCpumask,
 
+    // ---- Arena (W5.5) ----
+    /// Bounded arena memory pointer. The actual reg must be a non-null,
+    /// ref-tracked `RegType::PtrToArena` (i.e. the program has already
+    /// null-checked a freshly allocated arena range). Drives
+    /// `bpf_arena_free_pages`'s pointer-arg validation; also reused by
+    /// future arena-consumer kfuncs.
+    PtrToArena,
+
     // ---- Map-value special field (W5.1) ----
     /// Pointer into a map value, aimed at a specific kernel-defined
     /// field embedded in the value (e.g. `bpf_timer`, `bpf_spin_lock`).
@@ -237,6 +245,13 @@ pub enum RetKind {
     /// applier mints a fresh ref_id; combined with `CallFlags::RET_NULL`
     /// the result wraps as `PtrToCpumaskOrNull`.
     PtrToCpumask,
+    /// `RegType::PtrToArena` (W5.5). Used by `bpf_arena_alloc_pages`
+    /// whose returned bounded-memory size is `R(page_cnt_arg+1) * PAGE_SIZE`
+    /// — i.e. the page count argument scaled by the architectural page
+    /// size (4096). Combined with `CallFlags::ACQUIRE` the applier mints
+    /// a fresh ref_id; combined with `CallFlags::RET_NULL` the result
+    /// wraps as `PtrToArenaOrNull`.
+    PtrToArenaFromArg { page_cnt_arg: u8 },
     /// `bpf_iter_*_next(&it)` (W4.3b): forks the call into two
     /// successors. Non-NULL: R0 = `PtrToAllocMem { mem_size = elem_size }`,
     /// iterator slot at `iter_arg` stays Active. NULL: R0 = scalar 0,
@@ -1225,6 +1240,34 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             PtrToCpumask, DontCare, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::Scalar),
+
+        // ---- Arena kfuncs (W5.5) ----
+        //
+        // void __arena *bpf_arena_alloc_pages(void *map, void __arena *addr,
+        //                                     u32 page_cnt, int node_id, u64 flags)
+        // KF_ACQUIRE | KF_RET_NULL — allocates `page_cnt` pages from the
+        // arena map and returns a refcounted bounded pointer; may be NULL
+        // on alloc failure. The arena-map and addr-hint args are not
+        // shape-validated here (lite scope: the verifier doesn't model
+        // BPF_MAP_TYPE_ARENA yet).
+        "bpf_arena_alloc_pages" => CallProto::with_args([
+            Anything, Anything, Anything, Anything, Anything,
+        ])
+        .ret(RetKind::PtrToArenaFromArg { page_cnt_arg: 2 })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        // void bpf_arena_free_pages(void *map, void __arena *ptr, u32 page_cnt)
+        // KF_RELEASE — drops the refcount on the arena allocation. R2
+        // must be a non-null, ref-tracked PtrToArena. Lite scope: the
+        // entire allocation is invalidated even if `page_cnt` is a
+        // strict sub-range of the original alloc; partial-free precision
+        // is deferred (real programs that need it are rare).
+        "bpf_arena_free_pages" => CallProto::with_args([
+            Anything, PtrToArena, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 1 }]),
 
         _ => return None,
     })
