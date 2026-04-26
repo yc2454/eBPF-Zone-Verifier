@@ -172,6 +172,18 @@ pub enum VerificationError {
         pc: usize,
     },
     UnreleasedLock,
+    /// `bpf_rcu_read_unlock` called outside an RCU read-side section.
+    RcuReadNotHeld {
+        pc: usize,
+    },
+    /// Helper / kfunc marked `CallFlags::RCU` invoked while
+    /// `state.rcu_read_depth == 0`.
+    NotInRcuReadSection {
+        pc: usize,
+        helper: u32,
+    },
+    /// Program exit reached with one or more open RCU read-side sections.
+    UnreleasedRcuRead,
     LoadAbsUnderLock {
         pc: usize,
     },
@@ -405,6 +417,18 @@ impl VerificationError {
             }
             VerificationError::LockNotHeld { pc } => {
                 format!("Lock not held at pc {}, cannot release", pc)
+            }
+            VerificationError::RcuReadNotHeld { pc } => {
+                format!("RCU read-side section not held at pc {}, cannot unlock", pc)
+            }
+            VerificationError::NotInRcuReadSection { pc, helper } => {
+                format!(
+                    "Helper {} at pc {} requires an RCU read-side critical section",
+                    helper, pc
+                )
+            }
+            VerificationError::UnreleasedRcuRead => {
+                "Unreleased RCU read-side section in program".to_string()
             }
             VerificationError::LoadAbsUnderLock { pc } => {
                 format!("ld_abs with an active lock at pc {}", pc)

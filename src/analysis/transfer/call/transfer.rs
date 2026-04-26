@@ -13,7 +13,6 @@ use crate::common::constants;
 use crate::domains::interval::new_scalar_id;
 use crate::domains::numeric::NumericDomain;
 use crate::domains::tnum::Tnum;
-use crate::parsing::btf::SpecialFieldKind;
 use log::{debug, error, trace};
 
 use super::checks::{check_mem_size_pairs, is_valid_helper_id, validate_helper_args};
@@ -83,9 +82,16 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
         return vec![];
     }
 
-    // bpf_spin_lock and bpf_spin_unlock
-    if (helper == constants::BPF_SPIN_LOCK || helper == constants::BPF_SPIN_UNLOCK)
-        && !check_and_handle_spin_lock(env, &mut state, helper)
+    // ========================================================================
+    // Proto-flag-driven pre-call mutations (W5.2)
+    //
+    // bpf_spin_lock / _unlock and bpf_rcu_read_lock / _unlock all run
+    // their state mutation here. Arg shape is already validated by
+    // `validate_helper_args` (MapValueSpecial { SpinLock } for the lock
+    // helpers); this hook only handles the lock/RCU state machine and
+    // its rejection cases.
+    if let Some(p) = get_helper_proto(helper)
+        && !apply_pre_call_lock_flags(env, &mut state, helper, &p)
     {
         return vec![];
     }
@@ -456,61 +462,68 @@ pub(crate) fn transfer_call_rel(
     vec![state]
 }
 
-fn check_and_handle_spin_lock(env: &mut VerifierEnv, state: &mut State, helper: u32) -> bool {
+/// Apply the W5.2 lock / RCU pre-call flags carried on `proto`.
+/// Returns `false` (and calls `env.fail`) if the lock or RCU state
+/// machine rejects this call. Arg-shape checks already ran in
+/// `validate_helper_args`; here we only mutate `state.active_lock` /
+/// `state.rcu_read_depth` and reject mismatched ordering.
+fn apply_pre_call_lock_flags(
+    env: &mut VerifierEnv,
+    state: &mut State,
+    helper: u32,
+    proto: &super::signatures::CallProto,
+) -> bool {
+    use super::signatures::CallFlags;
     let pc = state.pc;
-    match state.types.get(Reg::R1) {
-        RegType::PtrToMapValue {
-            offset: _,
-            map_idx,
-            id,
-        } => match env.ctx.map_defs.get(map_idx) {
-            Some(map_def) => {
-                if let Some(val_type_id) = map_def.btf_val_type_id {
-                    if helper == constants::BPF_SPIN_LOCK {
-                        if state.has_active_lock() {
-                            env.fail(VerificationError::LockAlreadyHeld { pc });
-                            return false;
-                        }
-                        let special_fields = env.ctx.btf.find_special_fields(val_type_id);
-                        let lock_offset_op = special_fields
-                            .iter()
-                            .find(|f| f.kind == SpecialFieldKind::SpinLock)
-                            .map(|f| f.offset);
-                        if lock_offset_op.is_none() {
-                            env.fail(VerificationError::InvalidBtfType);
-                            return false;
-                        } else {
-                            let lock_offset = lock_offset_op.unwrap();
-                            state.acquire_lock(id, lock_offset);
-                        }
-                    } else {
-                        if !state.has_active_lock() {
-                            env.fail(VerificationError::LockNotHeld { pc });
-                            return false;
-                        } else {
-                            let lock = state.get_active_lock().unwrap();
-                            if lock.ptr_id != id {
-                                env.fail(VerificationError::LockNotHeld { pc });
-                                return false;
-                            }
-                        }
-                        state.release_lock();
-                    }
-                } else {
-                    env.fail(VerificationError::InvalidBtfType);
-                    return false;
-                }
-            }
-            _ => {
-                env.fail(VerificationError::MapNotFound { pc, map_idx });
-                return false;
-            }
-        },
-        _ => {
-            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+
+    // Helpers/kfuncs marked RCU require an active read-side section.
+    if proto.flags.contains(CallFlags::RCU) && !state.in_rcu_read_section() {
+        env.fail(VerificationError::NotInRcuReadSection { pc, helper });
+        return false;
+    }
+
+    if proto.flags.contains(CallFlags::SPIN_LOCK_ACQUIRE) {
+        if state.has_active_lock() {
+            env.fail(VerificationError::LockAlreadyHeld { pc });
             return false;
         }
+        // R1 was validated as PtrToMapValue aimed at a SpinLock field.
+        let RegType::PtrToMapValue { offset, id, .. } = state.types.get(Reg::R1) else {
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            return false;
+        };
+        let Some(off) = offset else {
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            return false;
+        };
+        state.acquire_lock(id, off as u32);
     }
+
+    if proto.flags.contains(CallFlags::SPIN_LOCK_RELEASE) {
+        let RegType::PtrToMapValue { id, .. } = state.types.get(Reg::R1) else {
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            return false;
+        };
+        let Some(lock) = state.get_active_lock() else {
+            env.fail(VerificationError::LockNotHeld { pc });
+            return false;
+        };
+        if lock.ptr_id != id {
+            env.fail(VerificationError::LockNotHeld { pc });
+            return false;
+        }
+        state.release_lock();
+    }
+
+    if proto.flags.contains(CallFlags::RCU_READ_LOCK) {
+        state.rcu_read_lock();
+    }
+
+    if proto.flags.contains(CallFlags::RCU_READ_UNLOCK) && !state.rcu_read_unlock() {
+        env.fail(VerificationError::RcuReadNotHeld { pc });
+        return false;
+    }
+
     true
 }
 

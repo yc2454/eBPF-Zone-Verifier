@@ -286,6 +286,12 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         return vec![];
     }
 
+    // Check if any RCU read-side section is still open (W5.2)
+    if state.in_rcu_read_section() {
+        env.fail(VerificationError::UnreleasedRcuRead);
+        return vec![];
+    }
+
     if state.num_frames() >= 8 {
         env.fail(VerificationError::MaxCallDepthExceeded { pc: state.pc });
         return vec![];

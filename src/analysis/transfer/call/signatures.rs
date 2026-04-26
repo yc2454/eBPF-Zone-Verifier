@@ -140,12 +140,29 @@ impl CallFlags {
     pub const RET_NULL: Self = Self(1 << 2);
     /// All pointer args must be trusted (kfunc KF_TRUSTED_ARGS).
     pub const TRUSTED_ARGS: Self = Self(1 << 3);
-    /// Must run inside an RCU read-side critical section.
+    /// Must run inside an RCU read-side critical section. Pre-call check
+    /// rejects if `state.rcu_read_depth == 0` (W5.2).
     pub const RCU: Self = Self(1 << 4);
     /// Callable only from sleepable programs.
     pub const SLEEPABLE: Self = Self(1 << 5);
     /// Destructive kfunc (KF_DESTRUCTIVE).
     pub const DESTRUCTIVE: Self = Self(1 << 6);
+    /// Pre-call: acquires the spin_lock pointed to by R1 (which the
+    /// `MapValueSpecial { SpinLock }` arg validator has already shape-
+    /// checked). Rejects if a lock is already held; otherwise records
+    /// `(ptr_id, lock_offset)` in `state.active_lock`. W5.2.
+    pub const SPIN_LOCK_ACQUIRE: Self = Self(1 << 7);
+    /// Pre-call: releases the spin_lock pointed to by R1. Rejects if no
+    /// lock is held or if the held lock's `ptr_id` doesn't match R1's.
+    /// W5.2.
+    pub const SPIN_LOCK_RELEASE: Self = Self(1 << 8);
+    /// Pre-call: enters an RCU read-side critical section by
+    /// incrementing `state.rcu_read_depth`. W5.2.
+    pub const RCU_READ_LOCK: Self = Self(1 << 9);
+    /// Pre-call: exits an RCU read-side critical section by
+    /// decrementing `state.rcu_read_depth`. Rejects if depth is already
+    /// zero. W5.2.
+    pub const RCU_READ_UNLOCK: Self = Self(1 << 10);
 
     pub const fn empty() -> Self {
         Self(0)
@@ -645,14 +662,48 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         ])
         .mem_size_pairs(&pairs::PERF_PROG_READ_VALUE),
 
-        // ---- Spin lock related ----
-        constants::BPF_SPIN_LOCK => {
-            CallProto::with_args([Anything, DontCare, DontCare, DontCare, DontCare])
-        }
+        // ---- Spin lock (W5.2) ----
+        // void bpf_spin_lock(struct bpf_spin_lock *lock)
+        // void bpf_spin_unlock(struct bpf_spin_lock *lock)
+        // R1 must be a PtrToMapValue aimed at a `bpf_spin_lock` field
+        // recorded in the map's value-type BTF. The shape check rides
+        // `MapValueSpecial { SpinLock }`; the lock-state mutation
+        // (`active_lock` acquire / release) is driven by the
+        // `SPIN_LOCK_{ACQUIRE,RELEASE}` flags in the pre-call hook.
+        constants::BPF_SPIN_LOCK => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::SpinLock },
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::SPIN_LOCK_ACQUIRE),
 
-        constants::BPF_SPIN_UNLOCK => {
-            CallProto::with_args([Anything, DontCare, DontCare, DontCare, DontCare])
-        }
+        constants::BPF_SPIN_UNLOCK => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::SpinLock },
+            DontCare,
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::SPIN_LOCK_RELEASE),
+
+        // ---- RCU read-side critical section (W5.2) ----
+        // void bpf_rcu_read_lock(void)
+        // void bpf_rcu_read_unlock(void)
+        constants::BPF_RCU_READ_LOCK => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::RCU_READ_LOCK),
+
+        constants::BPF_RCU_READ_UNLOCK => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::RCU_READ_UNLOCK),
 
         // ---- Timers (W5.1) ----
         // long bpf_timer_init(struct bpf_timer *timer, struct bpf_map *map, u64 flags)
