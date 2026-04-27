@@ -111,6 +111,13 @@ pub enum ArgKind {
     /// / `bpf_cpumask_release` all use this shape.
     PtrToCpumask,
 
+    // ---- Cgroup (W6.3-followon) ----
+    /// `struct cgroup *` argument. Same shape as `PtrToCpumask` —
+    /// only the non-null `RegType::PtrToCgroup` is accepted; the
+    /// program must have null-checked a freshly minted ref before
+    /// passing it to `bpf_cgroup_acquire` / `bpf_cgroup_release`.
+    PtrToCgroup,
+
     // ---- Arena (W5.5) ----
     /// Bounded arena memory pointer. The actual reg must be a non-null,
     /// ref-tracked `RegType::PtrToArena` (i.e. the program has already
@@ -277,6 +284,10 @@ pub enum RetKind {
     /// fresh ref_id; combined with `CallFlags::RET_NULL` the result
     /// wraps as `PtrToOwnedKptrOrNull`.
     PtrToOwnedKptr,
+    /// `RegType::PtrToCgroup` (W6.3-followon). Used by `bpf_cgroup_from_id`
+    /// and `bpf_cgroup_acquire`. Same applier shape as `PtrToCpumask`:
+    /// `ACQUIRE` mints a ref, `RET_NULL` wraps as `PtrToCgroupOrNull`.
+    PtrToCgroup,
     /// `bpf_iter_*_next(&it)` (W4.3b): forks the call into two
     /// successors. Non-NULL: R0 = `PtrToAllocMem { mem_size = elem_size }`,
     /// iterator slot at `iter_arg` stays Active. NULL: R0 = scalar 0,
@@ -938,17 +949,25 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
 // it heavily; eventually most kfuncs should fall through to a generic
 // BTF-driven producer that reads the func-proto BTF + KF flags directly.
 
-/// Prog-type allowlist for the cpumask kfunc family (W6.3). Mirrors the
-/// kernel verifier's `KF_PROG_TYPE_*` set: `bpf_cpumask_*` are gated to
-/// programs that hold a vmlinux BTF context (syscall, tracing, tracepoint,
-/// perf_event) and reject from raw_tp / network paths. Cgroup / task
-/// kfunc families share this same allowlist when they're added.
+/// Prog-type allowlist for kfunc families that need a vmlinux BTF
+/// context (W6.3 / W6.3-followon). Used by the cpumask family
+/// (`bpf_cpumask_*`) and the cgroup family (`bpf_cgroup_*`) — both
+/// mirror the kernel verifier's `KF_PROG_TYPE_*` set. Permitted in
+/// syscall / tracing (fentry/fexit/tp_btf/iter) / tracepoint /
+/// perf_event programs; rejected from raw_tp and network paths.
 const CPUMASK_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 4] = [
     crate::ast::ProgramKind::Syscall,
     crate::ast::ProgramKind::Tracing,
     crate::ast::ProgramKind::Tracepoint,
     crate::ast::ProgramKind::PerfEvent,
 ];
+
+/// Cgroup kfunc family allowlist — same set as cpumask. Aliased
+/// rather than reusing the cpumask constant directly so future
+/// per-family divergence (e.g. cgroup-only access from `cgroup/skb`)
+/// can be encoded without unwiring callers.
+const CGROUP_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 4] =
+    CPUMASK_KFUNC_PROG_TYPES;
 
 /// Kfunc prototypes indexed by kfunc name. Returns `None` for kfuncs not
 /// yet on the proto path — the caller falls back to the legacy bespoke
@@ -1323,6 +1342,44 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar)
         .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // ---- Cgroup kfuncs (W6.3-followon) ----
+        //
+        // Parallels the cpumask family: `RegType::PtrToCgroup{,OrNull}`,
+        // acquire/release with ref_id tracking + null-check refinement.
+        // All three kfuncs share `CGROUP_KFUNC_PROG_TYPES`.
+        //
+        // struct cgroup *bpf_cgroup_from_id(u64 cgrp_id)
+        // KF_ACQUIRE | KF_RET_NULL — looks up a cgroup by id, returns
+        // a fresh refcounted pointer or NULL if not found.
+        "bpf_cgroup_from_id" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToCgroup)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL)
+        .prog_type_allowlist(&CGROUP_KFUNC_PROG_TYPES),
+
+        // struct cgroup *bpf_cgroup_acquire(struct cgroup *cgrp)
+        // KF_ACQUIRE | KF_RET_NULL | KF_TRUSTED_ARGS — increments the
+        // refcount on an existing cgroup pointer. Tests in
+        // verifier_kfunc_prog_types.c null-check the result, so we
+        // model RET_NULL (kernel may return NULL on dying cgroups).
+        "bpf_cgroup_acquire" => CallProto::with_args([
+            PtrToCgroup, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToCgroup)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL)
+        .prog_type_allowlist(&CGROUP_KFUNC_PROG_TYPES),
+
+        // void bpf_cgroup_release(struct cgroup *cgrp)
+        // KF_RELEASE — drops the refcount.
+        "bpf_cgroup_release" => CallProto::with_args([
+            PtrToCgroup, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }])
+        .prog_type_allowlist(&CGROUP_KFUNC_PROG_TYPES),
 
         // ---- Arena kfuncs (W5.5 + W6.1c) ----
         //

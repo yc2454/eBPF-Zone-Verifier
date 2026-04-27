@@ -264,6 +264,9 @@ pub(crate) fn validate_single_arg(
         // ---- Cpumask (W5.3) ----
         ArgKind::PtrToCpumask => validate_ptr_to_cpumask(&mut ctx),
 
+        // ---- Cgroup (W6.3-followon) ----
+        ArgKind::PtrToCgroup => validate_ptr_to_cgroup(&mut ctx),
+
         // ---- Arena (W5.5) ----
         ArgKind::PtrToArena => validate_ptr_to_arena(&mut ctx),
 
@@ -369,6 +372,30 @@ fn validate_ptr_to_cpumask(ctx: &mut ValidationContext) -> bool {
             },
             &format!(
                 "[Verifier] pc {}: R{} expected PTR_TO_CPUMASK, got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                ctx.actual
+            ),
+        );
+    }
+    true
+}
+
+/// Validate `ArgKind::PtrToCgroup` (W6.3-followon).
+///
+/// Mirrors `validate_ptr_to_cpumask`: only the non-null
+/// `RegType::PtrToCgroup` is accepted. Cgroup consumers
+/// (`bpf_cgroup_acquire` / `_release`) require the program to have
+/// null-checked the freshly-minted ref first.
+fn validate_ptr_to_cgroup(ctx: &mut ValidationContext) -> bool {
+    if !matches!(ctx.actual, RegType::PtrToCgroup { .. }) {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} expected PTR_TO_CGROUP, got {:?}",
                 ctx.pc,
                 ctx.arg_index + 1,
                 ctx.actual
