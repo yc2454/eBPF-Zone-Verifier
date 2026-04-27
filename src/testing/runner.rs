@@ -41,6 +41,7 @@ fn make_entry_state() -> Dbm {
     dbm
 }
 
+#[derive(Clone)]
 pub struct Analyzer {
     pub path: String,
     pub config: VerifierConfig,
@@ -157,6 +158,44 @@ impl Analyzer {
 
         // Single function or no symbol info - use original behavior
         self.analyze_section_as_single_program(section)
+    }
+
+    /// Analyze a single named function within a section. Used by callers
+    /// that need per-function verdicts (e.g. the modern selftest runner,
+    /// where each `SEC()`-tagged program in a `.c` file gets its own
+    /// pass/fail expectation). Returns `LoadError` if the function isn't
+    /// found in the section.
+    pub fn analyze_function(&self, section: &str, func_name: &str) -> AnalysisResult {
+        // First try the section the caller asked for.
+        let funcs = get_functions_in_section(&self.path, section).unwrap_or_default();
+        if let Some(func) = funcs.iter().find(|f| f.name == func_name) {
+            let func = func.clone();
+            return self.analyze_function_with_info(section, &func);
+        }
+
+        // Fallback: clang sometimes emits a program under a section name
+        // that doesn't match the scraped `SEC("…")` literal — modern SEC
+        // aliases (`tcx/ingress` → `classifier`-ish), libbpf's optional
+        // `?` prefix handling, multi-section-per-file files, etc. Walk
+        // every section and dispatch on the first match. If we find the
+        // function under a different section, that's not a bug — the
+        // verdict is what matters.
+        let all_sections = list_section_names(&self.path).unwrap_or_default();
+        for s in &all_sections {
+            if !is_code_section(s) || s == section {
+                continue;
+            }
+            let funcs = get_functions_in_section(&self.path, s).unwrap_or_default();
+            if let Some(func) = funcs.iter().find(|f| f.name == func_name) {
+                let func = func.clone();
+                return self.analyze_function_with_info(s, &func);
+            }
+        }
+
+        AnalysisResult::LoadError(format!(
+            "function '{func_name}' not found (looked in '{section}' and {} other sections)",
+            all_sections.len()
+        ))
     }
 
     /// Analyze a specific function within a section, using pre-computed function info

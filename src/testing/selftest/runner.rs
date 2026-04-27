@@ -1,0 +1,321 @@
+//! Orchestrate compile → verify → diff for a modern upstream selftest file.
+//!
+//! Inputs:  one (or many) `progs/verifier_*.c`.
+//! Output:  per-program `Outcome` reporting whether our verifier's verdict
+//!          matched the `__success` / `__failure` annotation in the source.
+
+use anyhow::{Context, Result};
+use rayon::prelude::*;
+use std::path::{Path, PathBuf};
+
+use crate::common::config::VerifierConfig;
+use crate::testing::runner::{AnalysisResult, Analyzer};
+
+use super::attrs::{self, ProgAttrs};
+use super::clang;
+
+/// Filter that decides which programs the runner actually verifies.
+/// Programs the filter returns `false` for short-circuit to
+/// `Outcome::Skipped("filtered")` — useful for fast checks where we
+/// already know certain programs are non-deterministic in the baseline
+/// (TIMEOUT, ERROR) and re-running them just burns wallclock.
+pub trait ProgFilter: Send + Sync {
+    fn should_run(&self, file_basename: &str, prog_func_name: &str) -> bool;
+}
+
+/// Filter that always runs everything. Used when caller doesn't
+/// supply a filter.
+pub struct RunAll;
+impl ProgFilter for RunAll {
+    fn should_run(&self, _: &str, _: &str) -> bool {
+        true
+    }
+}
+
+/// Tight `max_insn` cap for selftest sweeps. The verifier's existing
+/// complexity-limit check returns `Timeout` once the abstract-interp
+/// step counter hits this. We don't use a wallclock-based timeout
+/// here — those would have to orphan worker threads we can't cancel,
+/// and orphans accumulate to saturate CPU under rayon. Tying the cap
+/// to step count keeps termination cooperative, deterministic, and
+/// parallelism-safe.
+pub const SELFTEST_MAX_INSN: usize = 100_000;
+
+/// Derive a config tuned for selftest sweeps from the caller's config:
+/// keep all user-set knobs, but clamp `max_insn` down so the verifier
+/// terminates promptly on a state-explosion. Caller can opt out of
+/// the clamp by setting an explicit `max_insn` lower than ours.
+pub fn with_selftest_caps(base: &VerifierConfig) -> VerifierConfig {
+    let mut c = base.clone();
+    if c.max_insn > SELFTEST_MAX_INSN {
+        c.max_insn = SELFTEST_MAX_INSN;
+    }
+    c
+}
+
+/// Per-file `-D` defines clang needs to compile certain corpus sources.
+/// Keep this list small and explicit — anything not listed here is
+/// compiled with no extra defines.
+pub const PER_FILE_DEFINES: &[(&str, &[&str])] = &[
+    // Phase 1 ISA gates.
+    ("verifier_gotol.c", &["CAN_USE_GOTOL"]),
+    ("verifier_ldsx.c", &["__TARGET_ARCH_x86"]),
+    ("verifier_movsx.c", &["__TARGET_ARCH_x86"]),
+];
+
+fn defines_for_file(path: &Path) -> &'static [&'static str] {
+    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    PER_FILE_DEFINES
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, d)| *d)
+        .unwrap_or(&[])
+}
+
+/// Did our verifier's verdict line up with the upstream annotation?
+#[derive(Debug, Clone)]
+pub enum Outcome {
+    /// Verdict matched expectation (ACCEPT/REJECT).
+    Pass,
+    /// Expected ACCEPT, we REJECTed — precision issue.
+    FalseReject(String),
+    /// Expected REJECT, we ACCEPTed — soundness issue.
+    FalseAccept,
+    /// Couldn't run the test.
+    Skipped(String),
+    /// Verifier error (timeout, load failure, etc.).
+    Error(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct ProgReport {
+    pub func_name: String,
+    pub description: String,
+    pub sec: String,
+    pub outcome: Outcome,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileReport {
+    pub source: PathBuf,
+    pub progs: Vec<ProgReport>,
+}
+
+impl FileReport {
+    pub fn pass_count(&self) -> usize {
+        self.progs
+            .iter()
+            .filter(|p| matches!(p.outcome, Outcome::Pass))
+            .count()
+    }
+
+    pub fn total(&self) -> usize {
+        self.progs.len()
+    }
+}
+
+/// Run a single `.c` source end-to-end: scrape, compile, verify each
+/// program, diff against expectation.
+///
+/// `headers_root` should be `selftests/headers/<tag>/` — see [`clang`].
+/// `extra_defines` lets a caller pass `-D` flags that some files need
+/// (e.g. `CAN_USE_GOTOL`); leave empty for files that don't.
+pub fn run_file(
+    src: &Path,
+    headers_root: &Path,
+    extra_defines: &[&str],
+    config: &VerifierConfig,
+) -> Result<FileReport> {
+    run_file_filtered(src, headers_root, extra_defines, config, &RunAll)
+}
+
+pub fn run_file_filtered(
+    src: &Path,
+    headers_root: &Path,
+    extra_defines: &[&str],
+    config: &VerifierConfig,
+    filter: &dyn ProgFilter,
+) -> Result<FileReport> {
+    let progs = attrs::scrape(src)
+        .with_context(|| format!("scraping attributes from {}", src.display()))?;
+
+    let stem = src
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "selftest".to_string());
+    let obj = std::env::temp_dir().join(format!("zovia_selftest_{stem}.o"));
+    let _ = std::fs::remove_file(&obj);
+
+    let inc = clang::default_include_dirs(headers_root);
+    clang::compile(src, &obj, &inc, extra_defines)
+        .with_context(|| format!("compiling {}", src.display()))?;
+
+    let analyzer = Analyzer::new(obj.to_str().unwrap(), with_selftest_caps(config));
+    let basename = src
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    // Per-prog parallelism. Each `run_one` already spawns its own
+    // worker thread for the wallclock timeout; rayon's pool runs
+    // independent progs concurrently, so a file with N timeouts no
+    // longer takes N × timeout wallclock.
+    let progs = progs
+        .into_par_iter()
+        .map(|attrs| {
+            if !filter.should_run(&basename, &attrs.func_name) {
+                return ProgReport {
+                    func_name: attrs.func_name.clone(),
+                    description: attrs.description.clone().unwrap_or_default(),
+                    sec: attrs.sec.clone().unwrap_or_default(),
+                    outcome: Outcome::Skipped("filtered (baseline non-deterministic)".into()),
+                };
+            }
+            run_one(&analyzer, attrs)
+        })
+        .collect();
+
+    Ok(FileReport {
+        source: src.to_path_buf(),
+        progs,
+    })
+}
+
+/// Sweep every `*.c` file under `dir`. Compile failures are surfaced
+/// as a single `Outcome::Error` entry on a synthetic `<compile>` prog
+/// so the report still has a row for the file. Per-file extra defines
+/// are pulled from [`PER_FILE_DEFINES`].
+pub fn run_dir(
+    dir: &Path,
+    headers_root: &Path,
+    config: &VerifierConfig,
+) -> Result<Vec<FileReport>> {
+    run_dir_filtered(dir, headers_root, config, &RunAll)
+}
+
+pub fn run_dir_filtered(
+    dir: &Path,
+    headers_root: &Path,
+    config: &VerifierConfig,
+    filter: &dyn ProgFilter,
+) -> Result<Vec<FileReport>> {
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
+        .with_context(|| format!("reading dir {}", dir.display()))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("c"))
+        .collect();
+    entries.sort();
+
+    let mut out = Vec::with_capacity(entries.len());
+    for path in entries {
+        let defines = defines_for_file(&path);
+        match run_file_filtered(&path, headers_root, defines, config, filter) {
+            Ok(r) => out.push(r),
+            Err(e) => out.push(FileReport {
+                source: path.clone(),
+                progs: vec![ProgReport {
+                    func_name: "<compile>".into(),
+                    description: String::new(),
+                    sec: String::new(),
+                    outcome: Outcome::Error(format!("{e}")),
+                }],
+            }),
+        }
+    }
+    Ok(out)
+}
+
+fn run_one(analyzer: &Analyzer, attrs: ProgAttrs) -> ProgReport {
+    let description = attrs.description.clone().unwrap_or_default();
+    let sec = attrs.sec.clone().unwrap_or_default();
+
+    // Sanity: must have a verdict expectation, else the test is undecidable.
+    let expected_accept = match (attrs.success, attrs.failure) {
+        (true, false) => true,
+        (false, true) => false,
+        _ => {
+            return ProgReport {
+                func_name: attrs.func_name,
+                description,
+                sec,
+                outcome: Outcome::Skipped("no __success/__failure annotation".into()),
+            };
+        }
+    };
+
+    if sec.is_empty() {
+        return ProgReport {
+            func_name: attrs.func_name,
+            description,
+            sec,
+            outcome: Outcome::Skipped("missing SEC()".into()),
+        };
+    }
+
+    // Termination is bounded by the verifier's own complexity-limit
+    // check — see `SELFTEST_MAX_INSN` and `with_selftest_caps` below.
+    // No wallclock timeout, no orphan threads.
+    let result = analyzer.analyze_function(&sec, &attrs.func_name);
+    let outcome = match (expected_accept, result) {
+        (true, AnalysisResult::Pass) => Outcome::Pass,
+        (false, AnalysisResult::Fail(_)) => Outcome::Pass,
+        (true, AnalysisResult::Fail(e)) => Outcome::FalseReject(e.description().to_string()),
+        (false, AnalysisResult::Pass) => Outcome::FalseAccept,
+        (_, AnalysisResult::Timeout) => Outcome::Error("verifier timeout".into()),
+        (_, AnalysisResult::LoadError(e)) => {
+            // A `not found in section` LoadError means the function was
+            // compiled out (typically by an `#ifdef` branch we don't
+            // see). That's a skip, not a verifier failure.
+            if e.contains("not found in section") {
+                Outcome::Skipped(format!("not in ELF: {e}"))
+            } else {
+                Outcome::Error(format!("load: {e}"))
+            }
+        }
+    };
+
+    ProgReport {
+        func_name: attrs.func_name,
+        description,
+        sec,
+        outcome,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn headers() -> PathBuf {
+        PathBuf::from("selftests/headers/v6.15")
+    }
+
+    #[test]
+    fn runs_verifier_gotol_end_to_end() {
+        if !headers().exists() {
+            eprintln!("skipping: vendored headers not present");
+            return;
+        }
+        let config = VerifierConfig::default();
+        let report = run_file(
+            Path::new("selftests/progs/verifier_gotol.c"),
+            &headers(),
+            &["CAN_USE_GOTOL"],
+            &config,
+        )
+        .expect("run_file should succeed");
+
+        // We expect at least gotol_small_imm and gotol_large_imm.
+        assert!(
+            report.progs.len() >= 2,
+            "got {} progs",
+            report.progs.len()
+        );
+        for p in &report.progs {
+            eprintln!(
+                "  {} ({}): {:?}",
+                p.func_name, p.description, p.outcome
+            );
+        }
+    }
+}

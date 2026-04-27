@@ -48,7 +48,7 @@ pub struct JsonTestCase {
     pub insns: Vec<JsonInsn>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct JsonInsn {
     pub code: u8,
     pub dst: u8,
