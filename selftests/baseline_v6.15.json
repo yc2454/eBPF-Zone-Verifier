@@ -1,7 +1,91 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-27T16:55:54.632090+00:00",
+  "generated_at": "2026-04-27T18:09:25.301705+00:00",
   "files": {
+    "bpf_cubic.c": {
+      "source": "selftests/progs/bpf_cubic.c",
+      "progs": {
+        "bpf_cubic_acked": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic load at pc 12: base R7+28 (type: ScalarValue)"
+        },
+        "bpf_cubic_cong_avoid": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "pc 277: R0 !read_ok"
+        },
+        "bpf_cubic_cwnd_event": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic load at pc 8: base R6+28 (type: ScalarValue)"
+        },
+        "bpf_cubic_init": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic store at pc 5: base R1+4 (type: ScalarValue)"
+        },
+        "bpf_cubic_state": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic store at pc 8: base R1+4 (type: ScalarValue)"
+        },
+        "tcp_cong_avoid_ai": {
+          "upstream": "UNKNOWN",
+          "ours": "SKIPPED",
+          "note": "not in ELF: function 'tcp_cong_avoid_ai' not found (looked in 'license' and 31 other sections)"
+        }
+      }
+    },
+    "bpf_dctcp.c": {
+      "source": "selftests/progs/bpf_dctcp.c",
+      "progs": {
+        "bpf_dctcp_cong_avoid": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+        },
+        "bpf_dctcp_cwnd_event": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "pc 54: R0 !read_ok"
+        },
+        "bpf_dctcp_init": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 63: register: r1"
+        },
+        "bpf_dctcp_state": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic load at pc 18: base R3+0 (type: ScalarValue)"
+        },
+        "bpf_dctcp_update_alpha": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic load at pc 5: base R2+16 (type: ScalarValue)"
+        },
+        "dctcp_reset": {
+          "upstream": "UNKNOWN",
+          "ours": "SKIPPED",
+          "note": "not in ELF: function 'dctcp_reset' not found (looked in '.maps' and 32 other sections)"
+        },
+        "tcp_reno_cong_avoid": {
+          "upstream": "UNKNOWN",
+          "ours": "SKIPPED",
+          "note": "not in ELF: function 'tcp_reno_cong_avoid' not found (looked in 'struct_ops' and 32 other sections)"
+        }
+      }
+    },
+    "bpf_dctcp_release.c": {
+      "source": "selftests/progs/bpf_dctcp_release.c",
+      "progs": {
+        "dctcp_nouse_release": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        }
+      }
+    },
     "cb_refs.c": {
       "source": "selftests/progs/cb_refs.c",
       "progs": {
@@ -18,7 +102,7 @@
         "TRACE_EVENT": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_acquire_wrong_cpumask": {
           "upstream": "ACCEPT",
@@ -76,117 +160,117 @@
         "test_alloc_free_cpumask": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_and_or_xor": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_copy_any_anyand": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_cpumask_weight": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_first_firstzero_cpu": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_firstand_nocpu": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_global_mask_array_l2_rcu": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_global_mask_array_one_rcu": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_global_mask_array_rcu": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_global_mask_nested_deep_array_rcu": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_global_mask_nested_deep_rcu": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_global_mask_nested_rcu": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_global_mask_rcu": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_insert_leave": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_insert_remove_release": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_intersects_subset": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_populate": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_populate_reject_small_mask": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_populate_reject_unaligned": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_refcount_null_tracking": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_set_clear_cpu": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_setall_clear_cpu": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_test_and_set_clear": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -350,7 +434,7 @@
         "get_map_val_dynptr": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "global": {
           "upstream": "REJECT",
@@ -504,82 +588,82 @@
         "test_adjust": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_adjust_err": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_dynptr_clone": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_dynptr_copy": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_dynptr_copy_xdp": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_dynptr_data": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_dynptr_is_null": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_dynptr_is_rdonly": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_dynptr_skb_data": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_dynptr_skb_no_buff": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_dynptr_skb_strcmp": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_dynptr_skb_tp_btf": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_read_write": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_ringbuf": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_skb_readonly": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "test_zero_size_dynptr": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -764,12 +848,12 @@
         "bpf_cgroup_release": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "iter_css_for_each": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -779,77 +863,77 @@
         "num_e2big_range": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "num_empty_int_max": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "num_empty_int_min": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "num_empty_minus_one": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "num_empty_zero": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "num_fail_elem_cnt": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "num_invalid_range": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "num_max_range": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "num_neg_pos_sum": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "num_neg_sum": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "num_overfetched_elem_cnt": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "num_simple_sum": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "num_succ_elem_cnt": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "num_very_big_sum": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "num_very_neg_sum": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -859,12 +943,12 @@
         "bpf_rcu_read_lock": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "iter_task_for_each_sleep": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -6673,57 +6757,57 @@
         "global_list_array_push_pop": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "global_list_in_list": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "global_list_push_pop": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "global_list_push_pop_multiple": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "global_list_push_pop_nested": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "inner_map_list_in_list": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "inner_map_list_push_pop": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "inner_map_list_push_pop_multiple": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "map_list_in_list": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "map_list_push_pop": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "map_list_push_pop_multiple": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -6733,182 +6817,182 @@
         "direct_read_head": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "direct_read_lock": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "direct_read_node": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "direct_write_head": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "direct_write_lock": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "direct_write_node": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "double_push_back": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "double_push_front": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "incorrect_head_off1": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "incorrect_head_off2": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "incorrect_head_var_off1": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "incorrect_head_var_off2": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "incorrect_node_off1": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "incorrect_node_off2": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "incorrect_node_var_off": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "incorrect_value_type": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "map_compat_kprobe": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "map_compat_kretprobe": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "map_compat_perf": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "map_compat_raw_tp": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "map_compat_raw_tp_w": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "map_compat_tp": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "new_null_ret": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "no_head_type": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "no_node_value_type": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "obj_drop_non_zero_off": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "obj_new_acq": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "obj_new_no_composite": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "obj_new_no_struct": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "obj_type_id_oor": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "pop_back_off": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "pop_front_off": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "ptr_walk_scalar": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "use_after_drop": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "use_after_unlock_push_back": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "use_after_unlock_push_front": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -6918,32 +7002,32 @@
         "rbtree_add_and_remove": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "rbtree_add_and_remove_array": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "rbtree_add_nodes": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "rbtree_add_nodes_nested": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "rbtree_api_release_aliasing": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "rbtree_first_and_remove": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -7016,7 +7100,7 @@
         "__insert_in_tree_and_list": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "rbtree_refcounted_node_ref_escapes": {
           "upstream": "ACCEPT",
@@ -7026,7 +7110,7 @@
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(22) })"
+          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(21) })"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",
@@ -7041,17 +7125,17 @@
         "rbtree_wrong_owner_remove_fail_a1": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "rbtree_wrong_owner_remove_fail_a2": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "rbtree_wrong_owner_remove_fail_b": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -7082,27 +7166,27 @@
         "bpf_spin_lock_test": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "lock_static_subprog_call": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "lock_static_subprog_lock": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "lock_static_subprog_unlock": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "static_subprog": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -7112,62 +7196,62 @@
         "lock_global_sleepable_helper_subprog": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "lock_global_sleepable_kfunc_subprog": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "lock_global_sleepable_subprog_indirect": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "lock_global_subprog_call1": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "lock_global_subprog_call2": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "lock_id_global_zero": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "lock_id_innermapval_preserve": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "lock_id_kptr_preserve": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "lock_id_mapval_preserve": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "lock_id_mismatch_innermapval_innermapval1": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "lock_id_mismatch_innermapval_innermapval2": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "lock_id_mismatch_mapval_mapval": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -7177,17 +7261,17 @@
         "BPF_PROG2": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "race": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "timer_cb1": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -7202,7 +7286,7 @@
         "timer_cb_ret_bad": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -7418,7 +7502,7 @@
         "unsafe_on_2nd_iter_cb": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "unsafe_on_zero_iter": {
           "upstream": "ACCEPT",
@@ -7473,7 +7557,7 @@
         "task_kfunc_load_test": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no __success/__failure annotation"
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "task_kfunc_perf_event": {
           "upstream": "ACCEPT",
