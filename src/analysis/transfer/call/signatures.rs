@@ -1381,37 +1381,44 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }])
         .prog_type_allowlist(&CGROUP_KFUNC_PROG_TYPES),
 
-        // ---- Arena kfuncs (W5.5 + W6.1c) ----
+        // ---- Arena kfuncs (W5.5 + W6.1c + W6.1d) ----
+        //
+        // W6.1d realigns these protos with kernel semantics. The kernel
+        // registers both as `KF_TRUSTED_ARGS | KF_SLEEPABLE` — NOT
+        // KF_ACQUIRE / KF_RELEASE. Arena pages are reclaimed when the
+        // map is destroyed, not per-alloc; consequently:
+        //   - alloc without free is fine (W5.5's UnreleasedReference
+        //     check was over-approximation).
+        //   - use after free is fine — freed pages simply read as zero.
+        // The `ref_id` field on `RegType::PtrToArena{,OrNull}` stays
+        // (the type still tracks `mem_size` for bounds checking) but is
+        // always `None` because no kfunc mints one.
         //
         // void __arena *bpf_arena_alloc_pages(void *map, void __arena *addr,
         //                                     u32 page_cnt, int node_id, u64 flags)
-        // KF_ACQUIRE | KF_RET_NULL — allocates `page_cnt` pages from the
-        // arena map and returns a refcounted bounded pointer; may be NULL
-        // on alloc failure. R1 must be a `PtrToMapObject` whose backing
-        // map's `type_ == BPF_MAP_TYPE_ARENA` (W6.1c). The addr-hint arg
-        // is `Anything` — arena pointers come back from BTF as a kernel
+        // KF_RET_NULL — returns a bounded arena pointer or NULL on alloc
+        // failure. R1 must be a `PtrToMapObject` whose backing map's
+        // `type_ == BPF_MAP_TYPE_ARENA` (W6.1c). The addr-hint arg is
+        // `Anything` — arena pointers come back from BTF as a kernel
         // type that we don't trace through the addr-cast.
         "bpf_arena_alloc_pages" => CallProto::with_args([
             ConstMapPtrOfType(crate::common::constants::BPF_MAP_TYPE_ARENA),
             Anything, Anything, Anything, Anything,
         ])
         .ret(RetKind::PtrToArenaFromArg { page_cnt_arg: 2 })
-        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+        .flags(CallFlags::RET_NULL),
 
         // void bpf_arena_free_pages(void *map, void __arena *ptr, u32 page_cnt)
-        // KF_RELEASE — drops the refcount on the arena allocation. R2
-        // must be a non-null, ref-tracked PtrToArena. R1 must be the
-        // arena map (W6.1c). Lite scope: the entire allocation is
-        // invalidated even if `page_cnt` is a strict sub-range of the
-        // original alloc; partial-free precision is deferred (real
-        // programs that need it are rare).
+        // No KF flags — verifier-side this is a no-op shape check. R2
+        // must still be a non-null `PtrToArena` (validates the arg is
+        // really an arena pointer), and R1 must be an arena map. The
+        // pointer is NOT invalidated — kernel allows reads after free
+        // (they return zero).
         "bpf_arena_free_pages" => CallProto::with_args([
             ConstMapPtrOfType(crate::common::constants::BPF_MAP_TYPE_ARENA),
             PtrToArena, Anything, DontCare, DontCare,
         ])
-        .ret(RetKind::Void)
-        .flags(CallFlags::RELEASE)
-        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 1 }]),
+        .ret(RetKind::Void),
 
         // ---- Owned-kptr alloc / drop / refcount (W5.4a) ----
         //

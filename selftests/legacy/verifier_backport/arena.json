@@ -24,8 +24,8 @@
     ]
   },
   {
-    "name": "bpf_arena_alloc_pages without free rejects (UnreleasedReference)",
-    "result": "REJECT",
+    "name": "bpf_arena_alloc_pages without free is allowed (kernel reclaims at map destruction)",
+    "result": "ACCEPT",
     "prog_type": 17,
     "fixups": {
       "fixup_map_arena": [0]
@@ -85,8 +85,8 @@
     ]
   },
   {
-    "name": "bpf_arena use after free rejects",
-    "result": "REJECT",
+    "name": "bpf_arena use after free is allowed (freed pages read as zero)",
+    "result": "ACCEPT",
     "prog_type": 17,
     "fixups": {
       "fixup_map_arena": [0]

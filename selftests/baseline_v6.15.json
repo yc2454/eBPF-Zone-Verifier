@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-27T16:33:40.754736+00:00",
+  "generated_at": "2026-04-27T16:44:13.361555+00:00",
   "files": {
     "cb_refs.c": {
       "source": "selftests/progs/cb_refs.c",
@@ -898,8 +898,8 @@
     "legacy/arena.json": {
       "source": "selftests/legacy/verifier_backport/arena.json",
       "progs": {
-        "bpf_arena use after free rejects": {
-          "upstream": "REJECT",
+        "bpf_arena use after free is allowed (freed pages read as zero)": {
+          "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "bpf_arena_alloc_pages + null-check + 8B load + free": {
@@ -910,8 +910,8 @@
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
-        "bpf_arena_alloc_pages without free rejects (UnreleasedReference)": {
-          "upstream": "REJECT",
+        "bpf_arena_alloc_pages without free is allowed (kernel reclaims at map destruction)": {
+          "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "bpf_arena_free_pages on un-null-checked OrNull rejects": {
@@ -7211,8 +7211,7 @@
       "progs": {
         "basic_alloc1": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 49: base R9+0 (type: ScalarValue)"
+          "ours": "PASS"
         },
         "basic_alloc2": {
           "upstream": "ACCEPT",
@@ -7221,8 +7220,7 @@
         },
         "basic_alloc3": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unreleased reference in program"
+          "ours": "PASS"
         },
         "iter_maps1": {
           "upstream": "ACCEPT",
