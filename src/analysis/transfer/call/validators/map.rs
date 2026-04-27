@@ -77,6 +77,42 @@ pub fn validate_const_map_ptr(ctx: &mut ValidationContext) -> bool {
     true
 }
 
+/// Validates a ConstMapPtr whose backing map's `type_` must equal
+/// `required_type` (a `BPF_MAP_TYPE_*` constant). Used for kfuncs that
+/// require a specific map kind (e.g. arena alloc/free), since the existing
+/// `validate_const_map_ptr` only checks the helper-id-driven type table,
+/// which doesn't apply to kfuncs.
+pub fn validate_const_map_ptr_of_type(
+    ctx: &mut ValidationContext,
+    required_type: u32,
+) -> bool {
+    if !validate_const_map_ptr(ctx) {
+        return false;
+    }
+
+    if let RegType::PtrToMapObject { map_idx } = ctx.actual
+        && let Some(map_def) = ctx.env.ctx.map_defs.get(map_idx)
+        && map_def.type_ != required_type
+    {
+        ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} expected map type {}, got {}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                required_type,
+                map_def.type_
+            ),
+        );
+        return false;
+    }
+
+    true
+}
+
 /// Validates PtrToMapKey argument type.
 /// The pointer must point to readable memory with size matching the map's key_size.
 pub fn validate_ptr_to_map_key(ctx: &mut ValidationContext) -> bool {

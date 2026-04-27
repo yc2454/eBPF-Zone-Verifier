@@ -641,6 +641,13 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                             // The member type might be a PTR to an ARRAY where nelems encodes the value
                             if let Some(val) = extract_btf_uint(&types, m_type_id) {
                                 map_type = val;
+                                // Valueless map kinds (ARENA, RINGBUF, USER_RINGBUF,
+                                // CGRP_STORAGE …) declare only `type` + `max_entries`
+                                // and never appear with a `key`/`value` member, so
+                                // without this the libbpf-style `.maps` section
+                                // parser sees an all-zero record and the BTF
+                                // merger drops the map silently.
+                                is_map = true;
                             }
                         } else if m_name == "max_entries" {
                             // Extract max_entries - similar encoding as type
@@ -662,7 +669,15 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                         }
                     }
 
-                    if is_map && value_size > 0 {
+                    // Valueless maps (ARENA / RINGBUF / USER_RINGBUF / CGRP_STORAGE)
+                    // legitimately have value_size == 0; for everything else require
+                    // value_size > 0 to avoid picking up unrelated BTF structs that
+                    // happen to have a `type` member.
+                    let is_valueless_map = matches!(
+                        map_type,
+                        27 | 31 | 32 | 33 // RINGBUF, USER_RINGBUF, CGRP_STORAGE, ARENA
+                    );
+                    if is_map && (value_size > 0 || is_valueless_map) {
                         info!(target: "app", "[BTF] Found Map: '{}' (Type: {}, KeySize: {}, ValSize: {}, MaxEntries: {}, TypeID: {:?})",
                             name, map_type, key_size, value_size, max_entries, btf_val_type_id);
                         map_defs.push(BpfMapDef {

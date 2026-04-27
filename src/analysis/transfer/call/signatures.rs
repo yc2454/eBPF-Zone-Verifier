@@ -31,6 +31,12 @@ pub enum ArgKind {
 
     // ---- Map-related ----
     ConstMapPtr,
+    /// `ConstMapPtr` whose backing `BpfMapDef::type_` must equal the given
+    /// kernel `BPF_MAP_TYPE_*` value. Used by kfuncs (e.g. arena alloc/free)
+    /// that demand a specific map kind. Distinct from `ConstMapPtr`'s
+    /// helper-id-driven type table because kfunc dispatch doesn't go
+    /// through `helper_id_by_name`.
+    ConstMapPtrOfType(u32),
     PtrToMapKey,
     PtrToMapValue,
     PtrToUninitMapValue,
@@ -1260,29 +1266,33 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar),
 
-        // ---- Arena kfuncs (W5.5) ----
+        // ---- Arena kfuncs (W5.5 + W6.1c) ----
         //
         // void __arena *bpf_arena_alloc_pages(void *map, void __arena *addr,
         //                                     u32 page_cnt, int node_id, u64 flags)
         // KF_ACQUIRE | KF_RET_NULL — allocates `page_cnt` pages from the
         // arena map and returns a refcounted bounded pointer; may be NULL
-        // on alloc failure. The arena-map and addr-hint args are not
-        // shape-validated here (lite scope: the verifier doesn't model
-        // BPF_MAP_TYPE_ARENA yet).
+        // on alloc failure. R1 must be a `PtrToMapObject` whose backing
+        // map's `type_ == BPF_MAP_TYPE_ARENA` (W6.1c). The addr-hint arg
+        // is `Anything` — arena pointers come back from BTF as a kernel
+        // type that we don't trace through the addr-cast.
         "bpf_arena_alloc_pages" => CallProto::with_args([
-            Anything, Anything, Anything, Anything, Anything,
+            ConstMapPtrOfType(crate::common::constants::BPF_MAP_TYPE_ARENA),
+            Anything, Anything, Anything, Anything,
         ])
         .ret(RetKind::PtrToArenaFromArg { page_cnt_arg: 2 })
         .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
 
         // void bpf_arena_free_pages(void *map, void __arena *ptr, u32 page_cnt)
         // KF_RELEASE — drops the refcount on the arena allocation. R2
-        // must be a non-null, ref-tracked PtrToArena. Lite scope: the
-        // entire allocation is invalidated even if `page_cnt` is a
-        // strict sub-range of the original alloc; partial-free precision
-        // is deferred (real programs that need it are rare).
+        // must be a non-null, ref-tracked PtrToArena. R1 must be the
+        // arena map (W6.1c). Lite scope: the entire allocation is
+        // invalidated even if `page_cnt` is a strict sub-range of the
+        // original alloc; partial-free precision is deferred (real
+        // programs that need it are rare).
         "bpf_arena_free_pages" => CallProto::with_args([
-            Anything, PtrToArena, Anything, DontCare, DontCare,
+            ConstMapPtrOfType(crate::common::constants::BPF_MAP_TYPE_ARENA),
+            PtrToArena, Anything, DontCare, DontCare,
         ])
         .ret(RetKind::Void)
         .flags(CallFlags::RELEASE)

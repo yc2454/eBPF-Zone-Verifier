@@ -132,7 +132,10 @@ pub(crate) fn validate_helper_args(
     };
 
     // Get map info if first arg is a map (needed for key/value size validation)
-    let map_info = if sig.args[0] == ArgKind::ConstMapPtr {
+    let map_info = if matches!(
+        sig.args[0],
+        ArgKind::ConstMapPtr | ArgKind::ConstMapPtrOfType(_)
+    ) {
         get_map_info(types.get(Reg::R1), env)
     } else {
         None
@@ -215,6 +218,9 @@ pub(crate) fn validate_single_arg(
 
         // ---- Map-related types ----
         ArgKind::ConstMapPtr => validators::validate_const_map_ptr(&mut ctx),
+        ArgKind::ConstMapPtrOfType(t) => {
+            validators::validate_const_map_ptr_of_type(&mut ctx, t)
+        }
         ArgKind::PtrToMapKey => validators::validate_ptr_to_map_key(&mut ctx),
         ArgKind::PtrToMapValue => validators::validate_ptr_to_map_value(&mut ctx),
         ArgKind::PtrToUninitMapValue => {

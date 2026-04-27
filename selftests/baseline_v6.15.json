@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-27T13:57:45.482493+00:00",
+  "generated_at": "2026-04-27T14:39:16.566934+00:00",
   "files": {
     "cb_refs.c": {
       "source": "selftests/progs/cb_refs.c",
@@ -7026,7 +7026,7 @@
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(21) })"
+          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(19) })"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",

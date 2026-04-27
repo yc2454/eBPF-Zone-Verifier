@@ -409,6 +409,20 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
         }),
+        // W6.1c: arena map fixture for legacy/arena.json. Valueless map
+        // kind (no key/value); `bpf_arena_alloc_pages` validates only
+        // `map.type_ == BPF_MAP_TYPE_ARENA` (33).
+        "fixup_map_arena" => Some(BpfMapDef {
+            type_: 33, // BPF_MAP_TYPE_ARENA
+            key_size: 0,
+            value_size: 0,
+            max_entries: 1,
+            map_flags: 0,
+            name: "arena_map".to_string(),
+            btf_val_type_id: None,
+            initial_data: None,
+            inner_map_idx: None,
+        }),
         // Add more fixup types as needed
         _ => None,
     }
