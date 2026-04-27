@@ -476,11 +476,19 @@ pub(crate) fn update_call_types(
             }
         }
 
-        constants::BPF_SK_STORAGE_GET => {
-            let RegType::PtrToMapValueOrNull { id, map_idx } = in_types.get(Reg::R3) else {
-                state.types.set(Reg::R0, RegType::ScalarValue);
-                return;
+        // *_storage_get: R0 = PtrToMapValueOrNull keyed off the map (R1),
+        // not the optional initial-value arg (R3). Real programs commonly
+        // pass NULL for R3 (e.g. bpf_dctcp_init), and the prior version of
+        // this arm fell through to Scalar in that case. W7.1 fix.
+        constants::BPF_SK_STORAGE_GET
+        | constants::BPF_TASK_STORAGE_GET
+        | constants::BPF_INODE_STORAGE_GET => {
+            let map_idx = match in_types.get(Reg::R1) {
+                RegType::PtrToMapObject { map_idx } => map_idx,
+                RegType::PtrToMapValue { map_idx, .. } => map_idx,
+                _ => 0,
             };
+            let id = new_ptr_id();
             state
                 .types
                 .set(Reg::R0, RegType::PtrToMapValueOrNull { id, map_idx });

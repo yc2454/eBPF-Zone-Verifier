@@ -981,6 +981,97 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             Anything, // R5: flags
         ]),
 
+        // ---- W7.1: storage_get/_delete (sk + task + inode) ----
+        // R0 typing for *_storage_get is handled by the legacy
+        // `update_call_types` arm in transfer/types.rs, which keys
+        // PtrToMapValueOrNull off R1 (the map) — same pattern as
+        // bpf_get_local_storage. The arg-side proto is identical across
+        // the three families; only R2's expected ptr family differs
+        // (sock_common vs btf_id task vs btf_id inode).
+        constants::BPF_SK_STORAGE_DELETE => CallProto::with_args([
+            ConstMapPtr,            // R1: map
+            PtrToBTFIdSockCommon,   // R2: sk
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        constants::BPF_TASK_STORAGE_GET => CallProto::with_args([
+            ConstMapPtr,            // R1: map
+            PtrToBtfId,             // R2: task
+            PtrToMapValueOrNull,    // R3: value (may be NULL)
+            Anything,               // R4: flags
+            DontCare,
+        ]),
+
+        constants::BPF_TASK_STORAGE_DELETE => CallProto::with_args([
+            ConstMapPtr,            // R1: map
+            PtrToBtfId,             // R2: task
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        constants::BPF_INODE_STORAGE_GET => CallProto::with_args([
+            ConstMapPtr,            // R1: map
+            PtrToBtfId,             // R2: inode
+            PtrToMapValueOrNull,    // R3: value
+            Anything,               // R4: flags
+            DontCare,
+        ]),
+
+        constants::BPF_INODE_STORAGE_DELETE => CallProto::with_args([
+            ConstMapPtr,            // R1: map
+            PtrToBtfId,             // R2: inode
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- W7.1: bpf_d_path ----
+        // (path: struct path *, buf: writable, sz: const) -> s64
+        constants::BPF_D_PATH => CallProto::with_args([
+            PtrToBtfId,     // R1: struct path *
+            PtrToUninitMem, // R2: buf
+            ConstSize,      // R3: sz
+            DontCare,
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::D_PATH)
+        .ret(RetKind::Scalar),
+
+        // ---- W7.1: bpf_snprintf ----
+        // (buf, sz, fmt, data, data_len) -> s32
+        // Lite scope: fmt and data are accepted as PtrToMem; the kernel
+        // additionally validates fmt against const-rodata + matches data
+        // entries against fmt specifiers (not modeled).
+        constants::BPF_SNPRINTF => CallProto::with_args([
+            PtrToUninitMem,  // R1: buf
+            ConstSizeOrZero, // R2: sz
+            PtrToMem,        // R3: fmt (read-only; not size-paired — string)
+            PtrToMemOrNull,  // R4: data (u64 array; may be NULL if data_len=0)
+            ConstSizeOrZero, // R5: data_len
+        ])
+        .mem_size_pairs(&pairs::SNPRINTF)
+        .ret(RetKind::Scalar),
+
+        // ---- W7.1: bpf_strncmp ----
+        // (s1: PtrToMem, s1_sz: ConstSize, s2: PtrToMem) -> s32
+        // Kernel additionally requires s2 to be a const string (rodata);
+        // we relax to PtrToMem.
+        constants::BPF_STRNCMP => CallProto::with_args([
+            PtrToMem,  // R1: s1
+            ConstSize, // R2: s1_sz
+            PtrToMem,  // R3: s2 (const string in rodata)
+            DontCare,
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::STRNCMP)
+        .ret(RetKind::Scalar),
+
         _ => return None,
     })
 }
@@ -1846,6 +1937,12 @@ pub(super) mod pairs {
     pub static SK_LOOKUP_UDP: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
     pub static GET_SOCKOPT: [MemSizePair; 1] = [MemSizePair::new(Reg::R4, Reg::R5)];
     pub static GET_TASK_STACK: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    pub static D_PATH: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    pub static SNPRINTF: [MemSizePair; 2] = [
+        MemSizePair::new_nullable(Reg::R1, Reg::R2),
+        MemSizePair::new_nullable(Reg::R4, Reg::R5),
+    ];
+    pub static STRNCMP: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
     pub static GET_STACK: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
     pub static PERF_EVENT_OUTPUT: [MemSizePair; 1] = [MemSizePair::new(Reg::R4, Reg::R5)];
     pub static GET_CURRENT_COMM: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];

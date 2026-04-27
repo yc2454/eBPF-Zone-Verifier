@@ -47,8 +47,7 @@
         },
         "bpf_dctcp_init": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 82: base R0+0 (type: ScalarValue)"
+          "ours": "PASS"
         },
         "bpf_dctcp_state": {
           "upstream": "ACCEPT",
