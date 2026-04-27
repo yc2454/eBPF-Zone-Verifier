@@ -126,6 +126,31 @@
     "maybe_null_fail_yld.bpf.c": {
       "expect": "reject",
       "note": "Dereferences MAYBE_NULL task_struct *to arg of .yield without null-check. Same shape as _dsp variant. runner.c::maybe_null asserts load fails."
+    },
+
+    "task_local_storage.c": {
+      "expect": "accept",
+      "note": "W7.1: tp_btf-based bpf_task_storage_get exercise; kernel prog_tests/task_local_storage.c::test_sys_enter_exit asserts load+attach succeed."
+    },
+    "local_storage.c": {
+      "expect": "accept",
+      "note": "W7.1: LSM-based multi-storage (sk + task + inode) get/delete; kernel prog_tests/test_local_storage.c asserts load succeeds."
+    },
+    "test_snprintf.c": {
+      "expect": "accept",
+      "note": "W7.1: positive bpf_snprintf coverage (BPF_SNPRINTF macro + various fmt specifiers); kernel prog_tests/snprintf.c::test_snprintf_positive asserts load."
+    },
+    "test_snprintf_single.c": {
+      "expect": "reject",
+      "note": "W7.1: negative case — fmt arg is a non-const writable global, not rodata. Kernel prog_tests/snprintf.c::test_snprintf_negative asserts load FAILS at verifier."
+    },
+    "test_d_path.c": {
+      "expect": "accept",
+      "note": "W7.1: positive bpf_d_path coverage from fentry/security_inode_getattr + fentry/filp_close; kernel prog_tests/d_path.c::test_d_path asserts load."
+    },
+    "test_d_path_check_rdonly_mem.c": {
+      "expect": "reject",
+      "note": "W7.1: bpf_d_path called with a rdonly-mem buf (from bpf_per_cpu_ptr on a __ksym). Kernel prog_tests/d_path.c asserts load FAILS — helpers cannot write into rdonly mem."
     }
   }
 }

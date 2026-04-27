@@ -782,3 +782,93 @@ pub fn combine_program_with_subprogs<P: AsRef<Path> + Clone>(
         func_offsets,
     })
 }
+
+/// Phase 7 wrap-up: per-function whole-program loader.
+///
+/// Like `combine_program_with_subprogs`, but scoped to a single
+/// SEC()'d entry function instead of the whole section. Loads
+/// `main_func` from `main_section` and transitively appends every
+/// `static __noinline` subprog it calls (across sections), then
+/// fixes up BpfCall imms so the verifier can follow the chain.
+///
+/// Why this exists: kernel selftest files often place multiple
+/// SEC()'d entries in the same section (`raw_tp`, `kprobe`, ...).
+/// `combine_program_with_subprogs` would pull in every entry as
+/// "subprograms", which is wrong. This variant loads only the
+/// transitive closure of `main_func`'s callees — matching how the
+/// kernel test_loader treats one SEC()'d entry as one program.
+pub fn combine_function_with_subprogs<P: AsRef<Path> + Clone>(
+    path: P,
+    maps: &[BpfMapDef],
+    main_section: &str,
+    main_func: &str,
+) -> Result<CombinedProgram> {
+    use super::prog::{get_functions_in_section, load_function_bytes};
+    use crate::parsing::bpf_insn::decode_insns;
+    use std::collections::HashSet;
+
+    let mut combined_insns: Vec<RawBpfInsn> = Vec::new();
+    let mut combined_relocs: HashMap<usize, RelocInfo> = HashMap::new();
+    let mut func_offsets: HashMap<String, usize> = HashMap::new();
+    let mut visited: HashSet<(String, String)> = HashSet::new();
+    let mut queue: Vec<(String, String)> =
+        vec![(main_section.to_string(), main_func.to_string())];
+
+    while let Some((section, func_name)) = queue.pop() {
+        if !visited.insert((section.clone(), func_name.clone())) {
+            continue;
+        }
+
+        let funcs = get_functions_in_section(&path, &section)?;
+        let func = match funcs.iter().find(|f| f.name == func_name) {
+            Some(f) => f.clone(),
+            None => continue, // extern / not present — fall through to a
+                              // BpfCall imm that points nowhere; the
+                              // verifier will surface that as a load /
+                              // analysis failure.
+        };
+
+        let bytes = match load_function_bytes(&path, &section, &func_name) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let insns = decode_insns(&bytes);
+        let func_pc_in_combined = combined_insns.len();
+        func_offsets.insert(func_name.clone(), func_pc_in_combined);
+
+        // Per-function relocs (PC-rebased to 0 within the function).
+        let func_relocs =
+            load_relocations_for_function(&path, maps, &section, func.offset, func.size)?;
+        for (local_pc, reloc) in func_relocs {
+            if reloc.kind == RelocKind::BpfCall
+                && let Some(ref t) = reloc.bpf_call_target
+            {
+                queue.push((t.section.clone(), t.func_name.clone()));
+            }
+            combined_relocs.insert(func_pc_in_combined + local_pc, reloc);
+        }
+
+        combined_insns.extend(insns);
+    }
+
+    // Fix BpfCall imms now that all callees have known PCs.
+    for (&call_pc, reloc) in combined_relocs.iter() {
+        if reloc.kind == RelocKind::BpfCall
+            && let Some(ref t) = reloc.bpf_call_target
+            && let Some(&target_pc) = func_offsets.get(&t.func_name)
+            && call_pc < combined_insns.len()
+        {
+            let relative_offset = (target_pc as i32) - (call_pc as i32 + 1);
+            combined_insns[call_pc].imm = relative_offset;
+            combined_insns[call_pc].src = 1; // BPF_PSEUDO_CALL
+        }
+    }
+
+    apply_relocs(&mut combined_insns, &combined_relocs);
+
+    Ok(CombinedProgram {
+        raw_insns: combined_insns,
+        pc_to_reloc: combined_relocs,
+        func_offsets,
+    })
+}

@@ -13,6 +13,10 @@
 
 #include <linux/bpf.h>
 
+#ifndef MAX_BPF_STACK
+#define MAX_BPF_STACK 512
+#endif
+
 #ifndef BPF_RAW_INSN
 #define BPF_RAW_INSN(CODE, DST, SRC, OFF, IMM)               \
     ((struct bpf_insn) {                                     \

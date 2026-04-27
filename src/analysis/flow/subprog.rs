@@ -3,7 +3,7 @@
 // Subprogram analysis: structure validation and stack overflow checking
 
 use crate::analysis::machine::reg::Reg;
-use crate::ast::{Instr, Program};
+use crate::ast::{CallKind, Instr, Program, ProgramKind};
 use crate::common::constants;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -14,6 +14,40 @@ pub struct SubprogInfo {
     pub start_pc: usize,
     pub end_pc: usize,
     pub max_stack_depth: u16,
+}
+
+/// W7.3: returns true if a program of `prog_kind` is eligible for the
+/// v6.12+ private-stack feature. Mirrors `bpf_priv_stack_supported`
+/// (kernel/bpf/verifier.c) — only program types that run with
+/// preempt_disable / are NMI-safe (so the per-CPU private stack arena
+/// is reentrant-safe) appear here.
+///
+/// Excludes any program whose call graph contains `bpf_tail_call`
+/// (helper id 12): the kernel can't share the private-stack arena
+/// across tail-called programs.
+pub fn private_stack_eligible(prog_kind: ProgramKind, instrs: &[Instr]) -> bool {
+    let prog_type_ok = matches!(
+        prog_kind,
+        ProgramKind::Kprobe
+            | ProgramKind::Tracepoint
+            | ProgramKind::PerfEvent
+            | ProgramKind::RawTracepoint
+            | ProgramKind::RawTracepointWritable
+            | ProgramKind::StructOps
+    );
+    if !prog_type_ok {
+        return false;
+    }
+    // Tail-call presence rules out private stack (kernel: same arena
+    // can't survive a tail-call jump).
+    !instrs.iter().any(|i| {
+        matches!(
+            i,
+            Instr::Call {
+                kind: CallKind::Helper { id }
+            } if *id == constants::BPF_TAIL_CALL
+        )
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -214,16 +248,39 @@ pub fn check_subprogs(prog: &Program) -> Result<(), SubprogError> {
 }
 
 /// Check that no call chain would cause stack overflow.
-pub fn check_stack_overflow(prog: &Program) -> Result<(), SubprogError> {
+///
+/// W7.3: when `private_stack_enabled` is true AND `prog_kind` is in the
+/// kernel's eligibility set (see `private_stack_eligible`), each subprog
+/// gets its own stack arena — the cumulative call-chain budget is not
+/// enforced; only each subprog's own ≤512-byte limit. This mirrors v6.12
+/// `bpf_priv_stack_supported` semantics.
+pub fn check_stack_overflow(
+    prog: &Program,
+    prog_kind: ProgramKind,
+    private_stack_enabled: bool,
+) -> Result<(), SubprogError> {
     let subprogs = analyze_subprograms(&prog.instrs);
 
     if subprogs.is_empty() {
         return Ok(());
     }
 
-    check_call_chain(prog, &subprogs, 0, 0, 1, None, &mut HashSet::new())
+    let private_stack =
+        private_stack_enabled && private_stack_eligible(prog_kind, &prog.instrs);
+
+    check_call_chain(
+        prog,
+        &subprogs,
+        0,
+        0,
+        1,
+        None,
+        private_stack,
+        &mut HashSet::new(),
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn check_call_chain(
     prog: &Program,
     subprogs: &BTreeMap<usize, SubprogInfo>,
@@ -231,6 +288,7 @@ fn check_call_chain(
     depth_so_far: u16,
     call_depth: usize,        // number of frames
     caller_pc: Option<usize>, // PC of the CallRel that invoked us (None for root)
+    private_stack: bool,      // W7.3: whole-program private-stack mode
     visiting: &mut HashSet<usize>,
 ) -> Result<(), SubprogError> {
     // Check call depth first
@@ -258,14 +316,28 @@ fn check_call_chain(
         }
     };
 
-    let new_depth = depth_so_far + info.max_stack_depth;
-
-    if new_depth > MAX_BPF_STACK {
-        return Err(SubprogError::StackOverflow {
-            pc: entry_pc,
-            combined: new_depth,
-        });
-    }
+    // W7.3: under private_stack, each subprog has its own arena —
+    // validate this subprog's depth against MAX_BPF_STACK alone and
+    // do NOT add to depth_so_far. Otherwise (legacy / ineligible
+    // program) accumulate as before.
+    let new_depth = if private_stack {
+        if info.max_stack_depth > MAX_BPF_STACK {
+            return Err(SubprogError::StackOverflow {
+                pc: entry_pc,
+                combined: info.max_stack_depth,
+            });
+        }
+        depth_so_far
+    } else {
+        let nd = depth_so_far + info.max_stack_depth;
+        if nd > MAX_BPF_STACK {
+            return Err(SubprogError::StackOverflow {
+                pc: entry_pc,
+                combined: nd,
+            });
+        }
+        nd
+    };
 
     for pc in info.start_pc..info.end_pc {
         if let Instr::CallRel { target } = &prog.instrs[pc] {
@@ -276,6 +348,7 @@ fn check_call_chain(
                 new_depth,
                 call_depth + 1,
                 Some(pc),
+                private_stack,
                 visiting,
             )?;
         }

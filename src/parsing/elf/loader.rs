@@ -1,7 +1,8 @@
 use crate::ast::{Program, ProgramKind};
 use crate::parsing::bpf_to_ast;
 use crate::parsing::elf::{
-    BpfMapDef, RelocInfo, combine_program_with_subprogs, discover_bpf_call_targets,
+    BpfMapDef, RelocInfo, combine_function_with_subprogs, combine_program_with_subprogs,
+    discover_bpf_call_targets,
 };
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -139,6 +140,38 @@ pub fn try_load_combined_program_from_elf(
     })?;
 
     Ok((prog, combined.pc_to_reloc))
+}
+
+/// Phase 7 wrap-up: load a single SEC()'d entry function plus all
+/// subprograms it transitively calls.
+///
+/// Returns `(Program, relocations, func_offsets)` where `func_offsets`
+/// maps each loaded function name to its PC in the combined program.
+/// The entry function lives at PC 0; appended subprogs follow.
+pub fn try_load_function_with_subprogs_from_elf(
+    path: &str,
+    section: &str,
+    func_name: &str,
+    maps: &[BpfMapDef],
+) -> Result<(Program, HashMap<usize, RelocInfo>, HashMap<String, usize>), String> {
+    let combined = combine_function_with_subprogs(path, maps, section, func_name)
+        .map_err(|e| format!("Failed to combine function with subprogs: {:?}", e))?;
+
+    if combined.raw_insns.is_empty() {
+        return Err(format!(
+            "Function '{}' not found in section '{}'",
+            func_name, section
+        ));
+    }
+
+    let prog = bpf_to_ast::lower_raw_to_program(&combined.raw_insns).map_err(|e| {
+        format!(
+            "Lowering combined ELF → AST failed at pc {} (opcode 0x{:02x}): {}",
+            e.pc, e.code, e.msg
+        )
+    })?;
+
+    Ok((prog, combined.pc_to_reloc, combined.func_offsets))
 }
 
 /// Lookup program kind for a single object file.

@@ -62,6 +62,17 @@ pub struct VerifierConfig {
     /// Enabled automatically by --kernel-mode.
     pub require_single_loop_entry: bool,
 
+    /// W7.3: model the v6.12 private-stack feature for eligible program
+    /// types (kprobe / tracepoint / perf_event / raw_tracepoint /
+    /// struct_ops, with sched_ext landing through StructOps). When ON,
+    /// subprograms in eligible programs get a separate stack arena and
+    /// don't contribute to the cumulative call-chain budget — only each
+    /// subprog's own ≤512-byte limit is enforced. Programs that call
+    /// `bpf_tail_call` are excluded (kernel does the same).
+    /// Default: ON (mirror kernel behavior). Set to false to fall back
+    /// to the pre-6.12 cumulative-only model.
+    pub enable_private_stack: bool,
+
     // --- Benchmark Filters ---
     /// Filter benchmark by project (subdirectory name)
     pub bench_project: Option<String>,
@@ -99,6 +110,7 @@ impl Default for VerifierConfig {
             map_overrides: std::collections::HashMap::new(),
             detect_bounded_loops: true, // Default: enabled for precision
             require_single_loop_entry: false, // Default: allow multi-entry loops
+            enable_private_stack: true, // W7.3 default: mirror v6.12+ kernel
             bench_project: None,
             bench_compiler: None,
             bench_opt: None,
@@ -158,6 +170,12 @@ impl VerifierConfig {
                     }
                     "--multi-entry-loops" => {
                         config.require_single_loop_entry = false;
+                    }
+                    "--enable-private-stack" => {
+                        config.enable_private_stack = true;
+                    }
+                    "--disable-private-stack" => {
+                        config.enable_private_stack = false;
                     }
                     "--zone-mode" | "--zone" => {
                         config.domain_mode = DomainMode::Zone;
@@ -290,6 +308,10 @@ impl VerifierConfig {
             "  --single-entry-loops      Reject loops with jumps into middle (kernel behavior)"
         );
         eprintln!("  --multi-entry-loops       Allow loops with any entry pattern (default)");
+        eprintln!();
+        eprintln!("Stack Model (W7.3):");
+        eprintln!("  --enable-private-stack    Model v6.12 private-stack (default)");
+        eprintln!("  --disable-private-stack   Pre-6.12 cumulative-only stack budget");
         eprintln!();
         eprintln!("Analysis Options:");
         eprintln!("  --skip-dbm           Skip DBM comparison in pruning (faster)");

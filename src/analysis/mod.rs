@@ -108,7 +108,9 @@ pub fn analyze_program_full(
         };
     }
 
-    if let Err(e) = subprog::check_stack_overflow(prog) {
+    if let Err(e) =
+        subprog::check_stack_overflow(prog, env.ctx.prog_kind, config.enable_private_stack)
+    {
         error!(target: "app", "[Analysis] Stack Error: {}", e);
         return AnalysisResult {
             dbms: vec![],

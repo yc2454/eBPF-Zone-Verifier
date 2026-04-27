@@ -17,6 +17,7 @@ use crate::parsing::elf::{
 };
 use crate::parsing::elf::{
     program_kind_for_object, try_load_combined_program_from_elf, try_load_function_from_elf,
+    try_load_function_with_subprogs_from_elf,
     try_load_program_from_elf,
 };
 use std::path::Path;
@@ -311,22 +312,48 @@ impl Analyzer {
         ))
     }
 
-    /// Analyze a specific function within a section, using pre-computed function info
+    /// Analyze a specific function within a section, using pre-computed function info.
+    ///
+    /// Phase 7 wrap-up: loads `func` as the entry plus every static
+    /// `__noinline` subprog it transitively calls. CallRel-typed BPF
+    /// calls now resolve to in-program PCs, so the verifier follows
+    /// the chain instead of treating them as opaque helper calls.
     fn analyze_function_with_info(&self, section: &str, func: &BpfFuncInfo) -> AnalysisResult {
-        // Load relocations adjusted for this function's offset within the section
-        let pc_to_reloc =
-            load_relocations_for_function(&self.path, &self.maps, section, func.offset, func.size)
+        let (prog, pc_to_reloc, func_offsets) = match try_load_function_with_subprogs_from_elf(
+            &self.path,
+            section,
+            &func.name,
+            &self.maps,
+        ) {
+            Ok(t) => t,
+            Err(e) => {
+                // Fall back to per-function load on combiner failure
+                // (e.g. cross-section reloc errors). Preserves prior
+                // behavior for files where the new path can't apply.
+                let pc_to_reloc = load_relocations_for_function(
+                    &self.path,
+                    &self.maps,
+                    section,
+                    func.offset,
+                    func.size,
+                )
                 .unwrap_or_default();
-
-        // Load only this function's bytes
-        let prog =
-            match try_load_function_from_elf(&self.path, section, &func.name, Some(&pc_to_reloc)) {
-                Ok(p) => p,
-                Err(e) => return AnalysisResult::LoadError(e),
-            };
+                let prog = match try_load_function_from_elf(
+                    &self.path,
+                    section,
+                    &func.name,
+                    Some(&pc_to_reloc),
+                ) {
+                    Ok(p) => p,
+                    Err(_) => return AnalysisResult::LoadError(e),
+                };
+                (prog, pc_to_reloc, std::collections::HashMap::new())
+            }
+        };
         if prog.instrs.is_empty() {
             return AnalysisResult::LoadError(format!("Empty function '{}'", func.name));
         }
+        let _ = &func_offsets;
 
         println!(
             "Test 'prog: {}, section: {}, func: {}': Lowered Program AST:",
@@ -379,6 +406,35 @@ impl Analyzer {
             // context so transfer_kfunc_proto can enforce per-(ops, member)
             // kfunc-context allowlists.
             ctx.struct_ops_member = binding.map(|b| (b.ops_struct.clone(), b.member.clone()));
+        } else if matches!(
+            ctx.prog_kind,
+            ProgramKind::Lsm
+                | ProgramKind::Tracing
+                | ProgramKind::Tracepoint
+                | ProgramKind::RawTracepoint
+                | ProgramKind::RawTracepointWritable
+        ) {
+            // Phase 7 wrap-up: extend the W6.4a struct_ops ctx-load idiom
+            // to fentry/fexit/tp_btf/lsm/tracepoint. clang's BPF_PROG()
+            // wrapper unpacks the kernel-passed args via `r1 = *(u64*)(r1 + 8*idx)`;
+            // we type each ctx slot from the function's BTF FUNC_PROTO.
+            // No per-arg MAYBE_NULL table for these kinds (the kernel
+            // marks fentry/LSM args as trusted/non-null by convention).
+            ctx.entry_args = self.btf.resolve_func_args(&func.name).map(|args| {
+                args.into_iter()
+                    .map(|a| match a {
+                        StructOpsArg::Scalar => EntryArg::Scalar,
+                        StructOpsArg::OpaquePtr => EntryArg::TrustedPtrBtfId {
+                            type_name: "struct",
+                            nullable: false,
+                        },
+                        StructOpsArg::TrustedPtr(name) => EntryArg::TrustedPtrBtfId {
+                            type_name: intern_btf_type_name(&name),
+                            nullable: false,
+                        },
+                    })
+                    .collect()
+            });
         }
 
         if self.config.verbosity > 0 {

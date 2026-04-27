@@ -183,11 +183,16 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     // 2.5 Initialize memory buffers for PtrToUninitMem arguments
     initialize_uninit_mem_args(&mut state, &in_types, helper);
 
-    // 3. Update DBM - forget caller-saved registers and reset Tnums
-    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-        state.domain.forget(r);
-        state.set_tnum(r, Tnum::unknown());
-        state.clear_scalar_id(r);
+    // 3. Update DBM - forget caller-saved registers and reset Tnums.
+    // W7.2: skip for fastcall helpers — kernel guarantees R1..R5 are
+    // preserved, so clang-emitted no-spill sequences must keep their
+    // pre-call values + tnums + scalar_ids visible to the verifier.
+    if !super::signatures::is_fastcall_helper(helper) {
+        for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+            state.domain.forget(r);
+            state.set_tnum(r, Tnum::unknown());
+            state.clear_scalar_id(r);
+        }
     }
 
     // 4. Forget packet pointer DBM entries if they were invalidated

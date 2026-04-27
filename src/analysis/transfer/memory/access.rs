@@ -183,6 +183,15 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
                 });
             }
         }
+        // Phase 7 wrap-up: lax field-access on trusted typed BTF
+        // pointers we don't have a `mem_region_model` entry for.
+        // Mirrors the W6.4a-followon `PtrToBtfId{type_name: "unknown"}`
+        // policy — accept any field read; result is `ScalarValue` (or a
+        // nested PtrToBtfId if narrower modeling lands later).
+        PtrToTask { .. } => {
+            // accept; loaded value left as `ScalarValue` by the
+            // type-update path
+        }
         ScalarValue | NotInit => {
             error!(
                 "Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})",

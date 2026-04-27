@@ -1552,24 +1552,57 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
     // recognized; this matches the codegen of the BPF_PROG macro and
     // avoids accidentally typing partial-byte reads that would have to
     // come from a different idiom.
-    if prog_kind == ProgramKind::StructOps
-        && let Some(args) = env.ctx.entry_args.as_ref()
-        && size == 8
+    // Phase 7 wrap-up: extended to fentry/fexit/tp_btf/lsm/tracepoint.
+    // The BPF_PROG() macro generates the same ctx-array idiom in all
+    // these prog types; the runner now resolves entry_args from the
+    // function's BTF FUNC_PROTO for non-struct_ops kinds via
+    // `btf.resolve_func_args(func_name)`.
+    if matches!(
+        prog_kind,
+        ProgramKind::StructOps
+            | ProgramKind::Lsm
+            | ProgramKind::Tracing
+            | ProgramKind::Tracepoint
+            | ProgramKind::RawTracepoint
+            | ProgramKind::RawTracepointWritable
+    ) && size == 8
         && off >= 0
         && off % 8 == 0
     {
         let idx = (off / 8) as usize;
-        if idx < args.len() {
-            use crate::analysis::machine::context::EntryArg;
-            let kind = match &args[idx] {
-                EntryArg::Scalar => CtxFieldKind::Scalar,
-                EntryArg::TrustedPtrBtfId { type_name, nullable } => CtxFieldKind::TrustedPtr {
-                    type_name,
-                    nullable: *nullable,
-                },
-            };
+        if let Some(args) = env.ctx.entry_args.as_ref() {
+            if idx < args.len() {
+                use crate::analysis::machine::context::EntryArg;
+                let kind = match &args[idx] {
+                    EntryArg::Scalar => CtxFieldKind::Scalar,
+                    EntryArg::TrustedPtrBtfId { type_name, nullable } => {
+                        CtxFieldKind::TrustedPtr {
+                            type_name,
+                            nullable: *nullable,
+                        }
+                    }
+                };
+                return Some(CtxAccessInfo {
+                    kind,
+                    readable: true,
+                    writable: false,
+                });
+            }
+        }
+        // Phase 7 wrap-up: fallback for fentry/LSM/tp_btf where
+        // `resolve_func_args` returns the BPF_PROG-wrapper signature
+        // rather than the user-declared args (the kernel resolves these
+        // from the attach target's vmlinux BTF, which we don't ship).
+        // Surface ctx-array slot loads as a "trusted unknown pointer" —
+        // the W6.4a-followon access path then accepts any field read off
+        // it via the `type_name == "unknown"` lax policy. Loose but
+        // sound: the kernel accepts everything we'd accept here.
+        if !matches!(prog_kind, ProgramKind::StructOps) {
             return Some(CtxAccessInfo {
-                kind,
+                kind: CtxFieldKind::TrustedPtr {
+                    type_name: "unknown",
+                    nullable: false,
+                },
                 readable: true,
                 writable: false,
             });

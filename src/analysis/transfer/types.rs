@@ -536,9 +536,14 @@ pub(crate) fn update_call_types(
     }
     } // end if !routed
 
-    // Clobber caller-saved registers - they are NOT readable after the call
-    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-        state.types.set(r, RegType::NotInit);
+    // Clobber caller-saved registers - they are NOT readable after the call.
+    // W7.2: fastcall helpers (v6.13) preserve R1..R5 — skip the regtype
+    // clobber so the values stay typed across the call. Paired with the
+    // DBM/Tnum skip in `transfer.rs`.
+    if !crate::analysis::transfer::call::signatures::is_fastcall_helper(helper) {
+        for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+            state.types.set(r, RegType::NotInit);
+        }
     }
 
     // 3. Invalidate packet pointers if needed

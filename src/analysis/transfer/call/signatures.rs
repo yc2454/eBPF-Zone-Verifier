@@ -118,6 +118,14 @@ pub enum ArgKind {
     /// passing it to `bpf_cgroup_acquire` / `bpf_cgroup_release`.
     PtrToCgroup,
 
+    // ---- Task (Phase 7 wrap-up) ----
+    /// `struct task_struct *` argument. Same shape as `PtrToCgroup` —
+    /// only the non-null `RegType::PtrToTask` accepted. Program must
+    /// have null-checked a `bpf_task_acquire` / `bpf_task_from_pid`
+    /// result first; `bpf_get_current_task_btf` returns a non-null
+    /// task directly.
+    PtrToTask,
+
     // ---- Arena (W5.5) ----
     /// Bounded arena memory pointer. The actual reg must be a non-null,
     /// ref-tracked `RegType::PtrToArena` (i.e. the program has already
@@ -205,6 +213,13 @@ impl CallFlags {
     /// value head/root without the lock. Rejects with
     /// `NotInSpinLockSection` when `state.active_lock.is_none()`.
     pub const SPIN_LOCK_HELD: Self = Self(1 << 11);
+    /// Post-call: skip the default caller-saved clobber of R1..R5
+    /// (regtypes + DBM + tnum + scalar_id). The kernel's `bpf_fastcall`
+    /// calling-convention hint (v6.13) lets clang emit shorter
+    /// sequences around these calls because R1..R5 retain their
+    /// pre-call values. Used by select helpers (see `is_fastcall_helper`)
+    /// and per-kfunc on cpumask read-only queries. W7.2.
+    pub const FASTCALL: Self = Self(1 << 12);
 
     pub const fn empty() -> Self {
         Self(0)
@@ -288,6 +303,11 @@ pub enum RetKind {
     /// and `bpf_cgroup_acquire`. Same applier shape as `PtrToCpumask`:
     /// `ACQUIRE` mints a ref, `RET_NULL` wraps as `PtrToCgroupOrNull`.
     PtrToCgroup,
+    /// `RegType::PtrToTask` (Phase 7 wrap-up). Used by
+    /// `bpf_get_current_task_btf` (no acquire), `bpf_task_acquire`,
+    /// `bpf_task_from_pid`. Same applier shape as `PtrToCgroup`:
+    /// `ACQUIRE` mints a ref, `RET_NULL` wraps as `PtrToTaskOrNull`.
+    PtrToTask,
     /// `bpf_iter_*_next(&it)` (W4.3b): forks the call into two
     /// successors. Non-NULL: R0 = `PtrToAllocMem { mem_size = elem_size }`,
     /// iterator slot at `iter_arg` stays Active. NULL: R0 = scalar 0,
@@ -999,7 +1019,7 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
 
         constants::BPF_TASK_STORAGE_GET => CallProto::with_args([
             ConstMapPtr,            // R1: map
-            PtrToBtfId,             // R2: task
+            PtrToTask,              // R2: task (Phase 7 wrap-up: typed)
             PtrToMapValueOrNull,    // R3: value (may be NULL)
             Anything,               // R4: flags
             DontCare,
@@ -1007,7 +1027,7 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
 
         constants::BPF_TASK_STORAGE_DELETE => CallProto::with_args([
             ConstMapPtr,            // R1: map
-            PtrToBtfId,             // R2: task
+            PtrToTask,              // R2: task
             DontCare,
             DontCare,
             DontCare,
@@ -1030,6 +1050,16 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             DontCare,
         ])
         .ret(RetKind::Scalar),
+
+        // ---- Phase 7 wrap-up: bpf_get_current_task_btf ----
+        // Returns the kernel's current-task pointer, typed as PTR_TO_BTF_ID
+        // (task_struct *) with PTR_TRUSTED. Modeled here as PtrToTask (no
+        // ACQUIRE — the kernel guarantees the returned pointer is live for
+        // the duration of the program). Zero arguments.
+        constants::BPF_GET_CURRENT_TASK_BTF => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToTask),
 
         // ---- W7.1: bpf_d_path ----
         // (path: struct path *, buf: writable, sz: const) -> s64
@@ -1108,6 +1138,20 @@ const CPUMASK_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 5] = [
 /// can be encoded without unwiring callers.
 const CGROUP_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 5] =
     CPUMASK_KFUNC_PROG_TYPES;
+
+/// Task kfunc family allowlist (Phase 7 wrap-up). Mirrors the kernel's
+/// `tasks_kfunc_set` registration: tracing (fentry/fexit/tp_btf), LSM,
+/// tracepoint, perf_event, syscall, struct_ops. LSM is added vs the
+/// cpumask/cgroup list because `local_storage.c` exercises
+/// `bpf_get_current_task_btf` from `lsm.s/*` hooks.
+const TASK_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 6] = [
+    crate::ast::ProgramKind::Syscall,
+    crate::ast::ProgramKind::Tracing,
+    crate::ast::ProgramKind::Tracepoint,
+    crate::ast::ProgramKind::PerfEvent,
+    crate::ast::ProgramKind::Lsm,
+    crate::ast::ProgramKind::StructOps,
+];
 
 /// Sched_ext kfunc family allowlist (W6.4b). The kernel registers most
 /// `scx_bpf_*` kfuncs against the sched_ext class. A subset (notably
@@ -1486,6 +1530,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             Anything, PtrToCpumask, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
         .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
 
         // u32 bpf_cpumask_first(const struct cpumask *cpumask)
@@ -1493,6 +1538,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             PtrToCpumask, DontCare, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
         .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
 
         // ---- Cgroup kfuncs (W6.3-followon) ----
@@ -1532,6 +1578,53 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .flags(CallFlags::RELEASE)
         .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }])
         .prog_type_allowlist(&CGROUP_KFUNC_PROG_TYPES),
+
+        // ---- Task kfuncs (Phase 7 wrap-up) ----
+        //
+        // Mirrors the cgroup family. `RegType::PtrToTask{,OrNull}`
+        // tracks the optional ref_id minted by acquire-style getters.
+        // Selftest corpus exercise: local_storage.c, task_local_storage.c,
+        // rcu_read_lock.c, verifier_kfunc_prog_types.c, test_snprintf.c.
+        //
+        // struct task_struct *bpf_get_current_task_btf(void)
+        // KF_TRUSTED — returns the kernel's current-task pointer. Not
+        // refcounted (the kernel guarantees liveness across the helper
+        // call), so no ACQUIRE flag and ret_id stays None.
+        "bpf_get_current_task_btf" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToTask)
+        .prog_type_allowlist(&TASK_KFUNC_PROG_TYPES),
+
+        // struct task_struct *bpf_task_acquire(struct task_struct *p)
+        // KF_ACQUIRE | KF_RET_NULL | KF_TRUSTED_ARGS — increments the
+        // refcount; may return NULL on a dying task.
+        "bpf_task_acquire" => CallProto::with_args([
+            PtrToTask, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToTask)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL)
+        .prog_type_allowlist(&TASK_KFUNC_PROG_TYPES),
+
+        // struct task_struct *bpf_task_from_pid(s32 pid)
+        // KF_ACQUIRE | KF_RET_NULL — looks up a task by pid; returns
+        // a fresh refcounted pointer or NULL.
+        "bpf_task_from_pid" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToTask)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL)
+        .prog_type_allowlist(&TASK_KFUNC_PROG_TYPES),
+
+        // void bpf_task_release(struct task_struct *p)
+        // KF_RELEASE — drops the refcount.
+        "bpf_task_release" => CallProto::with_args([
+            PtrToTask, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }])
+        .prog_type_allowlist(&TASK_KFUNC_PROG_TYPES),
 
         // ---- Arena kfuncs (W5.5 + W6.1c + W6.1d) ----
         //
@@ -1956,6 +2049,26 @@ pub(super) mod pairs {
 
     // ---- Slice cluster (W4.2g) ----
     pub static DYNPTR_SLICE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+}
+
+/// W7.2: returns true if the helper is in the kernel's `is_fastcall_helper_call`
+/// set. Fastcall helpers preserve R1..R5 across the call edge — the verifier
+/// skips the caller-saved clobber so clang-emitted no-spill sequences type-check.
+/// List mirrors `kernel/bpf/verifier.c::is_fastcall_helper_call` as of v6.13.
+pub(crate) fn is_fastcall_helper(helper: u32) -> bool {
+    matches!(
+        helper,
+        constants::BPF_KTIME_GET_NS
+            | constants::BPF_GET_SMP_PROCESSOR_ID
+            | constants::BPF_GET_CURRENT_PID_TGID
+            | constants::BPF_GET_CURRENT_UID_GID
+            | constants::BPF_GET_CURRENT_COMM
+            | constants::BPF_GET_CURRENT_TASK
+            | constants::BPF_GET_NUMA_NODE_ID
+            | constants::BPF_GET_CURRENT_CGROUP_ID
+            | constants::BPF_JIFFIES64
+            | constants::BPF_KTIME_GET_BOOT_NS
+    )
 }
 
 /// Returns true if the helper rejects packet pointers for the given argument index.

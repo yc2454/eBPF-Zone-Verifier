@@ -18,7 +18,7 @@ use crate::analysis::machine::state::State;
 use crate::domains::tnum::Tnum;
 
 use super::side_effects::{apply_call_proto_r0, arg_reg, resolve_stack_arg};
-use super::signatures::{CallProto, RetKind, get_kfunc_proto};
+use super::signatures::{CallFlags, CallProto, RetKind, get_kfunc_proto};
 
 /// Top-level kfunc dispatch. Looks up the kfunc name in BTF and routes
 /// it. Resolution order:
@@ -163,11 +163,17 @@ fn transfer_kfunc_proto(
 
     apply_call_proto_r0(&in_types, &mut state, proto);
 
-    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-        state.types.set(r, RegType::NotInit);
-        state.domain.forget(r);
-        state.set_tnum(r, Tnum::unknown());
-        state.clear_scalar_id(r);
+    // W7.2: kfuncs marked `bpf_fastcall` (v6.13) preserve R1..R5 — skip
+    // the caller-saved clobber so clang-emitted no-spill sequences
+    // type-check. Iter-next forks intentionally always clobber (no
+    // fastcall iter_next kfunc exists in the kernel set).
+    if !proto.flags.contains(CallFlags::FASTCALL) {
+        for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+            state.types.set(r, RegType::NotInit);
+            state.domain.forget(r);
+            state.set_tnum(r, Tnum::unknown());
+            state.clear_scalar_id(r);
+        }
     }
     state.domain.forget(Reg::R0);
     state.set_tnum(Reg::R0, Tnum::unknown());

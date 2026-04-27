@@ -190,6 +190,20 @@ pub(crate) fn apply_call_proto_r0(
             state.types.set(Reg::R0, ty);
             true
         }
+        RetKind::PtrToTask => {
+            let ref_id = if proto.flags.contains(CallFlags::ACQUIRE) {
+                Some(state.acquire_ref())
+            } else {
+                None
+            };
+            let ty = if proto.flags.contains(CallFlags::RET_NULL) {
+                RegType::PtrToTaskOrNull { ref_id }
+            } else {
+                RegType::PtrToTask { ref_id }
+            };
+            state.types.set(Reg::R0, ty);
+            true
+        }
         RetKind::PtrToSockCommon => {
             let ref_id = if proto.flags.contains(CallFlags::ACQUIRE) {
                 Some(state.acquire_ref())

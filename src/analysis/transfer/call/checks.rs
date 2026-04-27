@@ -266,6 +266,7 @@ pub(crate) fn validate_single_arg(
 
         // ---- Cgroup (W6.3-followon) ----
         ArgKind::PtrToCgroup => validate_ptr_to_cgroup(&mut ctx),
+        ArgKind::PtrToTask => validate_ptr_to_task(&mut ctx),
 
         // ---- Arena (W5.5) ----
         ArgKind::PtrToArena => validate_ptr_to_arena(&mut ctx),
@@ -396,6 +397,28 @@ fn validate_ptr_to_cgroup(ctx: &mut ValidationContext) -> bool {
             },
             &format!(
                 "[Verifier] pc {}: R{} expected PTR_TO_CGROUP, got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                ctx.actual
+            ),
+        );
+    }
+    true
+}
+
+/// Validate `ArgKind::PtrToTask` (Phase 7 wrap-up). Same shape as
+/// `validate_ptr_to_cgroup`: only non-null `RegType::PtrToTask`
+/// accepted. `bpf_task_acquire`/`_release` consumers require the
+/// program to have null-checked an `OrNull` result first.
+fn validate_ptr_to_task(ctx: &mut ValidationContext) -> bool {
+    if !matches!(ctx.actual, RegType::PtrToTask { .. }) {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} expected PTR_TO_TASK, got {:?}",
                 ctx.pc,
                 ctx.arg_index + 1,
                 ctx.actual

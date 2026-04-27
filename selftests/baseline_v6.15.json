@@ -1,10 +1,15 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-27T18:28:52.619943+00:00",
+  "generated_at": "2026-04-27T23:13:08.097806+00:00",
   "files": {
     "bpf_cubic.c": {
       "source": "selftests/progs/bpf_cubic.c",
       "progs": {
+        "before": {
+          "upstream": "UNKNOWN",
+          "ours": "SKIPPED",
+          "note": "not in ELF: function 'before' not found (looked in 'license' and 31 other sections)"
+        },
         "bpf_cubic_acked": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
@@ -26,11 +31,6 @@
         "bpf_cubic_state": {
           "upstream": "ACCEPT",
           "ours": "PASS"
-        },
-        "tcp_cong_avoid_ai": {
-          "upstream": "UNKNOWN",
-          "ours": "SKIPPED",
-          "note": "not in ELF: function 'tcp_cong_avoid_ai' not found (looked in 'license' and 31 other sections)"
         }
       }
     },
@@ -61,11 +61,6 @@
           "upstream": "UNKNOWN",
           "ours": "SKIPPED",
           "note": "not in ELF: function 'dctcp_reset' not found (looked in '.maps' and 32 other sections)"
-        },
-        "tcp_reno_cong_avoid": {
-          "upstream": "UNKNOWN",
-          "ours": "SKIPPED",
-          "note": "not in ELF: function 'tcp_reno_cong_avoid' not found (looked in 'struct_ops' and 32 other sections)"
         }
       }
     },
@@ -149,6 +144,11 @@
     "cpumask_success.c": {
       "source": "selftests/progs/cpumask_success.c",
       "progs": {
+        "is_test_task": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
         "test_alloc_free_cpumask": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
@@ -545,8 +545,8 @@
           "ours": "FALSE_ACCEPT"
         },
         "test_dynptr_reg_type": {
-          "upstream": "ACCEPT",
-          "ours": "PASS"
+          "upstream": "REJECT",
+          "ours": "FALSE_ACCEPT"
         },
         "test_dynptr_skb_small_buff": {
           "upstream": "REJECT",
@@ -837,11 +837,6 @@
     "iters_css.c": {
       "source": "selftests/progs/iters_css.c",
       "progs": {
-        "bpf_cgroup_release": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
-        },
         "iter_css_for_each": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
@@ -932,11 +927,6 @@
     "iters_task.c": {
       "source": "selftests/progs/iters_task.c",
       "progs": {
-        "bpf_rcu_read_lock": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
-        },
         "iter_task_for_each_sleep": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
@@ -1182,7 +1172,7 @@
         },
         "Can't use ATM_FETCH_ADD on kernel memory": {
           "upstream": "REJECT",
-          "ours": "PASS"
+          "ours": "FALSE_ACCEPT"
         },
         "Can't use ATM_FETCH_ADD on uninit dst reg": {
           "upstream": "REJECT",
@@ -2705,7 +2695,7 @@
       "progs": {
         "d_path accept": {
           "upstream": "ACCEPT",
-          "ours": "PASS"
+          "ours": "FALSE_REJECT"
         },
         "d_path reject": {
           "upstream": "REJECT",
@@ -6988,6 +6978,36 @@
         }
       }
     },
+    "local_storage.c": {
+      "source": "selftests/progs/local_storage.c",
+      "progs": {
+        "exec": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe socket access at pc 15: offset 64, size 8"
+        },
+        "inode_rename": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 7: register: r2"
+        },
+        "socket_bind": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe socket access at pc 2: offset 24, size 8"
+        },
+        "socket_post_create": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe socket access at pc 2: offset 24, size 8"
+        },
+        "unlink_hook": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic load at pc 40: base R1+128 (type: ScalarValue)"
+        }
+      }
+    },
     "rbtree.c": {
       "source": "selftests/progs/rbtree.c",
       "progs": {
@@ -7089,7 +7109,7 @@
     "refcounted_kptr.c": {
       "source": "selftests/progs/refcounted_kptr.c",
       "progs": {
-        "__insert_in_tree_and_list": {
+        "less": {
           "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
           "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
@@ -7102,7 +7122,7 @@
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(20) })"
+          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(21) })"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",
@@ -7147,6 +7167,85 @@
           "ours": "PASS"
         },
         "refcount_acquire_maybe_null": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        }
+      }
+    },
+    "strncmp_test.c": {
+      "source": "selftests/progs/strncmp_test.c",
+      "progs": {
+        "do_strncmp": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "strncmp_bad_not_const_str_size": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "strncmp_bad_not_null_term_target": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "strncmp_bad_writable_target": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        }
+      }
+    },
+    "task_local_storage.c": {
+      "source": "selftests/progs/task_local_storage.c",
+      "progs": {
+        "on_enter": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "on_exit": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        }
+      }
+    },
+    "test_d_path.c": {
+      "source": "selftests/progs/test_d_path.c",
+      "progs": {
+        "prog_close": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "prog_stat": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        }
+      }
+    },
+    "test_d_path_check_rdonly_mem.c": {
+      "source": "selftests/progs/test_d_path_check_rdonly_mem.c",
+      "progs": {
+        "d_path_check_rdonly_mem": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        }
+      }
+    },
+    "test_snprintf.c": {
+      "source": "selftests/progs/test_snprintf.c",
+      "progs": {
+        "handler": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 165: register: r1"
+        }
+      }
+    },
+    "test_snprintf_single.c": {
+      "source": "selftests/progs/test_snprintf_single.c",
+      "progs": {
+        "handler": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         }
@@ -7301,7 +7400,7 @@
         "iter_maps1": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe ctx access at pc 0: offset 8, size 8"
+          "note": "Invalid argument type at pc 6: register: r1"
         },
         "iter_maps2": {
           "upstream": "ACCEPT",
@@ -7324,7 +7423,146 @@
         "big_alloc2": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Subprogram error: jump out of range at pc 11: target 115 is outside function scope [0, 22)"
+          "note": "Unsafe generic store at pc 164: base R2+0 (type: ScalarValue)"
+        }
+      }
+    },
+    "verifier_bpf_fastcall.c": {
+      "source": "selftests/progs/verifier_bpf_fastcall.c",
+      "progs": {
+        "bad_fixed_read": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "bad_fixed_write": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "bad_helper_write": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "bad_varying_read": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Reading uninitialized stack slot at pc 11: offset -8"
+        },
+        "bad_varying_write": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "bad_write_in_subprog": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "bpf_loop_interaction1": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 9: register: r2"
+        },
+        "bpf_loop_interaction2": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 12: register: r2"
+        },
+        "canary_arm64_riscv64": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "canary_zero_spills": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "cumulative_stack_depth": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "helper_call_does_not_prevent_bpf_fastcall": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "invalidate_one_subprog": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "kfunc_bpf_cast_to_kern_ctx": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 2: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+        },
+        "kfunc_bpf_rdonly_cast": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "may_goto_interaction_arm64": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "may_goto_interaction_x86_64": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "min_stack_offset": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "partial_pattern": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "simple": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "subprogs_use_independent_offsets": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "wrong_base_in_pattern": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "wrong_insn_in_pattern": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "wrong_off_in_pattern1": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "wrong_off_in_pattern2": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "wrong_reg_in_pattern1": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "wrong_reg_in_pattern2": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "wrong_reg_in_pattern3": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "wrong_size_in_pattern": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        }
+      }
+    },
+    "verifier_d_path.c": {
+      "source": "selftests/progs/verifier_d_path.c",
+      "progs": {
+        "d_path_accept": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "d_path_reject": {
+          "upstream": "REJECT",
+          "ours": "FALSE_ACCEPT"
         }
       }
     },
@@ -7554,7 +7792,7 @@
         "task_kfunc_perf_event": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 1: base R0+1424 (type: ScalarValue)"
+          "note": "Invalid argument type at pc 6: register: r1"
         },
         "task_kfunc_raw_tp": {
           "upstream": "ACCEPT",
@@ -7563,12 +7801,12 @@
         "task_kfunc_syscall": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 1: base R0+1424 (type: ScalarValue)"
+          "note": "Invalid argument type at pc 6: register: r1"
         },
         "task_kfunc_tracepoint": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 1: base R0+1424 (type: ScalarValue)"
+          "note": "Invalid argument type at pc 6: register: r1"
         }
       }
     },
@@ -7804,6 +8042,51 @@
           "ours": "PASS"
         },
         "mov64sx_s8_range_check": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        }
+      }
+    },
+    "verifier_private_stack.c": {
+      "source": "selftests/progs/verifier_private_stack.c",
+      "progs": {
+        "dummy_test": {
+          "upstream": "UNKNOWN",
+          "ours": "SKIPPED",
+          "note": "not in ELF: function 'dummy_test' not found (looked in 'kprobe' and 34 other sections)"
+        },
+        "no_private_stack_nested": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "private_stack_async_callback_1": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 17: register: r2"
+        },
+        "private_stack_async_callback_2": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 17: register: r2"
+        },
+        "private_stack_callback": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 6: register: r2"
+        },
+        "private_stack_exception_main_prog": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "private_stack_exception_sub_prog": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "private_stack_nested_1": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "private_stack_single_prog": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         }
