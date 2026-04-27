@@ -856,6 +856,25 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             CallProto::with_args([PtrToAllocMem, Anything, DontCare, DontCare, DontCare])
         }
 
+        // W6.5: bpf_user_ringbuf_drain(map, callback, ctx, flags)
+        // Drains a user-space-written ringbuf, invoking `callback`
+        // for each sample. Routed through `is_callback_helper` →
+        // `transfer_callback_helper` so the callback subprog gets a
+        // pushed frame on the enter-callback successor; the callback
+        // signature is `(struct bpf_dynptr *dynptr, void *ctx) -> long`,
+        // but per the existing callback convention we leave R1/R2 as
+        // NotInit in the callee frame — programs that dereference
+        // `ctx` (R2) without typing reject, which is the right outcome
+        // for the lone existing test (`unsafe_ringbuf_drain`).
+        constants::BPF_USER_RINGBUF_DRAIN => CallProto::with_args([
+            ConstMapPtrOfType(crate::common::constants::BPF_MAP_TYPE_USER_RINGBUF),
+            PtrToCallback,
+            Anything,
+            Anything,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
         // ---- Information helpers ----
         constants::BPF_KTIME_GET_NS => {
             CallProto::with_args([DontCare, DontCare, DontCare, DontCare, DontCare])

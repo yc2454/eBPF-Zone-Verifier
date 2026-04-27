@@ -329,13 +329,14 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
     }
 }
 
-/// True when `helper` takes a callback pointer argument (W3.4b).
+/// True when `helper` takes a callback pointer argument (W3.4b + W6.5).
 fn is_callback_helper(helper: u32) -> bool {
     matches!(
         helper,
         constants::BPF_LOOP
             | constants::BPF_FOR_EACH_MAP_ELEM
             | constants::BPF_TIMER_SET_CALLBACK
+            | constants::BPF_USER_RINGBUF_DRAIN
     )
 }
 
@@ -345,6 +346,8 @@ fn callback_arg_reg(helper: u32) -> Reg {
         constants::BPF_LOOP => Reg::R2,
         constants::BPF_FOR_EACH_MAP_ELEM => Reg::R2,
         constants::BPF_TIMER_SET_CALLBACK => Reg::R2,
+        // W6.5: bpf_user_ringbuf_drain(map, callback, ctx, flags)
+        constants::BPF_USER_RINGBUF_DRAIN => Reg::R2,
         _ => unreachable!(),
     }
 }

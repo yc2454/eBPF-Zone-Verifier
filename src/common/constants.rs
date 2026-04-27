@@ -163,6 +163,7 @@ pub const BPF_TIMER_START: u32 = 171;
 pub const BPF_TIMER_CANCEL: u32 = 172;
 pub const BPF_SKC_TO_UNIX_SOCK: u32 = 178;
 pub const BPF_LOOP: u32 = 181;
+pub const BPF_USER_RINGBUF_DRAIN: u32 = 209;
 pub const BPF_KFUNC_CALL_DUMMY: u32 = 213;
 pub const BPF_RCU_READ_LOCK: u32 = 217;
 pub const BPF_RCU_READ_UNLOCK: u32 = 218;

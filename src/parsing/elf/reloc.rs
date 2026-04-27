@@ -174,6 +174,7 @@ pub fn helper_id_by_name(name: &str) -> Option<u32> {
         "bpf_get_task_stack" => Some(constants::BPF_GET_TASK_STACK),
         "bpf_d_path" => Some(constants::BPF_D_PATH),
         "bpf_skc_to_unix_sock" => Some(constants::BPF_SKC_TO_UNIX_SOCK),
+        "bpf_user_ringbuf_drain" => Some(constants::BPF_USER_RINGBUF_DRAIN),
         _ => None,
     }
 }
