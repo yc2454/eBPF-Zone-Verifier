@@ -18,5 +18,6 @@
 pub mod attrs;
 pub mod baseline;
 pub mod clang;
+pub mod expectations;
 pub mod runner;
 pub mod sec;

@@ -13,6 +13,7 @@ use crate::testing::runner::{AnalysisResult, Analyzer};
 
 use super::attrs::{self, ProgAttrs};
 use super::clang;
+use super::expectations;
 
 /// Filter that decides which programs the runner actually verifies.
 /// Programs the filter returns `false` for short-circuit to
@@ -177,7 +178,7 @@ pub fn run_file_filtered(
                     outcome: Outcome::Skipped("filtered (baseline non-deterministic)".into()),
                 };
             }
-            run_one(&analyzer, attrs)
+            run_one(&analyzer, attrs, &basename)
         })
         .collect();
 
@@ -231,22 +232,34 @@ pub fn run_dir_filtered(
     Ok(out)
 }
 
-fn run_one(analyzer: &Analyzer, attrs: ProgAttrs) -> ProgReport {
+fn run_one(analyzer: &Analyzer, attrs: ProgAttrs, file_basename: &str) -> ProgReport {
     let description = attrs.description.clone().unwrap_or_default();
     let sec = attrs.sec.clone().unwrap_or_default();
 
-    // Sanity: must have a verdict expectation, else the test is undecidable.
+    // Verdict-source precedence — keep this in sync with the doc-comment in
+    // src/testing/selftest/expectations.rs:
+    //   1. __success / __failure macros from the bpf-selftests test_loader
+    //      convention (extracted by attrs::scrape).
+    //   2. selftests/expectations.json — sidecar manifest for vendored
+    //      struct_ops / sched_ext files whose intent lives in the kernel's
+    //      C-side prog_tests / runner harnesses, not in the BPF source.
+    //   3. Otherwise: Skipped("no verdict source").
     let expected_accept = match (attrs.success, attrs.failure) {
         (true, false) => true,
         (false, true) => false,
-        _ => {
-            return ProgReport {
-                func_name: attrs.func_name,
-                description,
-                sec,
-                outcome: Outcome::Skipped("no __success/__failure annotation".into()),
-            };
-        }
+        _ => match expectations::lookup(file_basename) {
+            Some(e) => matches!(e.expect, expectations::Expect::Accept),
+            None => {
+                return ProgReport {
+                    func_name: attrs.func_name,
+                    description,
+                    sec,
+                    outcome: Outcome::Skipped(
+                        "no verdict source (no __success/__failure and not in selftests/expectations.json)".into(),
+                    ),
+                };
+            }
+        },
     };
 
     if sec.is_empty() {

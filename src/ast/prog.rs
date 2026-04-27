@@ -30,6 +30,13 @@ pub enum ProgramKind {
     /// can permit cgroup / cpumask / task kfuncs in syscall programs
     /// (where they're allowed) but reject in raw_tp.
     Syscall,
+    /// `SEC("struct_ops[.s]/<member>")` or bare `SEC("struct_ops")`
+    /// — BPF_PROG_TYPE_STRUCT_OPS (kernel v5.6+, expanded by sched_ext
+    /// in v6.12). Each program implements one member of an ops-struct
+    /// (`tcp_congestion_ops.init`, `sched_ext_ops.dispatch`, …); R1..Rn
+    /// entry types are derived from that member's BTF FUNC_PROTO by the
+    /// W6.4 entry-state plumbing.
+    StructOps,
     #[default]
     Unknown,
 }
@@ -117,6 +124,19 @@ impl ProgramKind {
         }
         if s == "syscall" {
             return ProgramKind::Syscall;
+        }
+        // struct_ops (W6.4). Forms in the wild:
+        //   "struct_ops"             — bare, member named after func symbol
+        //   "struct_ops/<member>"    — explicit member binding
+        //   "struct_ops.s/<member>"  — sleepable variant
+        //   "?struct_ops/<member>"   — optional (libbpf "weak") binding
+        // The leading "?" is libbpf-internal optionality; strip before match.
+        let trimmed = s.strip_prefix('?').unwrap_or(&s);
+        if trimmed == "struct_ops"
+            || trimmed.starts_with("struct_ops/")
+            || trimmed.starts_with("struct_ops.s/")
+        {
+            return ProgramKind::StructOps;
         }
 
         // ---- Common tc section aliases used by Cilium/Suricata-style objects ----
