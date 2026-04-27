@@ -130683,6 +130683,19 @@ struct thread_struct {
 
 struct uprobe_task;
 
+/* ===== W6.4b sched_ext stub: minimum needed for task_struct.scx ===== */
+struct sched_ext_entity {
+	u32 weight;
+	s32 sticky_cpu;
+	u64 slice;
+	u64 dsq_vtime;
+	u32 flags;
+	u32 disallow;
+	/* opaque tail; real layout has dsq pointers, list nodes, etc. */
+	unsigned long __scx_opaque[8];
+};
+/* ===== end sched_ext stub ===== */
+
 struct task_struct {
 	struct thread_info thread_info;
 	unsigned int __state;
@@ -130908,6 +130921,8 @@ struct task_struct {
 	struct llist_head kretprobe_instances;
 	struct llist_head rethooks;
 	struct callback_head l1d_flush_kill;
+	/* W6.4b sched_ext stub field */
+	struct sched_ext_entity scx;
 	long: 64;
 	long: 64;
 	long: 64;

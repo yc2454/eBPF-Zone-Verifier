@@ -273,6 +273,8 @@ fn is_libbpf_wrapper_macro(name: &str) -> bool {
             | "BPF_USDT"
             | "BPF_UPROBE"
             | "BPF_URETPROBE"
+            | "BPF_STRUCT_OPS"
+            | "BPF_STRUCT_OPS_SLEEPABLE"
     )
 }
 
