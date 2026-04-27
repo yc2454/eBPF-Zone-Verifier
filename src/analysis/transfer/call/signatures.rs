@@ -350,6 +350,12 @@ pub struct CallProto {
     /// for paired pointers (W4.2d: was helper-id-keyed; now lives on
     /// the proto so kfuncs reuse the same machinery).
     pub mem_size_pairs: &'static [MemSizePair],
+    /// Prog-type allowlist (W6.3). `None` means "allowed in any prog
+    /// type"; `Some(list)` restricts the kfunc to programs whose
+    /// `ProgramKind` appears in the list. Mirrors the kernel verifier's
+    /// per-kfunc `KF_PROG_TYPE_*` bitmap. Enforced once at the start of
+    /// `transfer_kfunc_proto`; helper paths ignore this field.
+    pub prog_type_allowlist: Option<&'static [crate::ast::ProgramKind]>,
 }
 
 impl CallProto {
@@ -362,6 +368,7 @@ impl CallProto {
             flags: CallFlags::empty(),
             side_effects: &[],
             mem_size_pairs: &[],
+            prog_type_allowlist: None,
         }
     }
 
@@ -386,6 +393,19 @@ impl CallProto {
     /// Builder: set pointer-size pair list.
     const fn mem_size_pairs(mut self, pairs: &'static [MemSizePair]) -> Self {
         self.mem_size_pairs = pairs;
+        self
+    }
+
+    /// Builder: restrict the kfunc to a specific list of `ProgramKind`s.
+    /// Programs with any other prog kind will reject the call. Used by
+    /// W6.3 to encode per-kfunc prog-type allowlists (cgroup / cpumask /
+    /// task families gate access to syscall / tracepoint / perf_event
+    /// and reject from raw_tp).
+    const fn prog_type_allowlist(
+        mut self,
+        list: &'static [crate::ast::ProgramKind],
+    ) -> Self {
+        self.prog_type_allowlist = Some(list);
         self
     }
 }
@@ -918,6 +938,18 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
 // it heavily; eventually most kfuncs should fall through to a generic
 // BTF-driven producer that reads the func-proto BTF + KF flags directly.
 
+/// Prog-type allowlist for the cpumask kfunc family (W6.3). Mirrors the
+/// kernel verifier's `KF_PROG_TYPE_*` set: `bpf_cpumask_*` are gated to
+/// programs that hold a vmlinux BTF context (syscall, tracing, tracepoint,
+/// perf_event) and reject from raw_tp / network paths. Cgroup / task
+/// kfunc families share this same allowlist when they're added.
+const CPUMASK_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 4] = [
+    crate::ast::ProgramKind::Syscall,
+    crate::ast::ProgramKind::Tracing,
+    crate::ast::ProgramKind::Tracepoint,
+    crate::ast::ProgramKind::PerfEvent,
+];
+
 /// Kfunc prototypes indexed by kfunc name. Returns `None` for kfuncs not
 /// yet on the proto path — the caller falls back to the legacy bespoke
 /// dispatch in `kfunc.rs`.
@@ -1222,7 +1254,14 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .flags(CallFlags::RET_NULL)
         .mem_size_pairs(&pairs::DYNPTR_SLICE),
 
-        // ---- Cpumask kfuncs (W5.3) ----
+        // ---- Cpumask kfuncs (W5.3 + W6.3) ----
+        //
+        // All cpumask kfuncs share the W6.3 prog-type allowlist
+        // (`KF_PROG_TYPE_*` in the kernel): permitted in `syscall`,
+        // `tracing` (fentry/fexit/tp_btf/iter), `tracepoint`, and
+        // `perf_event`; rejected from `raw_tp` and other prog types
+        // that lack a vmlinux BTF context. Validated by
+        // `transfer_kfunc_proto` before arg checks.
         //
         // struct bpf_cpumask *bpf_cpumask_create(void)
         // KF_ACQUIRE | KF_RET_NULL — fresh refcounted cpumask, may be
@@ -1232,7 +1271,22 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             DontCare, DontCare, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::PtrToCpumask)
-        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // struct bpf_cpumask *bpf_cpumask_acquire(struct bpf_cpumask *p)
+        // KF_ACQUIRE | KF_TRUSTED_ARGS — increments refcount on an
+        // existing cpumask. Returns the same logical pointer with a
+        // fresh ref_id (so the program can release each independently).
+        // Not RET_NULL: the kernel guarantees acquire never fails
+        // (refcount_t saturating add). R1 must be a non-null,
+        // ref-tracked PtrToCpumask.
+        "bpf_cpumask_acquire" => CallProto::with_args([
+            PtrToCpumask, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToCpumask)
+        .flags(CallFlags::ACQUIRE)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
 
         // void bpf_cpumask_release(struct bpf_cpumask *cpumask)
         // KF_RELEASE — drops the refcount. R1 must be a non-null,
@@ -1243,14 +1297,16 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Void)
         .flags(CallFlags::RELEASE)
-        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }])
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
 
         // void bpf_cpumask_set_cpu(u32 cpu, struct bpf_cpumask *cpumask)
         // Mutates the cpumask. R1 = cpu (scalar), R2 = cpumask.
         "bpf_cpumask_set_cpu" => CallProto::with_args([
             Anything, PtrToCpumask, DontCare, DontCare, DontCare,
         ])
-        .ret(RetKind::Void),
+        .ret(RetKind::Void)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
 
         // bool bpf_cpumask_test_cpu(u32 cpu, const struct cpumask *cpumask)
         // Read-only query. We accept PtrToCpumask for R2 — the const
@@ -1258,13 +1314,15 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         "bpf_cpumask_test_cpu" => CallProto::with_args([
             Anything, PtrToCpumask, DontCare, DontCare, DontCare,
         ])
-        .ret(RetKind::Scalar),
+        .ret(RetKind::Scalar)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
 
         // u32 bpf_cpumask_first(const struct cpumask *cpumask)
         "bpf_cpumask_first" => CallProto::with_args([
             PtrToCpumask, DontCare, DontCare, DontCare, DontCare,
         ])
-        .ret(RetKind::Scalar),
+        .ret(RetKind::Scalar)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
 
         // ---- Arena kfuncs (W5.5 + W6.1c) ----
         //

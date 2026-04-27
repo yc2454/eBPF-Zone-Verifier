@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-27T14:39:16.566934+00:00",
+  "generated_at": "2026-04-27T15:00:29.600686+00:00",
   "files": {
     "cb_refs.c": {
       "source": "selftests/progs/cb_refs.c",
@@ -2104,11 +2104,11 @@
         },
         "bpf_cpumask_create + null-check + release": {
           "upstream": "ACCEPT",
-          "ours": "PASS"
+          "ours": "FALSE_REJECT"
         },
         "bpf_cpumask_create + null-check + set_cpu + release": {
           "upstream": "ACCEPT",
-          "ours": "PASS"
+          "ours": "FALSE_REJECT"
         },
         "bpf_cpumask_create without release rejects (UnreleasedReference)": {
           "upstream": "REJECT",
@@ -7026,7 +7026,7 @@
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(19) })"
+          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(21) })"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",
@@ -7227,7 +7227,7 @@
         "iter_maps1": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 2: base R1+36 (type: ScalarValue)"
+          "note": "Unsafe ctx access at pc 0: offset 8, size 8"
         },
         "iter_maps2": {
           "upstream": "ACCEPT",
@@ -7461,8 +7461,7 @@
         },
         "cpumask_kfunc_perf_event": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "cpumask_kfunc_raw_tp": {
           "upstream": "ACCEPT",
@@ -7470,13 +7469,11 @@
         },
         "cpumask_kfunc_syscall": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "cpumask_kfunc_tracepoint": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "task_kfunc_load_test": {
           "upstream": "UNANNOTATED",

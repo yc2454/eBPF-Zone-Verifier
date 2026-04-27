@@ -25,6 +25,11 @@ pub enum ProgramKind {
     CgroupSockAddr,
     Lsm,
     Tracing,
+    /// `SEC("syscall")` — BPF_PROG_TYPE_SYSCALL (kernel v5.11+).
+    /// Distinct from generic Unknown so the W6.3 prog-type allowlist
+    /// can permit cgroup / cpumask / task kfuncs in syscall programs
+    /// (where they're allowed) but reject in raw_tp.
+    Syscall,
     #[default]
     Unknown,
 }
@@ -109,6 +114,9 @@ impl ProgramKind {
         }
         if s.starts_with("cgroup_skb/") {
             return ProgramKind::CgroupSkb;
+        }
+        if s == "syscall" {
+            return ProgramKind::Syscall;
         }
 
         // ---- Common tc section aliases used by Cilium/Suricata-style objects ----

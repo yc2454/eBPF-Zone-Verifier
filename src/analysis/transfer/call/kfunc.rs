@@ -72,6 +72,19 @@ fn transfer_kfunc_proto(
     let pc = state.pc;
     let in_types = state.types.clone();
 
+    // W6.3: enforce per-kfunc prog-type allowlist before any other
+    // validation. Mirrors the kernel verifier's `KF_PROG_TYPE_*` check.
+    if let Some(allowed) = proto.prog_type_allowlist
+        && !allowed.contains(&env.ctx.prog_kind)
+    {
+        env.fail(crate::analysis::machine::error::VerificationError::KfuncNotAllowedForProgram {
+            pc,
+            btf_id,
+            kind: env.ctx.prog_kind,
+        });
+        return vec![];
+    }
+
     if !super::checks::check_mem_size_pairs(env, &state, proto, pc) {
         return vec![];
     }

@@ -212,6 +212,16 @@ pub enum VerificationError {
         helper: u32,
         kind: ProgramKind,
     },
+    /// Kfunc proto carries a `prog_type_allowlist` (W6.3) and the
+    /// program's `ProgramKind` is not in it. Mirrors the kernel
+    /// verifier's per-kfunc `KF_PROG_TYPE_*` check (e.g. cgroup /
+    /// cpumask / task families are gated to syscall / tracepoint /
+    /// perf_event and reject from raw_tp).
+    KfuncNotAllowedForProgram {
+        pc: usize,
+        btf_id: u32,
+        kind: ProgramKind,
+    },
     PointerLeakage {
         pc: usize,
         offset: i64,
@@ -463,6 +473,12 @@ impl VerificationError {
                 format!(
                     "Helper {} not allowed for program {:?} at pc {}",
                     helper, kind, pc
+                )
+            }
+            VerificationError::KfuncNotAllowedForProgram { pc, btf_id, kind } => {
+                format!(
+                    "Kfunc btf_id {} not allowed for program {:?} at pc {}",
+                    btf_id, kind, pc
                 )
             }
             VerificationError::UnsafeMemoryStore {
