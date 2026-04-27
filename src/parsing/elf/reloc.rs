@@ -8,6 +8,24 @@ use super::types::{BpfCallTarget, BpfMapDef, RelocInfo, RelocKind};
 use crate::common::constants::{self, R_BPF_64_32, R_BPF_64_64};
 use crate::parsing::bpf_insn::RawBpfInsn;
 
+/// Map a kfunc symbol name to a deterministic synthetic btf_id well above any
+/// id a real BTF section would assign (real .BTF tables top out in the
+/// thousands; clang and the kernel verifier only ever read these ids out of
+/// the call insn's `imm` field, so the only constraint is uniqueness within
+/// the analysis-context BTF after the runner registers `name → id`).
+///
+/// FNV-1a 32-bit, biased into [10_000_000, 10_000_000 + 2^28). Collisions
+/// across different kfunc names are theoretically possible but vanishingly
+/// rare for the < 100 kfunc names registered in `signatures.rs`.
+pub fn synthetic_kfunc_btf_id(name: &str) -> u32 {
+    let mut h: u32 = 0x811c9dc5;
+    for b in name.as_bytes() {
+        h ^= *b as u32;
+        h = h.wrapping_mul(0x01000193);
+    }
+    10_000_000u32.wrapping_add(h & 0x0fff_ffff)
+}
+
 /// Look up BPF helper ID by name.
 /// Returns None if the name is not a known helper.
 pub fn helper_id_by_name(name: &str) -> Option<u32> {
@@ -233,6 +251,7 @@ pub fn load_relocations<P: AsRef<Path>>(
                             helper_id,
                             kind: RelocKind::HelperCall,
                             bpf_call_target: None,
+                            kfunc_name: None,
                         },
                     );
                 } else if let Some((sec_name, offset, size)) =
@@ -252,10 +271,27 @@ pub fn load_relocations<P: AsRef<Path>>(
                                 offset_in_section: offset,
                                 size,
                             }),
+                            kfunc_name: None,
+                        },
+                    );
+                } else if !name.is_empty() {
+                    // Recognized kfunc — route through the kfunc dispatcher
+                    // by synthesizing a btf_id that the runner will register
+                    // into ctx.btf prior to analysis.
+                    pc_to_reloc.insert(
+                        pc,
+                        RelocInfo {
+                            map_idx: 0,
+                            offset: 0,
+                            helper_id: synthetic_kfunc_btf_id(name),
+                            kind: RelocKind::KfuncCall,
+                            bpf_call_target: None,
+                            kfunc_name: Some(name.to_string()),
                         },
                     );
                 } else {
-                    // Unknown external function call (possibly kfunc)
+                    // Unknown external function call — fall back to the dummy
+                    // helper id so downstream rejection has a stable shape.
                     pc_to_reloc.insert(
                         pc,
                         RelocInfo {
@@ -264,6 +300,7 @@ pub fn load_relocations<P: AsRef<Path>>(
                             helper_id: constants::BPF_KFUNC_CALL_DUMMY,
                             kind: RelocKind::HelperCall,
                             bpf_call_target: None,
+                            kfunc_name: None,
                         },
                     );
                 }
@@ -278,6 +315,7 @@ pub fn load_relocations<P: AsRef<Path>>(
                             helper_id: 0,
                             kind: RelocKind::MapPtr,
                             bpf_call_target: None,
+                            kfunc_name: None,
                         },
                     );
                 } else if let Some(&map_idx) = section_idx_to_map_idx.get(&sym.st_shndx) {
@@ -289,6 +327,7 @@ pub fn load_relocations<P: AsRef<Path>>(
                             helper_id: 0,
                             kind: RelocKind::MapValue,
                             bpf_call_target: None,
+                            kfunc_name: None,
                         },
                     );
                 }
@@ -425,6 +464,7 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                             helper_id,
                             kind: RelocKind::HelperCall,
                             bpf_call_target: None,
+                            kfunc_name: None,
                         },
                     );
                 } else if let Some((sec_name, offset, size)) =
@@ -444,10 +484,24 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                                 offset_in_section: offset,
                                 size,
                             }),
+                            kfunc_name: None,
+                        },
+                    );
+                } else if !name.is_empty() {
+                    pc_to_reloc.insert(
+                        func_pc,
+                        RelocInfo {
+                            map_idx: 0,
+                            offset: 0,
+                            helper_id: synthetic_kfunc_btf_id(name),
+                            kind: RelocKind::KfuncCall,
+                            bpf_call_target: None,
+                            kfunc_name: Some(name.to_string()),
                         },
                     );
                 } else {
-                    // Unknown external function call (possibly kfunc)
+                    // Unknown external function call — fall back to the dummy
+                    // helper id so downstream rejection has a stable shape.
                     pc_to_reloc.insert(
                         func_pc,
                         RelocInfo {
@@ -456,6 +510,7 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                             helper_id: constants::BPF_KFUNC_CALL_DUMMY,
                             kind: RelocKind::HelperCall,
                             bpf_call_target: None,
+                            kfunc_name: None,
                         },
                     );
                 }
@@ -470,6 +525,7 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                             helper_id: 0,
                             kind: RelocKind::MapPtr,
                             bpf_call_target: None,
+                            kfunc_name: None,
                         },
                     );
                 } else if let Some(&map_idx) = section_idx_to_map_idx.get(&sym.st_shndx) {
@@ -481,6 +537,7 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                             helper_id: 0,
                             kind: RelocKind::MapValue,
                             bpf_call_target: None,
+                            kfunc_name: None,
                         },
                     );
                 }
@@ -531,6 +588,17 @@ pub fn apply_relocs(insns: &mut [RawBpfInsn], pc_to_reloc: &HashMap<usize, Reloc
                     // Here we just ensure src=1 (BPF_PSEUDO_CALL) is set for proper lowering
                     if insn.code == 0x85 {
                         insn.src = 1; // BPF_PSEUDO_CALL
+                    }
+                }
+                RelocKind::KfuncCall => {
+                    // BPF_PSEUDO_KFUNC_CALL — the lowerer (bpf_to_ast) emits
+                    // `Instr::Call { kind: Kfunc { btf_id, .. } }`, and the
+                    // runner registers `kfunc_name → helper_id` into ctx.btf
+                    // so the kfunc dispatcher's `btf.kfunc_name(btf_id)`
+                    // lookup resolves the name and routes through the proto.
+                    if insn.code == 0x85 {
+                        insn.src = 2;
+                        insn.imm = reloc.helper_id as i32;
                     }
                 }
             }

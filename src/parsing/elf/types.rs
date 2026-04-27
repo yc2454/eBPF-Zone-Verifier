@@ -30,6 +30,11 @@ pub enum RelocKind {
     HelperCall,
     /// BPF-to-BPF function call - cross-section call
     BpfCall,
+    /// Kfunc call against a name we recognize via `signatures::get_kfunc_proto`.
+    /// Apply rewrites the call as BPF_PSEUDO_KFUNC_CALL (src=2) with a
+    /// synthesized btf_id; the runner then registers the name → id mapping
+    /// into the analysis-context BTF so the kfunc dispatcher can route it.
+    KfuncCall,
 }
 
 /// Target information for a BPF-to-BPF function call
@@ -51,9 +56,12 @@ pub struct RelocInfo {
     pub map_idx: usize,
     /// Offset within map value (for MapValue)
     pub offset: i64,
-    /// Helper function ID (for HelperCall)
+    /// Helper function ID (for HelperCall) or synthesized btf_id (for KfuncCall).
     pub helper_id: u32,
     pub kind: RelocKind,
     /// BPF call target info (for BpfCall)
     pub bpf_call_target: Option<BpfCallTarget>,
+    /// Kfunc symbol name (for KfuncCall). Used by the runner to register
+    /// the synth `helper_id` into the analysis-context BTF before analysis.
+    pub kfunc_name: Option<String>,
 }

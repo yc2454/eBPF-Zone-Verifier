@@ -41,6 +41,23 @@ fn make_entry_state() -> Dbm {
     dbm
 }
 
+/// Register every `RelocKind::KfuncCall` entry as `name → synthetic btf_id`
+/// in the analysis-context BTF. The kfunc dispatcher resolves call sites by
+/// looking up the call's btf_id in this map, so without this step kfuncs
+/// emitted by clang as ELF externs would mis-route as helper(213).
+fn register_kfunc_relocs(
+    btf: &mut BtfContext,
+    pc_to_reloc: &std::collections::HashMap<usize, elf::RelocInfo>,
+) {
+    for reloc in pc_to_reloc.values() {
+        if matches!(reloc.kind, elf::RelocKind::KfuncCall)
+            && let Some(name) = &reloc.kfunc_name
+        {
+            btf.register_kfunc(name, reloc.helper_id);
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Analyzer {
     pub path: String,
@@ -235,6 +252,7 @@ impl Analyzer {
         let mut ctx = default_exec_ctx();
         ctx.map_defs = self.maps.clone();
         ctx.btf = self.btf.clone();
+        register_kfunc_relocs(&mut ctx.btf, &pc_to_reloc);
         ctx.pc_to_reloc = pc_to_reloc;
 
         // Determine program kind
@@ -292,6 +310,7 @@ impl Analyzer {
         let mut ctx = default_exec_ctx();
         ctx.map_defs = self.maps.clone();
         ctx.btf = self.btf.clone();
+        register_kfunc_relocs(&mut ctx.btf, &pc_to_reloc);
         ctx.pc_to_reloc = pc_to_reloc;
 
         // Determine program kind

@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-27T04:09:22.765260+00:00",
+  "generated_at": "2026-04-27T13:57:45.482493+00:00",
   "files": {
     "cb_refs.c": {
       "source": "selftests/progs/cb_refs.c",
@@ -25,16 +25,16 @@
           "ours": "PASS"
         },
         "test_alloc_double_release": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test_alloc_no_release": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test_cpumask_null": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test_global_mask_no_null_check": {
           "upstream": "ACCEPT",
@@ -49,24 +49,24 @@
           "ours": "PASS"
         },
         "test_insert_remove_no_release": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test_invalid_nested_array": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test_mutate_cpumask": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "test_populate_invalid_destination": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test_populate_invalid_source": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -202,24 +202,24 @@
           "ours": "PASS"
         },
         "clone_invalid1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "clone_invalid2": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "clone_invalidate1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "clone_invalidate2": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "clone_invalidate3": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "clone_invalidate4": {
           "upstream": "ACCEPT",
@@ -270,8 +270,8 @@
           "ours": "PASS"
         },
         "dynptr_adjust_invalid": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "dynptr_from_mem_invalid_api": {
           "upstream": "REJECT",
@@ -295,12 +295,12 @@
           "note": "Invalid argument type at pc 10: register: r3"
         },
         "dynptr_is_null_invalid": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "dynptr_is_rdonly_invalid": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "dynptr_overwrite_ref": {
           "upstream": "ACCEPT",
@@ -332,8 +332,8 @@
           "ours": "FALSE_ACCEPT"
         },
         "dynptr_size_invalid": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "dynptr_slice_var_len1": {
           "upstream": "REJECT",
@@ -389,8 +389,8 @@
           "ours": "PASS"
         },
         "invalid_slice_rdwr_rdonly": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "invalid_write1": {
           "upstream": "ACCEPT",
@@ -441,12 +441,12 @@
           "ours": "FALSE_ACCEPT"
         },
         "skb_invalid_ctx_fentry": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "skb_invalid_ctx_fexit": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "skb_invalid_data_slice1": {
           "upstream": "REJECT",
@@ -465,8 +465,8 @@
           "ours": "PASS"
         },
         "skb_invalid_slice_write": {
-          "upstream": "ACCEPT",
-          "ours": "PASS"
+          "upstream": "REJECT",
+          "ours": "FALSE_ACCEPT"
         },
         "test_dynptr_reg_type": {
           "upstream": "ACCEPT",
@@ -624,8 +624,8 @@
           "note": "verifier timeout"
         },
         "iter_destroy_bad_arg": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "iter_err_too_permissive1": {
           "upstream": "ACCEPT",
@@ -658,12 +658,13 @@
         },
         "iter_manual_unroll_loop": {
           "upstream": "ACCEPT",
-          "ours": "PASS"
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 39: register: r1"
         },
         "iter_multiple_sequential_loops": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 72: register: r1"
         },
         "iter_nested_deeply_iters": {
           "upstream": "UNKNOWN",
@@ -676,12 +677,12 @@
           "note": "verifier timeout"
         },
         "iter_new_bad_arg": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "iter_next_bad_arg": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "iter_obfuscate_counter": {
           "upstream": "UNKNOWN",
@@ -694,7 +695,8 @@
         },
         "iter_pragma_unroll_loop": {
           "upstream": "ACCEPT",
-          "ours": "PASS"
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 21: register: r1"
         },
         "iter_search_loop": {
           "upstream": "UNKNOWN",
@@ -6973,12 +6975,12 @@
           "ours": "PASS"
         },
         "rbtree_api_nolock_add": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "rbtree_api_nolock_first": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "rbtree_api_nolock_remove": {
           "upstream": "ACCEPT",
@@ -7024,12 +7026,12 @@
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToBtfId { type_name: \"unknown\", flags: PtrFlags(2) })"
+          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(21) })"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 10: register: r1"
+          "note": "Unsupported modern BPF feature at pc 7: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "rbtree_sleepable_rcu_no_explicit_rcu_lock": {
           "upstream": "ACCEPT",
@@ -7069,8 +7071,8 @@
           "ours": "PASS"
         },
         "refcount_acquire_maybe_null": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -7210,16 +7212,17 @@
         "basic_alloc1": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "load: Lowering ELF → AST failed at pc 9 (opcode 0xbf): invalid MOV64 off field: 1 (expected 0, 8, 16, or 32)"
+          "note": "Unsafe generic load at pc 49: base R9+0 (type: ScalarValue)"
         },
         "basic_alloc2": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "load: Lowering ELF → AST failed at pc 11 (opcode 0xbf): invalid MOV64 off field: 1 (expected 0, 8, 16, or 32)"
+          "note": "Unsafe memory store at pc 15: base R6, offset 8192, size 1"
         },
         "basic_alloc3": {
           "upstream": "ACCEPT",
-          "ours": "PASS"
+          "ours": "FALSE_REJECT",
+          "note": "Unreleased reference in program"
         },
         "iter_maps1": {
           "upstream": "ACCEPT",
@@ -7242,12 +7245,12 @@
         "big_alloc1": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "load: Lowering ELF → AST failed at pc 10 (opcode 0xbf): invalid MOV64 off field: 1 (expected 0, 8, 16, or 32)"
+          "note": "Invalid pointer arithmetic at pc 16"
         },
         "big_alloc2": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "load: Lowering ELF → AST failed at pc 28 (opcode 0xbf): invalid MOV64 off field: 1 (expected 0, 8, 16, or 32)"
+          "note": "Subprogram error: jump out of range at pc 11: target 115 is outside function scope [0, 22)"
         }
       }
     },
@@ -7439,35 +7442,41 @@
       "progs": {
         "cgrp_kfunc_perf_event": {
           "upstream": "ACCEPT",
-          "ours": "PASS"
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 1: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "cgrp_kfunc_raw_tp": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "cgrp_kfunc_syscall": {
           "upstream": "ACCEPT",
-          "ours": "PASS"
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 1: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "cgrp_kfunc_tracepoint": {
           "upstream": "ACCEPT",
-          "ours": "PASS"
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 1: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "cpumask_kfunc_perf_event": {
           "upstream": "ACCEPT",
-          "ours": "PASS"
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "cpumask_kfunc_raw_tp": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "cpumask_kfunc_syscall": {
           "upstream": "ACCEPT",
-          "ours": "PASS"
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "cpumask_kfunc_tracepoint": {
           "upstream": "ACCEPT",
-          "ours": "PASS"
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "task_kfunc_load_test": {
           "upstream": "UNANNOTATED",

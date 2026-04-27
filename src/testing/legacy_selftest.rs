@@ -667,6 +667,7 @@ pub(crate) fn build_exec_context(
                             helper_id: 0,
                             kind: RelocKind::MapPtr,
                             bpf_call_target: None,
+                            kfunc_name: None,
                         },
                     );
                 }
