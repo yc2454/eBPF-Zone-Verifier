@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-27T02:07:54.570717+00:00",
+  "generated_at": "2026-04-27T04:02:53.118534+00:00",
   "files": {
     "cb_refs.c": {
       "source": "selftests/progs/cb_refs.c",
@@ -7077,10 +7077,30 @@
     "test_spin_lock.c": {
       "source": "selftests/progs/test_spin_lock.c",
       "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling selftests/progs/test_spin_lock.c"
+        "bpf_spin_lock_test": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no __success/__failure annotation"
+        },
+        "lock_static_subprog_call": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no __success/__failure annotation"
+        },
+        "lock_static_subprog_lock": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no __success/__failure annotation"
+        },
+        "lock_static_subprog_unlock": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no __success/__failure annotation"
+        },
+        "static_subprog": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no __success/__failure annotation"
         }
       }
     },
@@ -7152,40 +7172,82 @@
     "timer.c": {
       "source": "selftests/progs/timer.c",
       "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling selftests/progs/timer.c"
+        "BPF_PROG2": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no __success/__failure annotation"
+        },
+        "race": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no __success/__failure annotation"
+        },
+        "timer_cb1": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no __success/__failure annotation"
         }
       }
     },
     "timer_failure.c": {
       "source": "selftests/progs/timer_failure.c",
       "progs": {
-        "<compile>": {
+        "BPF_PROG2": {
           "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling selftests/progs/timer_failure.c"
+          "ours": "SKIPPED",
+          "note": "not in ELF: function 'BPF_PROG2' not found (looked in 'fentry/bpf_fentry_test1' and 28 other sections)"
+        },
+        "timer_cb_ret_bad": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no __success/__failure annotation"
         }
       }
     },
     "verifier_arena.c": {
       "source": "selftests/progs/verifier_arena.c",
       "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling selftests/progs/verifier_arena.c"
+        "basic_alloc1": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "load: Lowering ELF → AST failed at pc 9 (opcode 0xbf): invalid MOV64 off field: 1 (expected 0, 8, 16, or 32)"
+        },
+        "basic_alloc2": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "load: Lowering ELF → AST failed at pc 11 (opcode 0xbf): invalid MOV64 off field: 1 (expected 0, 8, 16, or 32)"
+        },
+        "basic_alloc3": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "iter_maps1": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic load at pc 2: base R1+36 (type: ScalarValue)"
+        },
+        "iter_maps2": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "iter_maps3": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
     "verifier_arena_large.c": {
       "source": "selftests/progs/verifier_arena_large.c",
       "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling selftests/progs/verifier_arena_large.c"
+        "big_alloc1": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "load: Lowering ELF → AST failed at pc 10 (opcode 0xbf): invalid MOV64 off field: 1 (expected 0, 8, 16, or 32)"
+        },
+        "big_alloc2": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "load: Lowering ELF → AST failed at pc 28 (opcode 0xbf): invalid MOV64 off field: 1 (expected 0, 8, 16, or 32)"
         }
       }
     },
@@ -7194,8 +7256,8 @@
       "progs": {
         "dummy_test": {
           "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "load: function 'dummy_test' not found (looked in 'socket' and 24 other sections)"
+          "ours": "SKIPPED",
+          "note": "not in ELF: function 'dummy_test' not found (looked in 'socket' and 24 other sections)"
         },
         "gotol_large_imm": {
           "upstream": "ACCEPT",
@@ -7266,8 +7328,8 @@
         },
         "gotol_and_may_goto": {
           "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "load: function 'gotol_and_may_goto' not found (looked in 'socket' and 41 other sections)"
+          "ours": "SKIPPED",
+          "note": "not in ELF: function 'gotol_and_may_goto' not found (looked in 'socket' and 41 other sections)"
         },
         "iter_limit_bug": {
           "upstream": "ACCEPT",
@@ -7438,8 +7500,8 @@
       "progs": {
         "dummy_test": {
           "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "load: function 'dummy_test' not found (looked in 'socket' and 28 other sections)"
+          "ours": "SKIPPED",
+          "note": "not in ELF: function 'dummy_test' not found (looked in 'socket' and 28 other sections)"
         },
         "ldsx_ctx_1": {
           "upstream": "ACCEPT",
@@ -7502,20 +7564,83 @@
     "verifier_load_acquire.c": {
       "source": "selftests/progs/verifier_load_acquire.c",
       "progs": {
-        "<compile>": {
+        "dummy_test": {
           "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling selftests/progs/verifier_load_acquire.c"
+          "ours": "SKIPPED",
+          "note": "not in ELF: function 'dummy_test' not found (looked in 'socket' and 28 other sections)"
+        },
+        "load_acquire_16": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "load_acquire_32": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "load_acquire_64": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "load_acquire_8": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "load_acquire_from_ctx_pointer": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "load_acquire_from_flow_keys_pointer": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "load_acquire_from_pkt_pointer": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "load_acquire_from_sock_pointer": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "load_acquire_misaligned": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "load_acquire_with_invalid_reg": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "load_acquire_with_non_pointer_src_reg": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "load_acquire_with_uninitialized_src_reg": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
     "verifier_may_goto_1.c": {
       "source": "selftests/progs/verifier_may_goto_1.c",
       "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling selftests/progs/verifier_may_goto_1.c"
+        "may_goto_batch_0": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "may_goto_batch_1": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "may_goto_batch_2_arm64": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "may_goto_batch_2_x86_64": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "may_goto_simple": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -7534,8 +7659,8 @@
       "progs": {
         "dummy_test": {
           "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "load: function 'dummy_test' not found (looked in 'socket' and 24 other sections)"
+          "ours": "SKIPPED",
+          "note": "not in ELF: function 'dummy_test' not found (looked in 'socket' and 24 other sections)"
         },
         "mov32sx_s16": {
           "upstream": "ACCEPT",
@@ -7675,10 +7800,70 @@
     "verifier_store_release.c": {
       "source": "selftests/progs/verifier_store_release.c",
       "progs": {
-        "<compile>": {
+        "dummy_test": {
           "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling selftests/progs/verifier_store_release.c"
+          "ours": "SKIPPED",
+          "note": "not in ELF: function 'dummy_test' not found (looked in 'socket' and 30 other sections)"
+        },
+        "store_release_16": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "store_release_32": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "store_release_64": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "store_release_8": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "store_release_leak_pointer_to_map": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "store_release_leak_pointer_to_stack": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "store_release_misaligned": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "store_release_to_ctx_pointer": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "store_release_to_flow_keys_pointer": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "store_release_to_pkt_pointer": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "store_release_to_sock_pointer": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "store_release_with_invalid_reg": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "store_release_with_non_pointer_dst_reg": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "store_release_with_uninitialized_dst_reg": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "store_release_with_uninitialized_src_reg": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     }

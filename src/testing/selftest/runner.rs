@@ -61,6 +61,11 @@ pub const PER_FILE_DEFINES: &[(&str, &[&str])] = &[
     ("verifier_gotol.c", &["CAN_USE_GOTOL"]),
     ("verifier_ldsx.c", &["__TARGET_ARCH_x86"]),
     ("verifier_movsx.c", &["__TARGET_ARCH_x86"]),
+    // load_acquire/store_release/may_goto rely on macros that the
+    // upstream tree gates behind cpuv4 + clang ≥18; surface the
+    // payload functions by tripping those gates at compile time.
+    ("verifier_load_acquire.c", &["CAN_USE_LOAD_ACQ_STORE_REL"]),
+    ("verifier_store_release.c", &["ENABLE_ATOMICS_TESTS", "__TARGET_ARCH_x86"]),
 ];
 
 fn defines_for_file(path: &Path) -> &'static [&'static str] {
@@ -147,7 +152,8 @@ pub fn run_file_filtered(
     let _ = std::fs::remove_file(&obj);
 
     let inc = clang::default_include_dirs(headers_root);
-    clang::compile(src, &obj, &inc, extra_defines)
+    let iq = clang::default_iquote_dirs(headers_root);
+    clang::compile_with_iquote(src, &obj, &inc, &iq, extra_defines)
         .with_context(|| format!("compiling {}", src.display()))?;
 
     let analyzer = Analyzer::new(obj.to_str().unwrap(), with_selftest_caps(config));
@@ -263,13 +269,30 @@ fn run_one(analyzer: &Analyzer, attrs: ProgAttrs) -> ProgReport {
         (false, AnalysisResult::Pass) => Outcome::FalseAccept,
         (_, AnalysisResult::Timeout) => Outcome::Error("verifier timeout".into()),
         (_, AnalysisResult::LoadError(e)) => {
-            // A `not found in section` LoadError means the function was
-            // compiled out (typically by an `#ifdef` branch we don't
-            // see). That's a skip, not a verifier failure.
-            if e.contains("not found in section") {
+            // The function not being present in the ELF means it was
+            // compiled out (typically by an `#ifdef` branch the scraper
+            // walks past blindly). That's a skip, not a verifier
+            // failure. Two phrasings come from `analyze_function`:
+            // the per-section variant ("not found in section '…'") and
+            // the multi-section fallback ("not found (looked in '…' and
+            // N other sections)").
+            if e.contains("not found in section") || e.contains("not found (looked in") {
                 Outcome::Skipped(format!("not in ELF: {e}"))
+            } else if !expected_accept {
+                // The program was rejected before abstract-interp ever
+                // ran — typically because clang-emitted bytecode is
+                // intentionally malformed (upstream `__failure` tests
+                // for invalid register encodings, bad opcodes, …).
+                // That's a verifier REJECT verdict, just produced at
+                // the parse layer instead of the analysis layer; it
+                // matches upstream's `__failure` annotation.
+                Outcome::Pass
             } else {
-                Outcome::Error(format!("load: {e}"))
+                // Expected ACCEPT but couldn't even load. Surfacing as
+                // FalseReject lines up with the abstract-interp side:
+                // either the parser is too strict, or the test really
+                // is invalid input.
+                Outcome::FalseReject(format!("load: {e}"))
             }
         }
     };

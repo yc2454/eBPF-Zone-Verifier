@@ -40,6 +40,20 @@ pub fn default_include_dirs(headers_root: &Path) -> Vec<PathBuf> {
     ]
 }
 
+/// Default `-iquote` directories for the given tag. These exist solely
+/// to redirect `#include "…/relative/path.h"` lines that the upstream
+/// kernel selftests use to reach into `tools/include/`. We can't
+/// recreate that tree at the path their relative includes expect, so
+/// we register a deep dummy directory under `_quotes/` and place the
+/// stub headers at the resolved location. clang searches each
+/// `-iquote` dir for a literal `"x/y/z.h"` include, so a stub at
+/// `_quotes/include/linux/filter.h` resolves the upstream
+/// `"../../../include/linux/filter.h"` when the iquote root is
+/// `_quotes/q1/q2/q3` (three `..` ascents land back at `_quotes/`).
+pub fn default_iquote_dirs(headers_root: &Path) -> Vec<PathBuf> {
+    vec![headers_root.join("_quotes/q1/q2/q3")]
+}
+
 /// Returns clang's resource-dir `include` path (where compiler intrinsic
 /// headers live: `stddef.h`, `stdarg.h`, `stdint.h`, …). We need to
 /// surface these as `-isystem` rather than rely on the host's `/usr/include`
@@ -68,6 +82,16 @@ pub fn compile<P: AsRef<Path>, Q: AsRef<Path>>(
     include_dirs: &[PathBuf],
     extra_defines: &[&str],
 ) -> Result<()> {
+    compile_with_iquote(src, out_path, include_dirs, &[], extra_defines)
+}
+
+pub fn compile_with_iquote<P: AsRef<Path>, Q: AsRef<Path>>(
+    src: P,
+    out_path: Q,
+    include_dirs: &[PathBuf],
+    iquote_dirs: &[PathBuf],
+    extra_defines: &[&str],
+) -> Result<()> {
     let src = src.as_ref();
     let out = out_path.as_ref();
     let clang = resolve_clang();
@@ -83,6 +107,9 @@ pub fn compile<P: AsRef<Path>, Q: AsRef<Path>>(
     }
     for inc in include_dirs {
         cmd.arg("-I").arg(inc);
+    }
+    for q in iquote_dirs {
+        cmd.arg("-iquote").arg(q);
     }
     for d in extra_defines {
         cmd.arg(format!("-D{d}"));
