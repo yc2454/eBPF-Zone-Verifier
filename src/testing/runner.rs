@@ -21,6 +21,19 @@ use crate::parsing::elf::{
 };
 use std::path::Path;
 
+/// W6.4c: per-(ops_struct, member, arg_idx) PTR_MAYBE_NULL table.
+/// See doc comment on `Analyzer::struct_ops_entry_args` for sourcing.
+const STRUCT_OPS_MAYBE_NULL_ARGS: &[(&str, &str, u8)] = &[
+    ("sched_ext_ops", "dispatch", 1), // prev
+    ("sched_ext_ops", "yield", 1),    // to
+];
+
+fn is_struct_ops_arg_maybe_null(ops_struct: &str, member: &str, arg_idx: u8) -> bool {
+    STRUCT_OPS_MAYBE_NULL_ARGS
+        .iter()
+        .any(|(s, m, i)| *s == ops_struct && *m == member && *i == arg_idx)
+}
+
 /// Result of analyzing a single section
 #[derive(Debug)]
 pub enum AnalysisResult {
@@ -161,6 +174,26 @@ impl Analyzer {
         }
     }
 
+    // (W6.4c) PTR_MAYBE_NULL flags on specific struct_ops callback args.
+    //
+    // The kernel verifier marks a few struct_ops callback arguments as
+    // PTR_MAYBE_NULL based on hand-maintained tables in the kernel
+    // (real upstream sched_ext doesn't use BTF decl_tags for this — see
+    // the kernel's `scx_kf_allowed_args`-style lookups in ext.c). We
+    // mirror that here with a small static table; entries should match
+    // what the kernel asserts in its prog-load `__failure` selftests.
+    //
+    // (ops_struct, member, arg_idx) — arg_idx is 0-based across the
+    // FUNC_PROTO params (NOT the BPF_PROG ctx[] index, since the
+    // ctx-load idiom is what consumes this via validate_ctx_access).
+    //
+    // sched_ext_ops:
+    //   .dispatch(s32 cpu, struct task_struct *prev) — `prev` may be NULL.
+    //   .yield(struct task_struct *from, struct task_struct *to) — `to`
+    //                                                              may be NULL.
+    // Both confirmed against `selftests/sched_ext/maybe_null_fail_*.bpf.c`
+    // which assert load failure when the program derefs without checking.
+
     /// Build the entry-arg type vector for a struct_ops subprog by name.
     /// Returns None if no binding matches (e.g., a non-struct_ops subprog
     /// or one whose ops_struct/member can't be resolved in BTF).
@@ -180,15 +213,27 @@ impl Analyzer {
         Some(
             resolved
                 .into_iter()
-                .map(|a| match a {
-                    StructOpsArg::Scalar => EntryArg::Scalar,
-                    // OpaquePtr falls back to a generic typed pointer rather
-                    // than scalar — the verifier should treat it as a pointer
-                    // so dereferences are at least size-checked, even if the
-                    // pointee type is unknown.
-                    StructOpsArg::OpaquePtr => EntryArg::TrustedPtrBtfId("struct"),
-                    StructOpsArg::TrustedPtr(name) => {
-                        EntryArg::TrustedPtrBtfId(intern_btf_type_name(&name))
+                .enumerate()
+                .map(|(idx, a)| {
+                    let nullable = is_struct_ops_arg_maybe_null(
+                        &binding.ops_struct,
+                        &binding.member,
+                        idx as u8,
+                    );
+                    match a {
+                        StructOpsArg::Scalar => EntryArg::Scalar,
+                        // OpaquePtr falls back to a generic typed pointer rather
+                        // than scalar — the verifier should treat it as a pointer
+                        // so dereferences are at least size-checked, even if the
+                        // pointee type is unknown.
+                        StructOpsArg::OpaquePtr => EntryArg::TrustedPtrBtfId {
+                            type_name: "struct",
+                            nullable,
+                        },
+                        StructOpsArg::TrustedPtr(name) => EntryArg::TrustedPtrBtfId {
+                            type_name: intern_btf_type_name(&name),
+                            nullable,
+                        },
                     }
                 })
                 .collect(),
@@ -320,15 +365,20 @@ impl Analyzer {
             // for void methods. Take the same first-binding-wins rule
             // as struct_ops_entry_args (a subprog wired into multiple
             // ops-struct vars resolves identically).
-            ctx.entry_returns_void = self
+            let binding = self
                 .struct_ops_bindings
                 .iter()
-                .find(|b| b.subprog == func.name)
+                .find(|b| b.subprog == func.name);
+            ctx.entry_returns_void = binding
                 .and_then(|b| {
                     self.btf
                         .struct_ops_method_returns_void(&b.ops_struct, &b.member)
                 })
                 .unwrap_or(false);
+            // W6.4c: pass the (ops_struct, member) pair into the analysis
+            // context so transfer_kfunc_proto can enforce per-(ops, member)
+            // kfunc-context allowlists.
+            ctx.struct_ops_member = binding.map(|b| (b.ops_struct.clone(), b.member.clone()));
         }
 
         if self.config.verbosity > 0 {

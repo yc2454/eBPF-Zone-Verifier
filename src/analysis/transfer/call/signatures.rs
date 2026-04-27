@@ -367,6 +367,14 @@ pub struct CallProto {
     /// per-kfunc `KF_PROG_TYPE_*` bitmap. Enforced once at the start of
     /// `transfer_kfunc_proto`; helper paths ignore this field.
     pub prog_type_allowlist: Option<&'static [crate::ast::ProgramKind]>,
+    /// W6.4c: per-(ops_struct, member) allowlist for struct_ops kfuncs.
+    /// `None` means "no per-member restriction". `Some(list)` restricts
+    /// the kfunc to subprogs wired into one of the listed (ops_struct,
+    /// member) pairs. Mirrors kernel sched_ext's per-callback kfunc
+    /// gating (e.g. `scx_bpf_select_cpu_dfl` is only callable from
+    /// `sched_ext_ops.select_cpu`). Enforced after `prog_type_allowlist`
+    /// in `transfer_kfunc_proto`. Only consulted for `ProgramKind::StructOps`.
+    pub ops_member_allowlist: Option<&'static [(&'static str, &'static str)]>,
 }
 
 impl CallProto {
@@ -380,6 +388,7 @@ impl CallProto {
             side_effects: &[],
             mem_size_pairs: &[],
             prog_type_allowlist: None,
+            ops_member_allowlist: None,
         }
     }
 
@@ -417,6 +426,16 @@ impl CallProto {
         list: &'static [crate::ast::ProgramKind],
     ) -> Self {
         self.prog_type_allowlist = Some(list);
+        self
+    }
+
+    /// Builder: restrict a struct_ops kfunc to a specific list of
+    /// (ops_struct, member) pairs. W6.4c.
+    const fn ops_member_allowlist(
+        mut self,
+        list: &'static [(&'static str, &'static str)],
+    ) -> Self {
+        self.ops_member_allowlist = Some(list);
         self
     }
 }
@@ -1646,11 +1665,16 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // R4 is an output pointer; we accept any pointer (`Anything`)
         // here since the corpus passes a stack address and the kernel
         // verifier checks PTR_TO_STACK separately.
+        // W6.4c: kernel gates this kfunc to `sched_ext_ops.select_cpu`
+        // context only — calling it from `.enqueue` (or any other
+        // member) rejects with the kfunc-context check. See
+        // `selftests/sched_ext/enq_select_cpu_fails.bpf.c`.
         "scx_bpf_select_cpu_dfl" => CallProto::with_args([
             PtrToBtfId, Anything, Anything, Anything, DontCare,
         ])
         .ret(RetKind::Scalar)
-        .prog_type_allowlist(&SCHED_EXT_KFUNC_PROG_TYPES),
+        .prog_type_allowlist(&SCHED_EXT_KFUNC_PROG_TYPES)
+        .ops_member_allowlist(&[("sched_ext_ops", "select_cpu")]),
 
         // void scx_bpf_error_bstr(char *fmt, unsigned long long *data,
         //                         u32 data_len)

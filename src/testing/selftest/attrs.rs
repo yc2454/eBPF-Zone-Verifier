@@ -69,9 +69,31 @@ pub fn scrape_str(text: &str) -> Vec<ProgAttrs> {
         apply_attrs(line, &mut cur);
 
         // Look for the function definition that terminates this attribute block.
+        // Two emission triggers:
+        //   1. cur has at least one annotation (SEC/__description/__success/...).
+        //   2. The function uses a libbpf wrapper macro (BPF_STRUCT_OPS, BPF_PROG,
+        //      ...). For struct_ops corpora the SEC lives on the outer ops-struct
+        //      initializer, not on the per-callback function — without #2, only
+        //      the first callback after the file-level `SEC("license")` attribute
+        //      gets emitted; the rest are silently dropped (W6.4c). expectations.json
+        //      is consulted by the runner when no in-source verdict annotation is
+        //      present, so emitting with an empty `cur` is safe.
         if let Some(name) = extract_func_name(line) {
-            if !cur.is_empty() {
+            let wrapper_sec = wrapper_macro_sec(line, &name);
+            let wrapped = wrapper_sec.is_some();
+            if !cur.is_empty() || wrapped {
                 cur.func_name = name;
+                // For BPF_STRUCT_OPS / BPF_STRUCT_OPS_SLEEPABLE the SEC
+                // lives in the macro expansion, not on a preceding
+                // attribute line — fill it in if the scraper hasn't
+                // already captured one. (BPF_PROG and other plain
+                // wrappers don't synthesize a SEC; the user's SEC()
+                // attribute on the preceding line is what counts.)
+                if cur.sec.is_none()
+                    && let Some(s) = wrapper_sec
+                {
+                    cur.sec = Some(s);
+                }
                 out.push(std::mem::take(&mut cur));
             }
         }
@@ -223,6 +245,14 @@ fn extract_int_arg(line: &str, macro_name: &str) -> Option<i64> {
 ///     generate the real ELF symbol from the first arg.
 fn extract_func_name(line: &str) -> Option<String> {
     let l = line.trim_end_matches(|c: char| c == '{' || c.is_whitespace());
+    // Reject extern declarations / prototypes — they end with `;` after
+    // the closing paren (or after attribute macros like `__ksym`). Only
+    // function definitions are interesting to the runner; a definition's
+    // signature line never ends in `;`. Multi-line signatures end in
+    // `,` or the param-list close paren — both fine.
+    if l.ends_with(';') {
+        return None;
+    }
     let lparen = l.find('(')?;
     let head = &l[..lparen];
 
@@ -237,8 +267,22 @@ fn extract_func_name(line: &str) -> Option<String> {
     }
 
     let prev = tokens[tokens.len() - 2];
-    let is_typeish = matches!(prev, "void" | "int" | "long" | "short" | "char" | "unsigned" | "signed")
-        || prev.ends_with('*')
+    let is_typeish = matches!(
+        prev,
+        "void"
+            | "int"
+            | "long"
+            | "short"
+            | "char"
+            | "unsigned"
+            | "signed"
+            | "bool"
+            | "s32"
+            | "u32"
+            | "s64"
+            | "u64"
+            | "size_t"
+    ) || prev.ends_with('*')
         || prev.ends_with("_t");
     if !is_typeish {
         return None;
@@ -258,6 +302,30 @@ fn extract_func_name(line: &str) -> Option<String> {
     }
 
     Some(last.to_string())
+}
+
+/// If `line` opens a function whose definition uses a libbpf wrapper
+/// macro that implies a SEC (currently BPF_STRUCT_OPS variants), return
+/// the implied SEC string. Returns None for plain BPF_PROG / BPF_KPROBE
+/// / etc., where the user wrote their own SEC() above.
+fn wrapper_macro_sec(line: &str, func_name: &str) -> Option<String> {
+    let l = line.trim_end_matches(|c: char| c == '{' || c.is_whitespace());
+    let lparen = l.find('(')?;
+    let head = &l[..lparen];
+    let last = head.split_whitespace().last()?;
+    if !is_libbpf_wrapper_macro(last) {
+        return None;
+    }
+    match last {
+        "BPF_STRUCT_OPS" => Some(format!("struct_ops/{func_name}")),
+        "BPF_STRUCT_OPS_SLEEPABLE" => Some(format!("struct_ops.s/{func_name}")),
+        // Other wrappers (BPF_PROG, BPF_KPROBE, ...) don't synthesize a
+        // SEC. Returning Some("") would still trigger force-emit —
+        // return Some of an empty string only if the caller wants the
+        // emit-without-SEC behavior. Today they go through the
+        // SEC-attribute path, so return None here.
+        _ => Some(String::new()),
+    }
 }
 
 fn is_libbpf_wrapper_macro(name: &str) -> bool {

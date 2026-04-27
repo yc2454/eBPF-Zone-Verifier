@@ -1021,6 +1021,11 @@ fn run_baseline_check_modern(progs_dir: &str, stored: &str, config: &VerifierCon
             println!("  NEW         {}::{}  ours={}", n.file, n.prog, c.ours);
         }
     }
+    for r in &d.removed_entries {
+        if let Some(b) = &r.baseline {
+            println!("  REMOVED     {}::{}  was={}", r.file, r.prog, b.ours);
+        }
+    }
 
     if !d.regressions.is_empty() {
         std::process::exit(1);

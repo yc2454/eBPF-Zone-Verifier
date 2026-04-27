@@ -1563,9 +1563,9 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
             use crate::analysis::machine::context::EntryArg;
             let kind = match &args[idx] {
                 EntryArg::Scalar => CtxFieldKind::Scalar,
-                EntryArg::TrustedPtrBtfId(name) => CtxFieldKind::TrustedPtr {
-                    type_name: name,
-                    nullable: false,
+                EntryArg::TrustedPtrBtfId { type_name, nullable } => CtxFieldKind::TrustedPtr {
+                    type_name,
+                    nullable: *nullable,
                 },
             };
             return Some(CtxAccessInfo {

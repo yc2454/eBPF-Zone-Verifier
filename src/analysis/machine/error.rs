@@ -222,6 +222,16 @@ pub enum VerificationError {
         btf_id: u32,
         kind: ProgramKind,
     },
+    /// W6.4c: kfunc rejected because the calling subprog is wired
+    /// into a struct_ops member that's not in the kfunc's allowed
+    /// (ops_struct, member) set. E.g. `scx_bpf_select_cpu_dfl` is
+    /// callable only from `sched_ext_ops.select_cpu`.
+    KfuncNotAllowedForOpsMember {
+        pc: usize,
+        btf_id: u32,
+        ops_struct: String,
+        member: String,
+    },
     PointerLeakage {
         pc: usize,
         offset: i64,
@@ -479,6 +489,17 @@ impl VerificationError {
                 format!(
                     "Kfunc btf_id {} not allowed for program {:?} at pc {}",
                     btf_id, kind, pc
+                )
+            }
+            VerificationError::KfuncNotAllowedForOpsMember {
+                pc,
+                btf_id,
+                ops_struct,
+                member,
+            } => {
+                format!(
+                    "Kfunc btf_id {} not allowed in {}.{} at pc {}",
+                    btf_id, ops_struct, member, pc
                 )
             }
             VerificationError::UnsafeMemoryStore {
