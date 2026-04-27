@@ -358,6 +358,31 @@ impl BtfContext {
         Some(args)
     }
 
+    /// Does the named struct_ops member return void? Returns None if the
+    /// member or its FUNC_PROTO can't be resolved. The kernel verifier
+    /// relaxes the "R0 must be initialized at exit" check for void
+    /// return types, so the runner needs to know this to type the exit
+    /// state correctly.
+    pub fn struct_ops_method_returns_void(
+        &self,
+        struct_name: &str,
+        member_name: &str,
+    ) -> Option<bool> {
+        let struct_id = self.find_struct_by_name(struct_name)?;
+        let struct_ty = self.types.get(&struct_id)?;
+        let member = struct_ty
+            .members
+            .iter()
+            .find(|m| self.get_string(m.name_off) == Some(member_name))?;
+        let proto_id = self.pointee(member.type_id)?;
+        let proto = self.types.get(&proto_id)?;
+        if proto.kind() != BTF_KIND_FUNC_PROTO {
+            return None;
+        }
+        // BTF encodes void return as type id 0.
+        Some(proto.size_or_type == 0)
+    }
+
     /// Resolve a subprog's parameter list directly from its BTF FUNC entry.
     ///
     /// clang -target bpf emits a `BTF_KIND_FUNC` for every defined function

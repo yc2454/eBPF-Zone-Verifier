@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-27T18:09:25.301705+00:00",
+  "generated_at": "2026-04-27T18:28:52.619943+00:00",
   "files": {
     "bpf_cubic.c": {
       "source": "selftests/progs/bpf_cubic.c",
@@ -8,27 +8,24 @@
         "bpf_cubic_acked": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 12: base R7+28 (type: ScalarValue)"
+          "note": "Unsafe generic load at pc 21: base R1+0 (type: ScalarValue)"
         },
         "bpf_cubic_cong_avoid": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "pc 277: R0 !read_ok"
+          "note": "Unsafe generic load at pc 86: base R1+0 (type: ScalarValue)"
         },
         "bpf_cubic_cwnd_event": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 8: base R6+28 (type: ScalarValue)"
+          "ours": "PASS"
         },
         "bpf_cubic_init": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 5: base R1+4 (type: ScalarValue)"
+          "ours": "PASS"
         },
         "bpf_cubic_state": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 8: base R1+4 (type: ScalarValue)"
+          "ours": "PASS"
         },
         "tcp_cong_avoid_ai": {
           "upstream": "UNKNOWN",
@@ -42,28 +39,24 @@
       "progs": {
         "bpf_dctcp_cong_avoid": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "bpf_dctcp_cwnd_event": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "pc 54: R0 !read_ok"
+          "ours": "PASS"
         },
         "bpf_dctcp_init": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 63: register: r1"
+          "note": "Unsafe generic load at pc 82: base R0+0 (type: ScalarValue)"
         },
         "bpf_dctcp_state": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 18: base R3+0 (type: ScalarValue)"
+          "ours": "PASS"
         },
         "bpf_dctcp_update_alpha": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 5: base R2+16 (type: ScalarValue)"
+          "ours": "PASS"
         },
         "dctcp_reset": {
           "upstream": "UNKNOWN",
@@ -7110,7 +7103,7 @@
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(21) })"
+          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(20) })"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",

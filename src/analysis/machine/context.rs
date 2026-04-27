@@ -70,6 +70,11 @@ pub struct ExecContext {
     /// default `R1 = PtrToCtx` with these. None means "no struct_ops
     /// binding available" — fall back to the default.
     pub entry_args: Option<Vec<EntryArg>>,
+    /// W6.4a-followon: true when the matched struct_ops member's
+    /// FUNC_PROTO declares a void return. `transfer_exit` skips the
+    /// "R0 not initialized" rejection in this case — void methods are
+    /// not required to set R0, just like in the kernel verifier.
+    pub entry_returns_void: bool,
 }
 
 pub fn default_exec_ctx() -> ExecContext {
@@ -83,6 +88,7 @@ pub fn default_exec_ctx() -> ExecContext {
         mode: VerificationMode::Priviledged,
         kfunc: None,
         entry_args: None,
+        entry_returns_void: false,
     }
 }
 

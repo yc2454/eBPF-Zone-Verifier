@@ -695,7 +695,15 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         ]),
 
         constants::BPF_GET_SOCKOPT => {
-            CallProto::with_args([PtrToCtx, Anything, Anything, PtrToUninitMem, ConstSize])
+            // R1 is `bpf_socket` (kernel UAPI). The kernel verifier accepts
+            // it as PtrToCtx in cgroup_sock_addr/sock_ops contexts AND as
+            // a trusted PtrToBtfId{sock} in struct_ops contexts (where the
+            // BPF_PROG-wrapped struct_ops method has unpacked the sock arg
+            // out of the ctx array). Modeling as `Anything` matches the
+            // multi-shape acceptance and lets struct_ops methods like
+            // bpf_dctcp_init pass; the size pair on (R4, R5) still gates
+            // the actual write region.
+            CallProto::with_args([Anything, Anything, Anything, PtrToUninitMem, ConstSize])
                 .mem_size_pairs(&pairs::GET_SOCKOPT)
         }
 
@@ -1524,6 +1532,44 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Void)
         .flags(CallFlags::RELEASE | CallFlags::SPIN_LOCK_HELD)
         .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 1 }]),
+
+        // ---- W6.4a-followon: kernel-exported TCP CC helpers ----
+        //
+        // bpf_dctcp.c and bpf_cubic.c reach into the kernel's TCP
+        // congestion-control library via these ksyms. Clang emits each
+        // as a `BPF_PSEUDO_KFUNC_CALL`; without protos here, our kfunc
+        // dispatcher rejects with `UnsupportedModernFeature`.
+        //
+        // All four take a sock/tcp_sock pointer (which our struct_ops
+        // entry-state plumbing types as PtrToBtfId{unknown}) plus
+        // scalars; three return void, one returns u32. We model the
+        // pointer args as `PtrToBtfId` (matches the trusted-pointer
+        // shape) and let the verifier's permissive "unknown" type_name
+        // path handle access typing.
+        //
+        //   void tcp_reno_cong_avoid(struct sock *sk, u32 ack, u32 acked)
+        //   void tcp_slow_start    (struct tcp_sock *tp, u32 acked)
+        //   void tcp_cong_avoid_ai (struct tcp_sock *tp, u32 w, u32 acked)
+        //   u32  tcp_reno_undo_cwnd(struct sock *sk)
+        "tcp_reno_cong_avoid" => CallProto::with_args([
+            PtrToBtfId, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        "tcp_slow_start" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        "tcp_cong_avoid_ai" => CallProto::with_args([
+            PtrToBtfId, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        "tcp_reno_undo_cwnd" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
 
         _ => return None,
     })

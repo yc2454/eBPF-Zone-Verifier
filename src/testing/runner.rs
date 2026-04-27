@@ -315,6 +315,20 @@ impl Analyzer {
         // bindings cache resolves func_name → (ops_struct, member).
         if ctx.prog_kind == ProgramKind::StructOps {
             ctx.entry_args = self.struct_ops_entry_args(&func.name);
+            // Also note whether the matched method returns void; the
+            // analysis layer relaxes the exit-time R0-readability check
+            // for void methods. Take the same first-binding-wins rule
+            // as struct_ops_entry_args (a subprog wired into multiple
+            // ops-struct vars resolves identically).
+            ctx.entry_returns_void = self
+                .struct_ops_bindings
+                .iter()
+                .find(|b| b.subprog == func.name)
+                .and_then(|b| {
+                    self.btf
+                        .struct_ops_method_returns_void(&b.ops_struct, &b.member)
+                })
+                .unwrap_or(false);
         }
 
         if self.config.verbosity > 0 {

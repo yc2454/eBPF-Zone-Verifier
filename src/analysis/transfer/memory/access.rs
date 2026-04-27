@@ -330,6 +330,39 @@ pub fn check_store(
                 });
             }
         }
+        // W6.4a-followon: writes through a BTF-typed pointer.
+        // Mirror the load-side policy at access.rs::update_load_types:
+        //   * `type_name == "unknown"` (no layout) — accept; the BTF
+        //     resolver intentionally widens to "unknown" for kernel
+        //     structs we don't have mem_region_model entries for, and
+        //     struct_ops methods commonly write to embedded state
+        //     (e.g. `bictcp` inside `struct sock`).
+        //   * named struct with a layout — bounds-check via
+        //     mem_region_model. Future work: extend mem_region_model with
+        //     entries for named kernel structs and tighten this arm.
+        PtrToBtfId { .. } => {
+            let is_unknown = matches!(
+                base_ty,
+                PtrToBtfId {
+                    type_name: "unknown",
+                    ..
+                }
+            );
+            if !is_unknown
+                && !mem_region_model::is_valid_mem_region_read(state.types.get(base), off, size)
+            {
+                error!(
+                    "Invalid BTF-typed write at pc {}: {:?} offset {} size {}",
+                    pc, base_ty, off, size
+                );
+                env.fail(VerificationError::UnsafeGenericStore {
+                    pc,
+                    base,
+                    off,
+                    base_type: base_ty,
+                });
+            }
+        }
         _ => {
             error!(
                 "Unsafe store at pc {}: base {:?}+{} has non-pointer type {:?}",

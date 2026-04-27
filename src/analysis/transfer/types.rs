@@ -113,6 +113,17 @@ fn update_ptr_arithmetic_type(
                 types.set(dst, RegType::ScalarValue);
             }
         }
+        // W6.4a-followon: pointer arithmetic on a BTF-typed pointer (e.g.
+        // `r1 = sk + 1296` to reach an embedded struct field) preserves
+        // the type and trusted flags. Without this, struct_ops methods
+        // that compute interior pointers via add/sub demoted to scalar
+        // and the subsequent field access failed. The access check on
+        // `type_name == "unknown"` already skips per-field bounds
+        // validation; for layout-known names the access path enforces
+        // bounds via mem_region_model.
+        RegType::PtrToBtfId { type_name, flags } => {
+            types.set(dst, RegType::PtrToBtfId { type_name, flags });
+        }
         _ => types.set(dst, RegType::ScalarValue),
     }
 }
