@@ -154,6 +154,15 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                     if m.max_entries == 0 {
                         m.max_entries = btf_m.max_entries;
                     }
+                    // The legacy `bpf_map_def` section can't carry a value
+                    // type id, so the BTF-described copy is the only source
+                    // for it. Without this, MapValueSpecial validators
+                    // (spin_lock, timer, list_head, rb_root) reject every
+                    // ARRAY/HASH map produced by libbpf-style `__type(value, …)`
+                    // declarations with "no value-type BTF".
+                    if m.btf_val_type_id.is_none() {
+                        m.btf_val_type_id = btf_m.btf_val_type_id;
+                    }
                 }
             }
         }

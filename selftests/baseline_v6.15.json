@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-27T04:02:53.118534+00:00",
+  "generated_at": "2026-04-27T04:09:22.765260+00:00",
   "files": {
     "cb_refs.c": {
       "source": "selftests/progs/cb_refs.c",
@@ -7737,8 +7737,7 @@
       "progs": {
         "bpf_loop_inside_locked_region": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid BTF type"
+          "ours": "PASS"
         },
         "call_within_a_locked_region": {
           "upstream": "ACCEPT",
@@ -7746,13 +7745,12 @@
         },
         "check_ids_similar_id_mappings": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid BTF type"
+          "ours": "PASS"
         },
         "lock_in_subprog_without_unlock": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid BTF type"
+          "note": "Lock not held at pc 15, cannot release"
         },
         "lock_test2_direct_ld_st": {
           "upstream": "ACCEPT",
@@ -7771,13 +7769,12 @@
           "ours": "PASS"
         },
         "reg_id_for_map_value": {
-          "upstream": "ACCEPT",
-          "ours": "PASS"
+          "upstream": "REJECT",
+          "ours": "FALSE_ACCEPT"
         },
         "spin_lock_test1_success": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid BTF type"
+          "ours": "PASS"
         },
         "spin_lock_test6_missing_unlock": {
           "upstream": "ACCEPT",
