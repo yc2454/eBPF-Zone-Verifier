@@ -1,0 +1,156 @@
+{
+  "_comment": [
+    "Source-of-truth for expected verifier verdicts on vendored corpus files",
+    "that DO NOT carry __success / __failure annotations.",
+    "",
+    "Why this exists: the bpf-selftests under selftests/progs/ use the in-source",
+    "__success / __failure macros (test_loader convention). struct_ops corpus",
+    "(also under selftests/progs/) and sched_ext corpus (under selftests/sched_ext/)",
+    "do not — verdicts there are asserted by per-test C harnesses in the kernel's",
+    "tools/testing/selftests/{bpf,sched_ext}/ directory. We mirror that intent here.",
+    "",
+    "Verdict-source precedence consulted by the runner",
+    "(see src/testing/selftest/expectations.rs and runner.rs::run_one):",
+    "  1. __success / __failure macros in the source (bpf-selftests convention)",
+    "  2. This manifest (struct_ops / sched_ext convention)",
+    "  3. Otherwise: Outcome::Skipped(\"no verdict source\")",
+    "",
+    "Files keyed by basename — basenames are unique across our corpus and the",
+    "manifest stays stable across directory moves.",
+    "",
+    "Each entry MUST cite the kernel-side harness or in-source comment that",
+    "establishes the verdict. Files whose kernel-side failure happens past the",
+    "verifier (struct_ops map registration, GPL gating, sched_ext runtime exit)",
+    "should NOT appear here — delete them or leave as 'accept'."
+  ],
+
+  "files": {
+    "bpf_dctcp.c": {
+      "expect": "accept",
+      "note": "TCP CC happy path; kernel tools/testing/selftests/bpf/prog_tests/bpf_tcp_ca.c::test_dctcp asserts load+attach succeed."
+    },
+    "bpf_cubic.c": {
+      "expect": "accept",
+      "note": "TCP CC happy path; kernel tools/testing/selftests/bpf/prog_tests/bpf_tcp_ca.c::test_cubic asserts load+attach succeed."
+    },
+    "bpf_dctcp_release.c": {
+      "expect": "accept",
+      "note": "Kernel prog_tests/bpf_tcp_ca.c::test_dctcp_fallback expects load to succeed; the fallback semantic is asserted at runtime, not verify time."
+    },
+
+    "minimal.bpf.c": {
+      "expect": "accept",
+      "note": "Minimal sched_ext example; runner.c expects clean load + run."
+    },
+    "maximal.bpf.c": {
+      "expect": "accept",
+      "note": "Exercises full sched_ext_ops surface; runner.c expects load."
+    },
+    "maybe_null.bpf.c": {
+      "expect": "accept",
+      "note": "Properly null-checks task_struct args (paired with maybe_null_fail_*); runner.c::maybe_null asserts load succeeds."
+    },
+    "create_dsq.bpf.c": {
+      "expect": "accept",
+      "note": "scx_bpf_create_dsq usage in init op; runner.c::create_dsq asserts load."
+    },
+    "exit.bpf.c": {
+      "expect": "accept",
+      "note": "Exit-op exercise; runner.c::exit asserts load."
+    },
+    "prog_run.bpf.c": {
+      "expect": "accept",
+      "note": "Demonstrates BPF_PROG_RUN against a struct_ops method; runner.c::prog_run asserts load."
+    },
+    "init_enable_count.bpf.c": {
+      "expect": "accept",
+      "note": "init/enable op counting; runner.c::init_enable_count asserts load."
+    },
+    "hotplug.bpf.c": {
+      "expect": "accept",
+      "note": "CPU hotplug ops exercise; runner.c::hotplug asserts load."
+    },
+    "numa.bpf.c": {
+      "expect": "accept",
+      "note": "NUMA-aware scheduling primitives; runner.c::numa asserts load."
+    },
+    "dsp_local_on.bpf.c": {
+      "expect": "accept",
+      "note": "scx_bpf_dsq_insert with SCX_DSQ_LOCAL_ON; runner.c::dsp_local_on asserts load."
+    },
+    "select_cpu_dfl.bpf.c": {
+      "expect": "accept",
+      "note": "Default select_cpu; runner.c::select_cpu_dfl asserts load."
+    },
+    "select_cpu_dfl_nodispatch.bpf.c": {
+      "expect": "accept",
+      "note": "select_cpu without dispatch; runner.c::select_cpu_dfl_nodispatch asserts load."
+    },
+    "select_cpu_dispatch.bpf.c": {
+      "expect": "accept",
+      "note": "select_cpu + dispatch; runner.c::select_cpu_dispatch asserts load."
+    },
+    "select_cpu_dispatch_bad_dsq.bpf.c": {
+      "expect": "accept",
+      "note": "Bad DSQ id chosen at RUNTIME (not verify time); runner.c::select_cpu_dispatch_bad_dsq asserts SCX_EXIT_ERROR after run, load itself succeeds."
+    },
+    "select_cpu_dispatch_dbl_dsp.bpf.c": {
+      "expect": "accept",
+      "note": "Double-dispatch detected at RUNTIME; runner.c expects load to succeed and runtime exit error."
+    },
+    "select_cpu_vtime.bpf.c": {
+      "expect": "accept",
+      "note": "vtime dispatch from select_cpu; runner.c::select_cpu_vtime asserts load."
+    },
+
+    "ddsp_bogus_dsq_fail.bpf.c": {
+      "expect": "accept",
+      "note": "Despite '_fail' suffix, the bogus DSQ id (0xcafef00d) is detected at SCHEDULER RUNTIME. runner.c::ddsp_bogus_dsq_fail asserts SCX_EXIT_ERROR after run; load is expected to succeed."
+    },
+    "ddsp_vtimelocal_fail.bpf.c": {
+      "expect": "accept",
+      "note": "vtime dispatch to SCX_DSQ_LOCAL rejected at SCHEDULER RUNTIME; load succeeds. runner.c::ddsp_vtimelocal_fail asserts SCX_EXIT_ERROR."
+    },
+    "enq_last_no_enq_fails.bpf.c": {
+      "expect": "accept",
+      "note": "SCX_OPS_ENQ_LAST flag without an .enqueue op rejected at struct_ops registration (past verifier). runner.c::enq_last_no_enq_fails asserts ops registration fails; verifier-only verdict is accept."
+    },
+    "enq_select_cpu_fails.bpf.c": {
+      "expect": "reject",
+      "note": "Calls scx_bpf_select_cpu_dfl from .enqueue, but that kfunc is gated to .select_cpu context. Verifier-time kfunc-context check rejects. runner.c::enq_select_cpu_fails asserts load fails."
+    },
+    "maybe_null_fail_dsp.bpf.c": {
+      "expect": "reject",
+      "note": "Dereferences MAYBE_NULL task_struct *p arg of .dispatch without null-check. Kernel marks dispatch's p arg PTR_MAYBE_NULL; verifier rejects. runner.c::maybe_null asserts load fails."
+    },
+    "maybe_null_fail_yld.bpf.c": {
+      "expect": "reject",
+      "note": "Dereferences MAYBE_NULL task_struct *to arg of .yield without null-check. Same shape as _dsp variant. runner.c::maybe_null asserts load fails."
+    },
+
+    "task_local_storage.c": {
+      "expect": "accept",
+      "note": "W7.1: tp_btf-based bpf_task_storage_get exercise; kernel prog_tests/task_local_storage.c::test_sys_enter_exit asserts load+attach succeed."
+    },
+    "local_storage.c": {
+      "expect": "accept",
+      "note": "W7.1: LSM-based multi-storage (sk + task + inode) get/delete; kernel prog_tests/test_local_storage.c asserts load succeeds."
+    },
+    "test_snprintf.c": {
+      "expect": "accept",
+      "note": "W7.1: positive bpf_snprintf coverage (BPF_SNPRINTF macro + various fmt specifiers); kernel prog_tests/snprintf.c::test_snprintf_positive asserts load."
+    },
+    "test_snprintf_single.c": {
+      "expect": "reject",
+      "note": "W7.1: negative case — fmt arg is a non-const writable global, not rodata. Kernel prog_tests/snprintf.c::test_snprintf_negative asserts load FAILS at verifier."
+    },
+    "test_d_path.c": {
+      "expect": "accept",
+      "note": "W7.1: positive bpf_d_path coverage from fentry/security_inode_getattr + fentry/filp_close; kernel prog_tests/d_path.c::test_d_path asserts load."
+    },
+    "test_d_path_check_rdonly_mem.c": {
+      "expect": "reject",
+      "note": "W7.1: bpf_d_path called with a rdonly-mem buf (from bpf_per_cpu_ptr on a __ksym). Kernel prog_tests/d_path.c asserts load FAILS — helpers cannot write into rdonly mem."
+    }
+  }
+}

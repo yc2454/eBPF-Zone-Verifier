@@ -1,5 +1,6 @@
 pub mod bcf_benchmark;
 pub mod benchmark_common;
+pub mod legacy_selftest;
 pub mod logging;
 pub mod pcc_test;
 pub mod prevail;

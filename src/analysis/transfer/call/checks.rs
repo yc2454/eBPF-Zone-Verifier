@@ -132,7 +132,10 @@ pub(crate) fn validate_helper_args(
     };
 
     // Get map info if first arg is a map (needed for key/value size validation)
-    let map_info = if sig.args[0] == ArgKind::ConstMapPtr {
+    let map_info = if matches!(
+        sig.args[0],
+        ArgKind::ConstMapPtr | ArgKind::ConstMapPtrOfType(_)
+    ) {
         get_map_info(types.get(Reg::R1), env)
     } else {
         None
@@ -215,6 +218,9 @@ pub(crate) fn validate_single_arg(
 
         // ---- Map-related types ----
         ArgKind::ConstMapPtr => validators::validate_const_map_ptr(&mut ctx),
+        ArgKind::ConstMapPtrOfType(t) => {
+            validators::validate_const_map_ptr_of_type(&mut ctx, t)
+        }
         ArgKind::PtrToMapKey => validators::validate_ptr_to_map_key(&mut ctx),
         ArgKind::PtrToMapValue => validators::validate_ptr_to_map_value(&mut ctx),
         ArgKind::PtrToUninitMapValue => {
@@ -257,6 +263,10 @@ pub(crate) fn validate_single_arg(
 
         // ---- Cpumask (W5.3) ----
         ArgKind::PtrToCpumask => validate_ptr_to_cpumask(&mut ctx),
+
+        // ---- Cgroup (W6.3-followon) ----
+        ArgKind::PtrToCgroup => validate_ptr_to_cgroup(&mut ctx),
+        ArgKind::PtrToTask => validate_ptr_to_task(&mut ctx),
 
         // ---- Arena (W5.5) ----
         ArgKind::PtrToArena => validate_ptr_to_arena(&mut ctx),
@@ -363,6 +373,52 @@ fn validate_ptr_to_cpumask(ctx: &mut ValidationContext) -> bool {
             },
             &format!(
                 "[Verifier] pc {}: R{} expected PTR_TO_CPUMASK, got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                ctx.actual
+            ),
+        );
+    }
+    true
+}
+
+/// Validate `ArgKind::PtrToCgroup` (W6.3-followon).
+///
+/// Mirrors `validate_ptr_to_cpumask`: only the non-null
+/// `RegType::PtrToCgroup` is accepted. Cgroup consumers
+/// (`bpf_cgroup_acquire` / `_release`) require the program to have
+/// null-checked the freshly-minted ref first.
+fn validate_ptr_to_cgroup(ctx: &mut ValidationContext) -> bool {
+    if !matches!(ctx.actual, RegType::PtrToCgroup { .. }) {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} expected PTR_TO_CGROUP, got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                ctx.actual
+            ),
+        );
+    }
+    true
+}
+
+/// Validate `ArgKind::PtrToTask` (Phase 7 wrap-up). Same shape as
+/// `validate_ptr_to_cgroup`: only non-null `RegType::PtrToTask`
+/// accepted. `bpf_task_acquire`/`_release` consumers require the
+/// program to have null-checked an `OrNull` result first.
+fn validate_ptr_to_task(ctx: &mut ValidationContext) -> bool {
+    if !matches!(ctx.actual, RegType::PtrToTask { .. }) {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} expected PTR_TO_TASK, got {:?}",
                 ctx.pc,
                 ctx.arg_index + 1,
                 ctx.actual

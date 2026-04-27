@@ -212,6 +212,26 @@ pub enum VerificationError {
         helper: u32,
         kind: ProgramKind,
     },
+    /// Kfunc proto carries a `prog_type_allowlist` (W6.3) and the
+    /// program's `ProgramKind` is not in it. Mirrors the kernel
+    /// verifier's per-kfunc `KF_PROG_TYPE_*` check (e.g. cgroup /
+    /// cpumask / task families are gated to syscall / tracepoint /
+    /// perf_event and reject from raw_tp).
+    KfuncNotAllowedForProgram {
+        pc: usize,
+        btf_id: u32,
+        kind: ProgramKind,
+    },
+    /// W6.4c: kfunc rejected because the calling subprog is wired
+    /// into a struct_ops member that's not in the kfunc's allowed
+    /// (ops_struct, member) set. E.g. `scx_bpf_select_cpu_dfl` is
+    /// callable only from `sched_ext_ops.select_cpu`.
+    KfuncNotAllowedForOpsMember {
+        pc: usize,
+        btf_id: u32,
+        ops_struct: String,
+        member: String,
+    },
     PointerLeakage {
         pc: usize,
         offset: i64,
@@ -463,6 +483,23 @@ impl VerificationError {
                 format!(
                     "Helper {} not allowed for program {:?} at pc {}",
                     helper, kind, pc
+                )
+            }
+            VerificationError::KfuncNotAllowedForProgram { pc, btf_id, kind } => {
+                format!(
+                    "Kfunc btf_id {} not allowed for program {:?} at pc {}",
+                    btf_id, kind, pc
+                )
+            }
+            VerificationError::KfuncNotAllowedForOpsMember {
+                pc,
+                btf_id,
+                ops_struct,
+                member,
+            } => {
+                format!(
+                    "Kfunc btf_id {} not allowed in {}.{} at pc {}",
+                    btf_id, ops_struct, member, pc
                 )
             }
             VerificationError::UnsafeMemoryStore {

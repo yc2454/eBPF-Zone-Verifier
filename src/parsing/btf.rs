@@ -244,6 +244,12 @@ impl BtfContext {
         fields
     }
 
+    /// Public read of an interned BTF string by its byte offset into the
+    /// string blob. Returns the C-string up to the first NUL.
+    pub fn read_string(&self, offset: u32) -> Option<&str> {
+        self.get_string(offset)
+    }
+
     fn get_string(&self, offset: u32) -> Option<&str> {
         let start = offset as usize;
         if start >= self.strings.len() {
@@ -252,6 +258,270 @@ impl BtfContext {
         let end = self.strings[start..].iter().position(|&b| b == 0)? + start;
         std::str::from_utf8(&self.strings[start..end]).ok()
     }
+
+    /// Find a STRUCT (or UNION) BTF type by its declared name. Linear
+    /// scan — only called once per struct_ops program at entry-state
+    /// setup, so the cost is irrelevant. Returns the BTF type id.
+    pub fn find_struct_by_name(&self, name: &str) -> Option<u32> {
+        for ty in self.types.values() {
+            if !matches!(ty.kind(), BTF_KIND_STRUCT | BTF_KIND_UNION) {
+                continue;
+            }
+            if self.get_string(ty.name_off) == Some(name) {
+                return Some(ty.id);
+            }
+        }
+        None
+    }
+
+    /// Peel TYPEDEF / CONST / VOLATILE / RESTRICT wrappers and return the
+    /// underlying type id. Stops on the first non-wrapper kind. Bounded
+    /// to 16 hops as a defensive cycle guard.
+    pub fn peel_modifiers(&self, mut type_id: u32) -> u32 {
+        for _ in 0..16 {
+            let Some(ty) = self.types.get(&type_id) else {
+                return type_id;
+            };
+            match ty.kind() {
+                BTF_KIND_TYPEDEF | BTF_KIND_CONST | BTF_KIND_VOLATILE | BTF_KIND_RESTRICT => {
+                    type_id = ty.size_or_type;
+                }
+                _ => return type_id,
+            }
+        }
+        type_id
+    }
+
+    /// If `type_id` (after peeling modifiers) is a `PTR -> X` chain,
+    /// return `X` (also peeled). Otherwise None.
+    pub fn pointee(&self, type_id: u32) -> Option<u32> {
+        let id = self.peel_modifiers(type_id);
+        let ty = self.types.get(&id)?;
+        if ty.kind() != BTF_KIND_PTR {
+            return None;
+        }
+        Some(self.peel_modifiers(ty.size_or_type))
+    }
+
+    /// Return the declared name of a STRUCT / UNION type, peeling any
+    /// modifier wrappers first. Returns None for unnamed types or
+    /// non-struct kinds.
+    pub fn struct_name(&self, type_id: u32) -> Option<&str> {
+        let id = self.peel_modifiers(type_id);
+        let ty = self.types.get(&id)?;
+        if !matches!(ty.kind(), BTF_KIND_STRUCT | BTF_KIND_UNION) {
+            return None;
+        }
+        self.get_string(ty.name_off)
+    }
+
+    /// Resolve the parameter list of a single struct_ops member.
+    ///
+    /// Walks `struct <struct_name> { ... <member_name>; ... }`, finds the
+    /// member, peels its `PTR -> FUNC_PROTO` chain, and returns one
+    /// `StructOpsArg` per parameter.
+    ///
+    /// Returns None if any of the following are true:
+    ///   * the struct isn't in BTF,
+    ///   * no member matches `member_name`,
+    ///   * the member doesn't resolve to a `PTR -> FUNC_PROTO`.
+    ///
+    /// Why a method-by-method resolver instead of pre-computing all of
+    /// them: only programs whose section is `SEC("struct_ops/...")` need
+    /// this, and there are few of them per ELF — the linear cost is
+    /// negligible against the verifier itself.
+    pub fn resolve_struct_ops_method(
+        &self,
+        struct_name: &str,
+        member_name: &str,
+    ) -> Option<Vec<StructOpsArg>> {
+        let struct_id = self.find_struct_by_name(struct_name)?;
+        let struct_ty = self.types.get(&struct_id)?;
+
+        let member = struct_ty
+            .members
+            .iter()
+            .find(|m| self.get_string(m.name_off) == Some(member_name))?;
+
+        // Member type is `PTR -> FUNC_PROTO`. Peel the PTR.
+        let func_proto_id = self.pointee(member.type_id)?;
+        let func_proto = self.types.get(&func_proto_id)?;
+        if func_proto.kind() != BTF_KIND_FUNC_PROTO {
+            return None;
+        }
+
+        let args = func_proto
+            .members
+            .iter()
+            .map(|p| self.classify_param(p.type_id))
+            .collect();
+        Some(args)
+    }
+
+    /// Does the named struct_ops member return void? Returns None if the
+    /// member or its FUNC_PROTO can't be resolved. The kernel verifier
+    /// relaxes the "R0 must be initialized at exit" check for void
+    /// return types, so the runner needs to know this to type the exit
+    /// state correctly.
+    pub fn struct_ops_method_returns_void(
+        &self,
+        struct_name: &str,
+        member_name: &str,
+    ) -> Option<bool> {
+        let struct_id = self.find_struct_by_name(struct_name)?;
+        let struct_ty = self.types.get(&struct_id)?;
+        let member = struct_ty
+            .members
+            .iter()
+            .find(|m| self.get_string(m.name_off) == Some(member_name))?;
+        let proto_id = self.pointee(member.type_id)?;
+        let proto = self.types.get(&proto_id)?;
+        if proto.kind() != BTF_KIND_FUNC_PROTO {
+            return None;
+        }
+        // BTF encodes void return as type id 0.
+        Some(proto.size_or_type == 0)
+    }
+
+    /// Resolve a subprog's parameter list directly from its BTF FUNC entry.
+    ///
+    /// clang -target bpf emits a `BTF_KIND_FUNC` for every defined function
+    /// in the source, naming it and pointing at the FUNC_PROTO that captured
+    /// its declared signature. For struct_ops method implementations the
+    /// declared signature matches the ops-struct member's function pointer
+    /// type, so this gives us the same answer as walking
+    /// `<ops_struct>.<member>` — without needing to know which member the
+    /// subprog is bound to. The binding lives in the `.struct_ops`
+    /// relocation table; resolving via the FUNC entry sidesteps that
+    /// dependency entirely.
+    ///
+    /// Returns None if no FUNC by that name exists or it doesn't point at
+    /// a FUNC_PROTO.
+    pub fn resolve_func_args(&self, func_name: &str) -> Option<Vec<StructOpsArg>> {
+        let func_ty = self.types.values().find(|ty| {
+            ty.kind() == BTF_KIND_FUNC && self.get_string(ty.name_off) == Some(func_name)
+        })?;
+        // FUNC.size_or_type is the FUNC_PROTO btf_id.
+        let proto = self.types.get(&func_ty.size_or_type)?;
+        if proto.kind() != BTF_KIND_FUNC_PROTO {
+            return None;
+        }
+        Some(
+            proto
+                .members
+                .iter()
+                .map(|p| self.classify_param(p.type_id))
+                .collect(),
+        )
+    }
+
+    /// Find a BTF_KIND_DATASEC by section name (e.g. ".struct_ops",
+    /// ".struct_ops.link", ".rodata", ".bss"). Returns the BTF type id.
+    pub fn find_datasec(&self, section_name: &str) -> Option<u32> {
+        for ty in self.types.values() {
+            if ty.kind() != BTF_KIND_DATASEC {
+                continue;
+            }
+            if self.get_string(ty.name_off) == Some(section_name) {
+                return Some(ty.id);
+            }
+        }
+        None
+    }
+
+    /// Iterate the variables of a DATASEC. Returns an empty iterator if the
+    /// id isn't a DATASEC.
+    pub fn datasec_entries(&self, datasec_id: u32) -> Vec<DatasecEntry> {
+        let Some(ty) = self.types.get(&datasec_id) else {
+            return Vec::new();
+        };
+        if ty.kind() != BTF_KIND_DATASEC {
+            return Vec::new();
+        }
+        ty.members
+            .iter()
+            .map(|m| DatasecEntry {
+                var_id: m.type_id,
+                offset: m.offset,
+                size: m.name_off, // we packed size into name_off — see parse_btf
+            })
+            .collect()
+    }
+
+    /// Resolve a BTF_KIND_VAR into `(var_name, target_type_id)`. Returns None
+    /// if the id isn't a VAR.
+    pub fn var_info(&self, var_id: u32) -> Option<(&str, u32)> {
+        let ty = self.types.get(&var_id)?;
+        if ty.kind() != BTF_KIND_VAR {
+            return None;
+        }
+        let name = self.get_string(ty.name_off)?;
+        Some((name, ty.size_or_type))
+    }
+
+    /// Find the struct/union member that begins exactly at `byte_offset`.
+    /// Returns the member's declared name. Used by the struct_ops binding
+    /// resolver to translate a relocation offset into a method name.
+    pub fn member_name_at_offset(&self, struct_id: u32, byte_offset: u32) -> Option<&str> {
+        let id = self.peel_modifiers(struct_id);
+        let ty = self.types.get(&id)?;
+        if !matches!(ty.kind(), BTF_KIND_STRUCT | BTF_KIND_UNION) {
+            return None;
+        }
+        let bit = byte_offset * 8;
+        let m = ty.members.iter().find(|m| m.offset == bit)?;
+        self.get_string(m.name_off)
+    }
+
+    fn classify_param(&self, type_id: u32) -> StructOpsArg {
+        let id = self.peel_modifiers(type_id);
+        let Some(ty) = self.types.get(&id) else {
+            return StructOpsArg::Scalar;
+        };
+        match ty.kind() {
+            BTF_KIND_PTR => match self.struct_name(ty.size_or_type) {
+                Some(name) => StructOpsArg::TrustedPtr(name.to_string()),
+                None => StructOpsArg::OpaquePtr,
+            },
+            BTF_KIND_INT | BTF_KIND_ENUM | BTF_KIND_ENUM64 | BTF_KIND_FLOAT => {
+                StructOpsArg::Scalar
+            }
+            _ => StructOpsArg::Scalar,
+        }
+    }
+}
+
+/// One variable inside a BTF_KIND_DATASEC.
+#[derive(Debug, Clone)]
+pub struct DatasecEntry {
+    /// BTF type id of the variable (BTF_KIND_VAR). Use
+    /// [`BtfContext::var_info`] to resolve it to `(name, target_type_id)`.
+    pub var_id: u32,
+    /// Byte offset of the variable within the section.
+    pub offset: u32,
+    /// Size in bytes of the variable.
+    pub size: u32,
+}
+
+/// One resolved parameter of a struct_ops member's FUNC_PROTO.
+///
+/// `Scalar` covers integers, enums, floats — anything that lowers
+/// to a register-width value the verifier treats as a scalar.
+///
+/// `TrustedPtr(name)` is a pointer to a named struct/union; the name
+/// is the BTF type name (e.g. "sock", "tcp_sock", "task_struct").
+/// The W6.4a entry-state plumbing maps this to
+/// `RegType::PtrToBtfId { type_name, flags: TRUSTED }` after interning
+/// through a small static table of well-known kernel struct names.
+///
+/// `OpaquePtr` is a pointer to anything else — function pointers,
+/// pointers to primitives, void *. Caller decides whether to widen
+/// to a generic UNTRUSTED PtrToBtfId or scalar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StructOpsArg {
+    Scalar,
+    TrustedPtr(String),
+    OpaquePtr,
 }
 
 /// Parses the .BTF section into a structured Context for analysis
@@ -322,13 +592,65 @@ pub fn parse_btf(bytes: &[u8]) -> Result<BtfContext, String> {
                 cursor += 12;
             }
             BTF_KIND_VAR => {
+                // VAR header carries the var's name (in `name_off`) and the
+                // var's BTF type id (in `size_or_type`); the trailing 4 bytes
+                // are linkage (BTF_VAR_STATIC / GLOBAL_ALLOCATED / EXTERN),
+                // which we don't currently consume.
                 cursor += 4;
             }
-            BTF_KIND_DATASEC | BTF_KIND_ENUM64 => {
+            BTF_KIND_DATASEC => {
+                // Each entry is `struct btf_var_secinfo { u32 type; u32 offset;
+                // u32 size }` — 12 bytes. Stash into `members` reusing the
+                // existing slot: type_id = secinfo.type, offset = byte offset
+                // within the section, name_off = secinfo.size (we repurpose
+                // the unused name slot to carry the size — DATASEC entries
+                // are unnamed in BTF, so name_off would otherwise be 0).
+                // Callers use the helper `datasec_entries()` to read these
+                // back without remembering the field reuse.
+                for _ in 0..vlen {
+                    if cursor + 12 > type_end {
+                        break;
+                    }
+                    let s_type = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
+                    let s_off =
+                        u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap());
+                    let s_size =
+                        u32::from_le_bytes(bytes[cursor + 8..cursor + 12].try_into().unwrap());
+                    cursor += 12;
+                    members.push(BtfMember {
+                        name_off: s_size,
+                        type_id: s_type,
+                        offset: s_off,
+                    });
+                }
+            }
+            BTF_KIND_ENUM64 => {
                 cursor += vlen * 12;
             }
-            BTF_KIND_ENUM | BTF_KIND_FUNC_PROTO => {
+            BTF_KIND_ENUM => {
                 cursor += vlen * 8;
+            }
+            BTF_KIND_FUNC_PROTO => {
+                // Each param is `struct btf_param { u32 name_off; u32 type; }`.
+                // Return type is in `size_or_type` (already captured above).
+                // We reuse `members` to carry the params: `BtfMember.name_off` →
+                // param name, `BtfMember.type_id` → param type, `offset` is unused
+                // for FUNC_PROTO (set to 0). This keeps BtfType uniform without
+                // adding a parallel `params` field.
+                for _ in 0..vlen {
+                    if cursor + 8 > type_end {
+                        break;
+                    }
+                    let p_name = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
+                    let p_type =
+                        u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap());
+                    cursor += 8;
+                    members.push(BtfMember {
+                        name_off: p_name,
+                        type_id: p_type,
+                        offset: 0,
+                    });
+                }
             }
             BTF_KIND_DECL_TAG => {
                 if cursor + 4 <= type_end {
@@ -641,6 +963,13 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                             // The member type might be a PTR to an ARRAY where nelems encodes the value
                             if let Some(val) = extract_btf_uint(&types, m_type_id) {
                                 map_type = val;
+                                // Valueless map kinds (ARENA, RINGBUF, USER_RINGBUF,
+                                // CGRP_STORAGE …) declare only `type` + `max_entries`
+                                // and never appear with a `key`/`value` member, so
+                                // without this the libbpf-style `.maps` section
+                                // parser sees an all-zero record and the BTF
+                                // merger drops the map silently.
+                                is_map = true;
                             }
                         } else if m_name == "max_entries" {
                             // Extract max_entries - similar encoding as type
@@ -662,7 +991,15 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                         }
                     }
 
-                    if is_map && value_size > 0 {
+                    // Valueless maps (ARENA / RINGBUF / USER_RINGBUF / CGRP_STORAGE)
+                    // legitimately have value_size == 0; for everything else require
+                    // value_size > 0 to avoid picking up unrelated BTF structs that
+                    // happen to have a `type` member.
+                    let is_valueless_map = matches!(
+                        map_type,
+                        27 | 31 | 32 | 33 // RINGBUF, USER_RINGBUF, CGRP_STORAGE, ARENA
+                    );
+                    if is_map && (value_size > 0 || is_valueless_map) {
                         info!(target: "app", "[BTF] Found Map: '{}' (Type: {}, KeySize: {}, ValSize: {}, MaxEntries: {}, TypeID: {:?})",
                             name, map_type, key_size, value_size, max_entries, btf_val_type_id);
                         map_defs.push(BpfMapDef {

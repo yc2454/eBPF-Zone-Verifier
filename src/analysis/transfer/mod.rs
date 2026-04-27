@@ -240,8 +240,14 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         return vec![];
     }
 
-    // R0 must be readable at the main frame (it's the return value)
-    if state.at_main_frame() && state.types.get(Reg::R0) == RegType::NotInit {
+    // R0 must be readable at the main frame (it's the return value).
+    // W6.4a-followon: void-returning struct_ops methods are exempt — the
+    // kernel verifier doesn't require R0 to be set when the matched
+    // ops-struct member's FUNC_PROTO declares a void return.
+    if state.at_main_frame()
+        && state.types.get(Reg::R0) == RegType::NotInit
+        && !env.ctx.entry_returns_void
+    {
         env.fail(VerificationError::RegisterNotReadable { pc, reg: Reg::R0 });
         return vec![];
     }

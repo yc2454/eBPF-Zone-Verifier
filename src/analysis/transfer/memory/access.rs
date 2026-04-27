@@ -183,6 +183,15 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
                 });
             }
         }
+        // Phase 7 wrap-up: lax field-access on trusted typed BTF
+        // pointers we don't have a `mem_region_model` entry for.
+        // Mirrors the W6.4a-followon `PtrToBtfId{type_name: "unknown"}`
+        // policy — accept any field read; result is `ScalarValue` (or a
+        // nested PtrToBtfId if narrower modeling lands later).
+        PtrToTask { .. } => {
+            // accept; loaded value left as `ScalarValue` by the
+            // type-update path
+        }
         ScalarValue | NotInit => {
             error!(
                 "Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})",
@@ -327,6 +336,39 @@ pub fn check_store(
                     base,
                     off,
                     size,
+                });
+            }
+        }
+        // W6.4a-followon: writes through a BTF-typed pointer.
+        // Mirror the load-side policy at access.rs::update_load_types:
+        //   * `type_name == "unknown"` (no layout) — accept; the BTF
+        //     resolver intentionally widens to "unknown" for kernel
+        //     structs we don't have mem_region_model entries for, and
+        //     struct_ops methods commonly write to embedded state
+        //     (e.g. `bictcp` inside `struct sock`).
+        //   * named struct with a layout — bounds-check via
+        //     mem_region_model. Future work: extend mem_region_model with
+        //     entries for named kernel structs and tighten this arm.
+        PtrToBtfId { .. } => {
+            let is_unknown = matches!(
+                base_ty,
+                PtrToBtfId {
+                    type_name: "unknown",
+                    ..
+                }
+            );
+            if !is_unknown
+                && !mem_region_model::is_valid_mem_region_read(state.types.get(base), off, size)
+            {
+                error!(
+                    "Invalid BTF-typed write at pc {}: {:?} offset {} size {}",
+                    pc, base_ty, off, size
+                );
+                env.fail(VerificationError::UnsafeGenericStore {
+                    pc,
+                    base,
+                    off,
+                    base_type: base_ty,
                 });
             }
         }

@@ -18,7 +18,7 @@ use crate::testing::logging;
 use crate::testing::pcc_test::{pcc_cert_run, pcc_test_single};
 use crate::testing::prevail::{prevail_benchmark, prevail_list, prevail_run, prevail_single};
 use crate::testing::runner::{AnalysisResult, Analyzer, find_section_for_func, is_code_section};
-use crate::testing::selftest::{selftest_list, selftest_run, selftest_single, selftest_suite};
+use crate::testing::legacy_selftest::{selftest_list, selftest_run, selftest_single, selftest_suite};
 use std::path::Path;
 
 fn usage() {
@@ -28,10 +28,16 @@ fn usage() {
     eprintln!("  cargo run -- [flags] elf-analyze-func <elf_path> <func_name>");
     eprintln!("  cargo run -- [flags] elf-analyze-prog <elf_path>");
     eprintln!("  cargo run -- [flags] bcf-benchmark   <dir_path>");
-    eprintln!("  cargo run -- [flags] selftest-list   <json_file>");
-    eprintln!("  cargo run -- [flags] selftest-single <json_file> <test_name>");
-    eprintln!("  cargo run -- [flags] selftest-run    <json_file>");
-    eprintln!("  cargo run -- [flags] selftest-suite  <json_dir>");
+    eprintln!("  cargo run -- [flags] selftest-suite          <progs_dir>");
+    eprintln!("  cargo run -- [flags] selftest-file           <prog.c> [defines]");
+    eprintln!("  cargo run -- [flags] selftest-baseline-write        <progs_dir> <legacy_json_dir> <out.json>");
+    eprintln!("  cargo run -- [flags] selftest-baseline-check        <progs_dir> <legacy_json_dir> <baseline.json>");
+    eprintln!("  cargo run -- [flags] selftest-baseline-check-modern <progs_dir> <baseline.json>           (fast: skips legacy)");
+    eprintln!("  cargo run -- [flags] btf-dump-struct-ops <elf_path> <struct_name>                        (diagnostic for W6.4a)");
+    eprintln!("  cargo run -- [flags] legacy-selftest-list   <json_file>");
+    eprintln!("  cargo run -- [flags] legacy-selftest-single <json_file> <test_name>");
+    eprintln!("  cargo run -- [flags] legacy-selftest-run    <json_file>");
+    eprintln!("  cargo run -- [flags] legacy-selftest-suite  <json_dir>");
     eprintln!("  cargo run -- [flags] pcc-gen         <json_file> <test_name> [cert_out]");
     eprintln!("  cargo run -- [flags] pcc-check       <json_file> <test_name> <cert_path>");
     eprintln!("  cargo run -- [flags] pcc-cycle       <json_file> <test_name> [cert_out]");
@@ -340,7 +346,81 @@ fn main() {
         // ============================================================
         // Selftest: Run single JSON test file
         // ============================================================
-        "selftest-run" => {
+        // ============================================================
+        // Selftest (modern): compile + run upstream .c sources
+        // ============================================================
+        "selftest-file" => {
+            if remaining.len() < 2 {
+                eprintln!("Error: Missing .c source path");
+                usage();
+                return;
+            }
+            run_modern_selftest_file(&remaining[1], remaining.get(2).map(|s| s.as_str()), &config);
+        }
+        "selftest-suite" => {
+            if remaining.len() < 2 {
+                eprintln!("Error: Missing progs/ directory path");
+                usage();
+                return;
+            }
+            run_modern_selftest_dir(&remaining[1], &config);
+        }
+        "selftest-baseline-write" => {
+            if remaining.len() < 4 {
+                eprintln!("Usage: selftest-baseline-write <progs_dir> <legacy_json_dir> <out.json>");
+                return;
+            }
+            run_baseline_write(&remaining[1], &remaining[2], &remaining[3], &config);
+        }
+        "selftest-baseline-check" => {
+            if remaining.len() < 4 {
+                eprintln!("Usage: selftest-baseline-check <progs_dir> <legacy_json_dir> <baseline.json>");
+                return;
+            }
+            run_baseline_check(&remaining[1], &remaining[2], &remaining[3], &config);
+        }
+        "selftest-baseline-check-modern" => {
+            if remaining.len() < 3 {
+                eprintln!("Usage: selftest-baseline-check-modern <progs_dir> <baseline.json>");
+                return;
+            }
+            run_baseline_check_modern(&remaining[1], &remaining[2], &config);
+        }
+        "btf-dump-struct-ops" => {
+            if remaining.len() < 3 {
+                eprintln!("Usage: btf-dump-struct-ops <elf_path> <struct_name>");
+                eprintln!("Diagnostic: walk the BTF for <struct_name>, list each member that");
+                eprintln!("resolves to a `PTR -> FUNC_PROTO` (i.e. a struct_ops method), and");
+                eprintln!("print the parameter list as the W6.4a entry-state plumbing sees it.");
+                return;
+            }
+            run_btf_dump_struct_ops(&remaining[1], &remaining[2]);
+        }
+        "struct-ops-bindings" => {
+            if remaining.len() < 2 {
+                eprintln!("Usage: struct-ops-bindings <elf_path>");
+                eprintln!("Diagnostic: dump every recovered (subprog -> ops_struct.member)");
+                eprintln!("binding for SEC(\".struct_ops\")/.struct_ops.link sections (W6.4a step 3).");
+                return;
+            }
+            run_struct_ops_bindings(&remaining[1]);
+        }
+        "btf-dump-func" => {
+            if remaining.len() < 3 {
+                eprintln!("Usage: btf-dump-func <elf_path> <func_name>");
+                eprintln!("Diagnostic: print the parameter list of <func_name> as recorded");
+                eprintln!("in BTF. For struct_ops subprogs this is the same answer the");
+                eprintln!("entry-state plumbing uses — without needing to know which");
+                eprintln!("ops-struct member the subprog binds to.");
+                return;
+            }
+            run_btf_dump_func(&remaining[1], &remaining[2]);
+        }
+
+        // ============================================================
+        // Legacy selftest (pre-6.2 JSON corpus)
+        // ============================================================
+        "legacy-selftest-run" => {
             if remaining.len() < 2 {
                 eprintln!("Error: Missing JSON test file path");
                 usage();
@@ -352,10 +432,7 @@ fn main() {
             selftest_run(json_path, &config, output_dir);
         }
 
-        // ============================================================
-        // Selftest: Run all JSON files in directory
-        // ============================================================
-        "selftest-suite" => {
+        "legacy-selftest-suite" => {
             if remaining.len() < 2 {
                 eprintln!("Error: Missing JSON test directory path");
                 usage();
@@ -367,10 +444,7 @@ fn main() {
             selftest_suite(json_dir, &config, output_dir);
         }
 
-        // ============================================================
-        // Selftest: List all tests in a JSON file
-        // ============================================================
-        "selftest-list" => {
+        "legacy-selftest-list" => {
             if remaining.len() < 2 {
                 eprintln!("Error: Missing JSON test file path");
                 usage();
@@ -381,13 +455,10 @@ fn main() {
             selftest_list(json_path);
         }
 
-        // ============================================================
-        // Selftest: Run a single test by name
-        // ============================================================
-        "selftest-single" => {
+        "legacy-selftest-single" => {
             if remaining.len() < 3 {
                 eprintln!("Error: Missing arguments");
-                eprintln!("Usage: selftest-single <json_file> <test_name>");
+                eprintln!("Usage: legacy-selftest-single <json_file> <test_name>");
                 return;
             }
             let json_path = &remaining[1];
@@ -587,4 +658,455 @@ fn main() {
             usage();
         }
     }
+}
+
+// ============================================================
+// Modern selftest helpers
+// ============================================================
+
+fn parse_extra_defines(arg: Option<&str>) -> Vec<String> {
+    arg.map(|s| s.split(',').filter(|t| !t.is_empty()).map(String::from).collect())
+        .unwrap_or_default()
+}
+
+fn run_modern_selftest_file(src: &str, defines_arg: Option<&str>, config: &VerifierConfig) {
+    use crate::testing::selftest::clang::DEFAULT_HEADERS_TAG;
+    use crate::testing::selftest::runner;
+
+    let headers = std::path::PathBuf::from("selftests/headers").join(DEFAULT_HEADERS_TAG);
+    let defines = parse_extra_defines(defines_arg);
+    let define_refs: Vec<&str> = defines.iter().map(|s| s.as_str()).collect();
+
+    match runner::run_file(std::path::Path::new(src), &headers, &define_refs, config) {
+        Ok(report) => print_modern_report(&report),
+        Err(e) => eprintln!("Error: {e:?}"),
+    }
+}
+
+fn run_modern_selftest_dir(dir: &str, config: &VerifierConfig) {
+    use crate::testing::selftest::clang::DEFAULT_HEADERS_TAG;
+    use crate::testing::selftest::runner;
+
+    let headers = std::path::PathBuf::from("selftests/headers").join(DEFAULT_HEADERS_TAG);
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("Error reading {dir}: {e}");
+            return;
+        }
+    };
+
+    let mut totals = (0usize, 0usize, 0usize, 0usize, 0usize); // pass, false_reject, false_accept, skipped, error
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("c") {
+            continue;
+        }
+        match runner::run_file(&path, &headers, &[], config) {
+            Ok(report) => {
+                print_modern_report(&report);
+                for p in &report.progs {
+                    use crate::testing::selftest::runner::Outcome;
+                    match p.outcome {
+                        Outcome::Pass => totals.0 += 1,
+                        Outcome::FalseReject(_) => totals.1 += 1,
+                        Outcome::FalseAccept => totals.2 += 1,
+                        Outcome::Skipped(_) => totals.3 += 1,
+                        Outcome::Error(_) => totals.4 += 1,
+                    }
+                }
+            }
+            Err(e) => eprintln!("Error on {}: {e:?}", path.display()),
+        }
+    }
+    println!("\n=== Suite summary ===");
+    println!(
+        "  pass={}  false_reject={}  false_accept={}  skipped={}  error={}",
+        totals.0, totals.1, totals.2, totals.3, totals.4
+    );
+}
+
+fn collect_json_recursive(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            collect_json_recursive(&p, out);
+        } else if p.extension().and_then(|s| s.to_str()) == Some("json") {
+            out.push(p);
+        }
+    }
+}
+
+fn sweep_modern_and_legacy(
+    progs_dir: &str,
+    legacy_json_dir: &str,
+    config: &VerifierConfig,
+    filter: &dyn crate::testing::selftest::runner::ProgFilter,
+) -> crate::testing::selftest::baseline::Baseline {
+    use crate::testing::legacy_selftest;
+    use crate::testing::selftest::baseline::Baseline;
+    use crate::testing::selftest::clang::DEFAULT_HEADERS_TAG;
+    use crate::testing::selftest::runner;
+
+    let headers = std::path::PathBuf::from("selftests/headers").join(DEFAULT_HEADERS_TAG);
+    let modern = runner::run_dir_filtered(std::path::Path::new(progs_dir), &headers, config, filter)
+        .unwrap_or_else(|e| {
+            eprintln!("Error sweeping modern {progs_dir}: {e:?}");
+            Vec::new()
+        });
+    let mut bl = Baseline::from_reports(DEFAULT_HEADERS_TAG, &modern);
+
+    // Legacy JSON sweep — recurse, picking up `*.json` under the dir.
+    let mut legacy_files = Vec::new();
+    collect_json_recursive(std::path::Path::new(legacy_json_dir), &mut legacy_files);
+    legacy_files.sort();
+    // Parallelize legacy file iteration. Each `.json` file is fully
+    // independent; rayon walks them concurrently across cores. Within a
+    // file, tests still run sequentially — a file-level granularity is
+    // enough since most files have similar sizes.
+    //
+    // Also apply `with_selftest_caps` to the legacy config: without it,
+    // the default `max_insn = 1M` lets a handful of pathological tests
+    // run for many seconds each, dominating wallclock.
+    use crate::testing::selftest::runner::with_selftest_caps;
+    use rayon::prelude::*;
+    let legacy_config = with_selftest_caps(config);
+    let legacy_results: Vec<_> = legacy_files
+        .par_iter()
+        .filter_map(|path| match legacy_selftest::run_test_file(
+            path.to_str().unwrap(),
+            &legacy_config,
+        ) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                eprintln!("Error on legacy {}: {e}", path.display());
+                None
+            }
+        })
+        .collect();
+    bl.extend_with_legacy(&legacy_results);
+    bl
+}
+
+fn sweep_modern_only(
+    progs_dir: &str,
+    config: &VerifierConfig,
+    filter: &dyn crate::testing::selftest::runner::ProgFilter,
+) -> crate::testing::selftest::baseline::Baseline {
+    use crate::testing::selftest::baseline::Baseline;
+    use crate::testing::selftest::clang::DEFAULT_HEADERS_TAG;
+    use crate::testing::selftest::runner;
+
+    let headers = std::path::PathBuf::from("selftests/headers").join(DEFAULT_HEADERS_TAG);
+    let modern = runner::run_dir_filtered(std::path::Path::new(progs_dir), &headers, config, filter)
+        .unwrap_or_else(|e| {
+            eprintln!("Error sweeping modern {progs_dir}: {e:?}");
+            Vec::new()
+        });
+    Baseline::from_reports(DEFAULT_HEADERS_TAG, &modern)
+}
+
+fn run_btf_dump_struct_ops(elf_path: &str, struct_name: &str) {
+    use crate::parsing::btf::{self, StructOpsArg};
+    use goblin::elf::Elf;
+
+    let bytes = match std::fs::read(elf_path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("read {elf_path}: {e}");
+            std::process::exit(2);
+        }
+    };
+    let elf = match Elf::parse(&bytes) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("parse ELF {elf_path}: {e}");
+            std::process::exit(2);
+        }
+    };
+    let mut btf_bytes: Option<&[u8]> = None;
+    for sh in &elf.section_headers {
+        let name = elf
+            .shdr_strtab
+            .get_at(sh.sh_name)
+            .unwrap_or("");
+        if name == ".BTF" {
+            let start = sh.sh_offset as usize;
+            let end = start + sh.sh_size as usize;
+            if end <= bytes.len() {
+                btf_bytes = Some(&bytes[start..end]);
+            }
+            break;
+        }
+    }
+    let Some(raw) = btf_bytes else {
+        eprintln!("no .BTF section in {elf_path}");
+        std::process::exit(2);
+    };
+    let ctx = match btf::parse_btf(raw) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("parse BTF: {e}");
+            std::process::exit(2);
+        }
+    };
+    let Some(struct_id) = ctx.find_struct_by_name(struct_name) else {
+        eprintln!("struct `{struct_name}` not found in BTF");
+        std::process::exit(1);
+    };
+    println!("struct {struct_name} (btf_id {struct_id})");
+    let ty = ctx.types.get(&struct_id).unwrap();
+    let mut hits = 0usize;
+    for m in &ty.members {
+        let mname = ctx.read_string(m.name_off).unwrap_or("?");
+        // We only print members that look like struct_ops methods — those
+        // resolve to a `PTR -> FUNC_PROTO` chain.
+        let Some(pointee_id) = ctx.pointee(m.type_id) else {
+            continue;
+        };
+        let Some(pointee) = ctx.types.get(&pointee_id) else {
+            continue;
+        };
+        if pointee.kind() != btf::BTF_KIND_FUNC_PROTO {
+            continue;
+        }
+        hits += 1;
+        let args = ctx
+            .resolve_struct_ops_method(struct_name, mname)
+            .unwrap_or_default();
+        let pretty = args
+            .iter()
+            .map(|a| match a {
+                StructOpsArg::Scalar => "scalar".to_string(),
+                StructOpsArg::TrustedPtr(n) => format!("ptr<{n}>"),
+                StructOpsArg::OpaquePtr => "ptr<?>".to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("  .{mname:30} ({pretty})");
+    }
+    println!("({hits} method(s))");
+}
+
+fn run_struct_ops_bindings(elf_path: &str) {
+    use crate::parsing::btf;
+    use crate::parsing::elf::struct_ops;
+    use goblin::elf::Elf;
+
+    let bytes = std::fs::read(elf_path).unwrap_or_else(|e| {
+        eprintln!("read {elf_path}: {e}");
+        std::process::exit(2);
+    });
+    let elf = Elf::parse(&bytes).unwrap_or_else(|e| {
+        eprintln!("parse ELF: {e}");
+        std::process::exit(2);
+    });
+    let mut btf_bytes: Option<&[u8]> = None;
+    for sh in &elf.section_headers {
+        if elf.shdr_strtab.get_at(sh.sh_name).unwrap_or("") == ".BTF" {
+            let s = sh.sh_offset as usize;
+            let e = s + sh.sh_size as usize;
+            if e <= bytes.len() {
+                btf_bytes = Some(&bytes[s..e]);
+            }
+            break;
+        }
+    }
+    let raw = btf_bytes.unwrap_or_else(|| {
+        eprintln!("no .BTF section");
+        std::process::exit(2);
+    });
+    let ctx = btf::parse_btf(raw).unwrap_or_else(|e| {
+        eprintln!("parse BTF: {e}");
+        std::process::exit(2);
+    });
+    let bindings = struct_ops::extract_bindings(&bytes, &elf, &ctx);
+    if bindings.is_empty() {
+        println!("(no struct_ops bindings recovered)");
+        return;
+    }
+    for b in &bindings {
+        println!("{} -> {}.{}", b.subprog, b.ops_struct, b.member);
+    }
+    println!("({} binding(s))", bindings.len());
+}
+
+fn run_btf_dump_func(elf_path: &str, func_name: &str) {
+    use crate::parsing::btf::{self, StructOpsArg};
+    use goblin::elf::Elf;
+
+    let bytes = std::fs::read(elf_path).unwrap_or_else(|e| {
+        eprintln!("read {elf_path}: {e}");
+        std::process::exit(2);
+    });
+    let elf = Elf::parse(&bytes).unwrap_or_else(|e| {
+        eprintln!("parse ELF: {e}");
+        std::process::exit(2);
+    });
+    let mut btf_bytes: Option<&[u8]> = None;
+    for sh in &elf.section_headers {
+        if elf.shdr_strtab.get_at(sh.sh_name).unwrap_or("") == ".BTF" {
+            let s = sh.sh_offset as usize;
+            let e = s + sh.sh_size as usize;
+            if e <= bytes.len() {
+                btf_bytes = Some(&bytes[s..e]);
+            }
+            break;
+        }
+    }
+    let raw = btf_bytes.unwrap_or_else(|| {
+        eprintln!("no .BTF section");
+        std::process::exit(2);
+    });
+    let ctx = btf::parse_btf(raw).unwrap_or_else(|e| {
+        eprintln!("parse BTF: {e}");
+        std::process::exit(2);
+    });
+    let Some(args) = ctx.resolve_func_args(func_name) else {
+        eprintln!("FUNC `{func_name}` not found in BTF (or no FUNC_PROTO)");
+        std::process::exit(1);
+    };
+    let pretty = args
+        .iter()
+        .map(|a| match a {
+            StructOpsArg::Scalar => "scalar".to_string(),
+            StructOpsArg::TrustedPtr(n) => format!("ptr<{n}>"),
+            StructOpsArg::OpaquePtr => "ptr<?>".to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    println!("{func_name}({pretty})");
+}
+
+fn run_baseline_check_modern(progs_dir: &str, stored: &str, config: &VerifierConfig) {
+    use crate::testing::selftest::baseline::{Baseline, CheckFilter, DeterministicFilter, diff};
+
+    let mut baseline = match Baseline::read(stored) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("Error reading baseline {stored}: {e:?}");
+            std::process::exit(2);
+        }
+    };
+    // Ignore legacy entries on both sides — modern-only check is for
+    // the day-to-day phase-advance gate; legacy regressions are caught
+    // by the periodic full check.
+    baseline.files.retain(|k, _| !k.starts_with("legacy/"));
+
+    let det_filter = DeterministicFilter::from_baseline(&baseline);
+    let check_filter = CheckFilter {
+        filter: &det_filter,
+        baseline: &baseline,
+    };
+    let current = sweep_modern_only(progs_dir, config, &check_filter);
+    let d = diff(&baseline, &current);
+
+    println!("=== Baseline diff (modern only) ===");
+    println!("  unchanged: {}", d.unchanged);
+    println!("  regressions: {}", d.regressions.len());
+    println!("  new entries: {}", d.new_entries.len());
+    println!("  removed entries: {}", d.removed_entries.len());
+
+    for r in &d.regressions {
+        let was = r.baseline.as_ref().map(|b| b.ours.as_str()).unwrap_or("?");
+        let now = r.current.as_ref().map(|c| c.ours.as_str()).unwrap_or("?");
+        println!("  REGRESSION  {}::{}  {was} -> {now}", r.file, r.prog);
+    }
+    for n in &d.new_entries {
+        if let Some(c) = &n.current {
+            println!("  NEW         {}::{}  ours={}", n.file, n.prog, c.ours);
+        }
+    }
+    for r in &d.removed_entries {
+        if let Some(b) = &r.baseline {
+            println!("  REMOVED     {}::{}  was={}", r.file, r.prog, b.ours);
+        }
+    }
+
+    if !d.regressions.is_empty() {
+        std::process::exit(1);
+    }
+}
+
+fn run_baseline_write(progs_dir: &str, legacy_json_dir: &str, out: &str, config: &VerifierConfig) {
+    use crate::testing::selftest::runner::RunAll;
+    let bl = sweep_modern_and_legacy(progs_dir, legacy_json_dir, config, &RunAll);
+    if let Err(e) = bl.write(out) {
+        eprintln!("Error writing {out}: {e:?}");
+        return;
+    }
+    println!("Wrote baseline ({} files) to {out}", bl.files.len());
+}
+
+fn run_baseline_check(
+    progs_dir: &str,
+    legacy_json_dir: &str,
+    stored: &str,
+    config: &VerifierConfig,
+) {
+    use crate::testing::selftest::baseline::{Baseline, CheckFilter, DeterministicFilter, diff};
+
+    let baseline = match Baseline::read(stored) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("Error reading baseline {stored}: {e:?}");
+            std::process::exit(2);
+        }
+    };
+    // Fast path: only re-run programs whose baseline outcome is
+    // deterministic (PASS / FALSE_REJECT / FALSE_ACCEPT) plus any
+    // programs that aren't in the baseline at all (newly added). This
+    // shrinks the gate from ~18 min to <1 min for a typical sweep.
+    // Use `selftest-baseline-write` to refresh the baseline exhaustively.
+    let det_filter = DeterministicFilter::from_baseline(&baseline);
+    let check_filter = CheckFilter {
+        filter: &det_filter,
+        baseline: &baseline,
+    };
+    let current = sweep_modern_and_legacy(progs_dir, legacy_json_dir, config, &check_filter);
+    let d = diff(&baseline, &current);
+
+    println!("=== Baseline diff ===");
+    println!("  unchanged: {}", d.unchanged);
+    println!("  regressions: {}", d.regressions.len());
+    println!("  new entries: {}", d.new_entries.len());
+    println!("  removed entries: {}", d.removed_entries.len());
+
+    for r in &d.regressions {
+        let was = r.baseline.as_ref().map(|b| b.ours.as_str()).unwrap_or("?");
+        let now = r.current.as_ref().map(|c| c.ours.as_str()).unwrap_or("?");
+        println!("  REGRESSION  {}::{}  {was} -> {now}", r.file, r.prog);
+    }
+    for n in &d.new_entries {
+        if let Some(c) = &n.current {
+            println!("  NEW         {}::{}  ours={}", n.file, n.prog, c.ours);
+        }
+    }
+    for n in &d.removed_entries {
+        println!("  REMOVED     {}::{}", n.file, n.prog);
+    }
+
+    if !d.regressions.is_empty() {
+        std::process::exit(1);
+    }
+}
+
+fn print_modern_report(report: &crate::testing::selftest::runner::FileReport) {
+    use crate::testing::selftest::runner::Outcome;
+    println!("\n--- {} ---", report.source.display());
+    for p in &report.progs {
+        let tag = match &p.outcome {
+            Outcome::Pass => "PASS".to_string(),
+            Outcome::FalseReject(e) => format!("FALSE-REJECT ({e})"),
+            Outcome::FalseAccept => "FALSE-ACCEPT (soundness!)".into(),
+            Outcome::Skipped(r) => format!("skip: {r}"),
+            Outcome::Error(e) => format!("ERROR: {e}"),
+        };
+        println!("  [{tag}]  {} ({})", p.func_name, p.description);
+    }
+    println!("  ({} / {} pass)", report.pass_count(), report.total());
 }

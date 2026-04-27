@@ -18,7 +18,7 @@ use crate::analysis::machine::state::State;
 use crate::domains::tnum::Tnum;
 
 use super::side_effects::{apply_call_proto_r0, arg_reg, resolve_stack_arg};
-use super::signatures::{CallProto, RetKind, get_kfunc_proto};
+use super::signatures::{CallFlags, CallProto, RetKind, get_kfunc_proto};
 
 /// Top-level kfunc dispatch. Looks up the kfunc name in BTF and routes
 /// it. Resolution order:
@@ -72,6 +72,55 @@ fn transfer_kfunc_proto(
     let pc = state.pc;
     let in_types = state.types.clone();
 
+    // W6.3: enforce per-kfunc prog-type allowlist before any other
+    // validation. Mirrors the kernel verifier's `KF_PROG_TYPE_*` check.
+    if let Some(allowed) = proto.prog_type_allowlist
+        && !allowed.contains(&env.ctx.prog_kind)
+    {
+        env.fail(crate::analysis::machine::error::VerificationError::KfuncNotAllowedForProgram {
+            pc,
+            btf_id,
+            kind: env.ctx.prog_kind,
+        });
+        return vec![];
+    }
+
+    // W6.4c: per-(ops_struct, member) allowlist for struct_ops kfuncs.
+    // The kernel sched_ext class gates some kfuncs to specific callbacks
+    // (e.g. `scx_bpf_select_cpu_dfl` only callable from `.select_cpu`).
+    // We only consult the binding when prog_kind is StructOps; for any
+    // other prog kind the prog_type_allowlist above already rejected.
+    if let Some(allowed) = proto.ops_member_allowlist
+        && env.ctx.prog_kind == crate::ast::ProgramKind::StructOps
+    {
+        let ok = match &env.ctx.struct_ops_member {
+            Some((ops, member)) => allowed
+                .iter()
+                .any(|(o, m)| *o == ops.as_str() && *m == member.as_str()),
+            // No binding info: be conservative — reject. The runner is
+            // expected to populate this for any StructOps subprog with
+            // a recovered binding; missing-binding means we can't prove
+            // the call site is allowed.
+            None => false,
+        };
+        if !ok {
+            let (ops_struct, member) = env
+                .ctx
+                .struct_ops_member
+                .clone()
+                .unwrap_or_else(|| ("?".to_string(), "?".to_string()));
+            env.fail(
+                crate::analysis::machine::error::VerificationError::KfuncNotAllowedForOpsMember {
+                    pc,
+                    btf_id,
+                    ops_struct,
+                    member,
+                },
+            );
+            return vec![];
+        }
+    }
+
     if !super::checks::check_mem_size_pairs(env, &state, proto, pc) {
         return vec![];
     }
@@ -114,11 +163,17 @@ fn transfer_kfunc_proto(
 
     apply_call_proto_r0(&in_types, &mut state, proto);
 
-    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-        state.types.set(r, RegType::NotInit);
-        state.domain.forget(r);
-        state.set_tnum(r, Tnum::unknown());
-        state.clear_scalar_id(r);
+    // W7.2: kfuncs marked `bpf_fastcall` (v6.13) preserve R1..R5 — skip
+    // the caller-saved clobber so clang-emitted no-spill sequences
+    // type-check. Iter-next forks intentionally always clobber (no
+    // fastcall iter_next kfunc exists in the kernel set).
+    if !proto.flags.contains(CallFlags::FASTCALL) {
+        for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+            state.types.set(r, RegType::NotInit);
+            state.domain.forget(r);
+            state.set_tnum(r, Tnum::unknown());
+            state.clear_scalar_id(r);
+        }
     }
     state.domain.forget(Reg::R0);
     state.set_tnum(Reg::R0, Tnum::unknown());

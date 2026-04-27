@@ -99,13 +99,23 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                                 None
                             };
 
+                            // Modern BTF-described maps may omit the
+                            // tail fields of the legacy `bpf_map_def`.
+                            // Read each field only if `read_len` covers it.
+                            let read_u32 = |start: usize| {
+                                if read_len >= start + 4 {
+                                    u32::from_le_bytes(b[start..start + 4].try_into().unwrap())
+                                } else {
+                                    0
+                                }
+                            };
                             maps.push(BpfMapDef {
                                 name: map_name.to_string(),
-                                type_: u32::from_le_bytes(b[0..4].try_into().unwrap()),
-                                key_size: u32::from_le_bytes(b[4..8].try_into().unwrap()),
-                                value_size: u32::from_le_bytes(b[8..12].try_into().unwrap()),
-                                max_entries: u32::from_le_bytes(b[12..16].try_into().unwrap()),
-                                map_flags: u32::from_le_bytes(b[16..20].try_into().unwrap()),
+                                type_: read_u32(0),
+                                key_size: read_u32(4),
+                                value_size: read_u32(8),
+                                max_entries: read_u32(12),
+                                map_flags: read_u32(16),
                                 btf_val_type_id: None,
                                 initial_data: None,
                                 inner_map_idx,
@@ -143,6 +153,15 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                     }
                     if m.max_entries == 0 {
                         m.max_entries = btf_m.max_entries;
+                    }
+                    // The legacy `bpf_map_def` section can't carry a value
+                    // type id, so the BTF-described copy is the only source
+                    // for it. Without this, MapValueSpecial validators
+                    // (spin_lock, timer, list_head, rb_root) reject every
+                    // ARRAY/HASH map produced by libbpf-style `__type(value, …)`
+                    // declarations with "no value-type BTF".
+                    if m.btf_val_type_id.is_none() {
+                        m.btf_val_type_id = btf_m.btf_val_type_id;
                     }
                 }
             }

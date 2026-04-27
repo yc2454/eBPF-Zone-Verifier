@@ -7,7 +7,7 @@ use crate::domains::dbm::Dbm;
 use crate::parsing::bpf_insn::RawBpfInsn;
 use crate::parsing::bpf_to_ast::lower_raw_to_program;
 use crate::pcc::{ProgramCertificate, generate_certificate};
-use crate::testing::selftest::{
+use crate::testing::legacy_selftest::{
     JsonTestCase, TestOutcome, build_exec_context, make_entry_state, run_test,
 };
 use serde::Deserialize;

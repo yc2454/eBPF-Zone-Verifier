@@ -83,9 +83,21 @@ pub static SOCKET_COMPAT: &[fn(&RegType) -> bool] =
 pub static SOCK_COMMON_COMPAT: &[fn(&RegType) -> bool] =
     &[is_ptr_to_sock_common, is_ptr_to_socket, is_ptr_to_tcp_sock];
 
-/// Types compatible with PtrToBTFIdSockCommon argument
-pub static BTF_SOCK_COMMON_COMPAT: &[fn(&RegType) -> bool] =
-    &[is_ptr_to_sock_common, is_ptr_to_socket, is_ptr_to_tcp_sock];
+/// Types compatible with PtrToBTFIdSockCommon argument.
+///
+/// W6.4a-followon: includes `PtrToBtfId` (any BTF-typed pointer). The
+/// kernel verifier's `ARG_PTR_TO_BTF_ID_SOCK_COMMON` accepts any
+/// PTR_TO_BTF_ID whose type id is `struct sock` or a sock subclass
+/// (`tcp_sock`, `udp_sock`, …). For struct_ops methods we lose the
+/// exact type name (intern_btf_type_name returns "unknown"), so the
+/// best we can do here is "any PtrToBtfId" — narrowing requires
+/// resolving subclass relationships in BTF, which is W7 territory.
+pub static BTF_SOCK_COMMON_COMPAT: &[fn(&RegType) -> bool] = &[
+    is_ptr_to_sock_common,
+    is_ptr_to_socket,
+    is_ptr_to_tcp_sock,
+    is_ptr_to_btf_id,
+];
 
 /// Types compatible with generic memory pointers (PtrToMem)
 #[allow(dead_code)]

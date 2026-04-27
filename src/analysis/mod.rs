@@ -108,7 +108,9 @@ pub fn analyze_program_full(
         };
     }
 
-    if let Err(e) = subprog::check_stack_overflow(prog) {
+    if let Err(e) =
+        subprog::check_stack_overflow(prog, env.ctx.prog_kind, config.enable_private_stack)
+    {
         error!(target: "app", "[Analysis] Stack Error: {}", e);
         return AnalysisResult {
             dbms: vec![],
@@ -154,6 +156,13 @@ pub fn analyze_program_full(
         },
     );
     initial_state.domain.init_packet_anchors();
+
+    // W6.4a: struct_ops subprogs receive their args via the BPF_PROG
+    // macro's ctx-array idiom — R1 stays as PtrToCtx (a `u64 *ctx`), and
+    // each declared arg is unpacked at runtime via `*(u64 *)(ctx + 8*i)`.
+    // The per-arg typing happens inside `validate_ctx_access` (see
+    // src/common/ctx_model.rs), which consumes `ctx.entry_args` to type
+    // the loaded values. No R1..Rn override is needed here.
 
     // 3. Setup Worklist
     let mut worklist = VecDeque::new();

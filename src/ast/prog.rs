@@ -25,6 +25,18 @@ pub enum ProgramKind {
     CgroupSockAddr,
     Lsm,
     Tracing,
+    /// `SEC("syscall")` — BPF_PROG_TYPE_SYSCALL (kernel v5.11+).
+    /// Distinct from generic Unknown so the W6.3 prog-type allowlist
+    /// can permit cgroup / cpumask / task kfuncs in syscall programs
+    /// (where they're allowed) but reject in raw_tp.
+    Syscall,
+    /// `SEC("struct_ops[.s]/<member>")` or bare `SEC("struct_ops")`
+    /// — BPF_PROG_TYPE_STRUCT_OPS (kernel v5.6+, expanded by sched_ext
+    /// in v6.12). Each program implements one member of an ops-struct
+    /// (`tcp_congestion_ops.init`, `sched_ext_ops.dispatch`, …); R1..Rn
+    /// entry types are derived from that member's BTF FUNC_PROTO by the
+    /// W6.4 entry-state plumbing.
+    StructOps,
     #[default]
     Unknown,
 }
@@ -55,7 +67,79 @@ impl ProgramKind {
     pub fn from_section(s: &str) -> Self {
         let s = s.to_lowercase();
         let s = s.trim();
-        // Common tc section aliases used by Cilium/Suricata-style objects.
+
+        // ---- Modern aliases (W6.2) ----
+        //
+        // Recognized natively rather than relying on incidental
+        // `starts_with("tc")` matches or falling through to Unknown. Each
+        // modern SEC routes to its underlying kernel prog_type (libbpf's
+        // section_defs[] is the source of truth):
+        //   `tcx/{ingress,egress}` / `netkit/{primary,peer}` → sched_cls
+        //   `fentry[.s]/`, `fexit[.s]/`, `fmod_ret[.s]/`, `tp_btf/`,
+        //     `iter[.s]/` → tracing
+        //   `raw_tp[.w][/…]` → raw_tracepoint
+        //   `lsm[.s]/` → lsm
+        //   `uprobe[.s]/`, `uretprobe[.s]/` → kprobe
+        //   `cgroup_skb/{ingress,egress}` (libbpf modern form, distinct
+        //     from legacy `cgroup/skb`) → cgroup_skb
+        //
+        // SECs without a corresponding ProgramKind variant
+        // (`syscall`, `flow_dissector`, `sk_reuseport`, `sk_lookup`,
+        // `struct_ops/*`, `netfilter/*`) intentionally fall through to
+        // Unknown — adding variants is W6.3/W6.4 territory.
+        if s.starts_with("tcx/") || s.starts_with("netkit/") {
+            return ProgramKind::SchedCls;
+        }
+        if s.starts_with("fentry/")
+            || s.starts_with("fentry.s/")
+            || s.starts_with("fexit/")
+            || s.starts_with("fexit.s/")
+            || s.starts_with("fmod_ret/")
+            || s.starts_with("fmod_ret.s/")
+            || s.starts_with("tp_btf/")
+            || s.starts_with("iter/")
+            || s.starts_with("iter.s/")
+        {
+            return ProgramKind::Tracing;
+        }
+        if s == "raw_tp"
+            || s.starts_with("raw_tp/")
+            || s.starts_with("raw_tp.w/")
+            || s == "raw_tp.w"
+        {
+            return ProgramKind::RawTracepoint;
+        }
+        if s.starts_with("lsm/") || s.starts_with("lsm.s/") {
+            return ProgramKind::Lsm;
+        }
+        if s.starts_with("uprobe/")
+            || s.starts_with("uprobe.s/")
+            || s.starts_with("uretprobe/")
+            || s.starts_with("uretprobe.s/")
+        {
+            return ProgramKind::Kprobe;
+        }
+        if s.starts_with("cgroup_skb/") {
+            return ProgramKind::CgroupSkb;
+        }
+        if s == "syscall" {
+            return ProgramKind::Syscall;
+        }
+        // struct_ops (W6.4). Forms in the wild:
+        //   "struct_ops"             — bare, member named after func symbol
+        //   "struct_ops/<member>"    — explicit member binding
+        //   "struct_ops.s/<member>"  — sleepable variant
+        //   "?struct_ops/<member>"   — optional (libbpf "weak") binding
+        // The leading "?" is libbpf-internal optionality; strip before match.
+        let trimmed = s.strip_prefix('?').unwrap_or(&s);
+        if trimmed == "struct_ops"
+            || trimmed.starts_with("struct_ops/")
+            || trimmed.starts_with("struct_ops.s/")
+        {
+            return ProgramKind::StructOps;
+        }
+
+        // ---- Common tc section aliases used by Cilium/Suricata-style objects ----
         if matches!(
             s,
             "from-netdev"

@@ -261,6 +261,10 @@ fn same_acquired_pointer(t1: &RegType, t2: &RegType) -> bool {
             RegType::PtrToArenaOrNull { ref_id: id2, .. },
         ) => id1 == id2,
         (
+            RegType::PtrToCgroupOrNull { ref_id: id1 },
+            RegType::PtrToCgroupOrNull { ref_id: id2 },
+        ) => id1 == id2,
+        (
             RegType::PtrToOwnedKptrOrNull { ref_id: id1 },
             RegType::PtrToOwnedKptrOrNull { ref_id: id2 },
         ) => id1 == id2,
@@ -278,6 +282,7 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
         | RegType::PtrToTcpSockOrNull { id: ref_id }
         | RegType::PtrToCpumaskOrNull { ref_id }
         | RegType::PtrToArenaOrNull { ref_id, .. }
+        | RegType::PtrToCgroupOrNull { ref_id }
         | RegType::PtrToOwnedKptrOrNull { ref_id } => ref_id,
         _ => return,
     };
