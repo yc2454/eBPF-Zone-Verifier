@@ -216,6 +216,9 @@ pub const BPF_MAP_TYPE_RINGBUF: u32 = 27;
 pub const BPF_MAP_TYPE_INODE_STORAGE: u32 = 28;
 pub const BPF_MAP_TYPE_TASK_STORAGE: u32 = 29;
 pub const BPF_MAP_TYPE_BLOOM_FILTER: u32 = 30;
+pub const BPF_MAP_TYPE_USER_RINGBUF: u32 = 31;
+pub const BPF_MAP_TYPE_CGRP_STORAGE: u32 = 32;
+pub const BPF_MAP_TYPE_ARENA: u32 = 33;
 
 // Data section names (for identifying synthetic maps)
 pub const DATA_SECTION_RODATA: &str = ".rodata";

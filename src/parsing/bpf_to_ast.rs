@@ -280,9 +280,16 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
 
             // 0xbf: rX = rY   (ALU64 | MOV | X)
             // v6.6 overloads `off` ∈ {8, 16, 32} to select MOVSX width; off=0
-            // is the classic 64-bit MOV.
+            // is the classic 64-bit MOV. v6.7 reuses `off=1` to mark
+            // `bpf_addr_space_cast` (BPF_ADDR_SPACE_CAST), which casts a
+            // pointer between kernel and arena address spaces. From the
+            // verifier's perspective the resulting register inherits the
+            // source's type/bounds — the cast is a runtime address rewrite,
+            // not a precision-affecting operation — so we lower it as a
+            // plain MOV. This keeps `PtrToArena` mem_size and ref tracking
+            // intact across the cast.
             0xbf => match insn.off {
-                0 => Instr::Alu {
+                0 | 1 => Instr::Alu {
                     width: Width::W64,
                     op: AluOp::Mov,
                     dst,
@@ -302,7 +309,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                     return Err(LowerError {
                         pc,
                         code: insn.code,
-                        msg: format!("invalid MOV64 off field: {} (expected 0, 8, 16, or 32)", insn.off),
+                        msg: format!("invalid MOV64 off field: {} (expected 0, 1, 8, 16, or 32)", insn.off),
                         kind: LowerErrorKind::UnknownOpcode,
                     });
                 }
