@@ -155,6 +155,13 @@ pub fn analyze_program_full(
     );
     initial_state.domain.init_packet_anchors();
 
+    // W6.4a: struct_ops subprogs receive their args via the BPF_PROG
+    // macro's ctx-array idiom — R1 stays as PtrToCtx (a `u64 *ctx`), and
+    // each declared arg is unpacked at runtime via `*(u64 *)(ctx + 8*i)`.
+    // The per-arg typing happens inside `validate_ctx_access` (see
+    // src/common/ctx_model.rs), which consumes `ctx.entry_args` to type
+    // the loaded values. No R1..Rn override is needed here.
+
     // 3. Setup Worklist
     let mut worklist = VecDeque::new();
     worklist.push_back(initial_state);

@@ -1540,6 +1540,42 @@ fn apply_prog_type_overrides(prog_kind: ProgramKind, off: i16, info: &mut CtxAcc
 pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<CtxAccessInfo> {
     let prog_kind = env.ctx.prog_kind;
 
+    // W6.4a: struct_ops subprogs receive their args via the BPF_PROG
+    // wrapper's ctx-array idiom — clang emits each arg access as
+    // `r_n = *(u64 *)(r1 + 8*i)` followed by an explicit cast to the
+    // declared type. The verifier sees a PtrToCtx load whose result must
+    // be typed as the i-th declared arg. We model this from the
+    // `entry_args` vector cached on ExecContext (populated by the
+    // runner from the struct_ops bindings + BTF resolver).
+    //
+    // Only 8-byte aligned 8-byte loads at offsets 0/8/16/... are
+    // recognized; this matches the codegen of the BPF_PROG macro and
+    // avoids accidentally typing partial-byte reads that would have to
+    // come from a different idiom.
+    if prog_kind == ProgramKind::StructOps
+        && let Some(args) = env.ctx.entry_args.as_ref()
+        && size == 8
+        && off >= 0
+        && off % 8 == 0
+    {
+        let idx = (off / 8) as usize;
+        if idx < args.len() {
+            use crate::analysis::machine::context::EntryArg;
+            let kind = match &args[idx] {
+                EntryArg::Scalar => CtxFieldKind::Scalar,
+                EntryArg::TrustedPtrBtfId(name) => CtxFieldKind::TrustedPtr {
+                    type_name: name,
+                    nullable: false,
+                },
+            };
+            return Some(CtxAccessInfo {
+                kind,
+                readable: true,
+                writable: false,
+            });
+        }
+    }
+
     let ctx_kind = match prog_kind {
         ProgramKind::Tracing => match (env.ctx.attach_kind, env.ctx.kfunc.as_deref()) {
             (AttachKind::TraceIter, Some("task")) => ContextKind::IterTask,

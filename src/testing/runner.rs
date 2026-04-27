@@ -1,15 +1,16 @@
 // src/runner.rs
 
 use crate::analysis;
-use crate::analysis::machine::context::default_exec_ctx;
+use crate::analysis::machine::context::{EntryArg, default_exec_ctx, intern_btf_type_name};
 use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg::Reg;
 use crate::ast::ProgramKind;
 use crate::common::config::VerifierConfig;
 use crate::domains::dbm::Dbm;
 use crate::domains::domain::assign_zero;
-use crate::parsing::btf::{self, BtfContext};
+use crate::parsing::btf::{self, BtfContext, StructOpsArg};
 use crate::parsing::elf;
+use crate::parsing::elf::struct_ops::{StructOpsBinding, extract_bindings};
 use crate::parsing::elf::{
     BpfFuncInfo, BpfMapDef, get_functions_in_section, list_section_names, load_data_section_maps,
     load_maps, load_raw_programs, load_relocations_for_function,
@@ -64,6 +65,11 @@ pub struct Analyzer {
     pub config: VerifierConfig,
     pub maps: Vec<BpfMapDef>,
     pub btf: BtfContext,
+    /// W6.4a: cached `subprog → (ops_struct, member)` bindings extracted
+    /// from `.struct_ops*` data sections + relocations. Empty for ELFs
+    /// without struct_ops content. Used to seed entry-state arg types
+    /// for SEC("struct_ops*") subprograms.
+    pub struct_ops_bindings: Vec<StructOpsBinding>,
 }
 
 impl Analyzer {
@@ -136,12 +142,57 @@ impl Analyzer {
             btf::BtfContext::new()
         };
 
+        // W6.4a: extract struct_ops bindings once per ELF. Cheap; we
+        // already have the BTF parsed and re-parse the ELF here.
+        let struct_ops_bindings = match std::fs::read(path) {
+            Ok(bytes) => match goblin::elf::Elf::parse(&bytes) {
+                Ok(elf) => extract_bindings(&bytes, &elf, &btf),
+                Err(_) => Vec::new(),
+            },
+            Err(_) => Vec::new(),
+        };
+
         Analyzer {
             path: path.to_string(),
             config,
             maps: all_maps,
             btf,
+            struct_ops_bindings,
         }
+    }
+
+    /// Build the entry-arg type vector for a struct_ops subprog by name.
+    /// Returns None if no binding matches (e.g., a non-struct_ops subprog
+    /// or one whose ops_struct/member can't be resolved in BTF).
+    ///
+    /// A subprog can appear in multiple bindings when the same function
+    /// is wired into more than one ops-struct variable in the same ELF
+    /// (e.g. bpf_dctcp_init → both dctcp_nouse.init and dctcp.init); the
+    /// resolved arg vector is identical, so we take the first match.
+    fn struct_ops_entry_args(&self, func_name: &str) -> Option<Vec<EntryArg>> {
+        let binding = self
+            .struct_ops_bindings
+            .iter()
+            .find(|b| b.subprog == func_name)?;
+        let resolved = self
+            .btf
+            .resolve_struct_ops_method(&binding.ops_struct, &binding.member)?;
+        Some(
+            resolved
+                .into_iter()
+                .map(|a| match a {
+                    StructOpsArg::Scalar => EntryArg::Scalar,
+                    // OpaquePtr falls back to a generic typed pointer rather
+                    // than scalar — the verifier should treat it as a pointer
+                    // so dereferences are at least size-checked, even if the
+                    // pointee type is unknown.
+                    StructOpsArg::OpaquePtr => EntryArg::TrustedPtrBtfId("struct"),
+                    StructOpsArg::TrustedPtr(name) => {
+                        EntryArg::TrustedPtrBtfId(intern_btf_type_name(&name))
+                    }
+                })
+                .collect(),
+        )
     }
 
     /// Analyze a single section by name.
@@ -258,8 +309,19 @@ impl Analyzer {
         // Determine program kind
         ctx.prog_kind = self.derive_program_kind(section);
 
+        // W6.4a: for struct_ops subprogs, seed R1..Rn from the resolved
+        // ops-struct member signature. derive_program_kind already
+        // matched SEC("struct_ops*") to ProgramKind::StructOps; the
+        // bindings cache resolves func_name → (ops_struct, member).
+        if ctx.prog_kind == ProgramKind::StructOps {
+            ctx.entry_args = self.struct_ops_entry_args(&func.name);
+        }
+
         if self.config.verbosity > 0 {
             println!("  Program kind: {:?}", ctx.prog_kind);
+            if let Some(args) = &ctx.entry_args {
+                println!("  Entry args: {:?}", args);
+            }
         }
 
         // Run analysis
@@ -315,6 +377,10 @@ impl Analyzer {
 
         // Determine program kind
         ctx.prog_kind = self.derive_program_kind(section);
+
+        // Section-mode path: no per-subprog identity, so we don't seed
+        // struct_ops entry_args here. For struct_ops we always go through
+        // analyze_function instead (one program per ops-struct member).
 
         if self.config.verbosity > 0 {
             println!("  Program kind: {:?}", ctx.prog_kind);
