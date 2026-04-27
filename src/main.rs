@@ -396,6 +396,15 @@ fn main() {
             }
             run_btf_dump_struct_ops(&remaining[1], &remaining[2]);
         }
+        "struct-ops-bindings" => {
+            if remaining.len() < 2 {
+                eprintln!("Usage: struct-ops-bindings <elf_path>");
+                eprintln!("Diagnostic: dump every recovered (subprog -> ops_struct.member)");
+                eprintln!("binding for SEC(\".struct_ops\")/.struct_ops.link sections (W6.4a step 3).");
+                return;
+            }
+            run_struct_ops_bindings(&remaining[1]);
+        }
         "btf-dump-func" => {
             if remaining.len() < 3 {
                 eprintln!("Usage: btf-dump-func <elf_path> <func_name>");
@@ -881,6 +890,49 @@ fn run_btf_dump_struct_ops(elf_path: &str, struct_name: &str) {
         println!("  .{mname:30} ({pretty})");
     }
     println!("({hits} method(s))");
+}
+
+fn run_struct_ops_bindings(elf_path: &str) {
+    use crate::parsing::btf;
+    use crate::parsing::elf::struct_ops;
+    use goblin::elf::Elf;
+
+    let bytes = std::fs::read(elf_path).unwrap_or_else(|e| {
+        eprintln!("read {elf_path}: {e}");
+        std::process::exit(2);
+    });
+    let elf = Elf::parse(&bytes).unwrap_or_else(|e| {
+        eprintln!("parse ELF: {e}");
+        std::process::exit(2);
+    });
+    let mut btf_bytes: Option<&[u8]> = None;
+    for sh in &elf.section_headers {
+        if elf.shdr_strtab.get_at(sh.sh_name).unwrap_or("") == ".BTF" {
+            let s = sh.sh_offset as usize;
+            let e = s + sh.sh_size as usize;
+            if e <= bytes.len() {
+                btf_bytes = Some(&bytes[s..e]);
+            }
+            break;
+        }
+    }
+    let raw = btf_bytes.unwrap_or_else(|| {
+        eprintln!("no .BTF section");
+        std::process::exit(2);
+    });
+    let ctx = btf::parse_btf(raw).unwrap_or_else(|e| {
+        eprintln!("parse BTF: {e}");
+        std::process::exit(2);
+    });
+    let bindings = struct_ops::extract_bindings(&bytes, &elf, &ctx);
+    if bindings.is_empty() {
+        println!("(no struct_ops bindings recovered)");
+        return;
+    }
+    for b in &bindings {
+        println!("{} -> {}.{}", b.subprog, b.ops_struct, b.member);
+    }
+    println!("({} binding(s))", bindings.len());
 }
 
 fn run_btf_dump_func(elf_path: &str, func_name: &str) {

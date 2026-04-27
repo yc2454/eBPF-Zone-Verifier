@@ -390,6 +390,64 @@ impl BtfContext {
         )
     }
 
+    /// Find a BTF_KIND_DATASEC by section name (e.g. ".struct_ops",
+    /// ".struct_ops.link", ".rodata", ".bss"). Returns the BTF type id.
+    pub fn find_datasec(&self, section_name: &str) -> Option<u32> {
+        for ty in self.types.values() {
+            if ty.kind() != BTF_KIND_DATASEC {
+                continue;
+            }
+            if self.get_string(ty.name_off) == Some(section_name) {
+                return Some(ty.id);
+            }
+        }
+        None
+    }
+
+    /// Iterate the variables of a DATASEC. Returns an empty iterator if the
+    /// id isn't a DATASEC.
+    pub fn datasec_entries(&self, datasec_id: u32) -> Vec<DatasecEntry> {
+        let Some(ty) = self.types.get(&datasec_id) else {
+            return Vec::new();
+        };
+        if ty.kind() != BTF_KIND_DATASEC {
+            return Vec::new();
+        }
+        ty.members
+            .iter()
+            .map(|m| DatasecEntry {
+                var_id: m.type_id,
+                offset: m.offset,
+                size: m.name_off, // we packed size into name_off — see parse_btf
+            })
+            .collect()
+    }
+
+    /// Resolve a BTF_KIND_VAR into `(var_name, target_type_id)`. Returns None
+    /// if the id isn't a VAR.
+    pub fn var_info(&self, var_id: u32) -> Option<(&str, u32)> {
+        let ty = self.types.get(&var_id)?;
+        if ty.kind() != BTF_KIND_VAR {
+            return None;
+        }
+        let name = self.get_string(ty.name_off)?;
+        Some((name, ty.size_or_type))
+    }
+
+    /// Find the struct/union member that begins exactly at `byte_offset`.
+    /// Returns the member's declared name. Used by the struct_ops binding
+    /// resolver to translate a relocation offset into a method name.
+    pub fn member_name_at_offset(&self, struct_id: u32, byte_offset: u32) -> Option<&str> {
+        let id = self.peel_modifiers(struct_id);
+        let ty = self.types.get(&id)?;
+        if !matches!(ty.kind(), BTF_KIND_STRUCT | BTF_KIND_UNION) {
+            return None;
+        }
+        let bit = byte_offset * 8;
+        let m = ty.members.iter().find(|m| m.offset == bit)?;
+        self.get_string(m.name_off)
+    }
+
     fn classify_param(&self, type_id: u32) -> StructOpsArg {
         let id = self.peel_modifiers(type_id);
         let Some(ty) = self.types.get(&id) else {
@@ -406,6 +464,18 @@ impl BtfContext {
             _ => StructOpsArg::Scalar,
         }
     }
+}
+
+/// One variable inside a BTF_KIND_DATASEC.
+#[derive(Debug, Clone)]
+pub struct DatasecEntry {
+    /// BTF type id of the variable (BTF_KIND_VAR). Use
+    /// [`BtfContext::var_info`] to resolve it to `(name, target_type_id)`.
+    pub var_id: u32,
+    /// Byte offset of the variable within the section.
+    pub offset: u32,
+    /// Size in bytes of the variable.
+    pub size: u32,
 }
 
 /// One resolved parameter of a struct_ops member's FUNC_PROTO.
@@ -497,9 +567,39 @@ pub fn parse_btf(bytes: &[u8]) -> Result<BtfContext, String> {
                 cursor += 12;
             }
             BTF_KIND_VAR => {
+                // VAR header carries the var's name (in `name_off`) and the
+                // var's BTF type id (in `size_or_type`); the trailing 4 bytes
+                // are linkage (BTF_VAR_STATIC / GLOBAL_ALLOCATED / EXTERN),
+                // which we don't currently consume.
                 cursor += 4;
             }
-            BTF_KIND_DATASEC | BTF_KIND_ENUM64 => {
+            BTF_KIND_DATASEC => {
+                // Each entry is `struct btf_var_secinfo { u32 type; u32 offset;
+                // u32 size }` — 12 bytes. Stash into `members` reusing the
+                // existing slot: type_id = secinfo.type, offset = byte offset
+                // within the section, name_off = secinfo.size (we repurpose
+                // the unused name slot to carry the size — DATASEC entries
+                // are unnamed in BTF, so name_off would otherwise be 0).
+                // Callers use the helper `datasec_entries()` to read these
+                // back without remembering the field reuse.
+                for _ in 0..vlen {
+                    if cursor + 12 > type_end {
+                        break;
+                    }
+                    let s_type = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
+                    let s_off =
+                        u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap());
+                    let s_size =
+                        u32::from_le_bytes(bytes[cursor + 8..cursor + 12].try_into().unwrap());
+                    cursor += 12;
+                    members.push(BtfMember {
+                        name_off: s_size,
+                        type_id: s_type,
+                        offset: s_off,
+                    });
+                }
+            }
+            BTF_KIND_ENUM64 => {
                 cursor += vlen * 12;
             }
             BTF_KIND_ENUM => {
