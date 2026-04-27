@@ -33,6 +33,7 @@ fn usage() {
     eprintln!("  cargo run -- [flags] selftest-baseline-write        <progs_dir> <legacy_json_dir> <out.json>");
     eprintln!("  cargo run -- [flags] selftest-baseline-check        <progs_dir> <legacy_json_dir> <baseline.json>");
     eprintln!("  cargo run -- [flags] selftest-baseline-check-modern <progs_dir> <baseline.json>           (fast: skips legacy)");
+    eprintln!("  cargo run -- [flags] btf-dump-struct-ops <elf_path> <struct_name>                        (diagnostic for W6.4a)");
     eprintln!("  cargo run -- [flags] legacy-selftest-list   <json_file>");
     eprintln!("  cargo run -- [flags] legacy-selftest-single <json_file> <test_name>");
     eprintln!("  cargo run -- [flags] legacy-selftest-run    <json_file>");
@@ -384,6 +385,27 @@ fn main() {
                 return;
             }
             run_baseline_check_modern(&remaining[1], &remaining[2], &config);
+        }
+        "btf-dump-struct-ops" => {
+            if remaining.len() < 3 {
+                eprintln!("Usage: btf-dump-struct-ops <elf_path> <struct_name>");
+                eprintln!("Diagnostic: walk the BTF for <struct_name>, list each member that");
+                eprintln!("resolves to a `PTR -> FUNC_PROTO` (i.e. a struct_ops method), and");
+                eprintln!("print the parameter list as the W6.4a entry-state plumbing sees it.");
+                return;
+            }
+            run_btf_dump_struct_ops(&remaining[1], &remaining[2]);
+        }
+        "btf-dump-func" => {
+            if remaining.len() < 3 {
+                eprintln!("Usage: btf-dump-func <elf_path> <func_name>");
+                eprintln!("Diagnostic: print the parameter list of <func_name> as recorded");
+                eprintln!("in BTF. For struct_ops subprogs this is the same answer the");
+                eprintln!("entry-state plumbing uses — without needing to know which");
+                eprintln!("ops-struct member the subprog binds to.");
+                return;
+            }
+            run_btf_dump_func(&remaining[1], &remaining[2]);
         }
 
         // ============================================================
@@ -777,6 +799,135 @@ fn sweep_modern_only(
             Vec::new()
         });
     Baseline::from_reports(DEFAULT_HEADERS_TAG, &modern)
+}
+
+fn run_btf_dump_struct_ops(elf_path: &str, struct_name: &str) {
+    use crate::parsing::btf::{self, StructOpsArg};
+    use goblin::elf::Elf;
+
+    let bytes = match std::fs::read(elf_path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("read {elf_path}: {e}");
+            std::process::exit(2);
+        }
+    };
+    let elf = match Elf::parse(&bytes) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("parse ELF {elf_path}: {e}");
+            std::process::exit(2);
+        }
+    };
+    let mut btf_bytes: Option<&[u8]> = None;
+    for sh in &elf.section_headers {
+        let name = elf
+            .shdr_strtab
+            .get_at(sh.sh_name)
+            .unwrap_or("");
+        if name == ".BTF" {
+            let start = sh.sh_offset as usize;
+            let end = start + sh.sh_size as usize;
+            if end <= bytes.len() {
+                btf_bytes = Some(&bytes[start..end]);
+            }
+            break;
+        }
+    }
+    let Some(raw) = btf_bytes else {
+        eprintln!("no .BTF section in {elf_path}");
+        std::process::exit(2);
+    };
+    let ctx = match btf::parse_btf(raw) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("parse BTF: {e}");
+            std::process::exit(2);
+        }
+    };
+    let Some(struct_id) = ctx.find_struct_by_name(struct_name) else {
+        eprintln!("struct `{struct_name}` not found in BTF");
+        std::process::exit(1);
+    };
+    println!("struct {struct_name} (btf_id {struct_id})");
+    let ty = ctx.types.get(&struct_id).unwrap();
+    let mut hits = 0usize;
+    for m in &ty.members {
+        let mname = ctx.read_string(m.name_off).unwrap_or("?");
+        // We only print members that look like struct_ops methods — those
+        // resolve to a `PTR -> FUNC_PROTO` chain.
+        let Some(pointee_id) = ctx.pointee(m.type_id) else {
+            continue;
+        };
+        let Some(pointee) = ctx.types.get(&pointee_id) else {
+            continue;
+        };
+        if pointee.kind() != btf::BTF_KIND_FUNC_PROTO {
+            continue;
+        }
+        hits += 1;
+        let args = ctx
+            .resolve_struct_ops_method(struct_name, mname)
+            .unwrap_or_default();
+        let pretty = args
+            .iter()
+            .map(|a| match a {
+                StructOpsArg::Scalar => "scalar".to_string(),
+                StructOpsArg::TrustedPtr(n) => format!("ptr<{n}>"),
+                StructOpsArg::OpaquePtr => "ptr<?>".to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("  .{mname:30} ({pretty})");
+    }
+    println!("({hits} method(s))");
+}
+
+fn run_btf_dump_func(elf_path: &str, func_name: &str) {
+    use crate::parsing::btf::{self, StructOpsArg};
+    use goblin::elf::Elf;
+
+    let bytes = std::fs::read(elf_path).unwrap_or_else(|e| {
+        eprintln!("read {elf_path}: {e}");
+        std::process::exit(2);
+    });
+    let elf = Elf::parse(&bytes).unwrap_or_else(|e| {
+        eprintln!("parse ELF: {e}");
+        std::process::exit(2);
+    });
+    let mut btf_bytes: Option<&[u8]> = None;
+    for sh in &elf.section_headers {
+        if elf.shdr_strtab.get_at(sh.sh_name).unwrap_or("") == ".BTF" {
+            let s = sh.sh_offset as usize;
+            let e = s + sh.sh_size as usize;
+            if e <= bytes.len() {
+                btf_bytes = Some(&bytes[s..e]);
+            }
+            break;
+        }
+    }
+    let raw = btf_bytes.unwrap_or_else(|| {
+        eprintln!("no .BTF section");
+        std::process::exit(2);
+    });
+    let ctx = btf::parse_btf(raw).unwrap_or_else(|e| {
+        eprintln!("parse BTF: {e}");
+        std::process::exit(2);
+    });
+    let Some(args) = ctx.resolve_func_args(func_name) else {
+        eprintln!("FUNC `{func_name}` not found in BTF (or no FUNC_PROTO)");
+        std::process::exit(1);
+    };
+    let pretty = args
+        .iter()
+        .map(|a| match a {
+            StructOpsArg::Scalar => "scalar".to_string(),
+            StructOpsArg::TrustedPtr(n) => format!("ptr<{n}>"),
+            StructOpsArg::OpaquePtr => "ptr<?>".to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    println!("{func_name}({pretty})");
 }
 
 fn run_baseline_check_modern(progs_dir: &str, stored: &str, config: &VerifierConfig) {
