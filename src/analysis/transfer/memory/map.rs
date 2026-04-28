@@ -105,14 +105,10 @@ fn interval_check_map_access(
         let min_off = ptr_off.min_offset() + (insn_off as i64);
         let max_off = ptr_off.max_offset() + (insn_off as i64) + size;
 
-        if let Some(btf_id) = map_def.btf_val_type_id {
-            check_btf_fields_access(env, pc, min_off, max_off, size, map_limit, btf_id);
-            return true;
-        }
-
-        if min_off >= 0 && max_off <= map_limit {
-            return true; // Access is safe
-        } else {
+        // Cluster A1: enforce value_size bounds even when the map carries a
+        // BTF value-type. The special-fields check below is additive — a
+        // spin_lock overlap is one rejection reason, but plain OOB is another.
+        if !(min_off >= 0 && max_off <= map_limit) {
             error!(
                 "Unsafe variable map access at pc {}: range [{}, {}], limit {}",
                 pc, min_off, max_off, map_limit
@@ -125,6 +121,11 @@ fn interval_check_map_access(
             });
             return true;
         }
+
+        if let Some(btf_id) = map_def.btf_val_type_id {
+            check_btf_fields_access(env, pc, min_off, max_off, size, map_limit, btf_id);
+        }
+        return true;
     }
     false
 }
@@ -149,21 +150,9 @@ fn zone_check_map_access(
         let access_start = min_val + (insn_off as i64);
         let access_end = max_val + (insn_off as i64) + size;
 
-        if let Some(btf_id) = map_def.btf_val_type_id {
-            check_btf_fields_access(
-                env,
-                pc,
-                insn_off.into(),
-                access_end,
-                size,
-                map_limit,
-                btf_id,
-            );
-            return;
-        }
-
-        if access_start >= 0 && access_end <= map_limit {
-        } else {
+        // Cluster A1: enforce value_size first; BTF special-field overlap is
+        // additive, not a substitute.
+        if !(access_start >= 0 && access_end <= map_limit) {
             error!(
                 "Unsafe variable map access at pc {}: range [{}, {}], limit {}",
                 pc, access_start, access_end, map_limit
@@ -174,23 +163,35 @@ fn zone_check_map_access(
                 size,
                 limit: map_limit,
             });
+            return;
+        }
+
+        if let Some(btf_id) = map_def.btf_val_type_id {
+            check_btf_fields_access(
+                env,
+                pc,
+                insn_off.into(),
+                access_end,
+                size,
+                map_limit,
+                btf_id,
+            );
         }
     } else if let Some(fixed_off) = map_off_opt {
         let final_offset = fixed_off + (insn_off as i64);
         let access_end = final_offset + size;
 
-        if let Some(btf_id) = map_def.btf_val_type_id {
-            check_btf_fields_access(env, pc, final_offset, access_end, size, map_limit, btf_id);
-            return;
-        }
-
-        if final_offset >= 0 && access_end <= map_limit {
-        } else {
+        if !(final_offset >= 0 && access_end <= map_limit) {
             error!(
                 "Unsafe map access at pc {}: off {} limit {}",
                 pc, final_offset, map_limit
             );
             env.fail(VerificationError::UnsafeMapAccess { pc, size, map_idx });
+            return;
+        }
+
+        if let Some(btf_id) = map_def.btf_val_type_id {
+            check_btf_fields_access(env, pc, final_offset, access_end, size, map_limit, btf_id);
         }
     } else {
         error!("Unbounded variable map access at pc {}", pc);
