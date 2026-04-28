@@ -3,7 +3,7 @@
 // Subprogram analysis: structure validation and stack overflow checking
 
 use crate::analysis::machine::reg::Reg;
-use crate::ast::{CallKind, Instr, Program, ProgramKind};
+use crate::ast::{AluOp, CallKind, Instr, Operand, Program, ProgramKind, Width};
 use crate::common::constants;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -153,22 +153,156 @@ pub fn analyze_subprograms(instrs: &[Instr]) -> BTreeMap<usize, SubprogInfo> {
     subprogs
 }
 
+/// Per-subprog overhead the interpreter reserves at the bottom of the
+/// frame for `may_goto`'s iteration counter. Mirrors the kernel constant
+/// `BPF_MAY_GOTO_DEPTH` used in `check_max_stack_depth_subprog` —
+/// a subprog containing any `may_goto` instruction needs an extra 8
+/// bytes of stack on top of its directly-accessed depth, so the
+/// effective per-subprog cap drops from 512 to 504.
+const MAY_GOTO_STACK_EXTRA: u16 = 8;
+
 /// Compute the maximum stack depth accessed by a sequence of Instrs.
+///
+/// Tracks a tiny "register holds R10 + const" alias table so accesses
+/// through derived stack pointers (`r1 = r10; r1 += -512; *(u32 *)(r1 + 0) = …`)
+/// count toward depth — the kernel's pre-walk does the equivalent via
+/// per-instruction `update_stack_depth` calls, and the FALSE_ACCEPT for
+/// `verifier_stack_ptr::stack_check_size_512_with_may_goto` was caused
+/// by missing exactly this idiom.
 fn compute_max_stack_depth(instrs: &[Instr]) -> u16 {
     let mut max_depth: u16 = 0;
+    let mut has_may_goto = false;
+
+    // Per-register: Some(off) means "this reg currently holds R10 + off"
+    // (off is signed so we can represent above-frame offsets, though the
+    // kernel rejects positive R10 offsets elsewhere). None ⇒ unknown /
+    // not a stack alias. R10 itself is always offset 0.
+    let mut alias: [Option<i64>; { Reg::ALL.len() }] = [None; { Reg::ALL.len() }];
+    alias[Reg::R10.idx()] = Some(0);
+
+    let track_access = |alias: &[Option<i64>; { Reg::ALL.len() }],
+                        base: Reg,
+                        off: i16,
+                        max_depth: &mut u16| {
+        if let Some(base_off) = alias[base.idx()] {
+            let total = base_off + off as i64;
+            if total < 0 {
+                let depth = (-total) as u64;
+                if depth <= u16::MAX as u64 {
+                    *max_depth = (*max_depth).max(depth as u16);
+                }
+            }
+        }
+    };
 
     for insn in instrs {
-        let off = match insn {
-            Instr::Store { base, off, .. } if *base == Reg::R10 => *off,
-            Instr::Load { base, off, .. } if *base == Reg::R10 => *off,
-            Instr::Atomic { base, off, .. } if *base == Reg::R10 => *off,
-            _ => continue,
-        };
-
-        if off < 0 {
-            let depth = (-off) as u16;
-            max_depth = max_depth.max(depth);
+        match insn {
+            Instr::MayGoto { .. } => {
+                has_may_goto = true;
+            }
+            Instr::Store { base, off, .. } => {
+                track_access(&alias, *base, *off, &mut max_depth);
+            }
+            Instr::StoreRel { base, off, .. } => {
+                track_access(&alias, *base, *off, &mut max_depth);
+            }
+            Instr::Load { base, off, dst, .. } => {
+                track_access(&alias, *base, *off, &mut max_depth);
+                // Load clobbers dst's alias (loaded value is data, not a
+                // stack pointer — even if base was a stack alias).
+                alias[dst.idx()] = None;
+            }
+            Instr::LoadSx { base, off, dst, .. } => {
+                track_access(&alias, *base, *off, &mut max_depth);
+                alias[dst.idx()] = None;
+            }
+            Instr::LoadAcq { base, off, dst, .. } => {
+                track_access(&alias, *base, *off, &mut max_depth);
+                alias[dst.idx()] = None;
+            }
+            Instr::Atomic { base, off, .. } => {
+                track_access(&alias, *base, *off, &mut max_depth);
+            }
+            // Alias propagation: only on 64-bit ALU (32-bit truncates the
+            // pointer half; the kernel rejects stack accesses through
+            // 32-bit-truncated pointers anyway).
+            Instr::Alu { width, op, dst, src } => {
+                if *dst == Reg::R10 {
+                    // Defensive: R10 is never written; preserve its 0 alias.
+                    continue;
+                }
+                if *width != Width::W64 {
+                    alias[dst.idx()] = None;
+                    continue;
+                }
+                match op {
+                    AluOp::Mov => match src {
+                        Operand::Reg(r) => {
+                            alias[dst.idx()] = alias[r.idx()];
+                        }
+                        Operand::Imm(_) => {
+                            alias[dst.idx()] = None;
+                        }
+                    },
+                    AluOp::Add => match src {
+                        Operand::Imm(k) => {
+                            if let Some(o) = alias[dst.idx()] {
+                                alias[dst.idx()] = Some(o + *k);
+                            }
+                        }
+                        Operand::Reg(_) => {
+                            alias[dst.idx()] = None;
+                        }
+                    },
+                    AluOp::Sub => match src {
+                        Operand::Imm(k) => {
+                            if let Some(o) = alias[dst.idx()] {
+                                alias[dst.idx()] = Some(o - *k);
+                            }
+                        }
+                        Operand::Reg(_) => {
+                            alias[dst.idx()] = None;
+                        }
+                    },
+                    _ => {
+                        alias[dst.idx()] = None;
+                    }
+                }
+            }
+            Instr::MovSx { dst, .. } => {
+                alias[dst.idx()] = None;
+            }
+            Instr::Endian { dst, .. } => {
+                alias[dst.idx()] = None;
+            }
+            Instr::LoadPacket { .. } => {
+                // BPF_LD_ABS / BPF_LD_IND clobber R0..R5.
+                for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                    alias[r.idx()] = None;
+                }
+            }
+            Instr::LoadMap { dst, .. } => {
+                alias[dst.idx()] = None;
+            }
+            Instr::Call { .. } | Instr::CallRel { .. } => {
+                // Helper / subprog call: R0 = retval (scalar/ptr, never
+                // stack alias); R1..R5 are clobbered.
+                for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                    alias[r.idx()] = None;
+                }
+            }
+            Instr::If { .. } | Instr::Jmp { .. } | Instr::Exit => {
+                // Control flow: linear walk doesn't model joins; conservatively
+                // accept that a register's alias may be inconsistent across
+                // branches. We accept some imprecision (a positive over-
+                // approximation of stack usage) in exchange for catching the
+                // common `r10 += -K; deref` idiom.
+            }
         }
+    }
+
+    if has_may_goto {
+        max_depth = max_depth.saturating_add(MAY_GOTO_STACK_EXTRA);
     }
 
     max_depth

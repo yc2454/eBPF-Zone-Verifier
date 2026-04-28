@@ -30,6 +30,12 @@ pub struct ProgAttrs {
     /// `__msg("…")` substrings expected in the verifier log.
     pub msgs: Vec<String>,
     pub log_level: Option<u32>,
+    /// `__load_if_JITed()` — upstream test_loader only loads this prog
+    /// when JIT is enabled. We don't model JIT specifics (e.g. JIT-mode
+    /// may_goto stores its counter off-stack), so we treat such progs as
+    /// skipped: an ACCEPT verdict on them only applies under JIT, which
+    /// our (interpreter-mode) analysis cannot soundly assert.
+    pub load_if_jited: bool,
     /// Function name (the C identifier before the parameter list).
     pub func_name: String,
 }
@@ -126,6 +132,9 @@ fn apply_attrs(line: &str, cur: &mut ProgAttrs) {
     }
     if has_word(line, "__failure_unpriv") {
         cur.failure_unpriv = true;
+    }
+    if has_word(line, "__load_if_JITed") {
+        cur.load_if_jited = true;
     }
     if let Some(n) = extract_int_arg(line, "__retval") {
         cur.retval = Some(n);

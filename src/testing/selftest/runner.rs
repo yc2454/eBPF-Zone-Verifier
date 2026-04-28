@@ -289,6 +289,20 @@ fn run_one(analyzer: &Analyzer, attrs: ProgAttrs, file_basename: &str) -> ProgRe
     let description = attrs.description.clone().unwrap_or_default();
     let sec = attrs.sec.clone().unwrap_or_default();
 
+    // `__load_if_JITed()` programs only load when the kernel JIT is on.
+    // We don't simulate JIT-specific semantics (e.g. JIT-mode `may_goto`
+    // keeps its counter in a register, not on the stack), so an upstream
+    // ACCEPT verdict on such a program isn't something we can soundly
+    // reproduce. Skip rather than risk a misleading PASS or FR.
+    if attrs.load_if_jited {
+        return ProgReport {
+            func_name: attrs.func_name,
+            description,
+            sec,
+            outcome: Outcome::Skipped("__load_if_JITed (JIT-only semantics)".into()),
+        };
+    }
+
     // Verdict-source precedence — keep this in sync with the doc-comment in
     // src/testing/selftest/expectations.rs:
     //   1. __success / __failure macros from the bpf-selftests test_loader

@@ -444,6 +444,7 @@ fn is_callback_helper(helper: u32) -> bool {
             | constants::BPF_FOR_EACH_MAP_ELEM
             | constants::BPF_TIMER_SET_CALLBACK
             | constants::BPF_USER_RINGBUF_DRAIN
+            | constants::BPF_FIND_VMA
     )
 }
 
@@ -455,6 +456,8 @@ fn callback_arg_reg(helper: u32) -> Reg {
         constants::BPF_TIMER_SET_CALLBACK => Reg::R2,
         // W6.5: bpf_user_ringbuf_drain(map, callback, ctx, flags)
         constants::BPF_USER_RINGBUF_DRAIN => Reg::R2,
+        // bpf_find_vma(task, addr, callback, callback_ctx, flags)
+        constants::BPF_FIND_VMA => Reg::R3,
         _ => unreachable!(),
     }
 }

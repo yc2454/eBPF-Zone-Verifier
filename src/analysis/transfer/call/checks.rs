@@ -1083,9 +1083,7 @@ pub(crate) fn check_single_mem_size_pair(
 
     // Check zero size
     if max_size == 0 {
-        if pair.allow_zero {
-            return true;
-        } else {
+        if !pair.allow_zero {
             env.fail(VerificationError::InvalidArgType {
                 pc,
                 reg: pair.size_reg,
@@ -1093,6 +1091,27 @@ pub(crate) fn check_single_mem_size_pair(
             error!("[Verifier] pc {}: {:?} cannot be 0", pc, pair.size_reg);
             return false;
         }
+        // Zero-size accesses are allowed by this helper, but the kernel
+        // still validates that the *pointer itself* is within bounds —
+        // a variable-offset stack pointer whose range escapes [-512, 0)
+        // is rejected even when no byte is actually accessed
+        // (`verifier_var_off::zero_sized_access_max_out_of_bound`).
+        // Fall through to `check_ptr_access_size` with size=0 only for
+        // pointer kinds where range validation makes sense at zero size;
+        // unknown / non-memory pointers are not re-checked here.
+        if matches!(ptr_type, RegType::PtrToStack { .. }) {
+            let ptr_arg_type = proto.args.get(pair.ptr_reg.idx() - 2).unwrap();
+            return check_ptr_access_size(
+                env,
+                state,
+                pair.ptr_reg,
+                ptr_type,
+                *ptr_arg_type,
+                0,
+                pc,
+            );
+        }
+        return true;
     }
 
     // Validate pointer can accommodate the access

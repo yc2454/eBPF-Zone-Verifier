@@ -171,6 +171,7 @@ pub const BPF_TIMER_SET_CALLBACK: u32 = 170;
 pub const BPF_TIMER_START: u32 = 171;
 pub const BPF_TIMER_CANCEL: u32 = 172;
 pub const BPF_SKC_TO_UNIX_SOCK: u32 = 178;
+pub const BPF_FIND_VMA: u32 = 180;
 pub const BPF_LOOP: u32 = 181;
 pub const BPF_STRNCMP: u32 = 182;
 pub const BPF_USER_RINGBUF_DRAIN: u32 = 209;

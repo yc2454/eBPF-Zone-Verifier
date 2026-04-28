@@ -135,6 +135,78 @@ fn jeq_infer_not_null(state: &mut State, left: Reg, right: Reg, eq_branch: bool)
         && matches!(lty, RegType::PtrToMapValueOrNull { .. })
     {
         maybe_promote_map_val(state, left);
+        return;
+    }
+    // Extend to acquire-tracked pointer families: a JEQ between a
+    // non-null variant and the matching nullable variant promotes the
+    // nullable side on the eq branch, regardless of ref_id (the JEQ
+    // itself proves they alias). Without this, refinement can only flow
+    // across registers via shared ref_id — which we deliberately don't
+    // link when ref_id is `None`, see `same_acquired_pointer`.
+    if let Some(reg) = nullable_partner(&lty, &rty) {
+        match reg {
+            JeqPartner::Right => promote_nullable(state, right, &rty),
+            JeqPartner::Left => promote_nullable(state, left, &lty),
+        }
+    }
+}
+
+enum JeqPartner {
+    Left,
+    Right,
+}
+
+fn nullable_partner(lty: &RegType, rty: &RegType) -> Option<JeqPartner> {
+    if is_non_null_acquired(lty) && is_nullable_matching(lty, rty) {
+        return Some(JeqPartner::Right);
+    }
+    if is_non_null_acquired(rty) && is_nullable_matching(rty, lty) {
+        return Some(JeqPartner::Left);
+    }
+    None
+}
+
+fn is_non_null_acquired(ty: &RegType) -> bool {
+    matches!(
+        ty,
+        RegType::PtrToSocket { .. }
+            | RegType::PtrToSockCommon { .. }
+            | RegType::PtrToTcpSock { .. }
+            | RegType::PtrToCpumask { .. }
+            | RegType::PtrToArena { .. }
+            | RegType::PtrToCgroup { .. }
+            | RegType::PtrToOwnedKptr { .. }
+    )
+}
+
+fn is_nullable_matching(non_null: &RegType, nullable: &RegType) -> bool {
+    matches!(
+        (non_null, nullable),
+        (RegType::PtrToSocket { .. }, RegType::PtrToSocketOrNull { .. })
+            | (
+                RegType::PtrToSockCommon { .. },
+                RegType::PtrToSockCommonOrNull { .. }
+            )
+            | (
+                RegType::PtrToTcpSock { .. },
+                RegType::PtrToTcpSockOrNull { .. }
+            )
+            | (
+                RegType::PtrToCpumask { .. },
+                RegType::PtrToCpumaskOrNull { .. }
+            )
+            | (RegType::PtrToArena { .. }, RegType::PtrToArenaOrNull { .. })
+            | (RegType::PtrToCgroup { .. }, RegType::PtrToCgroupOrNull { .. })
+            | (
+                RegType::PtrToOwnedKptr { .. },
+                RegType::PtrToOwnedKptrOrNull { .. }
+            )
+    )
+}
+
+fn promote_nullable(state: &mut State, reg: Reg, ty: &RegType) {
+    if let Some(non_null) = ty.to_non_null() {
+        state.types.set(reg, non_null);
     }
 }
 
@@ -285,35 +357,45 @@ fn maybe_promote_mem(state: &mut State, reg: Reg) {
 /// pointer family with the same ref_id — i.e. a null check on one
 /// should refine the other along the same branch. Covers all
 /// acquire-style RegTypes (sockets / cpumask / arena / owned-kptr).
+///
+/// Two `None` ids are NOT considered linked — they describe pointers
+/// the verifier never assigned a release-tracking identity to (e.g.
+/// successive `bpf_sk_fullsock(skb->sk)` calls produce two distinct
+/// nullable sockets, neither acquired). Cross-register null promotion
+/// across such pairs caused the `verifier_jeq_infer_not_null::
+/// unchanged_for_jeq_false_branch` FALSE_ACCEPT.
 fn same_acquired_pointer(t1: &RegType, t2: &RegType) -> bool {
+    fn linked(id1: &Option<u32>, id2: &Option<u32>) -> bool {
+        id1.is_some() && id1 == id2
+    }
     match (t1, t2) {
         (
             RegType::PtrToSocketOrNull { ref_id: id1 },
             RegType::PtrToSocketOrNull { ref_id: id2 },
-        ) => id1 == id2,
+        ) => linked(id1, id2),
         (
             RegType::PtrToSockCommonOrNull { ref_id: id1 },
             RegType::PtrToSockCommonOrNull { ref_id: id2 },
-        ) => id1 == id2,
+        ) => linked(id1, id2),
         (RegType::PtrToTcpSockOrNull { id: id1 }, RegType::PtrToTcpSockOrNull { id: id2 }) => {
-            id1 == id2
+            linked(id1, id2)
         }
         (
             RegType::PtrToCpumaskOrNull { ref_id: id1 },
             RegType::PtrToCpumaskOrNull { ref_id: id2 },
-        ) => id1 == id2,
+        ) => linked(id1, id2),
         (
             RegType::PtrToArenaOrNull { ref_id: id1, .. },
             RegType::PtrToArenaOrNull { ref_id: id2, .. },
-        ) => id1 == id2,
+        ) => linked(id1, id2),
         (
             RegType::PtrToCgroupOrNull { ref_id: id1 },
             RegType::PtrToCgroupOrNull { ref_id: id2 },
-        ) => id1 == id2,
+        ) => linked(id1, id2),
         (
             RegType::PtrToOwnedKptrOrNull { ref_id: id1 },
             RegType::PtrToOwnedKptrOrNull { ref_id: id2 },
-        ) => id1 == id2,
+        ) => linked(id1, id2),
         _ => false,
     }
 }
@@ -333,8 +415,18 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
         _ => return,
     };
 
+    // Always refine the originating register itself; cross-register and
+    // stack-slot propagation is gated on a shared, *concrete* ref_id
+    // (`same_acquired_pointer` returns false when both ids are None —
+    // see comment there).
     if is_non_null {
+        if let Some(promoted) = reg_type.to_non_null() {
+            state.types.set(reg, promoted);
+        }
         for r in Reg::ALL {
+            if r == reg {
+                continue;
+            }
             let ty = state.types.get(r);
             if same_acquired_pointer(&reg_type, &ty) {
                 state.types.set(r, ty.to_non_null().unwrap());
@@ -349,7 +441,11 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
         if target_ref_id.is_some() {
             state.release_ref(target_ref_id.unwrap());
         }
+        state.types.set(reg, RegType::ScalarValue);
         for r in Reg::ALL {
+            if r == reg {
+                continue;
+            }
             let ty = state.types.get(r);
             if same_acquired_pointer(&reg_type, &ty) {
                 state.types.set(r, RegType::ScalarValue);
