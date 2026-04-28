@@ -9,6 +9,7 @@ pcc_proof_steps.md
 docs/
 track.patch
 .DS_Store
+vendor/
 
 # Local-only full-scale baselines (regenerate via tests/baselines/capture_baseline.sh)
 tests/baselines/selftest_zone.json
