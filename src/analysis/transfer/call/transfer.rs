@@ -149,6 +149,45 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
         return vec![];
     }
 
+    // F: sockmap/sockhash mutation via map_update_elem / map_delete_elem
+    // is restricted to a specific prog-type allowlist. Mirrors kernel
+    // `may_update_sockmap`. Without this, raw_tp / tracing programs can
+    // mutate sockmaps which the kernel rejects.
+    if matches!(
+        helper,
+        constants::BPF_MAP_UPDATE_ELEM | constants::BPF_MAP_DELETE_ELEM
+    ) {
+        let map_idx = match state.types.get(Reg::R1) {
+            RegType::PtrToMapObject { map_idx } => Some(map_idx),
+            _ => None,
+        };
+        if let Some(idx) = map_idx
+            && let Some(map_def) = env.ctx.map_defs.get(idx)
+            && matches!(
+                map_def.type_,
+                constants::BPF_MAP_TYPE_SOCKMAP | constants::BPF_MAP_TYPE_SOCKHASH
+            )
+            && !matches!(
+                env.ctx.prog_kind,
+                ProgramKind::SkSkb
+                    | ProgramKind::SockOps
+                    | ProgramKind::SkMsg
+                    | ProgramKind::SkLookup
+                    | ProgramKind::SchedCls
+                    | ProgramKind::SchedAct
+                    | ProgramKind::Syscall
+                    | ProgramKind::FlowDissector
+            )
+        {
+            env.fail(VerificationError::HelperNotAllowedForProgram {
+                pc,
+                helper,
+                kind: env.ctx.prog_kind,
+            });
+            return vec![];
+        }
+    }
+
     // bpf_ktime_get_coarse_ns: not in the helper whitelist for tracing
     // program types (kprobe, tracepoint, perf_event, raw_tracepoint*).
     // Mirrors kernel's per-prog-type helper allowlist (D1).

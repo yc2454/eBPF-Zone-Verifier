@@ -983,6 +983,14 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             Anything,       // R5: flags
         ]),
 
+        constants::BPF_COPY_FROM_USER => CallProto::with_args([
+            PtrToUninitMem, // R1: dst — writable; rdonly-map gated
+            ConstSize,      // R2: size
+            Anything,       // R3: user_ptr
+            DontCare,
+            DontCare,
+        ]),
+
         constants::BPF_GET_CGROUP_CLASS_ID => {
             CallProto::with_args([PtrToCtx, DontCare, DontCare, DontCare, DontCare])
         }
