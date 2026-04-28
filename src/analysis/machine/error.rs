@@ -164,6 +164,10 @@ pub enum VerificationError {
     UnreleasedReference,
     UnreleasedIterator,
     UnreleasedDynptr,
+    DynptrOverwrite {
+        pc: usize,
+        off: i64,
+    },
     InvalidBtfType,
     LockAlreadyHeld {
         pc: usize,
@@ -444,6 +448,10 @@ impl VerificationError {
             VerificationError::UnreleasedReference => "Unreleased reference in program".to_string(),
             VerificationError::UnreleasedIterator => "Unreleased open-coded iterator in program".to_string(),
             VerificationError::UnreleasedDynptr => "Unreleased dynptr in program".to_string(),
+            VerificationError::DynptrOverwrite { pc, off } => format!(
+                "Cannot overwrite referenced dynptr at pc {} (stack off {})",
+                pc, off
+            ),
             VerificationError::UnreleasedLock => "Unreleased lock in program".to_string(),
             VerificationError::InvalidBtfType => "Invalid BTF type".to_string(),
             VerificationError::LockAlreadyHeld { pc } => {

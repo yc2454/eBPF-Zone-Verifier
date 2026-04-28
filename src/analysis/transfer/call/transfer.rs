@@ -123,6 +123,18 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
         return vec![];
     }
 
+    // bpf_dynptr_from_mem: R1 (data pointer) must not be a stack pointer.
+    // The kernel's "Unsupported reg type fp for bpf_dynptr_from_mem data"
+    // — wrapping a stack region as a Local dynptr would let the dynptr
+    // outlive its frame. The generic `PtrToMem` validator accepts stack
+    // for most helpers, so we special-case here.
+    if helper == constants::BPF_DYNPTR_FROM_MEM
+        && matches!(state.types.get(Reg::R1), RegType::PtrToStack { .. })
+    {
+        env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+        return vec![];
+    }
+
     // ========================================================================
     // Proto-flag-driven pre-call mutations (W5.2)
     //

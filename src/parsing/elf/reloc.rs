@@ -175,6 +175,13 @@ pub fn helper_id_by_name(name: &str) -> Option<u32> {
         "bpf_d_path" => Some(constants::BPF_D_PATH),
         "bpf_skc_to_unix_sock" => Some(constants::BPF_SKC_TO_UNIX_SOCK),
         "bpf_user_ringbuf_drain" => Some(constants::BPF_USER_RINGBUF_DRAIN),
+        "bpf_dynptr_from_mem" => Some(constants::BPF_DYNPTR_FROM_MEM),
+        "bpf_ringbuf_reserve_dynptr" => Some(constants::BPF_RINGBUF_RESERVE_DYNPTR),
+        "bpf_ringbuf_submit_dynptr" => Some(constants::BPF_RINGBUF_SUBMIT_DYNPTR),
+        "bpf_ringbuf_discard_dynptr" => Some(constants::BPF_RINGBUF_DISCARD_DYNPTR),
+        "bpf_dynptr_read" => Some(constants::BPF_DYNPTR_READ),
+        "bpf_dynptr_write" => Some(constants::BPF_DYNPTR_WRITE),
+        "bpf_dynptr_data" => Some(constants::BPF_DYNPTR_DATA),
         _ => None,
     }
 }

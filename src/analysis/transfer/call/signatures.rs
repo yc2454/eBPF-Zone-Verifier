@@ -1130,6 +1130,29 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         .mem_size_pairs(&pairs::STRNCMP)
         .ret(RetKind::Scalar),
 
+        // ---- Dynptr helpers (W4.2) ----
+        //
+        // These are real helpers (numeric BPF_FUNC_* ids in v6.15 uapi),
+        // not kfuncs — clang emits CALL insns with the helper id, not
+        // PSEUDO_KFUNC_CALL. Their prototypes happen to live in the
+        // name-keyed table next to the related kfuncs (slice/from_skb/
+        // from_xdp); delegate by name so we don't duplicate them. Without
+        // these arms the entire dynptr modeling (init/release/leak
+        // detection) is unreachable on numeric-helper calls.
+        constants::BPF_DYNPTR_FROM_MEM => return get_kfunc_proto("bpf_dynptr_from_mem"),
+        constants::BPF_RINGBUF_RESERVE_DYNPTR => {
+            return get_kfunc_proto("bpf_ringbuf_reserve_dynptr");
+        }
+        constants::BPF_RINGBUF_SUBMIT_DYNPTR => {
+            return get_kfunc_proto("bpf_ringbuf_submit_dynptr");
+        }
+        constants::BPF_RINGBUF_DISCARD_DYNPTR => {
+            return get_kfunc_proto("bpf_ringbuf_discard_dynptr");
+        }
+        constants::BPF_DYNPTR_READ => return get_kfunc_proto("bpf_dynptr_read"),
+        constants::BPF_DYNPTR_WRITE => return get_kfunc_proto("bpf_dynptr_write"),
+        constants::BPF_DYNPTR_DATA => return get_kfunc_proto("bpf_dynptr_data"),
+
         _ => return None,
     })
 }
@@ -1180,6 +1203,30 @@ const TASK_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 6] = [
     crate::ast::ProgramKind::Lsm,
     crate::ast::ProgramKind::StructOps,
 ];
+
+/// `bpf_dynptr_from_skb` allowlist (W4.2f). The kfunc is registered for
+/// program types that receive an `__sk_buff *` context — sched_cls/act
+/// (tc), socket_filter, cgroup_skb, lwt_*, sk_skb, sock_ops, sk_msg,
+/// flow_dissector. raw_tp / tracing / xdp / others get the kernel's
+/// "calling kernel function bpf_dynptr_from_skb is not allowed".
+const SKB_DYNPTR_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 11] = [
+    crate::ast::ProgramKind::SchedCls,
+    crate::ast::ProgramKind::SchedAct,
+    crate::ast::ProgramKind::SocketFilter,
+    crate::ast::ProgramKind::CgroupSkb,
+    crate::ast::ProgramKind::LwtIn,
+    crate::ast::ProgramKind::LwtOut,
+    crate::ast::ProgramKind::LwtXmit,
+    crate::ast::ProgramKind::SkSkb,
+    crate::ast::ProgramKind::SockOps,
+    crate::ast::ProgramKind::SkMsg,
+    crate::ast::ProgramKind::FlowDissector,
+];
+
+/// `bpf_dynptr_from_xdp` allowlist (W4.2f) — only XDP programs receive
+/// `xdp_md *` context.
+const XDP_DYNPTR_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 1] =
+    [crate::ast::ProgramKind::Xdp];
 
 /// Sched_ext kfunc family allowlist (W6.4b). The kernel registers most
 /// `scx_bpf_*` kfuncs against the sched_ext class. A subset (notably
@@ -1309,6 +1356,22 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Scalar)
         .mem_size_pairs(&pairs::DYNPTR_WRITE),
 
+        // void *bpf_dynptr_data(const struct bpf_dynptr *ptr, u32 offset, u32 len)
+        //
+        // Returns a pointer into the dynptr's backing memory bounded by
+        // `len` (R3), or NULL on failure. Used for Local/Ringbuf dynptrs
+        // (skb/xdp must use bpf_dynptr_slice). Caller null-checks before
+        // dereferencing — RET_NULL on the proto.
+        "bpf_dynptr_data" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false }, // R1: src dynptr
+            Anything,  // R2: offset
+            ConstSize, // R3: len (bounds the returned pointer)
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::PtrToAllocMemFromArg { size_arg: 2 })
+        .flags(CallFlags::RET_NULL),
+
         // ---- skb / xdp dynptrs (W4.2f) ----
         //
         // int bpf_dynptr_from_skb(struct __sk_buff *skb, u64 flags,
@@ -1330,7 +1393,8 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             arg: 2,
             kind: DynptrKind::Skb,
             rdonly: true,
-        }]),
+        }])
+        .prog_type_allowlist(&SKB_DYNPTR_KFUNC_PROG_TYPES),
 
         // int bpf_dynptr_from_xdp(struct xdp_md *xdp, u64 flags,
         //                         struct bpf_dynptr *ptr)
@@ -1350,7 +1414,8 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             arg: 2,
             kind: DynptrKind::Xdp,
             rdonly: true,
-        }]),
+        }])
+        .prog_type_allowlist(&XDP_DYNPTR_KFUNC_PROG_TYPES),
 
         // ---- Open-coded iterators (W4.3a) ----
         //

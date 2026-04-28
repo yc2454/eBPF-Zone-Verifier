@@ -144,6 +144,19 @@ pub(crate) fn check_stack_initialization(
 
     match kind {
         AccessKind::Read => {
+            // W4.2: dynptr body bytes are opaque kernel metadata. A
+            // direct read that overlaps any byte of an active dynptr's
+            // 16-byte slot pair is the kernel's "invalid read from
+            // stack" rejection. Programs reach inside via
+            // `bpf_dynptr_read` / `bpf_dynptr_data` instead.
+            if stack.read_overlaps_dynptr(actual_offset, size) {
+                env.fail(VerificationError::InvalidStackRead {
+                    pc,
+                    offset: actual_offset,
+                });
+                return;
+            }
+
             let mut first_uninit: Option<i16> = None;
             for i in 0..size {
                 let slot = (actual_offset + i) as i16;
@@ -179,6 +192,17 @@ pub(crate) fn check_stack_initialization(
             }
         }
         AccessKind::HelperBuffer | AccessKind::HelperPrimitive => {
+            // W4.2: same dynptr-body-read rule as direct loads —
+            // helpers reading a stack region overlapping a dynptr's
+            // opaque metadata bytes is rejected ("invalid read from
+            // stack"). Catches `add_dynptr_to_map1` and friends.
+            if stack.read_overlaps_dynptr(actual_offset, size) {
+                env.fail(VerificationError::InvalidStackRead {
+                    pc,
+                    offset: actual_offset,
+                });
+                return;
+            }
             // Kernel verifier requires every byte of the helper buffer
             // range to be initialized for non-uninit pointer kinds (see
             // check_helper_mem_access). The previous `any_initialized`

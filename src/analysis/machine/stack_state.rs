@@ -318,6 +318,47 @@ impl StackState {
             .any(|s| s.dynptr.is_some_and(|d| d.ref_id != 0))
     }
 
+    /// True if a write of `size` bytes at stack offset `off` would touch
+    /// any byte covered by an active dynptr slot. Each dynptr occupies a
+    /// 16-byte pair (two adjacent 8-byte slots, both annotated). A direct
+    /// stack write that overlaps any byte of the pair is the kernel's
+    /// "cannot overwrite referenced dynptr" / partial-slot-invalidate
+    /// rejection. We only flag *referenced* dynptrs (`ref_id != 0`) so
+    /// that overwriting a Local/Skb/Xdp dynptr — which the kernel allows
+    /// — stays accepted.
+    pub fn write_overlaps_referenced_dynptr(&self, off: i64, size: i64) -> bool {
+        let write_end = off + size;
+        self.slots.iter().any(|(slot_off, spilled)| {
+            let Some(d) = spilled.dynptr else {
+                return false;
+            };
+            if d.ref_id == 0 {
+                return false;
+            }
+            let slot_start = *slot_off as i64;
+            let slot_end = slot_start + 8;
+            off < slot_end && write_end > slot_start
+        })
+    }
+
+    /// True if a direct read at `off..off+size` overlaps any byte of a
+    /// dynptr's body (W4.2). Programs may not read the dynptr metadata
+    /// bytes — they're opaque kernel state. Applies to *any* dynptr
+    /// kind, regardless of ref_id (the body of a Local/Skb/Xdp dynptr
+    /// is also not user-readable). Helpers reach into the dynptr via
+    /// `bpf_dynptr_read` / `bpf_dynptr_data` instead.
+    pub fn read_overlaps_dynptr(&self, off: i64, size: i64) -> bool {
+        let read_end = off + size;
+        self.slots.iter().any(|(slot_off, spilled)| {
+            if spilled.dynptr.is_none() {
+                return false;
+            }
+            let slot_start = *slot_off as i64;
+            let slot_end = slot_start + 8;
+            off < slot_end && read_end > slot_start
+        })
+    }
+
     pub fn live_slot_offsets(&self, live_regs: &HashSet<Reg>) -> Vec<i16> {
         self.slots
             .iter()

@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-28T00:47:19.645796+00:00",
+  "generated_at": "2026-04-28T19:02:52.837419+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -1645,8 +1645,8 @@
           "ours": "PASS"
         },
         "cgrp_kfunc_xchg_unreleased": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -3000,8 +3000,8 @@
           "ours": "FALSE_ACCEPT"
         },
         "reject_subprog_with_lock": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "reject_subprog_with_rcu_read_lock": {
           "upstream": "ACCEPT",
@@ -3906,8 +3906,9 @@
           "note": "verifier timeout"
         },
         "iter_pass_iter_ptr_to_subprog": {
-          "upstream": "ACCEPT",
-          "ours": "PASS"
+          "upstream": "UNKNOWN",
+          "ours": "ERROR",
+          "note": "verifier timeout"
         },
         "iter_pragma_unroll_loop": {
           "upstream": "ACCEPT",
@@ -4287,8 +4288,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/jeq_infer_not_null_fail.c",
       "progs": {
         "jeq_infer_not_null_ptr_to_btfid": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -5997,44 +5998,45 @@
         },
         "preempt_balance_subprog_test": {
           "upstream": "ACCEPT",
-          "ours": "PASS"
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 8: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "preempt_global_sleepable_helper_subprog": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "preempt_global_sleepable_kfunc_subprog": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "preempt_global_sleepable_subprog_indirect": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "preempt_global_subprog_test": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Subprogram error: last insn at pc 1 is not an exit or jmp"
+          "note": "Unsupported modern BPF feature at pc 5: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "preempt_lock_missing_1": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "preempt_lock_missing_1_subprog": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "preempt_lock_missing_2": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "preempt_lock_missing_2_minus_1_subprog": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "preempt_lock_missing_2_subprog": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "preempt_lock_missing_3": {
           "upstream": "ACCEPT",
@@ -7858,8 +7860,8 @@
           "ours": "PASS"
         },
         "task_kfunc_xchg_unreleased": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -9228,8 +9230,7 @@
       "progs": {
         "global_func2": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Subprogram error: combined stack size of 832 at pc 80 exceeds 512"
+          "ours": "PASS"
         }
       }
     },
@@ -9300,7 +9301,7 @@
         "global_func9": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 70: base R6+0 (type: ScalarValue)"
+          "note": "Unsafe generic load at pc 66: base R6+0 (type: ScalarValue)"
         }
       }
     },
@@ -13038,8 +13039,8 @@
           "ours": "PASS"
         },
         "invalid_range_check": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "known_subreg_with_unknown_reg": {
           "upstream": "ACCEPT",
@@ -13106,32 +13107,32 @@
           "ours": "PASS"
         },
         "a_read_only_array_1_2": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "a_read_only_array_2_1": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "a_read_only_array_2_2": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "a_write_only_array_1_1": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "a_write_only_array_1_2": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "a_write_only_array_2_1": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "a_write_only_array_2_2": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "an_array_with_a_32bit_constant_0_no_nullness": {
           "upstream": "ACCEPT",
@@ -13143,8 +13144,8 @@
           "ours": "PASS"
         },
         "an_array_with_a_constant_2": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "an_array_with_a_constant_no_nullness": {
           "upstream": "ACCEPT",
@@ -13168,8 +13169,8 @@
           "ours": "PASS"
         },
         "an_array_with_a_register_2": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "an_array_with_a_variable_1": {
           "upstream": "ACCEPT",
@@ -13196,8 +13197,8 @@
           "ours": "PASS"
         },
         "mixed_const_and_non_const_key_lookup": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "multiple_array_with_a_constant_no_nullness": {
           "upstream": "ACCEPT",
@@ -13209,8 +13210,8 @@
           "ours": "PASS"
         },
         "with_a_invalid_max_check_1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "with_a_invalid_max_check_2": {
           "upstream": "ACCEPT",
@@ -13374,12 +13375,12 @@
           "ours": "PASS"
         },
         "bounds_map_value_variant_1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "bounds_map_value_variant_2": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "crossing_32_bit_signed_boundary_1": {
           "upstream": "ACCEPT",
@@ -13456,8 +13457,8 @@
           "ours": "PASS"
         },
         "on_sign_extended_mov_test2": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "reg32_0_reg32_xor_1": {
           "upstream": "ACCEPT",
@@ -13468,8 +13469,8 @@
           "ours": "PASS"
         },
         "reg32_any_reg32_xor_3": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "reg_0_reg_xor_1": {
           "upstream": "ACCEPT",
@@ -13484,8 +13485,8 @@
           "ours": "PASS"
         },
         "reg_any_reg_xor_3": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "reg_equal_const": {
           "upstream": "ACCEPT",
@@ -13506,20 +13507,20 @@
           "ours": "PASS"
         },
         "shift_with_oversized_count_operand": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "size_signed_32bit_overflow_test1": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "size_signed_32bit_overflow_test2": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "size_signed_32bit_overflow_test3": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "size_signed_32bit_overflow_test4": {
           "upstream": "ACCEPT",
@@ -13530,8 +13531,8 @@
           "ours": "PASS"
         },
         "var_off_insn_off_test1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "var_off_insn_off_test2": {
           "upstream": "ACCEPT",
@@ -13973,16 +13974,16 @@
           "ours": "PASS"
         },
         "ctx_access_u32_pointer_reject_16": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "ctx_access_u32_pointer_reject_32": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "ctx_access_u32_pointer_reject_8": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -14192,12 +14193,12 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/verifier_const.c",
       "progs": {
         "bprm": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "tcx1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "tcx2": {
           "upstream": "ACCEPT",
@@ -14208,8 +14209,8 @@
           "ours": "PASS"
         },
         "tcx4": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "tcx5": {
           "upstream": "ACCEPT",
@@ -14270,8 +14271,8 @@
           "ours": "PASS"
         },
         "null_check_4_ctx_const": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "null_check_5_null_connect": {
           "upstream": "ACCEPT",
@@ -14298,8 +14299,8 @@
           "ours": "PASS"
         },
         "or_null_check_3_1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "unmodified_ctx_pointer_to_helper": {
           "upstream": "ACCEPT",
@@ -14376,8 +14377,8 @@
           "ours": "PASS"
         },
         "d_path_reject": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -14425,16 +14426,16 @@
           "ours": "PASS"
         },
         "id_in_regsafe_bad_access": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "packet_access_test10_write_invalid": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "packet_access_test17_pruning_alignment": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "pkt_end_reg_bad_access": {
           "upstream": "ACCEPT",
@@ -14450,8 +14451,7 @@
         },
         "reg_pkt_end_in_subprog": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe packet load at pc 6: offset 0, size 1"
+          "ours": "PASS"
         },
         "test16_arith_on_data_end": {
           "upstream": "ACCEPT",
@@ -14721,16 +14721,16 @@
           "ours": "PASS"
         },
         "map_adjusted_jmp_wrong_max": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "memory_map_jmp_correct_bounds": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "memory_map_jmp_wrong_max": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "memory_stack_jmp_bounds_offset": {
           "upstream": "ACCEPT",
@@ -14911,8 +14911,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/verifier_helper_restricted.c",
       "progs": {
         "bpf_prog_type_perf_event_1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "bpf_prog_type_perf_event_2": {
           "upstream": "ACCEPT",
@@ -14923,8 +14923,8 @@
           "ours": "PASS"
         },
         "bpf_prog_type_raw_tracepoint_1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "bpf_prog_type_raw_tracepoint_2": {
           "upstream": "ACCEPT",
@@ -14935,8 +14935,8 @@
           "ours": "PASS"
         },
         "in_bpf_prog_type_kprobe_1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "in_bpf_prog_type_kprobe_2": {
           "upstream": "ACCEPT",
@@ -14947,8 +14947,8 @@
           "ours": "PASS"
         },
         "in_bpf_prog_type_tracepoint_1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "in_bpf_prog_type_tracepoint_2": {
           "upstream": "ACCEPT",
@@ -15012,12 +15012,12 @@
           "ours": "PASS"
         },
         "check_using_s_bad_access_1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "check_using_s_bad_access_2": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "check_using_s_good_access_1": {
           "upstream": "ACCEPT",
@@ -15044,24 +15044,24 @@
           "ours": "PASS"
         },
         "imm_out_of_bound_1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "imm_out_of_bound_2": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "imm_out_of_bound_range": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "lookup_helper_access_to_map": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "map_out_of_bound_range": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "map_via_variable_empty_range": {
           "upstream": "ACCEPT",
@@ -15076,16 +15076,16 @@
           "ours": "PASS"
         },
         "reg_out_of_bound_1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "reg_out_of_bound_2": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "reg_out_of_bound_range": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "to_adjusted_map_via_variable": {
           "upstream": "ACCEPT",
@@ -15136,12 +15136,12 @@
           "ours": "PASS"
         },
         "via_variable_wrong_max_check_1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "via_variable_wrong_max_check_2": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -15201,8 +15201,8 @@
           "ours": "PASS"
         },
         "check_add_const_regsafe_off": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "cond_break1": {
           "upstream": "UNKNOWN",
@@ -15215,8 +15215,9 @@
           "note": "verifier timeout"
         },
         "cond_break3": {
-          "upstream": "ACCEPT",
-          "ours": "PASS"
+          "upstream": "UNKNOWN",
+          "ours": "ERROR",
+          "note": "verifier timeout"
         },
         "cond_break4": {
           "upstream": "UNKNOWN",
@@ -15224,9 +15225,9 @@
           "note": "verifier timeout"
         },
         "cond_break5": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "CFG error: unreachable insn at pc 6"
         },
         "gotol_and_may_goto": {
           "upstream": "UNKNOWN",
@@ -15249,7 +15250,8 @@
         },
         "ja_and_may_goto_subprog": {
           "upstream": "ACCEPT",
-          "ours": "PASS"
+          "ours": "FALSE_REJECT",
+          "note": "CFG error: unreachable insn at pc 4"
         },
         "jgt_imm64_and_may_goto": {
           "upstream": "UNKNOWN",
@@ -15305,8 +15307,8 @@
           "ours": "PASS"
         },
         "unsafe_find_vma": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "unsafe_for_each_map_elem": {
           "upstream": "ACCEPT",
@@ -15357,8 +15359,8 @@
           "ours": "PASS"
         },
         "unchanged_for_jeq_false_branch": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "unchanged_for_jne_true_branch": {
           "upstream": "ACCEPT",
@@ -15498,12 +15500,12 @@
           "ours": "PASS"
         },
         "ldsx_ctx_7": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "ldsx_ctx_8": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "ldsx_s16": {
           "upstream": "ACCEPT",
@@ -15639,8 +15641,8 @@
           "ours": "PASS"
         },
         "bounded_recursion": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "count_to_4_with_equality": {
           "upstream": "ACCEPT",
@@ -15703,24 +15705,24 @@
           "ours": "PASS"
         },
         "bool_retval_test3": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "bool_retval_test4": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "disabled_hook_test1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "disabled_hook_test2": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "disabled_hook_test3": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "errno_zero_retval_test1": {
           "upstream": "ACCEPT",
@@ -15731,16 +15733,16 @@
           "ours": "PASS"
         },
         "errno_zero_retval_test4": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "errno_zero_retval_test5": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "errno_zero_retval_test6": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "void_retval_test1": {
           "upstream": "ACCEPT",
@@ -15889,8 +15891,7 @@
         },
         "pointers_for_lookup_hash_array": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 9: register: r1"
+          "ours": "PASS"
         },
         "pointers_for_lookup_tail_tail_1": {
           "upstream": "ACCEPT",
@@ -15906,8 +15907,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/verifier_map_ret_val.c",
       "progs": {
         "access_memory_with_incorrect_alignment_1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "access_memory_with_incorrect_alignment_2": {
           "upstream": "ACCEPT",
@@ -16187,16 +16188,16 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/verifier_netfilter_ctx.c",
       "progs": {
         "with_invalid_ctx_access_test1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "with_invalid_ctx_access_test2": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "with_invalid_ctx_access_test3": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "with_invalid_ctx_access_test4": {
           "upstream": "ACCEPT",
@@ -16217,12 +16218,12 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/verifier_netfilter_retcode.c",
       "progs": {
         "with_invalid_return_code_test1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "with_invalid_return_code_test4": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "with_valid_return_code_test2": {
           "upstream": "ACCEPT",
@@ -16238,8 +16239,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/verifier_or_jmp32_k.c",
       "progs": {
         "or_jmp32_k": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -16447,12 +16448,11 @@
         },
         "alloc_in_subprog_release_outside": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 4: register: r1"
+          "ours": "PASS"
         },
         "alloc_leak_reference_in_subprog": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "and_bpf_tcp_sock_sk": {
           "upstream": "ACCEPT",
@@ -16476,8 +16476,7 @@
         },
         "call_free_reference_in_subprog": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unreleased reference in program"
+          "ours": "PASS"
         },
         "check_free_in_both_subbranches": {
           "upstream": "ACCEPT",
@@ -16551,8 +16550,8 @@
           "ours": "PASS"
         },
         "ptr_leak_into_caller_stack": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "ptr_spill_into_caller_stack": {
           "upstream": "ACCEPT",
@@ -16695,8 +16694,8 @@
           "ours": "PASS"
         },
         "regalloc_and_spill_negative": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "regalloc_basic": {
           "upstream": "ACCEPT",
@@ -16707,8 +16706,8 @@
           "ours": "PASS"
         },
         "regalloc_negative": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "regalloc_spill_jeq": {
           "upstream": "ACCEPT",
@@ -16719,8 +16718,8 @@
           "ours": "PASS"
         },
         "regalloc_src_reg_negative": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "regalloc_three_regs": {
           "upstream": "ACCEPT",
@@ -16827,12 +16826,12 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/verifier_scalar_ids.c",
       "progs": {
         "check_ids_in_regsafe": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "check_ids_in_regsafe_2": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "cjmp_no_linked_regs_trigger": {
           "upstream": "ACCEPT",
@@ -16999,7 +16998,8 @@
         },
         "sdiv64_non_zero_imm_2": {
           "upstream": "ACCEPT",
-          "ours": "PASS"
+          "ours": "FALSE_REJECT",
+          "note": "DBM inconsistent at pc 1"
         },
         "sdiv64_non_zero_imm_3": {
           "upstream": "ACCEPT",
@@ -17011,7 +17011,8 @@
         },
         "sdiv64_non_zero_imm_5": {
           "upstream": "ACCEPT",
-          "ours": "PASS"
+          "ours": "FALSE_REJECT",
+          "note": "DBM inconsistent at pc 1"
         },
         "sdiv64_non_zero_imm_6": {
           "upstream": "ACCEPT",
@@ -17051,7 +17052,8 @@
         },
         "sdiv64_ri_divisor_neg_1": {
           "upstream": "ACCEPT",
-          "ours": "PASS"
+          "ours": "FALSE_REJECT",
+          "note": "DBM inconsistent at pc 2"
         },
         "sdiv64_rr_divisor_neg_1": {
           "upstream": "ACCEPT",
@@ -17257,8 +17259,8 @@
           "ours": "PASS"
         },
         "tracking_for_u32_spill_fill": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "varlen_map_value_access_pruning": {
           "upstream": "ACCEPT",
@@ -17310,8 +17312,8 @@
           "ours": "PASS"
         },
         "invalidate_pkt_pointers_by_tail_call": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "invalidate_pkt_pointers_from_global_func": {
           "upstream": "ACCEPT",
@@ -17346,16 +17348,16 @@
           "ours": "PASS"
         },
         "post_bind4_read_mark": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "post_bind4_read_src_ip6": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "post_bind6_read_src_ip4": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "reuseport_ctx_sockhash_key_flags": {
           "upstream": "ACCEPT",
@@ -17472,13 +17474,11 @@
         },
         "bind4_good_return_code_2": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid return code at pc 1"
+          "ours": "PASS"
         },
         "bind4_good_return_code_3": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid return code at pc 1"
+          "ours": "PASS"
         },
         "bind6_bad_return_code": {
           "upstream": "ACCEPT",
@@ -17494,13 +17494,11 @@
         },
         "bind6_good_return_code_2": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid return code at pc 1"
+          "ours": "PASS"
         },
         "bind6_good_return_code_3": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid return code at pc 1"
+          "ours": "PASS"
         },
         "connect4_bad_return_code": {
           "upstream": "ACCEPT",
@@ -17539,40 +17537,40 @@
           "ours": "PASS"
         },
         "getpeername4_bad_return_code": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "getpeername4_good_return_code": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "getpeername6_bad_return_code": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "getpeername6_good_return_code": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "getpeername_unix_bad_return_code": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "getpeername_unix_good_return_code": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "getsockname4_bad_return_code": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "getsockname4_good_return_code": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "getsockname6_bad_return_code": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "getsockname6_good_return_code": {
           "upstream": "ACCEPT",
@@ -17583,28 +17581,28 @@
           "ours": "PASS"
         },
         "getsockname_unix_unix_bad_return_code": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "recvmsg4_bad_return_code": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "recvmsg4_good_return_code": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "recvmsg6_bad_return_code": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "recvmsg6_good_return_code": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "recvmsg_unix_bad_return_code": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "recvmsg_unix_good_return_code": {
           "upstream": "ACCEPT",
@@ -17660,8 +17658,8 @@
           "ours": "PASS"
         },
         "test_raw_tp_delete": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test_raw_tp_update": {
           "upstream": "ACCEPT",
@@ -17680,12 +17678,12 @@
         "test_sk_lookup": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 18: register: r3"
+          "note": "Helper 3 not allowed for program Unknown at pc 5"
         },
         "test_sk_reuseport": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 18: register: r3"
+          "note": "Helper 3 not allowed for program Unknown at pc 5"
         },
         "test_socket_filter": {
           "upstream": "ACCEPT",
@@ -17712,12 +17710,12 @@
         "test_trace_iter": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 18: register: r3"
+          "note": "Helper 3 not allowed for program Tracing at pc 5"
         },
         "test_xdp": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 23: register: r3"
+          "note": "Helper 3 not allowed for program Xdp at pc 4"
         }
       }
     },
@@ -17903,7 +17901,7 @@
         "lock_in_subprog_without_unlock": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Lock not held at pc 15, cannot release"
+          "note": "Unreleased lock in program"
         },
         "lock_test2_direct_ld_st": {
           "upstream": "ACCEPT",
@@ -17922,8 +17920,8 @@
           "ours": "PASS"
         },
         "reg_id_for_map_value": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "spin_lock_test1_success": {
           "upstream": "ACCEPT",
@@ -17979,12 +17977,13 @@
           "ours": "PASS"
         },
         "stack_check_size_512_with_may_goto": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
-        },
-        "stack_check_size_512_with_may_goto_jit": {
           "upstream": "ACCEPT",
           "ours": "PASS"
+        },
+        "stack_check_size_512_with_may_goto_jit": {
+          "upstream": "UNKNOWN",
+          "ours": "SKIPPED",
+          "note": "__load_if_JITed (JIT-only semantics)"
         },
         "stack_check_size_gt_512": {
           "upstream": "ACCEPT",
@@ -18192,7 +18191,7 @@
         "stack_slot_aliases_precision": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 15"
+          "note": "Reading uninitialized stack slot at pc 18: offset -4"
         },
         "subprog_arg_precise": {
           "upstream": "ACCEPT",
@@ -18200,13 +18199,11 @@
         },
         "subprog_result_precise": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 5"
+          "ours": "PASS"
         },
         "subprog_spill_into_parent_stack_slot_precise": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Reading uninitialized stack slot at pc 7: offset -8"
+          "ours": "PASS"
         }
       }
     },
@@ -18643,8 +18640,8 @@
           "ours": "PASS"
         },
         "null_check_ids_in_regsafe": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "share_map_lookup_elem_result": {
           "upstream": "ACCEPT",
@@ -18680,8 +18677,8 @@
           "ours": "PASS"
         },
         "access_value_ptr_known_scalar": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "access_value_ptr_unknown_scalar": {
           "upstream": "ACCEPT",
@@ -18712,8 +18709,8 @@
           "ours": "PASS"
         },
         "lower_oob_arith_test_1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "lower_oob_arith_test_2": {
           "upstream": "ACCEPT",
@@ -18764,8 +18761,8 @@
           "ours": "PASS"
         },
         "unknown_scalar_value_ptr_4": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "upper_oob_arith_test_1": {
           "upstream": "ACCEPT",
@@ -18800,16 +18797,16 @@
           "ours": "PASS"
         },
         "value_ptr_known_scalar_2_1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "value_ptr_known_scalar_2_2": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "value_ptr_known_scalar_3": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "value_ptr_known_scalar_4": {
           "upstream": "ACCEPT",
@@ -18903,8 +18900,8 @@
           "note": "Reading uninitialized stack slot at pc 4: offset -8"
         },
         "zero_sized_access_max_out_of_bound": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
