@@ -234,6 +234,41 @@ pub(crate) fn handle_mod(state: &mut State, width: Width, dst: Reg, src: &Operan
 }
 
 pub(crate) fn handle_div(state: &mut State, width: Width, dst: Reg, src: &Operand) {
+    // Preserve tnum precision for div by a known non-zero immediate.
+    // Mirrors kernel reasoning: when both dividend and divisor are
+    // fully known the result is exact; div by 1 is a no-op. Anything
+    // else (unknown divisor, unknown dividend, divisor=0) collapses to
+    // unknown — the kernel rejects div-by-zero before this point.
+    let new_tnum = match src {
+        Operand::Imm(imm) => {
+            let imm_u = if width == Width::W32 {
+                (*imm as u32) as u64
+            } else {
+                *imm as u64
+            };
+            let dst_t = if width == Width::W32 {
+                state.get_tnum(dst).trunc32()
+            } else {
+                state.get_tnum(dst)
+            };
+            if imm_u == 1 {
+                Some(dst_t)
+            } else if imm_u != 0
+                && let Some(c) = dst_t.const_value()
+            {
+                let q = if width == Width::W32 {
+                    ((c as u32) / (imm_u as u32)) as u64
+                } else {
+                    c / imm_u
+                };
+                Some(Tnum::constant(q))
+            } else {
+                None
+            }
+        }
+        Operand::Reg(_) => None,
+    };
+
     match src {
         Operand::Imm(imm) => state.domain.apply_div_imm(dst, *imm),
         Operand::Reg(r_src) => state.domain.apply_div_reg(dst, *r_src),
@@ -243,7 +278,10 @@ pub(crate) fn handle_div(state: &mut State, width: Width, dst: Reg, src: &Operan
         state.domain.apply_and_imm(dst, 0xFFFFFFFF);
     }
 
-    state.set_tnum(dst, Tnum::unknown());
+    state.set_tnum(dst, new_tnum.unwrap_or_else(Tnum::unknown));
+    if let Some(c) = state.get_tnum(dst).const_value() {
+        state.domain.assume_eq_imm(dst, c as i64);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
