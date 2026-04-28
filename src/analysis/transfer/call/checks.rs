@@ -10,8 +10,8 @@ use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::state::State;
 use crate::analysis::transfer::memory::access::{self, AccessKind};
 use crate::analysis::transfer::memory::{
-    check_map_access, check_map_rw, check_packet_access, check_stack_access,
-    check_stack_arg_readable,
+    check_kptr_field_access, check_map_access, check_map_rw, check_packet_access,
+    check_stack_access, check_stack_arg_readable,
 };
 use crate::common::constants;
 use log::{error, info, warn};
@@ -961,19 +961,44 @@ pub(crate) fn validate_writable_mem(
             }
             true
         }
-        RegType::PtrToMapValue { map_idx, .. } => {
+        RegType::PtrToMapValue {
+            map_idx,
+            offset: map_off,
+            ..
+        } => {
             let writable = env
                 .ctx
                 .map_defs
                 .get(map_idx)
                 .map(|md| md.map_flags & constants::BPF_F_RDONLY_PROG == 0)
                 .unwrap_or(false);
-            if writable {
-                true
-            } else {
+            if !writable {
                 env.fail(VerificationError::MapStoreForbidden { pc, map_idx });
-                false
+                return false;
             }
+            // "kptr cannot be accessed indirectly by helper": helper
+            // write buffers must not overlap any kptr field. Reuses the
+            // same overlap logic as direct stores.
+            if let Some(map_def) = env.ctx.map_defs.get(map_idx)
+                && let Some(sz) = size
+            {
+                check_kptr_field_access(
+                    env,
+                    state,
+                    map_def,
+                    map_idx,
+                    reg,
+                    map_off,
+                    0,
+                    sz as i64,
+                    pc,
+                    /*is_store=*/ true,
+                );
+                if env.failed() {
+                    return false;
+                }
+            }
+            true
         }
         RegType::PtrToPacket => {
             // Packet pointers are NOT valid for uninit_mem arguments
@@ -1241,6 +1266,24 @@ pub(crate) fn check_ptr_access_size(
                 return false;
             };
 
+            // "kptr cannot be accessed indirectly by helper": helper
+            // mem-buffer args (the size comes from the paired size arg)
+            // must not overlap a kptr field.
+            check_kptr_field_access(
+                env,
+                state,
+                map_def,
+                map_idx,
+                ptr_reg,
+                offset,
+                0,
+                size as i64,
+                pc,
+                /*is_store=*/ true,
+            );
+            if env.failed() {
+                return false;
+            }
             check_map_access(
                 env,
                 state,

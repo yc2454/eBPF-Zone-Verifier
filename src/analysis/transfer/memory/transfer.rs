@@ -162,6 +162,52 @@ pub(crate) fn transfer_store(
 
     access::check_store(env, &state, base, access_size, off, src_type);
 
+    // Stores to an Unref kptr slot accept only NULL (proven zero) or a
+    // fresh acquired pointer (PtrToBtfId / PtrToMapKptr / PtrToOwnedKptr).
+    // A pointer that has had ALU applied to it lands in `ScalarValue`
+    // (the default arm of `update_ptr_arithmetic_type`), so checking
+    // src_type for non-pointer-non-zero closes the variable-offset and
+    // bad-arithmetic store cases. Kernel diagnostic family:
+    // "variable untrusted_ptr_ access var_off=(...)".
+    if !env.failed()
+        && let RegType::PtrToMapValue {
+            offset: map_off,
+            map_idx,
+            ..
+        } = state.types.get(base)
+        && let Some(map_def) = env.ctx.map_defs.get(map_idx)
+        && let Some(off_val) = super::map::resolve_const_map_off(&state, base, map_off, off)
+        && let Some(field) = super::map::kptr_field_at(map_def, off_val, access_size)
+    {
+        use crate::parsing::elf::KptrFieldKind;
+        if matches!(field.kind, KptrFieldKind::Unref) {
+            let src_is_zero = match src {
+                Operand::Imm(v) => *v == 0,
+                Operand::Reg(r) => {
+                    matches!(src_type, RegType::ScalarValue) && state.domain.proven_zero(*r)
+                }
+            };
+            let src_is_acquired_ptr = matches!(
+                src_type,
+                RegType::PtrToBtfId { .. }
+                    | RegType::PtrToMapKptr { .. }
+                    | RegType::PtrToMapKptrOrNull { .. }
+                    | RegType::PtrToOwnedKptr { .. }
+                    | RegType::PtrToOwnedKptrOrNull { .. }
+            );
+            if !src_is_zero && !src_is_acquired_ptr {
+                env.fail(VerificationError::InvalidArgType {
+                    pc: state.pc,
+                    reg: match src {
+                        Operand::Reg(r) => *r,
+                        Operand::Imm(_) => Reg::R0,
+                    },
+                });
+                return vec![];
+            }
+        }
+    }
+
     let base_type = state.types.get(base);
     if let RegType::PtrToStack { frame_level } = base_type {
         if let Some(base_off) = state.domain.get_distance_fixed(base, Reg::R10) {

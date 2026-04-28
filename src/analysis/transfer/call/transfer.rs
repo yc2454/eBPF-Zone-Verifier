@@ -123,6 +123,118 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
         return vec![];
     }
 
+    // bpf_per_cpu_ptr / bpf_this_cpu_ptr: R1 must be a PERCPU pointer.
+    // A `PtrToMapKptr*` loaded from a non-percpu kptr slot (Unref/Ref/Rcu)
+    // does not carry the PERCPU flag, and the kernel rejects with
+    // "expected=percpu_ptr_". Standard arg-kind validators don't know
+    // about the new flag, so check here.
+    if helper == constants::BPF_THIS_CPU_PTR || helper == constants::BPF_PER_CPU_PTR {
+        let r1 = state.types.get(Reg::R1);
+        if matches!(
+            r1,
+            RegType::PtrToMapKptr { .. } | RegType::PtrToMapKptrOrNull { .. }
+        ) && !r1
+            .ptr_flags()
+            .contains(crate::analysis::machine::reg_types::PtrFlags::PERCPU)
+        {
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            return vec![];
+        }
+    }
+
+    // bpf_kptr_xchg(&map_value->kptr_field, new_obj):
+    //   - R1 must be a `PtrToMapValue` whose constant offset exactly hits
+    //     a *referenced* kptr slot (Ref/Rcu/Percpu). Unref slots reject:
+    //     kernel "off=N kptr isn't referenced kptr".
+    //   - R2 must be either NULL (scalar 0) or a reference-tracked
+    //     pointer (`get_ref_id().is_some()`). Kernel "R2 must be referenced".
+    //   - Return R0: `PtrToMapKptrOrNull` carrying the slot's
+    //     `pointee_btf_id` and matching flags, with a fresh `ref_id` —
+    //     this is the *previous* slot contents, ownership transferred to
+    //     the program. R2's ref is consumed (transferred into the map).
+    if helper == constants::BPF_KPTR_XCHG {
+        let r1 = state.types.get(Reg::R1);
+        let RegType::PtrToMapValue {
+            offset: r1_off_opt,
+            map_idx,
+            ..
+        } = r1
+        else {
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            return vec![];
+        };
+        let final_off = crate::analysis::transfer::memory::map::resolve_const_map_off(
+            &state, Reg::R1, r1_off_opt, 0,
+        );
+        let Some(off_val) = final_off else {
+            env.fail(VerificationError::KptrAccessVariableOffset { pc, map_idx });
+            return vec![];
+        };
+        let map_def = match env.ctx.map_defs.get(map_idx) {
+            Some(m) => m,
+            None => {
+                env.fail(VerificationError::MapNotFound { pc, map_idx });
+                return vec![];
+            }
+        };
+        let Some(field) =
+            crate::analysis::transfer::memory::map::kptr_field_at(map_def, off_val, 8)
+        else {
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            return vec![];
+        };
+        use crate::parsing::elf::KptrFieldKind;
+        if matches!(field.kind, KptrFieldKind::Unref) {
+            // "off=N kptr isn't referenced kptr"
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            return vec![];
+        }
+        let pointee_btf_id = field.pointee_btf_id;
+        let slot_flags = match field.kind {
+            KptrFieldKind::Ref => crate::analysis::machine::reg_types::PtrFlags::MEM_ALLOC,
+            KptrFieldKind::Rcu => crate::analysis::machine::reg_types::PtrFlags::RCU,
+            KptrFieldKind::Percpu => crate::analysis::machine::reg_types::PtrFlags::PERCPU,
+            KptrFieldKind::Unref => unreachable!("rejected above"),
+        };
+
+        // R2: either NULL (scalar 0) or a ref-tracked pointer.
+        let r2 = state.types.get(Reg::R2);
+        let r2_ref = r2.get_ref_id();
+        let r2_is_null = matches!(r2, RegType::ScalarValue) && state.domain.proven_zero(Reg::R2);
+        if r2_ref.is_none() && !r2_is_null {
+            // "R2 must be referenced"
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
+            return vec![];
+        }
+
+        // Consume R2's ref (transfer ownership into the map).
+        if let Some(id) = r2_ref {
+            state.release_ref(id);
+            state.invalidate_ref(id);
+        }
+
+        // R0 = previous slot contents: PtrToMapKptrOrNull, fresh ref_id.
+        let new_ref = state.acquire_ref();
+        state.types.set(
+            Reg::R0,
+            RegType::PtrToMapKptrOrNull {
+                pointee_btf_id,
+                ref_id: Some(new_ref),
+                flags: slot_flags,
+            },
+        );
+        state.domain.forget(Reg::R0);
+        state.clear_scalar_id(Reg::R0);
+
+        // Forget caller-saved scalars (R1..R5) per helper-call ABI.
+        for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+            state.domain.forget(r);
+        }
+
+        state.pc += 1;
+        return vec![state];
+    }
+
     // bpf_dynptr_from_mem: R1 (data pointer) must not be a stack pointer.
     // The kernel's "Unsupported reg type fp for bpf_dynptr_from_mem data"
     // — wrapping a stack region as a Local dynptr would let the dynptr
@@ -652,6 +764,33 @@ pub(crate) fn transfer_call_rel(
                         *mem_size as i64,
                         pc,
                         crate::analysis::transfer::memory::access::AccessKind::HelperBuffer,
+                    );
+                    if env.failed() {
+                        return vec![];
+                    }
+                }
+                // "kptr cannot be accessed indirectly by helper" extends
+                // to global subprog calls: a `PtrToMapValue` arg whose
+                // declared mem region overlaps a kptr field is rejected.
+                if let crate::parsing::btf::GlobalFuncArg::PtrToMem { mem_size } = arg
+                    && let RegType::PtrToMapValue {
+                        offset: map_off,
+                        map_idx,
+                        ..
+                    } = actual
+                    && let Some(map_def) = env.ctx.map_defs.get(map_idx)
+                {
+                    crate::analysis::transfer::memory::check_kptr_field_access(
+                        env,
+                        &state,
+                        map_def,
+                        map_idx,
+                        *reg,
+                        map_off,
+                        0,
+                        *mem_size as i64,
+                        pc,
+                        /*is_store=*/ true,
                     );
                     if env.failed() {
                         return vec![];
