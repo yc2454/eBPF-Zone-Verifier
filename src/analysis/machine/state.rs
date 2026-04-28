@@ -704,6 +704,10 @@ impl State {
                             off: *o,
                             var_off: v,
                             range: *range,
+                            // id not round-tripped through spill/fill
+                            // today; conservative None — loses id-aware
+                            // refinement on reload but stays sound.
+                            id: None,
                         };
 
                         // Set the PtrOffset on the register

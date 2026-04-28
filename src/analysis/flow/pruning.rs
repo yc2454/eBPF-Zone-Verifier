@@ -468,10 +468,17 @@ enum LinkageKind {
     BtfIdOrNull,
     AllocMem,
     AllocMemOrNull,
+    /// Interval-mode packet-pointer family (kernel `reg->id`).
+    /// Two registers with the same `(PacketPtr, id)` share a variable
+    /// offset chain; a bounds check on one refines `range` for all.
+    /// Zone mode handles this via DBM cells, not ids — the
+    /// corresponding subsumption check lives in `zone_subsumed_by`.
+    PacketPtr,
 }
 
 fn linkage_key(state: &State, r: Reg) -> Option<(LinkageKind, u32)> {
     use crate::analysis::machine::reg_types::RegType;
+    use crate::domains::numeric::NumericDomain;
     match state.types.get(r) {
         RegType::PtrToMapValueOrNull { id, .. } => Some((LinkageKind::MapValueOrNull, id)),
         RegType::PtrToMapValue { id, .. } => Some((LinkageKind::MapValue, id)),
@@ -479,6 +486,15 @@ fn linkage_key(state: &State, r: Reg) -> Option<(LinkageKind, u32)> {
         RegType::PtrToAllocMemOrNull { id, .. } => Some((LinkageKind::AllocMemOrNull, id)),
         RegType::PtrToAllocMem { id, .. } => Some((LinkageKind::AllocMem, id)),
         RegType::ScalarValue => state.scalar_id(r).map(|id| (LinkageKind::Scalar, id)),
+        RegType::PtrToPacket | RegType::PtrToPacketEnd | RegType::PtrToPacketMeta => {
+            if let NumericDomain::Interval(ref ivl) = state.domain {
+                ivl.get_ptr_offset(r)
+                    .and_then(|po| po.id)
+                    .map(|id| (LinkageKind::PacketPtr, id))
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }
@@ -622,7 +638,7 @@ fn domain_subsumed_by(
     // critical for packet access safety and persist across calls.
     match (old, cur) {
         (NumericDomain::Zone(old_dbm), NumericDomain::Zone(cur_dbm)) => {
-            zone_subsumed_by(old_dbm, cur_dbm)
+            zone_subsumed_by(old_dbm, cur_dbm, live_regs)
         }
         (NumericDomain::Interval(old_ivl), NumericDomain::Interval(cur_ivl)) => {
             interval_subsumed_by(old_ivl, cur_ivl)
@@ -634,15 +650,60 @@ fn domain_subsumed_by(
     }
 }
 
-fn zone_subsumed_by(old_dbm: &crate::analysis::Dbm, cur_dbm: &crate::analysis::Dbm) -> bool {
-    // Zone domain: check anchor-to-anchor constraints directly
+fn zone_subsumed_by(
+    old_dbm: &crate::analysis::Dbm,
+    cur_dbm: &crate::analysis::Dbm,
+    live_regs: &HashSet<Reg>,
+) -> bool {
     let anchors = [Reg::AnchorData, Reg::AnchorDataEnd, Reg::AnchorDataMeta];
+
+    // Anchor↔anchor: packet-region geometry (e.g. `data_end - data >= N`).
     for &a in &anchors {
         for &b in &anchors {
             if a == b {
                 continue;
             }
-            // old must be at least as permissive: old.get(a,b) >= cur.get(a,b)
+            if old_dbm.get(a, b) < cur_dbm.get(a, b) {
+                return false;
+            }
+        }
+    }
+
+    // Live-reg pairs (including reg ↔ anchor): zone-mode analogue of
+    // the kernel's id-tracking for packet pointers. Without this,
+    // pruning collapses two states whose live registers differ in
+    // their *relation* to one another or to a packet anchor —
+    // e.g. one path established `r2 - r3 == 0` (`r2 = r3` aliasing)
+    // and the other did not, but their standalone intervals coincide.
+    // That's the FALSE_ACCEPT in
+    // `verifier_direct_packet_access::id_in_regsafe_bad_access`.
+    //
+    // For subsumption: `old` covers `cur` only if every directed cell
+    // `old.get(a, b) >= cur.get(a, b)` for live-reg pairs. (`>=` is
+    // the looser direction in difference-bound semantics — a larger
+    // upper bound on `a - b` is more permissive.)
+    let live: Vec<Reg> = live_regs
+        .iter()
+        .copied()
+        .filter(|r| !r.is_anchor())
+        .collect();
+    for &r in &live {
+        for &a in &anchors {
+            if old_dbm.get(r, a) < cur_dbm.get(r, a) {
+                return false;
+            }
+            if old_dbm.get(a, r) < cur_dbm.get(a, r) {
+                return false;
+            }
+        }
+    }
+    for i in 0..live.len() {
+        for j in 0..live.len() {
+            if i == j {
+                continue;
+            }
+            let a = live[i];
+            let b = live[j];
             if old_dbm.get(a, b) < cur_dbm.get(a, b) {
                 return false;
             }
