@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 // src/btf.rs
-use crate::parsing::elf::BpfMapDef;
+use crate::parsing::elf::{BpfMapDef, KptrField, KptrFieldKind};
 use log::info;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -922,6 +922,137 @@ impl BtfTypeRaw {
     }
 }
 
+/// Classify a struct member's type_id as a kptr field by walking the
+/// chain of TYPE_TAGs / modifiers around the PTR.
+///
+/// The kernel emits two equivalent encodings for `struct foo __kptr *fld`
+/// depending on where `__attribute__((btf_type_tag("kptr")))` lands:
+///   (a) TYPE_TAG("kptr") -> PTR -> STRUCT foo
+///   (b) PTR -> TYPE_TAG("kptr") -> STRUCT foo
+/// Both are accepted. Returns `(KptrFieldKind, pointee_struct_btf_id)`
+/// when the field is a kptr; `None` otherwise.
+fn classify_kptr_field(
+    types: &[BtfTypeRaw],
+    field_type_id: u32,
+    get_str: &impl Fn(u32) -> String,
+) -> Option<(KptrFieldKind, u32)> {
+    let kind_from_tag = |name: &str| -> Option<KptrFieldKind> {
+        match name {
+            "kptr" => Some(KptrFieldKind::Ref),
+            "kptr_untrusted" => Some(KptrFieldKind::Unref),
+            "rcu" => Some(KptrFieldKind::Rcu),
+            "percpu_kptr" => Some(KptrFieldKind::Percpu),
+            _ => None,
+        }
+    };
+
+    // Peel modifiers + outer TYPE_TAGs until we either find a PTR or
+    // give up. Track the most-recently-seen kptr tag.
+    let mut kind: Option<KptrFieldKind> = None;
+    let mut curr = field_type_id;
+    for _ in 0..16 {
+        let t = types.get(curr as usize)?;
+        match t.kind() {
+            BTF_KIND_TYPEDEF | BTF_KIND_CONST | BTF_KIND_VOLATILE | BTF_KIND_RESTRICT => {
+                curr = t.size_or_type;
+            }
+            BTF_KIND_TYPE_TAG => {
+                let tag = get_str(t.name_off);
+                if let Some(k) = kind_from_tag(&tag) {
+                    kind = Some(k);
+                }
+                curr = t.size_or_type;
+            }
+            BTF_KIND_PTR => break,
+            _ => return None,
+        }
+    }
+    let ptr_t = types.get(curr as usize)?;
+    if ptr_t.kind() != BTF_KIND_PTR {
+        return None;
+    }
+    let mut pointee = ptr_t.size_or_type;
+
+    // Peel modifiers + inner TYPE_TAGs to reach the pointee struct,
+    // and pick up a kptr tag if it lives on the inner side.
+    for _ in 0..16 {
+        let t = match types.get(pointee as usize) {
+            Some(t) => t,
+            None => break,
+        };
+        match t.kind() {
+            BTF_KIND_TYPEDEF | BTF_KIND_CONST | BTF_KIND_VOLATILE | BTF_KIND_RESTRICT => {
+                pointee = t.size_or_type;
+            }
+            BTF_KIND_TYPE_TAG => {
+                let tag = get_str(t.name_off);
+                if let Some(k) = kind_from_tag(&tag) {
+                    kind = Some(k);
+                }
+                pointee = t.size_or_type;
+            }
+            _ => break,
+        }
+    }
+
+    kind.map(|k| (k, pointee))
+}
+
+/// Walk the members of `value_type_id` (expected STRUCT/UNION) and
+/// collect every kptr-typed field. Field offsets are returned in bytes.
+fn extract_kptr_fields(
+    types: &[BtfTypeRaw],
+    value_type_id: u32,
+    get_str: &impl Fn(u32) -> String,
+) -> Vec<KptrField> {
+    let mut out = Vec::new();
+    let Some(t) = types.get(value_type_id as usize) else {
+        return out;
+    };
+    // Peel typedef chain to the underlying struct.
+    let mut t = t;
+    let mut depth = 0;
+    while matches!(
+        t.kind(),
+        BTF_KIND_TYPEDEF | BTF_KIND_CONST | BTF_KIND_VOLATILE | BTF_KIND_RESTRICT
+    ) && depth < 8
+    {
+        match types.get(t.size_or_type as usize) {
+            Some(inner) => {
+                t = inner;
+                depth += 1;
+            }
+            None => return out,
+        }
+    }
+    if t.kind() != BTF_KIND_STRUCT && t.kind() != BTF_KIND_UNION {
+        return out;
+    }
+    let nmembers = t.vlen() as usize;
+    let mut cur = 0usize;
+    for _ in 0..nmembers {
+        if cur + 12 > t.data.len() {
+            break;
+        }
+        let _name_off = u32::from_le_bytes(t.data[cur..cur + 4].try_into().unwrap());
+        let m_type_id = u32::from_le_bytes(t.data[cur + 4..cur + 8].try_into().unwrap());
+        let m_offset_bits = u32::from_le_bytes(t.data[cur + 8..cur + 12].try_into().unwrap());
+        cur += 12;
+        if let Some((kind, pointee_btf_id)) = classify_kptr_field(types, m_type_id, get_str) {
+            // Bottom 24 bits are the bit offset for non-bitfield members
+            // in BPF_F_BITFIELD_SIZE_GT_0; for kptr fields (full pointers)
+            // the offset is byte-aligned and the upper bits are zero.
+            let bit_off = m_offset_bits & 0x00ff_ffff;
+            out.push(KptrField {
+                offset: bit_off / 8,
+                kind,
+                pointee_btf_id,
+            });
+        }
+    }
+    out
+}
+
 pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
     if bytes.len() < 24 {
         return Err("BTF too short".into());
@@ -1177,6 +1308,13 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                         27 | 31 | 32 | 33 // RINGBUF, USER_RINGBUF, CGRP_STORAGE, ARENA
                     );
                     if is_map && (value_size > 0 || is_valueless_map) {
+                        let kptr_fields = btf_val_type_id
+                            .map(|id| extract_kptr_fields(&types, id, &get_str))
+                            .unwrap_or_default();
+                        if !kptr_fields.is_empty() {
+                            info!(target: "app", "[BTF] Map '{}' has {} kptr field(s): {:?}",
+                                name, kptr_fields.len(), kptr_fields);
+                        }
                         info!(target: "app", "[BTF] Found Map: '{}' (Type: {}, KeySize: {}, ValSize: {}, MaxEntries: {}, TypeID: {:?})",
                             name, map_type, key_size, value_size, max_entries, btf_val_type_id);
                         map_defs.push(BpfMapDef {
@@ -1189,6 +1327,7 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                             btf_val_type_id,
                             initial_data: None, // No initial data here
                             inner_map_idx: None,
+                            kptr_fields,
                         });
                     }
                 }

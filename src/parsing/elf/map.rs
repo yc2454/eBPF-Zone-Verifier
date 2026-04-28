@@ -53,6 +53,7 @@ pub fn load_data_section_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>>
                 btf_val_type_id: None,
                 initial_data,
                 inner_map_idx: None,
+                kptr_fields: Vec::new(),
             });
         }
     }
@@ -119,6 +120,7 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                                 btf_val_type_id: None,
                                 initial_data: None,
                                 inner_map_idx,
+                                kptr_fields: Vec::new(),
                             });
                         }
                     }
@@ -162,6 +164,9 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                     // declarations with "no value-type BTF".
                     if m.btf_val_type_id.is_none() {
                         m.btf_val_type_id = btf_m.btf_val_type_id;
+                    }
+                    if m.kptr_fields.is_empty() && !btf_m.kptr_fields.is_empty() {
+                        m.kptr_fields = btf_m.kptr_fields.clone();
                     }
                     // BTF-described maps encode `__uint(map_flags, …)` in BTF;
                     // the legacy `bpf_map_def` slot in the .maps section reads

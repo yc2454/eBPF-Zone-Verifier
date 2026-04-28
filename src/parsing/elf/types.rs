@@ -1,3 +1,33 @@
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KptrFieldKind {
+    /// `__kptr_untrusted` — unreferenced kptr. Loaded value is
+    /// `PtrToUntrustedKptrOrNull` and must be NULL-checked / ptr-cast'd
+    /// before use; cannot be stored back as a referenced kptr.
+    Unref,
+    /// `__kptr` — referenced kptr (refcounted). Direct stores are
+    /// disallowed; mutation is via `bpf_kptr_xchg`. Load yields
+    /// `PtrToRefKptrOrNull` (still ref-tracked through xchg semantics).
+    Ref,
+    /// `__rcu` (with kptr) — RCU-protected referenced kptr. Loaded
+    /// value carries MEM_RCU and is `PtrToRcuKptrOrNull`.
+    Rcu,
+    /// `percpu_kptr` — referenced percpu kptr. Loaded value is
+    /// `PtrToPercpuKptrOrNull` and must be passed through
+    /// `bpf_per_cpu_ptr` / `bpf_this_cpu_ptr` before deref.
+    Percpu,
+}
+
+#[derive(Clone, Debug)]
+pub struct KptrField {
+    /// Byte offset of the field within the map value struct.
+    pub offset: u32,
+    pub kind: KptrFieldKind,
+    /// BTF type id of the *pointee* struct (the inner type that the
+    /// `__kptr*` PTR points to). Used for type-matching in
+    /// `bpf_kptr_xchg` and pointee-struct bounds checks on deref.
+    pub pointee_btf_id: u32,
+}
+
 #[derive(Clone, Debug)]
 pub struct BpfMapDef {
     pub type_: u32,
@@ -10,6 +40,11 @@ pub struct BpfMapDef {
     pub btf_val_type_id: Option<u32>,
     pub initial_data: Option<Vec<u8>>,
     pub inner_map_idx: Option<usize>,
+    /// kptr fields embedded in the map value struct, extracted from BTF
+    /// TYPE_TAGs (`kptr`, `kptr_untrusted`, `rcu`, `percpu_kptr`).
+    /// Empty for legacy maps and data-section maps. See
+    /// `parse_btf_map_defs` for population.
+    pub kptr_fields: Vec<KptrField>,
 }
 
 /// Represents a raw BPF program extracted from the ELF symbol table.
