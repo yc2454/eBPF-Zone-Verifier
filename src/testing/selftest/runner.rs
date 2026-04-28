@@ -341,7 +341,7 @@ fn run_one(analyzer: &Analyzer, attrs: ProgAttrs, file_basename: &str) -> ProgRe
     // Termination is bounded by the verifier's own complexity-limit
     // check — see `SELFTEST_MAX_INSN` and `with_selftest_caps` below.
     // No wallclock timeout, no orphan threads.
-    let result = analyzer.analyze_function(&sec, &attrs.func_name);
+    let result = analyzer.analyze_function_with_flags(&sec, &attrs.func_name, attrs.prog_flags);
     let outcome = match (expected_accept, result) {
         (true, AnalysisResult::Pass) => Outcome::Pass,
         (false, AnalysisResult::Fail(_)) => Outcome::Pass,

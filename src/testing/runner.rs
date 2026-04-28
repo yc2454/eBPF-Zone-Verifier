@@ -309,11 +309,24 @@ impl Analyzer {
     /// pass/fail expectation). Returns `LoadError` if the function isn't
     /// found in the section.
     pub fn analyze_function(&self, section: &str, func_name: &str) -> AnalysisResult {
+        self.analyze_function_with_flags(section, func_name, 0)
+    }
+
+    /// Variant of [`analyze_function`] that ORs `extra_flags` into the
+    /// program's `ExecContext::flags` before analysis. Used by the
+    /// modern selftest runner to honor `__flag(...)` annotations such
+    /// as `BPF_F_STRICT_ALIGNMENT`.
+    pub fn analyze_function_with_flags(
+        &self,
+        section: &str,
+        func_name: &str,
+        extra_flags: u32,
+    ) -> AnalysisResult {
         // First try the section the caller asked for.
         let funcs = get_functions_in_section(&self.path, section).unwrap_or_default();
         if let Some(func) = funcs.iter().find(|f| f.name == func_name) {
             let func = func.clone();
-            return self.analyze_function_with_info(section, &func);
+            return self.analyze_function_with_info_flags(section, &func, extra_flags);
         }
 
         // Fallback: clang sometimes emits a program under a section name
@@ -331,7 +344,7 @@ impl Analyzer {
             let funcs = get_functions_in_section(&self.path, s).unwrap_or_default();
             if let Some(func) = funcs.iter().find(|f| f.name == func_name) {
                 let func = func.clone();
-                return self.analyze_function_with_info(s, &func);
+                return self.analyze_function_with_info_flags(s, &func, extra_flags);
             }
         }
 
@@ -348,6 +361,15 @@ impl Analyzer {
     /// calls now resolve to in-program PCs, so the verifier follows
     /// the chain instead of treating them as opaque helper calls.
     fn analyze_function_with_info(&self, section: &str, func: &BpfFuncInfo) -> AnalysisResult {
+        self.analyze_function_with_info_flags(section, func, 0)
+    }
+
+    fn analyze_function_with_info_flags(
+        &self,
+        section: &str,
+        func: &BpfFuncInfo,
+        extra_flags: u32,
+    ) -> AnalysisResult {
         let (prog, pc_to_reloc, func_offsets) = match try_load_function_with_subprogs_from_elf(
             &self.path,
             section,
@@ -406,6 +428,7 @@ impl Analyzer {
         ctx.btf = self.btf.clone();
         register_kfunc_relocs(&mut ctx.btf, &pc_to_reloc);
         ctx.pc_to_reloc = pc_to_reloc;
+        ctx.flags |= extra_flags;
 
         // Determine program kind
         ctx.prog_kind = self.derive_program_kind(section);

@@ -409,6 +409,18 @@ fn state_subsumed_by(
         return false;
     }
 
+    // Active-lock identity. When `old.active_lock` names a specific
+    // map_value (`ptr_id`), every live register that *currently* holds
+    // that map_value in `old` must still hold the same map_value in
+    // `cur` — otherwise a future `bpf_spin_unlock` along the cached
+    // continuation through such a register would mismatch the lock in
+    // `cur`. This caught the FALSE_ACCEPT in
+    // `verifier_spin_lock::reg_id_for_map_value`, where one path
+    // reassigns the lock-holding register to a different map_value.
+    if !active_lock_subsumed_by(cur, old, live_regs) {
+        return false;
+    }
+
     // W3.1c: `old` must have at least as much may_goto budget remaining as
     // `cur`, otherwise pruning would let `cur` continue under behaviours
     // `old` never explored (old already exhausted the budget on a path cur
@@ -497,6 +509,40 @@ fn linkage_key(state: &State, r: Reg) -> Option<(LinkageKind, u32)> {
         }
         _ => None,
     }
+}
+
+/// `old.active_lock` constraint check: for every live register that
+/// holds the locked map_value in `old` (i.e. its `PtrToMapValue.id`
+/// equals `old.active_lock.ptr_id`), the same register in `cur` must
+/// still hold a map_value whose id equals `cur.active_lock.ptr_id`.
+///
+/// Encodes the rule that pruning must not collapse a state where the
+/// lock's owning register has been reassigned to a different map_value
+/// — `bpf_spin_unlock` later in the cached continuation would target
+/// the wrong identity. See `verifier_spin_lock::reg_id_for_map_value`.
+fn active_lock_subsumed_by(cur: &State, old: &State, live_regs: &HashSet<Reg>) -> bool {
+    use crate::analysis::machine::reg_types::RegType;
+    let Some(old_lock) = old.get_active_lock() else {
+        return true;
+    };
+    let cur_lock_ptr = cur.get_active_lock().map(|l| l.ptr_id);
+    for &r in live_regs {
+        if let RegType::PtrToMapValue { id: old_id, .. } = old.types.get(r) {
+            if old_id != old_lock.ptr_id {
+                continue;
+            }
+            // r holds the lock's map_value in `old`. Require the same
+            // in `cur`: cur.r must be a PtrToMapValue whose id matches
+            // cur's active_lock.
+            let RegType::PtrToMapValue { id: cur_id, .. } = cur.types.get(r) else {
+                return false;
+            };
+            if Some(cur_id) != cur_lock_ptr {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Conservative id-equivalence check used by `state_subsumed_by`.
