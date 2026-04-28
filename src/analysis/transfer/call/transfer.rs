@@ -72,6 +72,47 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             state.domain.forget(r);
         }
 
+        // Cluster D4: tail-called program may rewrite packet contents, so
+        // any packet pointer in callee-saved regs or stack slots is no
+        // longer valid afterwards. Invalidate them — accesses through
+        // such pointers must be rejected unless re-derived from
+        // skb->data after the tail call.
+        for r in Reg::ALL {
+            if r == Reg::R10 {
+                continue;
+            }
+            match state.types.get(r) {
+                RegType::PtrToPacket | RegType::PtrToPacketEnd | RegType::PtrToPacketMeta => {
+                    state.types.set(r, RegType::NotInit);
+                    state.domain.forget(r);
+                }
+                _ => {}
+            }
+        }
+        for frame in state.frames.iter_mut() {
+            for offset in frame.stack.slot_offsets() {
+                let ty = frame.stack.get_slot_type(offset);
+                if matches!(
+                    ty,
+                    RegType::PtrToPacket | RegType::PtrToPacketEnd | RegType::PtrToPacketMeta
+                ) {
+                    frame.stack.set_slot_type(offset, RegType::NotInit, None);
+                }
+            }
+            // Caller-saved register snapshots (r6-r9) restored on subprog
+            // exit must also be invalidated — otherwise main resumes with
+            // a stale packet pointer that survived the tail-call. Mirrors
+            // kernel `clear_all_pkt_pointers` walking every frame.
+            for r in [Reg::R6, Reg::R7, Reg::R8, Reg::R9] {
+                if matches!(
+                    frame.caller_types.get(r),
+                    RegType::PtrToPacket | RegType::PtrToPacketEnd | RegType::PtrToPacketMeta
+                ) {
+                    frame.caller_types.set(r, RegType::NotInit);
+                }
+            }
+        }
+
         state.pc += 1;
         return vec![state];
     }
@@ -139,7 +180,8 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             });
             return vec![];
         } else if matches!(env.ctx.prog_kind, ProgramKind::Tracing)
-            && matches!(env.ctx.kfunc.as_deref(), Some("d_path"))
+            && (matches!(env.ctx.kfunc.as_deref(), Some("d_path"))
+                || matches!(env.ctx.attach_subtype.as_deref(), Some("d_path")))
         {
             env.fail(VerificationError::HelperNotAllowedForProgram {
                 pc,
