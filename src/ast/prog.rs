@@ -40,6 +40,10 @@ pub enum ProgramKind {
     /// `SEC("netfilter")` — BPF_PROG_TYPE_NETFILTER. R0 at exit must be a
     /// known value in [0, 1] (NF_DROP / NF_ACCEPT).
     Netfilter,
+    /// `SEC("flow_dissector")` — BPF_PROG_TYPE_FLOW_DISSECTOR. Receives
+    /// `struct __sk_buff *` ctx but with a stricter allowlist than the
+    /// generic SkBuff context (only `data`, `data_end`, `flow_keys`).
+    FlowDissector,
     #[default]
     Unknown,
 }
@@ -131,6 +135,9 @@ impl ProgramKind {
         if s == "netfilter" || s.starts_with("netfilter/") {
             return ProgramKind::Netfilter;
         }
+        if s == "flow_dissector" || s.starts_with("flow_dissector/") {
+            return ProgramKind::FlowDissector;
+        }
         // struct_ops (W6.4). Forms in the wild:
         //   "struct_ops"             — bare, member named after func symbol
         //   "struct_ops/<member>"    — explicit member binding
@@ -202,7 +209,7 @@ impl ProgramKind {
         if s.starts_with("cgroup/skb") {
             return ProgramKind::CgroupSkb;
         }
-        if s.starts_with("cgroup/sock") {
+        if s.starts_with("cgroup/sock") || s.starts_with("cgroup/post_bind") {
             return ProgramKind::CgroupSock;
         }
         if s.starts_with("kprobe") || s.starts_with("kretprobe") {
@@ -232,7 +239,8 @@ impl ProgramKind {
             | ProgramKind::LwtOut
             | ProgramKind::LwtXmit
             | ProgramKind::Lsm
-            | ProgramKind::RawTracepoint => ContextKind::SkBuff,
+            | ProgramKind::RawTracepoint
+            | ProgramKind::FlowDissector => ContextKind::SkBuff,
             ProgramKind::SockOps => ContextKind::SockOps,
             ProgramKind::SkLookup => ContextKind::SkLookup,
             ProgramKind::SkMsg => ContextKind::SkMsgMd,

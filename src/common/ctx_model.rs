@@ -1644,6 +1644,24 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
         return None;
     }
 
+    // Cluster C2: cgroup/post_bind4 and cgroup/post_bind6 use the BpfSock
+    // ctx but with stricter per-attach-subtype field restrictions:
+    //   - mark (off 16) is not readable in either post_bind4 or post_bind6
+    //   - src_ip6 (off 28..44) is not readable in post_bind4 (IPv4-only)
+    //   - src_ip4 (off 24) is not readable in post_bind6 (IPv6-only)
+    if prog_kind == ProgramKind::CgroupSock {
+        if let Some(sub) = env.ctx.attach_subtype.as_deref() {
+            let denied = match sub {
+                "post_bind4" => off == 16 || (28..44).contains(&off),
+                "post_bind6" => off == 16 || off == 24,
+                _ => false,
+            };
+            if denied {
+                return None;
+            }
+        }
+    }
+
     let ctx_kind = match prog_kind {
         ProgramKind::Tracing => match (env.ctx.attach_kind, env.ctx.kfunc.as_deref()) {
             (AttachKind::TraceIter, Some("task")) => ContextKind::IterTask,
