@@ -317,6 +317,18 @@ pub fn expected_retval_rule(prog_kind: ProgramKind, subtype: Option<&str>) -> Op
             // to be a known constant (rejects "R0 is not a known value").
             Some(RetvalRule { lo: 0, hi: 1, require_known: true })
         }
+        ProgramKind::Kprobe => {
+            // SEC("kprobe.session") and SEC("uprobe.session"): the
+            // kernel's session-attach hook expects R0 ∈ [0, 1] at exit
+            // — 0 means "skip the matching kretprobe", 1 means "run
+            // it". Plain `kprobe`/`uprobe` programs don't constrain R0.
+            // Both share ProgramKind::Kprobe; the subtype derived from
+            // the SEC string disambiguates.
+            if matches!(subtype, Some("session")) {
+                return Some(RetvalRule { lo: 0, hi: 1, require_known: false });
+            }
+            None
+        }
         _ => None,
     }
 }

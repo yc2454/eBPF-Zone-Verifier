@@ -181,6 +181,21 @@ pub(crate) fn transfer_store(
                 });
                 return vec![];
             }
+            // W3.2: same shape for open-coded iterators. Iter bodies
+            // are opaque — only `*_new`/`*_next`/`*_destroy` may write
+            // them. Without this, `spill_at` silently wipes the iter
+            // annotation and a missing destroy slips by the exit-time
+            // `has_active_iterators` leak check.
+            if state
+                .stack_at(frame_level)
+                .access_overlaps_iterator(full_offset, size.bytes() as i64)
+            {
+                env.fail(VerificationError::IteratorOverwrite {
+                    pc: state.pc,
+                    off: full_offset,
+                });
+                return vec![];
+            }
             match src {
                 Operand::Reg(r) => {
                     state.spill_at(frame_level, *r, full_offset as i16, size);

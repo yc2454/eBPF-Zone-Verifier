@@ -156,6 +156,14 @@ pub(crate) fn check_stack_initialization(
                 });
                 return;
             }
+            // W3.2: same for open-coded iterators — body is opaque.
+            if stack.access_overlaps_iterator(actual_offset, size) {
+                env.fail(VerificationError::InvalidStackRead {
+                    pc,
+                    offset: actual_offset,
+                });
+                return;
+            }
 
             let mut first_uninit: Option<i16> = None;
             for i in 0..size {
@@ -197,6 +205,15 @@ pub(crate) fn check_stack_initialization(
             // opaque metadata bytes is rejected ("invalid read from
             // stack"). Catches `add_dynptr_to_map1` and friends.
             if stack.read_overlaps_dynptr(actual_offset, size) {
+                env.fail(VerificationError::InvalidStackRead {
+                    pc,
+                    offset: actual_offset,
+                });
+                return;
+            }
+            // W3.2: same for iter slots — helpers may not read or
+            // write iter bodies. Catches probe_read_kernel(iter+7, 1).
+            if stack.access_overlaps_iterator(actual_offset, size) {
                 env.fail(VerificationError::InvalidStackRead {
                     pc,
                     offset: actual_offset,

@@ -1142,7 +1142,7 @@ pub(crate) fn check_ptr_access_size(
     pc: usize,
 ) -> bool {
     match ptr_type {
-        RegType::PtrToStack { .. } => {
+        RegType::PtrToStack { frame_level } => {
             if let Some(off) = state.domain.get_distance_fixed(ptr_reg, Reg::R10) {
                 // Stack: check [off, off + size) is within stack bounds
                 // Stack grows down, so valid range is [-512, 0)
@@ -1157,6 +1157,25 @@ pub(crate) fn check_ptr_access_size(
                         "[Verifier] pc {}: stack access [{}, {}) out of bounds",
                         pc, off, end_offset
                     );
+                    return false;
+                }
+                // W3.2 / W4.2: helper buffer access (read or write) may
+                // not overlap an active iter slot or dynptr body. The
+                // initialization check below is skipped for PtrToUninitMem
+                // (helper writes the bytes), so the opaque-body rule
+                // needs its own gate here to catch e.g. probe_read_kernel
+                // writing into an iter slot.
+                if state
+                    .stack_at(frame_level)
+                    .access_overlaps_iterator(off, size as i64)
+                    || state
+                        .stack_at(frame_level)
+                        .read_overlaps_dynptr(off, size as i64)
+                {
+                    env.fail(VerificationError::InvalidStackRead {
+                        pc,
+                        offset: off,
+                    });
                     return false;
                 }
                 // Also check stack slots are initialized for reads

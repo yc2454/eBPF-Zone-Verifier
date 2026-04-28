@@ -79,6 +79,31 @@ fn lsm_hook_is_disabled(hook: &str) -> bool {
     )
 }
 
+/// Kernel `__noreturn` functions the verifier rejects as fexit/fmod_ret
+/// attach targets ("Attaching fexit/fmod_ret to __noreturn functions is
+/// rejected."). Mirrors the kernel's `noreturn` attribute set walked by
+/// `check_attach_btf_id` — fexit fires on return, so attaching it to a
+/// function that never returns is a guaranteed loss-of-control. fentry
+/// is allowed; only the post-return tracers are rejected.
+fn is_noreturn_kernel_fn(name: &str) -> bool {
+    matches!(
+        name,
+        "__module_put_and_kthread_exit"
+            | "__kthread_exit"
+            | "__x64_sys_exit"
+            | "__x64_sys_exit_group"
+            | "__ia32_sys_exit"
+            | "__ia32_sys_exit_group"
+            | "do_exit"
+            | "do_group_exit"
+            | "do_task_dead"
+            | "kthread_complete_and_exit"
+            | "kthread_exit"
+            | "make_task_dead"
+            | "rewind_stack_and_make_dead"
+    )
+}
+
 fn make_entry_state() -> Dbm {
     let mut dbm = Dbm::new();
     assign_zero(&mut dbm, Reg::R10);
@@ -432,10 +457,18 @@ impl Analyzer {
 
         // Determine program kind
         ctx.prog_kind = self.derive_program_kind(section);
-        ctx.attach_subtype = section
-            .to_lowercase()
-            .split_once('/')
-            .map(|(_, sub)| sub.to_string());
+        // Subtype is the SEC suffix after the first delimiter — '/' for
+        // hook-bound sections (`cgroup/recvmsg6`, `lsm/file_mprotect`),
+        // or '.' for attach-flavored sections that carry no explicit
+        // hook (`kprobe.session`, `uprobe.session`). Falls through to
+        // None when neither is present (`raw_tp`, `tc`, ...).
+        ctx.attach_subtype = match section.to_lowercase().split_once('/') {
+            Some((_, sub)) => Some(sub.to_string()),
+            None => section
+                .to_lowercase()
+                .split_once('.')
+                .map(|(_, sub)| sub.to_string()),
+        };
 
         // Cluster E: reject SEC("lsm/<hook>") for hooks the kernel's
         // BPF_LSM_DISABLED_HOOKS list excludes from BPF attach.
@@ -445,6 +478,24 @@ impl Analyzer {
         {
             return AnalysisResult::Fail(VerificationError::LsmHookDisabled {
                 hook: hook.to_string(),
+            });
+        }
+
+        // Reject SEC("fexit/<noreturn>") and SEC("fmod_ret/<noreturn>")
+        // — fexit/fmod_ret fire after the attached function returns, so
+        // attaching them to a `__noreturn` kernel function is a kernel
+        // attach-time error ("Attaching fexit/fmod_ret to __noreturn
+        // functions is rejected."). fentry on the same target is fine.
+        let sec_lower = section.to_lowercase();
+        if (sec_lower.starts_with("fexit/")
+            || sec_lower.starts_with("fexit.s/")
+            || sec_lower.starts_with("fmod_ret/")
+            || sec_lower.starts_with("fmod_ret.s/"))
+            && let Some(target) = ctx.attach_subtype.as_deref()
+            && is_noreturn_kernel_fn(target)
+        {
+            return AnalysisResult::Fail(VerificationError::NoreturnAttachTarget {
+                target: target.to_string(),
             });
         }
 
@@ -564,10 +615,18 @@ impl Analyzer {
 
         // Determine program kind
         ctx.prog_kind = self.derive_program_kind(section);
-        ctx.attach_subtype = section
-            .to_lowercase()
-            .split_once('/')
-            .map(|(_, sub)| sub.to_string());
+        // Subtype is the SEC suffix after the first delimiter — '/' for
+        // hook-bound sections (`cgroup/recvmsg6`, `lsm/file_mprotect`),
+        // or '.' for attach-flavored sections that carry no explicit
+        // hook (`kprobe.session`, `uprobe.session`). Falls through to
+        // None when neither is present (`raw_tp`, `tc`, ...).
+        ctx.attach_subtype = match section.to_lowercase().split_once('/') {
+            Some((_, sub)) => Some(sub.to_string()),
+            None => section
+                .to_lowercase()
+                .split_once('.')
+                .map(|(_, sub)| sub.to_string()),
+        };
 
         // Cluster E: reject SEC("lsm/<hook>") for hooks the kernel's
         // BPF_LSM_DISABLED_HOOKS list excludes from BPF attach.
@@ -577,6 +636,24 @@ impl Analyzer {
         {
             return AnalysisResult::Fail(VerificationError::LsmHookDisabled {
                 hook: hook.to_string(),
+            });
+        }
+
+        // Reject SEC("fexit/<noreturn>") and SEC("fmod_ret/<noreturn>")
+        // — fexit/fmod_ret fire after the attached function returns, so
+        // attaching them to a `__noreturn` kernel function is a kernel
+        // attach-time error ("Attaching fexit/fmod_ret to __noreturn
+        // functions is rejected."). fentry on the same target is fine.
+        let sec_lower = section.to_lowercase();
+        if (sec_lower.starts_with("fexit/")
+            || sec_lower.starts_with("fexit.s/")
+            || sec_lower.starts_with("fmod_ret/")
+            || sec_lower.starts_with("fmod_ret.s/"))
+            && let Some(target) = ctx.attach_subtype.as_deref()
+            && is_noreturn_kernel_fn(target)
+        {
+            return AnalysisResult::Fail(VerificationError::NoreturnAttachTarget {
+                target: target.to_string(),
             });
         }
 

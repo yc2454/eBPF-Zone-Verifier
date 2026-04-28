@@ -168,6 +168,10 @@ pub enum VerificationError {
         pc: usize,
         off: i64,
     },
+    IteratorOverwrite {
+        pc: usize,
+        off: i64,
+    },
     InvalidBtfType,
     LockAlreadyHeld {
         pc: usize,
@@ -219,6 +223,9 @@ pub enum VerificationError {
     /// Cluster E: LSM attach hook is on the kernel's disabled list
     /// (`getprocattr`, `setprocattr`, `ismaclabel`, `module_request`, ...).
     /// Reported at program load — there is no instruction PC.
+    NoreturnAttachTarget {
+        target: String,
+    },
     LsmHookDisabled {
         hook: String,
     },
@@ -452,6 +459,10 @@ impl VerificationError {
                 "Cannot overwrite referenced dynptr at pc {} (stack off {})",
                 pc, off
             ),
+            VerificationError::IteratorOverwrite { pc, off } => format!(
+                "Cannot overwrite open-coded iterator slot at pc {} (stack off {})",
+                pc, off
+            ),
             VerificationError::UnreleasedLock => "Unreleased lock in program".to_string(),
             VerificationError::InvalidBtfType => "Invalid BTF type".to_string(),
             VerificationError::LockAlreadyHeld { pc } => {
@@ -501,6 +512,12 @@ impl VerificationError {
             }
             VerificationError::LsmHookDisabled { hook } => {
                 format!("LSM attach target points to disabled hook '{}'", hook)
+            }
+            VerificationError::NoreturnAttachTarget { target } => {
+                format!(
+                    "Attaching fexit/fmod_ret to __noreturn functions is rejected: '{}'",
+                    target
+                )
             }
             VerificationError::KfuncNotAllowedForProgram { pc, btf_id, kind } => {
                 format!(

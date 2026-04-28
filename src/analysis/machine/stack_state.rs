@@ -359,6 +359,27 @@ impl StackState {
         })
     }
 
+    /// True if a stack access at `off..off+size` overlaps any byte of an
+    /// active open-coded iterator's body (W3.2). Iter structs span
+    /// `bpf_iter_size(kind)` bytes — the annotation lives only on the
+    /// base byte, so we resolve the size by looking at each annotated
+    /// slot. Applies to both reads and writes: programs treat iter
+    /// bodies as opaque (only `*_new`/`*_next`/`*_destroy` may touch
+    /// them). Without this, `spill_at` silently wipes the iter
+    /// annotation on a direct write and no leak is detected at exit.
+    pub fn access_overlaps_iterator(&self, off: i64, size: i64) -> bool {
+        let access_end = off + size;
+        self.slots.iter().any(|(slot_off, spilled)| {
+            let Some(iter) = spilled.iterator else {
+                return false;
+            };
+            let slot_start = *slot_off as i64;
+            let slot_end =
+                slot_start + crate::common::stack_objects::bpf_iter_size(iter.kind) as i64;
+            off < slot_end && access_end > slot_start
+        })
+    }
+
     pub fn live_slot_offsets(&self, live_regs: &HashSet<Reg>) -> Vec<i16> {
         self.slots
             .iter()
