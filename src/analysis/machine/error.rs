@@ -212,6 +212,12 @@ pub enum VerificationError {
         helper: u32,
         kind: ProgramKind,
     },
+    /// Cluster E: LSM attach hook is on the kernel's disabled list
+    /// (`getprocattr`, `setprocattr`, `ismaclabel`, `module_request`, ...).
+    /// Reported at program load — there is no instruction PC.
+    LsmHookDisabled {
+        hook: String,
+    },
     /// Kfunc proto carries a `prog_type_allowlist` (W6.3) and the
     /// program's `ProgramKind` is not in it. Mirrors the kernel
     /// verifier's per-kfunc `KF_PROG_TYPE_*` check (e.g. cgroup /
@@ -484,6 +490,9 @@ impl VerificationError {
                     "Helper {} not allowed for program {:?} at pc {}",
                     helper, kind, pc
                 )
+            }
+            VerificationError::LsmHookDisabled { hook } => {
+                format!("LSM attach target points to disabled hook '{}'", hook)
             }
             VerificationError::KfuncNotAllowedForProgram { pc, btf_id, kind } => {
                 format!(

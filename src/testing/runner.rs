@@ -50,6 +50,35 @@ impl AnalysisResult {
     }
 }
 
+/// Cluster E: LSM hooks the kernel's `lsm/disabled_hooks_list` rejects at
+/// attach time. Mirrors `BPF_LSM_DISABLED_HOOKS` in `kernel/bpf/bpf_lsm.c`.
+/// Names match the SEC suffix (`SEC("lsm/<hook>")`).
+fn lsm_hook_is_disabled(hook: &str) -> bool {
+    matches!(
+        hook,
+        "vm_enough_memory"
+            | "inode_need_killpriv"
+            | "inode_getsecurity"
+            | "inode_setsecurity"
+            | "inode_listsecurity"
+            | "inode_copy_up_xattr"
+            | "getselfattr"
+            | "getprocattr"
+            | "setprocattr"
+            | "ismaclabel"
+            | "secid_to_secctx"
+            | "secctx_to_secid"
+            | "release_secctx"
+            | "d_instantiate"
+            | "ipc_getsecid"
+            | "key_getsecurity"
+            | "audit_rule_match"
+            | "audit_rule_init"
+            | "audit_rule_free"
+            | "module_request"
+    )
+}
+
 fn make_entry_state() -> Dbm {
     let mut dbm = Dbm::new();
     assign_zero(&mut dbm, Reg::R10);
@@ -385,6 +414,17 @@ impl Analyzer {
             .split_once('/')
             .map(|(_, sub)| sub.to_string());
 
+        // Cluster E: reject SEC("lsm/<hook>") for hooks the kernel's
+        // BPF_LSM_DISABLED_HOOKS list excludes from BPF attach.
+        if ctx.prog_kind == ProgramKind::Lsm
+            && let Some(hook) = ctx.attach_subtype.as_deref()
+            && lsm_hook_is_disabled(hook)
+        {
+            return AnalysisResult::Fail(VerificationError::LsmHookDisabled {
+                hook: hook.to_string(),
+            });
+        }
+
         // W6.4a: for struct_ops subprogs, seed R1..Rn from the resolved
         // ops-struct member signature. derive_program_kind already
         // matched SEC("struct_ops*") to ProgramKind::StructOps; the
@@ -505,6 +545,17 @@ impl Analyzer {
             .to_lowercase()
             .split_once('/')
             .map(|(_, sub)| sub.to_string());
+
+        // Cluster E: reject SEC("lsm/<hook>") for hooks the kernel's
+        // BPF_LSM_DISABLED_HOOKS list excludes from BPF attach.
+        if ctx.prog_kind == ProgramKind::Lsm
+            && let Some(hook) = ctx.attach_subtype.as_deref()
+            && lsm_hook_is_disabled(hook)
+        {
+            return AnalysisResult::Fail(VerificationError::LsmHookDisabled {
+                hook: hook.to_string(),
+            });
+        }
 
         // Section-mode path: no per-subprog identity, so we don't seed
         // struct_ops entry_args here. For struct_ops we always go through
