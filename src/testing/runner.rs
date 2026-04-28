@@ -380,6 +380,10 @@ impl Analyzer {
 
         // Determine program kind
         ctx.prog_kind = self.derive_program_kind(section);
+        ctx.attach_subtype = section
+            .to_lowercase()
+            .split_once('/')
+            .map(|(_, sub)| sub.to_string());
 
         // W6.4a: for struct_ops subprogs, seed R1..Rn from the resolved
         // ops-struct member signature. derive_program_kind already
@@ -497,6 +501,10 @@ impl Analyzer {
 
         // Determine program kind
         ctx.prog_kind = self.derive_program_kind(section);
+        ctx.attach_subtype = section
+            .to_lowercase()
+            .split_once('/')
+            .map(|(_, sub)| sub.to_string());
 
         // Section-mode path: no per-subprog identity, so we don't seed
         // struct_ops entry_args here. For struct_ops we always go through

@@ -234,8 +234,30 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
 
     let (r0_min, r0_max) = state.domain.get_interval(Reg::R0);
 
-    // Use the helper method on the ProgramKind stored in env
-    if env.ctx.prog_kind.requires_strict_return_code() && (r0_min < 0 || r0_max > 1) {
+    // Cluster B: per-attach-type retval range. When a finer rule applies
+    // for the (prog_kind, attach_subtype) pair, prefer it over the coarse
+    // `requires_strict_return_code` check below — the kernel's per-hook
+    // ranges are tighter (e.g. cgroup/recvmsg* must return exactly 1).
+    if state.at_main_frame() {
+        if let Some(rule) = crate::ast::expected_retval_rule(
+            env.ctx.prog_kind,
+            env.ctx.attach_subtype.as_deref(),
+        ) {
+            let out_of_range = r0_min < rule.lo || r0_max > rule.hi;
+            let needs_known = rule.require_known
+                && (r0_min != r0_max
+                    || state.types.get(Reg::R0) != RegType::ScalarValue);
+            if out_of_range || needs_known {
+                env.fail(VerificationError::InvalidReturnCode { pc: state.pc });
+                return vec![];
+            }
+        } else if env.ctx.prog_kind.requires_strict_return_code()
+            && (r0_min < 0 || r0_max > 1)
+        {
+            env.fail(VerificationError::InvalidReturnCode { pc: state.pc });
+            return vec![];
+        }
+    } else if env.ctx.prog_kind.requires_strict_return_code() && (r0_min < 0 || r0_max > 1) {
         env.fail(VerificationError::InvalidReturnCode { pc: state.pc });
         return vec![];
     }

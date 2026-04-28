@@ -91,6 +91,11 @@ pub struct ExecContext {
     /// `kfunc_ops_member_allowlist` (e.g. `scx_bpf_select_cpu_dfl`
     /// is callable only from `sched_ext_ops.select_cpu`).
     pub struct_ops_member: Option<(String, String)>,
+    /// Cluster B: lowercase SEC suffix after the first `/`, used by
+    /// `expected_retval_rule` to pick the per-attach-type R0 range
+    /// enforced at exit. `None` for SECs without a slash (e.g. `"netfilter"`,
+    /// `"syscall"`) or when the runner did not stash the section name.
+    pub attach_subtype: Option<String>,
 }
 
 pub fn default_exec_ctx() -> ExecContext {
@@ -106,6 +111,7 @@ pub fn default_exec_ctx() -> ExecContext {
         entry_args: None,
         entry_returns_void: false,
         struct_ops_member: None,
+        attach_subtype: None,
     }
 }
 

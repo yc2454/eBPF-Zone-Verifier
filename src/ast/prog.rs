@@ -37,6 +37,9 @@ pub enum ProgramKind {
     /// entry types are derived from that member's BTF FUNC_PROTO by the
     /// W6.4 entry-state plumbing.
     StructOps,
+    /// `SEC("netfilter")` — BPF_PROG_TYPE_NETFILTER. R0 at exit must be a
+    /// known value in [0, 1] (NF_DROP / NF_ACCEPT).
+    Netfilter,
     #[default]
     Unknown,
 }
@@ -124,6 +127,9 @@ impl ProgramKind {
         }
         if s == "syscall" {
             return ProgramKind::Syscall;
+        }
+        if s == "netfilter" || s.starts_with("netfilter/") {
+            return ProgramKind::Netfilter;
         }
         // struct_ops (W6.4). Forms in the wild:
         //   "struct_ops"             — bare, member named after func symbol
@@ -241,5 +247,68 @@ impl ProgramKind {
             self,
             ProgramKind::CgroupSkb | ProgramKind::CgroupSock | ProgramKind::CgroupSockAddr
         )
+    }
+}
+
+/// Per-attach-type return-value rule (Cluster B).
+///
+/// Mirrors the kernel's `check_return_code` per-prog-type / per-expected-attach-type
+/// table: at program exit, R0 must lie in `[lo, hi]`, and if `require_known` is
+/// true, R0 must additionally be a single known value (smin == smax).
+///
+/// `subtype` is the SEC suffix after the first `/` lowercased — e.g. for
+/// `SEC("cgroup/recvmsg4")` it is `"recvmsg4"`; for `SEC("lsm/file_mprotect")`
+/// it is `"file_mprotect"`. For prog kinds whose retval rule does not depend
+/// on attach subtype (e.g. netfilter), `subtype` is unused.
+#[derive(Debug, Clone, Copy)]
+pub struct RetvalRule {
+    pub lo: i64,
+    pub hi: i64,
+    pub require_known: bool,
+}
+
+pub fn expected_retval_rule(prog_kind: ProgramKind, subtype: Option<&str>) -> Option<RetvalRule> {
+    match prog_kind {
+        ProgramKind::CgroupSockAddr => {
+            let sub = subtype?;
+            // recvmsg / getpeername / getsockname: must return exactly 1.
+            if sub.starts_with("recvmsg")
+                || sub.starts_with("getpeername")
+                || sub.starts_with("getsockname")
+            {
+                return Some(RetvalRule { lo: 1, hi: 1, require_known: false });
+            }
+            // bind4 / bind6: [0, 3].
+            if sub.starts_with("bind") {
+                return Some(RetvalRule { lo: 0, hi: 3, require_known: false });
+            }
+            // sendmsg / connect: [0, 1] (default for cgroup/sock_addr hooks).
+            Some(RetvalRule { lo: 0, hi: 1, require_known: false })
+        }
+        ProgramKind::Lsm => {
+            let sub = subtype?;
+            // bool retval hooks.
+            if sub == "audit_rule_known" {
+                return Some(RetvalRule { lo: 0, hi: 1, require_known: false });
+            }
+            // void retval hooks: no constraint.
+            if sub == "file_free_security" || sub == "task_free" || sub == "inode_free_security" {
+                return None;
+            }
+            // Default LSM hook: errno-or-zero. Only enforce on hooks we know
+            // are checked upstream (avoid regressing PASS cases that we
+            // currently accept but where the kernel's per-hook policy is
+            // looser than [-4095, 0]).
+            if sub == "file_mprotect" {
+                return Some(RetvalRule { lo: -4095, hi: 0, require_known: false });
+            }
+            None
+        }
+        ProgramKind::Netfilter => {
+            // NF_DROP=0, NF_ACCEPT=1; kernel additionally requires the value
+            // to be a known constant (rejects "R0 is not a known value").
+            Some(RetvalRule { lo: 0, hi: 1, require_known: true })
+        }
+        _ => None,
     }
 }
