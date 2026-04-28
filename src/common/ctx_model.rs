@@ -1609,6 +1609,41 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
         }
     }
 
+    // Cluster C1: for the BPF_PROG-style ctx prog kinds, the ctx is a
+    // BTF arg array. Only 8-byte aligned 8-byte loads are valid; narrow
+    // loads, misaligned loads, or negative offsets must reject. Without
+    // this guard, those fall through to the SkBuff/etc. fallback below
+    // and are silently accepted.
+    if matches!(
+        prog_kind,
+        ProgramKind::StructOps
+            | ProgramKind::Lsm
+            | ProgramKind::Tracing
+            | ProgramKind::Tracepoint
+            | ProgramKind::RawTracepoint
+            | ProgramKind::RawTracepointWritable
+    ) {
+        return None;
+    }
+
+    // Cluster C1: netfilter ctx is `struct bpf_nf_ctx { state; skb; }` —
+    // only 8-byte loads at off 0 (state) and off 8 (skb) are valid.
+    if prog_kind == ProgramKind::Netfilter {
+        if size == 8 && (off == 0 || off == 8) {
+            // Return Scalar rather than TrustedPtr: the kernel marks
+            // pointers loaded out of bpf_nf_ctx as read-only, and writes
+            // through them must be rejected (`__msg("only read is supported")`
+            // in `with_invalid_ctx_access_test5`). The BTF mem-region
+            // "unknown" lax policy would silently accept those writes.
+            return Some(CtxAccessInfo {
+                kind: CtxFieldKind::Scalar,
+                readable: true,
+                writable: false,
+            });
+        }
+        return None;
+    }
+
     let ctx_kind = match prog_kind {
         ProgramKind::Tracing => match (env.ctx.attach_kind, env.ctx.kfunc.as_deref()) {
             (AttachKind::TraceIter, Some("task")) => ContextKind::IterTask,

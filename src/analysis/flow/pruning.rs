@@ -398,6 +398,17 @@ fn state_subsumed_by(
         return false;
     }
 
+    // Cluster: regsafe scalar-id check.
+    // If two live registers share a scalar_id in `old` (so a future
+    // refinement on one will propagate to the other along the cached
+    // continuation), `cur` must also have them linked. Otherwise the
+    // cur-state's continuation would refine them independently — pruning
+    // it against `old` hides paths where the unlinked register stays
+    // unbounded. Mirrors upstream `check_ids` in `regsafe`.
+    if !scalar_id_links_subsumed_by(cur, old, live_regs) {
+        return false;
+    }
+
     // W3.1c: `old` must have at least as much may_goto budget remaining as
     // `cur`, otherwise pruning would let `cur` continue under behaviours
     // `old` never explored (old already exhausted the budget on a path cur
@@ -432,6 +443,81 @@ fn state_subsumed_by(
         }
     }
 
+    true
+}
+
+/// Linkage class for a register, used by `scalar_id_links_subsumed_by`.
+///
+/// Two registers belong to the same equivalence class when a future
+/// refinement (e.g. null-check, range narrowing) on one will propagate
+/// to the other along the kernel verifier's id-tracking. This covers:
+///   - scalars sharing a `scalar_id`
+///   - id-bearing nullable pointer types (`PtrToMapValueOrNull`,
+///     `PtrToBtfIdOrNull`, `PtrToAllocMemOrNull`) sharing an id — null
+///     refinement promotes all class members to the non-null form.
+///   - the non-null forms `PtrToMapValue { id, .. }`, `PtrToAllocMem { id, .. }`
+///     — the id persists post-refinement and still drives propagation.
+///
+/// The numeric tag in `LinkageKind` keeps classes from different RegType
+/// variants disjoint even when their ids collide as `u32` values.
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+enum LinkageKind {
+    Scalar,
+    MapValue,
+    MapValueOrNull,
+    BtfIdOrNull,
+    AllocMem,
+    AllocMemOrNull,
+}
+
+fn linkage_key(state: &State, r: Reg) -> Option<(LinkageKind, u32)> {
+    use crate::analysis::machine::reg_types::RegType;
+    match state.types.get(r) {
+        RegType::PtrToMapValueOrNull { id, .. } => Some((LinkageKind::MapValueOrNull, id)),
+        RegType::PtrToMapValue { id, .. } => Some((LinkageKind::MapValue, id)),
+        RegType::PtrToBtfIdOrNull { id, .. } => Some((LinkageKind::BtfIdOrNull, id)),
+        RegType::PtrToAllocMemOrNull { id, .. } => Some((LinkageKind::AllocMemOrNull, id)),
+        RegType::PtrToAllocMem { id, .. } => Some((LinkageKind::AllocMem, id)),
+        RegType::ScalarValue => state.scalar_id(r).map(|id| (LinkageKind::Scalar, id)),
+        _ => None,
+    }
+}
+
+/// Conservative id-equivalence check used by `state_subsumed_by`.
+///
+/// Returns true iff every pair `(r1, r2)` of live regs in the same
+/// linkage class in `old` is also in the same linkage class in `cur`.
+/// This is the safe direction: `cur` may have MORE links than `old`
+/// (refinement narrows), but `old` cannot have links that `cur` lacks —
+/// those are exactly the cases where future refinement in old's
+/// continuation would silently miss propagation in cur. Mirrors
+/// upstream `check_ids` in `regsafe`.
+fn scalar_id_links_subsumed_by(
+    cur: &State,
+    old: &State,
+    live_regs: &HashSet<Reg>,
+) -> bool {
+    let live: Vec<Reg> = live_regs.iter().copied().collect();
+    for i in 0..live.len() {
+        for j in (i + 1)..live.len() {
+            let r1 = live[i];
+            let r2 = live[j];
+            let old_link = match (linkage_key(old, r1), linkage_key(old, r2)) {
+                (Some(a), Some(b)) if a == b => true,
+                _ => false,
+            };
+            if !old_link {
+                continue;
+            }
+            let cur_link = match (linkage_key(cur, r1), linkage_key(cur, r2)) {
+                (Some(a), Some(b)) if a == b => true,
+                _ => false,
+            };
+            if !cur_link {
+                return false;
+            }
+        }
+    }
     true
 }
 

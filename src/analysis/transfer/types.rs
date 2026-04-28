@@ -398,10 +398,29 @@ pub(crate) fn update_call_types(
                             .set(Reg::R0, RegType::PtrToSocketOrNull { ref_id: Some(id) });
                     }
                     _ => {
-                        let id = new_ptr_id();
-                        state
-                            .types
-                            .set(Reg::R0, RegType::PtrToMapValueOrNull { id, map_idx });
+                        // bpf_get_local_storage returns a guaranteed non-null
+                        // pointer (cgroup_storage / per-cpu storage is always
+                        // allocated by the kernel for the prog's attach
+                        // target) — type R0 as PtrToMapValue directly so the
+                        // user can dereference without an explicit null check,
+                        // matching kernel behaviour.
+                        if helper == constants::BPF_GET_LOCAL_STORAGE {
+                            let id = new_ptr_id();
+                            state.types.set(
+                                Reg::R0,
+                                RegType::PtrToMapValue {
+                                    id,
+                                    offset: Some(0),
+                                    map_idx,
+                                },
+                            );
+                            state.domain.init_map_value_ptr(Reg::R0);
+                        } else {
+                            let id = new_ptr_id();
+                            state
+                                .types
+                                .set(Reg::R0, RegType::PtrToMapValueOrNull { id, map_idx });
+                        }
                     }
                 }
             } else {

@@ -109,8 +109,54 @@ fn fanout_scalar_bounds(state: &mut State, left: Reg) {
     }
 }
 
+/// `if r1 == r2` / `if r1 != r2` jeq-infer: when one operand is already
+/// a non-null pointer with an id (e.g. `PtrToMapValue`) and the branch
+/// implies r1 == r2, propagate the non-null type to the other operand
+/// if it's the matching nullable variant (same id). Mirrors upstream
+/// `find_equal_scalars` / jeq_infer_not_null logic.
+fn jeq_infer_not_null(state: &mut State, left: Reg, right: Reg, eq_branch: bool) {
+    if !eq_branch {
+        return;
+    }
+    let lty = state.types.get(left);
+    let rty = state.types.get(right);
+    // If `r1 == r2` and one side is a known non-null pointer, the other
+    // (if it's the matching nullable variant) is also non-null. Mirrors
+    // upstream `find_equal_scalars` / jeq_infer_not_null. Ids don't need
+    // to match — value-equality of two registers means they alias the
+    // same kernel pointer regardless of how each was tracked.
+    if matches!(lty, RegType::PtrToMapValue { .. })
+        && matches!(rty, RegType::PtrToMapValueOrNull { .. })
+    {
+        maybe_promote_map_val(state, right);
+        return;
+    }
+    if matches!(rty, RegType::PtrToMapValue { .. })
+        && matches!(lty, RegType::PtrToMapValueOrNull { .. })
+    {
+        maybe_promote_map_val(state, left);
+    }
+}
+
 /// Refines register types based on the outcome of a conditional branch.
 pub(crate) fn refine_branch(state: &mut State, instr: &Instr, branch_taken: bool) {
+    // jeq_infer_not_null: `if r1 (==|!=) r2`
+    if let Instr::If {
+        op,
+        left,
+        right: Operand::Reg(right),
+        ..
+    } = instr
+    {
+        let eq_branch = match op {
+            CmpOp::Eq => branch_taken,
+            CmpOp::Ne => !branch_taken,
+            _ => return,
+        };
+        jeq_infer_not_null(state, *left, *right, eq_branch);
+        return;
+    }
+
     if let Instr::If {
         op,
         left,

@@ -86,26 +86,24 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             }
         }
         PtrToMapValueOrNull { map_idx, .. } => {
-            let final_offset = off as i64;
-            let access_end = final_offset + size;
-            let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) {
-                def.value_size as i64
-            } else {
-                constants::DEFAULT_MAP_VALUE_SIZE
-            };
-
-            if !(final_offset >= 0 && access_end <= map_limit) {
-                error!(
-                    "Unsafe nullable map load at pc {}: off {} limit {}",
-                    pc, final_offset, map_limit
-                );
-                env.fail(VerificationError::UnsafeMapLoad {
-                    pc,
-                    off: final_offset,
-                    size,
-                    limit: map_limit,
-                });
-            }
+            // Loads through a nullable map pointer are unconditionally
+            // rejected by the kernel — the user must null-check first
+            // (which promotes the type to PtrToMapValue). Without this,
+            // pruning that loses an unrefined nullable arrival lets
+            // subsequent loads slip through (cluster: regsafe).
+            error!(
+                "Load through PtrToMapValueOrNull at pc {}: requires null check",
+                pc
+            );
+            let _ = off;
+            let _ = size;
+            let _ = map_idx;
+            env.fail(VerificationError::UnsafeMapLoad {
+                pc,
+                off: off as i64,
+                size,
+                limit: 0,
+            });
         }
         PtrToTcpSock { .. } | PtrToSockCommon { .. } | PtrToSocket { .. } => {
             if !mem_region_model::is_valid_mem_region_read(state.types.get(base), off, size) {

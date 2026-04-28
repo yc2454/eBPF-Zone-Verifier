@@ -560,6 +560,11 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             DontCare, DontCare, DontCare, DontCare,
         ]),
 
+        constants::BPF_GET_NETNS_COOKIE => CallProto::with_args([
+            PtrToCtxOrNull, // R1: ctx (nullable — kernel accepts NULL)
+            DontCare, DontCare, DontCare, DontCare,
+        ]),
+
         constants::BPF_CSUM_UPDATE => CallProto::with_args([
             PtrToCtx, // R1: skb
             DontCare, DontCare, DontCare, DontCare,
