@@ -96,6 +96,13 @@ pub struct ExecContext {
     /// enforced at exit. `None` for SECs without a slash (e.g. `"netfilter"`,
     /// `"syscall"`) or when the runner did not stash the section name.
     pub attach_subtype: Option<String>,
+    /// Reverse of `combine_program_with_subprogs::func_offsets` — maps
+    /// the absolute PC at which each subprog begins to its declared
+    /// function name. Used by `transfer_call_rel` to resolve a
+    /// `CallRel { target }` to a name and look up its BTF FUNC linkage
+    /// + FUNC_PROTO. Empty when no subprogs were combined or the
+    /// loader didn't populate the table.
+    pub pc_to_subprog_name: HashMap<usize, String>,
 }
 
 pub fn default_exec_ctx() -> ExecContext {
@@ -112,6 +119,7 @@ pub fn default_exec_ctx() -> ExecContext {
         entry_returns_void: false,
         struct_ops_member: None,
         attach_subtype: None,
+        pc_to_subprog_name: HashMap::new(),
     }
 }
 

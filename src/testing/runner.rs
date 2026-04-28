@@ -429,7 +429,6 @@ impl Analyzer {
         if prog.instrs.is_empty() {
             return AnalysisResult::LoadError(format!("Empty function '{}'", func.name));
         }
-        let _ = &func_offsets;
 
         println!(
             "Test 'prog: {}, section: {}, func: {}': Lowered Program AST:",
@@ -453,6 +452,13 @@ impl Analyzer {
         ctx.btf = self.btf.clone();
         register_kfunc_relocs(&mut ctx.btf, &pc_to_reloc);
         ctx.pc_to_reloc = pc_to_reloc;
+        // Invert func_offsets (name → entry PC) into entry PC → name
+        // so the call-rel transfer can resolve a target PC to a
+        // function name and look up its BTF FUNC linkage.
+        ctx.pc_to_subprog_name = func_offsets
+            .iter()
+            .map(|(name, pc)| (*pc, name.clone()))
+            .collect();
         ctx.flags |= extra_flags;
 
         // Determine program kind

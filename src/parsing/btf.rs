@@ -383,6 +383,116 @@ impl BtfContext {
         Some(proto.size_or_type == 0)
     }
 
+    /// Classification of a global-subprog argument from BTF, used to
+    /// emit the kernel's "Caller passes invalid args" / "FWD size
+    /// cannot be determined" / "expected ..." errors and to seed the
+    /// callee's R1..R5 with declared types when verifying its body.
+    ///
+    /// Distinct from `StructOpsArg`: struct_ops's TrustedPtr is a
+    /// kernel-typed pointer, whereas a global subprog's pointer arg is
+    /// the kernel verifier's `PTR_TO_MEM | PTR_MAYBE_NULL` — bounded
+    /// by the pointee's BTF size, callee must null-check.
+    pub fn resolve_global_func_args(&self, func_name: &str) -> Option<Vec<GlobalFuncArg>> {
+        let func_ty = self.types.values().find(|ty| {
+            ty.kind() == BTF_KIND_FUNC && self.get_string(ty.name_off) == Some(func_name)
+        })?;
+        let proto = self.types.get(&func_ty.size_or_type)?;
+        if proto.kind() != BTF_KIND_FUNC_PROTO {
+            return None;
+        }
+        Some(
+            proto
+                .members
+                .iter()
+                .map(|p| self.classify_global_func_arg(p.type_id))
+                .collect(),
+        )
+    }
+
+    fn classify_global_func_arg(&self, type_id: u32) -> GlobalFuncArg {
+        let id = self.peel_modifiers(type_id);
+        let Some(ty) = self.types.get(&id) else {
+            return GlobalFuncArg::Scalar;
+        };
+        match ty.kind() {
+            BTF_KIND_INT | BTF_KIND_ENUM | BTF_KIND_ENUM64 | BTF_KIND_FLOAT => {
+                GlobalFuncArg::Scalar
+            }
+            BTF_KIND_PTR => {
+                let pointee_id = self.peel_modifiers(ty.size_or_type);
+                let Some(pointee) = self.types.get(&pointee_id) else {
+                    // Unresolved pointee — typically `void *`, also
+                    // possible for opaque kernel types we don't have
+                    // BTF for. The kernel relies on DECL_TAG
+                    // annotations (`__arg_ctx`, `__arg_nullable`,
+                    // ...) to refine; without those we can't
+                    // distinguish ctx-typed from mem-typed `void *`.
+                    // Be permissive at the caller boundary: a
+                    // PermissivePtr accepts ctx, any mem pointer, or
+                    // NULL. Body verification loses some checks but
+                    // we don't false-reject legitimate `void *ctx`
+                    // global subprogs (test_global_func_ctx_args).
+                    return GlobalFuncArg::PermissivePtr;
+                };
+                match pointee.kind() {
+                    // FWD: struct declared but not defined — the kernel
+                    // can't determine its size, which is what test
+                    // global_func14 asserts.
+                    BTF_KIND_FWD => GlobalFuncArg::PtrToFwd {
+                        name: self.get_string(pointee.name_off).unwrap_or("?").to_string(),
+                    },
+                    BTF_KIND_STRUCT | BTF_KIND_UNION => {
+                        let pname = self.get_string(pointee.name_off).unwrap_or("");
+                        if is_ctx_struct_name(pname) {
+                            GlobalFuncArg::PtrToCtx
+                        } else {
+                            GlobalFuncArg::PtrToMem {
+                                mem_size: pointee.size_or_type,
+                            }
+                        }
+                    }
+                    BTF_KIND_INT | BTF_KIND_ENUM | BTF_KIND_ENUM64 | BTF_KIND_FLOAT => {
+                        GlobalFuncArg::PtrToMem {
+                            mem_size: pointee.size_or_type,
+                        }
+                    }
+                    _ => GlobalFuncArg::PtrToMem { mem_size: 0 },
+                }
+            }
+            _ => GlobalFuncArg::Scalar,
+        }
+    }
+
+    /// Returns true iff a BTF_KIND_FUNC by this name has GLOBAL linkage
+    /// (vs STATIC or EXTERN). Encoded in FUNC.info bits 0..16
+    /// (`BTF_FUNC_GLOBAL = 1`). The kernel verifies global subprogs
+    /// independently against their declared signature; static subprogs
+    /// inherit the caller's concrete types.
+    pub fn is_global_func(&self, func_name: &str) -> bool {
+        let Some(func_ty) = self.types.values().find(|ty| {
+            ty.kind() == BTF_KIND_FUNC && self.get_string(ty.name_off) == Some(func_name)
+        }) else {
+            return false;
+        };
+        (func_ty.info & 0xffff) == 1
+    }
+
+    /// True if the named function's declared return type is `void`
+    /// (BTF type id 0 in the FUNC_PROTO `size_or_type`). Used to
+    /// reject global subprogs declared with a void return —
+    /// "function 'foo' doesn't return scalar".
+    pub fn func_returns_void(&self, func_name: &str) -> bool {
+        let Some(func_ty) = self.types.values().find(|ty| {
+            ty.kind() == BTF_KIND_FUNC && self.get_string(ty.name_off) == Some(func_name)
+        }) else {
+            return false;
+        };
+        let Some(proto) = self.types.get(&func_ty.size_or_type) else {
+            return false;
+        };
+        proto.kind() == BTF_KIND_FUNC_PROTO && proto.size_or_type == 0
+    }
+
     /// Resolve a subprog's parameter list directly from its BTF FUNC entry.
     ///
     /// clang -target bpf emits a `BTF_KIND_FUNC` for every defined function
@@ -522,6 +632,65 @@ pub enum StructOpsArg {
     Scalar,
     TrustedPtr(String),
     OpaquePtr,
+}
+
+/// Classification of one parameter in a global subprog's BTF FUNC_PROTO.
+/// Drives the W6.5 "global function arg validation" path: caller-side
+/// type matching, callee-side R1..R5 entry-state seeding, and the
+/// `FWD size cannot be determined` rejection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GlobalFuncArg {
+    /// Integer / enum / float. Caller must pass a scalar; callee
+    /// receives a generic `ScalarValue` at entry.
+    Scalar,
+    /// Pointer to a sized struct/union/scalar with byte size `mem_size`.
+    /// Caller may pass any compatible memory pointer; callee receives
+    /// `PtrToAllocMemOrNull { mem_size }` and must null-check before
+    /// dereferencing — this is what produces the kernel's
+    /// "invalid mem access 'mem_or_null'" rejection inside the callee.
+    PtrToMem { mem_size: u32 },
+    /// Pointer to a recognized BPF context struct (`__sk_buff`,
+    /// `xdp_md`, `pt_regs`, ...). Caller must pass `PtrToCtx`; the
+    /// callee receives the same. Distinct from `PtrToMem` because the
+    /// kernel allows ctx-typed global subprog args without
+    /// MAYBE_NULL semantics — the ctx is always non-null.
+    PtrToCtx,
+    /// Pointer to a forward-declared struct (`struct S;` with no
+    /// definition). Size is unknown to BTF, so the kernel rejects
+    /// with "reference type('FWD S') size cannot be determined".
+    PtrToFwd { name: String },
+    /// `void *` or other unresolved pointer target — typically used
+    /// with kernel `__arg_ctx` / `__arg_nullable` DECL_TAG
+    /// annotations we don't yet parse. Caller accepts any pointer
+    /// kind plus NULL; callee receives PtrToCtx (the most common
+    /// real meaning) so body access is liberal but not pointer-leaky.
+    PermissivePtr,
+}
+
+/// Names of struct types the kernel treats as a BPF program context
+/// when used as a pointer arg of a global subprog. Drives the
+/// caller-side "PtrToCtx is admissible" check in W6.5. Mirrors the
+/// kernel's per-prog-type ctx struct allowlist (kept loose: any
+/// recognized name is accepted regardless of the calling prog kind —
+/// a tighter check would require per-prog-type plumbing we defer).
+fn is_ctx_struct_name(name: &str) -> bool {
+    matches!(
+        name,
+        "__sk_buff"
+            | "xdp_md"
+            | "pt_regs"
+            | "bpf_user_pt_regs_t"
+            | "bpf_perf_event_data"
+            | "bpf_raw_tracepoint_args"
+            | "bpf_sock"
+            | "bpf_sock_addr"
+            | "bpf_sock_ops"
+            | "bpf_sysctl"
+            | "sk_msg_md"
+            | "sk_reuseport_md"
+            | "bpf_sockopt"
+            | "bpf_sk_lookup"
+    )
 }
 
 /// Parses the .BTF section into a structured Context for analysis

@@ -226,6 +226,16 @@ pub enum VerificationError {
     NoreturnAttachTarget {
         target: String,
     },
+    GlobalFuncMalformed {
+        pc: usize,
+        func: String,
+        reason: String,
+    },
+    GlobalFuncBadCallerArg {
+        pc: usize,
+        func: String,
+        arg_index: usize,
+    },
     LsmHookDisabled {
         hook: String,
     },
@@ -517,6 +527,17 @@ impl VerificationError {
                 format!(
                     "Attaching fexit/fmod_ret to __noreturn functions is rejected: '{}'",
                     target
+                )
+            }
+            VerificationError::GlobalFuncMalformed { pc, func, reason } => {
+                format!("global function '{}' at pc {} {}", func, pc, reason)
+            }
+            VerificationError::GlobalFuncBadCallerArg { pc, func, arg_index } => {
+                format!(
+                    "Caller passes invalid args into func '{}' (arg #{}) at pc {}",
+                    func,
+                    arg_index + 1,
+                    pc
                 )
             }
             VerificationError::KfuncNotAllowedForProgram { pc, btf_id, kind } => {

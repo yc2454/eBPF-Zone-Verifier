@@ -284,12 +284,18 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     // W3.2b: open-coded iterators must be destroyed on every exit path.
     // An Active or Drained iterator slot anywhere in the frame stack is
     // a leak — parallel to unreleased refs above.
-    if state.at_main_frame()
-        && state
-            .frames
-            .iter()
-            .any(|f| f.stack.has_active_iterators())
-    {
+    //
+    // At main exit, walk all frames (defensive, though only frame[0] is
+    // live then). At non-main exit (subprog return), check the current
+    // frame: iter slots on the callee's stack vanish when the frame is
+    // popped, so an undestroyed iter is a leak — kernel emits
+    // "returning from callee: ... Unreleased reference".
+    let iter_leak = if state.at_main_frame() {
+        state.frames.iter().any(|f| f.stack.has_active_iterators())
+    } else {
+        state.frames.current().stack.has_active_iterators()
+    };
+    if iter_leak {
         env.fail(VerificationError::UnreleasedIterator);
         return vec![];
     }
@@ -297,13 +303,16 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     // W4.2c: ref-bearing dynptr slots (today: ringbuf reservations)
     // must be submitted or discarded on every exit path. Non-ref
     // dynptrs (Local/Skb/Xdp) are pure metadata over a pointer and
-    // need no release.
-    if state.at_main_frame()
-        && state
+    // need no release. Same per-frame logic as iterators above.
+    let dynptr_leak = if state.at_main_frame() {
+        state
             .frames
             .iter()
             .any(|f| f.stack.has_unreleased_dynptr_refs())
-    {
+    } else {
+        state.frames.current().stack.has_unreleased_dynptr_refs()
+    };
+    if dynptr_leak {
         env.fail(VerificationError::UnreleasedDynptr);
         return vec![];
     }

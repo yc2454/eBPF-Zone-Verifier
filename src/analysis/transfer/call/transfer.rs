@@ -572,8 +572,141 @@ pub(crate) fn transfer_call_rel(
         return vec![];
     }
 
+    // W6.5: global subprogs are verified independently against their
+    // declared BTF FUNC_PROTO. At each call site we must:
+    //   1. Reject malformed global signatures (void return, FWD args)
+    //      that the kernel would reject at function-load time.
+    //   2. Validate caller's R1..R5 against declared types (catches
+    //      "Caller passes invalid args into func#N").
+    //   3. After push_frame, override callee's R1..R5 with declared
+    //      types so the body is verified the way the kernel would —
+    //      pointers come in as PTR_TO_MEM | PTR_MAYBE_NULL, etc.
+    // Static subprogs skip all of this: callee inherits caller's
+    // concrete types, matching kernel `__noinline static` semantics.
+    let callee_global = env
+        .ctx
+        .pc_to_subprog_name
+        .get(&target)
+        .cloned()
+        .filter(|n| env.ctx.btf.is_global_func(n));
+    if let Some(name) = callee_global.as_ref() {
+        if env.ctx.btf.func_returns_void(name) {
+            env.fail(VerificationError::GlobalFuncMalformed {
+                pc,
+                func: name.clone(),
+                reason: "doesn't return scalar".to_string(),
+            });
+            return vec![];
+        }
+        if let Some(args) = env.ctx.btf.resolve_global_func_args(name) {
+            // Reject malformed args (FWD).
+            for (i, arg) in args.iter().enumerate() {
+                if let crate::parsing::btf::GlobalFuncArg::PtrToFwd { name: tname } = arg {
+                    env.fail(VerificationError::GlobalFuncMalformed {
+                        pc,
+                        func: name.clone(),
+                        reason: format!(
+                            "reference type('FWD {}') size cannot be determined (arg #{})",
+                            tname,
+                            i + 1
+                        ),
+                    });
+                    return vec![];
+                }
+            }
+            // Caller-side type compatibility check.
+            let arg_regs = [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
+            for (i, (arg, reg)) in args.iter().zip(arg_regs.iter()).enumerate() {
+                let actual = state.types.get(*reg);
+                // For scalars passed where a pointer is declared, the
+                // kernel admits only literal NULL — not arbitrary
+                // scalar values. Use the domain to prove the value is
+                // exactly 0; otherwise reject.
+                let scalar_is_zero = || {
+                    let (lo, hi) = state.domain.get_interval(*reg);
+                    lo == 0 && hi == 0
+                };
+                if !caller_arg_compatible(arg, actual, scalar_is_zero) {
+                    env.fail(VerificationError::GlobalFuncBadCallerArg {
+                        pc,
+                        func: name.clone(),
+                        arg_index: i,
+                    });
+                    return vec![];
+                }
+                // For PtrToStack passed to PtrToMem(mem_size), the
+                // kernel additionally verifies the caller's stack
+                // region is large enough and fully initialized. This
+                // catches "small struct passed to large declared arg"
+                // — the kernel emits "invalid read from stack" when
+                // the callee would later access bytes past the
+                // caller's allocation.
+                if let crate::parsing::btf::GlobalFuncArg::PtrToMem { mem_size } = arg
+                    && let RegType::PtrToStack { .. } = actual
+                    && let Some(off) = state.domain.get_distance_fixed(*reg, Reg::R10)
+                {
+                    crate::analysis::transfer::memory::check_stack_arg_readable(
+                        env,
+                        &state,
+                        off,
+                        *mem_size as i64,
+                        pc,
+                        crate::analysis::transfer::memory::access::AccessKind::HelperBuffer,
+                    );
+                    if env.failed() {
+                        return vec![];
+                    }
+                }
+            }
+        }
+    }
+
     state.push_frame(pc + 1);
     update_call_rel_types(&mut state);
+
+    // Override callee R1..R5 with declared types for global subprogs.
+    // Pointer args become PtrToAllocMemOrNull bounded by the pointee's
+    // BTF size — the callee must null-check before dereferencing,
+    // which is the surface for `invalid mem access 'mem_or_null'`
+    // when the body unconditionally derefs.
+    if let Some(name) = callee_global.as_ref()
+        && let Some(args) = env.ctx.btf.resolve_global_func_args(name)
+    {
+        let arg_regs = [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
+        for (arg, reg) in args.iter().zip(arg_regs.iter()) {
+            match arg {
+                crate::parsing::btf::GlobalFuncArg::Scalar => {
+                    state.types.set(*reg, RegType::ScalarValue);
+                    state.domain.forget(*reg);
+                }
+                crate::parsing::btf::GlobalFuncArg::PtrToMem { mem_size } => {
+                    let id = crate::analysis::machine::reg_types::new_ptr_id();
+                    state.types.set(
+                        *reg,
+                        RegType::PtrToAllocMemOrNull {
+                            id,
+                            mem_size: *mem_size as u64,
+                        },
+                    );
+                    state.domain.forget(*reg);
+                }
+                crate::parsing::btf::GlobalFuncArg::PtrToCtx => {
+                    state.types.set(*reg, RegType::PtrToCtx);
+                    state.domain.forget(*reg);
+                }
+                crate::parsing::btf::GlobalFuncArg::PermissivePtr => {
+                    // Most `void *` global subprog args are ctx
+                    // pointers in practice; pick PtrToCtx as the
+                    // best guess for callee body verification.
+                    state.types.set(*reg, RegType::PtrToCtx);
+                    state.domain.forget(*reg);
+                }
+                crate::parsing::btf::GlobalFuncArg::PtrToFwd { .. } => {
+                    // Already rejected above; keep arm exhaustive.
+                }
+            }
+        }
+    }
 
     // Clear packet size bounds for the callee.
     // The kernel verifier tracks bounds per-function, so each function
@@ -585,6 +718,46 @@ pub(crate) fn transfer_call_rel(
     state.pc = target;
 
     vec![state]
+}
+
+/// Caller-side compatibility for a global subprog arg (W6.5). The
+/// kernel rejects calls whose actual reg type doesn't satisfy the
+/// declared kind:
+///   - declared Scalar: actual must be ScalarValue.
+///   - declared PtrToMem: actual must be a memory-style pointer
+///     (PtrToStack / PtrToMapValue / PtrToMem / PtrToAllocMem) OR
+///     a scalar that's *provably zero* (literal NULL — the kernel
+///     does not admit arbitrary scalars cast to a pointer).
+fn caller_arg_compatible<F: Fn() -> bool>(
+    declared: &crate::parsing::btf::GlobalFuncArg,
+    actual: RegType,
+    scalar_is_zero: F,
+) -> bool {
+    use crate::parsing::btf::GlobalFuncArg;
+    match declared {
+        GlobalFuncArg::Scalar => matches!(actual, RegType::ScalarValue),
+        GlobalFuncArg::PtrToMem { .. } => match actual {
+            RegType::PtrToStack { .. }
+            | RegType::PtrToMapValue { .. }
+            | RegType::PtrToMapValueOrNull { .. }
+            | RegType::PtrToAllocMem { .. }
+            | RegType::PtrToAllocMemOrNull { .. } => true,
+            RegType::ScalarValue => scalar_is_zero(),
+            _ => false,
+        },
+        GlobalFuncArg::PtrToCtx => matches!(actual, RegType::PtrToCtx),
+        GlobalFuncArg::PtrToFwd { .. } => false,
+        GlobalFuncArg::PermissivePtr => match actual {
+            RegType::PtrToCtx
+            | RegType::PtrToStack { .. }
+            | RegType::PtrToMapValue { .. }
+            | RegType::PtrToMapValueOrNull { .. }
+            | RegType::PtrToAllocMem { .. }
+            | RegType::PtrToAllocMemOrNull { .. } => true,
+            RegType::ScalarValue => scalar_is_zero(),
+            _ => false,
+        },
+    }
 }
 
 /// Apply the W5.2 lock / RCU pre-call flags carried on `proto`.

@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-28T20:56:05.800124+00:00",
+  "generated_at": "2026-04-28T22:25:07.749732+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -2393,8 +2393,8 @@
           "ours": "PASS"
         },
         "test_dynptr_reg_type": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test_dynptr_skb_small_buff": {
           "upstream": "ACCEPT",
@@ -3806,8 +3806,8 @@
           "note": "verifier timeout"
         },
         "leak_iter_from_subprog_fail": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "next_after_destroy_fail": {
           "upstream": "ACCEPT",
@@ -5647,7 +5647,7 @@
         "preempt_global_subprog_test": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 13: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "note": "Unsupported modern BPF feature at pc 7: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "preempt_lock_missing_1": {
           "upstream": "ACCEPT",
@@ -8732,8 +8732,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_global_func11.c",
       "progs": {
         "global_func11": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -8741,8 +8741,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_global_func12.c",
       "progs": {
         "global_func12": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -8759,8 +8759,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_global_func14.c",
       "progs": {
         "global_func14": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -8783,7 +8783,7 @@
         "global_func16": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Reading uninitialized stack slot at pc 10: offset -4"
+          "note": "Unsafe memory load at pc 10: base R1, offset 36, size 4"
         }
       }
     },
@@ -8791,8 +8791,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_global_func17.c",
       "progs": {
         "global_func17": {
-          "upstream": "ACCEPT",
-          "ours": "PASS"
+          "upstream": "REJECT",
+          "ours": "FALSE_ACCEPT"
         }
       }
     },
@@ -8846,8 +8846,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_global_func7.c",
       "progs": {
         "global_func7": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -8872,7 +8872,7 @@
         "global_func9": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 74: base R6+0 (type: ScalarValue)"
+          "note": "Invalid return code at pc 86"
         }
       }
     },
@@ -11795,7 +11795,7 @@
         "big_alloc2": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 164: base R2+0 (type: ScalarValue)"
+          "note": "Unsafe memory store at pc 158: base R2, offset 0, size 1"
         }
       }
     },
