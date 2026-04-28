@@ -11,7 +11,7 @@ use crate::common::mem_region_model;
 use RegType::*;
 use log::error;
 
-use super::map::check_map_access;
+use super::map::{check_kptr_field_access, check_map_access};
 use super::packet::{check_packet_access, check_packet_meta_access};
 use super::stack::check_stack_access;
 
@@ -67,6 +67,18 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
                     error!("Map load is forbidden!");
                     env.fail(VerificationError::MapLoadForbidden { pc, map_idx });
                 }
+                check_kptr_field_access(
+                    env,
+                    state,
+                    map_def,
+                    map_idx,
+                    base,
+                    map_off_opt,
+                    off,
+                    size,
+                    pc,
+                    /*is_store=*/ false,
+                );
                 let map_limit = map_def.value_size as i64;
                 check_map_access(
                     env,
@@ -241,6 +253,10 @@ pub fn check_store(
                     error!("Map store is forbidden!");
                     env.fail(VerificationError::MapStoreForbidden { pc, map_idx });
                 }
+                check_kptr_field_access(
+                    env, state, map_def, map_idx, base, map_off, off, size, pc,
+                    /*is_store=*/ true,
+                );
                 let map_limit = map_def.value_size as i64;
                 check_map_access(
                     env, state, map_limit, map_off, map_idx, base, map_def, off, size, pc,

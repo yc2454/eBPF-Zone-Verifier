@@ -178,6 +178,30 @@ pub enum RegType {
     PtrToOwnedKptrOrNull {
         ref_id: Option<u32>,
     },
+    /// Pointer loaded from a kptr field of a map value. The four kptr
+    /// flavors (`__kptr_untrusted`, `__kptr`, `__rcu`, `__percpu_kptr`)
+    /// are encoded by `flags`, mirroring the kernel's
+    /// `PTR_TO_BTF_ID | MEM_*` flag scheme:
+    ///   - `Unref`   → `UNTRUSTED`
+    ///   - `Ref`     → `MEM_ALLOC` (trusted, refcounted; deref OK)
+    ///   - `Rcu`     → `RCU`       (deref OK while in `bpf_rcu_read_lock`)
+    ///   - `Percpu`  → `PERCPU`    (must pass through `bpf_*_cpu_ptr` first)
+    /// `pointee_btf_id` is the inner struct's BTF id (from the map's
+    /// BTF), used for type-matching in `bpf_kptr_xchg` and pointee-bounds
+    /// checks on deref. `ref_id` is set only when the pointer has been
+    /// taken out of the map via `bpf_kptr_xchg` (the prior contents),
+    /// participating in the existing reference-tracking machinery; loads
+    /// that don't transfer ownership leave it `None`.
+    PtrToMapKptr {
+        pointee_btf_id: u32,
+        ref_id: Option<u32>,
+        flags: PtrFlags,
+    },
+    PtrToMapKptrOrNull {
+        pointee_btf_id: u32,
+        ref_id: Option<u32>,
+        flags: PtrFlags,
+    },
     /// Pointer to a callback subprogram, produced by `LD_IMM64 BPF_PSEUDO_FUNC`
     /// (W3.4a). Consumed by callback-taking helpers (`bpf_loop`,
     /// `bpf_for_each_map_elem`, `bpf_timer_set_callback`) and by the
@@ -207,6 +231,7 @@ impl RegType {
                 | PtrToCgroupOrNull { .. }
                 | PtrToTaskOrNull { .. }
                 | PtrToOwnedKptrOrNull { .. }
+                | PtrToMapKptrOrNull { .. }
                 | PtrToMapValue { .. }
                 | PtrToSocket { .. }
                 | PtrToSockCommon { .. }
@@ -216,6 +241,7 @@ impl RegType {
                 | PtrToCgroup { .. }
                 | PtrToTask { .. }
                 | PtrToOwnedKptr { .. }
+                | PtrToMapKptr { .. }
         )
     }
 
@@ -246,6 +272,15 @@ impl RegType {
             RegType::PtrToOwnedKptrOrNull { ref_id } => {
                 Some(RegType::PtrToOwnedKptr { ref_id })
             }
+            RegType::PtrToMapKptrOrNull {
+                pointee_btf_id,
+                ref_id,
+                flags,
+            } => Some(RegType::PtrToMapKptr {
+                pointee_btf_id,
+                ref_id,
+                flags,
+            }),
             _ => None,
         }
     }
@@ -263,6 +298,7 @@ impl RegType {
                 | RegType::PtrToCgroupOrNull { .. }
                 | RegType::PtrToTaskOrNull { .. }
                 | RegType::PtrToOwnedKptrOrNull { .. }
+                | RegType::PtrToMapKptrOrNull { .. }
         )
     }
 
@@ -303,6 +339,9 @@ impl RegType {
     pub fn ptr_flags(&self) -> PtrFlags {
         match *self {
             RegType::PtrToBtfId { flags, .. } | RegType::PtrToBtfIdOrNull { flags, .. } => flags,
+            RegType::PtrToMapKptr { flags, .. } | RegType::PtrToMapKptrOrNull { flags, .. } => {
+                flags
+            }
             _ => PtrFlags::empty(),
         }
     }
@@ -337,6 +376,9 @@ impl RegType {
             | RegType::PtrToTaskOrNull { ref_id: id }
             | RegType::PtrToOwnedKptr { ref_id: id }
             | RegType::PtrToOwnedKptrOrNull { ref_id: id } => id,
+            RegType::PtrToMapKptr { ref_id, .. } | RegType::PtrToMapKptrOrNull { ref_id, .. } => {
+                ref_id
+            }
             _ => None,
         }
     }
@@ -400,6 +442,7 @@ pub fn type_family(ty: &RegType) -> u8 {
         PtrToOwnedKptr { .. } | PtrToOwnedKptrOrNull { .. } => 17,
         PtrToCgroup { .. } | PtrToCgroupOrNull { .. } => 18,
         PtrToTask { .. } | PtrToTaskOrNull { .. } => 19,
+        PtrToMapKptr { .. } | PtrToMapKptrOrNull { .. } => 20,
     }
 }
 
@@ -505,6 +548,22 @@ mod tests {
             map_idx: 0,
         }
         .is_trusted());
+    }
+
+    #[test]
+    fn map_kptr_or_null_to_non_null_round_trip() {
+        let n = RegType::PtrToMapKptrOrNull {
+            pointee_btf_id: 12,
+            ref_id: Some(7),
+            flags: PtrFlags::UNTRUSTED,
+        };
+        assert!(n.is_nullable());
+        assert!(n.is_null_checked());
+        assert_eq!(n.get_ref_id(), Some(7));
+        assert!(n.is_untrusted());
+        let nn = n.to_non_null().expect("convertible");
+        assert!(matches!(nn, RegType::PtrToMapKptr { pointee_btf_id: 12, ref_id: Some(7), .. }));
+        assert_eq!(type_family(&n), type_family(&nn));
     }
 
     #[test]

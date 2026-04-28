@@ -172,6 +172,34 @@ pub enum VerificationError {
         pc: usize,
         off: i64,
     },
+    /// Map-value access landed on a kptr field with a size other than
+    /// `BPF_DW` (8 bytes). Kernel: "kptr access size must be BPF_DW".
+    KptrAccessSizeMustBeDW {
+        pc: usize,
+        off: i64,
+        size: i64,
+    },
+    /// Map-value access partially overlaps a kptr field at an offset
+    /// other than the field's own (8-byte-aligned) offset. Kernel:
+    /// "kptr access misaligned expected=8 off=N".
+    KptrAccessMisaligned {
+        pc: usize,
+        off: i64,
+        expected: u8,
+    },
+    /// Variable-offset map-value access into a map whose value contains
+    /// kptr fields. Kernel: "kptr access cannot have variable offset".
+    KptrAccessVariableOffset {
+        pc: usize,
+        map_idx: usize,
+    },
+    /// Direct store to a referenced kptr slot (`__kptr` / `__rcu` /
+    /// `percpu_kptr`). Mutation must go through `bpf_kptr_xchg`.
+    /// Kernel: "store to referenced kptr disallowed".
+    KptrStoreToReferenced {
+        pc: usize,
+        off: i64,
+    },
     InvalidBtfType,
     LockAlreadyHeld {
         pc: usize,
@@ -471,6 +499,22 @@ impl VerificationError {
             ),
             VerificationError::IteratorOverwrite { pc, off } => format!(
                 "Cannot overwrite open-coded iterator slot at pc {} (stack off {})",
+                pc, off
+            ),
+            VerificationError::KptrAccessSizeMustBeDW { pc, off, size } => format!(
+                "kptr access size must be BPF_DW at pc {} (off {}, size {})",
+                pc, off, size
+            ),
+            VerificationError::KptrAccessMisaligned { pc, off, expected } => format!(
+                "kptr access misaligned expected={} off={} at pc {}",
+                expected, off, pc
+            ),
+            VerificationError::KptrAccessVariableOffset { pc, map_idx } => format!(
+                "kptr access cannot have variable offset (map {}) at pc {}",
+                map_idx, pc
+            ),
+            VerificationError::KptrStoreToReferenced { pc, off } => format!(
+                "store to referenced kptr disallowed at pc {} (off {})",
                 pc, off
             ),
             VerificationError::UnreleasedLock => "Unreleased lock in program".to_string(),

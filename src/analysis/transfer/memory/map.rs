@@ -8,8 +8,182 @@ use crate::analysis::machine::state::State;
 use crate::ast::MapLoadKind;
 use crate::common::constants;
 use crate::domains::numeric::NumericDomain;
-use crate::parsing::elf::BpfMapDef;
+use crate::parsing::elf::{BpfMapDef, KptrField, KptrFieldKind};
 use log::error;
+
+/// Outcome of overlapping a constant `[off, off+size)` access against a
+/// map's kptr fields.
+pub enum KptrAccessOutcome<'a> {
+    /// Access doesn't touch any kptr field.
+    None,
+    /// Access exactly matches a kptr field at `field.offset`, size 8,
+    /// 8-byte aligned. Caller proceeds and (for loads) types the dst as
+    /// `PtrToMapKptrOrNull`; for stores, may reject if the field is
+    /// referenced (Ref/Rcu/Percpu).
+    Hit(&'a KptrField),
+    /// Access overlaps a kptr field with size != 8.
+    BadSize { field_off: u32, size: i64 },
+    /// Access overlaps a kptr field with a misaligned start offset
+    /// (i.e., `off != field.offset`, but the access window intersects
+    /// the kptr's 8-byte slot).
+    Misaligned { off: i64, expected: u8 },
+}
+
+/// Check a constant-offset access against `map_def.kptr_fields`.
+/// Returns the kind of overlap, or `None` if no kptr field is touched.
+pub fn classify_kptr_access(map_def: &BpfMapDef, off: i64, size: i64) -> KptrAccessOutcome<'_> {
+    if map_def.kptr_fields.is_empty() {
+        return KptrAccessOutcome::None;
+    }
+    let access_end = off + size;
+    for f in &map_def.kptr_fields {
+        let f_off = f.offset as i64;
+        let f_end = f_off + 8; // kptr fields are always 8-byte pointers
+        if access_end <= f_off || off >= f_end {
+            continue;
+        }
+        // Some overlap with this kptr slot.
+        if off == f_off && size == 8 {
+            return KptrAccessOutcome::Hit(f);
+        }
+        if off == f_off {
+            // Right offset, wrong size (e.g., 4-byte read of a kptr).
+            return KptrAccessOutcome::BadSize {
+                field_off: f.offset,
+                size,
+            };
+        }
+        // Wrong offset — partial overlap. Kernel reports
+        // "kptr access misaligned expected=8 off=N" using the
+        // *access* offset relative to the map value.
+        return KptrAccessOutcome::Misaligned {
+            off,
+            expected: 8,
+        };
+    }
+    KptrAccessOutcome::None
+}
+
+/// Resolve the constant access offset for a `PtrToMapValue` access if
+/// possible: prefer the type-carried `map_off`, fall back to a domain
+/// lookup that pins both bounds to the same value.
+pub fn resolve_const_map_off(
+    state: &State,
+    base: Reg,
+    map_off_opt: Option<i64>,
+    insn_off: i16,
+) -> Option<i64> {
+    if let Some(off) = map_off_opt {
+        return Some(off + insn_off as i64);
+    }
+    if let NumericDomain::Interval(ref ivl) = state.domain
+        && let Some(p) = ivl.get_ptr_offset(base)
+        && p.min_offset() == p.max_offset()
+    {
+        return Some(p.min_offset() + insn_off as i64);
+    }
+    None
+}
+
+/// Apply kptr-field rules to a constant- or variable-offset access on a
+/// `PtrToMapValue`. Pure validator — fails `env` on bad cases (size,
+/// alignment, varoff, store-to-referenced) and is a no-op on a clean
+/// kptr-field hit. Generic bounds checking still runs after this.
+pub fn check_kptr_field_access(
+    env: &mut VerifierEnv,
+    state: &State,
+    map_def: &BpfMapDef,
+    map_idx: usize,
+    base: Reg,
+    map_off_opt: Option<i64>,
+    insn_off: i16,
+    size: i64,
+    pc: usize,
+    is_store: bool,
+) {
+    if map_def.kptr_fields.is_empty() {
+        return;
+    }
+    if let Some(final_off) = resolve_const_map_off(state, base, map_off_opt, insn_off) {
+        match classify_kptr_access(map_def, final_off, size) {
+            KptrAccessOutcome::None => {}
+            KptrAccessOutcome::Hit(field) => {
+                if is_store {
+                    match field.kind {
+                        KptrFieldKind::Ref | KptrFieldKind::Rcu | KptrFieldKind::Percpu => {
+                            env.fail(VerificationError::KptrStoreToReferenced {
+                                pc,
+                                off: final_off,
+                            });
+                        }
+                        KptrFieldKind::Unref => {
+                            // Direct stores to unreferenced kptr slots
+                            // are allowed in the kernel — but the stored
+                            // value must be a compatible BTF pointer or
+                            // NULL. Source-side typing is enforced in
+                            // Phase 4 alongside `bpf_kptr_xchg`.
+                        }
+                    }
+                }
+            }
+            KptrAccessOutcome::BadSize { field_off: _, size } => {
+                env.fail(VerificationError::KptrAccessSizeMustBeDW {
+                    pc,
+                    off: final_off,
+                    size,
+                });
+            }
+            KptrAccessOutcome::Misaligned { off, expected } => {
+                env.fail(VerificationError::KptrAccessMisaligned { pc, off, expected });
+            }
+        }
+        return;
+    }
+
+    // Variable offset: bound the access window if possible, else assume
+    // it could land anywhere in the map value.
+    let (lo, hi) = if let NumericDomain::Interval(ref ivl) = state.domain
+        && let Some(p) = ivl.get_ptr_offset(base)
+    {
+        (
+            p.min_offset() + insn_off as i64,
+            p.max_offset() + insn_off as i64 + size,
+        )
+    } else {
+        (0, map_def.value_size as i64)
+    };
+    if varoff_overlaps_kptr(map_def, lo, hi) {
+        env.fail(VerificationError::KptrAccessVariableOffset { pc, map_idx });
+    }
+}
+
+/// Returns the kptr field exactly hit by a constant 8-byte 8-aligned
+/// access at `off`, or `None`. Used by load typing to produce
+/// `PtrToMapKptrOrNull`.
+pub fn kptr_field_at(map_def: &BpfMapDef, off: i64, size: i64) -> Option<&KptrField> {
+    if size != 8 {
+        return None;
+    }
+    map_def
+        .kptr_fields
+        .iter()
+        .find(|f| f.offset as i64 == off)
+}
+
+/// True iff a variable-offset access window `[lo, hi)` could overlap any
+/// kptr field in `map_def`. Used to reject variable-offset accesses to
+/// map values that contain kptrs (the kernel forbids these unconditionally
+/// because the access could land on a kptr slot).
+pub fn varoff_overlaps_kptr(map_def: &BpfMapDef, lo: i64, hi: i64) -> bool {
+    for f in &map_def.kptr_fields {
+        let f_off = f.offset as i64;
+        let f_end = f_off + 8;
+        if hi > f_off && lo < f_end {
+            return true;
+        }
+    }
+    false
+}
 
 pub fn check_map_rw(env: &mut VerifierEnv, map_idx: usize, pc: usize, is_write: bool) {
     let flag_to_check = if is_write {

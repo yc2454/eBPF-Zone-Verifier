@@ -5,6 +5,7 @@
 use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::{PtrFlags, RegType, TypeState, new_ptr_id};
+use crate::parsing::elf::KptrFieldKind;
 use crate::analysis::machine::stack_state::StackState;
 use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, MapLoadKind, MemSize, Operand, Width};
@@ -300,6 +301,47 @@ pub(crate) fn update_load_types(
                     // Conservative: result is scalar (could be anything)
                     state.types.set(dst, RegType::ScalarValue);
                 }
+            }
+        }
+        RegType::PtrToMapValue {
+            offset: map_off_opt,
+            map_idx,
+            ..
+        } => {
+            // Kptr field load: produce a typed pointer rather than a
+            // scalar. Generic bounds and kptr-overlap rules already ran
+            // in `check_load`; here we just synthesize the right reg
+            // type when the access exactly matches a kptr slot.
+            let final_off = crate::analysis::transfer::memory::map::resolve_const_map_off(
+                state,
+                base,
+                map_off_opt,
+                off,
+            );
+            let map_def = env.ctx.map_defs.get(map_idx);
+            if let (Some(off_val), Some(map_def)) = (final_off, map_def)
+                && let Some(field) = crate::analysis::transfer::memory::map::kptr_field_at(
+                    map_def,
+                    off_val,
+                    size as i64,
+                )
+            {
+                let flags = match field.kind {
+                    KptrFieldKind::Unref => PtrFlags::UNTRUSTED,
+                    KptrFieldKind::Ref => PtrFlags::MEM_ALLOC,
+                    KptrFieldKind::Rcu => PtrFlags::RCU,
+                    KptrFieldKind::Percpu => PtrFlags::PERCPU,
+                };
+                state.types.set(
+                    dst,
+                    RegType::PtrToMapKptrOrNull {
+                        pointee_btf_id: field.pointee_btf_id,
+                        ref_id: None,
+                        flags,
+                    },
+                );
+            } else {
+                state.types.set(dst, RegType::ScalarValue);
             }
         }
         _ => state.types.set(dst, RegType::ScalarValue),
