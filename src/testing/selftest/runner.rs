@@ -147,6 +147,22 @@ pub fn run_file_filtered(
     config: &VerifierConfig,
     filter: &dyn ProgFilter,
 ) -> Result<FileReport> {
+    let inc = clang::default_include_dirs(headers_root);
+    let iq = clang::default_iquote_dirs(headers_root);
+    run_file_with_dirs(src, &inc, &iq, extra_defines, config, filter)
+}
+
+/// Core per-file driver, parameterized on include and `-iquote` dirs so
+/// callers (default vendored-headers sweep, upstream-tree sweep) share
+/// the same scrape → compile → verify → diff pipeline.
+pub fn run_file_with_dirs(
+    src: &Path,
+    include_dirs: &[PathBuf],
+    iquote_dirs: &[PathBuf],
+    extra_defines: &[&str],
+    config: &VerifierConfig,
+    filter: &dyn ProgFilter,
+) -> Result<FileReport> {
     let progs = attrs::scrape(src)
         .with_context(|| format!("scraping attributes from {}", src.display()))?;
 
@@ -157,9 +173,7 @@ pub fn run_file_filtered(
     let obj = std::env::temp_dir().join(format!("zovia_selftest_{stem}.o"));
     let _ = std::fs::remove_file(&obj);
 
-    let inc = clang::default_include_dirs(headers_root);
-    let iq = clang::default_iquote_dirs(headers_root);
-    clang::compile_with_iquote(src, &obj, &inc, &iq, extra_defines)
+    clang::compile_with_iquote(src, &obj, include_dirs, iquote_dirs, extra_defines)
         .with_context(|| format!("compiling {}", src.display()))?;
 
     let analyzer = Analyzer::new(obj.to_str().unwrap(), with_selftest_caps(config));
@@ -211,6 +225,39 @@ pub fn run_dir_filtered(
     config: &VerifierConfig,
     filter: &dyn ProgFilter,
 ) -> Result<Vec<FileReport>> {
+    let inc = clang::default_include_dirs(headers_root);
+    let iq = clang::default_iquote_dirs(headers_root);
+    run_dir_with_dirs(dir, &inc, &iq, &[], config, filter)
+}
+
+/// Sweep every `*.c` file under `dir`, running the upstream kernel
+/// selftests/bpf tree directly (no header re-vendoring). `upstream_root`
+/// is the kernel checkout root (typically `vendor/linux/`).
+pub fn run_dir_upstream_filtered(
+    dir: &Path,
+    headers_root: &Path,
+    upstream_root: &Path,
+    config: &VerifierConfig,
+    filter: &dyn ProgFilter,
+) -> Result<Vec<FileReport>> {
+    let inc = clang::upstream_include_dirs(headers_root, upstream_root);
+    let iq = clang::upstream_iquote_dirs(headers_root, upstream_root);
+    run_dir_with_dirs(dir, &inc, &iq, clang::UPSTREAM_GLOBAL_DEFINES, config, filter)
+}
+
+/// Core per-directory driver. `global_defines` are passed to every file
+/// in addition to its `PER_FILE_DEFINES` entry (used by the upstream
+/// sweep to apply `__TARGET_ARCH_x86` globally, matching the upstream
+/// Makefile). Build the include/iquote vectors *once* outside this fn —
+/// they're the same for every file in the sweep.
+pub fn run_dir_with_dirs(
+    dir: &Path,
+    include_dirs: &[PathBuf],
+    iquote_dirs: &[PathBuf],
+    global_defines: &[&str],
+    config: &VerifierConfig,
+    filter: &dyn ProgFilter,
+) -> Result<Vec<FileReport>> {
     let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
         .with_context(|| format!("reading dir {}", dir.display()))?
         .filter_map(|e| e.ok().map(|e| e.path()))
@@ -220,8 +267,9 @@ pub fn run_dir_filtered(
 
     let mut out = Vec::with_capacity(entries.len());
     for path in entries {
-        let defines = defines_for_file(&path);
-        match run_file_filtered(&path, headers_root, defines, config, filter) {
+        let mut defines: Vec<&str> = global_defines.to_vec();
+        defines.extend(defines_for_file(&path));
+        match run_file_with_dirs(&path, include_dirs, iquote_dirs, &defines, config, filter) {
             Ok(r) => out.push(r),
             Err(e) => out.push(FileReport {
                 source: path.clone(),

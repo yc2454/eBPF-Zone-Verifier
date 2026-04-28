@@ -31,6 +31,7 @@ fn usage() {
     eprintln!("  cargo run -- [flags] selftest-suite          <progs_dir>");
     eprintln!("  cargo run -- [flags] selftest-file           <prog.c> [defines]");
     eprintln!("  cargo run -- [flags] selftest-baseline-write        <progs_dir> <legacy_json_dir> <out.json>");
+    eprintln!("  cargo run -- [flags] selftest-baseline-write-upstream <progs_dir> <upstream_root> <out.json>");
     eprintln!("  cargo run -- [flags] selftest-baseline-check        <progs_dir> <legacy_json_dir> <baseline.json>");
     eprintln!("  cargo run -- [flags] selftest-baseline-check-modern <progs_dir> <baseline.json>           (fast: skips legacy)");
     eprintln!("  cargo run -- [flags] btf-dump-struct-ops <elf_path> <struct_name>                        (diagnostic for W6.4a)");
@@ -371,6 +372,24 @@ fn main() {
                 return;
             }
             run_baseline_write(&remaining[1], &remaining[2], &remaining[3], &config);
+        }
+        "selftest-baseline-write-upstream" => {
+            if remaining.len() < 4 {
+                eprintln!(
+                    "Usage: selftest-baseline-write-upstream <progs_dir> <upstream_root> <out.json>"
+                );
+                eprintln!(
+                    "  progs_dir:     directory of .c files (typically <upstream_root>/tools/testing/selftests/bpf/progs)"
+                );
+                eprintln!("  upstream_root: kernel checkout root (typically vendor/linux)");
+                return;
+            }
+            run_baseline_write_upstream(
+                &remaining[1],
+                &remaining[2],
+                &remaining[3],
+                &config,
+            );
         }
         "selftest-baseline-check" => {
             if remaining.len() < 4 {
@@ -792,6 +811,37 @@ fn sweep_modern_and_legacy(
     bl
 }
 
+/// Sweep the upstream kernel selftests/bpf/progs/ tree directly, with no
+/// re-vendoring of headers. `upstream_root` is the kernel checkout root
+/// (typically `vendor/linux/`). Skips the legacy JSON corpus — it served
+/// as a regression net during phased modernization, but the upstream
+/// `verifier_*.c` files in the modern tree now carry the equivalent
+/// signal natively.
+fn sweep_upstream_only(
+    progs_dir: &str,
+    upstream_root: &str,
+    config: &VerifierConfig,
+    filter: &dyn crate::testing::selftest::runner::ProgFilter,
+) -> crate::testing::selftest::baseline::Baseline {
+    use crate::testing::selftest::baseline::Baseline;
+    use crate::testing::selftest::clang::DEFAULT_HEADERS_TAG;
+    use crate::testing::selftest::runner;
+
+    let headers = std::path::PathBuf::from("selftests/headers").join(DEFAULT_HEADERS_TAG);
+    let modern = runner::run_dir_upstream_filtered(
+        std::path::Path::new(progs_dir),
+        &headers,
+        std::path::Path::new(upstream_root),
+        config,
+        filter,
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("Error sweeping upstream {progs_dir}: {e:?}");
+        Vec::new()
+    });
+    Baseline::from_reports(DEFAULT_HEADERS_TAG, &modern)
+}
+
 fn sweep_modern_only(
     progs_dir: &str,
     config: &VerifierConfig,
@@ -1040,6 +1090,21 @@ fn run_baseline_write(progs_dir: &str, legacy_json_dir: &str, out: &str, config:
         return;
     }
     println!("Wrote baseline ({} files) to {out}", bl.files.len());
+}
+
+fn run_baseline_write_upstream(
+    progs_dir: &str,
+    upstream_root: &str,
+    out: &str,
+    config: &VerifierConfig,
+) {
+    use crate::testing::selftest::runner::RunAll;
+    let bl = sweep_upstream_only(progs_dir, upstream_root, config, &RunAll);
+    if let Err(e) = bl.write(out) {
+        eprintln!("Error writing {out}: {e:?}");
+        return;
+    }
+    println!("Wrote upstream baseline ({} files) to {out}", bl.files.len());
 }
 
 fn run_baseline_check(

@@ -2,11 +2,14 @@
 #define _ZOVIA_STUB_LINUX_ERRNO_H
 #define EPERM   1
 #define ENOENT  2
+#define ESRCH   3
 #define EINTR   4
 #define EIO     5
+#define ENXIO   6
 #define E2BIG   7
 #define ENOEXEC 8
 #define EBADF   9
+#define ECHILD 10
 #define EAGAIN 11
 #define EDEADLK 35
 #define EDEADLOCK EDEADLK
@@ -35,4 +38,14 @@
 #define EAFNOSUPPORT 97
 #define ETIMEDOUT 110
 #define ENOTSUPP 524
+
+/* Less-common errno values (selftests reference a long tail). */
+#define EUNATCH  49   /* Protocol driver not attached */
+#define ENOMSG   42   /* No message of desired type */
+#define EBADMSG  74   /* Not a data message */
+#define ESOCKTNOSUPPORT 94
+#define EISCONN 106   /* Transport endpoint is already connected */
+#define ENOTCONN 107  /* Transport endpoint is not connected */
+#define ECONNREFUSED 111
+#define EHOSTUNREACH 113
 #endif
