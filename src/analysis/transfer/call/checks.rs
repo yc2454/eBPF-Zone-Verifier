@@ -784,23 +784,44 @@ fn validate_ptr_to_callback(ctx: &mut ValidationContext) -> bool {
 }
 
 fn validate_ptr_to_long(ctx: &mut ValidationContext) -> bool {
-    if let RegType::PtrToStack { frame_level } = ctx.actual {
-        let offset = ctx.state.domain.get_distance_fixed(ctx.reg, Reg::R10);
-        check_stack_access(
-            ctx.env,
-            ctx.state,
-            ctx.reg,
-            offset,
-            0,
-            8, // PtrToLong is 8-byte access
-            ctx.pc,
-            AccessKind::HelperPrimitive,
-            None,
-            frame_level,
-        );
-        !ctx.env.failed()
-    } else {
-        ctx.fail_with_log(
+    match ctx.actual {
+        RegType::PtrToStack { frame_level } => {
+            let offset = ctx.state.domain.get_distance_fixed(ctx.reg, Reg::R10);
+            check_stack_access(
+                ctx.env,
+                ctx.state,
+                ctx.reg,
+                offset,
+                0,
+                8, // PtrToLong is 8-byte access
+                ctx.pc,
+                AccessKind::HelperPrimitive,
+                None,
+                frame_level,
+            );
+            !ctx.env.failed()
+        }
+        // ARG_PTR_TO_LONG also accepts pointers into a writable map value
+        // (rodata-backed maps are rejected via the BPF_F_RDONLY_PROG flag).
+        RegType::PtrToMapValue { map_idx, .. } => {
+            let writable = ctx
+                .env
+                .ctx
+                .map_defs
+                .get(map_idx)
+                .map(|md| md.map_flags & constants::BPF_F_RDONLY_PROG == 0)
+                .unwrap_or(false);
+            if writable {
+                true
+            } else {
+                ctx.env.fail(VerificationError::MapStoreForbidden {
+                    pc: ctx.pc,
+                    map_idx,
+                });
+                false
+            }
+        }
+        _ => ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,
                 reg: ctx.reg,
@@ -811,7 +832,7 @@ fn validate_ptr_to_long(ctx: &mut ValidationContext) -> bool {
                 ctx.arg_index + 1,
                 ctx.actual
             ),
-        )
+        ),
     }
 }
 
@@ -945,7 +966,7 @@ pub(crate) fn validate_writable_mem(
                 .ctx
                 .map_defs
                 .get(map_idx)
-                .map(|md| md.map_flags != constants::BPF_F_RDONLY_PROG)
+                .map(|md| md.map_flags & constants::BPF_F_RDONLY_PROG == 0)
                 .unwrap_or(false);
             if writable {
                 true

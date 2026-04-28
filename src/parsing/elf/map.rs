@@ -163,6 +163,12 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                     if m.btf_val_type_id.is_none() {
                         m.btf_val_type_id = btf_m.btf_val_type_id;
                     }
+                    // BTF-described maps encode `__uint(map_flags, …)` in BTF;
+                    // the legacy `bpf_map_def` slot in the .maps section reads
+                    // as 0. Trust BTF when the section side is unset.
+                    if m.map_flags == 0 {
+                        m.map_flags = btf_m.map_flags;
+                    }
                 }
             }
         }

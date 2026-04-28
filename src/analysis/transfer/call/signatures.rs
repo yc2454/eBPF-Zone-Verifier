@@ -966,6 +966,18 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             CallProto::with_args([PtrToMem, ConstSize, Anything, PtrToLong, DontCare])
         }
 
+        constants::BPF_STRTOL => {
+            CallProto::with_args([PtrToMem, ConstSize, Anything, PtrToLong, DontCare])
+        }
+
+        constants::BPF_CHECK_MTU => CallProto::with_args([
+            PtrToCtx,       // R1: ctx (skb / xdp_md)
+            Anything,       // R2: ifindex
+            PtrToUninitMem, // R3: u32 *mtu_len — writable; rdonly-map gated
+            Anything,       // R4: len_diff
+            Anything,       // R5: flags
+        ]),
+
         constants::BPF_GET_CGROUP_CLASS_ID => {
             CallProto::with_args([PtrToCtx, DontCare, DontCare, DontCare, DontCare])
         }

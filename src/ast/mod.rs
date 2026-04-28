@@ -4,7 +4,7 @@ pub mod instr;
 pub mod prog;
 
 pub use self::instr::{CallKind, Instr, Program};
-pub use self::prog::{AttachKind, ContextKind, ProgramKind, RetvalRule, expected_retval_rule};
+pub use self::prog::{AttachKind, ContextKind, ProgramKind, expected_retval_rule};
 
 use crate::analysis::machine::reg::Reg;
 

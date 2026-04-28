@@ -918,6 +918,7 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                     let mut key_size = 0;
                     let mut max_entries = 0;
                     let mut map_type = 0u32;
+                    let mut map_flags = 0u32;
                     let mut btf_val_type_id = None; // STORE THIS!
 
                     let members = def_t.vlen() as usize;
@@ -988,6 +989,13 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                             if let Some(val) = extract_btf_uint(&types, m_type_id) {
                                 key_size = val;
                             }
+                        } else if m_name == "map_flags" {
+                            // `__uint(map_flags, BPF_F_RDONLY_PROG)` — encoded as
+                            // pointer-to-array with nelems = flag value, same as
+                            // type/max_entries above.
+                            if let Some(val) = extract_btf_uint(&types, m_type_id) {
+                                map_flags = val;
+                            }
                         }
                     }
 
@@ -1008,7 +1016,7 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                             key_size,
                             value_size,
                             max_entries,
-                            map_flags: 0,
+                            map_flags,
                             btf_val_type_id,
                             initial_data: None, // No initial data here
                             inner_map_idx: None,

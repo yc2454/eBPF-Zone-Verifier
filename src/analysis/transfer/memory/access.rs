@@ -63,7 +63,7 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             map_idx,
         } => {
             if let Some(map_def) = ctx.map_defs.get(map_idx) {
-                if map_def.map_flags == constants::BPF_F_WRONLY_PROG {
+                if map_def.map_flags & constants::BPF_F_WRONLY_PROG != 0 {
                     error!("Map load is forbidden!");
                     env.fail(VerificationError::MapLoadForbidden { pc, map_idx });
                 }
@@ -239,7 +239,7 @@ pub fn check_store(
             map_idx,
         } => {
             if let Some(map_def) = ctx.map_defs.get(map_idx) {
-                if map_def.map_flags == constants::BPF_F_RDONLY_PROG {
+                if map_def.map_flags & constants::BPF_F_RDONLY_PROG != 0 {
                     error!("Map store is forbidden!");
                     env.fail(VerificationError::MapStoreForbidden { pc, map_idx });
                 }
