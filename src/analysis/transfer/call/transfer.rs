@@ -108,6 +108,27 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
         return vec![];
     }
 
+    // bpf_ktime_get_coarse_ns: not in the helper whitelist for tracing
+    // program types (kprobe, tracepoint, perf_event, raw_tracepoint*).
+    // Mirrors kernel's per-prog-type helper allowlist (D1).
+    if helper == constants::BPF_KTIME_GET_COARSE_NS
+        && matches!(
+            env.ctx.prog_kind,
+            ProgramKind::Kprobe
+                | ProgramKind::Tracepoint
+                | ProgramKind::PerfEvent
+                | ProgramKind::RawTracepoint
+                | ProgramKind::RawTracepointWritable
+        )
+    {
+        env.fail(VerificationError::HelperNotAllowedForProgram {
+            pc,
+            helper,
+            kind: env.ctx.prog_kind,
+        });
+        return vec![];
+    }
+
     // bpf_d_path is restrictive
     if helper == constants::BPF_D_PATH {
         if !matches!(env.ctx.prog_kind, ProgramKind::Tracing | ProgramKind::Lsm) {

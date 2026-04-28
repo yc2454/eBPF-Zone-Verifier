@@ -161,6 +161,7 @@ pub const BPF_D_PATH: u32 = 147;
 pub const BPF_TASK_STORAGE_GET: u32 = 156;
 pub const BPF_TASK_STORAGE_DELETE: u32 = 157;
 pub const BPF_GET_CURRENT_TASK_BTF: u32 = 158;
+pub const BPF_KTIME_GET_COARSE_NS: u32 = 160;
 pub const BPF_FOR_EACH_MAP_ELEM: u32 = 164;
 pub const BPF_SNPRINTF: u32 = 165;
 pub const BPF_TIMER_INIT: u32 = 169;

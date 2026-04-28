@@ -926,6 +926,9 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         constants::BPF_KTIME_GET_NS => {
             CallProto::with_args([DontCare, DontCare, DontCare, DontCare, DontCare])
         }
+        constants::BPF_KTIME_GET_COARSE_NS => {
+            CallProto::with_args([DontCare, DontCare, DontCare, DontCare, DontCare])
+        }
 
         // ---- Process info helpers ----
         constants::BPF_GET_TASK_STACK => CallProto::with_args([
@@ -2068,6 +2071,7 @@ pub(crate) fn is_fastcall_helper(helper: u32) -> bool {
             | constants::BPF_GET_CURRENT_CGROUP_ID
             | constants::BPF_JIFFIES64
             | constants::BPF_KTIME_GET_BOOT_NS
+            | constants::BPF_KTIME_GET_COARSE_NS
     )
 }
 
