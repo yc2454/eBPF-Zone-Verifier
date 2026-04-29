@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-29T01:49:20.121170+00:00",
+  "generated_at": "2026-04-29T14:30:35.690734+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -6281,7 +6281,7 @@
           "ours": "PASS"
         },
         "test_raw_tp_null_sched_pi_setprio_arg_2": {
-          "upstream": "REJECT",
+          "upstream": "ACCEPT",
           "ours": "PASS"
         }
       }
@@ -6625,7 +6625,7 @@
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(65) })"
+          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(63) })"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",
@@ -7337,7 +7337,7 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/struct_ops_refcounted_fail__ref_leak.c",
       "progs": {
         "refcounted_fail__ref_leak": {
-          "upstream": "REJECT",
+          "upstream": "ACCEPT",
           "ours": "PASS"
         }
       }
@@ -9301,7 +9301,7 @@
         "global_func9": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid return code at pc 86"
+          "note": "Invalid return code at pc 78"
         }
       }
     },
@@ -12632,7 +12632,7 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/unsupported_ops.c",
       "progs": {
         "unsupported_ops": {
-          "upstream": "REJECT",
+          "upstream": "ACCEPT",
           "ours": "PASS"
         }
       }
@@ -12853,7 +12853,7 @@
           "ours": "PASS"
         },
         "uprobe_sesison_return_2": {
-          "upstream": "REJECT",
+          "upstream": "ACCEPT",
           "ours": "PASS"
         }
       }
@@ -12894,11 +12894,11 @@
           "ours": "PASS"
         },
         "uptr_write": {
-          "upstream": "REJECT",
+          "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "uptr_write_nested": {
-          "upstream": "REJECT",
+          "upstream": "ACCEPT",
           "ours": "PASS"
         }
       }
