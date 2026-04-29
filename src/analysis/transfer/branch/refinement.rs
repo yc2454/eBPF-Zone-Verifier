@@ -330,23 +330,30 @@ fn maybe_promote_btf_id(state: &mut State, reg: Reg) {
 
 fn maybe_promote_mem(state: &mut State, reg: Reg) {
     let (target_id, _) = match state.types.get(reg) {
-        RegType::PtrToAllocMemOrNull { id, mem_size } => (id, mem_size),
+        RegType::PtrToAllocMemOrNull { id, mem_size, .. } => (id, mem_size),
         _ => return,
     };
     for r in Reg::ALL {
-        if let RegType::PtrToAllocMemOrNull { id, mem_size } = state.types.get(r)
+        if let RegType::PtrToAllocMemOrNull { id, mem_size, ref_id } = state.types.get(r)
             && id == target_id
         {
-            state.types.set(r, RegType::PtrToAllocMem { id, mem_size });
+            state
+                .types
+                .set(r, RegType::PtrToAllocMem { id, mem_size, ref_id });
         }
     }
     promote_stack_slots_all_frames(
         state,
         |ty| matches!(ty, RegType::PtrToAllocMemOrNull { id, .. } if *id == target_id),
         |ty| match ty {
-            RegType::PtrToAllocMemOrNull { id, mem_size } => RegType::PtrToAllocMem {
+            RegType::PtrToAllocMemOrNull {
+                id,
+                mem_size,
+                ref_id,
+            } => RegType::PtrToAllocMem {
                 id: *id,
                 mem_size: *mem_size,
+                ref_id: *ref_id,
             },
             _ => unreachable!(),
         },

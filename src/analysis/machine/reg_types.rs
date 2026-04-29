@@ -110,10 +110,17 @@ pub enum RegType {
     PtrToAllocMemOrNull {
         id: u32,
         mem_size: u64,
+        /// Optional ref_id linking this pointer to an owning acquire-tracked
+        /// resource (e.g. the source dynptr for a `bpf_dynptr_data` slice).
+        /// When the owning ref is released, `invalidate_ref` rewrites this
+        /// register to `ScalarValue`, catching use-after-release on slice
+        /// pointers obtained from a released dynptr.
+        ref_id: Option<u32>,
     },
     PtrToAllocMem {
         id: u32,
         mem_size: u64,
+        ref_id: Option<u32>,
     },
     /// Refcounted pointer to a `struct bpf_cpumask` (W5.3). Mirrors
     /// `PtrToSocket` ref-tracking: `bpf_cpumask_create` mints a fresh
@@ -377,6 +384,9 @@ impl RegType {
             | RegType::PtrToOwnedKptr { ref_id: id }
             | RegType::PtrToOwnedKptrOrNull { ref_id: id } => id,
             RegType::PtrToMapKptr { ref_id, .. } | RegType::PtrToMapKptrOrNull { ref_id, .. } => {
+                ref_id
+            }
+            RegType::PtrToAllocMem { ref_id, .. } | RegType::PtrToAllocMemOrNull { ref_id, .. } => {
                 ref_id
             }
             _ => None,

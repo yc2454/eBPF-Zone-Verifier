@@ -840,6 +840,7 @@ pub(crate) fn transfer_call_rel(
                         RegType::PtrToAllocMemOrNull {
                             id,
                             mem_size: *mem_size as u64,
+                            ref_id: None,
                         },
                     );
                     state.domain.forget(*reg);

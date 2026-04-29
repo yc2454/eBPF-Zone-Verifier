@@ -587,6 +587,7 @@ pub(crate) fn update_call_types(
                 RegType::PtrToAllocMemOrNull {
                     id: new_ptr_id(),
                     mem_size: hi as u64,
+                    ref_id: None,
                 },
             );
         }

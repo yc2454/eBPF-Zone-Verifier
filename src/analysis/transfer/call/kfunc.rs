@@ -202,6 +202,7 @@ fn iter_next_fork(state: State, iter_arg: u8, elem_size: u64) -> Vec<State> {
         RegType::PtrToAllocMem {
             id: new_ptr_id(),
             mem_size: elem_size,
+            ref_id: None,
         },
     );
     nonnull.domain.forget(Reg::R0);

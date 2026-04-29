@@ -221,9 +221,17 @@ pub(crate) fn apply_call_proto_r0(
         RetKind::PtrToAllocMem { mem_size } => {
             let id = new_ptr_id();
             let ty = if proto.flags.contains(CallFlags::RET_NULL) {
-                RegType::PtrToAllocMemOrNull { id, mem_size }
+                RegType::PtrToAllocMemOrNull {
+                    id,
+                    mem_size,
+                    ref_id: None,
+                }
             } else {
-                RegType::PtrToAllocMem { id, mem_size }
+                RegType::PtrToAllocMem {
+                    id,
+                    mem_size,
+                    ref_id: None,
+                }
             };
             state.types.set(Reg::R0, ty);
             true
@@ -277,10 +285,28 @@ pub(crate) fn apply_call_proto_r0(
             let (_, max_size) = state.domain.get_interval(size_reg);
             let mem_size = max_size.max(0) as u64;
             let id = new_ptr_id();
+            // Inherit the source dynptr's ref_id from R1 so that releasing
+            // the dynptr (`bpf_ringbuf_submit_dynptr` etc.) invalidates the
+            // returned slice pointer too — catches use-after-release.
+            // All current `PtrToAllocMemFromArg` users (`bpf_dynptr_data`,
+            // `bpf_dynptr_slice`, `bpf_dynptr_slice_rdwr`) have R1 as the
+            // source dynptr.
+            let ref_id = resolve_stack_arg(state, arg_reg(0))
+                .and_then(|(frame, off)| state.stack_at(frame).stack_get_dynptr(off))
+                .map(|slot| slot.ref_id)
+                .filter(|id| *id != 0);
             let ty = if proto.flags.contains(CallFlags::RET_NULL) {
-                RegType::PtrToAllocMemOrNull { id, mem_size }
+                RegType::PtrToAllocMemOrNull {
+                    id,
+                    mem_size,
+                    ref_id,
+                }
             } else {
-                RegType::PtrToAllocMem { id, mem_size }
+                RegType::PtrToAllocMem {
+                    id,
+                    mem_size,
+                    ref_id,
+                }
             };
             state.types.set(Reg::R0, ty);
             true
