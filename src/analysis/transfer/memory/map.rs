@@ -116,6 +116,16 @@ pub fn check_kptr_field_access(
                                 off: final_off,
                             });
                         }
+                        KptrFieldKind::Uptr => {
+                            // `__uptr` slots are userspace-owned. BPF may
+                            // read but never write — the kernel rejects any
+                            // store regardless of the source value (NULL,
+                            // scalar, or pointer alike).
+                            env.fail(VerificationError::UptrStoreDisallowed {
+                                pc,
+                                off: final_off,
+                            });
+                        }
                         KptrFieldKind::Unref => {
                             // Direct stores to unreferenced kptr slots
                             // are allowed in the kernel — but the stored

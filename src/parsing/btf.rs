@@ -1028,6 +1028,7 @@ fn classify_kptr_field(
             "kptr_untrusted" => Some(KptrFieldKind::Unref),
             "rcu" => Some(KptrFieldKind::Rcu),
             "percpu_kptr" => Some(KptrFieldKind::Percpu),
+            "uptr" => Some(KptrFieldKind::Uptr),
             _ => None,
         }
     };
@@ -1086,33 +1087,58 @@ fn classify_kptr_field(
 
 /// Walk the members of `value_type_id` (expected STRUCT/UNION) and
 /// collect every kptr-typed field. Field offsets are returned in bytes.
+///
+/// Recurses into nested struct/union members so a `__uptr` (or other
+/// kptr-tagged) field inside an inner struct is reported with its absolute
+/// offset within the outer value type. Mirrors the kernel's
+/// `btf_find_struct_field` recursion via `BTF_FIELDS_F_RECUR` —
+/// uptr_failure.c::uptr_write_nested writes through `v->nested.udata`,
+/// which is reachable only via this recursion.
 fn extract_kptr_fields(
     types: &[BtfTypeRaw],
     value_type_id: u32,
     get_str: &impl Fn(u32) -> String,
 ) -> Vec<KptrField> {
     let mut out = Vec::new();
+    extract_kptr_fields_recurse(types, value_type_id, 0, get_str, &mut out, 0);
+    out
+}
+
+fn extract_kptr_fields_recurse(
+    types: &[BtfTypeRaw],
+    value_type_id: u32,
+    base_byte_off: u32,
+    get_str: &impl Fn(u32) -> String,
+    out: &mut Vec<KptrField>,
+    depth: u32,
+) {
+    // Bound recursion so a pathological BTF can't blow the stack. The
+    // kernel uses MAX_RESOLVE_DEPTH = 32 in similar walks; 8 is plenty
+    // for realistic map values.
+    if depth > 8 {
+        return;
+    }
     let Some(t) = types.get(value_type_id as usize) else {
-        return out;
+        return;
     };
     // Peel typedef chain to the underlying struct.
     let mut t = t;
-    let mut depth = 0;
+    let mut peel = 0;
     while matches!(
         t.kind(),
         BTF_KIND_TYPEDEF | BTF_KIND_CONST | BTF_KIND_VOLATILE | BTF_KIND_RESTRICT
-    ) && depth < 8
+    ) && peel < 8
     {
         match types.get(t.size_or_type as usize) {
             Some(inner) => {
                 t = inner;
-                depth += 1;
+                peel += 1;
             }
-            None => return out,
+            None => return,
         }
     }
     if t.kind() != BTF_KIND_STRUCT && t.kind() != BTF_KIND_UNION {
-        return out;
+        return;
     }
     let nmembers = t.vlen() as usize;
     let mut cur = 0usize;
@@ -1124,19 +1150,49 @@ fn extract_kptr_fields(
         let m_type_id = u32::from_le_bytes(t.data[cur + 4..cur + 8].try_into().unwrap());
         let m_offset_bits = u32::from_le_bytes(t.data[cur + 8..cur + 12].try_into().unwrap());
         cur += 12;
+        // Bottom 24 bits are the bit offset for non-bitfield members
+        // in BPF_F_BITFIELD_SIZE_GT_0; for full-width pointer/struct
+        // members the offset is byte-aligned and the upper bits are zero.
+        let bit_off = m_offset_bits & 0x00ff_ffff;
+        let member_byte_off = base_byte_off + bit_off / 8;
         if let Some((kind, pointee_btf_id)) = classify_kptr_field(types, m_type_id, get_str) {
-            // Bottom 24 bits are the bit offset for non-bitfield members
-            // in BPF_F_BITFIELD_SIZE_GT_0; for kptr fields (full pointers)
-            // the offset is byte-aligned and the upper bits are zero.
-            let bit_off = m_offset_bits & 0x00ff_ffff;
             out.push(KptrField {
-                offset: bit_off / 8,
+                offset: member_byte_off,
                 kind,
                 pointee_btf_id,
             });
+            continue;
+        }
+        // Not a kptr/uptr-tagged pointer at this slot — but if it's a
+        // nested struct/union, recurse so any kptr-tagged fields inside
+        // contribute with their absolute offset relative to the outer
+        // value type.
+        let mut inner_id = m_type_id;
+        let mut peel = 0;
+        while let Some(inner_t) = types.get(inner_id as usize) {
+            if !matches!(
+                inner_t.kind(),
+                BTF_KIND_TYPEDEF | BTF_KIND_CONST | BTF_KIND_VOLATILE | BTF_KIND_RESTRICT
+            ) || peel >= 8
+            {
+                break;
+            }
+            inner_id = inner_t.size_or_type;
+            peel += 1;
+        }
+        if let Some(inner_t) = types.get(inner_id as usize)
+            && matches!(inner_t.kind(), BTF_KIND_STRUCT | BTF_KIND_UNION)
+        {
+            extract_kptr_fields_recurse(
+                types,
+                inner_id,
+                member_byte_off,
+                get_str,
+                out,
+                depth + 1,
+            );
         }
     }
-    out
 }
 
 pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {

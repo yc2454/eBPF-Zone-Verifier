@@ -331,6 +331,20 @@ pub(crate) fn update_load_types(
                     KptrFieldKind::Ref => PtrFlags::MEM_ALLOC,
                     KptrFieldKind::Rcu => PtrFlags::RCU,
                     KptrFieldKind::Percpu => PtrFlags::PERCPU,
+                    KptrFieldKind::Uptr => {
+                        // `__uptr` loads yield a userspace-pointer value.
+                        // No PtrToMapKptr* variant fits — the kernel types
+                        // these as `PTR_TO_MEM | MEM_USER | PTR_MAYBE_NULL`
+                        // and rejects deref-before-null-check
+                        // ("invalid mem access 'mem_or_null'"). Until a
+                        // dedicated reg type lands, fall through to
+                        // ScalarValue: the two tests we're closing here
+                        // (uptr_write{,_nested}) only exercise the store
+                        // path. Load-side tests (uptr_no_null_check) stay
+                        // FA for now and fall to a follow-up.
+                        state.types.set(dst, RegType::ScalarValue);
+                        return;
+                    }
                 };
                 state.types.set(
                     dst,

@@ -200,6 +200,13 @@ pub enum VerificationError {
         pc: usize,
         off: i64,
     },
+    /// Store to a `__uptr` field of a map value. The pointer is
+    /// userspace-owned; BPF programs may read it but must not write.
+    /// Kernel: "store to uptr disallowed".
+    UptrStoreDisallowed {
+        pc: usize,
+        off: i64,
+    },
     InvalidBtfType,
     LockAlreadyHeld {
         pc: usize,
@@ -530,6 +537,10 @@ impl VerificationError {
             ),
             VerificationError::KptrStoreToReferenced { pc, off } => format!(
                 "store to referenced kptr disallowed at pc {} (off {})",
+                pc, off
+            ),
+            VerificationError::UptrStoreDisallowed { pc, off } => format!(
+                "store to uptr disallowed at pc {} (off {})",
                 pc, off
             ),
             VerificationError::UnreleasedLock => "Unreleased lock in program".to_string(),

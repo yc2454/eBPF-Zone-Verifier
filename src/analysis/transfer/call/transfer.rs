@@ -184,8 +184,10 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             return vec![];
         };
         use crate::parsing::elf::KptrFieldKind;
-        if matches!(field.kind, KptrFieldKind::Unref) {
-            // "off=N kptr isn't referenced kptr"
+        if matches!(field.kind, KptrFieldKind::Unref | KptrFieldKind::Uptr) {
+            // Unref kptr: "off=N kptr isn't referenced kptr".
+            // Uptr: kptr_xchg has no meaning on a userspace-pointer slot —
+            // mirror the unref path's rejection.
             env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
             return vec![];
         }
@@ -194,7 +196,9 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             KptrFieldKind::Ref => crate::analysis::machine::reg_types::PtrFlags::MEM_ALLOC,
             KptrFieldKind::Rcu => crate::analysis::machine::reg_types::PtrFlags::RCU,
             KptrFieldKind::Percpu => crate::analysis::machine::reg_types::PtrFlags::PERCPU,
-            KptrFieldKind::Unref => unreachable!("rejected above"),
+            KptrFieldKind::Unref | KptrFieldKind::Uptr => {
+                unreachable!("rejected above")
+            }
         };
 
         // R2: either NULL (scalar 0) or a ref-tracked pointer.

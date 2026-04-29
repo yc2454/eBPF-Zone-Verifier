@@ -15,6 +15,13 @@ pub enum KptrFieldKind {
     /// `PtrToPercpuKptrOrNull` and must be passed through
     /// `bpf_per_cpu_ptr` / `bpf_this_cpu_ptr` before deref.
     Percpu,
+    /// `__uptr` — pointer to user-space memory (BPF_MAP_TYPE_TASK_STORAGE
+    /// values can carry user-space pointers populated by setsockopt-style
+    /// userspace writes). The kernel allows BPF programs to read the
+    /// pointer (deref-after-null-check is OK), but rejects any store to
+    /// the field — userspace owns the slot. Kernel:
+    /// "store to uptr disallowed".
+    Uptr,
 }
 
 #[derive(Clone, Debug)]
