@@ -232,6 +232,23 @@ impl ProgramKind {
         if s.starts_with("perf_event") {
             return ProgramKind::PerfEvent;
         }
+        if s == "sk_lookup" || s.starts_with("sk_lookup/") {
+            return ProgramKind::SkLookup;
+        }
+        // LWT attach types share __sk_buff context. `lwt_in`/`lwt_out`/
+        // `lwt_xmit` map to the corresponding ProgramKind; `lwt_seg6local`
+        // also uses __sk_buff so route it to LwtXmit (closest ctx-access
+        // semantics — kernel verifies the same set of skb fields plus
+        // the seg6local-specific helper allowlist, which is orthogonal).
+        if s == "lwt_in" {
+            return ProgramKind::LwtIn;
+        }
+        if s == "lwt_out" {
+            return ProgramKind::LwtOut;
+        }
+        if s == "lwt_xmit" || s == "lwt_seg6local" {
+            return ProgramKind::LwtXmit;
+        }
         ProgramKind::Unknown
     }
 

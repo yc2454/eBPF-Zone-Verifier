@@ -142,14 +142,23 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             check_packet_meta_access(env, state, base, off, size, pc);
         }
         PtrToBtfId { .. } | PtrToMapObject { .. } => {
-            let is_unknown = match base_type {
+            // Skip the field-table check for any PtrToBtfId whose
+            // concrete kernel type isn't modeled in `mem_region_model`
+            // (e.g. `struct socket`, `struct task_struct`, `struct
+            // linux_binprm` for LSM hooks). The kernel relies on BTF for
+            // these and accepts any valid BTF field offset; without a
+            // BTF-driven check our hand table would over-reject the LSM
+            // / tp_btf corpus. PtrToMapObject and the modeled
+            // PtrToBtfId types (`bpf_iter_meta`) still go through the
+            // table.
+            let has_field_table = matches!(
+                base_type,
                 PtrToBtfId {
-                    type_name: "unknown",
+                    type_name: "bpf_iter_meta",
                     ..
-                } => true,
-                _ => false,
-            };
-            if !is_unknown
+                } | PtrToMapObject { .. }
+            );
+            if has_field_table
                 && !mem_region_model::is_valid_mem_region_read(state.types.get(base), off, size)
             {
                 error!(

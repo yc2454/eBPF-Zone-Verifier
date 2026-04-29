@@ -401,6 +401,21 @@ const SK_BUFF_FIELDS: &[CtxField] = &[
         readable: true,
         narrow_access: false,
     },
+    // struct bpf_sock *sk (offset 168, size 8)
+    // Kernel `bpf_skb_is_valid_access` permits read of `sk` for every
+    // skb-context prog type (SocketFilter, SchedCls, SchedAct, CgroupSkb,
+    // SkSkb, LWT, …). Modeled in the main field table rather than the
+    // CGROUP_SKB-only extended set so all prog kinds with SkBuff ctx see
+    // it. Returns a `PtrToSockCommon | NULL`; per-field-kind typing is
+    // wired through `CtxFieldKind::SockCommon`.
+    CtxField {
+        offset: 168,
+        size: MemSize::U64,
+        kind: CtxFieldKind::SockCommon,
+        writable: false,
+        readable: true,
+        narrow_access: false,
+    },
     // Additional fields can be added as needed...
 ];
 
@@ -436,14 +451,8 @@ const SK_BUFF_EXTENDED_FIELDS: &[CtxField] = &[
         readable: true,
         narrow_access: false,
     },
-    CtxField {
-        offset: 168,
-        size: MemSize::U64,
-        kind: CtxFieldKind::SockCommon,
-        writable: false,
-        readable: true,
-        narrow_access: false,
-    },
+    // (offset 168 `sk` is in the main SK_BUFF_FIELDS — kernel permits it
+    // for every skb-context prog type, not just CGROUP_SKB/SchedCls.)
     // __u32 gso_size (offset 176)
     CtxField {
         offset: 176,
@@ -1547,6 +1556,9 @@ const TP_BTF_MAYBE_NULL_ARGS: &[(&str, u8)] = &[
     // bpf_testmod_test_raw_tp_null(struct task_struct *task) — task arg is
     // declared with __nullable in the kmod's tracepoint definition.
     ("bpf_testmod_test_raw_tp_null", 0),
+    // bpf_testmod_test_nullable_bare(struct bpf_testmod_test_read_ctx *) —
+    // ctx arg declared __nullable; covered by `test_tp_btf_nullable.c`.
+    ("bpf_testmod_test_nullable_bare", 0),
 ];
 
 fn tp_btf_arg_is_maybe_null(tp_target: &str, arg_idx: u8) -> bool {
@@ -1600,12 +1612,29 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
         if let Some(args) = env.ctx.entry_args.as_ref() {
             if idx < args.len() {
                 use crate::analysis::machine::context::EntryArg;
+                // tp_btf attach targets carry per-arg PTR_MAYBE_NULL in
+                // the kernel's tracepoint BTF (which we don't ship). The
+                // BPF program's declared arg type loses that flag — e.g.
+                // `BPF_PROG(h, struct foo *nullable_ctx)` resolves to
+                // TrustedPtr{nullable:false} from our BTF resolver, but
+                // the tracepoint marks slot N as nullable. Consult the
+                // static (target, idx) table so the kernel's
+                // "trusted_ptr_or_null_" rejection lands.
+                let nullable_from_table = matches!(
+                    env.ctx.attach_flavor.as_deref(),
+                    Some("tp_btf") | Some("raw_tp") | Some("raw_tp.w")
+                ) && env
+                    .ctx
+                    .attach_subtype
+                    .as_deref()
+                    .map(|tp| tp_btf_arg_is_maybe_null(tp, idx as u8))
+                    .unwrap_or(false);
                 let kind = match &args[idx] {
                     EntryArg::Scalar => CtxFieldKind::Scalar,
                     EntryArg::TrustedPtrBtfId { type_name, nullable } => {
                         CtxFieldKind::TrustedPtr {
                             type_name,
-                            nullable: *nullable,
+                            nullable: *nullable || nullable_from_table,
                         }
                     }
                 };

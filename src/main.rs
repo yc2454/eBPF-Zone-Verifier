@@ -374,22 +374,40 @@ fn main() {
             run_baseline_write(&remaining[1], &remaining[2], &remaining[3], &config);
         }
         "selftest-baseline-write-upstream" => {
-            if remaining.len() < 4 {
-                eprintln!(
-                    "Usage: selftest-baseline-write-upstream <progs_dir> <upstream_root> <out.json>"
-                );
-                eprintln!(
-                    "  progs_dir:     directory of .c files (typically <upstream_root>/tools/testing/selftests/bpf/progs)"
-                );
-                eprintln!("  upstream_root: kernel checkout root (typically vendor/linux)");
-                return;
-            }
-            run_baseline_write_upstream(
-                &remaining[1],
-                &remaining[2],
-                &remaining[3],
-                &config,
-            );
+            // Two forms accepted:
+            //   selftest-baseline-write-upstream <upstream_root> <out.json>
+            //     (preferred; progs_dir is <root>/tools/testing/selftests/bpf/progs)
+            //   selftest-baseline-write-upstream <progs_dir> <upstream_root> <out.json>
+            //     (legacy 3-arg form; kept so existing scripts don't break)
+            //
+            // The 3-arg form was a footgun: passing the selftests dir as
+            // upstream_root silently double-prefixed every `-I` path
+            // (`<root>/tools/include` → `<selftests-dir>/tools/include`,
+            // which doesn't exist), making 204/849 files fail to compile
+            // and the resulting "baseline" look plausible but wrong.
+            let (upstream_root, out): (&str, &str) = match remaining.len() {
+                3 => (&remaining[1], &remaining[2]),
+                4 => {
+                    eprintln!(
+                        "[selftest-baseline-write-upstream] note: 3-arg form is deprecated; \
+                         the explicit progs_dir is now derived from <upstream_root>. \
+                         Pass just <upstream_root> <out.json>."
+                    );
+                    // Use the second arg as upstream_root; ignore the first.
+                    (&remaining[2], &remaining[3])
+                }
+                _ => {
+                    eprintln!(
+                        "Usage: selftest-baseline-write-upstream <upstream_root> <out.json>"
+                    );
+                    eprintln!(
+                        "  upstream_root: kernel checkout root (e.g. vendor/linux). \
+                         The selftests/bpf/progs directory underneath is found automatically."
+                    );
+                    return;
+                }
+            };
+            run_baseline_write_upstream(upstream_root, out, &config);
         }
         "selftest-baseline-check" => {
             if remaining.len() < 4 {
@@ -1092,19 +1110,74 @@ fn run_baseline_write(progs_dir: &str, legacy_json_dir: &str, out: &str, config:
     println!("Wrote baseline ({} files) to {out}", bl.files.len());
 }
 
-fn run_baseline_write_upstream(
-    progs_dir: &str,
-    upstream_root: &str,
-    out: &str,
-    config: &VerifierConfig,
-) {
+fn run_baseline_write_upstream(upstream_root: &str, out: &str, config: &VerifierConfig) {
     use crate::testing::selftest::runner::RunAll;
-    let bl = sweep_upstream_only(progs_dir, upstream_root, config, &RunAll);
+    use std::path::Path;
+
+    // Sanity-check upstream_root before sweeping. Each path below is one
+    // we depend on for `-I` resolution at compile time; missing any of
+    // them is the canonical sign the caller passed the wrong root (e.g.
+    // the selftests dir instead of the kernel checkout root). Failing
+    // fast here saves a 5-minute sweep that produces 200+ ERROR rows
+    // for the wrong reason.
+    let root = Path::new(upstream_root);
+    let required = [
+        "tools/include",
+        "tools/include/uapi",
+        "tools/testing/selftests/bpf/progs",
+        "tools/testing/selftests/bpf/bpf_experimental.h",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|p| !root.join(p).exists())
+        .collect();
+    if !missing.is_empty() {
+        eprintln!(
+            "Error: upstream_root='{upstream_root}' doesn't look like a kernel checkout — missing:"
+        );
+        for p in &missing {
+            eprintln!("    {p}");
+        }
+        eprintln!(
+            "Hint: pass the kernel-checkout root (e.g. `vendor/linux`), not the selftests dir."
+        );
+        std::process::exit(2);
+    }
+
+    let progs_dir = root.join("tools/testing/selftests/bpf/progs");
+    let progs_dir_str = progs_dir.to_string_lossy().into_owned();
+
+    let bl = sweep_upstream_only(&progs_dir_str, upstream_root, config, &RunAll);
+
+    // Sweep-quality post-check: a compile-failed file shows up as a
+    // synthetic `<compile>` ERROR row replacing all its real progs, so
+    // a high fraction of single-row ERROR files is a strong signal of
+    // toolchain or upstream_root misconfiguration. Warn loudly if more
+    // than 5% of files fall into that pattern.
+    let total_files = bl.files.len();
+    let compile_failed: usize = bl
+        .files
+        .values()
+        .filter(|fe| fe.progs.len() == 1 && fe.progs.contains_key("<compile>"))
+        .count();
+    if total_files > 0 && compile_failed * 20 > total_files {
+        eprintln!(
+            "[selftest-baseline-write-upstream] WARNING: {compile_failed}/{total_files} files \
+             collapsed to a single <compile> ERROR row — this almost always means \
+             upstream_root or the toolchain is wrong (correct sweeps see <1% compile-failed). \
+             Inspect a failing file with `cargo run -- selftest-file <path>` and the \
+             stderr from clang to diagnose."
+        );
+    }
+
     if let Err(e) = bl.write(out) {
         eprintln!("Error writing {out}: {e:?}");
         return;
     }
-    println!("Wrote upstream baseline ({} files) to {out}", bl.files.len());
+    println!(
+        "Wrote upstream baseline ({total_files} files, {compile_failed} compile-failed) to {out}"
+    );
 }
 
 fn run_baseline_check(

@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-29T15:09:23.899794+00:00",
+  "generated_at": "2026-04-29T22:32:42.185855+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -5029,7 +5029,7 @@
         "exec": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe socket access at pc 15: offset 64, size 8"
+          "note": "Unsafe generic load at pc 16: base R1+40 (type: ScalarValue)"
         },
         "inode_rename": {
           "upstream": "ACCEPT",
@@ -5039,12 +5039,12 @@
         "socket_bind": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe socket access at pc 2: offset 24, size 8"
+          "note": "Invalid argument type at pc 14: register: r2"
         },
         "socket_post_create": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe socket access at pc 2: offset 24, size 8"
+          "note": "Invalid argument type at pc 13: register: r2"
         },
         "unlink_hook": {
           "upstream": "ACCEPT",
@@ -5802,7 +5802,7 @@
         "test_read_cpumask": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe socket access at pc 1: offset 984, size 8"
+          "note": "Invalid argument type at pc 3: register: r2"
         },
         "test_skb_field": {
           "upstream": "ACCEPT",
@@ -6016,7 +6016,7 @@
         "preempt_global_subprog_test": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 13: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "note": "Unsupported modern BPF feature at pc 5: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "preempt_lock_missing_1": {
           "upstream": "ACCEPT",
@@ -6130,18 +6130,15 @@
         },
         "test_epilogue": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 2: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "test_pro_epilogue": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 2: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "test_prologue": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 2: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         }
       }
     },
@@ -6192,8 +6189,7 @@
         },
         "test_kfunc_pro_epilogue": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 2: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         }
       }
     },
@@ -6625,7 +6621,7 @@
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(63) })"
+          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(66) })"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",
@@ -9301,7 +9297,7 @@
         "global_func9": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid return code at pc 74"
+          "note": "Invalid return code at pc 90"
         }
       }
     },
@@ -13610,8 +13606,7 @@
         },
         "deducing_bounds_from_non_const_14": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 6"
+          "ours": "PASS"
         },
         "deducing_bounds_from_non_const_15": {
           "upstream": "ACCEPT",
@@ -13632,8 +13627,7 @@
         },
         "deducing_bounds_from_non_const_19": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 7"
+          "ours": "PASS"
         },
         "deducing_bounds_from_non_const_2": {
           "upstream": "ACCEPT",
@@ -13641,53 +13635,43 @@
         },
         "deducing_bounds_from_non_const_20": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 5"
+          "ours": "PASS"
         },
         "deducing_bounds_from_non_const_21": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 6"
+          "ours": "PASS"
         },
         "deducing_bounds_from_non_const_22": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 6"
+          "ours": "PASS"
         },
         "deducing_bounds_from_non_const_23": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 6"
+          "ours": "PASS"
         },
         "deducing_bounds_from_non_const_24": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 6"
+          "ours": "PASS"
         },
         "deducing_bounds_from_non_const_25": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 6"
+          "ours": "PASS"
         },
         "deducing_bounds_from_non_const_26": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 6"
+          "ours": "PASS"
         },
         "deducing_bounds_from_non_const_27": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 6"
+          "ours": "PASS"
         },
         "deducing_bounds_from_non_const_28": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 6"
+          "ours": "PASS"
         },
         "deducing_bounds_from_non_const_29": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 6"
+          "ours": "PASS"
         },
         "deducing_bounds_from_non_const_3": {
           "upstream": "ACCEPT",
@@ -13695,8 +13679,7 @@
         },
         "deducing_bounds_from_non_const_30": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 7"
+          "ours": "PASS"
         },
         "deducing_bounds_from_non_const_4": {
           "upstream": "ACCEPT",
@@ -13704,23 +13687,19 @@
         },
         "deducing_bounds_from_non_const_5": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 6"
+          "ours": "PASS"
         },
         "deducing_bounds_from_non_const_6": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 6"
+          "ours": "PASS"
         },
         "deducing_bounds_from_non_const_7": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 7"
+          "ours": "PASS"
         },
         "deducing_bounds_from_non_const_8": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 7"
+          "ours": "PASS"
         },
         "deducing_bounds_from_non_const_9": {
           "upstream": "ACCEPT",
@@ -13828,13 +13807,11 @@
         },
         "bpf_loop_interaction1": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 9: register: r2"
+          "ours": "PASS"
         },
         "bpf_loop_interaction2": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 12: register: r2"
+          "ours": "PASS"
         },
         "canary_arm64_riscv64": {
           "upstream": "ACCEPT",
@@ -13858,8 +13835,7 @@
         },
         "kfunc_bpf_cast_to_kern_ctx": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 2: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "kfunc_bpf_rdonly_cast": {
           "upstream": "UNANNOTATED",
@@ -13942,18 +13918,15 @@
       "progs": {
         "bswap_16": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "load: Lowering combined ELF → AST failed at pc 1 (opcode 0xd7): unsupported opcode 0xd7 at pc 1"
+          "ours": "PASS"
         },
         "bswap_32": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "load: Lowering combined ELF → AST failed at pc 1 (opcode 0xd7): unsupported opcode 0xd7 at pc 1"
+          "ours": "PASS"
         },
         "bswap_64": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "load: Lowering combined ELF → AST failed at pc 2 (opcode 0xd7): unsupported opcode 0xd7 at pc 2"
+          "ours": "PASS"
         },
         "dummy_test": {
           "upstream": "UNKNOWN",
@@ -15180,12 +15153,12 @@
         "bpf_loop_iter_limit_nested": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 11: register: r2"
+          "note": "pc 44: R2 !read_ok"
         },
         "bpf_loop_iter_limit_ok": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 9: register: r2"
+          "note": "pc 16: R2 !read_ok"
         },
         "bpf_loop_iter_limit_overflow": {
           "upstream": "ACCEPT",
@@ -15267,8 +15240,9 @@
           "note": "verifier timeout"
         },
         "loop_detection": {
-          "upstream": "ACCEPT",
-          "ours": "PASS"
+          "upstream": "UNKNOWN",
+          "ours": "ERROR",
+          "note": "verifier timeout"
         },
         "loop_inside_iter": {
           "upstream": "ACCEPT",
@@ -15337,7 +15311,7 @@
         "widening": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 10: register: r2"
+          "note": "pc 17: R2 !read_ok"
         }
       }
     },
@@ -15762,8 +15736,7 @@
       "progs": {
         "checks_for_direct_packet_access": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe ctx access at pc 0: offset 76, size 4"
+          "ours": "PASS"
         },
         "make_headroom_for_lwt_xmit": {
           "upstream": "ACCEPT",
@@ -15775,18 +15748,15 @@
         },
         "packet_read_for_lwt_in": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe ctx access at pc 0: offset 76, size 4"
+          "ours": "PASS"
         },
         "packet_read_for_lwt_out": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe ctx access at pc 0: offset 76, size 4"
+          "ours": "PASS"
         },
         "packet_read_for_lwt_xmit": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe ctx access at pc 0: offset 76, size 4"
+          "ours": "PASS"
         },
         "packet_write_for_lwt_in": {
           "upstream": "ACCEPT",
@@ -15798,8 +15768,7 @@
         },
         "packet_write_for_lwt_xmit": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe ctx access at pc 0: offset 76, size 4"
+          "ours": "PASS"
         },
         "tc_classid_for_lwt_in": {
           "upstream": "ACCEPT",
@@ -16252,8 +16221,7 @@
       "progs": {
         "bpf_end_bswap": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "load: Lowering combined ELF → AST failed at pc 1 (opcode 0xd7): unsupported opcode 0xd7 at pc 1"
+          "ours": "PASS"
         },
         "bpf_end_to_be": {
           "upstream": "ACCEPT",
@@ -16310,18 +16278,17 @@
         },
         "private_stack_async_callback_1": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 17: register: r2"
+          "ours": "PASS"
         },
         "private_stack_async_callback_2": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 17: register: r2"
+          "note": "Subprogram error: back-edge from insn 107 to 27"
         },
         "private_stack_callback": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 6: register: r2"
+          "note": "CFG error: unreachable insn at pc 9"
         },
         "private_stack_exception_main_prog": {
           "upstream": "ACCEPT",
@@ -17001,8 +16968,7 @@
         },
         "sdiv64_non_zero_imm_2": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "DBM inconsistent at pc 1"
+          "ours": "PASS"
         },
         "sdiv64_non_zero_imm_3": {
           "upstream": "ACCEPT",
@@ -17014,8 +16980,7 @@
         },
         "sdiv64_non_zero_imm_5": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "DBM inconsistent at pc 1"
+          "ours": "PASS"
         },
         "sdiv64_non_zero_imm_6": {
           "upstream": "ACCEPT",
@@ -17055,8 +17020,7 @@
         },
         "sdiv64_ri_divisor_neg_1": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "DBM inconsistent at pc 2"
+          "ours": "PASS"
         },
         "sdiv64_rr_divisor_neg_1": {
           "upstream": "ACCEPT",
@@ -17681,17 +17645,17 @@
         "test_sk_lookup": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Helper 3 not allowed for program Unknown at pc 5"
+          "note": "Invalid argument type at pc 18: register: r3"
         },
         "test_sk_reuseport": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Helper 3 not allowed for program Unknown at pc 5"
+          "note": "Invalid argument type at pc 18: register: r3"
         },
         "test_socket_filter": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe ctx access at pc 0: offset 168, size 8"
+          "note": "Invalid argument type at pc 18: register: r3"
         },
         "test_sockmap_delete": {
           "upstream": "UNANNOTATED",
@@ -17713,12 +17677,12 @@
         "test_trace_iter": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Helper 3 not allowed for program Tracing at pc 5"
+          "note": "Invalid argument type at pc 18: register: r3"
         },
         "test_xdp": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Helper 3 not allowed for program Xdp at pc 4"
+          "note": "Invalid argument type at pc 23: register: r3"
         }
       }
     },
@@ -18145,8 +18109,7 @@
         },
         "callback_result_precise": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 9: register: r2"
+          "ours": "PASS"
         },
         "fp_precise_subprog_result": {
           "upstream": "ACCEPT",
@@ -18172,8 +18135,7 @@
         },
         "parent_callee_saved_reg_precise_with_callback": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 9: register: r2"
+          "ours": "PASS"
         },
         "parent_stack_slot_precise": {
           "upstream": "ACCEPT",
@@ -18186,8 +18148,7 @@
         },
         "parent_stack_slot_precise_with_callback": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 10: register: r2"
+          "ours": "PASS"
         },
         "sneaky_fp_precise_subprog_result": {
           "upstream": "ACCEPT",

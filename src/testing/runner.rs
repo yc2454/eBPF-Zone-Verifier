@@ -688,20 +688,36 @@ impl Analyzer {
             // we type each ctx slot from the function's BTF FUNC_PROTO.
             // No per-arg MAYBE_NULL table for these kinds (the kernel
             // marks fentry/LSM args as trusted/non-null by convention).
-            ctx.entry_args = self.btf.resolve_func_args(&func.name).map(|args| {
-                args.into_iter()
-                    .map(|a| match a {
-                        StructOpsArg::Scalar => EntryArg::Scalar,
-                        StructOpsArg::OpaquePtr => EntryArg::TrustedPtrBtfId {
-                            type_name: "struct",
-                            nullable: false,
-                        },
-                        StructOpsArg::TrustedPtr(name) => EntryArg::TrustedPtrBtfId {
-                            type_name: intern_btf_type_name(&name),
-                            nullable: false,
-                        },
-                    })
-                    .collect()
+            // For non-struct_ops tracing kinds, a bare `void *ctx`
+            // signature (e.g. `int handler(void *ctx)`) carries no real
+            // arg-type info — the program will be unpacked at runtime
+            // against the *attach target's* BTF, which we don't ship.
+            // Skip populating entry_args in that case so
+            // `validate_ctx_access` falls back to the static
+            // MAYBE_NULL table keyed by attach_subtype (the only path
+            // that surfaces nullable trusted-args for tp_btf raw-tp
+            // targets).
+            ctx.entry_args = self.btf.resolve_func_args(&func.name).and_then(|args| {
+                let bare_void_ctx = args.len() == 1
+                    && matches!(args[0], StructOpsArg::OpaquePtr);
+                if bare_void_ctx {
+                    return None;
+                }
+                Some(
+                    args.into_iter()
+                        .map(|a| match a {
+                            StructOpsArg::Scalar => EntryArg::Scalar,
+                            StructOpsArg::OpaquePtr => EntryArg::TrustedPtrBtfId {
+                                type_name: "struct",
+                                nullable: false,
+                            },
+                            StructOpsArg::TrustedPtr(name) => EntryArg::TrustedPtrBtfId {
+                                type_name: intern_btf_type_name(&name),
+                                nullable: false,
+                            },
+                        })
+                        .collect(),
+                )
             });
         }
 
