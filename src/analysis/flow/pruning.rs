@@ -431,6 +431,18 @@ fn state_subsumed_by(
         return false;
     }
 
+    // Active refcount-tracked acquisitions (dynptr / sock / cpumask /
+    // kptr / ...) must be a subset in `cur` of those held by `old`. If
+    // `cur` carries an active ref that `old` doesn't, pruning would
+    // hide a leak: the cached continuation from `old` already proved
+    // there's no leaking exit, but along that continuation cur's extra
+    // ref never gets released — exit leak-check would catch it on cur
+    // but not on old. Caught `dynptr_fail::ringbuf_missing_release2`,
+    // where one branch releases both ptr1+ptr2 and the other only ptr1.
+    if !cur.active_refs.is_subset(&old.active_refs) {
+        return false;
+    }
+
     // Check caller frames: callee-saved registers (r6-r9) persist across
     // calls and determine post-return control flow. Without this check,
     // two states that differ only in caller-frame r6-r9 values get pruned
