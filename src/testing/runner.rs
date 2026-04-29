@@ -461,6 +461,43 @@ impl Analyzer {
             .collect();
         ctx.flags |= extra_flags;
 
+        // Load-time validation of `__exception_cb(<cb>)` decl-tags on the
+        // main subprog. libbpf encodes the annotation as a DECL_TAG named
+        // `"exception_callback:<cb>"` targeting the main FUNC. The kernel
+        // rejects:
+        //   * more than one tag per main subprog,
+        //   * a cb whose FUNC_PROTO doesn't return a scalar integer,
+        //   * a cb whose FUNC_PROTO doesn't take exactly one integer arg.
+        // All three are flagged before analysis runs — the runtime
+        // `bpf_set_exception_callback` plumbing is unaffected.
+        let cb_tags = ctx.btf.exception_callback_tags(&func.name);
+        if cb_tags.len() > 1 {
+            return AnalysisResult::Fail(VerificationError::ExceptionCallbackInvalid {
+                reason: "multiple exception callback tags for main subprog".to_string(),
+            });
+        }
+        if let Some(cb_name) = cb_tags.into_iter().next() {
+            if let Err(reason) = ctx.btf.validate_exception_cb_signature(&cb_name) {
+                return AnalysisResult::Fail(VerificationError::ExceptionCallbackInvalid {
+                    reason,
+                });
+            }
+            // Static-scan the cb's body for `bpf_throw` kfunc relocations.
+            // The kernel marks an exception callback's frame as a callback
+            // subprog and rejects any `bpf_throw` from inside it
+            // (kernel: "cannot be called from callback subprog"). The cb
+            // is unreachable from main's CFG (registered via decl_tag,
+            // not called), so abstract interp never visits it — relocs
+            // give us the throw sites without needing a parallel
+            // analysis pass.
+            if cb_subprog_throws(&self.path, &self.maps, &cb_name) {
+                return AnalysisResult::Fail(VerificationError::ExceptionCallbackInvalid {
+                    reason: "cannot be called from callback subprog".to_string(),
+                });
+            }
+            ctx.exception_callback = Some(cb_name);
+        }
+
         // Determine program kind
         ctx.prog_kind = self.derive_program_kind(section);
         // Subtype is the SEC suffix after the first delimiter — '/' for
@@ -717,6 +754,35 @@ impl Analyzer {
         }
         (all_pass, results)
     }
+}
+
+/// True if the named subprog's body contains a `bpf_throw` kfunc call.
+/// Walks every section in the .o looking for the function symbol, then
+/// scans that function's relocations for any `KfuncCall` whose
+/// `kfunc_name` is `"bpf_throw"`. Used to enforce the kernel's
+/// "cannot be called from callback subprog" rule against an
+/// `__exception_cb`-registered handler that the main program's CFG
+/// never reaches.
+fn cb_subprog_throws(path: &str, maps: &[BpfMapDef], cb_name: &str) -> bool {
+    let Ok(sections) = list_section_names(path) else {
+        return false;
+    };
+    for sec in &sections {
+        let Ok(funcs) = get_functions_in_section(path, sec) else {
+            continue;
+        };
+        let Some(func) = funcs.iter().find(|f| f.name == cb_name) else {
+            continue;
+        };
+        let Ok(relocs) = load_relocations_for_function(path, maps, sec, func.offset, func.size)
+        else {
+            return false;
+        };
+        return relocs
+            .values()
+            .any(|r| r.kfunc_name.as_deref() == Some("bpf_throw"));
+    }
+    false
 }
 
 /// Helper: Find section name for a given function symbol

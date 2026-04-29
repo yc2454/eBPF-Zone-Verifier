@@ -243,13 +243,18 @@ fn clobber_caller_saved(state: &mut State) {
 }
 
 /// `bpf_throw(cookie)`: terminates execution on this path. The kernel
-/// either dispatches to the program-default exception callback (if
-/// registered) or unwinds out of the program returning 0. Either way
-/// the throw site has no in-program successor — we drop the path.
+/// runs the program-default exception callback (if registered) or
+/// unwinds out of the program returning 0 — either way, the site has
+/// no in-program successor and we drop the path.
 ///
-/// Exit-style cleanup checks (unreleased refs / iterators / locks) are
-/// intentionally skipped: the kernel releases resources for us on the
-/// unwind path. R1 (cookie) can be any scalar; we don't validate it.
-fn throw(_env: &mut VerifierEnv, _state: State) -> Vec<State> {
+/// Reference cleanup is the caller's responsibility: a live
+/// `bpf_obj_new` / `bpf_refcount_acquire` reference at a throw site is
+/// rejected with "Unreleased reference" because no handler is empowered
+/// to release it on the unwind path. This matches the kernel's
+/// `check_reference_leak` invocation at every throw.
+fn throw(env: &mut VerifierEnv, state: State) -> Vec<State> {
+    if state.has_unreleased_refs() {
+        env.fail(VerificationError::UnreleasedReference);
+    }
     vec![]
 }

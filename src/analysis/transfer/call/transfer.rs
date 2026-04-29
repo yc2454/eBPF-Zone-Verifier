@@ -684,6 +684,21 @@ pub(crate) fn transfer_call_rel(
         return vec![];
     }
 
+    // Reject any direct (or transitively-resolved) call whose target
+    // resolves to the registered exception callback. The kernel
+    // disallows the program from invoking its own exception_cb directly:
+    // unwinding is the only legal entry into it. Mirrors the kernel's
+    // "cannot call exception cb directly" diagnostic.
+    if let Some(cb_name) = env.ctx.exception_callback.as_deref()
+        && let Some(target_name) = env.ctx.pc_to_subprog_name.get(&target)
+        && target_name == cb_name
+    {
+        env.fail(VerificationError::ExceptionCallbackInvalid {
+            reason: "cannot call exception cb directly".to_string(),
+        });
+        return vec![];
+    }
+
     // W6.5: global subprogs are verified independently against their
     // declared BTF FUNC_PROTO. At each call site we must:
     //   1. Reject malformed global signatures (void return, FWD args)

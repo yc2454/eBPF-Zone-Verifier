@@ -308,6 +308,13 @@ pub enum VerificationError {
         pc: usize,
         feature: &'static str,
     },
+    /// Load-time rejection of an `__exception_cb(name)` annotation.
+    /// Carries the kernel-style diagnostic verbatim — duplicates,
+    /// non-scalar return type, wrong arity, etc. Reported per main
+    /// subprog before analysis runs.
+    ExceptionCallbackInvalid {
+        reason: String,
+    },
 }
 
 impl VerificationError {
@@ -649,6 +656,7 @@ impl VerificationError {
             VerificationError::UnsupportedModernFeature { pc, feature } => {
                 format!("Unsupported modern BPF feature at pc {}: {}", pc, feature)
             }
+            VerificationError::ExceptionCallbackInvalid { reason } => reason.clone(),
         }
     }
 }

@@ -493,6 +493,92 @@ impl BtfContext {
         proto.kind() == BTF_KIND_FUNC_PROTO && proto.size_or_type == 0
     }
 
+    /// btf_id of the BTF_KIND_FUNC entry whose declared name is `func_name`,
+    /// or None if no such FUNC exists. Linear scan — only invoked at load
+    /// time per analyzed program.
+    pub fn find_func_id_by_name(&self, func_name: &str) -> Option<u32> {
+        self.types
+            .values()
+            .find(|ty| {
+                ty.kind() == BTF_KIND_FUNC && self.get_string(ty.name_off) == Some(func_name)
+            })
+            .map(|ty| ty.id)
+    }
+
+    /// Returns the cb-name strings of every `exception_callback:<cb>` decl
+    /// tag whose target FUNC is `main_func_name`. libbpf encodes
+    /// `__exception_cb(cb)` as a DECL_TAG with name string
+    /// `"exception_callback:<cb>"` attached to the main subprog FUNC.
+    /// More than one entry indicates a duplicate-tag error
+    /// (kernel: "multiple exception callback tags for main subprog").
+    pub fn exception_callback_tags(&self, main_func_name: &str) -> Vec<String> {
+        const PREFIX: &str = "exception_callback:";
+        let Some(func_id) = self.find_func_id_by_name(main_func_name) else {
+            return Vec::new();
+        };
+        self.decl_tags
+            .iter()
+            .filter(|t| t.target_type_id == func_id && t.name.starts_with(PREFIX))
+            .map(|t| t.name[PREFIX.len()..].to_string())
+            .collect()
+    }
+
+    /// Walk a type id past TYPEDEF/CONST/VOLATILE/RESTRICT modifiers and
+    /// return true if the underlying kind is an integer-class scalar
+    /// (INT / ENUM / ENUM64). Used to validate exception-callback
+    /// signatures and similar constraints. False for void (id 0),
+    /// pointers, structs, etc.
+    pub fn is_integer_scalar(&self, type_id: u32) -> bool {
+        if type_id == 0 {
+            return false;
+        }
+        let id = self.peel_modifiers(type_id);
+        match self.types.get(&id) {
+            Some(ty) => matches!(
+                ty.kind(),
+                BTF_KIND_INT | BTF_KIND_ENUM | BTF_KIND_ENUM64
+            ),
+            None => false,
+        }
+    }
+
+    /// Validate a registered exception-callback's BTF signature.
+    /// Returns Err with the kernel's exact diagnostic string if the
+    /// callback's FUNC_PROTO doesn't match the kernel's contract:
+    ///   * return type must be a scalar integer (kernel:
+    ///     "Global function <name>() doesn't return scalar.")
+    ///   * exactly one parameter of integer type (kernel:
+    ///     "exception cb only supports single integer argument")
+    ///
+    /// Returns Ok(()) when both checks pass, or when the cb FUNC isn't
+    /// in BTF (deferred to whatever path produces the missing-func
+    /// error elsewhere).
+    pub fn validate_exception_cb_signature(&self, cb_name: &str) -> Result<(), String> {
+        let Some(func_ty) = self.types.values().find(|ty| {
+            ty.kind() == BTF_KIND_FUNC && self.get_string(ty.name_off) == Some(cb_name)
+        }) else {
+            return Ok(());
+        };
+        let Some(proto) = self.types.get(&func_ty.size_or_type) else {
+            return Ok(());
+        };
+        if proto.kind() != BTF_KIND_FUNC_PROTO {
+            return Ok(());
+        }
+        // Kernel checks return type first: void or non-scalar return →
+        // "Global function ... doesn't return scalar."
+        if !self.is_integer_scalar(proto.size_or_type) {
+            return Err(format!(
+                "Global function {}() doesn't return scalar.",
+                cb_name
+            ));
+        }
+        if proto.members.len() != 1 || !self.is_integer_scalar(proto.members[0].type_id) {
+            return Err("exception cb only supports single integer argument".to_string());
+        }
+        Ok(())
+    }
+
     /// Resolve a subprog's parameter list directly from its BTF FUNC entry.
     ///
     /// clang -target bpf emits a `BTF_KIND_FUNC` for every defined function

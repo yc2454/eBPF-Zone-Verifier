@@ -103,6 +103,16 @@ pub struct ExecContext {
     /// + FUNC_PROTO. Empty when no subprogs were combined or the
     /// loader didn't populate the table.
     pub pc_to_subprog_name: HashMap<usize, String>,
+    /// Name of the cb registered via `__exception_cb(<cb>)` decl_tag on
+    /// the analyzed main subprog. Set by the runner after parsing the
+    /// BTF DECL_TAG with prefix `"exception_callback:"`. Drives:
+    ///   * direct-call rejection (main → cb resolves to "cannot call
+    ///     exception cb directly"),
+    ///   * throw-site checks inside the cb body ("cannot be called
+    ///     from callback subprog").
+    /// Distinct from the per-state `program_exception_cb`, which is
+    /// populated at runtime by `bpf_set_exception_callback`.
+    pub exception_callback: Option<String>,
 }
 
 pub fn default_exec_ctx() -> ExecContext {
@@ -120,6 +130,7 @@ pub fn default_exec_ctx() -> ExecContext {
         struct_ops_member: None,
         attach_subtype: None,
         pc_to_subprog_name: HashMap::new(),
+        exception_callback: None,
     }
 }
 
