@@ -784,6 +784,22 @@ pub(crate) fn transfer_call_rel(
                         return vec![];
                     }
                 }
+                // Read-only map value (.rodata) passed to a writable
+                // PtrToMem arg: the global subprog signature has no
+                // `__arg_const` tag, so the callee may store through it.
+                // Kernel reports "Caller passes invalid args into func#N".
+                if let crate::parsing::btf::GlobalFuncArg::PtrToMem { .. } = arg
+                    && let RegType::PtrToMapValue { map_idx, .. } = actual
+                    && let Some(map_def) = env.ctx.map_defs.get(map_idx)
+                    && map_def.map_flags & crate::common::constants::BPF_F_RDONLY_PROG != 0
+                {
+                    env.fail(VerificationError::GlobalFuncBadCallerArg {
+                        pc,
+                        func: name.clone(),
+                        arg_index: i,
+                    });
+                    return vec![];
+                }
                 // "kptr cannot be accessed indirectly by helper" extends
                 // to global subprog calls: a `PtrToMapValue` arg whose
                 // declared mem region overlaps a kptr field is rejected.
