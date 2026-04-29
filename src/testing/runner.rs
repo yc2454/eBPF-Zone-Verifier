@@ -458,11 +458,29 @@ impl Analyzer {
         func: &BpfFuncInfo,
         extra_flags: u32,
     ) -> AnalysisResult {
+        // Pre-resolve any `__exception_cb(<cb>)` decl_tag on this main
+        // FUNC. The cb is unreachable from main's CFG (no BpfCall reloc
+        // points to it), so the combiner won't pull it in by default.
+        // We pass it as an extra root so its body lands in `prog` and
+        // `func_offsets` exposes its entry PC, enabling the post-main
+        // exception-cb analysis pass below.
+        let cb_extra_roots: Vec<(String, String)> = self
+            .btf
+            .exception_callback_tags(&func.name)
+            .into_iter()
+            .next()
+            .and_then(|cb_name| {
+                find_section_for_func(&self.path, &cb_name)
+                    .map(|cb_section| (cb_section, cb_name))
+            })
+            .into_iter()
+            .collect();
         let (prog, pc_to_reloc, func_offsets) = match try_load_function_with_subprogs_from_elf(
             &self.path,
             section,
             &func.name,
             &self.maps,
+            &cb_extra_roots,
         ) {
             Ok(t) => t,
             Err(e) => {
@@ -699,7 +717,35 @@ impl Analyzer {
         let result = analysis::analyze_program(&ctx, &prog, entry, &self.config);
 
         match result {
-            Ok(_) => AnalysisResult::Pass,
+            Ok(_) => {
+                // Verify the body of any registered `__exception_cb`.
+                // Mirrors the kernel's `do_check_subprogs` force-marking the
+                // cb subprog as called: the cb is unreachable from main's
+                // CFG, so we drive a separate analysis pass over its body.
+                // The cb's entry PC lives in `func_offsets` (built by the
+                // combined-prog ELF loader); if the cb isn't in this map
+                // (e.g. fallback per-function load path), we skip — the
+                // static reloc-scan and signature checks already ran.
+                if let Some(cb_name) = ctx.exception_callback.as_deref()
+                    && let Some(&cb_entry_pc) = func_offsets.get(cb_name)
+                {
+                    let cb_entry = make_entry_state();
+                    if let Some(err) = analysis::analyze_exception_cb(
+                        &ctx,
+                        &prog,
+                        cb_entry,
+                        &self.config,
+                        cb_entry_pc,
+                    ) {
+                        return if err.description().contains("Complexity limit") {
+                            AnalysisResult::Timeout
+                        } else {
+                            AnalysisResult::Fail(err)
+                        };
+                    }
+                }
+                AnalysisResult::Pass
+            }
             Err(e) => {
                 if e.description().contains("Complexity limit") {
                     AnalysisResult::Timeout

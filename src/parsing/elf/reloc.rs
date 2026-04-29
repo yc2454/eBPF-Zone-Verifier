@@ -895,6 +895,7 @@ pub fn combine_function_with_subprogs<P: AsRef<Path> + Clone>(
     maps: &[BpfMapDef],
     main_section: &str,
     main_func: &str,
+    extra_roots: &[(String, String)],
 ) -> Result<CombinedProgram> {
     use super::prog::{get_functions_in_section, load_function_bytes};
     use crate::parsing::bpf_insn::decode_insns;
@@ -906,6 +907,13 @@ pub fn combine_function_with_subprogs<P: AsRef<Path> + Clone>(
     let mut visited: HashSet<(String, String)> = HashSet::new();
     let mut queue: Vec<(String, String)> =
         vec![(main_section.to_string(), main_func.to_string())];
+    // Extra roots (e.g. an `__exception_cb` registered via decl_tag) get
+    // appended so their bodies are combined and tracked in
+    // `func_offsets`. They're unreachable from main's CFG, but the
+    // verifier needs their PC to drive a separate analysis pass.
+    for r in extra_roots {
+        queue.push(r.clone());
+    }
 
     while let Some((section, func_name)) = queue.pop() {
         if !visited.insert((section.clone(), func_name.clone())) {

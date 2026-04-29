@@ -234,6 +234,25 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
 
     let (r0_min, r0_max) = state.domain.get_interval(Reg::R0);
 
+    // Exception-callback exit: when the active analysis pass is
+    // verifying an `__exception_cb` body (`analyze_exception_cb`),
+    // mirror the kernel's `in_exception_callback_fn` behavior — apply
+    // the main-program exit rule at the cb's exit. For fentry/fexit
+    // attach flavors, that rule is R0 ∈ [0, 0] (kernel:
+    // "At program exit the register R0 has ... should be ..."). We do
+    // not enforce this on ordinary fentry main-program exits because
+    // the existing corpus relies on the looser local behavior; the
+    // tighter rule fires only inside the cb pass.
+    if env.analyzing_exception_cb
+        && state.at_main_frame()
+        && matches!(env.ctx.attach_flavor.as_deref(), Some("fentry") | Some("fexit"))
+    {
+        if r0_min != 0 || r0_max != 0 {
+            env.fail(VerificationError::InvalidReturnCode { pc: state.pc });
+            return vec![];
+        }
+    }
+
     // Cluster B: per-attach-type retval range. When a finer rule applies
     // for the (prog_kind, attach_subtype) pair, prefer it over the coarse
     // `requires_strict_return_code` check below — the kernel's per-hook

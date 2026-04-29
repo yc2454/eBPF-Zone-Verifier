@@ -181,7 +181,131 @@ pub fn analyze_program_full(
         initial_state.acquire_ref();
     }
 
-    // 3. Setup Worklist
+    // 3. & 4. Run worklist analysis
+    let prune_count = run_worklist(&mut env, prog, config, initial_state);
+
+    // --- FINAL REPORT ---
+    let analysis_error = if let Some(err) = &env.error {
+        info!(target: "app", "\n[Verifier] FAILURE: {}", err.description());
+        if config.verbosity >= 1 {
+            info!(target: "app", "[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count);
+        }
+        Some(err.clone())
+    } else {
+        info!(target: "app", "\n[Verifier] Success! Verified {} instructions (pruned {} states).",
+                 env.insn_processed, prune_count);
+        if config.verbosity >= 1 {
+            info!(target: "app", "[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count);
+        }
+        None
+    };
+
+    // 5. Return Results
+    // NOTE: For backwards compatibility, dbms returns Vec<Dbm>.
+    // In Interval mode, we return empty Dbms since there's no underlying DBM.
+    let n = prog.instrs.len();
+    let mut results = Vec::with_capacity(n);
+
+    for i in 0..n {
+        if let Some(states) = env.explored_states.get(&i) {
+            if !states.is_empty() {
+                // Extract Dbm from Zone domain, or return empty for Interval
+                match &states[0].domain {
+                    NumericDomain::Zone(dbm) => results.push(dbm.clone()),
+                    NumericDomain::Interval(_) => results.push(Dbm::new()),
+                }
+            } else {
+                results.push(Dbm::new());
+            }
+        } else {
+            results.push(Dbm::new());
+        }
+    }
+
+    AnalysisResult {
+        dbms: results,
+        explored_states: env.explored_states,
+        error: analysis_error,
+    }
+}
+
+/// Verify the body of an `__exception_cb` callback subprog.
+///
+/// The cb is unreachable from main's CFG (registered via BTF decl_tag,
+/// not called) so the main analysis pass never visits it. The kernel
+/// handles this by force-marking the cb subprog as `called` in
+/// `do_check_subprogs`, which routes it through the normal global-subprog
+/// verification path. We don't have an equivalent global-subprog loop, so
+/// this function plays that role: build a fresh env, seed the cb's entry
+/// state (R1 = unknown SCALAR cookie, R10 = stack pointer), and run the
+/// worklist.
+///
+/// While the env's `analyzing_exception_cb` flag is set, `transfer_exit`
+/// applies the kernel's exception-cb-specific exit rule — for fentry/
+/// fexit programs, R0 must be in [0, 0] at cb exit (mirrors the kernel
+/// applying the main-program exit rule via `in_exception_callback_fn`).
+///
+/// Returns `Some(error)` if verification of the cb body fails; `None` on
+/// success. Caller is expected to surface the error as the parent
+/// program's failure verdict.
+pub fn analyze_exception_cb(
+    ctx: &ExecContext,
+    prog: &Program,
+    entry_dbm: Dbm,
+    config: &VerifierConfig,
+    cb_entry_pc: usize,
+) -> Option<VerificationError> {
+    let mut env = VerifierEnv::new(ctx, prog, None);
+    env.analyzing_exception_cb = true;
+
+    // Reuse program-level structural checks. These are idempotent — main
+    // analysis already ran them, but `env` is fresh here so we need its
+    // insn_aux_data populated (prune points, liveness) before the
+    // worklist body can run safely.
+    if let Err(e) = subprog::check_subprogs(prog) {
+        return Some(VerificationError::SubprogError { e });
+    }
+    if let Err(e) =
+        subprog::check_stack_overflow(prog, env.ctx.prog_kind, config.enable_private_stack)
+    {
+        return Some(VerificationError::SubprogError { e });
+    }
+    if let Err(e) = cfg::check_cfg(prog, &mut env, config) {
+        return Some(VerificationError::CfgError(e));
+    }
+    liveness::compute_liveness(prog, &mut env);
+
+    // Seed initial state at the cb's entry PC. The kernel's
+    // `btf_prepare_func_args` produces ARG_ANYTHING for the cookie arg;
+    // we mirror that with R1 = SCALAR with no interval bounds.
+    let initial_domain = match config.domain_mode {
+        DomainMode::Zone => NumericDomain::Zone(entry_dbm),
+        DomainMode::Interval => NumericDomain::new_interval(),
+    };
+    let mut initial_state = State::new(initial_domain, cb_entry_pc);
+    initial_state.types.set(Reg::R1, RegType::ScalarValue);
+    initial_state.types.set(
+        Reg::R10,
+        RegType::PtrToStack {
+            frame_level: FrameLevel::MAIN,
+        },
+    );
+    initial_state.domain.init_packet_anchors();
+
+    let _ = run_worklist(&mut env, prog, config, initial_state);
+
+    env.error
+}
+
+/// Worklist abstract-interpretation loop. Shared between the main-program
+/// analysis (`analyze_program_full`) and the exception-cb body pass
+/// (`analyze_exception_cb`). Returns the number of states pruned.
+fn run_worklist(
+    env: &mut VerifierEnv,
+    prog: &Program,
+    config: &VerifierConfig,
+    initial_state: State,
+) -> usize {
     let mut worklist = VecDeque::new();
     worklist.push_back(initial_state);
 
@@ -189,10 +313,8 @@ pub fn analyze_program_full(
         info!(target: "app", "[Analysis] Starting Abstract Interpretation...");
     }
 
-    // Track pruning statistics
     let mut prune_count: usize = 0;
 
-    // 4. Main Analysis Loop
     while let Some(mut state) = worklist.pop_back() {
         if env.failed() {
             error!(target: "app", "[Analysis] Aborted due to previous errors.");
@@ -220,7 +342,7 @@ pub fn analyze_program_full(
         }
 
         // A.c RECORD STATE
-        merging::record_state(&mut env, state.clone(), config.max_states_per_pc);
+        merging::record_state(env, state.clone(), config.max_states_per_pc);
 
         // B. Global Complexity Limit (only count non-pruned states)
         env.insn_processed += 1;
@@ -294,7 +416,7 @@ pub fn analyze_program_full(
 
         // F. Transfer Function
         state.domain.set_current_pc(state.pc);
-        let mut successors = transfer::transfer(&mut env, state, instr);
+        let mut successors = transfer::transfer(env, state, instr);
         // F.1 Certificate-Aided Refinement (optional)
         // Replay-verify proof chains for each successor PC using explored_states.
         if let Some(ref cert) = env.certificate {
@@ -366,47 +488,5 @@ pub fn analyze_program_full(
         }
     }
 
-    // --- FINAL REPORT ---
-    let analysis_error = if let Some(err) = &env.error {
-        info!(target: "app", "\n[Verifier] FAILURE: {}", err.description());
-        if config.verbosity >= 1 {
-            info!(target: "app", "[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count);
-        }
-        Some(err.clone())
-    } else {
-        info!(target: "app", "\n[Verifier] Success! Verified {} instructions (pruned {} states).",
-                 env.insn_processed, prune_count);
-        if config.verbosity >= 1 {
-            info!(target: "app", "[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count);
-        }
-        None
-    };
-
-    // 5. Return Results
-    // NOTE: For backwards compatibility, dbms returns Vec<Dbm>.
-    // In Interval mode, we return empty Dbms since there's no underlying DBM.
-    let n = prog.instrs.len();
-    let mut results = Vec::with_capacity(n);
-
-    for i in 0..n {
-        if let Some(states) = env.explored_states.get(&i) {
-            if !states.is_empty() {
-                // Extract Dbm from Zone domain, or return empty for Interval
-                match &states[0].domain {
-                    NumericDomain::Zone(dbm) => results.push(dbm.clone()),
-                    NumericDomain::Interval(_) => results.push(Dbm::new()),
-                }
-            } else {
-                results.push(Dbm::new());
-            }
-        } else {
-            results.push(Dbm::new());
-        }
-    }
-
-    AnalysisResult {
-        dbms: results,
-        explored_states: env.explored_states,
-        error: analysis_error,
-    }
+    prune_count
 }

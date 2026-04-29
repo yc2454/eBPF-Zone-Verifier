@@ -33,6 +33,11 @@ pub struct VerifierEnv<'a> {
     pub history: History,
     // Optional PCC certificate loaded from CLI.
     pub certificate: Option<ProgramCertificate>,
+    /// True while `analyze_exception_cb` is running. Mirrors the kernel's
+    /// `frame->in_exception_callback_fn`: switches the main-frame exit
+    /// check to the exception-cb-specific rule (R0 ∈ [0, 0] for fentry/
+    /// fexit) without affecting ordinary main-program exits.
+    pub analyzing_exception_cb: bool,
 }
 
 impl<'a> VerifierEnv<'a> {
@@ -50,6 +55,7 @@ impl<'a> VerifierEnv<'a> {
             error: None,
             history: History::new(),
             certificate,
+            analyzing_exception_cb: false,
         }
     }
 
