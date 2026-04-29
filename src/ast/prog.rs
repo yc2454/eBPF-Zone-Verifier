@@ -123,6 +123,14 @@ impl ProgramKind {
             || s.starts_with("uprobe.s/")
             || s.starts_with("uretprobe/")
             || s.starts_with("uretprobe.s/")
+            // `uprobe.session` / `kprobe.session`: session-attach SEC has
+            // no '/<func>' suffix in the test corpus (see
+            // uprobe_multi_verifier.c). Match the bare flavor too so the
+            // exit-time R0 ∈ [0, 1] rule in `expected_retval_rule` fires.
+            || s == "uprobe.session"
+            || s == "uretprobe.session"
+            || s == "kprobe.session"
+            || s == "kretprobe.session"
         {
             return ProgramKind::Kprobe;
         }

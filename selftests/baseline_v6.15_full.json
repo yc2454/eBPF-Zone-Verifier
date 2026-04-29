@@ -12854,7 +12854,7 @@
         },
         "uprobe_sesison_return_2": {
           "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "ours": "PASS"
         }
       }
     },
