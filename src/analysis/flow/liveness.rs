@@ -373,7 +373,17 @@ fn get_use_def(instr: &Instr) -> UseDef {
             }
         }
 
-        Instr::Exit => {}
+        Instr::Exit => {
+            // R0 is the return value: at main exit it's checked against
+            // the program's retval rule (e.g. cgroup_skb requires [0,1]),
+            // at subprog exit it flows to the caller. Marking R0 live
+            // here keeps it in pruning's `live_regs` so two states
+            // reaching the same exit with different R0 ranges don't
+            // collapse — caught test_global_func15_tricky_pruning where
+            // the branch (R0 unbounded) was pruned against the
+            // fallthrough (R0 = 1).
+            ud.use_regs.insert(Reg::R0);
+        }
 
         Instr::LoadPacket { src, .. } => {
             if let Some(r) = src {
