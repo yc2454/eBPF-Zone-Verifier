@@ -710,14 +710,14 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 size: insn.imm as u32,
             },
 
-            // 0xd7: END_LE_64 (dst = to_le_64(dst))
-            // Supports imm = 16, 32, 64
-            // 0xd7 => Instr::Endian {
-            //     width: Width::W64,
-            //     dst: dst,
-            //     op: EndianOp::ToLe,
-            //     size: insn.imm as u32,
-            // },
+            // 0xd7: BPF_ALU64 | BPF_END | BPF_K — BSWAP (BPF v4).
+            // dst = bswap_{imm}(dst); imm ∈ {16, 32, 64}.
+            0xd7 => Instr::Endian {
+                width: Width::W64,
+                dst,
+                op: EndianOp::Bswap,
+                size: insn.imm as u32,
+            },
 
             // --- JMP ---
             // 0x95: exit (JMP | EXIT)

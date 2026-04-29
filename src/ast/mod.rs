@@ -82,6 +82,9 @@ pub enum CmpOp {
 pub enum EndianOp {
     ToBe,
     ToLe,
+    /// BPF v4 BSWAP (alu64 | END | K, opcode 0xd7). Pure byte-swap of the
+    /// low `size` bits of `dst`, host-endianness independent.
+    Bswap,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

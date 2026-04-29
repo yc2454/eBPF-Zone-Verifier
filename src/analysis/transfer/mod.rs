@@ -216,6 +216,17 @@ fn transfer_endian(
                 _ => state.domain.forget(dst),
             }
         }
+        EndianOp::Bswap => {
+            // BPF v4 BSWAP: byte-swap of the low `size` bits, independent of
+            // host endianness. Result fits in `size` bits — narrow, but the
+            // exact value is non-linear so the prior interval is forgotten.
+            match size {
+                16 => state.domain.apply_and_imm(dst, 0xFFFF),
+                32 => state.domain.apply_and_imm(dst, 0xFFFF_FFFF),
+                64 => state.domain.forget(dst),
+                _ => state.domain.forget(dst),
+            }
+        }
     }
 
     // 3. Handle Implicit 32-bit Zero Extension

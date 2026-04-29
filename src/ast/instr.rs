@@ -205,6 +205,9 @@ impl fmt::Display for Instr {
                     (EndianOp::ToLe, 16) => "le16",
                     (EndianOp::ToLe, 32) => "le32",
                     (EndianOp::ToLe, 64) => "le64",
+                    (EndianOp::Bswap, 16) => "bswap16",
+                    (EndianOp::Bswap, 32) => "bswap32",
+                    (EndianOp::Bswap, 64) => "bswap64",
                     _ => "unknown",
                 };
                 write!(f, "{} = endian_{}", dst.name(), kind_str)

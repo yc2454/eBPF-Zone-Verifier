@@ -320,7 +320,12 @@ pub fn apply_mul_imm(dbm: &mut Dbm, dst: Reg, imm: i64) {
     dbm.close();
 }
 
-/// Performs dst /= imm.
+/// Performs dst /= imm. BPF DIV is unsigned, so a negative `imm`
+/// reinterprets to a huge unsigned divisor — the zone can't model that
+/// soundly with signed-i64 bounds. Mirror the interval domain: only
+/// narrow when `imm` and the dividend's range are both non-negative;
+/// otherwise forget. (SDIV is decoded separately and never reaches
+/// here with a meaningful negative imm.)
 pub fn apply_div_imm(dbm: &mut Dbm, reg: Reg, imm: i64) {
     if imm == 0 {
         return;
@@ -328,7 +333,7 @@ pub fn apply_div_imm(dbm: &mut Dbm, reg: Reg, imm: i64) {
     let (l, h) = get_interval(dbm, reg);
     forget(dbm, reg);
 
-    if l != i64::MIN && h != i64::MAX && l >= 0 && h >= 0 {
+    if imm > 0 && l != i64::MIN && h != i64::MAX && l >= 0 && h >= 0 {
         let new_lo = l / imm;
         let new_hi = h / imm;
         assume_ge_imm(dbm, reg, new_lo);
