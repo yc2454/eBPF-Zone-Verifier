@@ -1529,6 +1529,33 @@ fn apply_prog_type_overrides(prog_kind: ProgramKind, off: i16, info: &mut CtxAcc
 }
 
 // ===========================================================================
+// Per-tracepoint MAYBE_NULL arg table (tp_btf / raw_tp)
+// ===========================================================================
+
+/// `(tracepoint_target, arg_idx)` pairs whose kernel BTF marks the arg as
+/// `PTR_MAYBE_NULL`. The kernel rejects deref of these args before a null
+/// check ("invalid mem access 'trusted_ptr_or_null_'"). Mirrors what the
+/// kernel resolves from the tracepoint's `__bpf_trace_*` BTF; we maintain
+/// a static table because that BTF lives in vmlinux which we don't ship.
+///
+/// `arg_idx` is 0-based across the FUNC_PROTO params (matches the ctx
+/// slot index — `r1 = *(u64*)(r1 + 8*idx)`).
+const TP_BTF_MAYBE_NULL_ARGS: &[(&str, u8)] = &[
+    // sched_pi_setprio(struct task_struct *tsk, struct task_struct *pi_task) —
+    // `pi_task` (arg 1, 0-based) is the inheritor of a PI lock and may be NULL.
+    ("sched_pi_setprio", 1),
+    // bpf_testmod_test_raw_tp_null(struct task_struct *task) — task arg is
+    // declared with __nullable in the kmod's tracepoint definition.
+    ("bpf_testmod_test_raw_tp_null", 0),
+];
+
+fn tp_btf_arg_is_maybe_null(tp_target: &str, arg_idx: u8) -> bool {
+    TP_BTF_MAYBE_NULL_ARGS
+        .iter()
+        .any(|(tp, idx)| *tp == tp_target && *idx == arg_idx)
+}
+
+// ===========================================================================
 // Public API
 // ===========================================================================
 
@@ -1598,10 +1625,26 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
         // it via the `type_name == "unknown"` lax policy. Loose but
         // sound: the kernel accepts everything we'd accept here.
         if !matches!(prog_kind, ProgramKind::StructOps) {
+            // tp_btf-specific: a few raw-tracepoint targets pass args
+            // marked PTR_MAYBE_NULL in the kernel's tracepoint BTF (e.g.
+            // sched_pi_setprio's `pi_task` is the inheritor of a PI lock
+            // and may legitimately be NULL). The kernel rejects deref
+            // before null-check with "invalid mem access
+            // 'trusted_ptr_or_null_'" — we mirror this via a static
+            // (target, arg_idx) table since we don't ship vmlinux BTF.
+            let nullable = matches!(
+                env.ctx.attach_flavor.as_deref(),
+                Some("tp_btf") | Some("raw_tp") | Some("raw_tp.w")
+            ) && env
+                .ctx
+                .attach_subtype
+                .as_deref()
+                .map(|tp| tp_btf_arg_is_maybe_null(tp, (off / 8) as u8))
+                .unwrap_or(false);
             return Some(CtxAccessInfo {
                 kind: CtxFieldKind::TrustedPtr {
                     type_name: "unknown",
-                    nullable: false,
+                    nullable,
                 },
                 readable: true,
                 writable: false,

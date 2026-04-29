@@ -6282,7 +6282,7 @@
         },
         "test_raw_tp_null_sched_pi_setprio_arg_2": {
           "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "ours": "PASS"
         }
       }
     },
