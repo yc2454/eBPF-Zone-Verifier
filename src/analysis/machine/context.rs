@@ -113,6 +113,14 @@ pub struct ExecContext {
     /// Distinct from the per-state `program_exception_cb`, which is
     /// populated at runtime by `bpf_set_exception_callback`.
     pub exception_callback: Option<String>,
+    /// Lowercase SEC prefix before the first `/` (with leading `?`
+    /// stripped). Captures the attach *flavor* — `"fentry"`, `"fexit"`,
+    /// `"fmod_ret"`, `"tp_btf"`, `"iter"`, etc. Companion to
+    /// `attach_subtype` (which holds the *target*, e.g. `"bpf_check"`).
+    /// Together they reconstruct the SEC for checks that depend on the
+    /// flavor: e.g. fentry/fexit programs require R0 ∈ [0, 0] at exit
+    /// and at exception-cb exits / throw cookies.
+    pub attach_flavor: Option<String>,
 }
 
 pub fn default_exec_ctx() -> ExecContext {
@@ -131,6 +139,7 @@ pub fn default_exec_ctx() -> ExecContext {
         attach_subtype: None,
         pc_to_subprog_name: HashMap::new(),
         exception_callback: None,
+        attach_flavor: None,
     }
 }
 

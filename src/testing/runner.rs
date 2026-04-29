@@ -512,6 +512,15 @@ impl Analyzer {
                 .split_once('.')
                 .map(|(_, sub)| sub.to_string()),
         };
+        // Companion to `attach_subtype`: capture the SEC's flavor
+        // prefix (`fentry`, `fexit`, `fmod_ret`, ...) so transfer
+        // checks can dispatch on tracing flavor without re-parsing.
+        ctx.attach_flavor = section
+            .to_lowercase()
+            .strip_prefix('?')
+            .unwrap_or(&section.to_lowercase())
+            .split_once('/')
+            .map(|(prefix, _)| prefix.trim_end_matches(".s").to_string());
 
         // Cluster E: reject SEC("lsm/<hook>") for hooks the kernel's
         // BPF_LSM_DISABLED_HOOKS list excludes from BPF attach.
@@ -670,6 +679,15 @@ impl Analyzer {
                 .split_once('.')
                 .map(|(_, sub)| sub.to_string()),
         };
+        // Companion to `attach_subtype`: capture the SEC's flavor
+        // prefix (`fentry`, `fexit`, `fmod_ret`, ...) so transfer
+        // checks can dispatch on tracing flavor without re-parsing.
+        ctx.attach_flavor = section
+            .to_lowercase()
+            .strip_prefix('?')
+            .unwrap_or(&section.to_lowercase())
+            .split_once('/')
+            .map(|(prefix, _)| prefix.trim_end_matches(".s").to_string());
 
         // Cluster E: reject SEC("lsm/<hook>") for hooks the kernel's
         // BPF_LSM_DISABLED_HOOKS list excludes from BPF attach.

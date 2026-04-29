@@ -256,5 +256,31 @@ fn throw(env: &mut VerifierEnv, state: State) -> Vec<State> {
     if state.has_unreleased_refs() {
         env.fail(VerificationError::UnreleasedReference);
     }
+    // When no exception_cb is registered (load-time decl-tag or runtime
+    // bpf_set_exception_callback), the kernel's default unwind returns
+    // the throw cookie as the program's R0 — so R1 at the throw site
+    // must satisfy whatever return-value rule applies at the program's
+    // main exit. fentry/fexit demands R0 == 0; we mirror that here for
+    // R1, matching the kernel's "register R1 has smin=N smax=N" message.
+    let no_handler =
+        env.ctx.exception_callback.is_none() && state.effective_exception_cb().is_none();
+    if no_handler && tracing_requires_zero_retval(env.ctx) {
+        let (lo, hi) = state.domain.get_interval(Reg::R1);
+        if lo != 0 || hi != 0 {
+            env.fail(VerificationError::InvalidReturnCode { pc: state.pc });
+            return vec![];
+        }
+    }
     vec![]
+}
+
+/// True when the SEC indicates an fentry/fexit attach. The kernel's
+/// `check_return_code` enforces R0 == 0 at exit for both flavors; we
+/// mirror that at exception cb exits and (for the no-handler case)
+/// throw cookies. Driven off `attach_flavor` alone — the SEC suffices
+/// to identify these attach types and `prog_kind` may legitimately
+/// resolve to `Unknown` for `?fentry/...` test SECs without
+/// invalidating the constraint.
+fn tracing_requires_zero_retval(ctx: &crate::analysis::machine::context::ExecContext) -> bool {
+    matches!(ctx.attach_flavor.as_deref(), Some("fentry") | Some("fexit"))
 }
