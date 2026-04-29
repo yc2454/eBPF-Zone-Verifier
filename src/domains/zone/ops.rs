@@ -127,6 +127,22 @@ pub fn assign_reg(dbm: &mut Dbm, x: Reg, y: Reg) {
     dbm.close();
 }
 
+/// Intersect `x`'s range with `y`'s — i.e. assume `x == y` while
+/// preserving any prior constraints on `x`. Unlike `assign_reg` this is
+/// the *constraint* form used by `if x == y` branches: the closure may
+/// derive a contradiction when `x`'s pre-branch range is incompatible
+/// with `y`'s, letting the caller prune the infeasible successor. We
+/// `sync_bounds` for both registers so the 32/64-bit shadow ranges
+/// reflect the new equality (e.g. an empty `u32` shadow surfaced when
+/// `y` is constant-3 and `x`'s prior `u32 >= 4` from a jmp32).
+pub fn intersect_eq_reg(dbm: &mut Dbm, x: Reg, y: Reg) {
+    dbm.add_constraint(x, y, 0);
+    dbm.add_constraint(y, x, 0);
+    dbm.close();
+    sync_bounds(dbm, x);
+    sync_bounds(dbm, y);
+}
+
 /// Establishes the relationship dst = src + imm (i.e., dst - src = imm).
 pub fn assign_reg_offset(dbm: &mut Dbm, dst: Reg, src: Reg, imm: i64) {
     dbm.forget_var(dst);

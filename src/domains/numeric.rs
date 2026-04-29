@@ -160,6 +160,19 @@ impl NumericDomain {
         }
     }
 
+    /// Intersect `x`'s range with `y`'s (constraint form of `x == y`).
+    /// Preserves prior constraints on `x` so the caller can detect a
+    /// contradiction via `is_inconsistent` when the equality is
+    /// infeasible. Used by `if x == y` branch refinement (zone domain).
+    pub fn intersect_eq_reg(&mut self, x: Reg, y: Reg) {
+        match self {
+            NumericDomain::Zone(dbm) => zone_ops::intersect_eq_reg(dbm, x, y),
+            // Interval domain: intersect bounds element-wise. If the
+            // resulting interval is empty `is_inconsistent` will report it.
+            NumericDomain::Interval(ivl) => interval_ops::intersect_eq_reg(ivl, x, y),
+        }
+    }
+
     /// Explicitly sets the 32-bit signed bounds for a register
     pub fn set_s32_bounds(&mut self, x: Reg, min: i32, max: i32) {
         match self {
@@ -169,6 +182,35 @@ impl NumericDomain {
                 zone_ops::sync_bounds(dbm, x);
             }
             NumericDomain::Interval(_) => {} // Not needed for this domain here
+        }
+    }
+
+    /// Extracts the 32-bit unsigned bounds for a register.
+    pub fn get_u32_bounds(&self, x: Reg) -> (u32, u32) {
+        match self {
+            NumericDomain::Zone(dbm) => {
+                let b = &dbm.bounds[x.idx()];
+                (b.u32_min, b.u32_max)
+            }
+            NumericDomain::Interval(ivl) => {
+                let st = ivl.get_bounds(x);
+                if st.umax <= u32::MAX as u64 {
+                    (st.umin as u32, st.umax as u32)
+                } else {
+                    (0, u32::MAX)
+                }
+            }
+        }
+    }
+
+    /// Explicitly sets the 32-bit unsigned bounds for a register.
+    /// Zone-only narrowing path used by `apply_w32_unsigned_fallback`;
+    /// interval domain has its own width-tracking and is left untouched.
+    pub fn set_u32_bounds(&mut self, x: Reg, min: u32, max: u32) {
+        if let NumericDomain::Zone(dbm) = self {
+            dbm.bounds[x.idx()].u32_min = min;
+            dbm.bounds[x.idx()].u32_max = max;
+            zone_ops::sync_bounds(dbm, x);
         }
     }
 

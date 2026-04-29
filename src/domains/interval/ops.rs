@@ -117,6 +117,21 @@ pub fn assign_reg(state: &mut IntervalState, x: Reg, y: Reg) {
     }
 }
 
+/// Intersect x's bounds with y's (constraint form of `x == y`). Used by
+/// `if x == y` branch refinement; the result's emptiness is observable
+/// through `is_inconsistent`.
+pub fn intersect_eq_reg(state: &mut IntervalState, x: Reg, y: Reg) {
+    if x == Reg::Zero || x.is_anchor() {
+        return;
+    }
+    let yb = state.get(y).bounds.clone();
+    let xb = &mut state.get_bounds_mut(x);
+    xb.smin = xb.smin.max(yb.smin);
+    xb.smax = xb.smax.min(yb.smax);
+    xb.umin = xb.umin.max(yb.umin);
+    xb.umax = xb.umax.min(yb.umax);
+}
+
 /// Establishes the relationship dst = src + imm
 pub fn assign_reg_offset(state: &mut IntervalState, dst: Reg, src: Reg, imm: i64) {
     if dst == Reg::Zero || dst.is_anchor() {
