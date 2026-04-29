@@ -379,11 +379,16 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
             env.fail(VerificationError::InvalidReturnCode { pc });
             return vec![];
         }
-        // W3.4c: bpf_loop callback must return 0 (continue) or 1 (break).
-        // Other callback helpers use their return value differently
-        // (for_each_map_elem: 0/1 too; timer: void) — only tighten what
-        // we know is kernel-enforced.
-        if state.frames.current().callback_helper() == Some(crate::common::constants::BPF_LOOP) {
+        // W3.4c: bpf_loop / bpf_for_each_map_elem / bpf_user_ringbuf_drain
+        // callbacks must return 0 (continue) or 1 (break). Timer callbacks
+        // are void-returning and not constrained here.
+        let cb_helper = state.frames.current().callback_helper();
+        if matches!(
+            cb_helper,
+            Some(crate::common::constants::BPF_LOOP)
+                | Some(crate::common::constants::BPF_FOR_EACH_MAP_ELEM)
+                | Some(crate::common::constants::BPF_USER_RINGBUF_DRAIN)
+        ) {
             let (lo, hi) = state.domain.get_interval(Reg::R0);
             if lo < 0 || hi > 1 {
                 env.fail(VerificationError::InvalidReturnCode { pc });

@@ -254,6 +254,20 @@ fn clobber_caller_saved(state: &mut State) {
 /// to release it on the unwind path. This matches the kernel's
 /// `check_reference_leak` invocation at every throw.
 fn throw(env: &mut VerifierEnv, state: State) -> Vec<State> {
+    // Kernel: `bpf_throw` is forbidden inside any callback subprog
+    // entered via bpf_loop / bpf_for_each_map_elem / bpf_timer_set_callback
+    // / bpf_user_ringbuf_drain / bpf_find_vma. (The dedicated
+    // `__exception_cb` pass in `analyze_exception_cb` is allowed to throw
+    // — its frames don't carry `is_callback`.) Mirrors the kernel
+    // rejection "cannot be called from callback subprog".
+    if !env.analyzing_exception_cb
+        && state.frames.iter().any(|f| f.is_callback())
+    {
+        env.fail(VerificationError::ExceptionCallbackInvalid {
+            reason: "cannot be called from callback subprog".to_string(),
+        });
+        return vec![];
+    }
     if state.has_unreleased_refs() {
         env.fail(VerificationError::UnreleasedReference);
     }

@@ -2096,6 +2096,29 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Scalar)
         .prog_type_allowlist(&SCHED_EXT_KFUNC_PROG_TYPES),
 
+        // ---- bpf_testmod struct_ops kfuncs ----
+        // int bpf_kfunc_st_ops_inc10(struct st_ops_args *args)
+        // Trivial test kfunc invoked from struct_ops prologue/epilogue
+        // tests (`pro_epilogue.c`, `pro_epilogue_with_kfunc.c`). The
+        // single arg is a kernel-typed pointer (PtrToBtfId / NULL); we
+        // accept Anything since the test bodies don't read through the
+        // returned scalar.
+        "bpf_kfunc_st_ops_inc10" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // void *bpf_cast_to_kern_ctx(void *obj)
+        // Reinterpret a uapi BPF ctx pointer as the corresponding kernel
+        // type (e.g. __sk_buff -> sk_buff). Test bodies just call it and
+        // either ignore the return or store/load through the same alias;
+        // returning Scalar (no precise pointer typing yet) is sufficient
+        // to clear the dispatch-time rejection.
+        "bpf_cast_to_kern_ctx" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
         _ => return None,
     })
 }

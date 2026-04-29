@@ -77,6 +77,13 @@ pub enum RelocKind {
     /// synthesized btf_id; the runner then registers the name → id mapping
     /// into the analysis-context BTF so the kfunc dispatcher can route it.
     KfuncCall,
+    /// LD_IMM64 with `BPF_PSEUDO_FUNC` (src=4): a callback subprog pointer
+    /// (consumed by `bpf_loop` / `bpf_for_each_map_elem` / `bpf_timer_set_callback`
+    /// / `bpf_user_ringbuf_drain` / `bpf_find_vma`). Clang emits these as
+    /// `R_BPF_64_64` against `.text` (or the function symbol); the combiner
+    /// fixes the LD_IMM64 imm pair to a PC-relative offset to the combined
+    /// target subprog and sets `src = 4`.
+    PseudoFunc,
 }
 
 /// Target information for a BPF-to-BPF function call
