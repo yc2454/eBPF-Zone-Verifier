@@ -590,6 +590,42 @@ impl State {
         let is_aligned = (offset % 8) == 0;
         let sizes_match = spilled.source_reg.is_some() && spilled.size == size;
 
+        // Try to extract a precise value when reading a narrower (or
+        // unaligned) slice of a wider spill whose tnum is a known
+        // constant. Walk back up to 7 bytes to find the slot holding
+        // the actual spilled value (placeholders have non-const tnums,
+        // so they're naturally skipped).
+        let narrowed_const: Option<u64> = if !sizes_match && size.bytes() <= 8 {
+            let mut found: Option<u64> = None;
+            for back in 0..8i16 {
+                let base = offset - back;
+                if let Some(s) = stack.get_slot(base) {
+                    // Mirror kernel: an unaligned-base spill of a
+                    // non-zero scalar isn't trusted on refill (kernel
+                    // marks STACK_MISC); only the STACK_ZERO case
+                    // (imm=0 stores at any alignment) survives.
+                    let base_aligned = base % 8 == 0;
+                    if s.tnum.is_const()
+                        && (back as usize) + size.bytes() <= s.size.bytes()
+                        && (base_aligned || s.tnum.value == 0)
+                    {
+                        let shifted = s.tnum.value >> ((back as u64) * 8);
+                        let mask: u64 = match size {
+                            MemSize::U8 => 0xff,
+                            MemSize::U16 => 0xffff,
+                            MemSize::U32 => 0xffff_ffff,
+                            MemSize::U64 => u64::MAX,
+                        };
+                        found = Some(shifted & mask);
+                        break;
+                    }
+                }
+            }
+            found
+        } else {
+            None
+        };
+
         if sizes_match && is_aligned {
             // Preserve type and bounds
             self.types.set(dst, spilled.reg_type);
@@ -617,6 +653,14 @@ impl State {
             if size == MemSize::U64 {
                 self.restore_anchor_info(dst, &spilled);
             }
+        } else if let Some(c) = narrowed_const {
+            // Narrowing read of a known-constant spill (any byte offset
+            // within the wider value, LE byte order).
+            self.types.set(dst, RegType::ScalarValue);
+            self.tnums.insert(dst, Tnum::constant(c));
+            self.domain.assign_interval(dst, c as i64, c as i64);
+            self.scalar_ids.remove(&dst);
+            self.precise_regs.remove(&dst);
         } else {
             // Size mismatch or unaligned - return unbounded scalar for the load size
             self.types.set(dst, RegType::ScalarValue);

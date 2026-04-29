@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-29T22:32:42.185855+00:00",
+  "generated_at": "2026-04-29T23:06:24.610410+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -6016,7 +6016,7 @@
         "preempt_global_subprog_test": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 5: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "note": "Unsupported modern BPF feature at pc 7: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "preempt_lock_missing_1": {
           "upstream": "ACCEPT",
@@ -6621,7 +6621,7 @@
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(66) })"
+          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(64) })"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",
@@ -9297,7 +9297,7 @@
         "global_func9": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid return code at pc 90"
+          "note": "Invalid return code at pc 86"
         }
       }
     },
@@ -16283,7 +16283,7 @@
         "private_stack_async_callback_2": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Subprogram error: back-edge from insn 107 to 27"
+          "note": "pc 27: R2 !read_ok"
         },
         "private_stack_callback": {
           "upstream": "ACCEPT",
@@ -17749,13 +17749,11 @@
         },
         "partial_stack_load_preserves_partial_zeros": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe map load at pc 6: offset 0, size 1, limit 1"
+          "ours": "PASS"
         },
         "partial_stack_load_preserves_zeros": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe map load at pc 8: offset 0, size 1, limit 1"
+          "ours": "PASS"
         },
         "scalar_offset_to_skb_data_1": {
           "upstream": "ACCEPT",
@@ -17829,8 +17827,7 @@
         },
         "u16_offset_to_skb_data": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe packet load at pc 8: offset 0, size 4"
+          "ours": "PASS"
         },
         "u64_offset_to_skb_data": {
           "upstream": "ACCEPT",
