@@ -121,6 +121,16 @@ pub struct ExecContext {
     /// flavor: e.g. fentry/fexit programs require R0 ∈ [0, 0] at exit
     /// and at exception-cb exits / throw cookies.
     pub attach_flavor: Option<String>,
+    /// Number of struct_ops member parameters declared as `__ref` (acquired
+    /// at function entry, must be released before exit). Set by the runner
+    /// from `STRUCT_OPS_REFCOUNTED_ARGS` for the matched (ops_struct,
+    /// member) pair. `analyze_program_full` calls `state.acquire_ref()`
+    /// this many times when seeding the initial state, so a program that
+    /// fails to release one of its refcounted args fires
+    /// `UnreleasedReference` at exit (matches the kernel's
+    /// "Unreleased reference id=N alloc_insn=0" rejection on
+    /// struct_ops_refcounted_fail__ref_leak.c).
+    pub struct_ops_refcounted_args: usize,
 }
 
 pub fn default_exec_ctx() -> ExecContext {
@@ -140,6 +150,7 @@ pub fn default_exec_ctx() -> ExecContext {
         pc_to_subprog_name: HashMap::new(),
         exception_callback: None,
         attach_flavor: None,
+        struct_ops_refcounted_args: 0,
     }
 }
 

@@ -7338,7 +7338,7 @@
       "progs": {
         "refcounted_fail__ref_leak": {
           "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "ours": "PASS"
         }
       }
     },
@@ -12633,7 +12633,7 @@
       "progs": {
         "unsupported_ops": {
           "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "ours": "PASS"
         }
       }
     },

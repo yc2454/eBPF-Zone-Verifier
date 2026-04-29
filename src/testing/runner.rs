@@ -35,6 +35,69 @@ fn is_struct_ops_arg_maybe_null(ops_struct: &str, member: &str, arg_idx: u8) -> 
         .any(|(s, m, i)| *s == ops_struct && *m == member && *i == arg_idx)
 }
 
+/// Per-(ops_struct, member, arg_idx) refcounted-arg table. The kernel
+/// marks struct_ops member parameters as "ref-acquired at entry" via the
+/// `__ref` suffix on the kmod-side parameter name (e.g.
+/// `bpf_testmod_ops__test_refcounted(int dummy, struct task_struct *task__ref)`).
+/// That suffix lives in the kmod's BTF — not in the BPF program's BTF —
+/// so we mirror it here as a static table, the same way
+/// STRUCT_OPS_MAYBE_NULL_ARGS mirrors per-arg PTR_MAYBE_NULL.
+///
+/// The verifier acquires a ref at function entry for each refcounted arg;
+/// failure to release it before exit fires UnreleasedReference, matching
+/// the kernel's "Unreleased reference id=N alloc_insn=0" rejection on
+/// programs like struct_ops_refcounted_fail__ref_leak.
+const STRUCT_OPS_REFCOUNTED_ARGS: &[(&str, &str, u8)] = &[
+    ("bpf_testmod_ops", "test_refcounted", 1),     // task__ref
+    ("bpf_testmod_ops", "test_return_ref_kptr", 1), // task__ref
+];
+
+fn is_struct_ops_arg_refcounted(ops_struct: &str, member: &str, arg_idx: u8) -> bool {
+    STRUCT_OPS_REFCOUNTED_ARGS
+        .iter()
+        .any(|(s, m, i)| *s == ops_struct && *m == member && *i == arg_idx)
+}
+
+/// Per-(ops_struct, member) table of struct_ops members the kernel module
+/// marks unsupported for BPF attach. The kmod's `bpf_struct_ops` registration
+/// validates this via `bpf_struct_ops_check_member`/`check_member` callbacks
+/// and per-struct allowlists. Without inspecting the kmod we mirror the
+/// known-unsupported entries here, matching the kernel's
+/// "attach to unsupported member <member> of struct <ops_struct>" rejection.
+const UNSUPPORTED_STRUCT_OPS_MEMBERS: &[(&str, &str)] = &[
+    ("bpf_testmod_ops", "unsupported_ops"),
+];
+
+fn is_unsupported_struct_ops_member(ops_struct: &str, member: &str) -> bool {
+    UNSUPPORTED_STRUCT_OPS_MEMBERS
+        .iter()
+        .any(|(s, m)| *s == ops_struct && *m == member)
+}
+
+/// Number of refcounted args declared on this subprog's struct_ops binding.
+/// Returns 0 when the subprog has no struct_ops binding or none of its
+/// args are refcounted. Consumed by `analyze_program_full` to seed
+/// `state.active_refs` at function entry — every refcounted arg becomes
+/// an outstanding reference the program must release before exit.
+pub(crate) fn struct_ops_refcounted_arg_count(
+    bindings: &[StructOpsBinding],
+    func_name: &str,
+) -> usize {
+    let Some(binding) = bindings.iter().find(|b| b.subprog == func_name) else {
+        return 0;
+    };
+    let mut n = 0;
+    // The arg_idx in STRUCT_OPS_REFCOUNTED_ARGS is the FUNC_PROTO position
+    // (0-based, including any leading scalars). Iterating the table here is
+    // O(k) for k=2; same ergonomics as the MAYBE_NULL lookup.
+    for (s, m, _) in STRUCT_OPS_REFCOUNTED_ARGS {
+        if *s == binding.ops_struct && *m == binding.member {
+            n += 1;
+        }
+    }
+    n
+}
+
 /// Result of analyzing a single section
 #[derive(Debug)]
 pub enum AnalysisResult {
@@ -556,6 +619,21 @@ impl Analyzer {
         // matched SEC("struct_ops*") to ProgramKind::StructOps; the
         // bindings cache resolves func_name → (ops_struct, member).
         if ctx.prog_kind == ProgramKind::StructOps {
+            // Reject SEC("struct_ops/<member>") whose <member> is on the
+            // kmod's unsupported list before any analysis runs. Mirrors
+            // the kernel's "attach to unsupported member ... of struct ..."
+            // (e.g. bpf_testmod_ops.unsupported_ops).
+            if let Some(binding) = self
+                .struct_ops_bindings
+                .iter()
+                .find(|b| b.subprog == func.name)
+                && is_unsupported_struct_ops_member(&binding.ops_struct, &binding.member)
+            {
+                return AnalysisResult::Fail(VerificationError::UnsupportedStructOpsMember {
+                    ops_struct: binding.ops_struct.clone(),
+                    member: binding.member.clone(),
+                });
+            }
             ctx.entry_args = self.struct_ops_entry_args(&func.name);
             // Also note whether the matched method returns void; the
             // analysis layer relaxes the exit-time R0-readability check
@@ -576,6 +654,8 @@ impl Analyzer {
             // context so transfer_kfunc_proto can enforce per-(ops, member)
             // kfunc-context allowlists.
             ctx.struct_ops_member = binding.map(|b| (b.ops_struct.clone(), b.member.clone()));
+            ctx.struct_ops_refcounted_args =
+                struct_ops_refcounted_arg_count(&self.struct_ops_bindings, &func.name);
         } else if matches!(
             ctx.prog_kind,
             ProgramKind::Lsm

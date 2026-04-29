@@ -254,6 +254,14 @@ pub enum VerificationError {
     NoreturnAttachTarget {
         target: String,
     },
+    /// struct_ops program SEC names a member that the registering kernel
+    /// module marks as unsupported (e.g. bpf_testmod_ops.unsupported_ops).
+    /// Reported at program load. Mirrors the kernel's
+    /// "attach to unsupported member <member> of struct <ops_struct>".
+    UnsupportedStructOpsMember {
+        ops_struct: String,
+        member: String,
+    },
     GlobalFuncMalformed {
         pc: usize,
         func: String,
@@ -578,6 +586,12 @@ impl VerificationError {
                 format!(
                     "Attaching fexit/fmod_ret to __noreturn functions is rejected: '{}'",
                     target
+                )
+            }
+            VerificationError::UnsupportedStructOpsMember { ops_struct, member } => {
+                format!(
+                    "attach to unsupported member {} of struct {}",
+                    member, ops_struct
                 )
             }
             VerificationError::GlobalFuncMalformed { pc, func, reason } => {

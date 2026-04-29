@@ -163,6 +163,23 @@ pub fn analyze_program_full(
     // The per-arg typing happens inside `validate_ctx_access` (see
     // src/common/ctx_model.rs), which consumes `ctx.entry_args` to type
     // the loaded values. No R1..Rn override is needed here.
+    //
+    // For struct_ops members declared with `__ref` parameters (the kmod
+    // marks the arg as ref-acquired at entry — e.g.
+    // bpf_testmod_ops.test_refcounted's `task__ref`), seed an outstanding
+    // reference per refcounted arg. The kernel reports "Unreleased
+    // reference id=N alloc_insn=0" if the program exits without releasing
+    // it; here, `state.has_unreleased_refs()` at exit fires
+    // `UnreleasedReference`. Programs that load the arg from ctx and call
+    // the matching release kfunc (e.g. `bpf_task_release`) drop the ref
+    // through the existing release path. The arg-position-to-ref-id
+    // binding isn't propagated to the loaded register here; that would be
+    // needed to type the loaded ctx slot as a refcounted PtrToTask, which
+    // we leave for a follow-up if a corresponding success-case test
+    // surfaces as a false-reject.
+    for _ in 0..ctx.struct_ops_refcounted_args {
+        initial_state.acquire_ref();
+    }
 
     // 3. Setup Worklist
     let mut worklist = VecDeque::new();
