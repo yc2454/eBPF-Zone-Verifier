@@ -350,17 +350,21 @@ pub enum RetKind {
     /// `transfer_kfunc_proto` recognizes this variant and produces both
     /// successors; the flat-state applier `apply_call_proto_r0` does
     /// not handle it (would assert).
-    ///
-    /// Typed `_next` returns (e.g. `bpf_iter_task_vma_next` returning a
-    /// TRUSTED `vm_area_struct *`) need a parallel `IterNextBtfId`
-    /// variant; not yet added because the matching consumer kfuncs
-    /// (`bpf_kfunc_trusted_vma_test` / `bpf_kfunc_rcu_task_test`) would
-    /// require kfunc-side flag enforcement (`KF_TRUSTED_ARGS` /
-    /// `KF_RCU`) we don't model today — without that, adding them
-    /// would FA the matching `__failure` tests in the same files
-    /// (iter_next_rcu_not_trusted, iter_next_ptr_mem_not_trusted).
-    /// Deferred with the `iters_testmod.c::iter_next_{rcu,trusted}` FRs.
     IterNextElem { iter_arg: u8, elem_size: u64 },
+    /// Typed `_next` return: same fork shape as `IterNextElem` but R0
+    /// on the non-NULL successor is `PtrToBtfId { type_name, flags,
+    /// ref_id: None }` instead of generic `PtrToAllocMem`. Used by
+    /// `bpf_iter_task_vma_next` (TRUSTED `vm_area_struct *`) and
+    /// `bpf_iter_task_next` (RCU `task_struct *`). The matching
+    /// consumer kfunc's flag enforcement (`KF_TRUSTED_ARGS` /
+    /// `KF_RCU`) inspects `PtrFlags` to accept or reject — that's
+    /// what keeps `iter_next_rcu_not_trusted`'s call to
+    /// `bpf_kfunc_trusted_task_test` rejected (RCU isn't TRUSTED).
+    IterNextBtfId {
+        iter_arg: u8,
+        type_name: &'static str,
+        flags: crate::analysis::machine::reg_types::PtrFlags,
+    },
 }
 
 /// Post-call side effect entries — applied in order by the shared
@@ -1491,11 +1495,18 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Scalar)
         .side_effects(&[SideEffect::IterInitOnArg { arg: 0, kind: IterKind::Num }]),
 
+        // bpf_iter_task_new: kernel takes an RCU read lock for the
+        // iter's lifetime so KF_RCU consumers (`bpf_kfunc_rcu_task_test`)
+        // called between _new and _destroy don't need an explicit
+        // `bpf_rcu_read_lock()`. Modeled here as RCU_READ_LOCK on
+        // _new + RCU_READ_UNLOCK on _destroy. Closes the
+        // `iters_testmod.c::iter_next_rcu` sequence.
         "bpf_iter_task_new" => CallProto::with_args([
             IterArg { kind: IterKind::Task, expected: IterArgExpect::Uninit },
             Anything, Anything, DontCare, DontCare,
         ])
         .ret(RetKind::Scalar)
+        .flags(CallFlags::RCU_READ_LOCK)
         .side_effects(&[SideEffect::IterInitOnArg { arg: 0, kind: IterKind::Task }]),
 
         "bpf_iter_css_new" => CallProto::with_args([
@@ -1534,7 +1545,97 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             IterArg { kind: IterKind::Task, expected: IterArgExpect::ActiveOrDrained },
             DontCare, DontCare, DontCare, DontCare,
         ])
-        .ret(RetKind::IterNextElem { iter_arg: 0, elem_size: 8 }),
+        // Returns `struct task_struct *`. Kernel verifies tasks held
+        // across an iter as RCU-protected (the iter holds an RCU
+        // read lock for its lifetime); KF_RCU consumers
+        // (`bpf_kfunc_rcu_task_test`) accept, KF_TRUSTED_ARGS
+        // consumers (`bpf_kfunc_trusted_task_test`) reject. Closes
+        // `iter_next_rcu` while keeping `iter_next_rcu_not_trusted`
+        // rejected via the new flag enforcement.
+        .ret(RetKind::IterNextBtfId {
+            iter_arg: 0,
+            type_name: "task_struct",
+            flags: crate::analysis::machine::reg_types::PtrFlags::RCU,
+        }),
+
+        // ---- bpf_iter_task_vma_* (Phase C iters_testmod.c) ----
+        // 8-byte opaque iter struct (kernel-internal state lives in
+        // bpf_iter_task_vma_kern). Returns `struct vm_area_struct *`
+        // marked TRUSTED — the kernel iter holds the task's mmap
+        // semaphore for the iter's lifetime, so the vma is
+        // safe-to-deref. KF_TRUSTED_ARGS consumers
+        // (`bpf_kfunc_trusted_vma_test`) accept.
+        "bpf_iter_task_vma_new" => CallProto::with_args([
+            IterArg { kind: IterKind::TaskVma, expected: IterArgExpect::Uninit },
+            Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::IterInitOnArg { arg: 0, kind: IterKind::TaskVma }]),
+
+        "bpf_iter_task_vma_next" => CallProto::with_args([
+            IterArg { kind: IterKind::TaskVma, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::IterNextBtfId {
+            iter_arg: 0,
+            type_name: "vm_area_struct",
+            flags: crate::analysis::machine::reg_types::PtrFlags::TRUSTED,
+        }),
+
+        "bpf_iter_task_vma_destroy" => CallProto::with_args([
+            IterArg { kind: IterKind::TaskVma, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
+
+        // ---- testmod consumer kfuncs (Phase C iters_testmod.c) ----
+        //
+        // The kernel registers these in `bpf_testmod_kfunc_set` to
+        // exercise the kfunc-arg trust-band enforcement:
+        //   - bpf_kfunc_trusted_vma_test  : KF_TRUSTED_ARGS, takes
+        //     `struct vm_area_struct *` — accepts only TRUSTED.
+        //   - bpf_kfunc_trusted_task_test : KF_TRUSTED_ARGS, takes
+        //     `struct task_struct *`     — rejects RCU-flagged
+        //     (catches `iter_next_rcu_not_trusted`).
+        //   - bpf_kfunc_trusted_num_test  : KF_TRUSTED_ARGS, takes
+        //     `int *`                    — rejects PtrToAllocMem
+        //     (catches `iter_next_ptr_mem_not_trusted`).
+        //   - bpf_kfunc_rcu_task_test     : KF_RCU, takes
+        //     `struct task_struct *`     — accepts TRUSTED or RCU
+        //     (closes `iter_next_rcu`).
+        "bpf_kfunc_trusted_vma_test" => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "vm_area_struct" },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::TRUSTED_ARGS),
+
+        "bpf_kfunc_trusted_task_test" => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "task_struct" },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::TRUSTED_ARGS),
+
+        "bpf_kfunc_trusted_num_test" => CallProto::with_args([
+            // Kernel signature is `int *ptr`. We don't have a
+            // dedicated typed-int-pointer ArgKind; PtrToBtfId is the
+            // closest non-anything kind, and the trust-band gate
+            // rejects PtrToAllocMem (the only thing
+            // `bpf_iter_num_next` can return) before the
+            // PtrToBtfId-shape check would even fire.
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::TRUSTED_ARGS),
+
+        "bpf_kfunc_rcu_task_test" => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "task_struct" },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RCU),
 
         "bpf_iter_css_next" => CallProto::with_args([
             IterArg { kind: IterKind::Css, expected: IterArgExpect::ActiveOrDrained },
@@ -1558,11 +1659,13 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Void)
         .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
 
+        // Pairs with `bpf_iter_task_new`'s RCU_READ_LOCK — see comment there.
         "bpf_iter_task_destroy" => CallProto::with_args([
             IterArg { kind: IterKind::Task, expected: IterArgExpect::ActiveOrDrained },
             DontCare, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::Void)
+        .flags(CallFlags::RCU_READ_UNLOCK)
         .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
 
         "bpf_iter_css_destroy" => CallProto::with_args([

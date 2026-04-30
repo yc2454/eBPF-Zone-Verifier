@@ -182,10 +182,60 @@ fn transfer_kfunc_proto(
         }
     }
 
+    // KF_TRUSTED_ARGS / KF_RCU enforcement: pointer args' flags must
+    // satisfy the kfunc's trust band. Mirrors the kernel's
+    // `KF_TRUSTED_ARGS` (every pointer must be PTR_TRUSTED or
+    // refcounted/acquire-tracked) and `KF_RCU` (allows PTR_TRUSTED,
+    // PTR_RCU, or acquire-tracked; rejects PTR_UNTRUSTED). Without
+    // this gate, adding the testmod consumer kfuncs
+    // (`bpf_kfunc_trusted_*_test` family) would FA the matching
+    // `__failure` siblings (iter_next_rcu_not_trusted,
+    // iter_next_ptr_mem_not_trusted) where the consumer is
+    // intentionally fed a non-TRUSTED pointer the kernel rejects.
+    let trust_band = if proto.flags.contains(CallFlags::TRUSTED_ARGS) {
+        Some(TrustBand::Trusted)
+    } else if proto.flags.contains(CallFlags::RCU) {
+        Some(TrustBand::Rcu)
+    } else {
+        None
+    };
+    if let Some(band) = trust_band {
+        for (i, (&arg_kind, &reg)) in proto.args.iter().zip(arg_regs.iter()).enumerate() {
+            if matches!(arg_kind, super::signatures::ArgKind::DontCare) {
+                break;
+            }
+            let actual = in_types.get(reg);
+            if actual.is_pointer() && !pointer_arg_meets_trust(&actual, band) {
+                let _ = i;
+                env.fail(
+                    crate::analysis::machine::error::VerificationError::InvalidArgType {
+                        pc,
+                        reg,
+                    },
+                );
+                return vec![];
+            }
+        }
+    }
+
     // Forking kfuncs (iter_next): handle the two successors inline so
     // each can carry its own R0 typing and slot-state transition.
-    if let RetKind::IterNextElem { iter_arg, elem_size } = proto.ret {
-        return iter_next_fork(state, iter_arg, elem_size);
+    match proto.ret {
+        RetKind::IterNextElem { iter_arg, elem_size } => {
+            return iter_next_fork(state, iter_arg, IterNextElemKind::AllocMem(elem_size));
+        }
+        RetKind::IterNextBtfId {
+            iter_arg,
+            type_name,
+            flags,
+        } => {
+            return iter_next_fork(
+                state,
+                iter_arg,
+                IterNextElemKind::BtfId { type_name, flags },
+            );
+        }
+        _ => {}
     }
 
     apply_call_proto_r0(&in_types, &mut state, proto);
@@ -210,12 +260,26 @@ fn transfer_kfunc_proto(
     vec![state]
 }
 
+/// Element-shape distinguisher for `iter_next_fork`. The non-NULL
+/// successor's R0 is either a generic memory pointer
+/// (`bpf_iter_num_next` returns `int *` into iter state) or a typed
+/// BTF pointer (`bpf_iter_task_vma_next` returns `vm_area_struct *`,
+/// `bpf_iter_task_next` returns `task_struct *` with the kernel's
+/// RCU lifetime).
+pub(crate) enum IterNextElemKind {
+    AllocMem(u64),
+    BtfId {
+        type_name: &'static str,
+        flags: crate::analysis::machine::reg_types::PtrFlags,
+    },
+}
+
 /// Fork an `iter_next` call into its two successors. The validator
 /// already proved the iter arg points at an Active slot of the
 /// proto-declared kind, so `resolve_stack_arg` is expected to succeed
 /// here; if the offset went symbolic between validator and applier we
 /// drop the path conservatively.
-fn iter_next_fork(state: State, iter_arg: u8, elem_size: u64) -> Vec<State> {
+fn iter_next_fork(state: State, iter_arg: u8, kind: IterNextElemKind) -> Vec<State> {
     let pc = state.pc;
     let reg = arg_reg(iter_arg);
     let Some((frame, base_off)) = resolve_stack_arg(&state, reg) else {
@@ -255,16 +319,21 @@ fn iter_next_fork(state: State, iter_arg: u8, elem_size: u64) -> Vec<State> {
         return vec![null];
     }
 
-    // Non-NULL successor: R0 = PtrToAllocMem, slot stays Active.
+    // Non-NULL successor: R0 typed per `kind`, slot stays Active.
     let mut nonnull = state;
-    nonnull.types.set(
-        Reg::R0,
-        RegType::PtrToAllocMem {
+    let r0 = match kind {
+        IterNextElemKind::AllocMem(elem_size) => RegType::PtrToAllocMem {
             id: new_ptr_id(),
             mem_size: elem_size,
             ref_id: None,
         },
-    );
+        IterNextElemKind::BtfId { type_name, flags } => RegType::PtrToBtfId {
+            type_name,
+            flags,
+            ref_id: None,
+        },
+    };
+    nonnull.types.set(Reg::R0, r0);
     nonnull.domain.forget(Reg::R0);
     nonnull.set_tnum(Reg::R0, Tnum::unknown());
     nonnull.clear_scalar_id(Reg::R0);
@@ -280,6 +349,62 @@ fn clobber_caller_saved(state: &mut State) {
         state.domain.forget(r);
         state.set_tnum(r, Tnum::unknown());
         state.clear_scalar_id(r);
+    }
+}
+
+/// What trust level a kfunc demands of its pointer args.
+/// `Trusted` = `KF_TRUSTED_ARGS` (must be PTR_TRUSTED or refcounted).
+/// `Rcu` = `KF_RCU` (allows PTR_TRUSTED, PTR_RCU, or refcounted).
+#[derive(Copy, Clone)]
+enum TrustBand {
+    Trusted,
+    Rcu,
+}
+
+/// True iff `actual` (a pointer-typed reg) satisfies `band`. Used by
+/// the kfunc dispatcher's `KF_TRUSTED_ARGS` / `KF_RCU` enforcement.
+///
+/// "Refcounted" pointers (acquire-tracked specializations:
+/// `PtrToTask`, `PtrToCgroup`, `PtrToCpumask`, `PtrToOwnedKptr`,
+/// `PtrToArena`, `PtrToSocket{,Common}`, `PtrToTcpSock`,
+/// `PtrToMapKptr` with the kernel's `MEM_ALLOC` flag) carry an
+/// acquire-tracked ref_id; the kernel treats them as trusted for
+/// kfunc-arg purposes regardless of explicit `PtrFlags`. Generic
+/// `PtrToBtfId` consults `PtrFlags` directly. `PtrToAllocMem` is
+/// neither trusted nor RCU — it represents iter-element memory that
+/// `KF_TRUSTED_ARGS` consumers must reject (closes
+/// `iter_next_ptr_mem_not_trusted`).
+fn pointer_arg_meets_trust(actual: &RegType, band: TrustBand) -> bool {
+    use crate::analysis::machine::reg_types::PtrFlags;
+
+    let flags = actual.ptr_flags();
+    let has_trusted = flags.contains(PtrFlags::TRUSTED);
+    let has_rcu = flags.contains(PtrFlags::RCU);
+    let has_untrusted = flags.contains(PtrFlags::UNTRUSTED);
+
+    // Acquire-tracked specializations are trusted-by-construction
+    // (the kernel mints them through KF_ACQUIRE-flagged paths and
+    // ref-tracks them). Their reg variants don't carry PtrFlags, so
+    // detect via `get_ref_id().is_some()` plus a positive shape match.
+    let is_acquire_tracked = matches!(
+        actual,
+        RegType::PtrToTask { ref_id: Some(_) }
+            | RegType::PtrToCgroup { ref_id: Some(_) }
+            | RegType::PtrToCpumask { ref_id: Some(_) }
+            | RegType::PtrToOwnedKptr { ref_id: Some(_) }
+            | RegType::PtrToArena { ref_id: Some(_), .. }
+            | RegType::PtrToSocket { ref_id: Some(_) }
+            | RegType::PtrToSockCommon { ref_id: Some(_) }
+            | RegType::PtrToTcpSock { id: Some(_) }
+    );
+
+    match band {
+        TrustBand::Trusted => {
+            (has_trusted && !has_untrusted) || is_acquire_tracked
+        }
+        TrustBand::Rcu => {
+            (has_trusted || has_rcu) && !has_untrusted || is_acquire_tracked
+        }
     }
 }
 

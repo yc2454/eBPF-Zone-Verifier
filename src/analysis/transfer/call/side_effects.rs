@@ -260,6 +260,14 @@ pub(crate) fn apply_call_proto_r0(
             state.types.set(Reg::R0, ty);
             true
         }
+        RetKind::IterNextBtfId { .. } => {
+            // Same dispatch shape as `IterNextElem` — both forking
+            // returns are split into successors before the flat-state
+            // applier runs.
+            unreachable!(
+                "RetKind::IterNextBtfId must be handled by the kfunc dispatcher fork"
+            );
+        }
         RetKind::IterNextElem { .. } => {
             // The kfunc dispatcher forks IterNextElem into two
             // successors before the flat-state applier runs; reaching
