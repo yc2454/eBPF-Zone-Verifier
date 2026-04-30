@@ -90,7 +90,12 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                         } else {
                             28
                         };
-                        if offset + 20 <= section_data.len() {
+                        // Valueless maps (RINGBUF, ARENA, …) have BTF defs as
+                        // small as 16 bytes (just `type` + `max_entries`); the
+                        // legacy 20-byte minimum dropped them silently. Lower
+                        // the floor to one u32 (the type field) and let the
+                        // bounded `read_u32` helper cover any short tail.
+                        if offset + 4 <= section_data.len() {
                             let read_len = std::cmp::min(map_size, section_data.len() - offset);
                             let b = &section_data[offset..offset + read_len];
 

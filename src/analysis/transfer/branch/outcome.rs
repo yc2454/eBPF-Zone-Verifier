@@ -221,6 +221,35 @@ pub(crate) fn condition_outcome(
                 let imm_op = Operand::Imm(r_lo);
                 return condition_outcome(state, width, left, op, &imm_op);
             }
+            // Symmetric case: the LEFT register is a known constant, but
+            // the right is the unknown one. Swap operands using the inverse
+            // comparison so we can use the imm-comparison machinery against
+            // the unknown side. Pattern from `verifier_bounds_deduction_non_const::
+            // deducing_bounds_from_non_const_9`: `r2 = 0; if r2 > r0 ...`.
+            let lt = state.get_tnum(left);
+            let lt = if width == Width::W32 { lt.trunc32() } else { lt };
+            let left_const = lt.const_value().map(|v| v as i64).or_else(|| {
+                let (l_lo, l_hi) = state.domain.get_interval(left);
+                if l_lo == l_hi && l_lo != i64::MIN && l_hi != i64::MAX {
+                    Some(l_lo)
+                } else {
+                    None
+                }
+            });
+            if let Some(lv) = left_const {
+                let swapped = match op {
+                    CmpOp::Eq | CmpOp::Ne | CmpOp::Test => op,
+                    CmpOp::ULt => CmpOp::UGt,
+                    CmpOp::ULe => CmpOp::UGe,
+                    CmpOp::UGt => CmpOp::ULt,
+                    CmpOp::UGe => CmpOp::ULe,
+                    CmpOp::SLt => CmpOp::SGt,
+                    CmpOp::SLe => CmpOp::SGe,
+                    CmpOp::SGt => CmpOp::SLt,
+                    CmpOp::SGe => CmpOp::SLe,
+                };
+                return condition_outcome(state, width, *r, swapped, &Operand::Imm(lv));
+            }
             None
         }
     }

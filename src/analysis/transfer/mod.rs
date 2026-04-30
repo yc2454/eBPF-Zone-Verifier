@@ -349,8 +349,11 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         return vec![];
     }
 
-    // Check if there is any unreleased locks
-    if state.has_active_lock() {
+    // Check if there is any unreleased locks. The kernel tracks a
+    // single program-level active_lock, so a subprog `exit` may leave
+    // the lock held for the caller to release (mirrors `verifier_spin_lock::
+    // lock_in_subprog_without_unlock`). Only enforce at the main frame.
+    if state.at_main_frame() && state.has_active_lock() {
         env.fail(VerificationError::UnreleasedLock);
         return vec![];
     }

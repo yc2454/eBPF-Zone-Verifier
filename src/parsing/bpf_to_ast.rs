@@ -1241,6 +1241,18 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 }
             }
 
+            // 0xdd: JSLE_X_64 (if (s64)dst <= (s64)src goto target)
+            0xdd => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::SLe,
+                    right: Operand::Reg(src),
+                    target,
+                }
+            }
+
             // 0xde: JSLE32_X (if (s32)dst <= (s32)src goto target)
             0xde => {
                 let target = branch_target(pc, insn.off, raw.len(), insn.code)?;

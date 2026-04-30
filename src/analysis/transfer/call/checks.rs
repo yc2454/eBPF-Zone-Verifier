@@ -1020,6 +1020,37 @@ pub(crate) fn validate_readable_mem(
             // Context can be read
             true
         }
+        // Ring-buffer reservations (`bpf_ringbuf_reserve`) and arena
+        // allocations carry their own bounds in `mem_size`. Kernel
+        // accepts these as ARG_PTR_TO_MEM (mirrors `verifier_ringbuf::
+        // passing_rb_mem_to_helpers`, which routes ringbuf-reserved
+        // memory into bpf_fib_lookup's params arg).
+        RegType::PtrToAllocMem { mem_size, .. } => {
+            if let Some(sz) = size
+                && sz as u64 > mem_size
+            {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!(
+                    "[Verifier] pc {}: alloc-mem {} bytes can't satisfy {}-byte read",
+                    pc, mem_size, sz
+                );
+                return false;
+            }
+            true
+        }
+        RegType::PtrToArena { mem_size, .. } => {
+            if let Some(sz) = size
+                && sz as u64 > mem_size
+            {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!(
+                    "[Verifier] pc {}: arena-mem {} bytes can't satisfy {}-byte read",
+                    pc, mem_size, sz
+                );
+                return false;
+            }
+            true
+        }
         _ => {
             env.fail(VerificationError::InvalidArgType { pc, reg });
             error!("[Verifier] pc {}: {:?} not a valid memory pointer", pc, reg);

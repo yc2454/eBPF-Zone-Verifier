@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-30T20:56:33.510422+00:00",
+  "generated_at": "2026-04-30T22:33:22.516462+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -5996,7 +5996,7 @@
         "preempt_global_subprog_test": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 5: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "note": "Unsupported modern BPF feature at pc 13: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "preempt_lock_missing_1": {
           "upstream": "ACCEPT",
@@ -9275,7 +9275,7 @@
         "global_func9": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe memory load at pc 71: base R1, offset 36, size 4"
+          "note": "Unsafe memory load at pc 63: base R1, offset 36, size 4"
         }
       }
     },
@@ -13590,8 +13590,7 @@
         },
         "deducing_bounds_from_non_const_18": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "load: Lowering combined ELF → AST failed at pc 3 (opcode 0xdd): unsupported opcode 0xdd at pc 3"
+          "ours": "PASS"
         },
         "deducing_bounds_from_non_const_19": {
           "upstream": "ACCEPT",
@@ -13671,8 +13670,7 @@
         },
         "deducing_bounds_from_non_const_9": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 5"
+          "ours": "PASS"
         }
       }
     },
@@ -16232,7 +16230,7 @@
         "private_stack_async_callback_2": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "pc 27: R2 !read_ok"
+          "note": "Subprogram error: back-edge from insn 107 to 27"
         },
         "private_stack_callback": {
           "upstream": "ACCEPT",
@@ -16547,8 +16545,7 @@
         },
         "to_leak_released_ptr_reg": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 15: register: r1"
+          "ours": "PASS"
         },
         "to_sock_common_without_check": {
           "upstream": "ACCEPT",
@@ -16647,8 +16644,7 @@
       "progs": {
         "passing_rb_mem_to_helpers": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 15: register: r2"
+          "ours": "PASS"
         },
         "ringbuf_invalid_reservation_offset_1": {
           "upstream": "ACCEPT",
@@ -17792,8 +17788,7 @@
         },
         "lock_in_subprog_without_unlock": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unreleased lock in program"
+          "ours": "PASS"
         },
         "lock_test2_direct_ld_st": {
           "upstream": "ACCEPT",
