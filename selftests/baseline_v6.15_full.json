@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-30T20:10:00.613590+00:00",
+  "generated_at": "2026-04-30T20:38:15.285241+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -5996,7 +5996,7 @@
         "preempt_global_subprog_test": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 5: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "note": "Unsupported modern BPF feature at pc 7: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "preempt_lock_missing_1": {
           "upstream": "ACCEPT",
@@ -6601,7 +6601,7 @@
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(67) })"
+          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(66) })"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",
@@ -9275,7 +9275,7 @@
         "global_func9": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe memory load at pc 89: base R1, offset 36, size 4"
+          "note": "Unsafe memory load at pc 63: base R1, offset 36, size 4"
         }
       }
     },
@@ -13456,13 +13456,11 @@
         },
         "reg_equal_const": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 12: register: r4"
+          "ours": "PASS"
         },
         "reg_not_equal_const": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 14: register: r4"
+          "ours": "PASS"
         },
         "shift_of_maybe_negative_number": {
           "upstream": "ACCEPT",
@@ -16235,7 +16233,7 @@
         "private_stack_async_callback_2": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Subprogram error: back-edge from insn 107 to 27"
+          "note": "pc 27: R2 !read_ok"
         },
         "private_stack_callback": {
           "upstream": "ACCEPT",

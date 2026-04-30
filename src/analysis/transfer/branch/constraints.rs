@@ -136,6 +136,8 @@ fn apply_cmp_to_domain(
         (CmpOp::Eq, Either::Right(imm)) => {
             then_domain.assume_eq_imm(left, imm);
             interval_propagate_scalars(then_domain, left, |d, r| d.assume_eq_imm(r, imm));
+            // else: left != imm — tighten if imm matches a boundary.
+            refine_ne_imm(else_domain, left, imm);
         }
         (CmpOp::Eq, Either::Left(reg)) => {
             then_domain.intersect_eq_reg(left, reg);
@@ -143,6 +145,12 @@ fn apply_cmp_to_domain(
         (CmpOp::Ne, Either::Right(imm)) => {
             else_domain.assume_eq_imm(left, imm);
             interval_propagate_scalars(else_domain, left, |d, r| d.assume_eq_imm(r, imm));
+            // then: left != imm — tighten if imm matches a boundary.
+            // Closes verifier_bounds::reg_{equal,not_equal}_const where
+            // `r4 &= 7; if r4 != 0 goto l0` should refine r4 to [1, 7]
+            // on the L0 path so `bpf_skb_store_bytes(..., r4)` (which
+            // requires `ARG_CONST_SIZE > 0`) accepts.
+            refine_ne_imm(then_domain, left, imm);
         }
         (CmpOp::Ne, Either::Left(reg)) => {
             else_domain.intersect_eq_reg(left, reg);
@@ -248,6 +256,26 @@ fn apply_cmp_to_domain(
             else_domain.assume_ge(left, reg);
         }
         (CmpOp::Test, _) => {}
+    }
+}
+
+/// Refine `left != imm` against the domain's current interval.
+/// If the constant matches the lower or upper bound, raise/lower the
+/// boundary by one. Boundary-only refinement matches the kernel's
+/// `tnum`-based shrink: a `!= imm` where `imm` is in the interior
+/// can't tighten unsigned bounds.
+fn refine_ne_imm(domain: &mut NumericDomain, left: Reg, imm: i64) {
+    let (lo, hi) = domain.get_interval(left);
+    if lo == imm && lo < hi {
+        domain.assume_ge_imm(left, lo.saturating_add(1));
+        interval_propagate_scalars(domain, left, |d, r| {
+            d.assume_ge_imm(r, lo.saturating_add(1))
+        });
+    } else if hi == imm && lo < hi {
+        domain.assume_le_imm(left, hi.saturating_sub(1));
+        interval_propagate_scalars(domain, left, |d, r| {
+            d.assume_le_imm(r, hi.saturating_sub(1))
+        });
     }
 }
 
