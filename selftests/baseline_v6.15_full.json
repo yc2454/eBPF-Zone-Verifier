@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-30T02:45:36.589465+00:00",
+  "generated_at": "2026-04-30T02:58:54.642619+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -6016,7 +6016,7 @@
         "preempt_global_subprog_test": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 7: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "note": "Unsupported modern BPF feature at pc 13: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "preempt_lock_missing_1": {
           "upstream": "ACCEPT",
@@ -9297,7 +9297,7 @@
         "global_func9": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid return code at pc 86"
+          "note": "Invalid return code at pc 90"
         }
       }
     },
@@ -13095,8 +13095,7 @@
       "progs": {
         "a_pcpu_array_with_a_constant_no_nullness": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe map store at pc 8: offset 0, size 4, limit 48"
+          "ours": "PASS"
         },
         "a_read_only_array_1_1": {
           "upstream": "ACCEPT",
@@ -13132,8 +13131,7 @@
         },
         "an_array_with_a_32bit_constant_0_no_nullness": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe map store at pc 8: offset 0, size 4, limit 48"
+          "ours": "PASS"
         },
         "an_array_with_a_constant_1": {
           "upstream": "ACCEPT",
@@ -13145,8 +13143,7 @@
         },
         "an_array_with_a_constant_no_nullness": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe map store at pc 8: offset 0, size 4, limit 48"
+          "ours": "PASS"
         },
         "an_array_with_a_constant_no_nullness_out_of_bounds": {
           "upstream": "ACCEPT",
@@ -13198,8 +13195,7 @@
         },
         "multiple_array_with_a_constant_no_nullness": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe map store at pc 11: offset 0, size 4, limit 48"
+          "ours": "PASS"
         },
         "non_stack_key_lookup": {
           "upstream": "ACCEPT",

@@ -13,6 +13,35 @@ use crate::common::constants;
 use crate::common::ctx_model::{CtxFieldKind, validate_ctx_access};
 use crate::domains::numeric::NumericDomain;
 
+/// True if R2 (the lookup-elem key pointer) points at a stack slot
+/// whose value is a known constant strictly less than `map_def.max_entries`.
+/// Mirrors kernel's array-map "lookup with const in-bounds key returns
+/// non-null" specialization (closes verifier_array_access::*_no_nullness).
+fn const_key_in_bounds(
+    state: &State,
+    map_def: &crate::parsing::elf::BpfMapDef,
+) -> bool {
+    let level = match state.types.get(Reg::R2) {
+        RegType::PtrToStack { frame_level } => frame_level,
+        _ => return false,
+    };
+    let off = match state.domain.get_distance_fixed(Reg::R2, Reg::R10) {
+        Some(o) => o,
+        None => return false,
+    };
+    let slot = match state.stack_at(level).get_slot(off as i16) {
+        Some(s) => s,
+        None => return false,
+    };
+    if slot.size.bytes() as u32 != map_def.key_size {
+        return false;
+    }
+    if !slot.tnum.is_const() {
+        return false;
+    }
+    slot.tnum.value < map_def.max_entries as u64
+}
+
 fn update_packet_ptr_type_after_alu(types: &mut TypeState, domain: &NumericDomain, dst: Reg) {
     // Check offset from anchor: dst - @data
     // Use get_distance_interval to support both zone and interval domains
@@ -463,6 +492,27 @@ pub(crate) fn update_call_types(
                         // user can dereference without an explicit null check,
                         // matching kernel behaviour.
                         if helper == constants::BPF_GET_LOCAL_STORAGE {
+                            let id = new_ptr_id();
+                            state.types.set(
+                                Reg::R0,
+                                RegType::PtrToMapValue {
+                                    id,
+                                    offset: Some(0),
+                                    map_idx,
+                                },
+                            );
+                            state.domain.init_map_value_ptr(Reg::R0);
+                        } else if helper == constants::BPF_MAP_LOOKUP_ELEM
+                            && matches!(
+                                map_def.type_,
+                                constants::BPF_MAP_TYPE_ARRAY
+                                    | constants::BPF_MAP_TYPE_PERCPU_ARRAY
+                            )
+                            && const_key_in_bounds(state, map_def)
+                        {
+                            // Kernel: array-map lookups with a statically-known
+                            // in-bounds key return PTR_TO_MAP_VALUE (non-null).
+                            // verifier_array_access::*_no_nullness covers this.
                             let id = new_ptr_id();
                             state.types.set(
                                 Reg::R0,
