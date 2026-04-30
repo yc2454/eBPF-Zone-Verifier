@@ -18,7 +18,7 @@ use crate::analysis::machine::state::State;
 use crate::domains::tnum::Tnum;
 
 use super::side_effects::{apply_call_proto_r0, arg_reg, resolve_stack_arg};
-use super::signatures::{CallFlags, CallProto, RetKind, get_kfunc_proto};
+use super::signatures::{CallFlags, CallProto, RetKind, SideEffect, get_kfunc_proto};
 
 /// Top-level kfunc dispatch. Looks up the kfunc name in BTF and routes
 /// it. Resolution order:
@@ -152,6 +152,33 @@ fn transfer_kfunc_proto(
             proto.mem_size_pairs,
         ) {
             return vec![];
+        }
+    }
+
+    // KF_RELEASE precondition: every `ReleaseRefFromArg{N}` arg must be a
+    // refcounted pointer (i.e. carry a `ref_id`). Kernel rejects calls
+    // like `bpf_put_file(file)` on a non-acquired (e.g. BPF_PROG entry)
+    // pointer with "release kernel function bpf_put_file expects
+    // refcounted PTR_TO_BTF_ID". Without this gate, our generic
+    // `PtrToBtfId` validator (which doesn't inspect ref_id) would accept
+    // and the side-effect's get_ref_id-then-release would silently
+    // no-op on `ref_id: None`. The pre-existing `BPF_SK_RELEASE` arm in
+    // `transfer.rs` handles the helper case with the same shape; this
+    // closes the gap for the unified kfunc dispatcher.
+    if proto.flags.contains(CallFlags::RELEASE) {
+        for eff in proto.side_effects {
+            if let SideEffect::ReleaseRefFromArg { arg } = *eff {
+                let reg = arg_regs[arg as usize];
+                if in_types.get(reg).get_ref_id().is_none() {
+                    env.fail(
+                        crate::analysis::machine::error::VerificationError::InvalidArgType {
+                            pc,
+                            reg,
+                        },
+                    );
+                    return vec![];
+                }
+            }
         }
     }
 

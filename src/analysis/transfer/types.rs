@@ -151,8 +151,26 @@ fn update_ptr_arithmetic_type(
         // `type_name == "unknown"` already skips per-field bounds
         // validation; for layout-known names the access path enforces
         // bounds via mem_region_model.
-        RegType::PtrToBtfId { type_name, flags } => {
-            types.set(dst, RegType::PtrToBtfId { type_name, flags });
+        RegType::PtrToBtfId {
+            type_name,
+            flags,
+            ref_id,
+        } => {
+            // Pointer arithmetic on a refcounted BTF pointer drops the
+            // ref_id: an interior pointer (e.g. `&task->cpus_ptr`) is no
+            // longer the acquire-tracked owner, and releasing through it
+            // would mismatch the original. The kernel verifier likewise
+            // treats arithmetic on a `MEM_REFCOUNTED` pointer as breaking
+            // ownership.
+            let _ = ref_id;
+            types.set(
+                dst,
+                RegType::PtrToBtfId {
+                    type_name,
+                    flags,
+                    ref_id: None,
+                },
+            );
         }
         _ => types.set(dst, RegType::ScalarValue),
     }
@@ -297,6 +315,7 @@ pub(crate) fn update_load_types(
                                     id: new_ptr_id(),
                                     type_name,
                                     flags: PtrFlags::TRUSTED,
+                                    ref_id: None,
                                 },
                             );
                         } else {
@@ -305,6 +324,7 @@ pub(crate) fn update_load_types(
                                 RegType::PtrToBtfId {
                                     type_name,
                                     flags: PtrFlags::TRUSTED,
+                                    ref_id: None,
                                 },
                             );
                         }

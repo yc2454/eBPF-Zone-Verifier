@@ -204,6 +204,30 @@ pub(crate) fn apply_call_proto_r0(
             state.types.set(Reg::R0, ty);
             true
         }
+        RetKind::PtrToBtfIdNamed { type_name } => {
+            use crate::analysis::machine::reg_types::PtrFlags;
+            let ref_id = if proto.flags.contains(CallFlags::ACQUIRE) {
+                Some(state.acquire_ref())
+            } else {
+                None
+            };
+            let ty = if proto.flags.contains(CallFlags::RET_NULL) {
+                RegType::PtrToBtfIdOrNull {
+                    id: new_ptr_id(),
+                    type_name,
+                    flags: PtrFlags::TRUSTED,
+                    ref_id,
+                }
+            } else {
+                RegType::PtrToBtfId {
+                    type_name,
+                    flags: PtrFlags::TRUSTED,
+                    ref_id,
+                }
+            };
+            state.types.set(Reg::R0, ty);
+            true
+        }
         RetKind::PtrToSockCommon => {
             let ref_id = if proto.flags.contains(CallFlags::ACQUIRE) {
                 Some(state.acquire_ref())

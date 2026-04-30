@@ -303,12 +303,18 @@ fn maybe_promote_btf_id(state: &mut State, reg: Reg) {
             id,
             type_name,
             flags,
+            ref_id,
         } = state.types.get(r)
             && id == target_id
         {
-            state
-                .types
-                .set(r, RegType::PtrToBtfId { type_name, flags });
+            state.types.set(
+                r,
+                RegType::PtrToBtfId {
+                    type_name,
+                    flags,
+                    ref_id,
+                },
+            );
         }
     }
     promote_stack_slots_all_frames(
@@ -319,9 +325,11 @@ fn maybe_promote_btf_id(state: &mut State, reg: Reg) {
                 id: _,
                 type_name,
                 flags,
+                ref_id,
             } => RegType::PtrToBtfId {
                 type_name,
                 flags: *flags,
+                ref_id: *ref_id,
             },
             _ => unreachable!(),
         },
@@ -403,6 +411,14 @@ fn same_acquired_pointer(t1: &RegType, t2: &RegType) -> bool {
             RegType::PtrToOwnedKptrOrNull { ref_id: id1 },
             RegType::PtrToOwnedKptrOrNull { ref_id: id2 },
         ) => linked(id1, id2),
+        (
+            RegType::PtrToTaskOrNull { ref_id: id1 },
+            RegType::PtrToTaskOrNull { ref_id: id2 },
+        ) => linked(id1, id2),
+        (
+            RegType::PtrToBtfIdOrNull { ref_id: id1, .. },
+            RegType::PtrToBtfIdOrNull { ref_id: id2, .. },
+        ) => linked(id1, id2),
         _ => false,
     }
 }
@@ -418,7 +434,15 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
         | RegType::PtrToCpumaskOrNull { ref_id }
         | RegType::PtrToArenaOrNull { ref_id, .. }
         | RegType::PtrToCgroupOrNull { ref_id }
-        | RegType::PtrToOwnedKptrOrNull { ref_id } => ref_id,
+        | RegType::PtrToOwnedKptrOrNull { ref_id }
+        | RegType::PtrToTaskOrNull { ref_id } => ref_id,
+        // PtrToBtfIdOrNull only carries a ref_id when minted by an
+        // ACQUIRE-flagged kfunc returning `RetKind::PtrToBtfIdNamed`
+        // (`bpf_get_task_exe_file`, `bpf_lookup_user_key`, …). The plain
+        // entry-arg / decl-tag path uses `ref_id: None` and falls
+        // through to the catch-all return below — no release needed on
+        // the null branch.
+        RegType::PtrToBtfIdOrNull { ref_id: Some(rid), .. } => Some(rid),
         _ => return,
     };
 

@@ -308,6 +308,19 @@ pub enum RetKind {
     /// `bpf_task_from_pid`. Same applier shape as `PtrToCgroup`:
     /// `ACQUIRE` mints a ref, `RET_NULL` wraps as `PtrToTaskOrNull`.
     PtrToTask,
+    /// `RegType::PtrToBtfId { type_name, flags: TRUSTED }` for kernel
+    /// types that don't have a dedicated reg-type specialization
+    /// (e.g. `struct file *` from `bpf_get_task_exe_file`,
+    /// `struct bpf_key *` from `bpf_lookup_user_key`,
+    /// `struct sk_buff *` from `bpf_kfunc_nested_acquire_*_test`).
+    /// `ACQUIRE` mints a `ref_id` carried on the variant so the
+    /// matching `KF_RELEASE` consumer (`bpf_put_file`, `bpf_key_put`,
+    /// `bpf_kfunc_nested_release_test`) finds it via `get_ref_id()`;
+    /// `RET_NULL` wraps as `PtrToBtfIdOrNull` so the program must
+    /// null-check before passing the pointer to a `PtrToBtfId`-arg
+    /// kfunc (the kernel's "Possibly NULL pointer passed to trusted
+    /// arg0" diagnostic).
+    PtrToBtfIdNamed { type_name: &'static str },
     /// `bpf_iter_*_next(&it)` (W4.3b): forks the call into two
     /// successors. Non-NULL: R0 = `PtrToAllocMem { mem_size = elem_size }`,
     /// iterator slot at `iter_arg` stays Active. NULL: R0 = scalar 0,
@@ -1204,6 +1217,14 @@ const TASK_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 6] = [
     crate::ast::ProgramKind::StructOps,
 ];
 
+/// LSM-only kfunc family — `bpf_path_d_path`, `bpf_get_task_exe_file`,
+/// `bpf_put_file`. Kernel registers these in `bpf_lsm_kfunc_set` only.
+/// `verifier_vfs_reject.c::path_d_path_kfunc_non_lsm` calls
+/// `bpf_path_d_path` from `fentry/vfs_open` and the kernel rejects
+/// ("calling kernel function bpf_path_d_path is not allowed").
+const LSM_ONLY_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 1] =
+    [crate::ast::ProgramKind::Lsm];
+
 /// `bpf_dynptr_from_skb` allowlist (W4.2f). The kfunc is registered for
 /// program types that receive an `__sk_buff *` context — sched_cls/act
 /// (tc), socket_filter, cgroup_skb, lwt_*, sk_skb, sock_ops, sk_msg,
@@ -1718,6 +1739,106 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .flags(CallFlags::RELEASE)
         .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }])
         .prog_type_allowlist(&TASK_KFUNC_PROG_TYPES),
+
+        // ---- Cluster B Phase 3 (vfs_accept / nested_acquire / key) ----
+        //
+        // Kernel types without a dedicated `RegType::PtrTo<X>` reg-type
+        // specialization (`struct file`, `struct bpf_key`,
+        // `struct sk_buff` from the testmod nested-acquire kfuncs)
+        // funnel through `RetKind::PtrToBtfIdNamed { type_name }`, which
+        // produces a `PtrToBtfId{name, TRUSTED, ref_id}`. The ref_id
+        // travels on the variant for KF_ACQUIRE callers; the matching
+        // KF_RELEASE consumer recovers it via `get_ref_id()` from the
+        // existing `ReleaseRefFromArg` side-effect.
+        //
+        // struct file *bpf_get_task_exe_file(struct task_struct *task)
+        // KF_ACQUIRE | KF_RET_NULL | KF_TRUSTED_ARGS — kernel registers
+        // in bpf_lsm_kfunc_set; only LSM programs may call.
+        "bpf_get_task_exe_file" => CallProto::with_args([
+            PtrToTask, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "file" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL)
+        .prog_type_allowlist(&LSM_ONLY_KFUNC_PROG_TYPES),
+
+        // void bpf_put_file(struct file *file)
+        // KF_RELEASE — LSM-only.
+        "bpf_put_file" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }])
+        .prog_type_allowlist(&LSM_ONLY_KFUNC_PROG_TYPES),
+
+        // int bpf_path_d_path(struct path *path, char *buf, u32 sz)
+        // KF_TRUSTED_ARGS — fills `buf[..sz]` with the file's path; the
+        // kfunc-side `bpf_d_path` analogue. Mem-size pair (R2, R3) so
+        // `validate_ptr_to_uninit_mem` enforces the buffer's bounds.
+        // LSM-only (kernel `bpf_lsm_kfunc_set`).
+        "bpf_path_d_path" => CallProto::with_args([
+            PtrToBtfId, PtrToUninitMem, ConstSize, DontCare, DontCare,
+        ])
+        .mem_size_pairs(&pairs::D_PATH)
+        .ret(RetKind::Scalar)
+        .prog_type_allowlist(&LSM_ONLY_KFUNC_PROG_TYPES),
+
+        // ---- nested-acquire test kfuncs (testmod) ----
+        //
+        // struct sk_buff *bpf_kfunc_nested_acquire_nonzero_offset_test(struct sk_buff_head *)
+        // struct sk_buff *bpf_kfunc_nested_acquire_zero_offset_test(struct sock_common *)
+        //   KF_ACQUIRE only (NOT KF_RET_NULL — kernel guarantees non-null return).
+        // void bpf_kfunc_nested_release_test(struct sk_buff *)
+        //   KF_RELEASE.
+        "bpf_kfunc_nested_acquire_nonzero_offset_test" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "sk_buff" })
+        .flags(CallFlags::ACQUIRE),
+
+        "bpf_kfunc_nested_acquire_zero_offset_test" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "sk_buff" })
+        .flags(CallFlags::ACQUIRE),
+
+        "bpf_kfunc_nested_release_test" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+
+        // ---- key kfuncs (kernel/bpf/key.c) ----
+        //
+        // struct bpf_key *bpf_lookup_user_key(u32 serial, u64 flags)
+        // struct bpf_key *bpf_lookup_system_key(u64 id)
+        //   KF_ACQUIRE | KF_RET_NULL — caller must null-check before
+        //   passing to bpf_key_put.
+        // void bpf_key_put(struct bpf_key *key)
+        //   KF_RELEASE — rejects PtrToBtfIdOrNull at the validator
+        //   (which is how we keep the upstream
+        //   "user_key_reference_without_check" / "release_with_null_key_pointer"
+        //   __failure tests rejected: validate_ptr_to_btf_id only accepts
+        //   the non-null variant).
+        "bpf_lookup_user_key" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "bpf_key" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        "bpf_lookup_system_key" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "bpf_key" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        "bpf_key_put" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
 
         // ---- Arena kfuncs (W5.5 + W6.1c + W6.1d) ----
         //

@@ -52,7 +52,61 @@ pub fn intern_btf_type_name(_name: &str) -> &'static str {
     // No specific mem_region_model entries exist for struct_ops args yet
     // (sock, tcp_sock, task_struct, ...). When one is added, add a
     // matching arm below; until then, the catch-all is correct.
+    //
+    // Specifically: callers that need a *real* type_name (kfunc
+    // ArgKind matchers like `validate_ptr_to_task` keyed on
+    // `type_name == "task_struct"`) use `intern_btf_type_name_strict`
+    // instead. Returning "unknown" by default preserves the lax
+    // mem_region_model::is_valid_mem_region_read fall-through that
+    // struct_ops field stores depend on (e.g. `bictcp` writes through
+    // a `struct sock *` arg).
     "unknown"
+}
+
+/// Strict interner for callers that need the real BTF type_name to
+/// flow into a `RegType::PtrToBtfId { type_name, .. }`. Used by the
+/// BPF_PROG-style entry-arg seeders for LSM/tp_btf/tracing programs
+/// where downstream kfunc validators (`bpf_get_task_exe_file` →
+/// `validate_ptr_to_task` matching `"task_struct"`) need the actual
+/// name. The leak-based cache keeps the same `name` round-tripping
+/// through one `&'static str` so callers can compare with `==`.
+///
+/// Bounded by the number of distinct names referenced in any one
+/// verified ELF (typically dozens). Not used by the struct_ops entry
+/// seeder, which keeps `intern_btf_type_name` → "unknown" so the
+/// lax mem-region policy still applies to its writes.
+pub fn intern_btf_type_name_strict(name: &str) -> &'static str {
+    match name {
+        // Hot-path string literals for names already referenced by
+        // existing kfunc matchers — keeps the LSM entry seeding
+        // allocation-free.
+        "task_struct" => return "task_struct",
+        "file" => return "file",
+        "path" => return "path",
+        "sock" => return "sock",
+        "sk_buff" => return "sk_buff",
+        "sk_buff_head" => return "sk_buff_head",
+        "sock_common" => return "sock_common",
+        "tcp_sock" => return "tcp_sock",
+        "cpumask" => return "cpumask",
+        "bpf_cpumask" => return "bpf_cpumask",
+        "cgroup" => return "cgroup",
+        "bpf_key" => return "bpf_key",
+        "inode" => return "inode",
+        "cred" => return "cred",
+        _ => {}
+    }
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut g = cache.lock().expect("intern cache poisoned");
+    if let Some(&s) = g.get(name) {
+        return s;
+    }
+    let leaked: &'static str = Box::leak(name.to_string().into_boxed_str());
+    g.insert(name.to_string(), leaked);
+    leaked
 }
 
 #[derive(Clone, Debug)]

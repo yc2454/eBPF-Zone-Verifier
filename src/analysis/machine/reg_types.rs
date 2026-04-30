@@ -101,11 +101,23 @@ pub enum RegType {
     PtrToBtfId {
         type_name: &'static str,
         flags: PtrFlags,
+        /// Optional acquired-reference id, set when the pointer was minted by a
+        /// `KF_ACQUIRE` kfunc (e.g. `bpf_get_task_exe_file`,
+        /// `bpf_lookup_user_key`, `bpf_kfunc_nested_acquire_*_test`). Released
+        /// by the corresponding `KF_RELEASE` kfunc (`bpf_put_file`,
+        /// `bpf_key_put`, `bpf_kfunc_nested_release_test`); `None` for
+        /// non-acquired BTF pointers (BPF_PROG arg loads, BTF field walks,
+        /// `__rcu`/decl-tag-trusted, …) where leak detection isn't tracked.
+        ref_id: Option<u32>,
     },
     PtrToBtfIdOrNull {
         id: u32, // For null-tracking across branches
         type_name: &'static str,
         flags: PtrFlags,
+        /// See `PtrToBtfId::ref_id`. After a null-check refinement to the
+        /// non-null variant the `ref_id` is preserved on the success branch
+        /// and dropped on the null branch.
+        ref_id: Option<u32>,
     },
     PtrToAllocMemOrNull {
         id: u32,
@@ -288,6 +300,16 @@ impl RegType {
                 ref_id,
                 flags,
             }),
+            RegType::PtrToBtfIdOrNull {
+                id: _,
+                type_name,
+                flags,
+                ref_id,
+            } => Some(RegType::PtrToBtfId {
+                type_name,
+                flags,
+                ref_id,
+            }),
             _ => None,
         }
     }
@@ -306,6 +328,7 @@ impl RegType {
                 | RegType::PtrToTaskOrNull { .. }
                 | RegType::PtrToOwnedKptrOrNull { .. }
                 | RegType::PtrToMapKptrOrNull { .. }
+                | RegType::PtrToBtfIdOrNull { .. }
         )
     }
 
@@ -383,6 +406,7 @@ impl RegType {
             | RegType::PtrToTaskOrNull { ref_id: id }
             | RegType::PtrToOwnedKptr { ref_id: id }
             | RegType::PtrToOwnedKptrOrNull { ref_id: id } => id,
+            RegType::PtrToBtfId { ref_id, .. } | RegType::PtrToBtfIdOrNull { ref_id, .. } => ref_id,
             RegType::PtrToMapKptr { ref_id, .. } | RegType::PtrToMapKptrOrNull { ref_id, .. } => {
                 ref_id
             }
@@ -531,14 +555,17 @@ mod tests {
         let trusted = RegType::PtrToBtfId {
             type_name: "x",
             flags: PtrFlags::TRUSTED,
+            ref_id: None,
         };
         let untrusted = RegType::PtrToBtfId {
             type_name: "x",
             flags: PtrFlags::UNTRUSTED,
+            ref_id: None,
         };
         let empty = RegType::PtrToBtfId {
             type_name: "x",
             flags: PtrFlags::empty(),
+            ref_id: None,
         };
         assert!(trusted.is_trusted());
         assert!(!trusted.is_untrusted());
@@ -581,10 +608,12 @@ mod tests {
         let a = RegType::PtrToBtfId {
             type_name: "x",
             flags: PtrFlags::TRUSTED,
+            ref_id: None,
         };
         let b = RegType::PtrToBtfId {
             type_name: "x",
             flags: PtrFlags::UNTRUSTED,
+            ref_id: None,
         };
         assert_ne!(a, b, "flags must participate in PartialEq to preserve old trusted-bool semantics");
     }

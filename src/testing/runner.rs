@@ -1,7 +1,9 @@
 // src/runner.rs
 
 use crate::analysis;
-use crate::analysis::machine::context::{EntryArg, default_exec_ctx, intern_btf_type_name};
+use crate::analysis::machine::context::{
+    EntryArg, default_exec_ctx, intern_btf_type_name, intern_btf_type_name_strict,
+};
 use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg::Reg;
 use crate::ast::ProgramKind;
@@ -697,7 +699,27 @@ impl Analyzer {
             // MAYBE_NULL table keyed by attach_subtype (the only path
             // that surfaces nullable trusted-args for tp_btf raw-tp
             // targets).
-            ctx.entry_args = self.btf.resolve_func_args(&func.name).and_then(|args| {
+            // When the SEC-tagged entry point is a `BPF_PROG()` wrapper —
+            // signature `void *ctx` — its outer BTF FUNC_PROTO is a bare
+            // void-ctx, useless for typing the ctx-array slot loads the
+            // wrapper emits. The macro's inner static function carries the
+            // user-declared typed args; libbpf names it
+            // `____<entry>` (4 underscores) and that's what BTF stores
+            // *unless* clang inlined it (the BPF_PROG inner is
+            // `static __always_inline`, so no separate FUNC entry
+            // survives in `-O2`). Try the inner first; if missing, fall
+            // back to the outer's signature, then to a static
+            // (prog_kind, attach_subtype) → arg-types table keyed off
+            // the BPF section name. The static table is the only thing
+            // that lets us type LSM/tp_btf hook args without shipping
+            // vmlinux BTF — what the kernel verifier resolves at attach
+            // time from the hook's vmlinux signature.
+            let bpf_prog_inner = format!("____{}", func.name);
+            let resolved = self
+                .btf
+                .resolve_func_args(&bpf_prog_inner)
+                .or_else(|| self.btf.resolve_func_args(&func.name));
+            ctx.entry_args = resolved.and_then(|args| {
                 let bare_void_ctx = args.len() == 1
                     && matches!(args[0], StructOpsArg::OpaquePtr);
                 if bare_void_ctx {
@@ -712,13 +734,61 @@ impl Analyzer {
                                 nullable: false,
                             },
                             StructOpsArg::TrustedPtr(name) => EntryArg::TrustedPtrBtfId {
-                                type_name: intern_btf_type_name(&name),
+                                // Strict variant: kfunc validators
+                                // (`validate_ptr_to_task` matching
+                                // `"task_struct"`) require the real
+                                // BTF type name on Lsm/Tracing/tp_btf
+                                // entry-arg pointers. struct_ops keeps
+                                // the lax `"unknown"` (see line 352)
+                                // because its handlers commonly write
+                                // through these args to embedded state
+                                // that mem_region_model doesn't
+                                // describe.
+                                type_name: intern_btf_type_name_strict(&name),
                                 nullable: false,
                             },
                         })
                         .collect(),
                 )
             });
+
+            // Static (prog_kind, attach_subtype) → BPF_PROG entry-args
+            // fallback for the BPF_PROG()-wrapped LSM/tp_btf/tracing
+            // hooks whose inner typed function is `__always_inline` and
+            // therefore has no surviving FUNC entry in BTF (so the BPF
+            // path above's bpf_prog_inner lookup misses). The kernel
+            // resolves these from the attach target's vmlinux BTF — we
+            // mirror only the hooks our test corpus actually attaches to.
+            if ctx.entry_args.is_none() {
+                if let Some(target) = ctx.attach_subtype.as_deref() {
+                    let table_args = match (ctx.prog_kind, target) {
+                        // LSM hooks (vfs_accept tests). Args from
+                        // include/linux/lsm_hooks.h's `LSM_HOOK(...)`
+                        // declarations.
+                        (ProgramKind::Lsm, "file_open") => {
+                            Some(vec![("file", false)])
+                        }
+                        (ProgramKind::Lsm, "task_alloc") => {
+                            Some(vec![("task_struct", false)])
+                        }
+                        (ProgramKind::Lsm, "inode_getattr") => {
+                            Some(vec![("path", false)])
+                        }
+                        _ => None,
+                    };
+                    if let Some(arg_specs) = table_args {
+                        ctx.entry_args = Some(
+                            arg_specs
+                                .into_iter()
+                                .map(|(name, nullable)| EntryArg::TrustedPtrBtfId {
+                                    type_name: intern_btf_type_name_strict(name),
+                                    nullable,
+                                })
+                                .collect(),
+                        );
+                    }
+                }
+            }
         }
 
         if self.config.verbosity > 0 {

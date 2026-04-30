@@ -411,7 +411,22 @@ fn validate_ptr_to_cgroup(ctx: &mut ValidationContext) -> bool {
 /// accepted. `bpf_task_acquire`/`_release` consumers require the
 /// program to have null-checked an `OrNull` result first.
 fn validate_ptr_to_task(ctx: &mut ValidationContext) -> bool {
-    if !matches!(ctx.actual, RegType::PtrToTask { .. }) {
+    // PtrToTask covers acquire-tracked tasks (`bpf_task_acquire`,
+    // `bpf_task_from_pid`, `bpf_get_current_task_btf`). For BPF_PROG-style
+    // tracing/tp_btf/lsm programs that take `struct task_struct *task`
+    // directly (clang's BPF_PROG macro unpacks ctx[N*8] into the typed
+    // arg), the entry-arg seeder produces `PtrToBtfId{task_struct, TRUSTED}`
+    // — also accept that shape. Other kernel structs the BPF_PROG macro
+    // exposes via name use the generic `ArgKind::PtrToBtfId` validator;
+    // task is the special case because we have a dedicated reg-type
+    // specialization for it.
+    if !matches!(ctx.actual, RegType::PtrToTask { .. })
+        && !matches!(
+            ctx.actual,
+            RegType::PtrToBtfId { type_name: "task_struct", flags, .. }
+                if flags.contains(crate::analysis::machine::reg_types::PtrFlags::TRUSTED)
+        )
+    {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,

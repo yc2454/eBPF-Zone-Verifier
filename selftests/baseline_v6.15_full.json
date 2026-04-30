@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-30T02:58:54.642619+00:00",
+  "generated_at": "2026-04-30T04:40:59.964591+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -5763,13 +5763,11 @@
       "progs": {
         "test_nested_acquire_nonzero": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 3: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "test_nested_acquire_zero": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 3: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         }
       }
     },
@@ -6621,7 +6619,7 @@
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(64) })"
+          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(66) })"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",
@@ -9297,7 +9295,7 @@
         "global_func9": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid return code at pc 90"
+          "note": "Invalid return code at pc 94"
         }
       }
     },
@@ -15386,8 +15384,7 @@
         },
         "task_kfunc_perf_event": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 6: register: r1"
+          "ours": "PASS"
         },
         "task_kfunc_raw_tp": {
           "upstream": "ACCEPT",
@@ -15395,13 +15392,11 @@
         },
         "task_kfunc_syscall": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 6: register: r1"
+          "ours": "PASS"
         },
         "task_kfunc_tracepoint": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 6: register: r1"
+          "ours": "PASS"
         }
       }
     },
@@ -16273,7 +16268,7 @@
         "private_stack_async_callback_2": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "pc 27: R2 !read_ok"
+          "note": "Subprogram error: back-edge from insn 107 to 27"
         },
         "private_stack_callback": {
           "upstream": "ACCEPT",
@@ -16390,13 +16385,11 @@
         },
         "acquire_release_system_key_reference": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 1: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "acquire_release_user_key_reference": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 2: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "after_bpf_sk_release_sk": {
           "upstream": "ACCEPT",
@@ -18853,28 +18846,23 @@
       "progs": {
         "get_task_exe_file_and_put_kfunc_from_argument": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 1: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "get_task_exe_file_and_put_kfunc_from_current_non_sleepable": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 2: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "get_task_exe_file_and_put_kfunc_from_current_sleepable": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 2: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "path_d_path_from_file_argument": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 6: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "path_d_path_from_path_argument": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         }
       }
     },
@@ -18910,8 +18898,8 @@
           "ours": "PASS"
         },
         "path_d_path_kfunc_type_mismatch": {
-          "upstream": "ACCEPT",
-          "ours": "PASS"
+          "upstream": "REJECT",
+          "ours": "FALSE_ACCEPT"
         },
         "path_d_path_kfunc_untrusted_from_argument": {
           "upstream": "ACCEPT",

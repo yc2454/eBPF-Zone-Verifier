@@ -553,6 +553,7 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
                 RegType::PtrToBtfId {
                     type_name: "unknown",
                     flags: PtrFlags::UNTRUSTED,
+                    ref_id: None,
                 },
             );
         }
@@ -895,11 +896,13 @@ pub(crate) fn transfer_call_rel(
                             id: 0,
                             type_name: leaked,
                             flags,
+                            ref_id: None,
                         }
                     } else {
                         RegType::PtrToBtfId {
                             type_name: leaked,
                             flags,
+                            ref_id: None,
                         }
                     };
                     state.types.set(*reg, ty);
