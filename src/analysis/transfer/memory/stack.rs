@@ -175,7 +175,12 @@ pub(crate) fn check_stack_initialization(
             }
 
             if first_uninit.is_some() {
-                if allow_privileged_upper_half_read(actual_offset, size)
+                // Kernel allows uninit stack reads in privileged mode
+                // (CAP_PERFMON / `env->allow_uninit_stack`). Slot is
+                // uninit, so the downstream pointer-size check is
+                // irrelevant — return early like the narrow allowances.
+                if env.ctx.is_privileged()
+                    || allow_privileged_upper_half_read(actual_offset, size)
                     || allow_privileged_partial_u64_read(actual_offset, size)
                 {
                     return;
@@ -236,7 +241,13 @@ pub(crate) fn check_stack_initialization(
             let all_initialized =
                 (0..size).all(|i| stack.is_slot_initialized((actual_offset + i) as i16));
 
-            if !all_initialized && !allow_privileged_partial_u64_read(actual_offset, size) {
+            // Same priv-mode rule as direct reads: kernel
+            // `env->allow_uninit_stack` lets helper buffer args skip the
+            // initialization check entirely under CAP_PERFMON.
+            if !all_initialized
+                && !env.ctx.is_privileged()
+                && !allow_privileged_partial_u64_read(actual_offset, size)
+            {
                 env.fail(VerificationError::UninitializedStackRead {
                     pc,
                     offset: actual_offset,

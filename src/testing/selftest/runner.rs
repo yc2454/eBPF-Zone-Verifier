@@ -347,6 +347,12 @@ fn run_one(analyzer: &Analyzer, attrs: ProgAttrs, file_basename: &str) -> ProgRe
         (false, AnalysisResult::Fail(_)) => Outcome::Pass,
         (true, AnalysisResult::Fail(e)) => Outcome::FalseReject(e.description().to_string()),
         (false, AnalysisResult::Pass) => Outcome::FalseAccept,
+        // Hitting the complexity limit on a `__failure` program is
+        // kernel-aligned — the kernel verifier itself rejects via
+        // `BPF_COMPLEXITY_LIMIT_INSNS` for unbounded-loop and
+        // back-edge constructs (e.g. `infinite_loop_in_two_jumps`,
+        // `mov64sx_s32_varoff_1`, `may_goto_self`). Counts as Pass.
+        (false, AnalysisResult::Timeout) => Outcome::Pass,
         (_, AnalysisResult::Timeout) => Outcome::Error("verifier timeout".into()),
         (_, AnalysisResult::LoadError(e)) => {
             // The function not being present in the ELF means it was

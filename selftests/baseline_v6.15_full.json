@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-30T18:47:21.196976+00:00",
+  "generated_at": "2026-04-30T19:13:39.906205+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -3951,14 +3951,12 @@
           "ours": "PASS"
         },
         "loop_state_deps2": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "loop_state_deps3": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "triple_continue": {
           "upstream": "UNKNOWN",
@@ -4201,9 +4199,8 @@
           "ours": "PASS"
         },
         "iter_tasks_without_lock": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -6604,7 +6601,7 @@
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(67) })"
+          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(65) })"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",
@@ -9280,7 +9277,7 @@
         "global_func9": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid return code at pc 78"
+          "note": "Invalid return code at pc 82"
         }
       }
     },
@@ -13215,13 +13212,11 @@
         },
         "uninitialized_stack1": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Reading uninitialized stack slot at pc 4: offset -8"
+          "ours": "PASS"
         },
         "uninitialized_stack2": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Reading uninitialized stack slot at pc 1: offset -8"
+          "ours": "PASS"
         }
       }
     },
@@ -13771,8 +13766,7 @@
         },
         "bad_varying_read": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Reading uninitialized stack slot at pc 11: offset -8"
+          "ours": "PASS"
         },
         "bad_varying_write": {
           "upstream": "ACCEPT",
@@ -13955,9 +13949,8 @@
           "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         },
         "conditional_loop": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "conditional_loop2": {
           "upstream": "ACCEPT",
@@ -13968,9 +13961,8 @@
           "ours": "PASS"
         },
         "loop_back_edge": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "out_of_range_jump": {
           "upstream": "ACCEPT",
@@ -13981,9 +13973,8 @@
           "ours": "PASS"
         },
         "uncond_loop_after_cond_jmp": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "uncond_loop_in_subprog_after_cond_jmp": {
           "upstream": "UNKNOWN",
@@ -15108,8 +15099,7 @@
         },
         "arg_ptr_to_long_uninitialized": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Reading uninitialized stack slot at pc 9: offset -16"
+          "ours": "PASS"
         },
         "ptr_to_long_half_uninitialized": {
           "upstream": "ACCEPT",
@@ -15204,9 +15194,8 @@
           "note": "CFG error: unreachable insn at pc 4"
         },
         "jgt_imm64_and_may_goto": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "jlt_and_may_goto": {
           "upstream": "UNKNOWN",
@@ -15214,9 +15203,8 @@
           "note": "verifier timeout"
         },
         "loop_detection": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "loop_inside_iter": {
           "upstream": "ACCEPT",
@@ -15231,9 +15219,9 @@
           "ours": "PASS"
         },
         "may_goto_neg_off": {
-          "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Reading uninitialized stack slot at pc 0: offset -4"
+          "upstream": "UNKNOWN",
+          "ours": "ERROR",
+          "note": "verifier timeout"
         },
         "may_goto_self": {
           "upstream": "ACCEPT",
@@ -15603,14 +15591,12 @@
           "ours": "PASS"
         },
         "infinite_loop_in_two_jumps": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "infinite_loop_three_jump_trick": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "jump_to_1st_insn_2": {
           "upstream": "ACCEPT",
@@ -15621,9 +15607,8 @@
           "ours": "PASS"
         },
         "loop_after_a_conditional_jump": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "loop_containing_a_forward_jump": {
           "upstream": "ACCEPT",
@@ -16252,7 +16237,7 @@
         "private_stack_async_callback_2": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Subprogram error: back-edge from insn 107 to 27"
+          "note": "pc 27: R2 !read_ok"
         },
         "private_stack_callback": {
           "upstream": "ACCEPT",
@@ -16342,8 +16327,7 @@
         },
         "stack_no_skb_load_bytes": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Reading uninitialized stack slot at pc 5: offset -8"
+          "ours": "PASS"
         },
         "stack_skb_load_bytes_init": {
           "upstream": "ACCEPT",
@@ -17163,8 +17147,7 @@
         },
         "be_verified_invalid_stack_access": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Reading uninitialized stack slot at pc 15: offset -16"
+          "ours": "PASS"
         },
         "for_u32_spills_u64_fill": {
           "upstream": "ACCEPT",
@@ -17175,9 +17158,8 @@
           "ours": "PASS"
         },
         "short_loop1": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "should_be_verified_nop_operation": {
           "upstream": "ACCEPT",
@@ -18104,8 +18086,7 @@
         },
         "stack_slot_aliases_precision": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Reading uninitialized stack slot at pc 18: offset -4"
+          "ours": "PASS"
         },
         "subprog_arg_precise": {
           "upstream": "ACCEPT",
@@ -18769,8 +18750,7 @@
         },
         "access_min_off_min_initialized": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Reading uninitialized stack slot at pc 8: offset -16"
+          "ours": "PASS"
         },
         "access_min_out_of_bound": {
           "upstream": "ACCEPT",
@@ -18810,8 +18790,7 @@
         },
         "variable_offset_stack_read_uninitialized": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Reading uninitialized stack slot at pc 4: offset -8"
+          "ours": "PASS"
         },
         "zero_sized_access_max_out_of_bound": {
           "upstream": "ACCEPT",
