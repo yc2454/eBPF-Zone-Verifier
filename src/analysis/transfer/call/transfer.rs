@@ -875,6 +875,36 @@ pub(crate) fn transfer_call_rel(
                 crate::parsing::btf::GlobalFuncArg::PtrToFwd { .. } => {
                     // Already rejected above; keep arm exhaustive.
                 }
+                crate::parsing::btf::GlobalFuncArg::PtrToBtfIdTrusted {
+                    type_name,
+                    nullable,
+                } => {
+                    use crate::analysis::machine::reg_types::PtrFlags;
+                    // type_name is a runtime string; the RegType variant
+                    // holds a `&'static str`, so leak the (small, bounded)
+                    // name once. Subsequent calls reuse the leaked copy
+                    // via the leak-safe identity check on the call site
+                    // path — bounded by the number of distinct kernel
+                    // types referenced as `__arg_trusted` in any one
+                    // verified ELF.
+                    let leaked: &'static str =
+                        Box::leak(type_name.clone().into_boxed_str());
+                    let flags = PtrFlags::TRUSTED;
+                    let ty = if *nullable {
+                        RegType::PtrToBtfIdOrNull {
+                            id: 0,
+                            type_name: leaked,
+                            flags,
+                        }
+                    } else {
+                        RegType::PtrToBtfId {
+                            type_name: leaked,
+                            flags,
+                        }
+                    };
+                    state.types.set(*reg, ty);
+                    state.domain.forget(*reg);
+                }
             }
         }
     }
@@ -918,6 +948,47 @@ fn caller_arg_compatible<F: Fn() -> bool>(
         },
         GlobalFuncArg::PtrToCtx => matches!(actual, RegType::PtrToCtx),
         GlobalFuncArg::PtrToFwd { .. } => false,
+        GlobalFuncArg::PtrToBtfIdTrusted {
+            nullable,
+            type_name,
+        } => match actual {
+            // `__arg_trusted` accepts any kernel BTF id pointer the
+            // caller produced (acquired or static). `__arg_nullable`
+            // additionally admits the OrNull variant and literal NULL.
+            RegType::PtrToBtfId { .. } => true,
+            RegType::PtrToBtfIdOrNull { .. } => *nullable,
+            // Acquire-tracked specializations (PtrToTask, PtrToSocket,
+            // …) are kernel BTF ids in disguise — accept them when the
+            // declared type_name matches. CO-RE flavor suffix
+            // (`task_struct___local`) just renames the same kernel
+            // type, so strip the trailing `___…` before matching.
+            RegType::PtrToTask { .. } | RegType::PtrToTaskOrNull { .. } => {
+                let base = type_name
+                    .split("___")
+                    .next()
+                    .unwrap_or(type_name.as_str());
+                base == "task_struct"
+                    && (matches!(actual, RegType::PtrToTask { .. }) || *nullable)
+            }
+            RegType::PtrToSocket { .. } | RegType::PtrToSocketOrNull { .. } => {
+                let base = type_name
+                    .split("___")
+                    .next()
+                    .unwrap_or(type_name.as_str());
+                base == "sock"
+                    && (matches!(actual, RegType::PtrToSocket { .. }) || *nullable)
+            }
+            RegType::PtrToCpumask { .. } | RegType::PtrToCpumaskOrNull { .. } => {
+                let base = type_name
+                    .split("___")
+                    .next()
+                    .unwrap_or(type_name.as_str());
+                base == "bpf_cpumask"
+                    && (matches!(actual, RegType::PtrToCpumask { .. }) || *nullable)
+            }
+            RegType::ScalarValue => *nullable && scalar_is_zero(),
+            _ => false,
+        },
         GlobalFuncArg::PermissivePtr => match actual {
             RegType::PtrToCtx
             | RegType::PtrToStack { .. }

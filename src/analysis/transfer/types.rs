@@ -178,11 +178,13 @@ pub(crate) fn update_alu_types(
                     types.set(dst, src_ty);
                 }
                 Operand::Imm(_) => {
-                    let reloc = env
-                        .ctx
-                        .pc_to_reloc
-                        .get(&pc)
-                        .or_else(|| env.ctx.pc_to_reloc.get(&(pc + 1)));
+                    // Regular ALU MOV imm: look up a reloc at *this* pc only.
+                    // LD_IMM64 (`r = imm64`) is handled via its own MapLoad
+                    // opcode, so the legacy `pc+1` fallback would only ever
+                    // misattribute a neighbouring insn's reloc to a single-slot
+                    // ALU MOV (e.g. `r1 = 0` followed by an LD_IMM64-of-vals
+                    // → r1 wrongly typed as PtrToMapValue at the call site).
+                    let reloc = env.ctx.pc_to_reloc.get(&pc);
 
                     if let Some(info) = reloc {
                         if info.map_idx < env.ctx.map_defs.len() {

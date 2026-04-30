@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-30T02:16:35.109358+00:00",
+  "generated_at": "2026-04-30T02:45:36.589465+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -6016,7 +6016,7 @@
         "preempt_global_subprog_test": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 5: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "note": "Unsupported modern BPF feature at pc 7: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "preempt_lock_missing_1": {
           "upstream": "ACCEPT",
@@ -14607,13 +14607,11 @@
       "progs": {
         "flavor_ptr_nonnull": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Caller passes invalid args into func 'subprog_nonnull_task_flavor' (arg #1) at pc 2"
+          "ours": "PASS"
         },
         "flavor_ptr_nullable": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Caller passes invalid args into func 'subprog_nullable_task_flavor' (arg #1) at pc 2"
+          "ours": "PASS"
         },
         "trusted_acq_rel": {
           "upstream": "ACCEPT",
@@ -14626,8 +14624,7 @@
         },
         "trusted_task_arg_nonnull": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Caller passes invalid args into func 'subprog_trusted_task_nonnull' (arg #1) at pc 2"
+          "ours": "PASS"
         },
         "trusted_task_arg_nonnull_fail1": {
           "upstream": "ACCEPT",
@@ -15253,8 +15250,7 @@
         },
         "loop_inside_iter_volatile_limit": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 29"
+          "ours": "PASS"
         },
         "may_goto_neg_off": {
           "upstream": "ACCEPT",
@@ -15267,8 +15263,7 @@
         },
         "test1": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe map store at pc 4: map index 6, size 8"
+          "ours": "PASS"
         },
         "test2": {
           "upstream": "ACCEPT",
@@ -16282,7 +16277,7 @@
         "private_stack_async_callback_2": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Subprogram error: back-edge from insn 107 to 27"
+          "note": "pc 27: R2 !read_ok"
         },
         "private_stack_callback": {
           "upstream": "ACCEPT",
@@ -18118,8 +18113,7 @@
         },
         "parent_callee_saved_reg_precise_global": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Caller passes invalid args into func 'global_identity_subprog' (arg #1) at pc 4"
+          "ours": "PASS"
         },
         "parent_callee_saved_reg_precise_with_callback": {
           "upstream": "ACCEPT",
@@ -18131,8 +18125,7 @@
         },
         "parent_stack_slot_precise_global": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Caller passes invalid args into func 'global_identity_subprog' (arg #1) at pc 5"
+          "ours": "PASS"
         },
         "parent_stack_slot_precise_with_callback": {
           "upstream": "ACCEPT",

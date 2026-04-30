@@ -393,20 +393,57 @@ impl BtfContext {
     /// the kernel verifier's `PTR_TO_MEM | PTR_MAYBE_NULL` — bounded
     /// by the pointee's BTF size, callee must null-check.
     pub fn resolve_global_func_args(&self, func_name: &str) -> Option<Vec<GlobalFuncArg>> {
-        let func_ty = self.types.values().find(|ty| {
+        let (func_id, func_ty) = self.types.iter().find(|(_, ty)| {
             ty.kind() == BTF_KIND_FUNC && self.get_string(ty.name_off) == Some(func_name)
         })?;
+        let func_id = *func_id;
         let proto = self.types.get(&func_ty.size_or_type)?;
         if proto.kind() != BTF_KIND_FUNC_PROTO {
             return None;
         }
+
+        // Per-arg decl tags (e.g. `__arg_trusted`, `__arg_nullable`,
+        // `__arg_ctx`) target the FUNC btf_id with `component_idx`
+        // = arg index. Collect tags per index up front.
+        let mut tags_per_arg: std::collections::HashMap<i32, Vec<&str>> =
+            std::collections::HashMap::new();
+        for tag in self.decl_tags_for(func_id) {
+            if tag.component_idx >= 0 {
+                tags_per_arg
+                    .entry(tag.component_idx)
+                    .or_default()
+                    .push(tag.name.as_str());
+            }
+        }
+
         Some(
             proto
                 .members
                 .iter()
-                .map(|p| self.classify_global_func_arg(p.type_id))
+                .enumerate()
+                .map(|(idx, p)| {
+                    let base = self.classify_global_func_arg(p.type_id);
+                    let empty = Vec::new();
+                    let tags = tags_per_arg.get(&(idx as i32)).unwrap_or(&empty);
+                    refine_global_arg_with_tags(base, tags, p.type_id, self)
+                })
                 .collect(),
         )
+    }
+
+    /// Resolve the type-name for a BTF type used as a pointee. Strips
+    /// modifiers (CONST/VOLATILE/RESTRICT/TYPEDEF) and returns the
+    /// underlying STRUCT/UNION name when possible. Used by
+    /// `refine_global_arg_with_tags` to populate `PtrToBtfIdTrusted`.
+    fn pointee_struct_name(&self, ptr_type_id: u32) -> Option<String> {
+        let id = self.peel_modifiers(ptr_type_id);
+        let ty = self.types.get(&id)?;
+        if ty.kind() != BTF_KIND_PTR {
+            return None;
+        }
+        let pid = self.peel_modifiers(ty.size_or_type);
+        let pty = self.types.get(&pid)?;
+        Some(self.get_string(pty.name_off).unwrap_or("?").to_string())
     }
 
     fn classify_global_func_arg(&self, type_id: u32) -> GlobalFuncArg {
@@ -751,6 +788,49 @@ pub enum GlobalFuncArg {
     /// kind plus NULL; callee receives PtrToCtx (the most common
     /// real meaning) so body access is liberal but not pointer-leaky.
     PermissivePtr,
+    /// Pointer to a kernel BTF struct passed with `__arg_trusted`.
+    /// Caller must pass `PtrToBtfId` (or `PtrToBtfIdOrNull` if the
+    /// arg is also `__arg_nullable`); callee receives the same.
+    /// Mirrors kernel's `KF_ARG_PTR_TO_BTF_ID | KF_TRUSTED_ARGS`
+    /// validation for global subprog args.
+    PtrToBtfIdTrusted {
+        type_name: String,
+        nullable: bool,
+    },
+}
+
+/// Refine a base `GlobalFuncArg` classification using `__arg_*` decl
+/// tags collected from BTF DECL_TAG entries targeting a FUNC's argument
+/// (component_idx = arg index). Recognized:
+///   - `arg_trusted` → if the base is a struct/empty pointer, switch to
+///     `PtrToBtfIdTrusted` (kernel treats it as a kernel BTF id).
+///   - `arg_nullable` → marks the argument as MAYBE_NULL on the
+///     trusted-ptr variant. No effect on `PtrToCtx`.
+///   - `arg_ctx` → upgrade an unresolved/struct pointer to PtrToCtx.
+fn refine_global_arg_with_tags(
+    base: GlobalFuncArg,
+    tags: &[&str],
+    arg_type_id: u32,
+    btf: &BtfContext,
+) -> GlobalFuncArg {
+    // Kernel encodes these via clang `btf_decl_tag("arg:<kind>")`.
+    let trusted = tags.iter().any(|t| *t == "arg:trusted");
+    let nullable = tags.iter().any(|t| *t == "arg:nullable");
+    let ctx_tag = tags.iter().any(|t| *t == "arg:ctx");
+    if ctx_tag {
+        return GlobalFuncArg::PtrToCtx;
+    }
+    if trusted {
+        // Need a struct-typed pointee — pull the name from BTF.
+        let type_name = btf
+            .pointee_struct_name(arg_type_id)
+            .unwrap_or_else(|| "?".to_string());
+        return GlobalFuncArg::PtrToBtfIdTrusted {
+            type_name,
+            nullable,
+        };
+    }
+    base
 }
 
 /// Names of struct types the kernel treats as a BPF program context
