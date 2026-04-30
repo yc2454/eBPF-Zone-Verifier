@@ -52,6 +52,44 @@ pub struct SpecialField {
     pub size: u32,
 }
 
+/// Result of looking up a struct/union member at a byte offset, for
+/// the verifier's load-typing path. See `BtfContext::field_at_offset`.
+#[derive(Debug, Clone)]
+pub struct BtfFieldInfo<'a> {
+    /// Member name (e.g. `"cpus_ptr"`, `"sk"`, `"f_path"`). Borrowed
+    /// from the BTF strings table; cheap to clone-into-static via the
+    /// `intern_btf_type_name_strict` cache when needed.
+    pub name: &'a str,
+    pub kind: BtfFieldKind,
+}
+
+/// What a struct/union member resolves to after walking through any
+/// modifier (TYPEDEF/CONST/VOLATILE/RESTRICT) and TYPE_TAG entries.
+#[derive(Debug, Clone)]
+pub enum BtfFieldKind {
+    /// Pointer field: `pointee_name` is the named struct it points to
+    /// (or None if the pointee isn't a named struct — function ptr,
+    /// pointer-to-primitive, …). `tags` collects all `TYPE_TAG`
+    /// modifiers seen along the way (kernel `__rcu`, `__percpu`,
+    /// `__user`, …) so the load site can lift them into the
+    /// resulting `RegType::PtrToBtfId.flags`.
+    Pointer {
+        pointee_name: Option<String>,
+        tags: Vec<&'static str>,
+    },
+    /// Embedded struct/union member (no PTR layer). `type_name` is the
+    /// BTF struct name. Used for `&base->field` interior-pointer
+    /// arithmetic to produce a typed pointer to the member.
+    Embedded {
+        type_name: Option<String>,
+        tags: Vec<&'static str>,
+    },
+    /// Primitive (int, enum, float).
+    Scalar,
+    /// Anything else — array, function-proto, void, … — caller decides.
+    Other,
+}
+
 impl SpecialFieldKind {
     fn from_type_name(name: &str) -> Option<Self> {
         match name {
@@ -169,6 +207,134 @@ impl BtfContext {
         }
         let name = self.get_string(ty.name_off)?;
         Some((name, ty.size_or_type))
+    }
+
+    /// Look up a struct/union member at an exact byte offset and
+    /// classify it for the verifier's load-typing path.
+    ///
+    /// Returns `None` only when no member starts exactly at
+    /// `byte_offset` (or the type isn't a struct/union). Otherwise the
+    /// `BtfFieldInfo` carries:
+    ///   - `name` of the field (for the per-(struct, field) trusted
+    ///     allowlist consulted at the load site),
+    ///   - `kind` describing how the verifier should type a load or an
+    ///     `&base->field` arithmetic.
+    ///
+    /// Used by `update_load_types` to type loads from `PtrToBtfId{X}` at
+    /// known offsets, and by the pointer-arithmetic path to type
+    /// interior pointers `&base->field` to embedded sub-structs.
+    pub fn field_at_offset(
+        &self,
+        struct_id: u32,
+        byte_offset: u32,
+    ) -> Option<BtfFieldInfo<'_>> {
+        let id = self.peel_modifiers(struct_id);
+        let ty = self.types.get(&id)?;
+        if !matches!(ty.kind(), BTF_KIND_STRUCT | BTF_KIND_UNION) {
+            return None;
+        }
+        let bit_offset = byte_offset.checked_mul(8)?;
+        let member = ty.members.iter().find(|m| m.offset == bit_offset)?;
+        let field_name = self.get_string(member.name_off).unwrap_or("");
+
+        // Walk the member's type chain, recording any BTF_KIND_TYPE_TAG
+        // along the way (the kernel's `__rcu`, `__percpu`, `__user`
+        // attributes lower to TYPE_TAG entries the BPF backend
+        // preserves). The chain's terminal kind tells us whether this
+        // is a pointer field, an embedded struct, or a scalar.
+        let mut cur = member.type_id;
+        let mut tags: Vec<&'static str> = Vec::new();
+        for _ in 0..16 {
+            let Some(t) = self.types.get(&cur) else { break };
+            match t.kind() {
+                BTF_KIND_TYPE_TAG => {
+                    if let Some(n) = self.get_string(t.name_off) {
+                        // Tag names are short, well-known kernel
+                        // strings (`rcu`, `percpu`, `user`, …); leak
+                        // once so the consumer can compare with `==`.
+                        tags.push(Box::leak(n.to_string().into_boxed_str()));
+                    }
+                    cur = t.size_or_type;
+                }
+                BTF_KIND_TYPEDEF
+                | BTF_KIND_CONST
+                | BTF_KIND_VOLATILE
+                | BTF_KIND_RESTRICT => {
+                    cur = t.size_or_type;
+                }
+                BTF_KIND_PTR => {
+                    // Walk through any TYPE_TAG / TYPEDEF / CONST /
+                    // VOLATILE / RESTRICT on the pointee so we recover
+                    // a STRUCT/UNION's name when the BTF chain is e.g.
+                    // `PTR -> TYPE_TAG("rcu") -> STRUCT sock` (kernel
+                    // emits `__rcu`-tagged pointer fields this way).
+                    // Tags collected here also propagate up to `tags`
+                    // so the load site can lift them into PtrFlags.
+                    let mut p = t.size_or_type;
+                    let mut pointee_name: Option<String> = None;
+                    for _ in 0..16 {
+                        let Some(pt) = self.types.get(&p) else { break };
+                        match pt.kind() {
+                            BTF_KIND_TYPE_TAG => {
+                                if let Some(n) = self.get_string(pt.name_off) {
+                                    tags.push(Box::leak(n.to_string().into_boxed_str()));
+                                }
+                                p = pt.size_or_type;
+                            }
+                            BTF_KIND_TYPEDEF
+                            | BTF_KIND_CONST
+                            | BTF_KIND_VOLATILE
+                            | BTF_KIND_RESTRICT => {
+                                p = pt.size_or_type;
+                            }
+                            // STRUCT/UNION definitions and FWD
+                            // declarations both name the pointee. FWD
+                            // is what vmlinux BTF emits for kernel
+                            // structs whose layout the BPF prog
+                            // doesn't reference (e.g. `struct sock`
+                            // is FWD-only when the program just
+                            // passes the pointer through). We still
+                            // get a usable type_name for kfunc
+                            // matching.
+                            BTF_KIND_STRUCT | BTF_KIND_UNION | BTF_KIND_FWD => {
+                                pointee_name =
+                                    self.get_string(pt.name_off).map(|s| s.to_string());
+                                break;
+                            }
+                            _ => break,
+                        }
+                    }
+                    return Some(BtfFieldInfo {
+                        name: field_name,
+                        kind: BtfFieldKind::Pointer { pointee_name, tags },
+                    });
+                }
+                BTF_KIND_STRUCT | BTF_KIND_UNION => {
+                    let name = self.get_string(t.name_off).map(|s| s.to_string());
+                    return Some(BtfFieldInfo {
+                        name: field_name,
+                        kind: BtfFieldKind::Embedded { type_name: name, tags },
+                    });
+                }
+                BTF_KIND_INT | BTF_KIND_ENUM | BTF_KIND_ENUM64 | BTF_KIND_FLOAT => {
+                    return Some(BtfFieldInfo {
+                        name: field_name,
+                        kind: BtfFieldKind::Scalar,
+                    });
+                }
+                BTF_KIND_ARRAY => {
+                    return Some(BtfFieldInfo {
+                        name: field_name,
+                        kind: BtfFieldKind::Other,
+                    });
+                }
+                _ => break,
+            }
+        }
+        Some(BtfFieldInfo {
+            name: field_name,
+            kind: BtfFieldKind::Other,
+        })
     }
 
     /// Looks up a struct member at a specific byte offset.

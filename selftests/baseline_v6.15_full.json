@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-30T14:14:10.499680+00:00",
+  "generated_at": "2026-04-30T14:42:23.053826+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -5789,18 +5789,15 @@
       "progs": {
         "test_nested_offset": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 3: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "test_read_cpumask": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 3: register: r2"
+          "ours": "PASS"
         },
         "test_skb_field": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 6: register: r2"
+          "ours": "PASS"
         }
       }
     },
@@ -6009,7 +6006,7 @@
         "preempt_global_subprog_test": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 5: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "note": "Unsupported modern BPF feature at pc 13: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "preempt_lock_missing_1": {
           "upstream": "ACCEPT",
@@ -9290,7 +9287,7 @@
         "global_func9": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid return code at pc 68"
+          "note": "Invalid return code at pc 72"
         }
       }
     },
@@ -16570,8 +16567,7 @@
         },
         "sk_release_btf_tcp_sock": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 23: register: r1"
+          "ours": "PASS"
         },
         "system_key_reference_without_check": {
           "upstream": "ACCEPT",
@@ -18892,8 +18888,8 @@
           "ours": "PASS"
         },
         "path_d_path_kfunc_type_mismatch": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "path_d_path_kfunc_untrusted_from_argument": {
           "upstream": "ACCEPT",

@@ -62,6 +62,16 @@ pub enum ArgKind {
 
     // ---- BTF ID ----
     PtrToBtfId,
+    /// `PtrToBtfId` whose `type_name` must equal the given kernel
+    /// struct name. Stricter than `PtrToBtfId` (which accepts any
+    /// named BTF pointer): used by kfuncs that demand a specific
+    /// struct (`bpf_path_d_path` requires `struct path *` — kernel
+    /// rejects `struct file *` interior pointers like
+    /// `&file->f_task_work` cast to `(struct path *)`). The new
+    /// per-field BTF arithmetic in `update_ptr_arithmetic_type`
+    /// produces correctly-typed interior pointers so this name
+    /// match becomes meaningful.
+    PtrToBtfIdNamed { type_name: &'static str },
 
     // ---- Stack ----
     PtrToStack,
@@ -104,12 +114,24 @@ pub enum ArgKind {
     IterArg { kind: IterKind, expected: IterArgExpect },
 
     // ---- Cpumask (W5.3) ----
-    /// `struct bpf_cpumask *` argument. The actual reg must be a
-    /// non-null, ref-tracked `RegType::PtrToCpumask` (i.e. the program
-    /// has already null-checked a freshly created cpumask). Consumers
-    /// `bpf_cpumask_set_cpu` / `bpf_cpumask_test_cpu` / `bpf_cpumask_first`
-    /// / `bpf_cpumask_release` all use this shape.
+    /// `struct bpf_cpumask *` argument — mutating consumers only
+    /// (`bpf_cpumask_set_cpu`, `_clear_cpu`, `_clear`, `_copy`,
+    /// `_release`, …). Strict: only the acquire-tracked
+    /// `RegType::PtrToCpumask` is accepted, so the program must have
+    /// passed an actual `bpf_cpumask` allocated via
+    /// `bpf_cpumask_create` / acquired via `bpf_cpumask_acquire`.
+    /// `(struct bpf_cpumask *)task->cpus_ptr` casts (read-only kernel
+    /// `cpumask`) are rejected here — kernel error
+    /// "Can't set the CPU of a non-struct bpf_cpumask".
     PtrToCpumask,
+    /// `const struct cpumask *` argument — read-only consumers
+    /// (`bpf_cpumask_test_cpu`, `_first`, `_first_zero`, `_full`,
+    /// `_empty`, `_equal`, `_intersects`, `_subset`, `_weight`, …).
+    /// Accepts `PtrToCpumask` (the bpf_cpumask wrapper is also a
+    /// const cpumask) AND `PtrToBtfId{type_name in {"cpumask",
+    /// "bpf_cpumask"}, TRUSTED}` produced by the BTF field-load
+    /// typing path (`task->cpus_ptr`, `&task->cpus_mask`).
+    PtrToCpumaskRead,
 
     // ---- Cgroup (W6.3-followon) ----
     /// `struct cgroup *` argument. Same shape as `PtrToCpumask` —
@@ -1702,10 +1724,11 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
 
         // bool bpf_cpumask_test_cpu(u32 cpu, const struct cpumask *cpumask)
-        // Read-only query. We accept PtrToCpumask for R2 — the const
-        // cpumask vs bpf_cpumask distinction isn't modeled here.
+        // Read-only query — `PtrToCpumaskRead` accepts both the
+        // bpf_cpumask wrapper (PtrToCpumask) and BTF-typed reads
+        // (`task->cpus_ptr`).
         "bpf_cpumask_test_cpu" => CallProto::with_args([
-            Anything, PtrToCpumask, DontCare, DontCare, DontCare,
+            Anything, PtrToCpumaskRead, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::Scalar)
         .flags(CallFlags::FASTCALL)
@@ -1713,7 +1736,17 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
 
         // u32 bpf_cpumask_first(const struct cpumask *cpumask)
         "bpf_cpumask_first" => CallProto::with_args([
-            PtrToCpumask, DontCare, DontCare, DontCare, DontCare,
+            PtrToCpumaskRead, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // u32 bpf_cpumask_first_zero(const struct cpumask *cpumask)
+        // Same shape as `bpf_cpumask_first`, returns first unset cpu.
+        // KF_RCU consumer.
+        "bpf_cpumask_first_zero" => CallProto::with_args([
+            PtrToCpumaskRead, DontCare, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::Scalar)
         .flags(CallFlags::FASTCALL)
@@ -1839,9 +1872,15 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // KF_TRUSTED_ARGS — fills `buf[..sz]` with the file's path; the
         // kfunc-side `bpf_d_path` analogue. Mem-size pair (R2, R3) so
         // `validate_ptr_to_uninit_mem` enforces the buffer's bounds.
-        // LSM-only (kernel `bpf_lsm_kfunc_set`).
+        // LSM-only (kernel `bpf_lsm_kfunc_set`). R1 is strict-named
+        // `struct path *` — the cluster B residual FA
+        // (path_d_path_kfunc_type_mismatch) passes
+        // `(struct path *)&file->f_task_work` whose corrected type
+        // after the new BTF field-arithmetic is `callback_head`,
+        // not `path`. PtrToBtfIdNamed catches the mismatch.
         "bpf_path_d_path" => CallProto::with_args([
-            PtrToBtfId, PtrToUninitMem, ConstSize, DontCare, DontCare,
+            PtrToBtfIdNamed { type_name: "path" },
+            PtrToUninitMem, ConstSize, DontCare, DontCare,
         ])
         .mem_size_pairs(&pairs::D_PATH)
         .ret(RetKind::Scalar)

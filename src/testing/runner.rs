@@ -761,18 +761,31 @@ impl Analyzer {
             // mirror only the hooks our test corpus actually attaches to.
             if ctx.entry_args.is_none() {
                 if let Some(target) = ctx.attach_subtype.as_deref() {
-                    let table_args = match (ctx.prog_kind, target) {
+                    let flavor = ctx.attach_flavor.as_deref();
+                    let table_args = match (ctx.prog_kind, flavor, target) {
                         // LSM hooks (vfs_accept tests). Args from
                         // include/linux/lsm_hooks.h's `LSM_HOOK(...)`
                         // declarations.
-                        (ProgramKind::Lsm, "file_open") => {
+                        (ProgramKind::Lsm, _, "file_open") => {
                             Some(vec![("file", false)])
                         }
-                        (ProgramKind::Lsm, "task_alloc") => {
+                        (ProgramKind::Lsm, _, "task_alloc") => {
                             Some(vec![("task_struct", false)])
                         }
-                        (ProgramKind::Lsm, "inode_getattr") => {
+                        (ProgramKind::Lsm, _, "inode_getattr") => {
                             Some(vec![("path", false)])
+                        }
+                        // tp_btf raw-tracepoint targets. Args from
+                        // include/trace/events/<sub>.h's TRACE_EVENT
+                        // declarations. clang `__always_inline`s the
+                        // BPF_PROG inner so we mirror the kernel's
+                        // attach-time vmlinux-BTF resolution with a
+                        // static table for hooks our corpus exercises.
+                        (ProgramKind::Tracing, Some("tp_btf"), "task_newtask") => {
+                            Some(vec![("task_struct", false)])
+                        }
+                        (ProgramKind::Tracing, Some("tp_btf"), "tcp_probe") => {
+                            Some(vec![("sock", false), ("sk_buff", false)])
                         }
                         _ => None,
                     };

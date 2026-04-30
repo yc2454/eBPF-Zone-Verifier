@@ -75,9 +75,18 @@ pub fn is_ptr_to_btf_id(t: &RegType) -> bool {
 // Type Compatibility Tables
 // ============================================================================
 
-/// Types compatible with PtrToSocket argument
-pub static SOCKET_COMPAT: &[fn(&RegType) -> bool] =
-    &[is_ptr_to_socket, is_ptr_to_sock_common, is_ptr_to_stack];
+/// Types compatible with PtrToSocket argument.
+/// Phase 3 cluster B follow-on: `is_ptr_to_tcp_sock` accepts the
+/// narrowed-by-`bpf_skc_to_tcp_sock` form so `bpf_sk_release(tcp)`
+/// is allowed (kernel checks ref_id, not the static subclass —
+/// PtrToTcpSock carries the same ref_id as the original socket).
+/// Closes `verifier_ref_tracking::sk_release_btf_tcp_sock`.
+pub static SOCKET_COMPAT: &[fn(&RegType) -> bool] = &[
+    is_ptr_to_socket,
+    is_ptr_to_sock_common,
+    is_ptr_to_tcp_sock,
+    is_ptr_to_stack,
+];
 
 /// Types compatible with PtrToSockCommon argument
 pub static SOCK_COMMON_COMPAT: &[fn(&RegType) -> bool] =

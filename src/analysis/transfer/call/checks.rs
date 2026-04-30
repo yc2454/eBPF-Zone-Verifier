@@ -246,6 +246,9 @@ pub(crate) fn validate_single_arg(
         // ---- Simple pointer types (inline validation) ----
         ArgKind::PtrToCtx => validate_ptr_to_ctx(&mut ctx),
         ArgKind::PtrToBtfId => validate_ptr_to_btf_id(&mut ctx),
+        ArgKind::PtrToBtfIdNamed { type_name } => {
+            validate_ptr_to_btf_id_named(&mut ctx, type_name)
+        }
         ArgKind::PtrToStack => validate_ptr_to_stack(&mut ctx),
         ArgKind::PtrToLong => validate_ptr_to_long(&mut ctx),
         ArgKind::PtrToCallback => validate_ptr_to_callback(&mut ctx),
@@ -263,6 +266,7 @@ pub(crate) fn validate_single_arg(
 
         // ---- Cpumask (W5.3) ----
         ArgKind::PtrToCpumask => validate_ptr_to_cpumask(&mut ctx),
+        ArgKind::PtrToCpumaskRead => validate_ptr_to_cpumask_read(&mut ctx),
 
         // ---- Cgroup (W6.3-followon) ----
         ArgKind::PtrToCgroup => validate_ptr_to_cgroup(&mut ctx),
@@ -357,6 +361,34 @@ fn validate_ptr_to_btf_id(ctx: &mut ValidationContext) -> bool {
     true
 }
 
+/// Strict variant: arg must be `PtrToBtfId{type_name == expected, ..}`.
+/// Drives kfuncs like `bpf_path_d_path` whose first arg is `struct
+/// path *` — closes the cluster B residual FA where the test passes
+/// `(struct path *)&file->f_task_work` (an interior pointer of type
+/// `callback_head` after our new field-arithmetic typing) to the
+/// kfunc.
+fn validate_ptr_to_btf_id_named(
+    ctx: &mut ValidationContext,
+    expected: &'static str,
+) -> bool {
+    match ctx.actual {
+        RegType::PtrToBtfId { type_name, .. } if type_name == expected => true,
+        _ => ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} expected PTR_TO_BTF_ID(struct {}), got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                expected,
+                ctx.actual
+            ),
+        ),
+    }
+}
+
 /// Validate `ArgKind::PtrToCpumask` (W5.3).
 ///
 /// Only the non-null `RegType::PtrToCpumask` is accepted: cpumask
@@ -365,6 +397,8 @@ fn validate_ptr_to_btf_id(ctx: &mut ValidationContext) -> bool {
 /// `PtrToCpumaskOrNull` would short-circuit fail because the pointer
 /// could legitimately be null at the call site.
 fn validate_ptr_to_cpumask(ctx: &mut ValidationContext) -> bool {
+    // Strict: mutating cpumask consumers only accept the
+    // acquire-tracked specialization. See ArgKind::PtrToCpumask docs.
     if !matches!(ctx.actual, RegType::PtrToCpumask { .. }) {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
@@ -373,6 +407,35 @@ fn validate_ptr_to_cpumask(ctx: &mut ValidationContext) -> bool {
             },
             &format!(
                 "[Verifier] pc {}: R{} expected PTR_TO_CPUMASK, got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                ctx.actual
+            ),
+        );
+    }
+    true
+}
+
+/// Validate `ArgKind::PtrToCpumaskRead` — read-only KF_RCU consumers.
+/// Accepts `PtrToCpumask` (the bpf_cpumask wrapper passes the const
+/// arg) and `PtrToBtfId{cpumask|bpf_cpumask, TRUSTED}` produced by the
+/// BTF field-load typing path (`task->cpus_ptr`, `&task->cpus_mask`).
+fn validate_ptr_to_cpumask_read(ctx: &mut ValidationContext) -> bool {
+    use crate::analysis::machine::reg_types::PtrFlags;
+    let is_btf_cpumask = matches!(
+        ctx.actual,
+        RegType::PtrToBtfId { type_name, flags, .. }
+            if (type_name == "cpumask" || type_name == "bpf_cpumask")
+                && flags.contains(PtrFlags::TRUSTED)
+    );
+    if !matches!(ctx.actual, RegType::PtrToCpumask { .. }) && !is_btf_cpumask {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} expected PTR_TO_CPUMASK_READ, got {:?}",
                 ctx.pc,
                 ctx.arg_index + 1,
                 ctx.actual

@@ -85,6 +85,7 @@ fn adjust_map_value_offset(ty: RegType, delta: Option<i64>) -> RegType {
 
 /// Unified handler for pointer arithmetic (Add/Sub) type updates
 fn update_ptr_arithmetic_type(
+    env: &VerifierEnv,
     types: &mut TypeState,
     domain: &NumericDomain,
     dst: Reg,
@@ -151,22 +152,48 @@ fn update_ptr_arithmetic_type(
         // `type_name == "unknown"` already skips per-field bounds
         // validation; for layout-known names the access path enforces
         // bounds via mem_region_model.
+        //
+        // Phase 3 cluster B follow-on: when the offset matches an
+        // *embedded* struct member of `type_name`, retype to that
+        // member's struct (e.g. `&task->cpus_mask` →
+        // `PtrToBtfId{cpumask, TRUSTED}`). This is what kfunc arg
+        // matchers like `validate_ptr_to_cpumask` need to accept the
+        // interior pointer. For non-named types (`"unknown"`,
+        // `"struct"`) or unresolved offsets, fall back to preserving
+        // the source type — matches the W6.4a-followon shape.
         RegType::PtrToBtfId {
             type_name,
             flags,
             ref_id,
         } => {
             // Pointer arithmetic on a refcounted BTF pointer drops the
-            // ref_id: an interior pointer (e.g. `&task->cpus_ptr`) is no
-            // longer the acquire-tracked owner, and releasing through it
-            // would mismatch the original. The kernel verifier likewise
-            // treats arithmetic on a `MEM_REFCOUNTED` pointer as breaking
-            // ownership.
+            // ref_id: an interior pointer is no longer the
+            // acquire-tracked owner, and releasing through it would
+            // mismatch the original. Kernel matches.
             let _ = ref_id;
+            let new_type_name = signed_delta
+                .filter(|d| *d > 0 && *d < i64::from(i32::MAX))
+                .and_then(|d| {
+                    let struct_id = env.ctx.btf.find_struct_by_name(type_name)?;
+                    let info = env
+                        .ctx
+                        .btf
+                        .field_at_offset(struct_id, d as u32)?;
+                    match info.kind {
+                        crate::parsing::btf::BtfFieldKind::Embedded {
+                            type_name: Some(name),
+                            ..
+                        } => Some(crate::analysis::machine::context::intern_btf_type_name_strict(
+                            &name,
+                        )),
+                        _ => None,
+                    }
+                })
+                .unwrap_or(type_name);
             types.set(
                 dst,
                 RegType::PtrToBtfId {
-                    type_name,
+                    type_name: new_type_name,
                     flags,
                     ref_id: None,
                 },
@@ -266,7 +293,7 @@ pub(crate) fn update_alu_types(
             let is_add = op == AluOp::Add;
 
             if dst_ty.is_pointer() {
-                update_ptr_arithmetic_type(types, domain, dst, dst_ty, src, is_add);
+                update_ptr_arithmetic_type(env, types, domain, dst, dst_ty, src, is_add);
             } else {
                 handle_scalar_arithmetic_type(in_types, types, dst, src, is_add);
             }
@@ -409,8 +436,86 @@ pub(crate) fn update_load_types(
                 state.types.set(dst, RegType::ScalarValue);
             }
         }
+        // Phase 3 cluster B follow-on: load `*(u64*)(base + off)` from
+        // `PtrToBtfId{X, flags}` where X.fields[off] is a `PTR -> Y`.
+        // The default load yields ScalarValue (preserves the existing
+        // FA-safe behavior — kfunc validators reject Scalar where they
+        // expected a typed pointer). For a small allowlist of known-
+        // safe (struct, field_name) pairs the loaded value is typed as
+        // `PtrToBtfId{Y, TRUSTED}` so the matching kfunc validators
+        // accept it (`task->cpus_ptr`, `skb->sk` are the load
+        // surfaces driving the nested_trust_success FRs).
+        //
+        // Type-tag-based promotion (kernel `__rcu` / `__percpu` …) is
+        // intentionally *not* applied here yet — it would require
+        // RCU-section tracking we don't model, and the upstream
+        // selftest corpus has only one __success test that depends on
+        // it (`test_read_cpumask`'s `cpus_ptr`, which the allowlist
+        // covers explicitly). When we ship RCU lock tracking, swap
+        // `tags` → `flags` and drop the static allowlist.
+        RegType::PtrToBtfId { type_name, .. }
+            if size == MemSize::U64.bytes() && off >= 0 =>
+        {
+            use crate::parsing::btf::BtfFieldKind;
+            let mut typed = false;
+            if let Some(struct_id) = env.ctx.btf.find_struct_by_name(type_name)
+                && let Some(info) = env.ctx.btf.field_at_offset(struct_id, off as u32)
+                && let BtfFieldKind::Pointer {
+                    pointee_name: Some(pointee),
+                    ..
+                } = info.kind
+                && trusted_field_load(type_name, info.name)
+            {
+                let pointee_static =
+                    crate::analysis::machine::context::intern_btf_type_name_strict(
+                        &pointee,
+                    );
+                state.types.set(
+                    dst,
+                    RegType::PtrToBtfId {
+                        type_name: pointee_static,
+                        flags: PtrFlags::TRUSTED,
+                        ref_id: None,
+                    },
+                );
+                typed = true;
+            }
+            if !typed {
+                state.types.set(dst, RegType::ScalarValue);
+            }
+        }
         _ => state.types.set(dst, RegType::ScalarValue),
     }
+}
+
+/// Allowlist of `(struct_name, field_name)` pairs whose loaded pointer
+/// value is treated as `PtrToBtfId{<pointee>, TRUSTED}`. Mirrors the
+/// kernel's per-field "safe field" allowlist for tracing programs —
+/// the kernel encodes most of these via BTF `__rcu` / `btf_type_tag`
+/// metadata that we don't yet thread through `RegType` flags. The
+/// intent is conservative: only fields whose kernel BTF actually marks
+/// safe-to-load belong here, so unrelated `__failure` selftests that
+/// rely on a non-allowlisted field landing as ScalarValue (and thus
+/// getting rejected by the kfunc validator) keep their rejection.
+///
+/// Each entry is "this load yields a trusted pointer typed as the
+/// declared pointee struct". Promote-from-allowlist is the *only*
+/// way a load gets a typed pointer today; remove an entry to
+/// re-introduce the lax-Scalar fallback.
+fn trusted_field_load(struct_name: &str, field_name: &str) -> bool {
+    matches!(
+        (struct_name, field_name),
+        // task_struct.cpus_ptr — `cpumask_t *` carrying the task's
+        // current CPU mask. Kernel marks PTR_TRUSTED on load (the
+        // task's PCB is alive while the program holds a trusted
+        // task pointer); KF_RCU consumers like
+        // `bpf_cpumask_test_cpu` accept.
+        ("task_struct", "cpus_ptr")
+        // sk_buff.sk — `struct sock *`. Trusted while the skb is
+        // trusted. Drives `nested_trust_success::test_skb_field`'s
+        // `bpf_sk_storage_get(&map, skb->sk, …)` accepting path.
+        | ("sk_buff", "sk")
+    )
 }
 
 /// Updates stack types after a Store operation.
