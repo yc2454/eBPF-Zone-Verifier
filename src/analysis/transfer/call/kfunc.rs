@@ -433,6 +433,17 @@ fn throw(env: &mut VerifierEnv, state: State) -> Vec<State> {
         });
         return vec![];
     }
+    // Kernel: "function calls are not allowed while holding a lock".
+    // bpf_throw under an active spin_lock would unwind without releasing
+    // the lock — the kernel rejects up-front.
+    // (See `exceptions_fail::reject_with_lock` and `reject_subprog_with_lock`.)
+    if state.has_active_lock() {
+        env.fail(VerificationError::InvalidArgType {
+            pc: state.pc,
+            reg: Reg::R0,
+        });
+        return vec![];
+    }
     if state.has_unreleased_refs() {
         env.fail(VerificationError::UnreleasedReference);
     }

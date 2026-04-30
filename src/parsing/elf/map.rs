@@ -13,16 +13,39 @@ pub fn load_data_section_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>>
     let buf = fs::read(path)?;
     let elf = Elf::parse(&buf)?;
 
+    // Pre-parse BTF once so we can attach `btf_val_type_id` to the
+    // DATASEC for each synthetic data-section map. Without this,
+    // SpecialField validation (spin_lock, rb_root, …) on `private(name)`
+    // globals in `.bss.<name>` can't resolve any field because there's
+    // no value-type BTF on the synthetic map.
+    let btf_ctx = elf
+        .section_headers
+        .iter()
+        .find_map(|sh| {
+            if elf.shdr_strtab.get_at(sh.sh_name) == Some(".BTF") {
+                let start = sh.sh_offset as usize;
+                let end = start + sh.sh_size as usize;
+                if end <= buf.len() {
+                    return btf::parse_btf(&buf[start..end]).ok();
+                }
+            }
+            None
+        });
+
     let mut maps = vec![];
 
     for sh in &elf.section_headers {
         let name = elf.shdr_strtab.get_at(sh.sh_name).unwrap_or("");
 
+        // `.bss.<name>` mirrors `.data.<name>` / `.rodata.<name>` for
+        // libbpf's `private(name)` macro idiom (see e.g.
+        // `progs/refcounted_kptr.c`'s per-suite `.bss.A`/`.bss.B`/`.bss.C`).
         let is_data_section = name == ".rodata"
             || name == ".data"
             || name == ".bss"
             || name.starts_with(".rodata.")
-            || name.starts_with(".data.");
+            || name.starts_with(".data.")
+            || name.starts_with(".bss.");
 
         if is_data_section && sh.sh_size > 0 {
             let initial_data = if sh.sh_type == constants::SHT_NOBITS {
@@ -43,6 +66,10 @@ pub fn load_data_section_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>>
                 0
             };
 
+            let btf_val_type_id = btf_ctx
+                .as_ref()
+                .and_then(|ctx| ctx.find_datasec(name));
+
             maps.push(BpfMapDef {
                 type_: constants::BPF_MAP_TYPE_ARRAY,
                 key_size: 4,
@@ -50,7 +77,7 @@ pub fn load_data_section_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>>
                 max_entries: 1,
                 map_flags: extra_flags,
                 name: name.to_string(),
-                btf_val_type_id: None,
+                btf_val_type_id,
                 initial_data,
                 inner_map_idx: None,
                 kptr_fields: Vec::new(),

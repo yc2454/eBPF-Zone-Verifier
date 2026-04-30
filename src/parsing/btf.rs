@@ -401,13 +401,46 @@ impl BtfContext {
         false
     }
 
-    /// Find all special fields in a struct type
+    /// Find all special fields in a struct type. Also supports DATASEC
+    /// types (used for synthetic data-section maps like `.bss.<name>`):
+    /// each VAR's resolved struct name is checked against
+    /// [`SpecialFieldKind::from_type_name`], with the offset taken from
+    /// the DATASEC entry (already in bytes).
     pub fn find_special_fields(&self, type_id: u32) -> Vec<SpecialField> {
         let mut fields = Vec::new();
 
         let Some(ty) = self.types.get(&type_id) else {
             return fields;
         };
+
+        // DATASEC: each member is a VAR pointing at a struct/typedef.
+        // The kernel treats `.bss.<name>` as a single map value; each VAR
+        // declared in that section becomes a special field at its DATASEC
+        // offset if the VAR's type is one of the recognized special types
+        // (bpf_spin_lock, bpf_rb_root, …). Used by `private(name)`-style
+        // globals in tests like `refcounted_kptr.c`.
+        if ty.kind() == BTF_KIND_DATASEC {
+            for entry in self.datasec_entries(type_id) {
+                let Some((_var_name, target_id)) = self.var_info(entry.var_id) else {
+                    continue;
+                };
+                let resolved_id = self.peel_modifiers(target_id);
+                let Some(resolved_ty) = self.types.get(&resolved_id) else {
+                    continue;
+                };
+                let Some(type_name) = self.get_string(resolved_ty.name_off) else {
+                    continue;
+                };
+                if let Some(kind) = SpecialFieldKind::from_type_name(type_name) {
+                    fields.push(SpecialField {
+                        kind,
+                        offset: entry.offset,
+                        size: resolved_ty.size_or_type,
+                    });
+                }
+            }
+            return fields;
+        }
 
         for member in &ty.members {
             let Some(member_type) = self.types.get(&member.type_id) else {
