@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-30T20:38:15.285241+00:00",
+  "generated_at": "2026-04-30T20:56:33.510422+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -5996,7 +5996,7 @@
         "preempt_global_subprog_test": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 7: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "note": "Unsupported modern BPF feature at pc 5: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "preempt_lock_missing_1": {
           "upstream": "ACCEPT",
@@ -9275,7 +9275,7 @@
         "global_func9": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe memory load at pc 63: base R1, offset 36, size 4"
+          "note": "Unsafe memory load at pc 71: base R1, offset 36, size 4"
         }
       }
     },
@@ -16131,8 +16131,7 @@
         },
         "with_valid_ctx_access_test6": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 15: base R2+112 (type: ScalarValue)"
+          "ours": "PASS"
         }
       }
     },

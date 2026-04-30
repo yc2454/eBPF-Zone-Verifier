@@ -1755,13 +1755,22 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
     // only 8-byte loads at off 0 (state) and off 8 (skb) are valid.
     if prog_kind == ProgramKind::Netfilter {
         if size == 8 && (off == 0 || off == 8) {
-            // Return Scalar rather than TrustedPtr: the kernel marks
-            // pointers loaded out of bpf_nf_ctx as read-only, and writes
-            // through them must be rejected (`__msg("only read is supported")`
-            // in `with_invalid_ctx_access_test5`). The BTF mem-region
-            // "unknown" lax policy would silently accept those writes.
+            // bpf_nf_ctx { state @ 0; skb @ 8; }. Type the loaded
+            // value as the named struct so subsequent field reads
+            // (e.g. `state->pf` in
+            // `verifier_netfilter_ctx::with_valid_ctx_access_test6`)
+            // type-check. Writes through the loaded pointer remain
+            // rejected: PtrToBtfId{<name>, TRUSTED} stores fall into
+            // the access.rs check_store arm, which rejects since
+            // nf_hook_state / sk_buff aren't in mem_region_model
+            // (closes `with_invalid_ctx_access_test5`'s
+            // `state->sk = NULL` rejection).
+            let type_name = if off == 0 { "nf_hook_state" } else { "sk_buff" };
             return Some(CtxAccessInfo {
-                kind: CtxFieldKind::Scalar,
+                kind: CtxFieldKind::TrustedPtr {
+                    type_name,
+                    nullable: false,
+                },
                 readable: true,
                 writable: false,
             });

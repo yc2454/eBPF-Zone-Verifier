@@ -1266,7 +1266,7 @@ const LSM_ONLY_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 1] =
 /// (tc), socket_filter, cgroup_skb, lwt_*, sk_skb, sock_ops, sk_msg,
 /// flow_dissector. raw_tp / tracing / xdp / others get the kernel's
 /// "calling kernel function bpf_dynptr_from_skb is not allowed".
-const SKB_DYNPTR_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 11] = [
+const SKB_DYNPTR_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 12] = [
     crate::ast::ProgramKind::SchedCls,
     crate::ast::ProgramKind::SchedAct,
     crate::ast::ProgramKind::SocketFilter,
@@ -1278,6 +1278,11 @@ const SKB_DYNPTR_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 11] = [
     crate::ast::ProgramKind::SockOps,
     crate::ast::ProgramKind::SkMsg,
     crate::ast::ProgramKind::FlowDissector,
+    // Netfilter passes `struct sk_buff *` via `bpf_nf_ctx.skb`;
+    // upstream `verifier_netfilter_ctx::with_valid_ctx_access_test6`
+    // is `__success` calling `bpf_dynptr_from_skb` from a netfilter
+    // hook.
+    crate::ast::ProgramKind::Netfilter,
 ];
 
 /// `bpf_dynptr_from_xdp` allowlist (W4.2f) — only XDP programs receive

@@ -333,7 +333,19 @@ pub(crate) fn validate_single_arg_inner(
 // ============================================================================
 
 fn validate_ptr_to_ctx(ctx: &mut ValidationContext) -> bool {
-    if !matches!(ctx.actual, RegType::PtrToCtx) {
+    use crate::analysis::machine::reg_types::PtrFlags;
+    let ok = matches!(ctx.actual, RegType::PtrToCtx)
+        // Kernel `check_kfunc_call` accepts both PTR_TO_CTX and a
+        // trusted `PTR_TO_BTF_ID + sk_buff` for kfuncs like
+        // `bpf_dynptr_from_skb`. The latter arises from `ctx->skb`
+        // of `bpf_nf_ctx` (Netfilter) — closes
+        // `verifier_netfilter_ctx::with_valid_ctx_access_test6`.
+        || matches!(
+            ctx.actual,
+            RegType::PtrToBtfId { type_name: "sk_buff", flags, .. }
+                if flags.contains(PtrFlags::TRUSTED)
+        );
+    if !ok {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,
