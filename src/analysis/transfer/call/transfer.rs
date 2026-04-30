@@ -711,7 +711,13 @@ pub(crate) fn transfer_call_rel(
     target: usize,
 ) -> Vec<State> {
     let pc = state.pc;
-    if state.num_frames() >= 8 {
+    // Kernel: `state->curframe + 1 >= MAX_CALL_FRAMES (8)` rejects when
+    // the *new* frame's index would reach the limit. Our 1-based
+    // `num_frames()` counts the current depth. The kernel allows 8
+    // frames total (main + 7 subprog frames); a chain like
+    // `test_global_func4`'s `main → f7 → ... → f1` hits exactly 8
+    // frames at f1. Use `> 8` so we reject only on the *9th* push.
+    if state.num_frames() > 8 {
         env.fail(VerificationError::MaxCallDepthExceeded { pc });
         return vec![];
     }

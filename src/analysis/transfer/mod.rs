@@ -287,10 +287,12 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
             env.fail(VerificationError::InvalidReturnCode { pc: state.pc });
             return vec![];
         }
-    } else if env.ctx.prog_kind.requires_strict_return_code() && (r0_min < 0 || r0_max > 1) {
-        env.fail(VerificationError::InvalidReturnCode { pc: state.pc });
-        return vec![];
     }
+    // Kernel `check_return_code` only fires at the *main* program's
+    // exit — subprog (global_func) return values are unconstrained
+    // (test_global_func8::foo returns `bpf_get_prandom_u32()` and
+    // upstream accepts). Don't enforce the prog-type retval rule on
+    // non-main exits.
 
     // R0 must be readable at the main frame (it's the return value).
     // W6.4a-followon: void-returning struct_ops methods are exempt — the
@@ -359,7 +361,13 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         return vec![];
     }
 
-    if state.num_frames() >= 8 {
+    // Exit-time sanity guard: depth at exit shouldn't exceed the
+    // kernel's MAX_CALL_FRAMES = 8. The pre-push `> 8` check in
+    // `transfer_call_rel` already prevents pushing a 9th frame, so
+    // hitting this at exit means a bug in frame bookkeeping. Use the
+    // same `> 8` rule so a legitimate `main → 7 subprogs → exit`
+    // chain (depth = 8 at the deepest) doesn't FR.
+    if state.num_frames() > 8 {
         env.fail(VerificationError::MaxCallDepthExceeded { pc: state.pc });
         return vec![];
     }
