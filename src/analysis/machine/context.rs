@@ -94,6 +94,11 @@ pub fn intern_btf_type_name_strict(name: &str) -> &'static str {
         "bpf_key" => return "bpf_key",
         "inode" => return "inode",
         "cred" => return "cred",
+        "dentry" => return "dentry",
+        "socket" => return "socket",
+        "sockaddr" => return "sockaddr",
+        "linux_binprm" => return "linux_binprm",
+        "vm_area_struct" => return "vm_area_struct",
         _ => {}
     }
     use std::collections::HashMap;

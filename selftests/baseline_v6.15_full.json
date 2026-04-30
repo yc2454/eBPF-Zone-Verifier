@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-30T18:20:40.381885+00:00",
+  "generated_at": "2026-04-30T18:38:31.614994+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -5021,28 +5021,23 @@
       "progs": {
         "exec": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 16: base R1+40 (type: ScalarValue)"
+          "ours": "PASS"
         },
         "inode_rename": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 7: register: r2"
+          "ours": "PASS"
         },
         "socket_bind": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 14: register: r2"
+          "ours": "PASS"
         },
         "socket_post_create": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 13: register: r2"
+          "ours": "PASS"
         },
         "unlink_hook": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 40: base R1+128 (type: ScalarValue)"
+          "ours": "PASS"
         }
       }
     },
@@ -6004,7 +5999,7 @@
         "preempt_global_subprog_test": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 13: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "note": "Unsupported modern BPF feature at pc 5: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "preempt_lock_missing_1": {
           "upstream": "ACCEPT",
@@ -6609,7 +6604,7 @@
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(67) })"
+          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(66) })"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",
@@ -9285,7 +9280,7 @@
         "global_func9": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid return code at pc 74"
+          "note": "Invalid return code at pc 76"
         }
       }
     },

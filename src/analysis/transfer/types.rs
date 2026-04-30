@@ -453,10 +453,23 @@ pub(crate) fn update_load_types(
         // it (`test_read_cpumask`'s `cpus_ptr`, which the allowlist
         // covers explicitly). When we ship RCU lock tracking, swap
         // `tags` → `flags` and drop the static allowlist.
-        RegType::PtrToBtfId { type_name, .. }
-            if size == MemSize::U64.bytes() && off >= 0 =>
+        // Phase 3 cluster B follow-on: BTF field-load typing for
+        // any base whose static BTF type is known. PtrToBtfId
+        // carries `type_name` directly. The acquire-tracked
+        // specializations (`PtrToTask`, `PtrToCgroup`, `PtrToCpumask`)
+        // are structurally pointers to the matching named struct for
+        // field-access purposes — extract the implied name so
+        // `task = bpf_get_current_task_btf(); task->bpf_storage`
+        // resolves the same as `task` from a BPF_PROG entry arg.
+        // Sock-family variants stay on the mem_region_model field
+        // tables (richer per-field offsets); we don't divert them
+        // here.
+        ref t if size == MemSize::U64.bytes()
+            && off >= 0
+            && implied_btf_struct_name(t).is_some() =>
         {
             use crate::parsing::btf::BtfFieldKind;
+            let type_name = implied_btf_struct_name(t).unwrap();
             let mut typed = false;
             if let Some(struct_id) = env.ctx.btf.find_struct_by_name(type_name)
                 && let Some(info) = env.ctx.btf.field_at_offset(struct_id, off as u32)
@@ -502,6 +515,22 @@ pub(crate) fn update_load_types(
 /// declared pointee struct". Promote-from-allowlist is the *only*
 /// way a load gets a typed pointer today; remove an entry to
 /// re-introduce the lax-Scalar fallback.
+/// Map a register type to the BTF struct name whose layout describes
+/// what the program accesses through it. Used by the BTF field-load
+/// typing path to look up `(struct_name, field@offset)` for
+/// trusted-load promotion. Returns None for pointer kinds the path
+/// doesn't handle (sock variants use mem_region_model field tables;
+/// PtrToCtx / PtrToStack / etc. don't apply).
+fn implied_btf_struct_name(ty: &RegType) -> Option<&'static str> {
+    match ty {
+        RegType::PtrToBtfId { type_name, .. } => Some(type_name),
+        RegType::PtrToTask { .. } => Some("task_struct"),
+        RegType::PtrToCgroup { .. } => Some("cgroup"),
+        RegType::PtrToCpumask { .. } => Some("cpumask"),
+        _ => None,
+    }
+}
+
 fn trusted_field_load(struct_name: &str, field_name: &str) -> bool {
     matches!(
         (struct_name, field_name),
@@ -515,6 +544,19 @@ fn trusted_field_load(struct_name: &str, field_name: &str) -> bool {
         // trusted. Drives `nested_trust_success::test_skb_field`'s
         // `bpf_sk_storage_get(&map, skb->sk, …)` accepting path.
         | ("sk_buff", "sk")
+        // LSM hook chains — fields kernel marks PTR_TRUSTED on load
+        // from a trusted-rooted access (each entry corresponds to a
+        // specific FR in local_storage.c). Adding more entries should
+        // always cross-check against the matching `__failure` siblings
+        // — see the cpumask reader/mutator split for the kind of FA
+        // risk loose typing exposes.
+        | ("linux_binprm", "file")  // bprm->file (exec)
+        | ("file", "f_inode")        // bprm->file->f_inode (exec)
+        | ("dentry", "d_inode")      // dentry->d_inode (inode_rename, unlink_hook)
+        | ("socket", "sk")           // sock->sk (socket_bind, socket_post_create)
+        | ("task_struct", "bpf_storage")  // task->bpf_storage (unlink_hook)
+        | ("sock", "sk_bpf_storage")      // sk->sk_bpf_storage (socket_bind)
+        | ("bpf_local_storage", "smap")   // local_storage->smap (unlink_hook, socket_bind)
     )
 }
 

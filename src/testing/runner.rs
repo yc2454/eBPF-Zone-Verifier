@@ -763,9 +763,13 @@ impl Analyzer {
                 if let Some(target) = ctx.attach_subtype.as_deref() {
                     let flavor = ctx.attach_flavor.as_deref();
                     let table_args = match (ctx.prog_kind, flavor, target) {
-                        // LSM hooks (vfs_accept tests). Args from
-                        // include/linux/lsm_hooks.h's `LSM_HOOK(...)`
-                        // declarations.
+                        // LSM hooks. Args from include/linux/lsm_hooks.h's
+                        // `LSM_HOOK(...)` declarations. Trailing scalar
+                        // args (int, unsigned, etc.) are dropped — only
+                        // the BTF-typed pointer prefix matters; the
+                        // ctx-array load typing only fires for 8-byte
+                        // pointer fields, scalars fall through to
+                        // ScalarValue and pose no soundness issue.
                         (ProgramKind::Lsm, _, "file_open") => {
                             Some(vec![("file", false)])
                         }
@@ -774,6 +778,25 @@ impl Analyzer {
                         }
                         (ProgramKind::Lsm, _, "inode_getattr") => {
                             Some(vec![("path", false)])
+                        }
+                        (ProgramKind::Lsm, _, "inode_unlink") => {
+                            Some(vec![("inode", false), ("dentry", false)])
+                        }
+                        (ProgramKind::Lsm, _, "inode_rename") => Some(vec![
+                            ("inode", false),
+                            ("dentry", false),
+                            ("inode", false),
+                            ("dentry", false),
+                        ]),
+                        (ProgramKind::Lsm, _, "socket_bind") => Some(vec![
+                            ("socket", false),
+                            ("sockaddr", false),
+                        ]),
+                        (ProgramKind::Lsm, _, "socket_post_create") => {
+                            Some(vec![("socket", false)])
+                        }
+                        (ProgramKind::Lsm, _, "bprm_committed_creds") => {
+                            Some(vec![("linux_binprm", false)])
                         }
                         // tp_btf raw-tracepoint targets. Args from
                         // include/trace/events/<sub>.h's TRACE_EVENT
