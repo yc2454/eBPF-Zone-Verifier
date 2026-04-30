@@ -1596,6 +1596,59 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
     // these prog types; the runner now resolves entry_args from the
     // function's BTF FUNC_PROTO for non-struct_ops kinds via
     // `btf.resolve_func_args(func_name)`.
+    // Iter / sk_reuseport ctx loads: R1 holds a typed ctx pointer
+    // directly (no BPF_PROG wrapper). `*(u64 *)(r1 + off)` is a field
+    // load on the ctx struct, not the BPF_PROG ctx-array idiom. Look
+    // up `(ctx_struct, off)` in BTF and type the load via the
+    // `trusted_field_load` allowlist.
+    let is_direct_typed_ctx = matches!(prog_kind, ProgramKind::SkReuseport)
+        || (prog_kind == ProgramKind::Tracing
+            && matches!(env.ctx.attach_flavor.as_deref(), Some("iter")));
+    if is_direct_typed_ctx && size == 8 && off >= 0 && off % 8 == 0 {
+        if let Some(args) = env.ctx.entry_args.as_ref()
+            && let Some(arg0) = args.first()
+        {
+            use crate::analysis::machine::context::{
+                EntryArg, intern_btf_type_name_strict,
+            };
+            use crate::analysis::transfer::types::trusted_field_load;
+            use crate::parsing::btf::BtfFieldKind;
+            if let EntryArg::TrustedPtrBtfId { type_name, .. } = arg0 {
+                if let Some(struct_id) = env.ctx.btf.find_struct_by_name(type_name)
+                    && let Some(info) =
+                        env.ctx.btf.field_at_offset(struct_id, off as u32)
+                {
+                    if let BtfFieldKind::Pointer {
+                        pointee_name: Some(pointee),
+                        ..
+                    } = &info.kind
+                        && trusted_field_load(type_name, info.name)
+                    {
+                        let pointee_static = intern_btf_type_name_strict(pointee);
+                        return Some(CtxAccessInfo {
+                            kind: CtxFieldKind::TrustedPtr {
+                                type_name: pointee_static,
+                                nullable: false,
+                            },
+                            readable: true,
+                            writable: false,
+                        });
+                    }
+                }
+                // Fallback for non-allowlisted iter / sk_reuseport ctx
+                // fields: scalar (loose). Mirrors the existing iter
+                // behavior pre-cluster-#2 — the kernel admits these
+                // loads but our verifier doesn't have ctx-field
+                // metadata for every iter ctx struct.
+                return Some(CtxAccessInfo {
+                    kind: CtxFieldKind::Scalar,
+                    readable: true,
+                    writable: false,
+                });
+            }
+        }
+    }
+
     if matches!(
         prog_kind,
         ProgramKind::StructOps

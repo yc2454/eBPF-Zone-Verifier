@@ -683,6 +683,7 @@ impl Analyzer {
                 | ProgramKind::Tracepoint
                 | ProgramKind::RawTracepoint
                 | ProgramKind::RawTracepointWritable
+                | ProgramKind::SkReuseport
         ) {
             // Phase 7 wrap-up: extend the W6.4a struct_ops ctx-load idiom
             // to fentry/fexit/tp_btf/lsm/tracepoint. clang's BPF_PROG()

@@ -44,6 +44,11 @@ pub enum ProgramKind {
     /// `struct __sk_buff *` ctx but with a stricter allowlist than the
     /// generic SkBuff context (only `data`, `data_end`, `flow_keys`).
     FlowDissector,
+    /// `SEC("sk_reuseport")` — BPF_PROG_TYPE_SK_REUSEPORT. Receives
+    /// `struct sk_reuseport_md *` ctx directly (no BPF_PROG wrapper);
+    /// ctx-access is BTF-driven via `field_at_offset` on the iter-style
+    /// path in `validate_ctx_access`.
+    SkReuseport,
     #[default]
     Unknown,
 }
@@ -145,6 +150,9 @@ impl ProgramKind {
         }
         if s == "flow_dissector" || s.starts_with("flow_dissector/") {
             return ProgramKind::FlowDissector;
+        }
+        if s == "sk_reuseport" || s.starts_with("sk_reuseport/") {
+            return ProgramKind::SkReuseport;
         }
         // struct_ops (W6.4). Forms in the wild:
         //   "struct_ops"             — bare, member named after func symbol

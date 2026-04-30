@@ -8,7 +8,7 @@ mod branch;
 mod call;
 mod common;
 mod memory;
-mod types;
+pub(crate) mod types;
 
 use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::error::VerificationError;

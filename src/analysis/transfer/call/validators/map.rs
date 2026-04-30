@@ -214,7 +214,7 @@ pub fn validate_ptr_to_map_value(ctx: &mut ValidationContext) -> bool {
         ) || matches!(
             actual,
             RegType::PtrToBtfId { type_name, flags, .. }
-                if matches!(type_name, "sock" | "sock_common" | "tcp_sock")
+                if matches!(type_name, "sock" | "sock_common" | "tcp_sock" | "bpf_sock")
                     && flags.contains(PtrFlags::TRUSTED)
         );
         if sock_ok {

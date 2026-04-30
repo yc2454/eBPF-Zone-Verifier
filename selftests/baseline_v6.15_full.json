@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-30T19:13:39.906205+00:00",
+  "generated_at": "2026-04-30T19:33:15.404472+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -6601,7 +6601,7 @@
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(65) })"
+          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(66) })"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",
@@ -9277,7 +9277,7 @@
         "global_func9": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid return code at pc 82"
+          "note": "Invalid return code at pc 94"
         }
       }
     },
@@ -13043,7 +13043,7 @@
         "iter_maps1": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 6: register: r1"
+          "note": "Unsafe generic load at pc 2: base R1+36 (type: ScalarValue)"
         },
         "iter_maps2": {
           "upstream": "ACCEPT",
@@ -17594,8 +17594,7 @@
         },
         "test_sk_reuseport": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 18: register: r3"
+          "ours": "PASS"
         },
         "test_socket_filter": {
           "upstream": "ACCEPT",
@@ -17620,8 +17619,7 @@
         },
         "test_trace_iter": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 18: register: r3"
+          "ours": "PASS"
         },
         "test_xdp": {
           "upstream": "ACCEPT",

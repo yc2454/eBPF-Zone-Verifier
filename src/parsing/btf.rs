@@ -237,6 +237,25 @@ impl BtfContext {
         let member = ty.members.iter().find(|m| m.offset == bit_offset)?;
         let field_name = self.get_string(member.name_off).unwrap_or("");
 
+        // Anonymous member at the same offset: descend into the
+        // nested struct/union to find a deeper-named field. The kernel
+        // UAPI uses this pattern via `__bpf_md_ptr(type, name)`, which
+        // wraps `name` in an anonymous union for ABI compatibility (e.g.
+        // `sk_reuseport_md.sk`, `bpf_iter__sockmap.sk`). field_at_offset
+        // would otherwise stop at the union's Embedded kind and miss
+        // the typed pointer member.
+        if field_name.is_empty() {
+            let inner_id = self.peel_modifiers(member.type_id);
+            if let Some(inner_ty) = self.types.get(&inner_id)
+                && matches!(inner_ty.kind(), BTF_KIND_STRUCT | BTF_KIND_UNION)
+            {
+                let inner_byte_offset = byte_offset - (bit_offset / 8);
+                if let Some(info) = self.field_at_offset(inner_id, inner_byte_offset) {
+                    return Some(info);
+                }
+            }
+        }
+
         // Walk the member's type chain, recording any BTF_KIND_TYPE_TAG
         // along the way (the kernel's `__rcu`, `__percpu`, `__user`
         // attributes lower to TYPE_TAG entries the BPF backend

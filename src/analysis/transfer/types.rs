@@ -531,7 +531,7 @@ fn implied_btf_struct_name(ty: &RegType) -> Option<&'static str> {
     }
 }
 
-fn trusted_field_load(struct_name: &str, field_name: &str) -> bool {
+pub fn trusted_field_load(struct_name: &str, field_name: &str) -> bool {
     matches!(
         (struct_name, field_name),
         // task_struct.cpus_ptr — `cpumask_t *` carrying the task's
@@ -557,6 +557,17 @@ fn trusted_field_load(struct_name: &str, field_name: &str) -> bool {
         | ("task_struct", "bpf_storage")  // task->bpf_storage (unlink_hook)
         | ("sock", "sk_bpf_storage")      // sk->sk_bpf_storage (socket_bind)
         | ("bpf_local_storage", "smap")   // local_storage->smap (unlink_hook, socket_bind)
+        // Iter / direct-typed-ctx hooks. The BPF program holds a
+        // typed ctx pointer directly; the kernel marks the embedded
+        // sock pointer trusted while the iter is alive.
+        // `bpf_iter__sockmap.sk` (verifier_sockmap_mutate::test_trace_iter):
+        // `__bpf_md_ptr(struct sock *, sk)` at offset 0; pointee
+        // resolves via the anonymous-union descent in `field_at_offset`.
+        | ("bpf_iter__sockmap", "sk")
+        // `sk_reuseport_md.sk` (verifier_sockmap_mutate::test_sk_reuseport):
+        // `__bpf_md_ptr(struct bpf_sock *, sk)` — kernel marks bpf_sock
+        // pointer trusted on load; SOCKMAP/SOCKHASH map-update accepts.
+        | ("sk_reuseport_md", "sk")
     )
 }
 
