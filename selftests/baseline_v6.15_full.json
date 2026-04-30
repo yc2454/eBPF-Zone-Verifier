@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-29T23:06:24.610410+00:00",
+  "generated_at": "2026-04-30T02:16:35.109358+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -6016,7 +6016,7 @@
         "preempt_global_subprog_test": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 7: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "note": "Unsupported modern BPF feature at pc 5: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "preempt_lock_missing_1": {
           "upstream": "ACCEPT",
@@ -13383,9 +13383,8 @@
           "ours": "PASS"
         },
         "crossing_32_bit_signed_boundary_2": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "crossing_64_bit_signed_boundary_1": {
           "upstream": "ACCEPT",
@@ -16283,7 +16282,7 @@
         "private_stack_async_callback_2": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "pc 27: R2 !read_ok"
+          "note": "Subprogram error: back-edge from insn 107 to 27"
         },
         "private_stack_callback": {
           "upstream": "ACCEPT",
@@ -17719,8 +17718,7 @@
         },
         "fill_32bit_after_spill_64bit": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "pc 5: R9 !read_ok"
+          "ours": "PASS"
         },
         "fill_32bit_after_spill_64bit_clear_id": {
           "upstream": "ACCEPT",
@@ -17728,8 +17726,7 @@
         },
         "fill_32bit_after_spill_64bit_preserve_id": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "pc 7: R9 !read_ok"
+          "ours": "PASS"
         },
         "old_imprecise_scalar_vs_cur_stack_misc": {
           "upstream": "ACCEPT",
@@ -17765,8 +17762,7 @@
         },
         "spill_16bit_of_16bit_ok": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "pc 7: R9 !read_ok"
+          "ours": "PASS"
         },
         "spill_16bit_of_32bit_fail": {
           "upstream": "ACCEPT",
@@ -17774,8 +17770,7 @@
         },
         "spill_32bit_of_32bit_ok": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "pc 7: R9 !read_ok"
+          "ours": "PASS"
         },
         "spill_32bit_of_64bit_fail": {
           "upstream": "ACCEPT",
@@ -17783,18 +17778,15 @@
         },
         "spill_32bit_range_track": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "pc 7: R9 !read_ok"
+          "ours": "PASS"
         },
         "spill_64bit_of_64bit_ok": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "pc 8: R9 !read_ok"
+          "ours": "PASS"
         },
         "spill_8bit_of_8bit_ok": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "pc 7: R9 !read_ok"
+          "ours": "PASS"
         },
         "spill_fill_ptr_to_mem": {
           "upstream": "ACCEPT",
@@ -17806,8 +17798,7 @@
         },
         "spill_unbounded": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "pc 5: R9 !read_ok"
+          "ours": "PASS"
         },
         "stack_load_preserves_const_precision": {
           "upstream": "ACCEPT",

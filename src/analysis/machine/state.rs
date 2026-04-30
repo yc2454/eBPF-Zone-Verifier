@@ -441,6 +441,31 @@ impl State {
         // Only track as proper spill if 8-byte aligned
         let source_reg = if is_aligned { Some(reg) } else { None };
 
+        // Allocate (or reuse) a scalar id for any aligned scalar spill so
+        // the slot — and any same-width fill — joins the source's scalar
+        // equivalence class. Mirrors kernel's `assign_scalar_id_before_mov`
+        // at spill time. Without this, post-spill branch refinements on
+        // the source can't fan out to slot/fill, which leaves dead
+        // branches reachable in the verifier_spill_fill::*_ok tests.
+        let slot_scalar_id = if is_aligned
+            && size.bytes() <= 8
+            && matches!(preserved_type, RegType::ScalarValue)
+        {
+            let id = match self.scalar_ids.get(&reg).copied() {
+                Some(id) => id,
+                None => {
+                    let new_id = crate::analysis::machine::reg_types::new_scalar_id();
+                    self.scalar_ids.insert(reg, new_id);
+                    new_id
+                }
+            };
+            Some(id)
+        } else if size == MemSize::U64 && is_aligned {
+            self.scalar_ids.get(&reg).copied()
+        } else {
+            None
+        };
+
         let spilled = SpilledReg {
             source_reg,
             reg_type: preserved_type,
@@ -448,12 +473,7 @@ impl State {
             bounds: ScalarBounds { min, max },
             size,
             ptr_bounds,
-            // Carry the scalar id so fill_at can re-link the destination register.
-            scalar_id: if size == MemSize::U64 && is_aligned {
-                self.scalar_ids.get(&reg).copied()
-            } else {
-                None
-            },
+            scalar_id: slot_scalar_id,
             precise: is_aligned && size == MemSize::U64 && self.precise_regs.contains(&reg),
             iterator: None,
             dynptr: None,
@@ -590,41 +610,89 @@ impl State {
         let is_aligned = (offset % 8) == 0;
         let sizes_match = spilled.source_reg.is_some() && spilled.size == size;
 
-        // Try to extract a precise value when reading a narrower (or
-        // unaligned) slice of a wider spill whose tnum is a known
-        // constant. Walk back up to 7 bytes to find the slot holding
-        // the actual spilled value (placeholders have non-const tnums,
-        // so they're naturally skipped).
-        let narrowed_const: Option<u64> = if !sizes_match && size.bytes() <= 8 {
-            let mut found: Option<u64> = None;
+        // Try to extract a precise (sub-)value when reading a narrower
+        // (or unaligned) slice of a wider spill whose enclosing tnum
+        // pins enough bits. Walk back up to 7 bytes to find the slot
+        // holding the actual spilled value. Placeholder bytes have
+        // tnum=unknown (mask=u64::MAX) and large size, so the
+        // alignment+const gates below let real spills win the search.
+        let narrowed_tnum: Option<Tnum> = if !sizes_match && size.bytes() <= 8 {
+            let mut found: Option<Tnum> = None;
             for back in 0..8i16 {
                 let base = offset - back;
                 if let Some(s) = stack.get_slot(base) {
-                    // Mirror kernel: an unaligned-base spill of a
-                    // non-zero scalar isn't trusted on refill (kernel
-                    // marks STACK_MISC); only the STACK_ZERO case
-                    // (imm=0 stores at any alignment) survives.
+                    // Aligned-base aligned-width spills are the only
+                    // ones we trust beyond the simple zero (STACK_ZERO)
+                    // case — kernel marks unaligned register spills
+                    // STACK_MISC. We treat constant-zero stores as
+                    // safe at any alignment to model STACK_ZERO.
                     let base_aligned = base % 8 == 0;
-                    if s.tnum.is_const()
-                        && (back as usize) + size.bytes() <= s.size.bytes()
-                        && (base_aligned || s.tnum.value == 0)
-                    {
-                        let shifted = s.tnum.value >> ((back as u64) * 8);
-                        let mask: u64 = match size {
-                            MemSize::U8 => 0xff,
-                            MemSize::U16 => 0xffff,
-                            MemSize::U32 => 0xffff_ffff,
-                            MemSize::U64 => u64::MAX,
-                        };
-                        found = Some(shifted & mask);
+                    let covers = (back as usize) + size.bytes() <= s.size.bytes();
+                    if !covers {
+                        continue;
+                    }
+                    let trustable = base_aligned || (s.tnum.is_const() && s.tnum.value == 0);
+                    if !trustable {
+                        continue;
+                    }
+                    let shift = (back as u64) * 8;
+                    let v = s.tnum.value >> shift;
+                    let m = s.tnum.mask >> shift;
+                    let mask: u64 = match size {
+                        MemSize::U8 => 0xff,
+                        MemSize::U16 => 0xffff,
+                        MemSize::U32 => 0xffff_ffff,
+                        MemSize::U64 => u64::MAX,
+                    };
+                    let nm = m & mask;
+                    // Nothing pinned within the fill width → no info beyond
+                    // the existing unbounded fallback. Skip to avoid spurious
+                    // bounds (e.g. signed-overflow at U64) and pointless work.
+                    if nm == mask {
                         break;
                     }
+                    found = Some(Tnum {
+                        value: v & mask,
+                        mask: nm,
+                    });
+                    break;
                 }
             }
             found
         } else {
             None
         };
+
+        // Special case: u32 LE-low fill of an aligned u64 scalar spill
+        // whose high 32 bits are known zero. The low half carries the
+        // full spilled value, so preserve tnum, bounds AND scalar_id —
+        // matching kernel's u32-fill-after-u64-spill-preserve-id rule.
+        // (Counterpart `_clear_id` test fails the high-bits-zero check.)
+        if !sizes_match
+            && size == MemSize::U32
+            && spilled.size == MemSize::U64
+            && is_aligned
+            && spilled.source_reg.is_some()
+            && matches!(spilled.reg_type, RegType::ScalarValue)
+            && (spilled.tnum.mask & 0xFFFFFFFF_00000000) == 0
+            && (spilled.tnum.value >> 32) == 0
+        {
+            self.types.set(dst, RegType::ScalarValue);
+            self.tnums.insert(dst, spilled.tnum.clone());
+            self.domain
+                .assign_interval(dst, spilled.bounds.min, spilled.bounds.max);
+            if let Some(id) = spilled.scalar_id {
+                self.scalar_ids.insert(dst, id);
+            } else {
+                self.scalar_ids.remove(&dst);
+            }
+            if spilled.precise {
+                self.precise_regs.insert(dst);
+            } else {
+                self.precise_regs.remove(&dst);
+            }
+            return true;
+        }
 
         if sizes_match && is_aligned {
             // Preserve type and bounds
@@ -653,12 +721,21 @@ impl State {
             if size == MemSize::U64 {
                 self.restore_anchor_info(dst, &spilled);
             }
-        } else if let Some(c) = narrowed_const {
-            // Narrowing read of a known-constant spill (any byte offset
-            // within the wider value, LE byte order).
+        } else if let Some(tn) = narrowed_tnum {
+            // Narrowing read of a wider spill whose tnum pins (some of)
+            // the bits we're loading (any byte offset within the wider
+            // value, LE byte order).
             self.types.set(dst, RegType::ScalarValue);
-            self.tnums.insert(dst, Tnum::constant(c));
-            self.domain.assign_interval(dst, c as i64, c as i64);
+            let v = tn.value;
+            let m = tn.mask;
+            // Bounds derived from the narrowed tnum: low = pinned bits,
+            // high = pinned | unknown bits. For partial-knowledge tnums
+            // this is the tightest interval we can claim without the
+            // spill-time bounds.
+            let lo = v as i64;
+            let hi = (v | m) as i64;
+            self.tnums.insert(dst, tn);
+            self.domain.assign_interval(dst, lo, hi);
             self.scalar_ids.remove(&dst);
             self.precise_regs.remove(&dst);
         } else {

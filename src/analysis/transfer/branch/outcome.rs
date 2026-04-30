@@ -204,7 +204,25 @@ pub(crate) fn condition_outcome(
                 }
             }
         }
-        Operand::Reg(_r) => None,
+        Operand::Reg(r) => {
+            // If the right-hand register is a known constant (via tnum
+            // or single-point interval bounds), fall back to imm-comparison
+            // logic. This is what lets `if r0 == r2 goto …` resolve
+            // statically when r2=0 has been propagated to all linked
+            // scalars (e.g. via spill/fill scalar_id fan-out).
+            let rt = state.get_tnum(*r);
+            let rt = if width == Width::W32 { rt.trunc32() } else { rt };
+            if let Some(v) = rt.const_value() {
+                let imm_op = Operand::Imm(v as i64);
+                return condition_outcome(state, width, left, op, &imm_op);
+            }
+            let (r_lo, r_hi) = state.domain.get_interval(*r);
+            if r_lo == r_hi && r_lo != i64::MIN && r_hi != i64::MAX {
+                let imm_op = Operand::Imm(r_lo);
+                return condition_outcome(state, width, left, op, &imm_op);
+            }
+            None
+        }
     }
 }
 
