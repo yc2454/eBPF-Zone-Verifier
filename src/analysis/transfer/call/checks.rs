@@ -29,6 +29,11 @@ use super::validators;
 pub(crate) struct MapInfo {
     pub(crate) key_size: u32,
     pub(crate) value_size: u32,
+    /// `BPF_MAP_TYPE_*` raw value. Lets validators dispatch on map
+    /// type — SOCKMAP/SOCKHASH accept sock pointers as their
+    /// `bpf_map_update_elem` value arg; BPF_MAP_TYPE_ARRAY accepts
+    /// PtrToMapValue, etc.
+    pub(crate) map_type: u32,
 }
 
 pub(crate) fn get_map_info(map_type: RegType, env: &VerifierEnv) -> Option<MapInfo> {
@@ -36,12 +41,14 @@ pub(crate) fn get_map_info(map_type: RegType, env: &VerifierEnv) -> Option<MapIn
         RegType::PtrToMapObject { map_idx } => env.ctx.map_defs.get(map_idx).map(|md| MapInfo {
             key_size: md.key_size,
             value_size: md.value_size,
+            map_type: md.type_,
         }),
         RegType::PtrToMapValue { map_idx, .. } => env.ctx.map_defs.get(map_idx).and_then(|md| {
             if let Some(inner) = md.inner_map_idx {
                 env.ctx.map_defs.get(inner).map(|inner_md| MapInfo {
                     key_size: inner_md.key_size,
                     value_size: inner_md.value_size,
+                    map_type: inner_md.type_,
                 })
             } else {
                 None

@@ -183,11 +183,45 @@ pub fn validate_ptr_to_map_key(ctx: &mut ValidationContext) -> bool {
 /// Validates PtrToMapValue argument type.
 /// Must point to readable memory with size matching the map's value_size.
 pub fn validate_ptr_to_map_value(ctx: &mut ValidationContext) -> bool {
+    use crate::analysis::machine::reg_types::PtrFlags;
+    use crate::common::constants;
     let Some(target_info) = ctx.map_info else {
         return true;
     };
 
     let actual = ctx.actual;
+
+    // SOCKMAP / SOCKHASH special-case: `bpf_map_update_elem`'s value
+    // arg (R3) is a socket pointer for these map types, not a map
+    // value. Kernel `sock_map_update_elem` checks ARG_PTR_TO_BTF_ID_SOCK_COMMON
+    // — accepts PtrToSocket / PtrToSockCommon / PtrToTcpSock and
+    // BTF-typed sock pointers (e.g. `skb->sk` typed as
+    // `PtrToBtfId{sock, TRUSTED}` via the cluster B BTF field-load
+    // typing). Closes the seven `verifier_sockmap_mutate.c` FRs.
+    let is_sock_map = matches!(
+        target_info.map_type,
+        constants::BPF_MAP_TYPE_SOCKMAP | constants::BPF_MAP_TYPE_SOCKHASH
+    );
+    if is_sock_map {
+        let sock_ok = matches!(
+            actual,
+            RegType::PtrToSocket { .. }
+                | RegType::PtrToSocketOrNull { .. }
+                | RegType::PtrToSockCommon { .. }
+                | RegType::PtrToSockCommonOrNull { .. }
+                | RegType::PtrToTcpSock { .. }
+                | RegType::PtrToTcpSockOrNull { .. }
+        ) || matches!(
+            actual,
+            RegType::PtrToBtfId { type_name, flags, .. }
+                if matches!(type_name, "sock" | "sock_common" | "tcp_sock")
+                    && flags.contains(PtrFlags::TRUSTED)
+        );
+        if sock_ok {
+            return true;
+        }
+        // fall through to default error reporting below
+    }
 
     // Check compatible types
     if !matches!(

@@ -123,6 +123,37 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
         return vec![];
     }
 
+    // bpf_sk_release: not allowed in flow_dissector / sockops / tracing
+    // / sock-cgroup / lwt-* prog types (kernel's per-prog-type
+    // func_proto returns NULL for BPF_FUNC_sk_release in these).
+    // Closes the cluster-A sockmap_mutate FA on
+    // `test_flow_dissector_update` exposed once we widened
+    // `bpf_map_update_elem` R3 for SOCKMAP/SOCKHASH — without the
+    // widening, the test was rejected at the update site; with it,
+    // execution reaches sk_release, which the kernel separately
+    // forbids in flow_dissector.
+    if helper == constants::BPF_SK_RELEASE
+        && matches!(
+            env.ctx.prog_kind,
+            crate::ast::ProgramKind::FlowDissector
+                | crate::ast::ProgramKind::SockOps
+                | crate::ast::ProgramKind::Tracing
+                | crate::ast::ProgramKind::Tracepoint
+                | crate::ast::ProgramKind::RawTracepoint
+                | crate::ast::ProgramKind::RawTracepointWritable
+                | crate::ast::ProgramKind::Lsm
+                | crate::ast::ProgramKind::PerfEvent
+                | crate::ast::ProgramKind::Kprobe
+        )
+    {
+        env.fail(VerificationError::HelperNotAllowedForProgram {
+            pc,
+            helper,
+            kind: env.ctx.prog_kind,
+        });
+        return vec![];
+    }
+
     // bpf_per_cpu_ptr / bpf_this_cpu_ptr: R1 must be a PERCPU pointer.
     // A `PtrToMapKptr*` loaded from a non-percpu kptr slot (Unref/Ref/Rcu)
     // does not carry the PERCPU flag, and the kernel rejects with

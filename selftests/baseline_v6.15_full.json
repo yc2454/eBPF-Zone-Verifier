@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-30T18:38:31.614994+00:00",
+  "generated_at": "2026-04-30T18:47:21.196976+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -5999,7 +5999,7 @@
         "preempt_global_subprog_test": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 5: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "note": "Unsupported modern BPF feature at pc 13: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "preempt_lock_missing_1": {
           "upstream": "ACCEPT",
@@ -6604,7 +6604,7 @@
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(66) })"
+          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(67) })"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",
@@ -9280,7 +9280,7 @@
         "global_func9": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid return code at pc 76"
+          "note": "Invalid return code at pc 78"
         }
       }
     },
@@ -16252,7 +16252,7 @@
         "private_stack_async_callback_2": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "pc 27: R2 !read_ok"
+          "note": "Subprogram error: back-edge from insn 107 to 27"
         },
         "private_stack_callback": {
           "upstream": "ACCEPT",
@@ -17600,18 +17600,15 @@
         },
         "test_sched_act": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 18: register: r3"
+          "ours": "PASS"
         },
         "test_sched_cls": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 18: register: r3"
+          "ours": "PASS"
         },
         "test_sk_lookup": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 18: register: r3"
+          "ours": "PASS"
         },
         "test_sk_reuseport": {
           "upstream": "ACCEPT",
@@ -17620,8 +17617,7 @@
         },
         "test_socket_filter": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 18: register: r3"
+          "ours": "PASS"
         },
         "test_sockmap_delete": {
           "upstream": "UNANNOTATED",
@@ -17647,8 +17643,7 @@
         },
         "test_xdp": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 23: register: r3"
+          "ours": "PASS"
         }
       }
     },
