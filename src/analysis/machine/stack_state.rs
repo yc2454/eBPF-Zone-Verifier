@@ -16,6 +16,14 @@ pub enum IterKind {
     Task,
     Css,
     Bits,
+    /// `struct bpf_iter_task_vma` from kernel/bpf/task_iter.c. The
+    /// program-visible struct is 8 bytes; `_next` returns
+    /// `struct vm_area_struct *` (TRUSTED).
+    TaskVma,
+    /// `struct bpf_iter_testmod_seq` from the bpf testmod (16-byte
+    /// program-visible struct). `_next` returns `s64 *` into the
+    /// iterator's own state.
+    TestmodSeq,
 }
 
 /// Lifecycle state for an open-coded iterator slot. Transitions:

@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-04-30T04:40:59.964591+00:00",
+  "generated_at": "2026-04-30T14:14:10.499680+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -3874,13 +3874,12 @@
         },
         "iter_manual_unroll_loop": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 39: register: r1"
+          "ours": "PASS"
         },
         "iter_multiple_sequential_loops": {
-          "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 72: register: r1"
+          "upstream": "UNKNOWN",
+          "ours": "ERROR",
+          "note": "verifier timeout"
         },
         "iter_nested_deeply_iters": {
           "upstream": "UNKNOWN",
@@ -3912,13 +3911,11 @@
         },
         "iter_pragma_unroll_loop": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 21: register: r1"
+          "ours": "PASS"
         },
         "iter_search_loop": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "iter_stack_array_loop": {
           "upstream": "UNKNOWN",
@@ -4256,13 +4253,11 @@
       "progs": {
         "testmod_seq_empty": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 5: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "testmod_seq_full": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 5: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "testmod_seq_getter_after_bad": {
           "upstream": "ACCEPT",
@@ -4273,14 +4268,14 @@
           "ours": "PASS"
         },
         "testmod_seq_getter_good": {
-          "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 5: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "upstream": "UNKNOWN",
+          "ours": "ERROR",
+          "note": "verifier timeout"
         },
         "testmod_seq_truncated": {
-          "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 7: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "upstream": "UNKNOWN",
+          "ours": "ERROR",
+          "note": "verifier timeout"
         }
       }
     },
@@ -6014,7 +6009,7 @@
         "preempt_global_subprog_test": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 13: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "note": "Unsupported modern BPF feature at pc 5: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "preempt_lock_missing_1": {
           "upstream": "ACCEPT",
@@ -9295,7 +9290,7 @@
         "global_func9": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid return code at pc 94"
+          "note": "Invalid return code at pc 68"
         }
       }
     },
@@ -13270,9 +13265,8 @@
           "note": "verifier timeout"
         },
         "bit_index": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "bits_copy": {
           "upstream": "UNKNOWN",

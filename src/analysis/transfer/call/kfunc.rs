@@ -222,24 +222,17 @@ fn iter_next_fork(state: State, iter_arg: u8, elem_size: u64) -> Vec<State> {
         return vec![];
     };
 
-    // Non-NULL successor: R0 = PtrToAllocMem, slot stays Active.
-    let mut nonnull = state.clone();
-    nonnull.types.set(
-        Reg::R0,
-        RegType::PtrToAllocMem {
-            id: new_ptr_id(),
-            mem_size: elem_size,
-            ref_id: None,
-        },
+    // Drained-input collapse: a `_next` call on an already-drained
+    // iterator returns NULL unconditionally (the kernel just does one
+    // `if (it->cnt <= 0) return NULL;` early-out). Don't fork — emit
+    // only the null successor, and keep the slot Drained.
+    let already_drained = matches!(
+        state.stack_at(frame).stack_get_iterator(base_off),
+        Some(slot) if matches!(slot.state, IterState::Drained)
     );
-    nonnull.domain.forget(Reg::R0);
-    nonnull.set_tnum(Reg::R0, Tnum::unknown());
-    nonnull.clear_scalar_id(Reg::R0);
-    clobber_caller_saved(&mut nonnull);
-    nonnull.pc = pc + 1;
 
     // NULL successor: R0 = scalar 0, slot → Drained.
-    let mut null = state;
+    let mut null = state.clone();
     if let Some(slot) = null.stack_at(frame).stack_get_iterator(base_off) {
         null.stack_at_mut(frame).stack_set_iterator(
             base_off,
@@ -257,6 +250,26 @@ fn iter_next_fork(state: State, iter_arg: u8, elem_size: u64) -> Vec<State> {
     null.clear_scalar_id(Reg::R0);
     clobber_caller_saved(&mut null);
     null.pc = pc + 1;
+
+    if already_drained {
+        return vec![null];
+    }
+
+    // Non-NULL successor: R0 = PtrToAllocMem, slot stays Active.
+    let mut nonnull = state;
+    nonnull.types.set(
+        Reg::R0,
+        RegType::PtrToAllocMem {
+            id: new_ptr_id(),
+            mem_size: elem_size,
+            ref_id: None,
+        },
+    );
+    nonnull.domain.forget(Reg::R0);
+    nonnull.set_tnum(Reg::R0, Tnum::unknown());
+    nonnull.clear_scalar_id(Reg::R0);
+    clobber_caller_saved(&mut nonnull);
+    nonnull.pc = pc + 1;
 
     vec![nonnull, null]
 }

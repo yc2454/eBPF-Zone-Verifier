@@ -662,6 +662,28 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
         // Stack pointers - DBM subsumption covers the numeric relationship
         (PtrToStack { frame_level: fl1 }, PtrToStack { frame_level: fl2 }) => fl1 == fl2,
 
+        // PtrToAllocMem from `bpf_iter_*_next` etc.: the dispatcher mints
+        // a fresh `id` on every call, so two visits to the same loop top
+        // hold non-equal-but-semantically-identical allocs in the loop
+        // variable. Subsume when (mem_size, ref_id) match — `ref_id`
+        // None means unref-tracked iter-elem alloc, Some(N) means the
+        // alloc is owned by a tracked acquire (dynptr_data slice from
+        // a specific dynptr; ringbuf reservation). For the latter, the
+        // matching ref_id ensures we don't conflate two acquires;
+        // mem_size pins the bounds-check budget. Without this rule,
+        // unbounded `bpf_for_each` loops state-explode (each iter's
+        // fresh id breaks loop-top subsumption on the loop variable).
+        // The `id` field is intentionally ignored — it's a per-call
+        // tag, not a structural property.
+        (
+            PtrToAllocMem { mem_size: ms1, ref_id: ri1, .. },
+            PtrToAllocMem { mem_size: ms2, ref_id: ri2, .. },
+        ) => ms1 == ms2 && ri1 == ri2,
+        (
+            PtrToAllocMemOrNull { mem_size: ms1, ref_id: ri1, .. },
+            PtrToAllocMemOrNull { mem_size: ms2, ref_id: ri2, .. },
+        ) => ms1 == ms2 && ri1 == ri2,
+
         // Different types - no subsumption
         _ => false,
     }

@@ -27,6 +27,14 @@ pub const BPF_ITER_NUM_SIZE: usize = 8;
 pub const BPF_ITER_TASK_SIZE: usize = 40;
 pub const BPF_ITER_CSS_SIZE: usize = 24;
 pub const BPF_ITER_BITS_SIZE: usize = 16;
+/// `struct bpf_iter_task_vma` is opaque to programs (forward-declared in
+/// `bpf_experimental.h`); BTF reports an 8-byte size. The kernel-side
+/// state lives in a separate `bpf_iter_task_vma_kern` that the kfunc
+/// implementations cast to.
+pub const BPF_ITER_TASK_VMA_SIZE: usize = 8;
+/// `struct bpf_iter_testmod_seq` (testmod-defined, 16 bytes:
+/// `u64 :64; u64 :64;`).
+pub const BPF_ITER_TESTMOD_SEQ_SIZE: usize = 16;
 
 /// Stack footprint of an open-coded iterator struct, in bytes.
 pub fn bpf_iter_size(kind: IterKind) -> usize {
@@ -35,6 +43,8 @@ pub fn bpf_iter_size(kind: IterKind) -> usize {
         IterKind::Task => BPF_ITER_TASK_SIZE,
         IterKind::Css => BPF_ITER_CSS_SIZE,
         IterKind::Bits => BPF_ITER_BITS_SIZE,
+        IterKind::TaskVma => BPF_ITER_TASK_VMA_SIZE,
+        IterKind::TestmodSeq => BPF_ITER_TESTMOD_SEQ_SIZE,
     }
 }
 

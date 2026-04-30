@@ -328,6 +328,16 @@ pub enum RetKind {
     /// `transfer_kfunc_proto` recognizes this variant and produces both
     /// successors; the flat-state applier `apply_call_proto_r0` does
     /// not handle it (would assert).
+    ///
+    /// Typed `_next` returns (e.g. `bpf_iter_task_vma_next` returning a
+    /// TRUSTED `vm_area_struct *`) need a parallel `IterNextBtfId`
+    /// variant; not yet added because the matching consumer kfuncs
+    /// (`bpf_kfunc_trusted_vma_test` / `bpf_kfunc_rcu_task_test`) would
+    /// require kfunc-side flag enforcement (`KF_TRUSTED_ARGS` /
+    /// `KF_RCU`) we don't model today — without that, adding them
+    /// would FA the matching `__failure` tests in the same files
+    /// (iter_next_rcu_not_trusted, iter_next_ptr_mem_not_trusted).
+    /// Deferred with the `iters_testmod.c::iter_next_{rcu,trusted}` FRs.
     IterNextElem { iter_arg: u8, elem_size: u64 },
 }
 
@@ -1480,32 +1490,38 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Scalar)
         .side_effects(&[SideEffect::IterInitOnArg { arg: 0, kind: IterKind::Bits }]),
 
-        // `bpf_iter_*_next(&it)` — requires Active; the dispatcher
-        // forks into non-NULL (R0 = PtrToAllocMem{elem_size}, slot
-        // stays Active) and NULL (R0 = 0, slot → Drained) successors.
+        // `bpf_iter_*_next(&it)` — accepts Active or Drained; the
+        // dispatcher forks Active into non-NULL (R0 = PtrToAllocMem{elem_size},
+        // slot stays Active) and NULL (R0 = 0, slot → Drained), and on
+        // Drained input collapses to the NULL-only successor (kernel
+        // semantics: a drained iterator just keeps returning NULL).
+        // Without `ActiveOrDrained`, programs that call `_next` after a
+        // post-loop unrolled iteration (iters.c::iter_pragma_unroll_loop)
+        // FR'd because the static unroll re-enters _next on the Drained
+        // slot a second time.
         // Element sizes mirror the bespoke handler: num=4 (int*),
         // bits=8 (u64*), task/css=8 (placeholder pointer-width until
         // PtrToBtfId per-kind typing in a future phase).
         "bpf_iter_num_next" => CallProto::with_args([
-            IterArg { kind: IterKind::Num, expected: IterArgExpect::Active },
+            IterArg { kind: IterKind::Num, expected: IterArgExpect::ActiveOrDrained },
             DontCare, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::IterNextElem { iter_arg: 0, elem_size: 4 }),
 
         "bpf_iter_task_next" => CallProto::with_args([
-            IterArg { kind: IterKind::Task, expected: IterArgExpect::Active },
+            IterArg { kind: IterKind::Task, expected: IterArgExpect::ActiveOrDrained },
             DontCare, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::IterNextElem { iter_arg: 0, elem_size: 8 }),
 
         "bpf_iter_css_next" => CallProto::with_args([
-            IterArg { kind: IterKind::Css, expected: IterArgExpect::Active },
+            IterArg { kind: IterKind::Css, expected: IterArgExpect::ActiveOrDrained },
             DontCare, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::IterNextElem { iter_arg: 0, elem_size: 8 }),
 
         "bpf_iter_bits_next" => CallProto::with_args([
-            IterArg { kind: IterKind::Bits, expected: IterArgExpect::Active },
+            IterArg { kind: IterKind::Bits, expected: IterArgExpect::ActiveOrDrained },
             DontCare, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::IterNextElem { iter_arg: 0, elem_size: 8 }),
@@ -1540,6 +1556,54 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Void)
         .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
+
+        // ---- testmod_seq iterator family (Phase 3 cluster B) ----
+        //
+        // testmod-defined open-coded iterator. The kernel registers all
+        // four kfuncs in `bpf_testmod_check_kfunc_call`:
+        //   - _new   : KF_ITER_NEW
+        //   - _next  : KF_ITER_NEXT | KF_RET_NULL
+        //   - _destroy: KF_ITER_DESTROY
+        //   - _value : reads the iter's stored value; the `it__iter`
+        //     param suffix tells the kernel "this is an initialized iter
+        //     reference" — accept Active *or* Drained, reject Uninit.
+        //     Selftest `testmod_seq_getter_after_bad` covers the post-
+        //     destroy case (Uninit → reject); _value's expected =
+        //     ActiveOrDrained is what catches both bad calls.
+        //
+        // int bpf_iter_testmod_seq_new(struct bpf_iter_testmod_seq *it, s64 value, int cnt)
+        "bpf_iter_testmod_seq_new" => CallProto::with_args([
+            IterArg { kind: IterKind::TestmodSeq, expected: IterArgExpect::Uninit },
+            Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::IterInitOnArg { arg: 0, kind: IterKind::TestmodSeq }]),
+
+        // s64 *bpf_iter_testmod_seq_next(struct bpf_iter_testmod_seq *it)
+        "bpf_iter_testmod_seq_next" => CallProto::with_args([
+            IterArg { kind: IterKind::TestmodSeq, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::IterNextElem { iter_arg: 0, elem_size: 8 }),
+
+        // void bpf_iter_testmod_seq_destroy(struct bpf_iter_testmod_seq *it)
+        "bpf_iter_testmod_seq_destroy" => CallProto::with_args([
+            IterArg { kind: IterKind::TestmodSeq, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
+
+        // s64 bpf_iter_testmod_seq_value(int val, struct bpf_iter_testmod_seq *it__iter)
+        // The `__iter` suffix forces the kernel to treat arg #2 (R2 here)
+        // as an initialized iter — Active or Drained, never Uninit.
+        // Doesn't transition the slot's state.
+        "bpf_iter_testmod_seq_value" => CallProto::with_args([
+            Anything,
+            IterArg { kind: IterKind::TestmodSeq, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
 
         // ---- Slice cluster (W4.2g) ----
         //
