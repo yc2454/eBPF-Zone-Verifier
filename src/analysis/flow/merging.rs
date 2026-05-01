@@ -120,6 +120,18 @@ fn is_readable_ptr(ty: &RegType) -> bool {
             | PtrToPacketMeta
             | PtrToAllocMem { .. }
             | PtrToArena { .. }
+            // PtrToBtfId is a kernel BTF-typed pointer; field loads are
+            // bounds-validated against the type's BTF. When two paths
+            // reach the same PC with one producing PtrToStack and another
+            // producing PtrToBtfId (typical of `__noinline static`
+            // subprogs called from both main and a timer/wq async cb,
+            // see verifier_private_stack.c::private_stack_async_callback_2),
+            // each path's body verifies independently against its own
+            // type — no need to demote to Scalar. The kernel achieves the
+            // same by re-verifying the subprog separately for each
+            // distinct caller-state shape (`push_async_cb` makes the cb
+            // a separate verifier root).
+            | PtrToBtfId { .. }
     )
 }
 

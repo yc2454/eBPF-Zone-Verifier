@@ -678,9 +678,9 @@ fn transfer_callback_helper(
 
     // Minimal arg typing: R1 is always a scalar (iteration index / map
     // pointer / map-elem pointer depending on helper); R2+ are left
-    // unsupported for now so callbacks that dereference them REJECT.
-    // Full per-helper arg typing lands alongside richer signature
-    // validation in a follow-up.
+    // unsupported for most helpers so callbacks that dereference them
+    // REJECT. Full per-helper arg typing lands alongside richer
+    // signature validation in a follow-up.
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
         cb_state.types.set(r, RegType::NotInit);
         cb_state.domain.forget(r);
@@ -691,6 +691,41 @@ fn transfer_callback_helper(
     cb_state.domain.forget(Reg::R1);
     cb_state.set_tnum(Reg::R1, Tnum::unknown());
     cb_state.alloc_scalar_id(Reg::R1);
+
+    // Timer cb signature is `(struct bpf_map *, void *key, void *value)`
+    // — kernel `set_timer_callback_state` (verifier.c ~L10685, v6.15)
+    // sets R1=CONST_PTR_TO_MAP, R2=PTR_TO_MAP_KEY, R3=PTR_TO_MAP_VALUE
+    // off the timer's owning map. Without typed R2/R3 the cb body
+    // hits "R2 !read_ok" on the very first `Mov R1=R2`.
+    // Approximate with scalar pointers: the cb in
+    // `verifier_private_stack.c::private_stack_async_callback_2`
+    // immediately forwards `key` to a global subprog that
+    // dereferences it as `int *`, so a generic readable scalar
+    // suffices for that closure. Tighter typing (real PTR_TO_MAP_KEY
+    // / VALUE) is future work — surfaced as the next FR if any test
+    // does map-aware arithmetic in a timer cb.
+    if helper == constants::BPF_TIMER_SET_CALLBACK {
+        // R1=map ptr, R2=key ptr, R3=value ptr. We don't track
+        // PTR_TO_MAP_KEY/VALUE distinctly, so approximate with a lax
+        // BTF-typed pointer (type_name="unknown" gives the existing
+        // "unknown-layout" load/store policy: any offset accepted,
+        // loads produce ScalarValue). Concrete enough that subprogs
+        // dereferencing the key (e.g. `subprog1(key) → *val`) verify;
+        // loose enough that we don't claim more precision than the
+        // kernel actually requires for these pointer args.
+        use crate::analysis::machine::reg_types::PtrFlags;
+        let unknown_btf = || RegType::PtrToBtfId {
+            type_name: "unknown",
+            flags: PtrFlags::TRUSTED,
+            ref_id: None,
+        };
+        for r in [Reg::R1, Reg::R2, Reg::R3] {
+            cb_state.types.set(r, unknown_btf());
+            cb_state.domain.forget(r);
+            cb_state.set_tnum(r, Tnum::unknown());
+            cb_state.clear_scalar_id(r);
+        }
+    }
 
     cb_state.pc = cb_entry;
 

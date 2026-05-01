@@ -126,10 +126,34 @@ pub fn analyze_subprograms(instrs: &[Instr]) -> BTreeMap<usize, SubprogInfo> {
     let mut entries: Vec<usize> = vec![0];
 
     for insn in instrs {
-        if let Instr::CallRel { target } = insn
-            && !entries.contains(target)
-        {
-            entries.push(*target);
+        match insn {
+            Instr::CallRel { target } => {
+                if !entries.contains(target) {
+                    entries.push(*target);
+                }
+            }
+            // `LD_IMM64 BPF_PSEUDO_FUNC` materializes a function pointer
+            // for callbacks — bpf_loop / bpf_for_each_map_elem (sync) and
+            // bpf_timer_set_callback / bpf_wq_set_callback_impl (async).
+            // Those subprogs are not reached via CallRel from the caller's
+            // body, but their PCs still need to be subprog boundaries:
+            // otherwise their body bleeds into the preceding subprog's
+            // range and any CallRel inside (e.g. `subprog1(key)` inside
+            // an async timer cb) is misattributed as a back-edge of the
+            // outer subprog. Kernel `verifier.c` ~L10477 handles async
+            // callbacks via `push_async_cb` (separate verifier root); we
+            // approximate by giving each callback target its own subprog
+            // boundary in the static call-chain analysis.
+            Instr::LoadMap {
+                kind: crate::ast::MapLoadKind::PseudoFunc { subprog_pc },
+                ..
+            } => {
+                let pc = *subprog_pc as usize;
+                if !entries.contains(&pc) {
+                    entries.push(pc);
+                }
+            }
+            _ => {}
         }
     }
     entries.sort();
