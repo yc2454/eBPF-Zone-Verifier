@@ -14,18 +14,52 @@ use crate::domains::tnum::Tnum;
 /// Check if the loop body contains a conditional branch (If instruction),
 /// which indicates the loop has a potential exit path.
 /// Only considers instructions at the same call depth as the loop head.
+/// Does this loop have at least one `Instr::If` exit? Used to distinguish
+/// "natural" loops with comparison-based exits (where domain refinement on
+/// the exit branch handles termination) from may_goto-only loops where the
+/// runtime budget is the only termination guarantee.
+fn loop_has_if_exit(env: &VerifierEnv, state: &State, pc: usize, prog: &Program) -> bool {
+    if let Some(idx) = state.history_idx {
+        let body_pcs = env.history.loop_body_pcs(idx, pc, Some(state.num_frames()));
+        for body_pc in body_pcs {
+            if body_pc < prog.instrs.len()
+                && matches!(prog.instrs[body_pc], Instr::If { .. })
+            {
+                return true;
+            }
+        }
+    }
+    if pc < prog.instrs.len() && matches!(prog.instrs[pc], Instr::If { .. }) {
+        return true;
+    }
+    false
+}
+
 fn loop_has_conditional_exit(env: &VerifierEnv, state: &State, pc: usize, prog: &Program) -> bool {
     if let Some(idx) = state.history_idx {
         // Only check PCs at the same frame depth (excludes callee instructions)
         let body_pcs = env.history.loop_body_pcs(idx, pc, Some(state.num_frames()));
         for body_pc in body_pcs {
-            if body_pc < prog.instrs.len() && matches!(prog.instrs[body_pc], Instr::If { .. }) {
+            if body_pc < prog.instrs.len()
+                && matches!(
+                    prog.instrs[body_pc],
+                    Instr::If { .. } | Instr::MayGoto { .. }
+                )
+            {
                 return true;
             }
         }
     }
-    // Also check the loop head itself
-    if pc < prog.instrs.len() && matches!(prog.instrs[pc], Instr::If { .. }) {
+    // Also check the loop head itself. `MayGoto` is a budget-bounded
+    // conditional exit (BPF_JCOND v6.8): the kernel inlines a hidden
+    // counter check that eventually short-circuits the back-edge, so the
+    // exit is guaranteed to be reachable.
+    if pc < prog.instrs.len()
+        && matches!(
+            prog.instrs[pc],
+            Instr::If { .. } | Instr::MayGoto { .. }
+        )
+    {
         return true;
     }
     false
@@ -104,12 +138,21 @@ fn loop_exit_was_explored(env: &VerifierEnv, state: &State, pc: usize, prog: &Pr
         }
     }
 
-    // For each If instruction in the loop body, check if its exit successor
-    // (the one that leaves the loop) has been explored
+    // For each conditional-exit instruction in the loop body (If or
+    // MayGoto), check if its exit successor (the one that leaves the
+    // loop) has been explored. MayGoto behaves the same way for this
+    // analysis: budget exhaustion guarantees one of its successors is
+    // an exit.
     for &body_pc in &body_pc_set {
-        if body_pc < prog.instrs.len()
-            && let Instr::If { target, .. } = &prog.instrs[body_pc]
-        {
+        if body_pc >= prog.instrs.len() {
+            continue;
+        }
+        let target_opt = match &prog.instrs[body_pc] {
+            Instr::If { target, .. } => Some(*target),
+            Instr::MayGoto { target } => Some(*target),
+            _ => None,
+        };
+        if let Some(target) = target_opt {
             let fall_through = body_pc + 1;
             // Check if fall-through exits the loop
             if !body_pc_set.contains(&fall_through)
@@ -118,7 +161,7 @@ fn loop_exit_was_explored(env: &VerifierEnv, state: &State, pc: usize, prog: &Pr
                 return true;
             }
             // Check if target exits the loop
-            if !body_pc_set.contains(target) && env.explored_states.contains_key(target) {
+            if !body_pc_set.contains(&target) && env.explored_states.contains_key(&target) {
                 return true;
             }
         }
@@ -223,7 +266,12 @@ fn check_loop_convergence(
 ) -> bool {
     // Only converge if:
     // 1. Widening was applied (prev_states >= 2)
-    // 2. Widening was effective (bounds expanded)
+    // 2. Either widening was effective (live regs' bounds expanded), or
+    //    the loop is may_goto-bounded (the runtime counter on its own
+    //    proves termination — no scalar needs to widen). Loop body
+    //    effects on live regs are still subsumption-checked by the
+    //    caller; this just controls when we *trust* the subsumption to
+    //    let us prune.
     // 3. Exit path exists (bounded loop or exit was explored)
     if prev_states.len() < 2 {
         return false;
@@ -231,7 +279,19 @@ fn check_loop_convergence(
 
     let first = &prev_states[0];
     let last = prev_states.last().unwrap();
-    if !widening_was_effective(first, last, live_regs) {
+
+    // may_goto loops decrement `goto_budget` on every iteration; once
+    // we're observably making progress on the budget the runtime is
+    // guaranteed to exit, so subsumption alone is sufficient. This is
+    // what `verifier_iterating_callbacks::cond_break5` needs — the
+    // body's `cnt1++` doesn't widen because cnt1 isn't live across
+    // the loop head, but the budget counts iterations down regardless.
+    let may_goto_bounded = first.goto_budget > last.goto_budget;
+
+    if !may_goto_bounded
+        && !live_regs.is_empty()
+        && !widening_was_effective(first, last, live_regs)
+    {
         return false;
     }
 
@@ -306,8 +366,30 @@ fn handle_loop_pruning(
             return false;
         }
 
-        // Not subsumed: apply widening to accelerate convergence
-        if config.use_widening {
+        // Not subsumed: apply widening to accelerate convergence.
+        //
+        // Force-widen when the loop's ONLY conditional exit is a may_goto
+        // (no `Instr::If` in the body and no static loop bound detected),
+        // and the goto_budget is strictly decreasing across `prev_states`.
+        // Without that, the body's per-iteration scalar mutation prevents
+        // subsumption forever and we hit the complexity limit. The budget
+        // decrement guarantees termination, so we can afford to lose
+        // precision on scalars the static bounds machinery can't pin down.
+        //
+        // Bounded loops with both an `If`-style exit AND a may_goto
+        // (e.g. test2's `for (i=0; i<N && can_loop; i++)`) already
+        // converge via `apply_loop_bound`, so we don't force-widen there
+        // — preserves the index-bound precision the array store inside
+        // needs.
+        let only_may_goto_exit = !loop_has_if_exit(env, state, pc, prog);
+        let may_goto_progress = prev_states
+            .first()
+            .zip(prev_states.last())
+            .map(|(f, l)| f.goto_budget > l.goto_budget)
+            .unwrap_or(false);
+        let force_widen_for_may_goto =
+            only_may_goto_exit && loop_bound.is_none() && may_goto_progress;
+        if config.use_widening || force_widen_for_may_goto {
             apply_widening(state, old, live_regs, loop_bound);
         }
     }

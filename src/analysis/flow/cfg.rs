@@ -82,6 +82,7 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
             | Instr::Exit
             | Instr::Call { .. }
             | Instr::CallRel { .. }
+            | Instr::MayGoto { .. }
     ) {
         if pc + 1 < n {
             succs.push(pc + 1);
@@ -149,6 +150,27 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
 
             Ok(succs)
         }
+        Instr::MayGoto { target } => {
+            // BPF_JCOND (v6.8) — bounded back-edge whose taken/fallthrough
+            // both reach reachable code. Modeled as a conditional jump:
+            // mark self + both edges as prune points and emit both
+            // successors. Without this, may_goto's `target` was dropped
+            // by the non-branch fall-through above and post-may_goto code
+            // (e.g. cond_break5's exit at pc 6) showed up as
+            // "CFG error: unreachable insn".
+            //
+            // Termination at runtime relies on `goto_budget` saturating
+            // and pruning at the loop head, not on CFG structure — so
+            // the static CFG just needs both edges visible.
+            init_explored_state(env, pc);
+            if pc + 1 < n {
+                succs.push(pc + 1);
+                init_explored_state(env, pc + 1);
+            }
+            succs.push(*target);
+            init_explored_state(env, *target);
+            Ok(succs)
+        }
         Instr::CallRel { target } => {
             // 1. Push the Function Entry (The Call)
             succs.push(*target);
@@ -184,7 +206,7 @@ fn get_successors(pc: usize, prog: &Program) -> Vec<usize> {
     match &prog.instrs[pc] {
         Instr::Exit => vec![],
         Instr::Jmp { target } => vec![*target],
-        Instr::If { target, .. } => {
+        Instr::If { target, .. } | Instr::MayGoto { target } => {
             let mut succs = vec![*target];
             if pc + 1 < n {
                 succs.push(pc + 1);

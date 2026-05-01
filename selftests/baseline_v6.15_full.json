@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-01T14:37:06.052145+00:00",
+  "generated_at": "2026-05-01T15:38:03.750739+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -6600,7 +6600,7 @@
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(66) })"
+          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(68) })"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",
@@ -15147,47 +15147,40 @@
           "note": "verifier timeout"
         },
         "cond_break4": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "cond_break5": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "CFG error: unreachable insn at pc 6"
+          "ours": "PASS"
         },
         "gotol_and_may_goto": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "iter_limit_bug": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "ja_and_may_goto": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "ja_and_may_goto2": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "ja_and_may_goto_subprog": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "CFG error: unreachable insn at pc 4"
+          "ours": "PASS"
         },
         "jgt_imm64_and_may_goto": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "jlt_and_may_goto": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "loop_detection": {
           "upstream": "ACCEPT",
@@ -15206,9 +15199,8 @@
           "ours": "PASS"
         },
         "may_goto_neg_off": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "may_goto_self": {
           "upstream": "ACCEPT",
@@ -16223,7 +16215,7 @@
         "private_stack_async_callback_2": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "pc 27: R2 !read_ok"
+          "note": "Subprogram error: back-edge from insn 107 to 27"
         },
         "private_stack_callback": {
           "upstream": "ACCEPT",

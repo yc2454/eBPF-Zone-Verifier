@@ -202,7 +202,7 @@ fn get_local_successors(pc: usize, instr: &Instr, start: usize, end: usize) -> V
                 succs.push(*target);
             }
         }
-        Instr::If { target, .. } => {
+        Instr::If { target, .. } | Instr::MayGoto { target } => {
             if is_local(next) {
                 succs.push(next); // fallthrough
             }

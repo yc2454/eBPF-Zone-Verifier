@@ -135,26 +135,32 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
         }
 
         Instr::MayGoto { target } => {
-            // `may_goto` models a bounded back-edge: the kernel inlines a
-            // per-program counter check that either takes the jump (counter
-            // positive, decrement) or falls through (counter exhausted).
-            // We fork two successors accordingly. When the budget on this
-            // path is already zero, the taken edge is infeasible and only
-            // the fallthrough survives — this is what guarantees
-            // termination of the abstract interpreter on otherwise
-            // unbounded loops. No REJECT: the kernel itself doesn't reject
-            // here, it just stops iterating.
+            // `may_goto` (BPF_JCOND, v6.8) models a bounded back-edge.
+            // The kernel inlines a per-program counter that decrements on
+            // every execution of the may_goto, regardless of which edge
+            // is taken; once the counter hits zero the may_goto becomes
+            // a no-op (fall through). Mirroring that decrement on BOTH
+            // successors is what lets the abstract interpreter actually
+            // terminate: each loop iteration shrinks the budget, so
+            // pruning at the loop head eventually subsumes future
+            // iterations once widening (or empty live-regs) makes the
+            // body's effect on tracked state stable.
             let fallthrough_pc = state.pc + 1;
-            let mut state_fall = state.clone();
-            state_fall.pc = fallthrough_pc;
 
             if state.goto_budget() == 0 {
+                let mut state_fall = state;
+                state_fall.pc = fallthrough_pc;
                 return vec![state_fall];
             }
 
-            let mut state_taken = state;
+            let mut state_taken = state.clone();
             state_taken.consume_goto_budget();
             state_taken.pc = *target;
+
+            let mut state_fall = state;
+            state_fall.consume_goto_budget();
+            state_fall.pc = fallthrough_pc;
+
             vec![state_taken, state_fall]
         }
 
