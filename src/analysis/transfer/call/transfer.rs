@@ -521,6 +521,15 @@ fn initialize_uninit_mem_args(
 }
 
 /// Apply return value bounds based on helper semantics.
+/// Public re-export of `apply_return_bounds` for the cb-Exit
+/// propagation path in `transfer/mod.rs`. The cb-Exit path needs the
+/// same R0 bounds the helper would normally produce on its skip-path,
+/// minus the side-effect modeling that depends on caller-side
+/// `in_types`. `apply_return_bounds` is pure on-state.
+pub(crate) fn apply_return_bounds_for_cb_helper(state: &mut State, helper: u32) {
+    apply_return_bounds(state, helper);
+}
+
 fn apply_return_bounds(state: &mut State, helper: u32) {
     state.domain.forget(Reg::R0);
     state.set_tnum(Reg::R0, Tnum::unknown());
@@ -671,8 +680,67 @@ fn transfer_callback_helper(
         return vec![skip_state];
     }
 
+    // Decide whether cb iteration could run ≥ 2 times — drives the widen
+    // decision on cb-Exit propagation. Mirrors kernel's
+    // `widen_imprecise_scalars` only triggering when find_prev_entry
+    // returns a previous iteration to compare against (verifier.c v6.15
+    // L10903–10920).
+    let cb_should_widen = match helper {
+        constants::BPF_LOOP => {
+            // nr_loops is caller's R1. If max ≤ 1, only one iter possible
+            // (concrete merge). Else widen.
+            let (_, hi) = state.domain.get_interval(Reg::R1);
+            hi > 1
+        }
+        // bpf_for_each_map_elem / user_ringbuf_drain / find_vma: variable
+        // count (depends on map size / ringbuf entries / vma matches).
+        // The kernel's iteration logic walks ≥ 2 entries when the cb's
+        // exit-state isn't iter-stable, so widen scalar effects across
+        // iterations — matches the `unsafe_find_vma` reject pattern in
+        // verifier_iterating_callbacks.c.
+        constants::BPF_FOR_EACH_MAP_ELEM
+        | constants::BPF_USER_RINGBUF_DRAIN
+        | constants::BPF_FIND_VMA => true,
+        _ => false,
+    };
+
+    // Pre-push: capture caller's ctx-arg register so we can install it
+    // as the cb's ctx parameter after the frame push (which clears the
+    // caller-side regs). For sync callbacks the kernel passes the
+    // caller's ctx pointer to a specific cb arg register
+    // (`set_loop_callback_state` etc., verifier.c v6.15 ~L10685+).
+    // Without this, the cb body's first read of ctx hits "R2 !read_ok".
+    let ctx_propagation: Option<(Reg, RegType, Tnum, (i64, i64))> = match helper {
+        // bpf_loop(nr_loops, cb, ctx, flags) → cb(idx, ctx); ctx → R2.
+        constants::BPF_LOOP
+        // bpf_user_ringbuf_drain(map, cb, ctx, flags) → cb(dynptr, ctx); ctx → R2.
+        | constants::BPF_USER_RINGBUF_DRAIN => {
+            let bounds = state.domain.get_interval(Reg::R3);
+            Some((Reg::R2, state.types.get(Reg::R3), state.get_tnum(Reg::R3), bounds))
+        }
+        // bpf_for_each_map_elem(map, cb, ctx, flags) → cb(map, key, val, ctx); ctx → R4.
+        constants::BPF_FOR_EACH_MAP_ELEM => {
+            let bounds = state.domain.get_interval(Reg::R3);
+            Some((Reg::R4, state.types.get(Reg::R3), state.get_tnum(Reg::R3), bounds))
+        }
+        // bpf_find_vma(task, addr, cb, ctx, flags) → cb(task, vma, ctx); caller's R4 → cb's R3.
+        constants::BPF_FIND_VMA => {
+            let bounds = state.domain.get_interval(Reg::R4);
+            Some((Reg::R3, state.types.get(Reg::R4), state.get_tnum(Reg::R4), bounds))
+        }
+        _ => None,
+    };
+
     let mut cb_state = state;
+    let caller_level_idx = cb_state.current_frame_level();
+    let caller_stack_snapshot =
+        cb_state.frames.get(caller_level_idx).stack.clone();
     cb_state.push_callback_frame(pc + 1, helper);
+    cb_state.frames.current_mut().set_cb_propagation(
+        caller_stack_snapshot,
+        caller_level_idx.index(),
+        cb_should_widen,
+    );
     update_call_rel_types(&mut cb_state);
     cb_state.domain.clear_packet_size_bounds();
 
@@ -691,6 +759,15 @@ fn transfer_callback_helper(
     cb_state.domain.forget(Reg::R1);
     cb_state.set_tnum(Reg::R1, Tnum::unknown());
     cb_state.alloc_scalar_id(Reg::R1);
+
+    // Install propagated ctx after the generic clear above.
+    if let Some((dst, ty, tnum, (lo, hi))) = ctx_propagation {
+        cb_state.types.set(dst, ty);
+        cb_state.set_tnum(dst, tnum);
+        cb_state.domain.forget(dst);
+        cb_state.domain.assign_interval(dst, lo, hi);
+        cb_state.clear_scalar_id(dst);
+    }
 
     // Timer cb signature is `(struct bpf_map *, void *key, void *value)`
     // — kernel `set_timer_callback_state` (verifier.c ~L10685, v6.15)

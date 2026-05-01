@@ -21,6 +21,11 @@ impl FrameLevel {
     pub fn from_index(idx: usize) -> Self {
         FrameLevel(idx)
     }
+
+    /// Index into the frame stack.
+    pub fn index(self) -> usize {
+        self.0
+    }
 }
 
 impl std::fmt::Display for FrameLevel {
@@ -62,6 +67,27 @@ pub struct CallFrame {
     /// Used on Exit to tighten the callback's return-value contract
     /// (e.g. bpf_loop requires R0 ∈ {0, 1}) — W3.4c.
     callback_helper: Option<u32>,
+
+    /// Snapshot of the caller frame's stack at cb-entry time. On clean
+    /// cb-Exit we propagate the cb's writes to caller's stack onto the
+    /// post-call skip-state (mirroring the kernel's iterative cb model
+    /// in verifier.c v6.15 ~L10903 where cb iteration applies its own
+    /// memory effects to the surviving post-call state). Comparing the
+    /// post-cb stack against this snapshot tells us which slots cb
+    /// touched, so we can widen only those when iteration count > 1.
+    caller_stack_snapshot: Option<StackState>,
+
+    /// Frame level of the caller at cb-push time. Identifies which
+    /// frame's stack the cb might write through its ctx-arg pointer.
+    caller_frame_level: Option<usize>,
+
+    /// True when the cb may iterate ≥ 2 times so cb-touched slots must
+    /// be widened on the post-call state. Mirrors the kernel's
+    /// `widen_imprecise_scalars` pass after cb-return: only triggered
+    /// when there's a "previous iteration" to compare against, which
+    /// for nr_loops==1 (and find_vma which runs at most once) doesn't
+    /// happen — those use concrete merge.
+    cb_should_widen: bool,
 }
 
 impl Default for CallFrame {
@@ -76,6 +102,9 @@ impl Default for CallFrame {
             exception_cb: None,
             is_callback: false,
             callback_helper: None,
+            caller_stack_snapshot: None,
+            caller_frame_level: None,
+            cb_should_widen: false,
         }
     }
 }
@@ -94,6 +123,33 @@ impl CallFrame {
     /// Helper id that entered this callback frame, if `is_callback`.
     pub fn callback_helper(&self) -> Option<u32> {
         self.callback_helper
+    }
+
+    /// Caller frame's stack snapshot for cb-effect propagation, if set.
+    pub fn caller_stack_snapshot(&self) -> Option<&StackState> {
+        self.caller_stack_snapshot.as_ref()
+    }
+
+    /// Frame level of the caller at cb-push time.
+    pub fn caller_frame_level(&self) -> Option<usize> {
+        self.caller_frame_level
+    }
+
+    /// Whether cb-touched slots must be widened on post-call propagation.
+    pub fn cb_should_widen(&self) -> bool {
+        self.cb_should_widen
+    }
+
+    /// Set cb-effect propagation parameters at frame push time.
+    pub fn set_cb_propagation(
+        &mut self,
+        caller_stack_snapshot: StackState,
+        caller_frame_level: usize,
+        should_widen: bool,
+    ) {
+        self.caller_stack_snapshot = Some(caller_stack_snapshot);
+        self.caller_frame_level = Some(caller_frame_level);
+        self.cb_should_widen = should_widen;
     }
 
     /// Register an exception callback entry PC on this frame. Overwrites
@@ -227,6 +283,9 @@ impl FrameStack {
             exception_cb: None,
             is_callback: callback_helper.is_some(),
             callback_helper,
+            caller_stack_snapshot: None,
+            caller_frame_level: None,
+            cb_should_widen: false,
         };
         self.frames.push(frame);
         self.current_level()

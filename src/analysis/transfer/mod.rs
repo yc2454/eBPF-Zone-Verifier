@@ -386,11 +386,18 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         return vec![];
     }
 
-    // W3.4b: a callback frame's Exit doesn't return into the caller —
-    // the helper's post-call state is emitted separately at the call
-    // site. We only validate the callback's R0 (must be a scalar — for
-    // bpf_loop specifically the kernel requires 0 or 1; we keep the
-    // check loose here and let future work tighten) and drop the path.
+    // W3.4b: a callback frame's Exit doesn't merge back into the caller
+    // by way of CallRel return semantics — the helper's post-call state
+    // is emitted separately at the call site (see
+    // `transfer_callback_helper`'s skip_state). What we DO emit here
+    // (bucket E) is a SECOND post-call state at the call site's pc+1
+    // that carries the cb's effects on caller-frame stack memory. This
+    // mirrors the kernel's iterative cb model (verifier.c v6.15
+    // ~L10903+): cb-touched scalar stack slots get widened on the
+    // surviving caller state when the cb may run ≥ 2 times. For
+    // nr_loops ≤ 1 (or single-shot helpers like find_vma) we keep the
+    // cb's writes concretely, since there's no "previous iteration" to
+    // widen against.
     if state.frames.current().is_callback() {
         if state.types.get(Reg::R0) != RegType::ScalarValue {
             env.fail(VerificationError::InvalidReturnCode { pc });
@@ -399,9 +406,9 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         // W3.4c: bpf_loop / bpf_for_each_map_elem / bpf_user_ringbuf_drain
         // callbacks must return 0 (continue) or 1 (break). Timer callbacks
         // are void-returning and not constrained here.
-        let cb_helper = state.frames.current().callback_helper();
+        let cb_helper_id = state.frames.current().callback_helper();
         if matches!(
-            cb_helper,
+            cb_helper_id,
             Some(crate::common::constants::BPF_LOOP)
                 | Some(crate::common::constants::BPF_FOR_EACH_MAP_ELEM)
                 | Some(crate::common::constants::BPF_USER_RINGBUF_DRAIN)
@@ -412,7 +419,7 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
                 return vec![];
             }
         }
-        return vec![];
+        return cb_exit_propagate(state);
     }
 
     if let Some(frame) = state.pop_frame() {
@@ -490,4 +497,76 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     } else {
         vec![]
     }
+}
+
+/// Build a post-cb state at the helper call's pc+1 that carries the
+/// cb's effects on caller-frame memory. Mirrors kernel's
+/// `prepare_func_exit` cb-return path + `widen_imprecise_scalars`
+/// (verifier.c v6.15 ~L10898–10920). Caller-frame stack writes done
+/// via the cb's ctx pointer have already landed on the right frame
+/// (PtrToStack carries frame_level); we pop the cb frame, restore
+/// caller regs, and—if the cb may iterate ≥ 2 times—invalidate the
+/// stack slots that differ from the snapshot taken at cb-entry.
+fn cb_exit_propagate(mut state: State) -> Vec<State> {
+    use crate::analysis::machine::frame_stack::FrameLevel;
+    use crate::analysis::machine::reg_types::RegType;
+    use crate::analysis::transfer::call::transfer::apply_return_bounds_for_cb_helper;
+    use crate::domains::tnum::Tnum;
+    use std::collections::HashSet;
+
+    let Some(frame) = state.pop_frame() else {
+        return vec![];
+    };
+    let return_pc = frame.return_pc;
+    let helper = frame.callback_helper().unwrap_or(0);
+    let should_widen = frame.cb_should_widen();
+    let caller_level = frame.caller_frame_level();
+    let snapshot = frame.caller_stack_snapshot().cloned();
+
+    // Restore caller regs (cb's R0 etc. are dropped).
+    state.types = frame.caller_types;
+    state.domain = frame.caller_domain;
+    state.tnums = frame.caller_tnums;
+
+    // Helper return value lives in R0; bounds depend on helper kind.
+    state.types.set(Reg::R0, RegType::ScalarValue);
+    apply_return_bounds_for_cb_helper(&mut state, helper);
+    state.clear_scalar_id(Reg::R0);
+
+    // Forget arg regs (helpers clobber R1..R5).
+    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+        state.types.set(r, RegType::ScalarValue);
+        state.domain.forget(r);
+        state.set_tnum(r, Tnum::unknown());
+        state.clear_scalar_id(r);
+    }
+
+    // Apply widening to caller-frame stack slots the cb touched. We
+    // detect "touched" by comparing each slot against the pre-cb
+    // snapshot. With cb_should_widen=false (nr_loops ≤ 1, find_vma)
+    // we keep the cb's writes concretely; this lets `_ok`-style tests
+    // verify with the post-cb concrete value while still abstracting
+    // multi-iteration cases.
+    if should_widen
+        && let (Some(snap), Some(idx)) = (snapshot, caller_level)
+    {
+        let caller_stack = state.stack_at_mut(FrameLevel::from_index(idx));
+        let mut all_offsets: HashSet<i16> = snap.slot_offsets().into_iter().collect();
+        all_offsets.extend(caller_stack.slot_offsets());
+        for off in all_offsets {
+            let snap_slot = snap.get_slot(off);
+            let cur_slot = caller_stack.get_slot(off);
+            let differs = match (snap_slot, cur_slot) {
+                (None, None) => false,
+                (None, Some(_)) | (Some(_), None) => true,
+                (Some(a), Some(b)) => a != b,
+            };
+            if differs {
+                caller_stack.invalidate_slot(off);
+            }
+        }
+    }
+
+    state.pc = return_pc;
+    vec![state]
 }
