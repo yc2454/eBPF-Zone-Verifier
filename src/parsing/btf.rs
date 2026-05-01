@@ -1844,6 +1844,7 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                             initial_data: None, // No initial data here
                             inner_map_idx: None,
                             kptr_fields,
+                            extern_var_offsets: Vec::new(),
                         });
                     }
                 }

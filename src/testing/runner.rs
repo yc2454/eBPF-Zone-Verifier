@@ -14,8 +14,8 @@ use crate::parsing::btf::{self, BtfContext, StructOpsArg};
 use crate::parsing::elf;
 use crate::parsing::elf::struct_ops::{StructOpsBinding, extract_bindings};
 use crate::parsing::elf::{
-    BpfFuncInfo, BpfMapDef, get_functions_in_section, list_section_names, load_data_section_maps,
-    load_maps, load_raw_programs, load_relocations_for_function,
+    BpfFuncInfo, BpfMapDef, get_functions_in_section, list_section_names, load_btf_extern_maps,
+    load_data_section_maps, load_maps, load_raw_programs, load_relocations_for_function,
 };
 use crate::parsing::elf::{
     program_kind_for_object, try_load_combined_program_from_elf, try_load_function_from_elf,
@@ -246,8 +246,10 @@ impl Analyzer {
         // Load maps (explicit + data sections)
         let explicit_maps = load_maps(path).unwrap_or_default();
         let data_maps = load_data_section_maps(path).unwrap_or_default();
+        let extern_maps = load_btf_extern_maps(path).unwrap_or_default();
         let mut all_maps = explicit_maps;
         all_maps.extend(data_maps);
+        all_maps.extend(extern_maps);
 
         // Apply map size overrides from config
         for m in &mut all_maps {

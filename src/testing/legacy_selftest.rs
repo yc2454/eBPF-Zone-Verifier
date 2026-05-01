@@ -172,6 +172,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         "fixup_map_hash_16b" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_HASH,
@@ -184,6 +185,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         "fixup_map_hash_48b" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_HASH,
@@ -196,6 +198,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         "fixup_map_array_48b" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_ARRAY,
@@ -208,6 +211,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         "fixup_map_array_ro" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_ARRAY,
@@ -220,6 +224,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         "fixup_map_array_wo" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_ARRAY,
@@ -232,6 +237,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         "fixup_map_array_small" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_ARRAY,
@@ -244,6 +250,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         "fixup_prog1" | "fixup_prog2" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_PROG_ARRAY,
@@ -256,6 +263,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         "fixup_cgroup_storage" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_CGROUP_STORAGE, // 19
@@ -268,6 +276,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         "fixup_percpu_cgroup_storage" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_PERCPU_CGROUP_STORAGE, // 21
@@ -280,6 +289,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         "fixup_map_event_output" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_PERF_EVENT_ARRAY, // 4
@@ -292,6 +302,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         "fixup_map_ringbuf" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_RINGBUF, // 27
@@ -304,6 +315,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         "fixup_map_in_map" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_ARRAY_OF_MAPS, // 12
@@ -316,6 +328,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         "fixup_map_stacktrace" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_STACK_TRACE, // 7
@@ -328,6 +341,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         "fixup_sk_storage_map" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_SK_STORAGE, // 24
@@ -340,6 +354,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         "fixup_map_sockmap" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_SOCKMAP, // 15
@@ -352,6 +367,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         "fixup_map_sockhash" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_SOCKHASH, // 18
@@ -364,6 +380,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         "fixup_map_xskmap" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_XSKMAP, // 17
@@ -376,6 +393,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         "fixup_map_reuseport_array" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_REUSEPORT_SOCKARRAY, // 22
@@ -388,6 +406,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         "fixup_map_spin_lock" => Some(BpfMapDef {
             type_: BPF_MAP_TYPE_ARRAY,
@@ -400,6 +419,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         // W5.1c: hash map whose value embeds a `struct bpf_timer` at byte 0.
         // Value layout: 16 bytes (matches struct bpf_timer footprint). BTF
@@ -415,6 +435,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         // W5.4b: hash map whose value (`struct val_graph`, BTF id 8)
         // embeds spin_lock @0, list_head @8, rb_root @24. Backs the
@@ -430,6 +451,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         // W6.1c: arena map fixture for legacy/arena.json. Valueless map
         // kind (no key/value); `bpf_arena_alloc_pages` validates only
@@ -445,6 +467,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             initial_data: None,
             inner_map_idx: None,
             kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
         }),
         // Add more fixup types as needed
         _ => None,

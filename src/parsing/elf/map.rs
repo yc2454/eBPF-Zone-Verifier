@@ -81,10 +81,87 @@ pub fn load_data_section_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>>
                 initial_data,
                 inner_map_idx: None,
                 kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
             });
         }
     }
 
+    Ok(maps)
+}
+
+/// Synthesize maps for libbpf-managed extern sections that don't appear as
+/// real ELF sections but are described in BTF DATASEC. Today only `.kconfig`
+/// is handled — these are scalar kernel-config externs declared with
+/// `extern <type> NAME __kconfig;`. libbpf builds the map at load time and
+/// patches `R_BPF_64_64` relocations against UND extern symbols into
+/// `BPF_PSEUDO_MAP_VALUE` LD_IMM64s. We mirror that here so the lowerer sees
+/// the LD_IMM64 + LDX pattern as a typed map-value access instead of a load
+/// from address 0 (the unrelocated default).
+///
+/// `.ksyms` (typed kernel-symbol externs) is intentionally not handled — those
+/// resolve via `BPF_PSEUDO_BTF_ID`, not `MAP_VALUE`.
+pub fn load_btf_extern_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
+    let buf = fs::read(&path)?;
+    let elf = Elf::parse(&buf)?;
+
+    let btf_ctx = elf.section_headers.iter().find_map(|sh| {
+        if elf.shdr_strtab.get_at(sh.sh_name) == Some(".BTF") {
+            let start = sh.sh_offset as usize;
+            let end = start + sh.sh_size as usize;
+            if end <= buf.len() {
+                return btf::parse_btf(&buf[start..end]).ok();
+            }
+        }
+        None
+    });
+
+    let Some(ctx) = btf_ctx else {
+        return Ok(vec![]);
+    };
+
+    let mut maps = vec![];
+    let sec_name = ".kconfig";
+    let Some(datasec_id) = ctx.find_datasec(sec_name) else {
+        return Ok(maps);
+    };
+    let entries = ctx.datasec_entries(datasec_id);
+    if entries.is_empty() {
+        return Ok(maps);
+    }
+
+    // clang emits `.kconfig` DATASEC entries with offset=0; libbpf assigns
+    // the real offsets at load time, sequentially with size-aligned packing.
+    // We mirror that deterministically here — the actual values are unknown
+    // at static-analysis time anyway, so as long as each var maps to a
+    // distinct, in-bounds offset, loads through the synthesized map produce
+    // ScalarValue (any) and verification proceeds.
+    let mut cur_off: u32 = 0;
+    let mut extern_var_offsets: Vec<(String, u32)> = Vec::new();
+    for entry in &entries {
+        let Some((name, _)) = ctx.var_info(entry.var_id) else {
+            continue;
+        };
+        let size = entry.size.max(1);
+        let align = size.next_power_of_two().min(8);
+        let aligned = cur_off.div_ceil(align) * align;
+        extern_var_offsets.push((name.to_string(), aligned));
+        cur_off = aligned + size;
+    }
+    let value_size = cur_off.max(8);
+
+    maps.push(BpfMapDef {
+        type_: constants::BPF_MAP_TYPE_ARRAY,
+        key_size: 4,
+        value_size,
+        max_entries: 1,
+        map_flags: constants::BPF_F_RDONLY_PROG,
+        name: sec_name.to_string(),
+        btf_val_type_id: Some(datasec_id),
+        initial_data: None,
+        inner_map_idx: None,
+        kptr_fields: Vec::new(),
+        extern_var_offsets,
+    });
     Ok(maps)
 }
 
@@ -153,6 +230,7 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                                 initial_data: None,
                                 inner_map_idx,
                                 kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
                             });
                         }
                     }

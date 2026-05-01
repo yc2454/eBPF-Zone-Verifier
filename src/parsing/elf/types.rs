@@ -52,6 +52,12 @@ pub struct BpfMapDef {
     /// Empty for legacy maps and data-section maps. See
     /// `parse_btf_map_defs` for population.
     pub kptr_fields: Vec<KptrField>,
+    /// libbpf-managed extern variables backed by this synthetic map
+    /// (`.kconfig` only today). Each entry is `(extern_name, offset_in_value)`.
+    /// Empty for normal maps. Populated by `load_btf_extern_maps` and consumed
+    /// by `load_relocations*` to resolve `R_BPF_64_64` against UND extern
+    /// symbols into a `RelocKind::MapValue` reloc into this map.
+    pub extern_var_offsets: Vec<(String, u32)>,
 }
 
 /// Represents a raw BPF program extracted from the ELF symbol table.

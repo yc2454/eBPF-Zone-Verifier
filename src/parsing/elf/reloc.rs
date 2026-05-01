@@ -200,6 +200,17 @@ pub fn load_relocations<P: AsRef<Path>>(
         map_name_to_idx.insert(m.name.as_str(), i);
     }
 
+    // Extern variables backed by libbpf-managed maps (today only `.kconfig`).
+    // For each, the synthesized map carries the (extern_name, offset) pairs;
+    // a `R_BPF_64_64` against a UND extern symbol with one of these names
+    // becomes a `MapValue` reloc into this map.
+    let mut extern_var_to_loc: HashMap<&str, (usize, i64)> = HashMap::new();
+    for (i, m) in maps.iter().enumerate() {
+        for (name, off) in &m.extern_var_offsets {
+            extern_var_to_loc.insert(name.as_str(), (i, *off as i64));
+        }
+    }
+
     let mut section_idx_to_map_idx: HashMap<usize, usize> = HashMap::new();
     for (sec_idx, sh) in elf.section_headers.iter().enumerate() {
         if let Some(name) = elf.shdr_strtab.get_at(sh.sh_name)
@@ -332,6 +343,21 @@ pub fn load_relocations<P: AsRef<Path>>(
                         RelocInfo {
                             map_idx,
                             offset: sym.st_value as i64,
+                            helper_id: 0,
+                            kind: RelocKind::MapValue,
+                            bpf_call_target: None,
+                            kfunc_name: None,
+                        },
+                    );
+                } else if let Some(&(map_idx, offset)) = extern_var_to_loc.get(name) {
+                    // libbpf-managed extern (e.g. `.kconfig` `__kconfig` var).
+                    // Symbol is UND in the ELF; the synthesized map carries
+                    // the in-value offset.
+                    pc_to_reloc.insert(
+                        pc,
+                        RelocInfo {
+                            map_idx,
+                            offset,
                             helper_id: 0,
                             kind: RelocKind::MapValue,
                             bpf_call_target: None,
@@ -515,6 +541,17 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
     let mut map_name_to_idx: HashMap<&str, usize> = HashMap::new();
     for (i, m) in maps.iter().enumerate() {
         map_name_to_idx.insert(m.name.as_str(), i);
+    }
+
+    // Extern variables backed by libbpf-managed maps (today only `.kconfig`).
+    // For each, the synthesized map carries the (extern_name, offset) pairs;
+    // a `R_BPF_64_64` against a UND extern symbol with one of these names
+    // becomes a `MapValue` reloc into this map.
+    let mut extern_var_to_loc: HashMap<&str, (usize, i64)> = HashMap::new();
+    for (i, m) in maps.iter().enumerate() {
+        for (name, off) in &m.extern_var_offsets {
+            extern_var_to_loc.insert(name.as_str(), (i, *off as i64));
+        }
     }
 
     let mut section_idx_to_map_idx: HashMap<usize, usize> = HashMap::new();
@@ -734,6 +771,19 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                         RelocInfo {
                             map_idx,
                             offset: sym.st_value as i64,
+                            helper_id: 0,
+                            kind: RelocKind::MapValue,
+                            bpf_call_target: None,
+                            kfunc_name: None,
+                        },
+                    );
+                } else if let Some(&(map_idx, offset)) = extern_var_to_loc.get(name) {
+                    // libbpf-managed extern (e.g. `.kconfig` `__kconfig` var).
+                    pc_to_reloc.insert(
+                        func_pc,
+                        RelocInfo {
+                            map_idx,
+                            offset,
                             helper_id: 0,
                             kind: RelocKind::MapValue,
                             bpf_call_target: None,
