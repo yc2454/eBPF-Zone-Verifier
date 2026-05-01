@@ -1,4 +1,3 @@
-pub mod benchmark_common;
 pub mod jsonl;
 pub mod legacy_selftest;
 pub mod logging;

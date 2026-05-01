@@ -1,12 +1,17 @@
-// src/testing/scanner.rs
+//! `dev benchmark-scan <dir> <out.json>` — ELF/BTF metadata extractor.
+//!
+//! For every `.o` under `<dir>`, lists each code section that loads
+//! cleanly and the function names declared in it. Pure parsing — no
+//! verification work happens here. Used to build catalogues / scoping
+//! reports without invoking the verifier.
 
 use crate::parsing::elf::{get_functions_in_section, list_section_names};
-use crate::testing::benchmark_common::{expand_path, is_elf_file, visit_dirs};
 use crate::testing::runner::is_code_section;
 use anyhow::{Context, Result};
 use serde::Serialize;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::BufWriter;
+use std::path::{Path, PathBuf};
 
 #[derive(Serialize)]
 pub struct ElfScanResult {
@@ -21,7 +26,7 @@ pub struct SectionScanInfo {
 }
 
 pub fn scan_benchmark_dir(dir_path: &str, output_json: &str) -> Result<()> {
-    let root_path = expand_path(dir_path);
+    let root_path = expand_tilde(dir_path);
     if !root_path.exists() || !root_path.is_dir() {
         return Err(anyhow::anyhow!("Directory does not exist: {:?}", root_path));
     }
@@ -88,4 +93,38 @@ pub fn scan_benchmark_dir(dir_path: &str, output_json: &str) -> Result<()> {
 
     println!("Done.");
     Ok(())
+}
+
+// --- Local filesystem helpers ---
+//
+// Trivial enough to live next to their only caller; previously lived in
+// `benchmark_common.rs` alongside the (now-deleted) bcf/prevail Rust
+// harnesses.
+
+fn visit_dirs(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    if dir.is_dir() {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                visit_dirs(&path, files)?;
+            } else {
+                files.push(path);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn expand_tilde(path: &str) -> PathBuf {
+    if let Some(stripped) = path.strip_prefix("~/") {
+        let home = std::env::var("HOME").expect("HOME not set");
+        PathBuf::from(home).join(stripped)
+    } else {
+        PathBuf::from(path)
+    }
+}
+
+fn is_elf_file(path: &Path) -> bool {
+    path.extension().is_some_and(|ext| ext == "o")
 }
