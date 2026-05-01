@@ -13,7 +13,7 @@ BIN="./target/release/zovia"
 capture_selftest() {
     local mode="$1" flag="$2" suite="$3" dir="$4"
     echo "== capturing selftest ($mode${suite:+, $suite}) =="
-    $BIN -q $flag --max-insn 100000 selftest-suite "$dir" > /dev/null 2>&1
+    $BIN -q $flag --max-insn 100000 dev selftest-suite "$dir" > /dev/null 2>&1
     python3 tests/baselines/canonicalize.py \
         results/selftest/selftest_report.json \
         "tests/baselines/selftest_${mode}${suite:+_$suite}.json"
@@ -21,7 +21,8 @@ capture_selftest() {
 
 capture_prevail() {
     echo "== capturing prevail =="
-    $BIN -q prevail-benchmark ~/ebpf-samples > /dev/null 2>&1
+    # Prevail moved to scripts/prevail.py (Pass 2 step 4); same JSON shape.
+    scripts/prevail.py --output-dir results/prevail benchmark ~/ebpf-samples > /dev/null 2>&1
     local src
     src="$(ls -t results/prevail/prevail_benchmark_*_results.json | head -1)"
     python3 - "$src" tests/baselines/prevail.json <<'PY'

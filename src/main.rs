@@ -17,29 +17,21 @@ mod testing;
 
 use crate::ast::ProgramKind;
 use crate::cli::{
-    Cli, Cmd, DevCmd, ElfArgs, InputKind, LegacySelftestCmd, PccCmd, PrevailCmd, VerifyArgs,
+    Cli, Cmd, DevCmd, ElfArgs, InputKind, LegacySelftestCmd, PccCmd, VerifyArgs,
 };
 use crate::common::config::{DomainMode, VerifierConfig};
 use crate::parsing::elf::program_kind_for_object;
 use crate::parsing::elf::{list_section_names, load_maps, load_raw_programs};
 use crate::pcc::ProgramCertificate;
-use crate::testing::bcf_benchmark::analyze_benchmark;
 use crate::testing::legacy_selftest::{selftest_list, selftest_run, selftest_single, selftest_suite};
 use crate::testing::logging;
 use crate::testing::pcc_test::{pcc_cert_run, pcc_test_single};
-use crate::testing::prevail::{prevail_benchmark, prevail_list, prevail_run, prevail_single};
 use crate::testing::runner::{AnalysisResult, Analyzer, find_section_for_func, is_code_section};
 use clap::Parser;
 use std::path::Path;
 
 fn main() {
-    let raw_args: Vec<String> = std::env::args().collect();
-    let (bin, rest) = raw_args.split_first().expect("argv[0]");
-    let translated = cli::rewrite_legacy_argv(rest.to_vec());
-    let mut full = vec![bin.clone()];
-    full.extend(translated);
-
-    let parsed = Cli::parse_from(full);
+    let parsed = Cli::parse();
     let config = parsed.global.into_verifier_config();
 
     // Initialize logging.
@@ -399,8 +391,24 @@ fn run_dev(sub: DevCmd, config: VerifierConfig) {
         } => {
             run_baseline_check_modern(&progs_dir, &baseline, &config);
         }
-        DevCmd::BcfBenchmark { dir } => {
-            analyze_benchmark(&dir, &config);
+        DevCmd::VerifyCorpus {
+            dir,
+            input_list,
+            out,
+        } => {
+            let dir_path = if dir.is_empty() {
+                None
+            } else {
+                Some(Path::new(dir.as_str()))
+            };
+            let list_path = input_list.as_deref().map(Path::new);
+            let out_path = out.as_deref().map(Path::new);
+            if let Err(e) =
+                crate::testing::jsonl::emit_corpus_jsonl(dir_path, list_path, out_path, &config)
+            {
+                eprintln!("Error: {e}");
+                std::process::exit(2);
+            }
         }
         DevCmd::LegacySelftest { sub } => match sub {
             LegacySelftestCmd::List { json_file } => selftest_list(&json_file),
@@ -412,16 +420,6 @@ fn run_dev(sub: DevCmd, config: VerifierConfig) {
             }
             LegacySelftestCmd::Suite { json_dir } => {
                 selftest_suite(&json_dir, &config, Some("./results/selftest"))
-            }
-        },
-        DevCmd::Prevail { sub } => match sub {
-            PrevailCmd::List { catalogue } => prevail_list(&catalogue),
-            PrevailCmd::Run { catalogue } => {
-                prevail_run(&catalogue, &config, Some("./results/prevail"))
-            }
-            PrevailCmd::Single { catalogue, test } => prevail_single(&catalogue, &test, &config),
-            PrevailCmd::Benchmark { dir } => {
-                prevail_benchmark(&dir, &config, Some("./results/prevail"))
             }
         },
         DevCmd::PccRegress { manifest } => {

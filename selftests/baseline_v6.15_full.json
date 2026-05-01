@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-01T15:47:45.990257+00:00",
+  "generated_at": "2026-05-01T22:18:18.528974+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -130,8 +130,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/async_stack_depth.c",
       "progs": {
         "async_call_root_check": {
-          "upstream": "ACCEPT",
-          "ours": "PASS"
+          "upstream": "REJECT",
+          "ours": "FALSE_ACCEPT"
         },
         "pseudo_call_check": {
           "upstream": "ACCEPT",
@@ -5995,7 +5995,7 @@
         "preempt_global_subprog_test": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 7: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "note": "Unsupported modern BPF feature at pc 13: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "preempt_lock_missing_1": {
           "upstream": "ACCEPT",
@@ -6600,7 +6600,7 @@
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(65) })"
+          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(66) })"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",
@@ -13036,8 +13036,7 @@
         },
         "iter_maps1": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 2: base R1+36 (type: ScalarValue)"
+          "ours": "PASS"
         },
         "iter_maps2": {
           "upstream": "ACCEPT",
@@ -13058,8 +13057,7 @@
         },
         "big_alloc2": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 164: base R2+0 (type: ScalarValue)"
+          "ours": "PASS"
         }
       }
     },
@@ -15103,13 +15101,11 @@
       "progs": {
         "bpf_loop_iter_limit_nested": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "pc 44: R2 !read_ok"
+          "ours": "PASS"
         },
         "bpf_loop_iter_limit_ok": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "pc 16: R2 !read_ok"
+          "ours": "PASS"
         },
         "bpf_loop_iter_limit_overflow": {
           "upstream": "ACCEPT",
@@ -15159,8 +15155,8 @@
           "ours": "PASS"
         },
         "iter_limit_bug": {
-          "upstream": "ACCEPT",
-          "ours": "PASS"
+          "upstream": "REJECT",
+          "ours": "FALSE_ACCEPT"
         },
         "ja_and_may_goto": {
           "upstream": "ACCEPT",
@@ -15249,8 +15245,7 @@
         },
         "widening": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "pc 17: R2 !read_ok"
+          "ours": "PASS"
         }
       }
     },
@@ -15944,8 +15939,7 @@
       "progs": {
         "may_goto_c_code": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "DBM inconsistent at pc 31"
+          "ours": "PASS"
         }
       }
     },
@@ -16214,8 +16208,7 @@
         },
         "private_stack_async_callback_2": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Subprogram error: back-edge from insn 107 to 27"
+          "ours": "PASS"
         },
         "private_stack_callback": {
           "upstream": "ACCEPT",

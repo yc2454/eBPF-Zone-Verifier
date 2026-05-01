@@ -73,20 +73,6 @@ pub struct VerifierConfig {
     /// to the pre-6.12 cumulative-only model.
     pub enable_private_stack: bool,
 
-    // --- Benchmark Filters ---
-    /// Filter benchmark by project (subdirectory name)
-    pub bench_project: Option<String>,
-    /// Filter benchmark by compiler version (e.g., "clang-16")
-    pub bench_compiler: Option<String>,
-    /// Filter benchmark by optimization level (e.g., "-O1")
-    pub bench_opt: Option<String>,
-    /// Filter benchmark by source program name (e.g., "bpf_host")
-    pub bench_source: Option<String>,
-
-    // --- Benchmark Input ---
-    /// Optional: Path to a file containing a list of ELF paths to analyze
-    pub bench_input_file: Option<String>,
-
     /// Optional path to write generated PCC certificate JSON.
     pub certificate_output: Option<String>,
     /// Optional path to load a PCC certificate for certificate-aided analysis.
@@ -111,11 +97,6 @@ impl Default for VerifierConfig {
             detect_bounded_loops: true, // Default: enabled for precision
             require_single_loop_entry: false, // Default: allow multi-entry loops
             enable_private_stack: true, // W7.3 default: mirror v6.12+ kernel
-            bench_project: None,
-            bench_compiler: None,
-            bench_opt: None,
-            bench_source: None,
-            bench_input_file: None,
             certificate_output: None,
             certificate_input: None,
             certificate: None,
