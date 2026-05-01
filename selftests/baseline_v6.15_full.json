@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-01T15:38:03.750739+00:00",
+  "generated_at": "2026-05-01T15:47:45.990257+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -5995,7 +5995,7 @@
         "preempt_global_subprog_test": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 13: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "note": "Unsupported modern BPF feature at pc 7: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "preempt_lock_missing_1": {
           "upstream": "ACCEPT",
@@ -6600,7 +6600,7 @@
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(68) })"
+          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(65) })"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",
@@ -16219,8 +16219,7 @@
         },
         "private_stack_callback": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "CFG error: unreachable insn at pc 9"
+          "ours": "PASS"
         },
         "private_stack_exception_main_prog": {
           "upstream": "ACCEPT",

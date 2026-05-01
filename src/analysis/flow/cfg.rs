@@ -21,9 +21,18 @@ fn callback_arg_reg(helper_id: u32) -> Option<Reg> {
 
 /// Scan backward from `call_pc` through the current linear run of
 /// instructions to find the PSEUDO_FUNC load that feeds `cb_reg`.
-/// Stops at the first branch/exit/call we see (simple basic-block walk);
-/// if later dataflow proves richer feeders, W3.4b can revisit.
+/// Follows reg-to-reg Mov chains (`Mov cb_reg, R6` → keep scanning for
+/// the PSEUDO_FUNC that fed `R6`). Stops at the first branch/exit/call
+/// we see (simple basic-block walk); if later dataflow proves richer
+/// feeders, W3.4b can revisit.
+///
+/// Caught `verifier_private_stack::private_stack_callback`, where the
+/// pattern is `LoadMap R6, PseudoFunc; Mov R2, R6; Call bpf_loop`. R2
+/// is the cb_reg for bpf_loop; without the chain-follow the scan saw
+/// `Mov R2, R6` as a foreign write and gave up, leaving the callback's
+/// body unreachable in DFS.
 fn find_pseudo_func_for_call(prog: &Program, call_pc: usize, cb_reg: Reg) -> Option<u32> {
+    let mut tracked = cb_reg;
     let mut pc = call_pc;
     while pc > 0 {
         pc -= 1;
@@ -32,12 +41,19 @@ fn find_pseudo_func_for_call(prog: &Program, call_pc: usize, cb_reg: Reg) -> Opt
                 dst,
                 kind: MapLoadKind::PseudoFunc { subprog_pc },
                 ..
-            } if *dst == cb_reg => return Some(*subprog_pc),
-            // Any write to cb_reg that isn't the PSEUDO_FUNC load breaks
-            // the direct feed — bail out conservatively.
+            } if *dst == tracked => return Some(*subprog_pc),
+            // `Mov tracked, Reg(src)` is an alias chain — keep scanning
+            // backward for the producer of `src`. Any other write to
+            // `tracked` (immediate Mov, arithmetic, load, foreign LoadMap)
+            // breaks the direct feed.
+            Instr::Alu { dst, op: crate::ast::AluOp::Mov, src: crate::ast::Operand::Reg(src), .. }
+                if *dst == tracked =>
+            {
+                tracked = *src;
+            }
             Instr::Alu { dst, .. } | Instr::MovSx { dst, .. } | Instr::Load { dst, .. }
             | Instr::LoadSx { dst, .. } | Instr::LoadMap { dst, .. }
-                if *dst == cb_reg =>
+                if *dst == tracked =>
             {
                 return None;
             }
