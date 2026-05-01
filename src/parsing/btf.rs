@@ -711,6 +711,28 @@ impl BtfContext {
                             mem_size: pointee.size_or_type,
                         }
                     }
+                    // `int (*arr)[10]` etc.: pointer to a fixed-size array.
+                    // ARRAY's parsed members[0] carries (elem_type, nelems);
+                    // total mem_size = elem_size * nelems. Peel modifiers on
+                    // the elem so typedef'd elem types resolve. Required for
+                    // `test_global_func9` / `test_global_func16`'s
+                    // `quux(int (*arr)[10])` callee body to see R1 as a
+                    // 40-byte mem region.
+                    BTF_KIND_ARRAY => {
+                        let arr = pointee.members.first();
+                        let mem_size = arr
+                            .map(|m| {
+                                let elem_id = self.peel_modifiers(m.type_id);
+                                let elem_size = self
+                                    .types
+                                    .get(&elem_id)
+                                    .map(|t| t.size_or_type)
+                                    .unwrap_or(0);
+                                elem_size.saturating_mul(m.offset)
+                            })
+                            .unwrap_or(0);
+                        GlobalFuncArg::PtrToMem { mem_size }
+                    }
                     _ => GlobalFuncArg::PtrToMem { mem_size: 0 },
                 }
             }
@@ -1180,6 +1202,22 @@ pub fn parse_btf(bytes: &[u8]) -> Result<BtfContext, String> {
                 cursor += 4;
             }
             BTF_KIND_ARRAY => {
+                // Trailing `struct btf_array { u32 elem_type; u32 index_type;
+                // u32 nelems }`. ARRAY's header `size_or_type` slot is
+                // unused per BTF spec, so we reuse `members[0]` to carry
+                // `elem_type` (in type_id) and `nelems` (in offset). The
+                // index_type is always an integer kind we don't need.
+                if cursor + 12 <= type_end {
+                    let elem_type =
+                        u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
+                    let nelems =
+                        u32::from_le_bytes(bytes[cursor + 8..cursor + 12].try_into().unwrap());
+                    members.push(BtfMember {
+                        name_off: 0,
+                        type_id: elem_type,
+                        offset: nelems,
+                    });
+                }
                 cursor += 12;
             }
             BTF_KIND_VAR => {
