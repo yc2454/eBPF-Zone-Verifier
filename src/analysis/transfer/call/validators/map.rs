@@ -86,6 +86,25 @@ pub fn validate_const_map_ptr_of_type(
     ctx: &mut ValidationContext,
     required_type: u32,
 ) -> bool {
+    // Also accept a `__map`-suffixed kfunc-arg shape: any
+    // `PtrToBtfId{bpf_map, TRUSTED}` (kernel `verifier.c` ~L13227,
+    // `KF_ARG_PTR_TO_MAP` — "If argument has '__map' suffix expect
+    // 'struct bpf_map *'"). The runtime map type is not checked at
+    // verification time in this path; the kfunc body's
+    // `container_of(map, struct bpf_arena, map)` enforces it at
+    // runtime. Drives `verifier_arena.c::iter_maps1` where
+    // `bpf_arena_alloc_pages(ctx->map, …)` passes a typed bpf_map*
+    // loaded from the iter ctx, not a CONST_PTR_TO_MAP.
+    if let RegType::PtrToBtfId {
+        type_name, flags, ..
+    } = ctx.actual
+        && type_name == "bpf_map"
+        && flags.contains(crate::analysis::machine::reg_types::PtrFlags::TRUSTED)
+    {
+        let _ = required_type;
+        return true;
+    }
+
     if !validate_const_map_ptr(ctx) {
         return false;
     }

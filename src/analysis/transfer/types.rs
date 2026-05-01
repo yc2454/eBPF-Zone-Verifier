@@ -609,6 +609,13 @@ pub fn trusted_field_load(struct_name: &str, field_name: &str) -> bool {
         // `__bpf_md_ptr(struct bpf_sock *, sk)` — kernel marks bpf_sock
         // pointer trusted on load; SOCKMAP/SOCKHASH map-update accepts.
         | ("sk_reuseport_md", "sk")
+        // `bpf_iter__bpf_map.map` (verifier_arena::iter_maps1):
+        // `__bpf_md_ptr(struct bpf_map *, map)` — the iter ctx's
+        // current map. Kernel marks it trusted while the iter is alive;
+        // `bpf_arena_alloc_pages(map, ...)` accepts the loaded
+        // `PtrToBtfId{bpf_map, TRUSTED}` as its `__map`-suffixed arg
+        // (kernel `verifier.c` ~L13227 KF_ARG_PTR_TO_MAP).
+        | ("bpf_iter__bpf_map", "map")
     )
 }
 
