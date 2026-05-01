@@ -1,7 +1,14 @@
-// src/main.rs - With configurable verifier options
+// src/main.rs - clap-based CLI entry point.
+//
+// User-facing surface: three verbs (`elf`, `verify`, `pcc`).
+// Internal corpus/benchmark commands live under a hidden `dev` subcommand.
+// Old top-level command names (`selftest-suite`, `prevail-benchmark`, etc.)
+// are translated transparently in `cli::rewrite_legacy_argv` so existing
+// scripts and CI keep working without surfacing them in `--help`.
 
 mod analysis;
 mod ast;
+mod cli;
 mod common;
 mod domains;
 mod parsing;
@@ -9,105 +16,34 @@ mod pcc;
 mod testing;
 
 use crate::ast::ProgramKind;
+use crate::cli::{
+    Cli, Cmd, DevCmd, ElfArgs, InputKind, LegacySelftestCmd, PccCmd, PrevailCmd, VerifyArgs,
+};
 use crate::common::config::{DomainMode, VerifierConfig};
 use crate::parsing::elf::program_kind_for_object;
 use crate::parsing::elf::{list_section_names, load_maps, load_raw_programs};
 use crate::pcc::ProgramCertificate;
 use crate::testing::bcf_benchmark::analyze_benchmark;
+use crate::testing::legacy_selftest::{selftest_list, selftest_run, selftest_single, selftest_suite};
 use crate::testing::logging;
 use crate::testing::pcc_test::{pcc_cert_run, pcc_test_single};
 use crate::testing::prevail::{prevail_benchmark, prevail_list, prevail_run, prevail_single};
 use crate::testing::runner::{AnalysisResult, Analyzer, find_section_for_func, is_code_section};
-use crate::testing::legacy_selftest::{selftest_list, selftest_run, selftest_single, selftest_suite};
+use clap::Parser;
 use std::path::Path;
 
-fn usage() {
-    eprintln!("Usage:");
-    eprintln!("  cargo run -- [flags] elf-list        <elf_path>");
-    eprintln!("  cargo run -- [flags] elf-analyze     <elf_path> <section_name>");
-    eprintln!("  cargo run -- [flags] elf-analyze-func <elf_path> <func_name>");
-    eprintln!("  cargo run -- [flags] elf-analyze-prog <elf_path>");
-    eprintln!("  cargo run -- [flags] bcf-benchmark   <dir_path>");
-    eprintln!("  cargo run -- [flags] selftest-suite          <progs_dir>");
-    eprintln!("  cargo run -- [flags] selftest-file           <prog.c> [defines]");
-    eprintln!("  cargo run -- [flags] selftest-baseline-write        <progs_dir> <legacy_json_dir> <out.json>");
-    eprintln!("  cargo run -- [flags] selftest-baseline-write-upstream <progs_dir> <upstream_root> <out.json>");
-    eprintln!("  cargo run -- [flags] selftest-baseline-check        <progs_dir> <legacy_json_dir> <baseline.json>");
-    eprintln!("  cargo run -- [flags] selftest-baseline-check-modern <progs_dir> <baseline.json>           (fast: skips legacy)");
-    eprintln!("  cargo run -- [flags] btf-dump-struct-ops <elf_path> <struct_name>                        (diagnostic for W6.4a)");
-    eprintln!("  cargo run -- [flags] legacy-selftest-list   <json_file>");
-    eprintln!("  cargo run -- [flags] legacy-selftest-single <json_file> <test_name>");
-    eprintln!("  cargo run -- [flags] legacy-selftest-run    <json_file>");
-    eprintln!("  cargo run -- [flags] legacy-selftest-suite  <json_dir>");
-    eprintln!("  cargo run -- [flags] pcc-gen         <json_file> <test_name> [cert_out]");
-    eprintln!("  cargo run -- [flags] pcc-check       <json_file> <test_name> <cert_path>");
-    eprintln!("  cargo run -- [flags] pcc-cycle       <json_file> <test_name> [cert_out]");
-    eprintln!("  cargo run -- [flags] pcc-regress     [cert_cases.json]");
-    eprintln!("  cargo run -- [flags] prevail-list    <catalogue.json>");
-    eprintln!("  cargo run -- [flags] prevail-run     <catalogue.json>");
-    eprintln!("  cargo run -- [flags] prevail-single  <catalogue.json> <test_name>");
-    eprintln!("  cargo run -- [flags] prevail-benchmark <dir_path>");
-    eprintln!("  cargo run -- [flags] benchmark-scan    <dir_path> <output.json>");
-    eprintln!();
-    VerifierConfig::print_help();
-    eprintln!();
-    eprintln!("Examples:");
-    eprintln!("  cargo run -- elf-list ./bpf_host.o");
-    eprintln!("  cargo run -- elf-analyze ./bpf_host.o tc");
-    eprintln!("  cargo run -- bcf-benchmark ./bpf-progs --project cilium");
-    eprintln!("  cargo run -- prevail-benchmark ~/ebpf-samples --project cilium");
-    eprintln!("  cargo run -- selftest-list <json_file>");
-    eprintln!("  cargo run -- selftest-single <json_file> <test_name>");
-    eprintln!("  cargo run -- selftest-run <json_file>");
-    eprintln!("  cargo run -- selftest-suite <json_dir>");
-    eprintln!(
-        "  cargo run -- pcc-gen pcc-tests/pcc_examples.json \"pcc motivating: var add packet access (zone ok, kernel reject)\""
-    );
-    eprintln!(
-        "  cargo run -- pcc-check pcc-tests/pcc_examples.json \"pcc motivating: var add packet access (zone ok, kernel reject)\" pcc-tests/certs/pcc_examples.valid.cert.json"
-    );
-    eprintln!(
-        "  cargo run -- pcc-cycle pcc-tests/pcc_examples.json \"pcc motivating: var add packet access (zone ok, kernel reject)\""
-    );
-    eprintln!("  cargo run -- pcc-regress");
-}
-
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let raw_args: Vec<String> = std::env::args().collect();
+    let (bin, rest) = raw_args.split_first().expect("argv[0]");
+    let translated = cli::rewrite_legacy_argv(rest.to_vec());
+    let mut full = vec![bin.clone()];
+    full.extend(translated);
 
-    if args.len() < 2 {
-        usage();
-        return;
-    }
+    let parsed = Cli::parse_from(full);
+    let config = parsed.global.into_verifier_config();
 
-    // Parse config flags and get remaining positional args
-    let (mut config, remaining) = VerifierConfig::from_args(&args[1..]);
-
-    if config.certificate_output.is_some() && config.certificate_input.is_some() {
-        eprintln!(
-            "Error: --generate-certificate and --certificate-aided-analysis cannot be used together"
-        );
-        return;
-    }
-    if config.certificate_output.is_some() && config.domain_mode != DomainMode::Zone {
-        eprintln!("Error: --generate-certificate currently requires --zone-mode");
-        return;
-    }
-
-    if let Some(path) = &config.certificate_input {
-        match ProgramCertificate::load_from_path(path) {
-            Ok(cert) => config.certificate = Some(cert),
-            Err(e) => {
-                eprintln!("Error: invalid certificate file '{}': {e:#}", path);
-                return;
-            }
-        };
-    }
-
-    // Initialize logging
+    // Initialize logging.
     logging::VerifierLogger::init(config.verbosity);
-
-    // If debug_pc is set, configure logging filter
     if let Some(target_pc) = config.debug_pc {
         let filter = logging::FilterConfig {
             pc_range: Some(target_pc.saturating_sub(10)..=target_pc + 10),
@@ -116,452 +52,273 @@ fn main() {
         logging::VerifierLogger::set_config(filter);
     }
 
-    if remaining.is_empty() {
-        usage();
-        return;
+    match parsed.cmd {
+        Cmd::Elf(args) => run_elf(args, config),
+        Cmd::Verify(args) => run_verify(args, config),
+        Cmd::Pcc { sub } => run_pcc(sub, config),
+        Cmd::Dev { sub } => run_dev(sub, config),
+    }
+}
+
+// ============================================================
+// `elf` — inspect / analyze ELF + BTF contents
+// ============================================================
+
+fn run_elf(args: ElfArgs, config: VerifierConfig) {
+    let path = args.path;
+
+    if let Some(struct_name) = args.struct_ops {
+        return run_btf_dump_struct_ops(&path, &struct_name);
+    }
+    if let Some(func_name) = args.btf_func {
+        return run_btf_dump_func(&path, &func_name);
+    }
+    if args.bindings {
+        return run_struct_ops_bindings(&path);
     }
 
-    let cmd = &remaining[0];
-
-    if config.certificate_output.is_some() && cmd != "pcc-gen" && cmd != "pcc-cycle" {
-        eprintln!("Error: --generate-certificate is supported only with pcc-gen or pcc-cycle");
-        return;
+    if let Some(section) = args.section {
+        return run_analyze_section(&path, &section, config);
+    }
+    if let Some(func) = args.func {
+        return run_analyze_func(&path, &func, config);
+    }
+    if args.all {
+        return run_analyze_all(&path, config);
     }
 
-    match cmd.as_str() {
-        // ============================================================
-        // List all sections and programs in an ELF
-        // ============================================================
-        "elf-list" => {
-            if remaining.len() < 2 {
-                eprintln!("Error: Missing ELF path");
-                usage();
-                return;
-            }
-            let path = &remaining[1];
+    // Default: list sections, programs, maps.
+    run_elf_list(&path);
+}
 
-            println!("=== ELF Contents: '{}' ===\n", path);
-            println!("--- SECTIONS ---");
-            match list_section_names(path) {
-                Ok(sections) => {
-                    for (i, name) in sections.iter().enumerate() {
-                        if is_code_section(name) {
-                            let kind = match program_kind_for_object(Path::new(path)) {
-                                Ok(k) => k,
-                                Err(_) => ProgramKind::from_section(name),
-                            };
-                            println!("  [{}] {} (Kind: {:?})", i, name, kind);
-                        }
-                    }
+fn run_elf_list(path: &str) {
+    println!("=== ELF Contents: '{}' ===\n", path);
+    println!("--- SECTIONS ---");
+    match list_section_names(path) {
+        Ok(sections) => {
+            for (i, name) in sections.iter().enumerate() {
+                if is_code_section(name) {
+                    let kind = program_kind_for_object(Path::new(path))
+                        .unwrap_or_else(|_| ProgramKind::from_section(name));
+                    println!("  [{}] {} (Kind: {:?})", i, name, kind);
                 }
-                Err(e) => eprintln!("  Error: {:?}", e),
-            }
-            println!("\n--- BPF PROGRAMS ---");
-            match load_raw_programs(path) {
-                Ok(progs) => {
-                    let mut sections = Vec::new();
-                    if let Ok(s) = list_section_names(path) {
-                        sections = s;
-                    }
-
-                    for (i, p) in progs.iter().enumerate() {
-                        let section_name = sections
-                            .get(p.section_idx)
-                            .map(|s| s.as_str())
-                            .unwrap_or("");
-                        let kind = match program_kind_for_object(Path::new(path)) {
-                            Ok(k) => k,
-                            Err(_) => ProgramKind::from_section(section_name),
-                        };
-                        println!(
-                            "  [{}] {} ({} insns) [Section: {}, Kind: {:?}]",
-                            i,
-                            p.name,
-                            p.data.len() / 8,
-                            section_name,
-                            kind
-                        );
-                    }
-                }
-                Err(e) => eprintln!("  Error: {:?}", e),
-            }
-            println!("\n--- BPF MAPS ---");
-            match load_maps(path) {
-                Ok(maps) => {
-                    for (i, m) in maps.iter().enumerate() {
-                        println!(
-                            "  [{}] {} (k:{}, v:{})",
-                            i, m.name, m.key_size, m.value_size
-                        );
-                    }
-                }
-                Err(e) => eprintln!("  Error: {:?}", e),
             }
         }
-
-        // ============================================================
-        // Analyze by section name
-        // ============================================================
-        "elf-analyze-section" | "elf-analyze" => {
-            if remaining.len() < 3 {
-                eprintln!("Error: Missing arguments");
-                usage();
-                return;
-            }
-            let path = &remaining[1];
-            let section = &remaining[2];
-
-            println!("=== Analyzing: '{}' section '{}' ===", path, section);
-
-            let analyzer = Analyzer::new(path, config);
-            let result = analyzer.analyze_section(section);
-
-            match result {
-                AnalysisResult::Pass => println!("\n=== PASS ==="),
-                AnalysisResult::Fail(e) => println!("\n=== FAIL: {} ===", e.description()),
-                AnalysisResult::Timeout => println!("\n=== TIMEOUT: Complexity limit reached ==="),
-                AnalysisResult::LoadError(e) => println!("\n=== LOAD ERROR: {} ===", e),
-            }
-        }
-
-        // ============================================================
-        // Analyze by function name
-        // ============================================================
-        "elf-analyze-func" => {
-            if remaining.len() < 3 {
-                eprintln!("Error: Missing arguments");
-                usage();
-                return;
-            }
-            let path = &remaining[1];
-            let func_name = &remaining[2];
-
-            println!("=== Analyzing function: '{}' in '{}' ===", func_name, path);
-
-            if let Some(section_name) = find_section_for_func(path, func_name) {
-                let analyzer = Analyzer::new(path, config);
-                let result = analyzer.analyze_section(&section_name);
-
-                match result {
-                    AnalysisResult::Pass => println!("\n=== PASS ==="),
-                    AnalysisResult::Fail(e) => println!("\n=== FAIL: {} ===", e.description()),
-                    AnalysisResult::Timeout => {
-                        println!("\n=== TIMEOUT: Complexity limit reached ===")
-                    }
-                    AnalysisResult::LoadError(e) => println!("\n=== LOAD ERROR: {} ===", e),
-                }
-            } else {
-                eprintln!(
-                    "Function '{}' not found or section lookup failed.",
-                    func_name
-                );
-            }
-        }
-
-        // ============================================================
-        // Batch analyze all sections in an ELF
-        // ============================================================
-        "elf-analyze-prog" => {
-            if remaining.len() < 2 {
-                eprintln!("Error: Missing ELF path");
-                usage();
-                return;
-            }
-            let path = &remaining[1];
-
-            println!("=== Batch Analysis: '{}' ===\n", path);
-            println!(
-                "Config: max_insn={}, skip_dbm={}, verbosity={}",
-                config.max_insn, config.skip_dbm_check, config.verbosity
-            );
-
-            let analyzer = Analyzer::new(path, config);
-            let (_, results) = analyzer.analyze_all();
-
-            let mut pass_count = 0;
-            let mut fail_count = 0;
-            let mut timeout_count = 0;
-            let mut error_count = 0;
-
-            for (section, res) in &results {
-                print!("Section '{}'... ", section);
-                match res {
-                    AnalysisResult::Pass => {
-                        println!("PASS");
-                        pass_count += 1;
-                    }
-                    AnalysisResult::Fail(_) => {
-                        println!("FAIL");
-                        fail_count += 1;
-                    }
-                    AnalysisResult::Timeout => {
-                        println!("TIMEOUT");
-                        timeout_count += 1;
-                    }
-                    AnalysisResult::LoadError(e) => {
-                        println!("ERROR ({})", e);
-                        error_count += 1;
-                    }
-                }
-            }
-
-            println!("\n========================================");
-            println!("              SUMMARY");
-            println!("========================================");
-            println!("Total:  {}", results.len());
-            if !results.is_empty() {
+        Err(e) => eprintln!("  Error: {:?}", e),
+    }
+    println!("\n--- BPF PROGRAMS ---");
+    match load_raw_programs(path) {
+        Ok(progs) => {
+            let sections = list_section_names(path).unwrap_or_default();
+            for (i, p) in progs.iter().enumerate() {
+                let section_name = sections
+                    .get(p.section_idx)
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
+                let kind = program_kind_for_object(Path::new(path))
+                    .unwrap_or_else(|_| ProgramKind::from_section(section_name));
                 println!(
-                    "Pass:   {} ({:.1}%)",
-                    pass_count,
-                    100.0 * pass_count as f64 / results.len() as f64
+                    "  [{}] {} ({} insns) [Section: {}, Kind: {:?}]",
+                    i,
+                    p.name,
+                    p.data.len() / 8,
+                    section_name,
+                    kind
                 );
             }
-            println!("Fail:   {}", fail_count);
-            println!("Timeout: {}", timeout_count);
-            println!("Errors: {}", error_count);
+        }
+        Err(e) => eprintln!("  Error: {:?}", e),
+    }
+    println!("\n--- BPF MAPS ---");
+    match load_maps(path) {
+        Ok(maps) => {
+            for (i, m) in maps.iter().enumerate() {
+                println!("  [{}] {} (k:{}, v:{})", i, m.name, m.key_size, m.value_size);
+            }
+        }
+        Err(e) => eprintln!("  Error: {:?}", e),
+    }
+}
 
-            if fail_count > 0 {
-                println!("\n--- FAILURES ---");
-                for (section, res) in &results {
-                    if let AnalysisResult::Fail(e) = res {
-                        println!("  {}: {}", section, e.description());
-                    }
-                }
-            }
-            println!("\n=== Done ===");
-        }
+fn run_analyze_section(path: &str, section: &str, config: VerifierConfig) {
+    println!("=== Analyzing: '{}' section '{}' ===", path, section);
+    let analyzer = Analyzer::new(path, config);
+    print_analysis_result(analyzer.analyze_section(section));
+}
 
-        // ============================================================
-        // BCF BENCHMARK COMMAND (Recursive directory analysis)
-        // ============================================================
-        "bcf-benchmark" | "elf-analyze-benchmark" => {
-            if remaining.len() < 2 {
-                eprintln!("Error: Missing benchmark directory path");
-                usage();
-                return;
-            }
-            let dir_path = &remaining[1];
-            analyze_benchmark(dir_path, &config);
-        }
+fn run_analyze_func(path: &str, func: &str, config: VerifierConfig) {
+    println!("=== Analyzing function: '{}' in '{}' ===", func, path);
+    let Some(section_name) = find_section_for_func(path, func) else {
+        eprintln!("Function '{}' not found or section lookup failed.", func);
+        return;
+    };
+    let analyzer = Analyzer::new(path, config);
+    print_analysis_result(analyzer.analyze_section(&section_name));
+}
 
-        // ============================================================
-        // Selftest: Run single JSON test file
-        // ============================================================
-        // ============================================================
-        // Selftest (modern): compile + run upstream .c sources
-        // ============================================================
-        "selftest-file" => {
-            if remaining.len() < 2 {
-                eprintln!("Error: Missing .c source path");
-                usage();
-                return;
-            }
-            run_modern_selftest_file(&remaining[1], remaining.get(2).map(|s| s.as_str()), &config);
-        }
-        "selftest-suite" => {
-            if remaining.len() < 2 {
-                eprintln!("Error: Missing progs/ directory path");
-                usage();
-                return;
-            }
-            run_modern_selftest_dir(&remaining[1], &config);
-        }
-        "selftest-baseline-write" => {
-            if remaining.len() < 4 {
-                eprintln!("Usage: selftest-baseline-write <progs_dir> <legacy_json_dir> <out.json>");
-                return;
-            }
-            run_baseline_write(&remaining[1], &remaining[2], &remaining[3], &config);
-        }
-        "selftest-baseline-write-upstream" => {
-            // Two forms accepted:
-            //   selftest-baseline-write-upstream <upstream_root> <out.json>
-            //     (preferred; progs_dir is <root>/tools/testing/selftests/bpf/progs)
-            //   selftest-baseline-write-upstream <progs_dir> <upstream_root> <out.json>
-            //     (legacy 3-arg form; kept so existing scripts don't break)
-            //
-            // The 3-arg form was a footgun: passing the selftests dir as
-            // upstream_root silently double-prefixed every `-I` path
-            // (`<root>/tools/include` → `<selftests-dir>/tools/include`,
-            // which doesn't exist), making 204/849 files fail to compile
-            // and the resulting "baseline" look plausible but wrong.
-            let (upstream_root, out): (&str, &str) = match remaining.len() {
-                3 => (&remaining[1], &remaining[2]),
-                4 => {
-                    eprintln!(
-                        "[selftest-baseline-write-upstream] note: 3-arg form is deprecated; \
-                         the explicit progs_dir is now derived from <upstream_root>. \
-                         Pass just <upstream_root> <out.json>."
-                    );
-                    // Use the second arg as upstream_root; ignore the first.
-                    (&remaining[2], &remaining[3])
-                }
-                _ => {
-                    eprintln!(
-                        "Usage: selftest-baseline-write-upstream <upstream_root> <out.json>"
-                    );
-                    eprintln!(
-                        "  upstream_root: kernel checkout root (e.g. vendor/linux). \
-                         The selftests/bpf/progs directory underneath is found automatically."
-                    );
-                    return;
-                }
-            };
-            run_baseline_write_upstream(upstream_root, out, &config);
-        }
-        "selftest-baseline-check" => {
-            if remaining.len() < 4 {
-                eprintln!("Usage: selftest-baseline-check <progs_dir> <legacy_json_dir> <baseline.json>");
-                return;
-            }
-            run_baseline_check(&remaining[1], &remaining[2], &remaining[3], &config);
-        }
-        "selftest-baseline-check-modern" => {
-            if remaining.len() < 3 {
-                eprintln!("Usage: selftest-baseline-check-modern <progs_dir> <baseline.json>");
-                return;
-            }
-            run_baseline_check_modern(&remaining[1], &remaining[2], &config);
-        }
-        "btf-dump-struct-ops" => {
-            if remaining.len() < 3 {
-                eprintln!("Usage: btf-dump-struct-ops <elf_path> <struct_name>");
-                eprintln!("Diagnostic: walk the BTF for <struct_name>, list each member that");
-                eprintln!("resolves to a `PTR -> FUNC_PROTO` (i.e. a struct_ops method), and");
-                eprintln!("print the parameter list as the W6.4a entry-state plumbing sees it.");
-                return;
-            }
-            run_btf_dump_struct_ops(&remaining[1], &remaining[2]);
-        }
-        "struct-ops-bindings" => {
-            if remaining.len() < 2 {
-                eprintln!("Usage: struct-ops-bindings <elf_path>");
-                eprintln!("Diagnostic: dump every recovered (subprog -> ops_struct.member)");
-                eprintln!("binding for SEC(\".struct_ops\")/.struct_ops.link sections (W6.4a step 3).");
-                return;
-            }
-            run_struct_ops_bindings(&remaining[1]);
-        }
-        "btf-dump-func" => {
-            if remaining.len() < 3 {
-                eprintln!("Usage: btf-dump-func <elf_path> <func_name>");
-                eprintln!("Diagnostic: print the parameter list of <func_name> as recorded");
-                eprintln!("in BTF. For struct_ops subprogs this is the same answer the");
-                eprintln!("entry-state plumbing uses — without needing to know which");
-                eprintln!("ops-struct member the subprog binds to.");
-                return;
-            }
-            run_btf_dump_func(&remaining[1], &remaining[2]);
-        }
+fn print_analysis_result(result: AnalysisResult) {
+    match result {
+        AnalysisResult::Pass => println!("\n=== PASS ==="),
+        AnalysisResult::Fail(e) => println!("\n=== FAIL: {} ===", e.description()),
+        AnalysisResult::Timeout => println!("\n=== TIMEOUT: Complexity limit reached ==="),
+        AnalysisResult::LoadError(e) => println!("\n=== LOAD ERROR: {} ===", e),
+    }
+}
 
-        // ============================================================
-        // Legacy selftest (pre-6.2 JSON corpus)
-        // ============================================================
-        "legacy-selftest-run" => {
-            if remaining.len() < 2 {
-                eprintln!("Error: Missing JSON test file path");
-                usage();
-                return;
-            }
-            let json_path = &remaining[1];
-            let output_dir = Some("./results/selftest");
+fn run_analyze_all(path: &str, config: VerifierConfig) {
+    println!("=== Batch Analysis: '{}' ===\n", path);
+    println!(
+        "Config: max_insn={}, skip_dbm={}, verbosity={}",
+        config.max_insn, config.skip_dbm_check, config.verbosity
+    );
 
-            selftest_run(json_path, &config, output_dir);
+    let analyzer = Analyzer::new(path, config);
+    let (_, results) = analyzer.analyze_all();
+
+    let mut pass = 0;
+    let mut fail = 0;
+    let mut timeout = 0;
+    let mut error = 0;
+    for (section, res) in &results {
+        print!("Section '{}'... ", section);
+        match res {
+            AnalysisResult::Pass => {
+                println!("PASS");
+                pass += 1;
+            }
+            AnalysisResult::Fail(_) => {
+                println!("FAIL");
+                fail += 1;
+            }
+            AnalysisResult::Timeout => {
+                println!("TIMEOUT");
+                timeout += 1;
+            }
+            AnalysisResult::LoadError(e) => {
+                println!("ERROR ({})", e);
+                error += 1;
+            }
         }
-
-        "legacy-selftest-suite" => {
-            if remaining.len() < 2 {
-                eprintln!("Error: Missing JSON test directory path");
-                usage();
-                return;
+    }
+    println!("\n========================================");
+    println!("              SUMMARY");
+    println!("========================================");
+    println!("Total:  {}", results.len());
+    if !results.is_empty() {
+        println!(
+            "Pass:   {} ({:.1}%)",
+            pass,
+            100.0 * pass as f64 / results.len() as f64
+        );
+    }
+    println!("Fail:   {}", fail);
+    println!("Timeout: {}", timeout);
+    println!("Errors: {}", error);
+    if fail > 0 {
+        println!("\n--- FAILURES ---");
+        for (section, res) in &results {
+            if let AnalysisResult::Fail(e) = res {
+                println!("  {}: {}", section, e.description());
             }
-            let json_dir = &remaining[1];
-            let output_dir = Some("./results/selftest");
-
-            selftest_suite(json_dir, &config, output_dir);
         }
+    }
+    println!("\n=== Done ===");
+}
 
-        "legacy-selftest-list" => {
-            if remaining.len() < 2 {
-                eprintln!("Error: Missing JSON test file path");
-                usage();
-                return;
+// ============================================================
+// `verify` — auto-detect ELF / .c / legacy .json
+// ============================================================
+
+fn run_verify(args: VerifyArgs, config: VerifierConfig) {
+    let kind = args.kind.unwrap_or_else(|| infer_kind(&args.path));
+    match kind {
+        InputKind::Elf => {
+            if let Some(section) = args.section {
+                run_analyze_section(&args.path, &section, config);
+            } else if let Some(func) = args.func {
+                run_analyze_func(&args.path, &func, config);
+            } else {
+                run_analyze_all(&args.path, config);
             }
-            let json_path = &remaining[1];
-
-            selftest_list(json_path);
         }
-
-        "legacy-selftest-single" => {
-            if remaining.len() < 3 {
-                eprintln!("Error: Missing arguments");
-                eprintln!("Usage: legacy-selftest-single <json_file> <test_name>");
-                return;
-            }
-            let json_path = &remaining[1];
-            let test_name = &remaining[2];
-
-            selftest_single(json_path, test_name, &config);
+        InputKind::C => {
+            run_modern_selftest_file(&args.path, args.defines.as_deref(), &config);
         }
-
-        // ============================================================
-        // PCC: generate certificate (zone mode enforced)
-        // ============================================================
-        "pcc-gen" => {
-            if remaining.len() < 3 {
-                eprintln!("Error: Missing arguments");
-                eprintln!("Usage: pcc-gen <json_file> <test_name> [cert_out]");
-                return;
+        InputKind::Json => match args.test {
+            Some(name) => selftest_single(&args.path, &name, &config),
+            None => {
+                // Bare `verify foo.json` lists the available tests rather
+                // than running the whole catalogue (which can be 10+ min).
+                // Use `dev legacy-selftest run <foo.json>` for the bulk path.
+                println!(
+                    "(`verify` on a .json catalogue lists tests; pick one with --test NAME, \
+                     or use `dev legacy-selftest run` for a bulk run.)\n"
+                );
+                selftest_list(&args.path);
             }
-            let mut cfg = config.clone();
+        },
+    }
+}
+
+fn infer_kind(path: &str) -> InputKind {
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    match ext {
+        "c" => InputKind::C,
+        "json" => InputKind::Json,
+        _ => InputKind::Elf, // .o / .bpf.o / .so / no extension all treated as ELF
+    }
+}
+
+// ============================================================
+// `pcc` — certificate generate / check / cycle
+// ============================================================
+
+fn run_pcc(sub: PccCmd, config: VerifierConfig) {
+    match sub {
+        PccCmd::Gen {
+            json_file,
+            test,
+            out,
+        } => {
+            let mut cfg = config;
             cfg.domain_mode = DomainMode::Zone;
             cfg.detect_bounded_loops = true;
             cfg.require_single_loop_entry = false;
             cfg.certificate = None;
             cfg.certificate_input = None;
-            cfg.certificate_output = remaining.get(3).cloned();
-            pcc_test_single(&remaining[1], &remaining[2], &cfg);
+            cfg.certificate_output = out;
+            pcc_test_single(&json_file, &test, &cfg);
         }
-
-        // ============================================================
-        // PCC: cert-aided check (kernel mode enforced)
-        // ============================================================
-        "pcc-check" => {
-            if remaining.len() < 4 {
-                eprintln!("Error: Missing arguments");
-                eprintln!("Usage: pcc-check <json_file> <test_name> <cert_path>");
-                return;
-            }
-            let cert = match ProgramCertificate::load_from_path(&remaining[3]) {
+        PccCmd::Check {
+            json_file,
+            test,
+            cert,
+        } => {
+            let parsed_cert = match ProgramCertificate::load_from_path(&cert) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("Error: invalid certificate file '{}': {e:#}", &remaining[3]);
-                    return;
+                    eprintln!("Error: invalid certificate file '{}': {e:#}", cert);
+                    std::process::exit(2);
                 }
             };
-            let mut cfg = config.clone();
+            let mut cfg = config;
             cfg.domain_mode = DomainMode::Interval;
             cfg.detect_bounded_loops = false;
             cfg.require_single_loop_entry = true;
             cfg.certificate_output = None;
             cfg.certificate_input = None;
-            cfg.certificate = Some(cert);
-            pcc_test_single(&remaining[1], &remaining[2], &cfg);
+            cfg.certificate = Some(parsed_cert);
+            pcc_test_single(&json_file, &test, &cfg);
         }
-
-        // ============================================================
-        // PCC: generate + check in one command
-        // ============================================================
-        "pcc-cycle" => {
-            if remaining.len() < 3 {
-                eprintln!("Error: Missing arguments");
-                eprintln!("Usage: pcc-cycle <json_file> <test_name> [cert_out]");
-                return;
-            }
-            let cert_out = remaining
-                .get(3)
-                .cloned()
-                .unwrap_or_else(|| "/tmp/pcc_cycle.cert.json".to_string());
+        PccCmd::Cycle {
+            json_file,
+            test,
+            out,
+        } => {
+            let cert_out = out.unwrap_or_else(|| "/tmp/pcc_cycle.cert.json".to_string());
 
             let mut gen_cfg = config.clone();
             gen_cfg.domain_mode = DomainMode::Zone;
@@ -572,7 +329,7 @@ fn main() {
             gen_cfg.certificate_output = Some(cert_out.clone());
 
             println!("\n====== Phase 1 / Certificate Generation (zone mode) ======\n");
-            pcc_test_single(&remaining[1], &remaining[2], &gen_cfg);
+            pcc_test_single(&json_file, &test, &gen_cfg);
 
             if !Path::new(&cert_out).exists() {
                 eprintln!(
@@ -593,7 +350,7 @@ fn main() {
                 }
             };
 
-            let mut check_cfg = config.clone();
+            let mut check_cfg = config;
             check_cfg.domain_mode = DomainMode::Interval;
             check_cfg.detect_bounded_loops = false;
             check_cfg.require_single_loop_entry = true;
@@ -602,97 +359,79 @@ fn main() {
             check_cfg.certificate = Some(cert);
 
             println!("\n====== Phase 2 / PCC Certificate Check (interval mode) ======\n");
-            pcc_test_single(&remaining[1], &remaining[2], &check_cfg);
+            pcc_test_single(&json_file, &test, &check_cfg);
         }
+    }
+}
 
-        // ============================================================
-        // PCC: run regression manifest
-        // ============================================================
-        "pcc-regress" => {
-            let manifest = remaining
-                .get(1)
-                .map(|s| s.as_str())
-                .unwrap_or("pcc-tests/cert_cases.json");
-            pcc_cert_run(manifest, &config);
+// ============================================================
+// `dev` — internal corpus / benchmark / baseline harness
+// ============================================================
+
+fn run_dev(sub: DevCmd, config: VerifierConfig) {
+    match sub {
+        DevCmd::SelftestFile { src, defines } => {
+            run_modern_selftest_file(&src, defines.as_deref(), &config);
         }
-
-        // ============================================================
-        // PREVAIL: List all tests in catalogue
-        // ============================================================
-        "prevail-list" => {
-            if remaining.len() < 2 {
-                eprintln!("Error: Missing catalogue path");
-                usage();
-                return;
+        DevCmd::SelftestSuite { progs_dir } => {
+            run_modern_selftest_dir(&progs_dir, &config);
+        }
+        DevCmd::SelftestBaselineWrite {
+            progs_dir,
+            legacy_json_dir,
+            out,
+        } => {
+            run_baseline_write(&progs_dir, &legacy_json_dir, &out, &config);
+        }
+        DevCmd::SelftestBaselineWriteUpstream { upstream_root, out } => {
+            run_baseline_write_upstream(&upstream_root, &out, &config);
+        }
+        DevCmd::SelftestBaselineCheck {
+            progs_dir,
+            legacy_json_dir,
+            baseline,
+        } => {
+            run_baseline_check(&progs_dir, &legacy_json_dir, &baseline, &config);
+        }
+        DevCmd::SelftestBaselineCheckModern {
+            progs_dir,
+            baseline,
+        } => {
+            run_baseline_check_modern(&progs_dir, &baseline, &config);
+        }
+        DevCmd::BcfBenchmark { dir } => {
+            analyze_benchmark(&dir, &config);
+        }
+        DevCmd::LegacySelftest { sub } => match sub {
+            LegacySelftestCmd::List { json_file } => selftest_list(&json_file),
+            LegacySelftestCmd::Single { json_file, test } => {
+                selftest_single(&json_file, &test, &config)
             }
-            let catalogue_path = &remaining[1];
-            prevail_list(catalogue_path);
-        }
-
-        // ============================================================
-        // PREVAIL: Run all tests in catalogue
-        // ============================================================
-        "prevail-run" => {
-            if remaining.len() < 2 {
-                eprintln!("Error: Missing catalogue path");
-                usage();
-                return;
+            LegacySelftestCmd::Run { json_file } => {
+                selftest_run(&json_file, &config, Some("./results/selftest"))
             }
-            let catalogue_path = &remaining[1];
-            let output_dir = Some("./results/prevail");
-
-            prevail_run(catalogue_path, &config, output_dir);
-        }
-
-        // ============================================================
-        // PREVAIL: Run a single test by name
-        // ============================================================
-        "prevail-single" => {
-            if remaining.len() < 3 {
-                eprintln!("Error: Missing arguments");
-                eprintln!("Usage: prevail-single <catalogue.json> <test_name>");
-                return;
+            LegacySelftestCmd::Suite { json_dir } => {
+                selftest_suite(&json_dir, &config, Some("./results/selftest"))
             }
-            let catalogue_path = &remaining[1];
-            let test_name = &remaining[2];
-
-            prevail_single(catalogue_path, test_name, &config);
-        }
-
-        // ============================================================
-        // PREVAIL: Run benchmark on all ELF files in a directory
-        // ============================================================
-        "prevail-benchmark" => {
-            if remaining.len() < 2 {
-                eprintln!("Error: Missing directory path");
-                eprintln!("Usage: prevail-benchmark <dir_path> [--project <name>]");
-                return;
+        },
+        DevCmd::Prevail { sub } => match sub {
+            PrevailCmd::List { catalogue } => prevail_list(&catalogue),
+            PrevailCmd::Run { catalogue } => {
+                prevail_run(&catalogue, &config, Some("./results/prevail"))
             }
-            let dir_path = &remaining[1];
-            let output_dir = Some("./results/prevail");
-
-            prevail_benchmark(dir_path, &config, output_dir);
-        }
-
-        // ============================================================
-        // Benchmark Scan: Export ELF metadata to JSON
-        // ============================================================
-        "benchmark-scan" => {
-            if remaining.len() < 3 {
-                eprintln!("Error: Missing arguments");
-                eprintln!("Usage: benchmark-scan <dir_path> <output.json>");
-                return;
+            PrevailCmd::Single { catalogue, test } => prevail_single(&catalogue, &test, &config),
+            PrevailCmd::Benchmark { dir } => {
+                prevail_benchmark(&dir, &config, Some("./results/prevail"))
             }
-            let dir_path = &remaining[1];
-            let output_json = &remaining[2];
-            if let Err(e) = crate::testing::scanner::scan_benchmark_dir(dir_path, output_json) {
+        },
+        DevCmd::PccRegress { manifest } => {
+            let m = manifest.unwrap_or_else(|| "pcc-tests/cert_cases.json".to_string());
+            pcc_cert_run(&m, &config);
+        }
+        DevCmd::BenchmarkScan { dir, out } => {
+            if let Err(e) = crate::testing::scanner::scan_benchmark_dir(&dir, &out) {
                 eprintln!("Error: {:?}", e);
             }
-        }
-
-        _ => {
-            eprintln!("Unknown command: {}", cmd);
-            usage();
         }
     }
 }
@@ -702,8 +441,13 @@ fn main() {
 // ============================================================
 
 fn parse_extra_defines(arg: Option<&str>) -> Vec<String> {
-    arg.map(|s| s.split(',').filter(|t| !t.is_empty()).map(String::from).collect())
-        .unwrap_or_default()
+    arg.map(|s| {
+        s.split(',')
+            .filter(|t| !t.is_empty())
+            .map(String::from)
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 fn run_modern_selftest_file(src: &str, defines_arg: Option<&str>, config: &VerifierConfig) {
@@ -797,31 +541,22 @@ fn sweep_modern_and_legacy(
         });
     let mut bl = Baseline::from_reports(DEFAULT_HEADERS_TAG, &modern);
 
-    // Legacy JSON sweep — recurse, picking up `*.json` under the dir.
     let mut legacy_files = Vec::new();
     collect_json_recursive(std::path::Path::new(legacy_json_dir), &mut legacy_files);
     legacy_files.sort();
-    // Parallelize legacy file iteration. Each `.json` file is fully
-    // independent; rayon walks them concurrently across cores. Within a
-    // file, tests still run sequentially — a file-level granularity is
-    // enough since most files have similar sizes.
-    //
-    // Also apply `with_selftest_caps` to the legacy config: without it,
-    // the default `max_insn = 1M` lets a handful of pathological tests
-    // run for many seconds each, dominating wallclock.
+
     use crate::testing::selftest::runner::with_selftest_caps;
     use rayon::prelude::*;
     let legacy_config = with_selftest_caps(config);
     let legacy_results: Vec<_> = legacy_files
         .par_iter()
-        .filter_map(|path| match legacy_selftest::run_test_file(
-            path.to_str().unwrap(),
-            &legacy_config,
-        ) {
-            Ok(r) => Some(r),
-            Err(e) => {
-                eprintln!("Error on legacy {}: {e}", path.display());
-                None
+        .filter_map(|path| {
+            match legacy_selftest::run_test_file(path.to_str().unwrap(), &legacy_config) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    eprintln!("Error on legacy {}: {e}", path.display());
+                    None
+                }
             }
         })
         .collect();
@@ -829,12 +564,6 @@ fn sweep_modern_and_legacy(
     bl
 }
 
-/// Sweep the upstream kernel selftests/bpf/progs/ tree directly, with no
-/// re-vendoring of headers. `upstream_root` is the kernel checkout root
-/// (typically `vendor/linux/`). Skips the legacy JSON corpus — it served
-/// as a regression net during phased modernization, but the upstream
-/// `verifier_*.c` files in the modern tree now carry the equivalent
-/// signal natively.
 fn sweep_upstream_only(
     progs_dir: &str,
     upstream_root: &str,
@@ -878,6 +607,10 @@ fn sweep_modern_only(
     Baseline::from_reports(DEFAULT_HEADERS_TAG, &modern)
 }
 
+// ============================================================
+// BTF dump diagnostics
+// ============================================================
+
 fn run_btf_dump_struct_ops(elf_path: &str, struct_name: &str) {
     use crate::parsing::btf::{self, StructOpsArg};
     use goblin::elf::Elf;
@@ -898,10 +631,7 @@ fn run_btf_dump_struct_ops(elf_path: &str, struct_name: &str) {
     };
     let mut btf_bytes: Option<&[u8]> = None;
     for sh in &elf.section_headers {
-        let name = elf
-            .shdr_strtab
-            .get_at(sh.sh_name)
-            .unwrap_or("");
+        let name = elf.shdr_strtab.get_at(sh.sh_name).unwrap_or("");
         if name == ".BTF" {
             let start = sh.sh_offset as usize;
             let end = start + sh.sh_size as usize;
@@ -931,8 +661,6 @@ fn run_btf_dump_struct_ops(elf_path: &str, struct_name: &str) {
     let mut hits = 0usize;
     for m in &ty.members {
         let mname = ctx.read_string(m.name_off).unwrap_or("?");
-        // We only print members that look like struct_ops methods — those
-        // resolve to a `PTR -> FUNC_PROTO` chain.
         let Some(pointee_id) = ctx.pointee(m.type_id) else {
             continue;
         };
@@ -1050,6 +778,10 @@ fn run_btf_dump_func(elf_path: &str, func_name: &str) {
     println!("{func_name}({pretty})");
 }
 
+// ============================================================
+// Baseline read/write/check helpers
+// ============================================================
+
 fn run_baseline_check_modern(progs_dir: &str, stored: &str, config: &VerifierConfig) {
     use crate::testing::selftest::baseline::{Baseline, CheckFilter, DeterministicFilter, diff};
 
@@ -1060,9 +792,6 @@ fn run_baseline_check_modern(progs_dir: &str, stored: &str, config: &VerifierCon
             std::process::exit(2);
         }
     };
-    // Ignore legacy entries on both sides — modern-only check is for
-    // the day-to-day phase-advance gate; legacy regressions are caught
-    // by the periodic full check.
     baseline.files.retain(|k, _| !k.starts_with("legacy/"));
 
     let det_filter = DeterministicFilter::from_baseline(&baseline);
@@ -1073,28 +802,7 @@ fn run_baseline_check_modern(progs_dir: &str, stored: &str, config: &VerifierCon
     let current = sweep_modern_only(progs_dir, config, &check_filter);
     let d = diff(&baseline, &current);
 
-    println!("=== Baseline diff (modern only) ===");
-    println!("  unchanged: {}", d.unchanged);
-    println!("  regressions: {}", d.regressions.len());
-    println!("  new entries: {}", d.new_entries.len());
-    println!("  removed entries: {}", d.removed_entries.len());
-
-    for r in &d.regressions {
-        let was = r.baseline.as_ref().map(|b| b.ours.as_str()).unwrap_or("?");
-        let now = r.current.as_ref().map(|c| c.ours.as_str()).unwrap_or("?");
-        println!("  REGRESSION  {}::{}  {was} -> {now}", r.file, r.prog);
-    }
-    for n in &d.new_entries {
-        if let Some(c) = &n.current {
-            println!("  NEW         {}::{}  ours={}", n.file, n.prog, c.ours);
-        }
-    }
-    for r in &d.removed_entries {
-        if let Some(b) = &r.baseline {
-            println!("  REMOVED     {}::{}  was={}", r.file, r.prog, b.ours);
-        }
-    }
-
+    print_diff(&d, "(modern only)");
     if !d.regressions.is_empty() {
         std::process::exit(1);
     }
@@ -1112,14 +820,7 @@ fn run_baseline_write(progs_dir: &str, legacy_json_dir: &str, out: &str, config:
 
 fn run_baseline_write_upstream(upstream_root: &str, out: &str, config: &VerifierConfig) {
     use crate::testing::selftest::runner::RunAll;
-    use std::path::Path;
 
-    // Sanity-check upstream_root before sweeping. Each path below is one
-    // we depend on for `-I` resolution at compile time; missing any of
-    // them is the canonical sign the caller passed the wrong root (e.g.
-    // the selftests dir instead of the kernel checkout root). Failing
-    // fast here saves a 5-minute sweep that produces 200+ ERROR rows
-    // for the wrong reason.
     let root = Path::new(upstream_root);
     let required = [
         "tools/include",
@@ -1139,9 +840,7 @@ fn run_baseline_write_upstream(upstream_root: &str, out: &str, config: &Verifier
         for p in &missing {
             eprintln!("    {p}");
         }
-        eprintln!(
-            "Hint: pass the kernel-checkout root (e.g. `vendor/linux`), not the selftests dir."
-        );
+        eprintln!("Hint: pass the kernel-checkout root (e.g. `vendor/linux`), not the selftests dir.");
         std::process::exit(2);
     }
 
@@ -1150,11 +849,6 @@ fn run_baseline_write_upstream(upstream_root: &str, out: &str, config: &Verifier
 
     let bl = sweep_upstream_only(&progs_dir_str, upstream_root, config, &RunAll);
 
-    // Sweep-quality post-check: a compile-failed file shows up as a
-    // synthetic `<compile>` ERROR row replacing all its real progs, so
-    // a high fraction of single-row ERROR files is a strong signal of
-    // toolchain or upstream_root misconfiguration. Warn loudly if more
-    // than 5% of files fall into that pattern.
     let total_files = bl.files.len();
     let compile_failed: usize = bl
         .files
@@ -1166,7 +860,7 @@ fn run_baseline_write_upstream(upstream_root: &str, out: &str, config: &Verifier
             "[selftest-baseline-write-upstream] WARNING: {compile_failed}/{total_files} files \
              collapsed to a single <compile> ERROR row — this almost always means \
              upstream_root or the toolchain is wrong (correct sweeps see <1% compile-failed). \
-             Inspect a failing file with `cargo run -- selftest-file <path>` and the \
+             Inspect a failing file with `dev selftest-file <path>` and the \
              stderr from clang to diagnose."
         );
     }
@@ -1195,11 +889,6 @@ fn run_baseline_check(
             std::process::exit(2);
         }
     };
-    // Fast path: only re-run programs whose baseline outcome is
-    // deterministic (PASS / FALSE_REJECT / FALSE_ACCEPT) plus any
-    // programs that aren't in the baseline at all (newly added). This
-    // shrinks the gate from ~18 min to <1 min for a typical sweep.
-    // Use `selftest-baseline-write` to refresh the baseline exhaustively.
     let det_filter = DeterministicFilter::from_baseline(&baseline);
     let check_filter = CheckFilter {
         filter: &det_filter,
@@ -1208,7 +897,21 @@ fn run_baseline_check(
     let current = sweep_modern_and_legacy(progs_dir, legacy_json_dir, config, &check_filter);
     let d = diff(&baseline, &current);
 
-    println!("=== Baseline diff ===");
+    print_diff(&d, "");
+    if !d.regressions.is_empty() {
+        std::process::exit(1);
+    }
+}
+
+fn print_diff(d: &crate::testing::selftest::baseline::DiffReport, suffix: &str) {
+    println!(
+        "=== Baseline diff{} ===",
+        if suffix.is_empty() {
+            String::new()
+        } else {
+            format!(" {suffix}")
+        }
+    );
     println!("  unchanged: {}", d.unchanged);
     println!("  regressions: {}", d.regressions.len());
     println!("  new entries: {}", d.new_entries.len());
@@ -1224,12 +927,12 @@ fn run_baseline_check(
             println!("  NEW         {}::{}  ours={}", n.file, n.prog, c.ours);
         }
     }
-    for n in &d.removed_entries {
-        println!("  REMOVED     {}::{}", n.file, n.prog);
-    }
-
-    if !d.regressions.is_empty() {
-        std::process::exit(1);
+    for r in &d.removed_entries {
+        if let Some(b) = &r.baseline {
+            println!("  REMOVED     {}::{}  was={}", r.file, r.prog, b.ours);
+        } else {
+            println!("  REMOVED     {}::{}", r.file, r.prog);
+        }
     }
 }
 
