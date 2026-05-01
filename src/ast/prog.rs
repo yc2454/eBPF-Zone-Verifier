@@ -109,6 +109,13 @@ impl ProgramKind {
             || s.starts_with("fmod_ret/")
             || s.starts_with("fmod_ret.s/")
             || s.starts_with("tp_btf/")
+            // libbpf optional-load form: `?tp_btf/<func>`. Treat as
+            // Tracing for kfunc-allowlist purposes (cf.
+            // `verifier_global_ptr_args::trusted_task_arg_nullable`).
+            // We don't strip `?` for the other tracing flavors because
+            // `?fentry/` / `?fexit/` siblings in the corpus rely on
+            // their current-Unknown kfunc rejection — see audit doc.
+            || s.starts_with("?tp_btf/")
             || s.starts_with("iter/")
             || s.starts_with("iter.s/")
         {

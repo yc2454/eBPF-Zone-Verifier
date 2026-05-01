@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-01T03:31:00.189302+00:00",
+  "generated_at": "2026-05-01T03:53:02.928040+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -5996,7 +5996,7 @@
         "preempt_global_subprog_test": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 13: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "note": "Unsupported modern BPF feature at pc 5: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "preempt_lock_missing_1": {
           "upstream": "ACCEPT",
@@ -6601,7 +6601,7 @@
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(67) })"
+          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(66) })"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",
@@ -14576,8 +14576,7 @@
         },
         "trusted_acq_rel": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Caller passes invalid args into func 'subprog_trusted_acq_rel' (arg #1) at pc 1"
+          "ours": "PASS"
         },
         "trusted_destroy_fail": {
           "upstream": "ACCEPT",
@@ -14597,8 +14596,7 @@
         },
         "trusted_task_arg_nullable": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Kfunc btf_id 163420002 not allowed for program Unknown at pc 3"
+          "ours": "PASS"
         }
       }
     },
