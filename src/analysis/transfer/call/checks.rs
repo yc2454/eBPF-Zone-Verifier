@@ -527,18 +527,25 @@ fn validate_ptr_to_task(ctx: &mut ValidationContext) -> bool {
 
 /// Validate `ArgKind::PtrToArena` (W5.5).
 ///
-/// Only the non-null `RegType::PtrToArena` is accepted: arena
-/// consumers (free_pages, future arena-aware kfuncs) all require the
-/// program to have null-checked the freshly-allocated pointer first.
+/// Kernel `verifier.c` ~L10370 (v6.15) for `ARG_PTR_TO_ARENA`:
+/// "only PTR_TO_ARENA or SCALAR make sense" — both shapes are
+/// accepted. A scalar arg is the runtime case where the program
+/// loaded an arena value from a `__arena *` global (loads from
+/// PtrToArena `mark_reg_unknown`, kernel `verifier.c` ~L7639) and
+/// passes it back into a free helper without re-casting. The kernel
+/// rejects everything else as "not a pointer to arena or scalar".
 fn validate_ptr_to_arena(ctx: &mut ValidationContext) -> bool {
-    if !matches!(ctx.actual, RegType::PtrToArena { .. }) {
+    if !matches!(
+        ctx.actual,
+        RegType::PtrToArena { .. } | RegType::ScalarValue
+    ) {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,
                 reg: ctx.reg,
             },
             &format!(
-                "[Verifier] pc {}: R{} expected PTR_TO_ARENA, got {:?}",
+                "[Verifier] pc {}: R{} expected PTR_TO_ARENA or SCALAR, got {:?}",
                 ctx.pc,
                 ctx.arg_index + 1,
                 ctx.actual

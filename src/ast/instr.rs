@@ -148,6 +148,17 @@ pub enum Instr {
 pub struct Program {
     pub instrs: Vec<Instr>,
     pub invalid_pc_set: HashSet<usize>,
+    /// PCs of `BPF_MOV | BPF_X` instructions encoded as
+    /// `bpf_addr_space_cast(dst_as=0, src_as=1)` — `off=1, imm=1` per
+    /// kernel `verifier.c` ~L15402 (v6.15). Semantically: take a value
+    /// in arena address space and produce a `PTR_TO_ARENA` (the
+    /// 32-bit kernel-side handle to arena memory). The Mov transfer
+    /// consults this set to retype dst as `PtrToArena` regardless of
+    /// the source register's type (kernel does `mark_reg_unknown` then
+    /// unconditionally sets `dst_reg->type = PTR_TO_ARENA`).
+    /// The reverse direction (`imm == 0x10000`, `as(0)→as(1)`) leaves
+    /// dst as `mark_reg_unknown` (Scalar) — kernel doesn't tag it.
+    pub addr_space_cast_to_arena_pcs: HashSet<usize>,
 }
 
 impl fmt::Display for Instr {

@@ -23,6 +23,7 @@ pub struct VerifierEnv<'a> {
     pub explored_states: HashMap<usize, Vec<State>>,
     pub insn_aux_data: Vec<InsnAuxData>,
     pub invalid_pc_set: HashSet<usize>,
+    pub addr_space_cast_to_arena_pcs: HashSet<usize>,
 
     // --- Dynamic State ---
     pub insn_processed: usize,
@@ -51,6 +52,7 @@ impl<'a> VerifierEnv<'a> {
             explored_states: HashMap::new(),
             insn_aux_data: vec![InsnAuxData::default(); prog.instrs.len()],
             invalid_pc_set: prog.invalid_pc_set.clone(),
+            addr_space_cast_to_arena_pcs: prog.addr_space_cast_to_arena_pcs.clone(),
             insn_processed: 0,
             error: None,
             history: History::new(),

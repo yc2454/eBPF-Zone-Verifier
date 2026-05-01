@@ -110,6 +110,15 @@ fn update_ptr_arithmetic_type(
         RegType::PtrToStack { frame_level } => {
             types.set(dst, RegType::PtrToStack { frame_level });
         }
+        RegType::PtrToArena { ref_id, mem_size } => {
+            // Kernel `verifier.c` ~L15191 (v6.15): when dst is
+            // PTR_TO_ARENA, "Any arithmetic operations are allowed on
+            // arena pointers" and the function returns 0 without
+            // changing dst's type. Add/Sub/Shl/Shr/And/Or/etc. all
+            // preserve PtrToArena. This is what alloc_pages's
+            // `pg - base; result >> 12` shape needs to verify.
+            types.set(dst, RegType::PtrToArena { ref_id, mem_size });
+        }
         RegType::PtrToCtx => {
             if signed_delta == Some(0) {
                 types.set(dst, RegType::PtrToCtx);
@@ -249,7 +258,26 @@ pub(crate) fn update_alu_types(
             match src {
                 Operand::Reg(r) => {
                     let src_ty = in_types.get(*r);
-                    types.set(dst, src_ty);
+                    // `bpf_addr_space_cast(as(1)→as(0))` is encoded as
+                    // BPF_MOV | BPF_X with off=1, imm=1. The parser
+                    // records its PCs; the kernel
+                    // (`verifier.c` ~L15402, v6.15) does
+                    // `mark_reg_unknown` then unconditionally sets
+                    // `dst_reg->type = PTR_TO_ARENA` for this form,
+                    // ignoring the source register's prior type. Mirror
+                    // that here: the cast ignores src and produces a
+                    // fresh PtrToArena.
+                    if env.addr_space_cast_to_arena_pcs.contains(&pc) {
+                        types.set(
+                            dst,
+                            RegType::PtrToArena {
+                                ref_id: None,
+                                mem_size: 1u64 << 32,
+                            },
+                        );
+                    } else {
+                        types.set(dst, src_ty);
+                    }
                 }
                 Operand::Imm(_) => {
                     // Regular ALU MOV imm: look up a reloc at *this* pc only.
@@ -298,7 +326,20 @@ pub(crate) fn update_alu_types(
                 handle_scalar_arithmetic_type(in_types, types, dst, src, is_add);
             }
         }
-        _ => types.set(dst, RegType::ScalarValue),
+        _ => {
+            // Non-Add/Sub ALU ops normally demote dst to scalar. The
+            // exception is PtrToArena: the kernel
+            // (`verifier.c` ~L15191, v6.15) allows any arithmetic on
+            // an arena pointer and the type stays PTR_TO_ARENA.
+            // Preserves alloc_pages's `R1 = (pg - base) >> 12` chain
+            // where the Shr after Sub keeps the arena type alive.
+            let in_ty = in_types.get(dst);
+            if matches!(in_ty, RegType::PtrToArena { .. }) {
+                types.set(dst, in_ty);
+            } else {
+                types.set(dst, RegType::ScalarValue);
+            }
+        }
     }
 }
 

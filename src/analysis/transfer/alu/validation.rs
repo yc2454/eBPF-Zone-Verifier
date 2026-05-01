@@ -49,6 +49,20 @@ pub(crate) fn check_ptr_arithmetic(
         return true;
     }
 
+    // PtrToArena fast-path: kernel `verifier.c` ~L15191 (v6.15) —
+    // "Any arithmetic operations are allowed on arena pointers".
+    // The kernel returns 0 immediately when `dst_reg->type ==
+    // PTR_TO_ARENA`, regardless of src type or op. Mirror that:
+    // skip every other validation rule (MAX_VAR_OFF, op allowlist,
+    // ptr-ptr-sub same-type, etc.) for PtrToArena dst. This is what
+    // alloc_pages's `pg - base; >> 12` shape needs (Shr on a pointer
+    // is otherwise rejected as "Invalid pointer arithmetic"), and it
+    // matches arena's 4GB sparse-mapped semantics where bounds-checks
+    // are intentionally permissive.
+    if matches!(dst_type, RegType::PtrToArena { .. }) {
+        return true;
+    }
+
     // 2. Pointer <op> Pointer
     if dst_is_ptr && src_is_ptr {
         match op {
