@@ -264,7 +264,7 @@ impl Analyzer {
 
         // Load BTF
         let btf_bytes = elf::prog::load_section_bytes(path, ".BTF", false).unwrap_or_default();
-        let btf = if !btf_bytes.is_empty() {
+        let mut btf = if !btf_bytes.is_empty() {
             btf::parse_btf(&btf_bytes).unwrap_or_else(|e| {
                 if config.verbosity > 0 {
                     println!("BTF Parse Warning: {}", e);
@@ -275,14 +275,35 @@ impl Analyzer {
             btf::BtfContext::new()
         };
 
+        // Patch BTF DATASEC member offsets from the ELF symbol table.
+        // clang emits all DATASEC entries with offset=0; libbpf rewrites
+        // them post-link from the symbol table. Without this, the
+        // SpecialField machinery sees every `.bss.X`/`.data.X` var at
+        // offset 0 and the offset-match check on
+        // MapValueSpecial{SpinLock/RbRoot/...} fails.
+        let raw_bytes = std::fs::read(path).ok();
+        if let Some(ref bytes) = raw_bytes
+            && let Ok(elf) = goblin::elf::Elf::parse(bytes)
+        {
+            let mut name_to_offset = std::collections::HashMap::new();
+            for sym in elf.syms.iter() {
+                if let Some(name) = elf.strtab.get_at(sym.st_name)
+                    && !name.is_empty()
+                {
+                    name_to_offset.insert(name.to_string(), sym.st_value as u32);
+                }
+            }
+            btf.patch_datasec_offsets(&name_to_offset);
+        }
+
         // W6.4a: extract struct_ops bindings once per ELF. Cheap; we
         // already have the BTF parsed and re-parse the ELF here.
-        let struct_ops_bindings = match std::fs::read(path) {
-            Ok(bytes) => match goblin::elf::Elf::parse(&bytes) {
-                Ok(elf) => extract_bindings(&bytes, &elf, &btf),
+        let struct_ops_bindings = match raw_bytes.as_deref() {
+            Some(bytes) => match goblin::elf::Elf::parse(bytes) {
+                Ok(elf) => extract_bindings(bytes, &elf, &btf),
                 Err(_) => Vec::new(),
             },
-            Err(_) => Vec::new(),
+            None => Vec::new(),
         };
 
         Analyzer {

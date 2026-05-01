@@ -895,13 +895,14 @@ pub(crate) fn update_map_load_types(
     kind: MapLoadKind,
     map_fd: usize,
     dst: Reg,
+    offset: i64,
 ) {
     let new_type = match kind {
         MapLoadKind::MapPtr => RegType::PtrToMapObject { map_idx: map_fd },
         MapLoadKind::MapValue => RegType::PtrToMapValue {
             id: new_ptr_id(),
             map_idx: map_fd,
-            offset: Some(0),
+            offset: Some(offset),
         },
         // Modern kinds are filtered upstream in transfer_map_load; reaching
         // them here would be a bug.

@@ -866,6 +866,44 @@ impl BtfContext {
         )
     }
 
+    /// Patch DATASEC member offsets from an ELF-symbol name→offset map.
+    /// clang emits BTF DATASEC entries with `offset = 0` for every var;
+    /// libbpf rewrites them post-link from the symbol table. We do the
+    /// same: for each DATASEC member whose VAR resolves to a name found
+    /// in `name_to_offset`, overwrite the entry's offset. Members not in
+    /// the map (or whose VAR has no name) are left untouched.
+    ///
+    /// Without this, `find_special_fields` on a `.bss.<name>` DATASEC
+    /// reports every var at offset 0, which fails the offset-match
+    /// check in MapValueSpecial validators (spin_lock at offset 32 vs
+    /// ".bss.A reports SpinLock at offset 0").
+    pub fn patch_datasec_offsets(&mut self, name_to_offset: &HashMap<String, u32>) {
+        // First, collect (var_id → name) from VAR entries so we don't
+        // borrow self both mutably and immutably in the loop below.
+        let var_names: HashMap<u32, String> = self
+            .types
+            .values()
+            .filter(|t| t.kind() == BTF_KIND_VAR)
+            .filter_map(|t| {
+                self.get_string(t.name_off)
+                    .map(|n| (t.id, n.to_string()))
+            })
+            .collect();
+        for ty in self.types.values_mut() {
+            if ty.kind() != BTF_KIND_DATASEC {
+                continue;
+            }
+            for member in ty.members.iter_mut() {
+                let Some(var_name) = var_names.get(&member.type_id) else {
+                    continue;
+                };
+                if let Some(&off) = name_to_offset.get(var_name) {
+                    member.offset = off;
+                }
+            }
+        }
+    }
+
     /// Find a BTF_KIND_DATASEC by section name (e.g. ".struct_ops",
     /// ".struct_ops.link", ".rodata", ".bss"). Returns the BTF type id.
     pub fn find_datasec(&self, section_name: &str) -> Option<u32> {

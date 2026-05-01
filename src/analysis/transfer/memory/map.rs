@@ -431,6 +431,7 @@ pub(crate) fn transfer_map_load(
             kind,
             reloc.map_idx,
             dst,
+            reloc.offset,
         );
         state.domain.forget(dst);
         state.pc += 2;
