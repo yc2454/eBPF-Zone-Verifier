@@ -187,20 +187,17 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
                 });
             }
         }
-        PtrToArena { ref_id: _, mem_size } => {
-            let access_end = off as i64 + size;
-            if off < 0 || access_end > mem_size as i64 {
-                error!(
-                    "Unsafe arena load at pc {}: base {:?}+{} size {} exceeds arena allocation size {}",
-                    pc, base, off, size, mem_size
-                );
-                env.fail(VerificationError::UnsafeMemoryLoad {
-                    pc,
-                    base,
-                    off,
-                    size,
-                });
-            }
+        PtrToArena { .. } => {
+            // Arena memory is sparse-mapped and lazily faulted: accesses
+            // outside the alloc'd page run zero-faults rather than reject.
+            // The kernel verifier therefore doesn't bounds-check arena
+            // loads against the alloc's `mem_size`, only against the
+            // arena's overall 4GB virtual range (modeled implicitly by
+            // the addr-space cast, which we don't trace). See
+            // `verifier_arena.c::basic_alloc2` (writes `page1 + 2*PAGE_SIZE`
+            // through a 2-page alloc) and `verifier_arena_large.c::big_alloc1`
+            // (`page2 +/- PAGE_SIZE`). Accept any offset; loaded value
+            // stays `ScalarValue` via the type-update path.
         }
         // Phase 7 wrap-up: lax field-access on trusted typed BTF
         // pointers we don't have a `mem_region_model` entry for.
@@ -347,20 +344,10 @@ pub fn check_store(
                 });
             }
         }
-        PtrToArena { ref_id: _, mem_size } => {
-            let access_end = off as i64 + size;
-            if off < 0 || access_end > mem_size as i64 {
-                error!(
-                    "Unsafe arena store at pc {}: base {:?}+{} size {} exceeds arena allocation size {}",
-                    pc, base, off, size, mem_size
-                );
-                env.fail(VerificationError::UnsafeMemoryStore {
-                    pc,
-                    base,
-                    off,
-                    size,
-                });
-            }
+        PtrToArena { .. } => {
+            // Symmetric with the load side: arena memory is sparse-mapped,
+            // so OOB-looking stores zero-fault rather than reject. The
+            // kernel verifier doesn't bound stores against alloc size.
         }
         // W6.4a-followon: writes through a BTF-typed pointer.
         // Mirror the load-side policy at access.rs::update_load_types:

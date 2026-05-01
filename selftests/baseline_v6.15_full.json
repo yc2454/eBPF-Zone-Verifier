@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-01T14:15:14.313423+00:00",
+  "generated_at": "2026-05-01T14:37:06.052145+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -6600,7 +6600,7 @@
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(65) })"
+          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(66) })"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",
@@ -13028,8 +13028,7 @@
         },
         "basic_alloc2": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe memory store at pc 15: base R6, offset 8192, size 1"
+          "ours": "PASS"
         },
         "basic_alloc3": {
           "upstream": "ACCEPT",
@@ -13055,13 +13054,12 @@
       "progs": {
         "big_alloc1": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 16"
+          "ours": "PASS"
         },
         "big_alloc2": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe memory store at pc 158: base R2, offset 0, size 1"
+          "note": "Unsafe generic store at pc 164: base R2+0 (type: ScalarValue)"
         }
       }
     },
