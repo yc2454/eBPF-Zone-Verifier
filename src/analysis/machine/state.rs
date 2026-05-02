@@ -362,6 +362,48 @@ impl State {
         self.stack_mut().invalidate_ref(id);
     }
 
+    /// Convert every reg holding `PtrToOwnedKptr` with the given
+    /// `ref_id` from owning to non-owning: clear `ref_id`, set the
+    /// `non_owning` flag, keep the type and offset. Mirrors kernel
+    /// `verifier.c` v6.15 L12471 `ref_convert_owning_non_owning` —
+    /// fired by `bpf_rbtree_add` / `bpf_list_push_*` after they consume
+    /// the owning ref into the container. Stack-slot conversion not
+    /// modeled (no current test stores an OwnedKptr to stack across a
+    /// graph-add).
+    pub fn convert_ref_to_non_owning(&mut self, id: u32) {
+        for i in 0..self.types.regs.len() {
+            if let RegType::PtrToOwnedKptr {
+                ref_id: Some(rid),
+                offset,
+                ..
+            } = self.types.regs[i]
+                && rid == id
+            {
+                self.types.regs[i] = RegType::PtrToOwnedKptr {
+                    ref_id: None,
+                    offset,
+                    non_owning: true,
+                };
+            }
+        }
+    }
+
+    /// Drop every non-owning OwnedKptr reg back to ScalarValue. Fired
+    /// on `bpf_spin_unlock` — non-owning refs are only valid under the
+    /// lock that scoped the graph-add. Mirrors kernel `verifier.c`
+    /// v6.15 L10242 `invalidate_non_owning_refs` (called from L8382 on
+    /// spin_unlock).
+    pub fn invalidate_non_owning_refs(&mut self) {
+        for i in 0..self.types.regs.len() {
+            if let RegType::PtrToOwnedKptr {
+                non_owning: true, ..
+            } = self.types.regs[i]
+            {
+                self.types.regs[i] = RegType::ScalarValue;
+            }
+        }
+    }
+
     // ── Lock tracking ───────────────────────────────────────────
 
     pub fn acquire_lock(&mut self, ptr_id: u32, lock_offset: u32) {

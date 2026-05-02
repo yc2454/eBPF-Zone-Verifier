@@ -125,6 +125,25 @@ fn transfer_kfunc_proto(
         return vec![];
     }
 
+    // Kernel: `bpf_rcu_read_{lock,unlock}` cross a spin_lock boundary
+    // is rejected as "function calls are not allowed while holding a
+    // lock" (refcounted_kptr_fail::rbtree_fail_sleepable_lock_across_rcu).
+    // The kfunc has no lock-aware semantics — programs that toggle
+    // RCU regions while a spin_lock is held would unwind the lock
+    // pairing across critical sections.
+    if state.has_active_lock()
+        && (proto.flags.contains(CallFlags::RCU_READ_LOCK)
+            || proto.flags.contains(CallFlags::RCU_READ_UNLOCK))
+    {
+        env.fail(
+            crate::analysis::machine::error::VerificationError::InvalidArgType {
+                pc,
+                reg: Reg::R0,
+            },
+        );
+        return vec![];
+    }
+
     // W5.4: enforce SPIN_LOCK_HELD / RCU / lock-acquire-release proto
     // flags before arg validation. Done here (not in side_effects)
     // because rejection short-circuits the whole call.
@@ -165,11 +184,61 @@ fn transfer_kfunc_proto(
     // no-op on `ref_id: None`. The pre-existing `BPF_SK_RELEASE` arm in
     // `transfer.rs` handles the helper case with the same shape; this
     // closes the gap for the unified kfunc dispatcher.
+    // Callback-misuse static scan: graph-add kfuncs (rbtree_add /
+    // list_push_*) take a `less` callback in R3. The kernel rejects
+    // when the cb body contains forbidden ops (spin_lock/unlock,
+    // bpf_throw, recursive graph-mutation kfuncs, alloc/release).
+    // Lite scope: any subprog landed in `tainted_cb_subprogs` at env
+    // init is rejected here. Without this, the static-MapValue id=0
+    // change unmasks several rbtree_fail / exceptions_fail
+    // FALSE_ACCEPTs.
+    if proto.flags.contains(CallFlags::RELEASE_NON_OWN) {
+        // Cb arg by convention is R3 for both rbtree_add and list_push.
+        if let RegType::PtrToCallback { subprog_pc } = in_types.get(Reg::R3)
+            && env.tainted_cb_subprogs.contains(&(subprog_pc as usize))
+        {
+            env.fail(
+                crate::analysis::machine::error::VerificationError::InvalidArgType {
+                    pc,
+                    reg: Reg::R3,
+                },
+            );
+            return vec![];
+        }
+    }
+
     if proto.flags.contains(CallFlags::RELEASE) {
+        let is_non_own = proto.flags.contains(CallFlags::RELEASE_NON_OWN);
         for eff in proto.side_effects {
             if let SideEffect::ReleaseRefFromArg { arg } = *eff {
                 let reg = arg_regs[arg as usize];
-                if in_types.get(reg).get_ref_id().is_none() {
+                let actual = in_types.get(reg);
+                if actual.get_ref_id().is_none() {
+                    env.fail(
+                        crate::analysis::machine::error::VerificationError::InvalidArgType {
+                            pc,
+                            reg,
+                        },
+                    );
+                    return vec![];
+                }
+                // Kernel verifier.c v6.15 ~L13242: for a full-release
+                // kfunc (`bpf_obj_drop`, `bpf_kptr_xchg`) the released
+                // pointer must reference the head of the alloc; the
+                // kernel's exact check is `reg->off == 0`. We approximate
+                // by rejecting only positive offsets (`&res->node`-style
+                // forward arithmetic into the alloc). Negative offsets
+                // arise from `container_of(rb_remove_ret, struct, r)`
+                // = `rb - 16`, which the kernel models via BTF-aware
+                // offset tracking we don't replicate; treating negative
+                // offsets as "container-of recovered to head" keeps
+                // refcounted_kptr.c::rbtree_sleepable_rcu* PASSing
+                // while still catching local_kptr_stash_fail::
+                // drop_rb_node_off (offset = +16).
+                if !is_non_own
+                    && let RegType::PtrToOwnedKptr { offset, .. } = actual
+                    && offset > 0
+                {
                     env.fail(
                         crate::analysis::machine::error::VerificationError::InvalidArgType {
                             pc,
@@ -391,7 +460,7 @@ fn pointer_arg_meets_trust(actual: &RegType, band: TrustBand) -> bool {
         RegType::PtrToTask { ref_id: Some(_) }
             | RegType::PtrToCgroup { ref_id: Some(_) }
             | RegType::PtrToCpumask { ref_id: Some(_) }
-            | RegType::PtrToOwnedKptr { ref_id: Some(_) }
+            | RegType::PtrToOwnedKptr { ref_id: Some(_), .. }
             | RegType::PtrToArena { ref_id: Some(_), .. }
             | RegType::PtrToSocket { ref_id: Some(_) }
             | RegType::PtrToSockCommon { ref_id: Some(_) }
@@ -438,6 +507,19 @@ fn throw(env: &mut VerifierEnv, state: State) -> Vec<State> {
     // the lock — the kernel rejects up-front.
     // (See `exceptions_fail::reject_with_lock` and `reject_subprog_with_lock`.)
     if state.has_active_lock() {
+        env.fail(VerificationError::InvalidArgType {
+            pc: state.pc,
+            reg: Reg::R0,
+        });
+        return vec![];
+    }
+    // Kernel: bpf_throw inside an RCU read-side critical section is
+    // also rejected — the unwind path doesn't run rcu_read_unlock, so
+    // the program would leak the RCU lock. Mirrors
+    // `exceptions_fail::reject_with_rcu_read_lock` (kernel msg
+    // "function calls are not allowed while holding a lock" — same
+    // family, RCU bucket).
+    if state.in_rcu_read_section() {
         env.fail(VerificationError::InvalidArgType {
             pc: state.pc,
             reg: Reg::R0,

@@ -45,8 +45,21 @@ pub(crate) fn apply_call_proto_r0(
                 // upstream. The kernel verifier likewise consults the
                 // pre-call type for the release target.
                 if let Some(ref_id) = in_types.get(reg).get_ref_id() {
-                    state.release_ref(ref_id);
-                    state.invalidate_ref(ref_id);
+                    if proto.flags.contains(CallFlags::RELEASE_NON_OWN) {
+                        // Graph-add (rbtree_add / list_push_*): the
+                        // owning ref is consumed by the container, but
+                        // the original alloc-pointer aliases stay
+                        // valid as non-owning refs under the lock
+                        // (verifier.c v6.15 L12471
+                        // `ref_convert_owning_non_owning`). Drop the
+                        // ref-tracking entry but retype aliases rather
+                        // than wiping them.
+                        state.release_ref(ref_id);
+                        state.convert_ref_to_non_owning(ref_id);
+                    } else {
+                        state.release_ref(ref_id);
+                        state.invalidate_ref(ref_id);
+                    }
                 }
             }
             SideEffect::SetExceptionCallbackFromArg { arg } => {
@@ -283,7 +296,11 @@ pub(crate) fn apply_call_proto_r0(
             let ty = if proto.flags.contains(CallFlags::RET_NULL) {
                 RegType::PtrToOwnedKptrOrNull { ref_id }
             } else {
-                RegType::PtrToOwnedKptr { ref_id }
+                RegType::PtrToOwnedKptr {
+                    ref_id,
+                    offset: 0,
+                    non_owning: false,
+                }
             };
             state.types.set(Reg::R0, ty);
             true

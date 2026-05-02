@@ -110,6 +110,33 @@ fn update_ptr_arithmetic_type(
         RegType::PtrToStack { frame_level } => {
             types.set(dst, RegType::PtrToStack { frame_level });
         }
+        RegType::PtrToOwnedKptr {
+            ref_id,
+            offset,
+            non_owning,
+        } => {
+            // Kernel `verifier.c` v6.15 ~L15170: PTR_TO_BTF_ID|MEM_ALLOC
+            // preserves type through pointer arithmetic; `reg->off` is
+            // bumped by the constant delta. Required for graph-add
+            // kfuncs that pass `&n->node` (PtrToOwnedKptr + 16) — the
+            // member offset must reach the validator without being
+            // demoted to Scalar. Release sinks (`bpf_obj_drop`,
+            // `bpf_kptr_xchg`) reject non-zero offsets in the post-call
+            // gate, mirroring kernel "must have zero offset when passed
+            // to release func" (verifier.c ~L13242).
+            let new_offset = match signed_delta {
+                Some(d) => offset.saturating_add(d.clamp(i32::MIN as i64, i32::MAX as i64) as i32),
+                None => offset, // unknown delta: keep type, offset unchanged
+            };
+            types.set(
+                dst,
+                RegType::PtrToOwnedKptr {
+                    ref_id,
+                    offset: new_offset,
+                    non_owning,
+                },
+            );
+        }
         RegType::PtrToArena { ref_id, mem_size } => {
             // Kernel `verifier.c` ~L15191 (v6.15): when dst is
             // PTR_TO_ARENA, "Any arithmetic operations are allowed on
@@ -944,11 +971,19 @@ pub(crate) fn update_map_load_types(
     map_fd: usize,
     dst: Reg,
     offset: i64,
+    is_static_data_section: bool,
 ) {
     let new_type = match kind {
         MapLoadKind::MapPtr => RegType::PtrToMapObject { map_idx: map_fd },
         MapLoadKind::MapValue => RegType::PtrToMapValue {
-            id: new_ptr_id(),
+            // Synthetic data sections (`.bss`, `.bss.<name>`, `.data`,
+            // `.data.<name>`, `.rodata`, `.rodata.<name>`) load via
+            // `BPF_PSEUDO_MAP_VALUE`, which the kernel does NOT mint a
+            // fresh ptr_id for: every reload of `&alock` yields the
+            // same identity. Required for `bpf_spin_lock` / `unlock` to
+            // pair across two LD_IMM64s of the same `.bss.<name>`
+            // global. Other map kinds (HASH/ARRAY etc.) keep fresh ids.
+            id: if is_static_data_section { 0 } else { new_ptr_id() },
             map_idx: map_fd,
             offset: Some(offset),
         },

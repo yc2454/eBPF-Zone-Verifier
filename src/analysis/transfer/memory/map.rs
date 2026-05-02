@@ -426,12 +426,27 @@ pub(crate) fn transfer_map_load(
 
     let reloc_info = env.ctx.pc_to_reloc.get(&state.pc);
     if let Some(reloc) = reloc_info {
+        let is_static_data = env
+            .ctx
+            .map_defs
+            .get(reloc.map_idx)
+            .map(|md| {
+                let n = md.name.as_str();
+                n == ".bss"
+                    || n == ".data"
+                    || n == ".rodata"
+                    || n.starts_with(".bss.")
+                    || n.starts_with(".data.")
+                    || n.starts_with(".rodata.")
+            })
+            .unwrap_or(false);
         crate::analysis::transfer::types::update_map_load_types(
             &mut state.types,
             kind,
             reloc.map_idx,
             dst,
             reloc.offset,
+            is_static_data,
         );
         state.domain.forget(dst);
         state.pc += 2;

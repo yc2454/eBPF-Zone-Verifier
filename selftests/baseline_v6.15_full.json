@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-02T00:52:00.791292+00:00",
+  "generated_at": "2026-05-02T01:36:16.748632+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -6591,23 +6591,19 @@
         },
         "rbtree_refcounted_node_ref_escapes": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 18: register: r2"
+          "ours": "PASS"
         },
         "rbtree_refcounted_node_ref_escapes_owning_input": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 12: base R6+0 (type: PtrToOwnedKptrOrNull { ref_id: Some(65) })"
+          "ours": "PASS"
         },
         "rbtree_sleepable_rcu": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 7: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "rbtree_sleepable_rcu_no_explicit_rcu_lock": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 17: register: r2"
+          "ours": "PASS"
         },
         "rbtree_wrong_owner_remove_fail_a1": {
           "upstream": "UNANNOTATED",

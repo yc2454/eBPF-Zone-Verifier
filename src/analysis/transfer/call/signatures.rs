@@ -195,7 +195,7 @@ pub enum IterArgExpect {
 /// ret-null by helper-id switch. W4.1b migrates that logic to be
 /// flag-driven (so kfuncs can reuse it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct CallFlags(u16);
+pub struct CallFlags(u32);
 
 #[allow(dead_code)]
 impl CallFlags {
@@ -254,6 +254,16 @@ impl CallFlags {
     /// `state.in_preempt_disabled()`. Mirrors kernel `fn->might_sleep`
     /// (verifier.c v6.15 ~L11299) and `KF_SLEEPABLE` for kfuncs (~L13565).
     pub const MIGHT_SLEEP: Self = Self(1 << 15);
+    /// Post-call: this `RELEASE`-flagged kfunc converts the released
+    /// argument's owning ref into a non-owning ref instead of fully
+    /// invalidating it. Mirrors kernel `verifier.c` v6.15
+    /// `ref_convert_owning_non_owning` (L12471), driven by the
+    /// `KF_RELEASE` flag on graph-add kfuncs (`bpf_rbtree_add_impl`,
+    /// `bpf_list_push_{front,back}_impl`). Without this, the original
+    /// alloc-pointer becomes Scalar after add and a follow-up
+    /// `bpf_refcount_acquire(n)` (under the same lock) fails its arg
+    /// type check.
+    pub const RELEASE_NON_OWN: Self = Self(1 << 16);
 
     pub const fn empty() -> Self {
         Self(0)
@@ -1335,6 +1345,24 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Scalar)
         .flags(CallFlags::PREEMPT_ENABLE),
 
+        // RCU read-side kfuncs (kernel `verifier.c` v6.15: registered
+        // in `common_btf_ids` as `KF_RCU_PROTECTS_ALLOC`/no-arg). The
+        // `BPF_PSEUDO_KFUNC_CALL` form is what `__ksym extern void
+        // bpf_rcu_read_lock(void);` resolves to in refcounted_kptr.c.
+        // Reuse the same RCU_READ_LOCK / _UNLOCK depth-counter
+        // machinery used by the helper-form (transfer.rs ~L1226).
+        "bpf_rcu_read_lock" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RCU_READ_LOCK),
+
+        "bpf_rcu_read_unlock" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RCU_READ_UNLOCK),
+
         "bpf_set_exception_callback" => CallProto::with_args([
             PtrToCallback, // R1: subprog ptr (PSEUDO_FUNC)
             DontCare,
@@ -2147,11 +2175,15 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // fresh ref to the same object. The input ref stays valid (no
         // RELEASE flag); the new ref must be independently dropped or
         // pushed into a container.
+        // Kernel commit 7793fc3d (v6.13) dropped KF_RET_NULL from
+        // bpf_refcount_acquire_impl: the input ref already guarantees
+        // refcount > 0, so the bumped result cannot be NULL. Programs
+        // ≥ v6.13 (incl. refcounted_kptr.c) skip the null check.
         "bpf_refcount_acquire_impl" => CallProto::with_args([
             PtrToOwnedKptr, Anything, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::PtrToOwnedKptr)
-        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+        .flags(CallFlags::ACQUIRE),
 
         // ---- List + rbtree kfuncs (W5.4b) ----
         //
@@ -2171,7 +2203,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             DontCare,
         ])
         .ret(RetKind::Void)
-        .flags(CallFlags::RELEASE | CallFlags::SPIN_LOCK_HELD)
+        .flags(CallFlags::RELEASE | CallFlags::RELEASE_NON_OWN | CallFlags::SPIN_LOCK_HELD)
         .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 1 }]),
 
         // struct bpf_list_node *bpf_list_pop_front(struct bpf_list_head *head)
@@ -2193,6 +2225,37 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // callback (R3) is accepted as Anything — we don't walk into the
         // cb subprog for ordering-correctness checks. Tech-debt: future
         // precision should validate it as `PtrToCallback` and explore.
+        // struct bpf_rb_node *bpf_rbtree_first(struct bpf_rb_root *root)
+        // KF_RET_NULL | KF_LOCK_HELD — peek at the leftmost node.
+        // Return is a *non-owning* ref (no KF_ACQUIRE); the caller may
+        // dereference it under the lock but cannot drop it. We model
+        // the result as a `PtrToOwnedKptr` without `ref_id` (so any
+        // attempt to release it is rejected by the
+        // `ReleaseRefFromArg` precondition gate which demands a
+        // present `ref_id`). After bpf_spin_unlock, non-owning refs
+        // are invalidated by `state.invalidate_non_owning_refs()`.
+        "bpf_rbtree_first" => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::RbRoot },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToOwnedKptr)
+        .flags(CallFlags::RET_NULL | CallFlags::SPIN_LOCK_HELD),
+
+        // struct bpf_rb_node *bpf_rbtree_remove(struct bpf_rb_root *root,
+        //                                       struct bpf_rb_node *node)
+        // KF_ACQUIRE | KF_RET_NULL | KF_LOCK_HELD — pull `node` out of
+        // the tree, hand the caller a fresh owning ref. The `node`
+        // arg must be a non-owning rb_node ref already in the tree
+        // (kernel rejects "rbtree_remove node input must be
+        // non-owning ref"); lite scope accepts any `PtrToOwnedKptr`.
+        "bpf_rbtree_remove" => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::RbRoot },
+            PtrToOwnedKptr,
+            DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToOwnedKptr)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL | CallFlags::SPIN_LOCK_HELD),
+
         "bpf_rbtree_add_impl" => CallProto::with_args([
             MapValueSpecial { kind: SpecialFieldKind::RbRoot },
             PtrToOwnedKptr,
@@ -2201,7 +2264,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             DontCare,
         ])
         .ret(RetKind::Void)
-        .flags(CallFlags::RELEASE | CallFlags::SPIN_LOCK_HELD)
+        .flags(CallFlags::RELEASE | CallFlags::RELEASE_NON_OWN | CallFlags::SPIN_LOCK_HELD)
         .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 1 }]),
 
         // ---- W6.4a-followon: kernel-exported TCP CC helpers ----

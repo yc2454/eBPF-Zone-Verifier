@@ -74,6 +74,16 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             env.fail(VerificationError::TailCallInPreemptDisabled { pc });
             return vec![];
         }
+        // Kernel `verifier.c` v6.15 ~L11069: bpf_tail_call cannot be
+        // used inside a `bpf_rcu_read_lock`-ed region — the tail-call
+        // jumps into a different program with the RCU read lock leaked.
+        // Mirrors `tailcall_fail::reject_tail_call_rcu_lock`. Re-uses
+        // the existing InvalidArgType / R0 family — no dedicated
+        // variant for this rejection family elsewhere.
+        if state.in_rcu_read_section() {
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R0 });
+            return vec![];
+        }
         update_call_types(env, &in_types, &mut state, helper);
 
         for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
@@ -1221,6 +1231,11 @@ pub(crate) fn apply_pre_call_lock_flags(
             return false;
         }
         state.release_lock();
+        // Kernel `verifier.c` v6.15 L8382: `process_spin_lock` calls
+        // `invalidate_non_owning_refs` on unlock — non-owning refs
+        // produced by `bpf_rbtree_add` / `bpf_list_push_*` under this
+        // lock are only safe to dereference while the lock is held.
+        state.invalidate_non_owning_refs();
     }
 
     if proto.flags.contains(CallFlags::RCU_READ_LOCK) {

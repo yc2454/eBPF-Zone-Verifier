@@ -24,6 +24,13 @@ pub struct VerifierEnv<'a> {
     pub insn_aux_data: Vec<InsnAuxData>,
     pub invalid_pc_set: HashSet<usize>,
     pub addr_space_cast_to_arena_pcs: HashSet<usize>,
+    /// Subprog entry-PCs whose body contains a kfunc / helper that the
+    /// kernel forbids inside an rbtree-add / list-push `less` callback
+    /// (verifier.c v6.15: kernel rejects "X not allowed in rbtree cb"
+    /// or "function calls not allowed while holding a lock"). At the
+    /// graph-add validator we look up R3's `PtrToCallback{subprog_pc}`
+    /// and reject if its entry PC is in this set.
+    pub tainted_cb_subprogs: HashSet<usize>,
 
     // --- Dynamic State ---
     pub insn_processed: usize,
@@ -53,6 +60,7 @@ impl<'a> VerifierEnv<'a> {
             insn_aux_data: vec![InsnAuxData::default(); prog.instrs.len()],
             invalid_pc_set: prog.invalid_pc_set.clone(),
             addr_space_cast_to_arena_pcs: prog.addr_space_cast_to_arena_pcs.clone(),
+            tainted_cb_subprogs: compute_tainted_cb_subprogs(prog, &ctx.btf),
             insn_processed: 0,
             error: None,
             history: History::new(),
@@ -71,4 +79,116 @@ impl<'a> VerifierEnv<'a> {
     pub fn failed(&self) -> bool {
         self.error.is_some()
     }
+}
+
+/// Static pre-pass identifying subprog entry PCs whose body is unsafe
+/// to use as a graph-add (`bpf_rbtree_add_impl` / `bpf_list_push_*`)
+/// `less` callback. Kernel verifier.c v6.15 rejects callbacks that
+/// re-invoke graph-add/remove kfuncs, take/release spin_locks, or
+/// `bpf_throw`. The kernel's checks include:
+///
+///   - "rbtree_remove not allowed in rbtree cb"
+///   - "arg#1 expected pointer to allocated object" (when the cb
+///     calls bpf_rbtree_add → recursion poisons the alloc-arg shape)
+///   - "can't spin_{lock,unlock} in rbtree cb"
+///   - "bpf_throw not allowed in rbtree cb"
+///
+/// We don't model these per-msg; we conservatively reject if any
+/// forbidden op is reachable in the subprog's straight-line body
+/// between its entry PC and its `Exit`. Subprogs are identified by
+/// being targets of `LD_IMM64 BPF_PSEUDO_FUNC` (the way callbacks are
+/// materialized).
+fn compute_tainted_cb_subprogs(
+    prog: &crate::ast::Program,
+    btf: &crate::parsing::btf::BtfContext,
+) -> HashSet<usize> {
+    use crate::ast::{CallKind, Instr, MapLoadKind};
+    use crate::common::constants;
+
+    // Collect every PSEUDO_FUNC subprog entry PC. These are the only
+    // PCs that can ever land in `RegType::PtrToCallback`.
+    let mut entries: Vec<usize> = Vec::new();
+    for insn in &prog.instrs {
+        if let Instr::LoadMap {
+            kind: MapLoadKind::PseudoFunc { subprog_pc },
+            ..
+        } = insn
+        {
+            entries.push(*subprog_pc as usize);
+        }
+    }
+    entries.sort();
+    entries.dedup();
+
+    // Sorted full subprog-entry list (incl. main + every CallRel target +
+    // every PSEUDO_FUNC target) used to bound each cb subprog's body
+    // range — the Exit at end_pc is conservatively the next entry PC.
+    let mut all_entries: Vec<usize> = vec![0];
+    for insn in &prog.instrs {
+        match insn {
+            Instr::CallRel { target } => all_entries.push(*target),
+            Instr::LoadMap {
+                kind: MapLoadKind::PseudoFunc { subprog_pc },
+                ..
+            } => all_entries.push(*subprog_pc as usize),
+            _ => {}
+        }
+    }
+    all_entries.sort();
+    all_entries.dedup();
+
+    let is_forbidden_kfunc = |name: &str| {
+        matches!(
+            name,
+            "bpf_throw"
+                | "bpf_rbtree_add_impl"
+                | "bpf_rbtree_remove"
+                | "bpf_rbtree_first"
+                | "bpf_list_push_front_impl"
+                | "bpf_list_push_back_impl"
+                | "bpf_list_pop_front"
+                | "bpf_list_pop_back"
+                | "bpf_obj_drop_impl"
+                | "bpf_obj_new_impl"
+                | "bpf_refcount_acquire_impl"
+                | "bpf_rcu_read_lock"
+                | "bpf_rcu_read_unlock"
+        )
+    };
+
+    let mut tainted: HashSet<usize> = HashSet::new();
+    for &start in &entries {
+        let end = all_entries
+            .iter()
+            .find(|&&pc| pc > start)
+            .copied()
+            .unwrap_or(prog.instrs.len());
+        let body = &prog.instrs[start..end.min(prog.instrs.len())];
+        let mut bad = false;
+        for insn in body {
+            match insn {
+                Instr::Call { kind } => match *kind {
+                    CallKind::Helper { id } => {
+                        if id == constants::BPF_SPIN_LOCK || id == constants::BPF_SPIN_UNLOCK {
+                            bad = true;
+                            break;
+                        }
+                    }
+                    CallKind::Kfunc { btf_id, .. } => {
+                        if let Some(name) = btf.kfunc_name(btf_id)
+                            && is_forbidden_kfunc(name)
+                        {
+                            bad = true;
+                            break;
+                        }
+                    }
+                },
+                _ => {}
+            }
+        }
+        if bad {
+            tainted.insert(start);
+        }
+    }
+    tainted
 }

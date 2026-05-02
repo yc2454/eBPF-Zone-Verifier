@@ -344,6 +344,18 @@ pub fn check_store(
                 });
             }
         }
+        PtrToOwnedKptr { .. } => {
+            // Stores into a freshly-allocated owned kptr (`m->key = 2`
+            // after `bpf_obj_new` / `bpf_refcount_acquire`) are allowed
+            // by kernel `verifier.c` v6.15 — `check_ptr_to_btf_access`
+            // for `MEM_ALLOC` falls through to BTF field-typed access,
+            // which we don't model precisely. Accept permissively here:
+            // the alternative is rejecting kernel-accepting programs.
+            // Bounds against the allocated object size are not tracked
+            // (`PtrToOwnedKptr` doesn't carry a size); future precision
+            // can attach the BTF id of the underlying type and bound
+            // against it.
+        }
         PtrToArena { .. } => {
             // Symmetric with the load side: arena memory is sparse-mapped,
             // so OOB-looking stores zero-fault rather than reject. The
