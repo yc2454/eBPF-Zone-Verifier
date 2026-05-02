@@ -476,6 +476,23 @@ fn iter_next_fork(
 pub(crate) fn widen_imprecise_scalars_at_iter_next(prev: &State, cur: &mut State) {
     use crate::analysis::machine::reg::Reg;
 
+    // Bucket F-D: once the may_goto/iter_next has been visited many
+    // times on this path (i.e. we've enumerated a lot of iterations
+    // without subsumption firing), drop the precision-skip rule and
+    // force-widen even precise scalars. Lets bounded-but-long loops
+    // (cond_break1: N=1M) converge despite the loop counter being
+    // precision-marked by the access site's `mark_chain_precision`.
+    //
+    // Threshold tuned to be larger than the small-N enumeration
+    // patterns (test1-4: N=1000) so they keep passing via straight
+    // enumeration without precision loss. Loops with iteration counts
+    // above ~2k were going to time out anyway under the 100k step cap;
+    // force-widening lets them converge instead. The loop-head bound
+    // check re-narrows the counter on every iteration after widening,
+    // so safety is preserved.
+    let force_widen_threshold: u32 = 1024;
+    let force_widen = cur.may_goto_depth >= force_widen_threshold;
+
     // Collect changes first; can't mutate while borrowed.
     let mut regs_to_widen: Vec<Reg> = Vec::new();
     for r in [
@@ -496,7 +513,9 @@ pub(crate) fn widen_imprecise_scalars_at_iter_next(prev: &State, cur: &mut State
         // populates `prev` (cached) precision retroactively when the
         // backward walk lands on a checkpoint, so checking only `cur`
         // would miss the lineage and over-widen.
-        if cur.precise_regs.contains(&r) || prev.precise_regs.contains(&r) {
+        if !force_widen
+            && (cur.precise_regs.contains(&r) || prev.precise_regs.contains(&r))
+        {
             continue;
         }
         // Only widen scalar-typed regs; pointer types are kept exact
@@ -518,6 +537,13 @@ pub(crate) fn widen_imprecise_scalars_at_iter_next(prev: &State, cur: &mut State
         cur.domain.forget(r);
         cur.set_tnum(r, Tnum::unknown());
         cur.clear_scalar_id(r);
+        // Once we widen a reg's value, its `precise` mark no longer
+        // refers to a meaningful tight bound. Clear so subsumption
+        // (which keys on `old.precise_regs`) doesn't demand range_within
+        // against a deliberately-coarsened bound.
+        if force_widen {
+            cur.precise_regs.remove(&r);
+        }
     }
 
     // Spilled scalar slots: walk both frames' stacks. Drop any slot
@@ -544,8 +570,9 @@ pub(crate) fn widen_imprecise_scalars_at_iter_next(prev: &State, cur: &mut State
             };
             let cur_precise = cur_slot.map(|s| s.precise).unwrap_or(false);
             let prev_precise = prev_slot.map(|s| s.precise).unwrap_or(false);
-            // Skip widening if either side is precise (kernel parity).
-            if differs && !cur_precise && !prev_precise {
+            // Skip widening if either side is precise (kernel parity),
+            // unless we're past the force-widen threshold.
+            if differs && (force_widen || (!cur_precise && !prev_precise)) {
                 to_invalidate.push(off);
             }
         }

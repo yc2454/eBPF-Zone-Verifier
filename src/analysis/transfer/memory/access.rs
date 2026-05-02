@@ -44,34 +44,28 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
     let base_type = state.types.get(base);
     let pc = state.pc;
 
-    // Bucket F-D / Option C: variable-offset access is a precision sink.
-    // Walk the History backward, marking the offset register's lineage
-    // precise on every cached state on the path. This preserves the bound
-    // through site-specific wideners (iter_next, may_goto, cb-return) so
-    // they skip the offset reg (kernel `maybe_widen_reg` / our
-    // `widen_imprecise_scalars_at_iter_next`).
-    // Bucket F-D: precision-mark the variable-offset contributor.
+    // Bucket F-D: every memory access is a precision sink. Walk the
+    // History backward marking the access's offset lineage precise on
+    // every cached state on the path. Mirrors kernel
+    // `mark_chain_precision` (verifier.c v6.15 ~L4500-4900). The walker
+    // traces Alu/Mov/Load/Call chains starting from `base` (the access
+    // pointer) and updates frontier across them; if the access has a
+    // recorded variable-offset contributor (`ptr += Reg(scalar)`), we
+    // start from the scalar instead — saves the walker some work but
+    // reaches the same lineage either way.
     //
-    // When `base` was constructed via `Alu Add base, Reg(scalar)` in
-    // `arithmetic::handle_add`, the scalar that supplied the variable
-    // offset was recorded in `state.var_off_contributor[base]`. At the
-    // access (a precision sink), we walk the History backward from this
-    // step, marking the scalar's transitive lineage precise on every
-    // cached state on the path. This is what lets the kernel-aligned
-    // wideners at iter_next / may_goto / cb-return preserve the offset
-    // reg's bound across widening sites — without it, the widener
-    // clobbers the offset to UNKNOWN and the next iteration's bounds
-    // check fails.
-    //
-    // Mirrors kernel `mark_chain_precision` (verifier.c v6.15
-    // ~L4500-4900): kernel walks back from precision sinks and marks
-    // ancestors precise via id-link / ALU-source chasing. We use the
-    // explicit contributor map plus the AST-walk in
-    // `mark_chain_precision_backward` (env.rs) as the same chain.
+    // Skip R10 — the frame pointer is never re-assigned, so walking
+    // from it is a no-op that just marks R10 precise on history's worth
+    // of cached states (wasted work, no behavior change).
     if let Some(hidx) = state.history_idx
-        && let Some(&offset_reg) = state.var_off_contributor.get(&base)
+        && base != Reg::R10
     {
-        env.mark_chain_precision_backward(hidx, offset_reg);
+        let sink = state
+            .var_off_contributor
+            .get(&base)
+            .copied()
+            .unwrap_or(base);
+        env.mark_chain_precision_backward(hidx, sink);
     }
     let _ = base_has_variable_offset;
 

@@ -66,24 +66,26 @@ pub(crate) fn transfer_if(
     // every register and stack slot sharing its scalar id.
     propagate_scalar_links(&mut state_then, &mut state_else, left);
 
-    // W2.2: a branch that refines `left` is a use-site whose precision
-    // matters for downstream safety reasoning. Mark both outgoing states
-    // so pruning (W2.3) cannot generalise this register across the branch.
+    // Bucket F-D: a back-edge compare-to-imm is a precision sink for
+    // the compared register. The kernel's `mark_chain_precision` walks
+    // backward from such sinks; without it, the loop counter widens at
+    // intermediate may_goto sites, the bounds derived from this compare
+    // don't propagate to downstream pointer arithmetic, and accumulator-
+    // style loops (test1: `*R2=R1; R2+=8; R1++`) run away in abstract
+    // interp because R1 widens before the next iteration's compare.
     //
-    // Bucket F-D note (2026-05-02): removing this proxy is the right
-    // long-term direction (kernel uses `mark_chain_precision` walking
-    // backward from genuine sinks, not forward from branches). But it
-    // ALSO requires widening pointer offsets at divergence sites — not
-    // just scalars. Test1's loop body is `*R2 = R1; R2 += 8; R1 += 1`,
-    // where R2's fixed offset accumulates monotonically; if R1 widens
-    // (and R2 doesn't), R2 grows past the map limit and the store fails.
-    // Until pointer-offset widening is added at iter_next/may_goto, the
-    // branch precision proxy is load-bearing for accumulator-style loops.
-    state_then.mark_reg_precise(left);
-    state_else.mark_reg_precise(left);
-    if let Operand::Reg(r) = right {
-        state_then.mark_reg_precise(r);
-        state_else.mark_reg_precise(r);
+    // Gate on **back-edge** (target < state.pc) to differentiate the
+    // loop-back-to-head pattern from forward-exit conditionals. A
+    // forward `if r < N goto exit` doesn't need the precision (the
+    // loop head's re-refinement on entry handles each iteration), and
+    // marking precise there blocks widening at the may_goto inside the
+    // body (cond_break1's pattern). A backward `if r != K goto head`
+    // (test1) does need it.
+    if matches!(right, Operand::Imm(_))
+        && target < state.pc
+        && let Some(hidx) = state.history_idx
+    {
+        env.mark_chain_precision_backward(hidx, left);
     }
 
     // Branch Type Refinement (For map and socket pointers)
