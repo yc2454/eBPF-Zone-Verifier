@@ -116,6 +116,17 @@ pub struct State {
     /// env-global — parallel DFS branches have independent depths.
     pub may_goto_depth: u32,
 
+    /// Bucket F-D: maps each pointer register to the scalar register that
+    /// contributed its variable offset, if any. Set at `Alu Add ptr +
+    /// Reg(scalar)` (handle_add); cleared on dst-clobbering ops (Mov-from-
+    /// imm, Load, Mov-from-other-pointer, Mov-from-different-anchor). At
+    /// variable-offset memory access sites, the access checker calls
+    /// `mark_chain_precision_backward` on this scalar so the access's
+    /// bounds-critical lineage survives kernel-aligned widening at
+    /// iter_next / may_goto / cb-return (the wideners skip precise regs,
+    /// matching kernel `maybe_widen_reg` L8752).
+    pub var_off_contributor: HashMap<Reg, Reg>,
+
     /// Program-default exception callback entry PC (W3.3a plumbing).
     /// Used when `bpf_throw` unwinds past every frame without finding a
     /// frame-local `exception_cb` (see [`CallFrame::exception_cb`]). A
@@ -153,6 +164,7 @@ impl State {
             active_preempt_locks: 0,
             goto_budget: BPF_MAY_GOTO_LIMIT,
             may_goto_depth: 0,
+            var_off_contributor: HashMap::new(),
             program_exception_cb: None,
         }
     }

@@ -50,20 +50,30 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
     // through site-specific wideners (iter_next, may_goto, cb-return) so
     // they skip the offset reg (kernel `maybe_widen_reg` / our
     // `widen_imprecise_scalars_at_iter_next`).
-    // Bucket F-D groundwork: variable-offset access is the canonical
-    // precision sink for kernel `mark_chain_precision`. The backward
-    // walker is implemented in env.rs but disabled here pending the
-    // companion fixes (drop the over-aggressive branch-precision proxy +
-    // mid-loop bound preservation + the may_goto widener interactions
-    // we explored in this session). Re-enable when those land together.
-    let _enable_mark_chain_precision = false;
-    if _enable_mark_chain_precision
-        && let Some(hidx) = state.history_idx
-        && base != Reg::R10
-        && base_has_variable_offset(state, base)
+    // Bucket F-D: precision-mark the variable-offset contributor.
+    //
+    // When `base` was constructed via `Alu Add base, Reg(scalar)` in
+    // `arithmetic::handle_add`, the scalar that supplied the variable
+    // offset was recorded in `state.var_off_contributor[base]`. At the
+    // access (a precision sink), we walk the History backward from this
+    // step, marking the scalar's transitive lineage precise on every
+    // cached state on the path. This is what lets the kernel-aligned
+    // wideners at iter_next / may_goto / cb-return preserve the offset
+    // reg's bound across widening sites — without it, the widener
+    // clobbers the offset to UNKNOWN and the next iteration's bounds
+    // check fails.
+    //
+    // Mirrors kernel `mark_chain_precision` (verifier.c v6.15
+    // ~L4500-4900): kernel walks back from precision sinks and marks
+    // ancestors precise via id-link / ALU-source chasing. We use the
+    // explicit contributor map plus the AST-walk in
+    // `mark_chain_precision_backward` (env.rs) as the same chain.
+    if let Some(hidx) = state.history_idx
+        && let Some(&offset_reg) = state.var_off_contributor.get(&base)
     {
-        env.mark_chain_precision_backward(hidx, base);
+        env.mark_chain_precision_backward(hidx, offset_reg);
     }
+    let _ = base_has_variable_offset;
 
     match base_type {
         PtrToStack { frame_level } => {
@@ -285,20 +295,30 @@ pub fn check_store(
     let pc = state.pc;
 
     // Bucket F-D / Option C: variable-offset store is also a precision sink.
-    // Bucket F-D groundwork: variable-offset access is the canonical
-    // precision sink for kernel `mark_chain_precision`. The backward
-    // walker is implemented in env.rs but disabled here pending the
-    // companion fixes (drop the over-aggressive branch-precision proxy +
-    // mid-loop bound preservation + the may_goto widener interactions
-    // we explored in this session). Re-enable when those land together.
-    let _enable_mark_chain_precision = false;
-    if _enable_mark_chain_precision
-        && let Some(hidx) = state.history_idx
-        && base != Reg::R10
-        && base_has_variable_offset(state, base)
+    // Bucket F-D: precision-mark the variable-offset contributor.
+    //
+    // When `base` was constructed via `Alu Add base, Reg(scalar)` in
+    // `arithmetic::handle_add`, the scalar that supplied the variable
+    // offset was recorded in `state.var_off_contributor[base]`. At the
+    // access (a precision sink), we walk the History backward from this
+    // step, marking the scalar's transitive lineage precise on every
+    // cached state on the path. This is what lets the kernel-aligned
+    // wideners at iter_next / may_goto / cb-return preserve the offset
+    // reg's bound across widening sites — without it, the widener
+    // clobbers the offset to UNKNOWN and the next iteration's bounds
+    // check fails.
+    //
+    // Mirrors kernel `mark_chain_precision` (verifier.c v6.15
+    // ~L4500-4900): kernel walks back from precision sinks and marks
+    // ancestors precise via id-link / ALU-source chasing. We use the
+    // explicit contributor map plus the AST-walk in
+    // `mark_chain_precision_backward` (env.rs) as the same chain.
+    if let Some(hidx) = state.history_idx
+        && let Some(&offset_reg) = state.var_off_contributor.get(&base)
     {
-        env.mark_chain_precision_backward(hidx, base);
+        env.mark_chain_precision_backward(hidx, offset_reg);
     }
+    let _ = base_has_variable_offset;
 
     match base_ty {
         PtrToMapValue {

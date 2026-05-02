@@ -70,14 +70,15 @@ pub(crate) fn transfer_if(
     // matters for downstream safety reasoning. Mark both outgoing states
     // so pruning (W2.3) cannot generalise this register across the branch.
     //
-    // Bucket F-D note (2026-05-02): this is a forward proxy for the
-    // kernel's `mark_chain_precision` (which walks backward from real
-    // precision sinks). The proxy over-marks compared to the kernel and
-    // blocks convergence on may_goto-bounded loops with array accesses
-    // (cond_break1). The full `mark_chain_precision_backward` helper now
-    // exists in `env.rs` but isn't yet wired in — closing F-D properly
-    // requires removing this proxy + wiring backward marking + handling
-    // the mid-loop bound preservation. See the bucket F-D memory note.
+    // Bucket F-D note (2026-05-02): removing this proxy is the right
+    // long-term direction (kernel uses `mark_chain_precision` walking
+    // backward from genuine sinks, not forward from branches). But it
+    // ALSO requires widening pointer offsets at divergence sites — not
+    // just scalars. Test1's loop body is `*R2 = R1; R2 += 8; R1 += 1`,
+    // where R2's fixed offset accumulates monotonically; if R1 widens
+    // (and R2 doesn't), R2 grows past the map limit and the store fails.
+    // Until pointer-offset widening is added at iter_next/may_goto, the
+    // branch precision proxy is load-bearing for accumulator-style loops.
     state_then.mark_reg_precise(left);
     state_else.mark_reg_precise(left);
     if let Operand::Reg(r) = right {

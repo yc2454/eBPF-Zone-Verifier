@@ -27,7 +27,18 @@ pub(crate) fn handle_add(
             let dst_is_ptr = in_types.get(dst).is_pointer();
 
             if dst_is_ptr && !src_is_ptr {
-                // ptr += scalar: preserve relational info if possible
+                // ptr += scalar: preserve relational info if possible.
+                //
+                // Bucket F-D: record the scalar contributor in
+                // `var_off_contributor` so variable-offset access sites can
+                // call `mark_chain_precision_backward` on the scalar
+                // (rather than the base pointer). The walker reaches the
+                // same lineage either way, but starting from the scalar
+                // avoids polluting the frontier with the pointer reg
+                // (which can trip MOV-handling along the chain when the
+                // base is a fresh LoadMap/MapValue load).
+                state.var_off_contributor.insert(dst, *r);
+
                 let (lo, hi) = state.domain.get_interval(*r);
                 if lo == hi && lo != i64::MIN && lo != i64::MAX {
                     // Known constant: shift all relations exactly

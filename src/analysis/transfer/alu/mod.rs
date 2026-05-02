@@ -59,6 +59,11 @@ pub(crate) fn transfer_alu(
         return vec![];
     }
 
+    // Bucket F-D: clear `var_off_contributor[dst]` before the op runs;
+    // `handle_add` re-sets it for the `ptr += scalar` case. Any other op
+    // (Mov, Sub, And, Mul, etc.) invalidates the contributor link.
+    state.var_off_contributor.remove(&dst);
+
     // 5. Execute operation
     match op {
         AluOp::Add => arithmetic::handle_add(env, &mut state, &in_types, width, dst, &src),
