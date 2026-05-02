@@ -370,6 +370,14 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         return vec![];
     }
 
+    // Main-prog exit inside a preempt-disabled region (kernel verifier.c
+    // v6.15 ~L11096). Subprog exits are fine: kernel only checks at the
+    // root frame's BPF_EXIT, mirroring `check_lock` callers.
+    if state.at_main_frame() && state.in_preempt_disabled() {
+        env.fail(VerificationError::ExitInPreemptDisabled);
+        return vec![];
+    }
+
     // Exit-time sanity guard: depth at exit shouldn't exceed the
     // kernel's MAX_CALL_FRAMES = 8. The pre-push `> 8` check in
     // `transfer_call_rel` already prevents pushing a 9th frame, so

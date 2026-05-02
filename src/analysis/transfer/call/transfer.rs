@@ -66,6 +66,14 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             env.fail(VerificationError::UnreleasedReference {});
             return vec![];
         }
+        // Kernel `check_lock` path (verifier.c v6.15 ~L11096) gates
+        // tail_call alongside BPF_EXIT under preempt-disable: tail-calling
+        // out of a preempt-disabled region would jump into a different
+        // program with the disable count leaked.
+        if state.in_preempt_disabled() {
+            env.fail(VerificationError::TailCallInPreemptDisabled { pc });
+            return vec![];
+        }
         update_call_types(env, &in_types, &mut state, helper);
 
         for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
@@ -1221,6 +1229,27 @@ pub(crate) fn apply_pre_call_lock_flags(
 
     if proto.flags.contains(CallFlags::RCU_READ_UNLOCK) && !state.rcu_read_unlock() {
         env.fail(VerificationError::RcuReadNotHeld { pc });
+        return false;
+    }
+
+    // Preempt-region (kernel verifier.c v6.15 ~L13560).
+    //
+    // MIGHT_SLEEP is checked BEFORE PREEMPT_DISABLE/ENABLE state changes:
+    // a sleepable helper inside an existing disabled region rejects
+    // regardless of whether this call would itself toggle the count.
+    // (`bpf_preempt_disable` and `bpf_preempt_enable` themselves are not
+    // marked MIGHT_SLEEP.)
+    if proto.flags.contains(CallFlags::MIGHT_SLEEP) && state.in_preempt_disabled() {
+        env.fail(VerificationError::SleepableInPreemptDisabled { pc, helper });
+        return false;
+    }
+
+    if proto.flags.contains(CallFlags::PREEMPT_DISABLE) {
+        state.preempt_disable();
+    }
+
+    if proto.flags.contains(CallFlags::PREEMPT_ENABLE) && !state.preempt_enable() {
+        env.fail(VerificationError::PreemptNotDisabled { pc });
         return false;
     }
 

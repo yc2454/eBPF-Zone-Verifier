@@ -84,6 +84,13 @@ pub struct State {
     /// Program exit rejects if depth > 0 (`UnreleasedRcuRead`).
     pub rcu_read_depth: u32,
 
+    /// Preempt-disabled nesting count. Incremented by `bpf_preempt_disable`
+    /// kfunc, decremented by `bpf_preempt_enable`. Mirrors kernel
+    /// `bpf_verifier_state.active_preempt_locks` (verifier.c v6.15
+    /// ~L13560). Helpers/kfuncs marked `CallFlags::MIGHT_SLEEP` are
+    /// rejected when this is > 0; `BPF_EXIT` in main prog also rejects.
+    pub active_preempt_locks: u32,
+
     /// Remaining `may_goto` iterations on this path. Initialised to
     /// [`BPF_MAY_GOTO_LIMIT`] at entry. Decremented by the `may_goto`
     /// transfer function on the taken branch (W3.1b); once zero the
@@ -124,6 +131,7 @@ impl State {
             active_refs: HashSet::new(),
             active_lock: None,
             rcu_read_depth: 0,
+            active_preempt_locks: 0,
             goto_budget: BPF_MAY_GOTO_LIMIT,
             program_exception_cb: None,
         }
@@ -393,6 +401,26 @@ impl State {
 
     pub fn in_rcu_read_section(&self) -> bool {
         self.rcu_read_depth > 0
+    }
+
+    // ── Preempt-disable tracking (kernel verifier.c v6.15 ~L13560) ──
+
+    pub fn preempt_disable(&mut self) {
+        self.active_preempt_locks = self.active_preempt_locks.saturating_add(1);
+    }
+
+    /// Decrement preempt-disable nesting. Returns `false` (caller must
+    /// reject as unmatched-enable) if no disable is active.
+    pub fn preempt_enable(&mut self) -> bool {
+        if self.active_preempt_locks == 0 {
+            return false;
+        }
+        self.active_preempt_locks -= 1;
+        true
+    }
+
+    pub fn in_preempt_disabled(&self) -> bool {
+        self.active_preempt_locks > 0
     }
 
     // ── Stack spill/reload (current frame) ──────────────────────

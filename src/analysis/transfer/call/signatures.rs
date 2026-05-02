@@ -242,6 +242,18 @@ impl CallFlags {
     /// pre-call values. Used by select helpers (see `is_fastcall_helper`)
     /// and per-kfunc on cpumask read-only queries. W7.2.
     pub const FASTCALL: Self = Self(1 << 12);
+    /// Pre-call: enters a preempt-disabled region by incrementing
+    /// `state.active_preempt_locks`. Mirrors kernel `bpf_preempt_disable`
+    /// kfunc (verifier.c v6.15 ~L13569).
+    pub const PREEMPT_DISABLE: Self = Self(1 << 13);
+    /// Pre-call: exits a preempt-disabled region. Rejects if the count
+    /// is already zero (unmatched enable). Mirrors kernel
+    /// `bpf_preempt_enable` kfunc (verifier.c v6.15 ~L13571).
+    pub const PREEMPT_ENABLE: Self = Self(1 << 14);
+    /// Pre-call: this helper/kfunc may sleep. Rejected when
+    /// `state.in_preempt_disabled()`. Mirrors kernel `fn->might_sleep`
+    /// (verifier.c v6.15 ~L11299) and `KF_SLEEPABLE` for kfuncs (~L13565).
+    pub const MIGHT_SLEEP: Self = Self(1 << 15);
 
     pub const fn empty() -> Self {
         Self(0)
@@ -1038,7 +1050,8 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             Anything,       // R3: user_ptr
             DontCare,
             DontCare,
-        ]),
+        ])
+        .flags(CallFlags::MIGHT_SLEEP),
 
         constants::BPF_GET_CGROUP_CLASS_ID => {
             CallProto::with_args([PtrToCtx, DontCare, DontCare, DontCare, DontCare])
@@ -1307,6 +1320,21 @@ const SCHED_EXT_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 2] = [
 /// dispatch in `kfunc.rs`.
 pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
     Some(match name {
+        // Preempt-region kfuncs (kernel verifier.c v6.15 ~L13560).
+        // No args; PREEMPT_DISABLE / PREEMPT_ENABLE drive the
+        // `active_preempt_locks` state machine in `apply_pre_call_lock_flags`.
+        "bpf_preempt_disable" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::PREEMPT_DISABLE),
+
+        "bpf_preempt_enable" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::PREEMPT_ENABLE),
+
         "bpf_set_exception_callback" => CallProto::with_args([
             PtrToCallback, // R1: subprog ptr (PSEUDO_FUNC)
             DontCare,

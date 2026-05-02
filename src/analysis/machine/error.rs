@@ -227,6 +227,25 @@ pub enum VerificationError {
     },
     /// Program exit reached with one or more open RCU read-side sections.
     UnreleasedRcuRead,
+    /// Helper / kfunc marked `CallFlags::MIGHT_SLEEP` invoked while
+    /// `state.active_preempt_locks > 0`. Mirrors kernel verifier.c
+    /// v6.15 ~L11299 / ~L13565.
+    SleepableInPreemptDisabled {
+        pc: usize,
+        helper: u32,
+    },
+    /// `bpf_preempt_enable` invoked with no matching disable.
+    PreemptNotDisabled {
+        pc: usize,
+    },
+    /// Main-prog `BPF_EXIT` reached inside a preempt-disabled region.
+    /// Mirrors kernel verifier.c v6.15 ~L11096.
+    ExitInPreemptDisabled,
+    /// `bpf_tail_call` invoked inside a preempt-disabled region.
+    /// Mirrors kernel verifier.c v6.15 ~L11096.
+    TailCallInPreemptDisabled {
+        pc: usize,
+    },
     /// Helper / kfunc marked `CallFlags::SPIN_LOCK_HELD` invoked
     /// without an active spin_lock (W5.4). rbtree / list mutators
     /// require a held lock to prevent races on the per-map-value
@@ -562,6 +581,24 @@ impl VerificationError {
             }
             VerificationError::UnreleasedRcuRead => {
                 "Unreleased RCU read-side section in program".to_string()
+            }
+            VerificationError::SleepableInPreemptDisabled { pc, helper } => {
+                format!(
+                    "Sleepable helper/kfunc {} in preempt-disabled region at pc {}",
+                    helper, pc
+                )
+            }
+            VerificationError::PreemptNotDisabled { pc } => {
+                format!("Unmatched bpf_preempt_enable at pc {}", pc)
+            }
+            VerificationError::ExitInPreemptDisabled => {
+                "BPF_EXIT in main prog inside bpf_preempt_disable-ed region".to_string()
+            }
+            VerificationError::TailCallInPreemptDisabled { pc } => {
+                format!(
+                    "tail_call cannot be used inside bpf_preempt_disable-ed region at pc {}",
+                    pc
+                )
             }
             VerificationError::NotInSpinLockSection { pc, helper } => {
                 format!(
