@@ -435,7 +435,108 @@ pub fn check_stack_overflow(
         None,
         private_stack,
         &mut HashSet::new(),
-    )
+    )?;
+
+    // Kernel-aligned: `check_max_stack_depth` (verifier.c v6.15 ~L6627)
+    // also walks every `is_async_cb` subprog as its own root, because async
+    // callbacks (registered via `bpf_timer_set_callback`) execute on a
+    // fresh kernel stack — their chain depth must fit ≤MAX_BPF_STACK on
+    // its own, not added to main's. Without this, programs whose async-cb
+    // chain exceeds 512B but whose main path fits silently passed
+    // (e.g. async_stack_depth.c::async_call_root_check).
+    //
+    // Identify async cbs via static scan: any `LoadMap{PseudoFunc{pc}}`
+    // whose result feeds R2 of a `bpf_timer_set_callback` helper call
+    // marks `pc` as an async-cb root. (Sync-cb helpers like bpf_loop /
+    // bpf_for_each_map_elem use the same LD_IMM64 mechanism but execute
+    // on the caller's stack — kernel does NOT root them, so we don't
+    // either.)
+    for &root in &collect_async_cb_roots(&prog.instrs) {
+        check_call_chain(
+            prog,
+            &subprogs,
+            root,
+            0,
+            1,
+            None,
+            private_stack,
+            &mut HashSet::new(),
+        )?;
+    }
+    Ok(())
+}
+
+/// Static scan: collect subprog entry PCs that are registered as async
+/// callbacks via `bpf_timer_set_callback`. Mirrors the kernel marking
+/// `subprog_info[idx].is_async_cb = true` in `set_timer_callback_state`
+/// (verifier.c v6.15 ~L10481).
+///
+/// Heuristic: walk the instruction stream tracking, per register, the
+/// most recent `LoadMap{PseudoFunc{pc}}` written to it. When a
+/// `Call{Helper{BPF_TIMER_SET_CALLBACK}}` is reached, the value in R2
+/// at that point identifies the cb subprog. Any write to R2 that isn't
+/// such a load clears the alias.
+fn collect_async_cb_roots(instrs: &[Instr]) -> BTreeSet<usize> {
+    let mut roots = BTreeSet::new();
+    let mut pseudofunc_alias: [Option<usize>; { Reg::ALL.len() }] =
+        [None; { Reg::ALL.len() }];
+
+    let clear_dst = |alias: &mut [Option<usize>; { Reg::ALL.len() }], dst: Reg| {
+        alias[dst.idx()] = None;
+    };
+
+    for insn in instrs {
+        match insn {
+            Instr::LoadMap {
+                dst,
+                kind: crate::ast::MapLoadKind::PseudoFunc { subprog_pc },
+                ..
+            } => {
+                pseudofunc_alias[dst.idx()] = Some(*subprog_pc as usize);
+            }
+            Instr::LoadMap { dst, .. } => clear_dst(&mut pseudofunc_alias, *dst),
+            Instr::Alu {
+                op: AluOp::Mov,
+                dst,
+                src: Operand::Reg(s),
+                width: Width::W64,
+            } => {
+                pseudofunc_alias[dst.idx()] = pseudofunc_alias[s.idx()];
+            }
+            Instr::Alu { dst, .. } => clear_dst(&mut pseudofunc_alias, *dst),
+            Instr::MovSx { dst, .. }
+            | Instr::Endian { dst, .. }
+            | Instr::Load { dst, .. }
+            | Instr::LoadSx { dst, .. }
+            | Instr::LoadAcq { dst, .. } => clear_dst(&mut pseudofunc_alias, *dst),
+            Instr::Call {
+                kind: CallKind::Helper { id },
+            } => {
+                if *id == constants::BPF_TIMER_SET_CALLBACK
+                    && let Some(target) = pseudofunc_alias[Reg::R2.idx()]
+                {
+                    roots.insert(target);
+                }
+                // Helper clobbers R0..R5.
+                for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                    pseudofunc_alias[r.idx()] = None;
+                }
+            }
+            Instr::Call { .. } | Instr::CallRel { .. } => {
+                for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                    pseudofunc_alias[r.idx()] = None;
+                }
+            }
+            Instr::LoadPacket { .. } => {
+                for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                    pseudofunc_alias[r.idx()] = None;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    roots
 }
 
 #[allow(clippy::too_many_arguments)]
