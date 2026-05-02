@@ -1562,12 +1562,22 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // `bpf_rcu_read_lock()`. Modeled here as RCU_READ_LOCK on
         // _new + RCU_READ_UNLOCK on _destroy. Closes the
         // `iters_testmod.c::iter_next_rcu` sequence.
+        // bpf_iter_task_new is KF_RCU_PROTECTED in the kernel: it does
+        // NOT take an RCU read lock itself (was a prior modeling
+        // mistake); it only reads in_rcu_cs at call-time and stamps the
+        // iter slot with MEM_RCU (trusted) or PTR_UNTRUSTED accordingly
+        // (verifier.c v6.15 `mark_stack_slots_iter` ~L1041). Slot-trust
+        // logic lives in the IterInitOnArg side-effect handler — it
+        // calls `state.in_rcu_read_section()` and sets
+        // `IteratorSlot.untrusted` for `IterKind::Task`/`Css`. Subsequent
+        // `_next` calls reject on UNTRUSTED. Programs that rely on the
+        // implicit kernel-held RCU CS (non-sleepable kprobe/raw_tp/etc.)
+        // get `rcu_read_depth = 1` at entry from `analysis::mod`.
         "bpf_iter_task_new" => CallProto::with_args([
             IterArg { kind: IterKind::Task, expected: IterArgExpect::Uninit },
             Anything, Anything, DontCare, DontCare,
         ])
         .ret(RetKind::Scalar)
-        .flags(CallFlags::RCU_READ_LOCK)
         .side_effects(&[SideEffect::IterInitOnArg { arg: 0, kind: IterKind::Task }]),
 
         "bpf_iter_css_new" => CallProto::with_args([
@@ -1720,13 +1730,13 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Void)
         .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
 
-        // Pairs with `bpf_iter_task_new`'s RCU_READ_LOCK — see comment there.
+        // No RCU_READ_UNLOCK side effect — iter_task_new doesn't take a
+        // CS in our updated model (see comment there).
         "bpf_iter_task_destroy" => CallProto::with_args([
             IterArg { kind: IterKind::Task, expected: IterArgExpect::ActiveOrDrained },
             DontCare, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::Void)
-        .flags(CallFlags::RCU_READ_UNLOCK)
         .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
 
         "bpf_iter_css_destroy" => CallProto::with_args([

@@ -26,6 +26,17 @@ pub enum IterKind {
     TestmodSeq,
 }
 
+impl IterKind {
+    /// Mirrors the kernel's `KF_RCU_PROTECTED` annotation on iter
+    /// `*_new` kfuncs. When true, the slot trust state at init time
+    /// depends on whether we're in an RCU CS, and `bpf_rcu_read_unlock`
+    /// invalidates trust on outstanding slots of this kind. Currently
+    /// task and css iters; bits/num are pure userspace state.
+    pub fn is_rcu_protected(self) -> bool {
+        matches!(self, IterKind::Task | IterKind::Css)
+    }
+}
+
 /// Lifecycle state for an open-coded iterator slot. Transitions:
 /// (no annotation) -`*_new`-> Active -`*_next`=NULL-> Drained -`*_destroy`-> (no annotation).
 /// `*_next` non-NULL keeps Active. Exit with any Active/Drained slot
@@ -41,12 +52,31 @@ pub enum IterState {
 }
 
 /// Per-slot iterator annotation. `id` is a fresh token minted at `*_new`
-/// time (used by subsumption in W3.2c to match "same loop").
+/// time (used by subsumption in W3.2c to match "same loop"). `depth`
+/// mirrors kernel `iter.depth`: incremented on every ACTIVE-branch fork
+/// at `*_next`, used by iter-loop convergence to keep iterations
+/// distinguishable so the inf-loop detector doesn't fire on legitimate
+/// loops, and (paired with `widen_imprecise_scalars`) drives convergence
+/// at the iter_next call site itself. See kernel
+/// `process_iter_next_call` / `iter_active_depths_differ` (verifier.c
+/// v6.15 ~L8884 / ~L18965).
+///
+/// `untrusted` mirrors kernel `PTR_UNTRUSTED` on iter stack slots
+/// (verifier.c v6.15 `mark_stack_slots_iter` ~L1041). For an iter kind
+/// whose `_new` kfunc is `KF_RCU_PROTECTED` (currently `task`, `css`),
+/// the kernel sets `MEM_RCU` if `in_rcu_cs` at `_new` time, else
+/// `PTR_UNTRUSTED`. After `bpf_rcu_read_unlock`, every `MEM_RCU` reg/
+/// slot is re-flagged `PTR_UNTRUSTED` (~L13543), so an iter created
+/// inside a RCU CS becomes UNTRUSTED if the program later releases the
+/// lock and re-enters `_next`. `_next` itself rejects with
+/// "expected an RCU CS when using …" on UNTRUSTED slots (~L8691).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct IteratorSlot {
     pub kind: IterKind,
     pub state: IterState,
     pub id: u32,
+    pub depth: u32,
+    pub untrusted: bool,
 }
 
 /// Dynptr families (Phase 4 W4.2).

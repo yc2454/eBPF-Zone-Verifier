@@ -132,6 +132,13 @@ pub(crate) fn apply_call_proto_r0(
                     continue;
                 };
                 let size_bytes = bpf_iter_size(kind);
+                // Kernel `mark_stack_slots_iter` (verifier.c v6.15
+                // ~L1041): for KF_RCU_PROTECTED iter `_new` kfuncs (task,
+                // css), the slot is MEM_RCU (trusted) iff we're in an
+                // RCU CS at init time, otherwise PTR_UNTRUSTED. The
+                // subsequent `_next` call then rejects the UNTRUSTED
+                // slot with "expected an RCU CS when using …".
+                let untrusted = kind.is_rcu_protected() && !state.in_rcu_read_section();
                 let stack = state.stack_at_mut(frame);
                 for i in 0..size_bytes {
                     let byte_off = base_off as i64 + i as i64;
@@ -143,6 +150,8 @@ pub(crate) fn apply_call_proto_r0(
                         kind,
                         state: IterState::Active,
                         id: new_iter_id(),
+                        depth: 0,
+                        untrusted,
                     },
                 );
             }

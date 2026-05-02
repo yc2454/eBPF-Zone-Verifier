@@ -1281,9 +1281,20 @@ pub(crate) fn apply_pre_call_lock_flags(
         state.rcu_read_lock();
     }
 
-    if proto.flags.contains(CallFlags::RCU_READ_UNLOCK) && !state.rcu_read_unlock() {
-        env.fail(VerificationError::RcuReadNotHeld { pc });
-        return false;
+    if proto.flags.contains(CallFlags::RCU_READ_UNLOCK) {
+        if !state.rcu_read_unlock() {
+            env.fail(VerificationError::RcuReadNotHeld { pc });
+            return false;
+        }
+        // Kernel verifier.c v6.15 ~L13543: on rcu_read_unlock, every
+        // MEM_RCU reg/slot is re-flagged PTR_UNTRUSTED. We mirror this
+        // for iter slots only — the use-after-unlock pattern (lock /
+        // iter_*_new / next / unlock / next or unlock / lock / next)
+        // is what `iters_task_failure::iter_tasks_lock_and_unlock`
+        // exercises. Other reg-type RCU promotions are out of scope.
+        if !state.in_rcu_read_section() {
+            state.invalidate_rcu_iter_slots();
+        }
     }
 
     // Preempt-region (kernel verifier.c v6.15 ~L13560).

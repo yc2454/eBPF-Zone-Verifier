@@ -364,8 +364,15 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         return vec![];
     }
 
-    // Check if any RCU read-side section is still open (W5.2)
-    if state.in_rcu_read_section() {
+    // Check if any RCU read-side section is still open (W5.2). For
+    // programs entered with the kernel's implicit RCU CS (kprobe,
+    // tracepoint, raw_tp, perf_event), depth=1 at exit is the
+    // kernel-supplied baseline — the kernel releases on return — so
+    // tolerate it. Anything above 1 in that case, or anything > 0 in
+    // sleepable / non-tracing programs, is an unreleased explicit
+    // bpf_rcu_read_lock.
+    let baseline = if state.implicit_rcu_at_entry { 1 } else { 0 };
+    if state.rcu_read_depth > baseline {
         env.fail(VerificationError::UnreleasedRcuRead);
         return vec![];
     }

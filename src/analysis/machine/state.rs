@@ -81,8 +81,16 @@ pub struct State {
     /// RCU read-side critical section nesting depth (W5.2). Incremented
     /// by `bpf_rcu_read_lock`, decremented by `bpf_rcu_read_unlock`.
     /// Helpers/kfuncs marked with `CallFlags::RCU` require depth > 0.
-    /// Program exit rejects if depth > 0 (`UnreleasedRcuRead`).
+    /// Program exit rejects if depth > [`Self::implicit_rcu_at_entry`].
     pub rcu_read_depth: u32,
+
+    /// True iff the program type runs with the kernel's implicit RCU
+    /// read-side CS held (kprobe / tracepoint / raw_tp / perf_event).
+    /// `analysis::mod` calls `rcu_read_lock()` once at entry for those,
+    /// so `rcu_read_depth` starts at 1 instead of 0. The exit check
+    /// (`UnreleasedRcuRead`) tolerates a residual depth of 1 in this
+    /// case — the kernel releases the lock for us when the prog returns.
+    pub implicit_rcu_at_entry: bool,
 
     /// Preempt-disabled nesting count. Incremented by `bpf_preempt_disable`
     /// kfunc, decremented by `bpf_preempt_enable`. Mirrors kernel
@@ -131,6 +139,7 @@ impl State {
             active_refs: HashSet::new(),
             active_lock: None,
             rcu_read_depth: 0,
+            implicit_rcu_at_entry: false,
             active_preempt_locks: 0,
             goto_budget: BPF_MAY_GOTO_LIMIT,
             program_exception_cb: None,
@@ -368,6 +377,33 @@ impl State {
     /// which uses `bpf_for_each_reg_in_vstate` to find slices tagged
     /// with the dynptr's id. Walks every frame's stack so a slice
     /// stored across a subprog call is also caught.
+    /// Mark every RCU-protected iter slot as `untrusted` (kind ∈ task,
+    /// css). Mirrors kernel verifier.c v6.15 ~L13543: on
+    /// `bpf_rcu_read_unlock`, every reg/slot tagged MEM_RCU is
+    /// re-flagged PTR_UNTRUSTED. We track this on the iter slot only;
+    /// the iter's `_next` consumer rejects on the untrusted slot in the
+    /// next iteration. Called by `transfer_call` after a successful
+    /// `state.rcu_read_unlock()` that leaves us outside any RCU CS.
+    pub fn invalidate_rcu_iter_slots(&mut self) {
+        for frame in self.frames.iter_mut() {
+            let offsets = frame.stack.slot_offsets();
+            for off in offsets {
+                if let Some(slot) = frame.stack.stack_get_iterator(off)
+                    && slot.kind.is_rcu_protected()
+                    && !slot.untrusted
+                {
+                    frame.stack.stack_set_iterator(
+                        off,
+                        crate::analysis::machine::stack_state::IteratorSlot {
+                            untrusted: true,
+                            ..slot
+                        },
+                    );
+                }
+            }
+        }
+    }
+
     pub fn invalidate_dynptr_slices(&mut self, dynptr_id: u32) {
         for i in 0..self.types.regs.len() {
             let demote = matches!(

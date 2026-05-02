@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-02T03:44:40.741036+00:00",
+  "generated_at": "2026-05-02T04:46:47.126313+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -3805,12 +3805,12 @@
         "irq_balance": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 8: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "note": "Unsupported modern BPF feature at pc 10: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "irq_balance_n": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 22: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "note": "Unsupported modern BPF feature at pc 20: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "irq_balance_subprog": {
           "upstream": "ACCEPT",
@@ -3968,9 +3968,8 @@
           "ours": "PASS"
         },
         "iter_array_fill": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "iter_bpf_for_each_macro": {
           "upstream": "UNKNOWN",
@@ -3978,9 +3977,8 @@
           "note": "verifier timeout"
         },
         "iter_bpf_for_macro": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "iter_destroy_bad_arg": {
           "upstream": "ACCEPT",
@@ -4007,9 +4005,8 @@
           "ours": "PASS"
         },
         "iter_for_loop": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "iter_limit_cond_break_loop": {
           "upstream": "ACCEPT",
@@ -4020,9 +4017,8 @@
           "ours": "PASS"
         },
         "iter_multiple_sequential_loops": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "iter_nested_deeply_iters": {
           "upstream": "UNKNOWN",
@@ -4048,9 +4044,8 @@
           "note": "verifier timeout"
         },
         "iter_pass_iter_ptr_to_subprog": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "iter_pragma_unroll_loop": {
           "upstream": "ACCEPT",
@@ -4080,14 +4075,12 @@
           "note": "verifier timeout"
         },
         "iter_while_loop": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "iter_while_loop_auto_cleanup": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "loop_state_deps1": {
           "upstream": "ACCEPT",
@@ -4151,9 +4144,8 @@
           "ours": "PASS"
         },
         "force_clang_to_emit_btf_for_externs": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "missing_null_check_fail": {
           "upstream": "ACCEPT",
@@ -4286,9 +4278,8 @@
           "ours": "PASS"
         },
         "force_clang_to_emit_btf_for_externs": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "leak_iter_from_subprog_fail": {
           "upstream": "ACCEPT",
@@ -4406,9 +4397,8 @@
           "ours": "PASS"
         },
         "testmod_seq_getter_good": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "testmod_seq_truncated": {
           "upstream": "UNKNOWN",
@@ -13521,9 +13511,8 @@
           "note": "verifier timeout"
         },
         "max_words": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "next_uninit": {
           "upstream": "ACCEPT",
@@ -14908,7 +14897,7 @@
         "arg_tag_nonnull_ptr_good": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 8: base R1+0 (type: PtrToAllocMemOrNull { id: 228505, mem_size: 4, ref_id: None, dynptr_id: None })"
+          "note": "Unsafe generic load at pc 8: base R1+0 (type: PtrToAllocMemOrNull { id: 175653, mem_size: 4, ref_id: None, dynptr_id: None })"
         },
         "arg_tag_nullable_ptr_fail": {
           "upstream": "ACCEPT",

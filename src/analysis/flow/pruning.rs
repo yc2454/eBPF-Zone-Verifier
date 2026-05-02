@@ -346,8 +346,18 @@ fn handle_loop_pruning(
         return false;
     };
 
+    // Branchy loop tops can hold multiple cached states (e.g. an
+    // `iter_*_next` fork leaves both the non-null and null R0 paths
+    // cached at the same pc). Match against any of them — only checking
+    // `last()` would miss subsumption when the branches alternate.
+    // Mirrors kernel `is_state_visited` which iterates `list_for_each`
+    // over the full explored_state list (verifier.c v6.15 ~L19018).
+    let any_subsumes = prev_states
+        .iter()
+        .any(|old| state_subsumed_by(state, old, live_regs, config));
+
     if let Some(old) = prev_states.last() {
-        if state_subsumed_by(state, old, live_regs, config) {
+        if any_subsumes {
             // Check if we can converge (widening effective + exit explored)
             if check_loop_convergence(
                 env,
@@ -949,9 +959,22 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
             // via the existing W2.3 non-precise superset rule above —
             // this check is about the iterator identity itself, not
             // the loop variable.
+            // `depth` is intentionally ignored — it grows monotonically
+            // per iter_next ACTIVE-fork (kernel `iter.depth`) and is
+            // used by the inf-loop detector and `widen_imprecise_scalars`
+            // to keep iterations distinguishable, NOT by subsumption.
+            // Kernel `states_equal(RANGE_WITHIN)` for iter_next call
+            // sites doesn't compare `iter.depth` either; convergence
+            // here is exactly what allows e.g. `i++; while(iter_next)`
+            // loops to terminate.
             let old_iter = old_slot.and_then(|s| s.iterator);
             let new_iter = new_slot.and_then(|s| s.iterator);
-            if old_iter != new_iter {
+            let iter_eq_modulo_depth = match (old_iter, new_iter) {
+                (None, None) => true,
+                (Some(a), Some(b)) => a.kind == b.kind && a.state == b.state && a.id == b.id,
+                _ => false,
+            };
+            if !iter_eq_modulo_depth {
                 return false;
             }
 

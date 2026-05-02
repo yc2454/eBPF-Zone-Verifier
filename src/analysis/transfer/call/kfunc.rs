@@ -291,7 +291,7 @@ fn transfer_kfunc_proto(
     // each can carry its own R0 typing and slot-state transition.
     match proto.ret {
         RetKind::IterNextElem { iter_arg, elem_size } => {
-            return iter_next_fork(state, iter_arg, IterNextElemKind::AllocMem(elem_size));
+            return iter_next_fork(env, state, iter_arg, IterNextElemKind::AllocMem(elem_size));
         }
         RetKind::IterNextBtfId {
             iter_arg,
@@ -299,6 +299,7 @@ fn transfer_kfunc_proto(
             flags,
         } => {
             return iter_next_fork(
+                env,
                 state,
                 iter_arg,
                 IterNextElemKind::BtfId { type_name, flags },
@@ -348,12 +349,32 @@ pub(crate) enum IterNextElemKind {
 /// proto-declared kind, so `resolve_stack_arg` is expected to succeed
 /// here; if the offset went symbolic between validator and applier we
 /// drop the path conservatively.
-fn iter_next_fork(state: State, iter_arg: u8, kind: IterNextElemKind) -> Vec<State> {
+fn iter_next_fork(
+    env: &mut VerifierEnv,
+    state: State,
+    iter_arg: u8,
+    kind: IterNextElemKind,
+) -> Vec<State> {
     let pc = state.pc;
     let reg = arg_reg(iter_arg);
     let Some((frame, base_off)) = resolve_stack_arg(&state, reg) else {
         return vec![];
     };
+
+    // Kernel `is_iter_reg_valid_init` (verifier.c v6.15 ~L1135) returns
+    // -EPROTO when the iter slot has PTR_UNTRUSTED; `process_iter_arg`
+    // surfaces this as "expected an RCU CS when using <kfunc>". Mirrors
+    // our `IteratorSlot.untrusted`: if set, reject before forking.
+    if matches!(
+        state.stack_at(frame).stack_get_iterator(base_off),
+        Some(slot) if slot.untrusted
+    ) {
+        env.fail(crate::analysis::machine::error::VerificationError::InvalidArgType {
+            pc,
+            reg,
+        });
+        return vec![];
+    }
 
     // Drained-input collapse: a `_next` call on an already-drained
     // iterator returns NULL unconditionally (the kernel just does one
@@ -388,8 +409,23 @@ fn iter_next_fork(state: State, iter_arg: u8, kind: IterNextElemKind) -> Vec<Sta
         return vec![null];
     }
 
-    // Non-NULL successor: R0 typed per `kind`, slot stays Active.
+    // Non-NULL successor: R0 typed per `kind`, slot stays Active. Bump
+    // `iter.depth` (kernel `process_iter_next_call` verifier.c v6.15
+    // ~L8919) so successive iterations are distinguishable for the
+    // pruning machinery and the inf-loop detector
+    // (`iter_active_depths_differ`, ~L18965). Without this the loop top
+    // looks identical across iterations and the kernel would mis-fire
+    // the infinite-loop check on legitimate iter loops.
     let mut nonnull = state;
+    if let Some(slot) = nonnull.stack_at(frame).stack_get_iterator(base_off) {
+        nonnull.stack_at_mut(frame).stack_set_iterator(
+            base_off,
+            IteratorSlot {
+                depth: slot.depth.saturating_add(1),
+                ..slot
+            },
+        );
+    }
     let r0 = match kind {
         IterNextElemKind::AllocMem(elem_size) => RegType::PtrToAllocMem {
             id: new_ptr_id(),
@@ -410,7 +446,106 @@ fn iter_next_fork(state: State, iter_arg: u8, kind: IterNextElemKind) -> Vec<Sta
     clobber_caller_saved(&mut nonnull);
     nonnull.pc = pc + 1;
 
+    // Widen imprecise scalars in the queued ACTIVE branch relative to
+    // the most recent prior visit at this iter_next call. Kernel
+    // `widen_imprecise_scalars` (verifier.c v6.15 ~L8765, called from
+    // `process_iter_next_call`) does the same: any imprecise reg or
+    // spilled-stack scalar that differs from the parent state's value
+    // becomes UNKNOWN. Without this, simple counter-bearing loops like
+    // `i++; while(iter_next(...)) {}` produce a fresh distinct state
+    // every iteration and the verifier never converges. Walking
+    // explored_states[pc] for the most-recent prior is our analogue of
+    // the kernel's `find_prev_entry(cur_st->parent, insn_idx)` —
+    // we don't track parent-state lineage, so the latest cached visit
+    // at this call site is the best available proxy.
+    if let Some(prev_states) = env.explored_states.get(&pc)
+        && let Some(prev) = prev_states.iter().rev().find(|s| s.pc == pc)
+    {
+        widen_imprecise_scalars_at_iter_next(prev, &mut nonnull);
+    }
+
     vec![nonnull, null]
+}
+
+/// Widen imprecise scalars in `cur` against `prev` at an iter_next
+/// fork. Mirrors kernel `widen_imprecise_scalars` (verifier.c v6.15
+/// ~L8765): per-frame scan of regs and spilled-scalar stack slots; any
+/// reg/slot not flagged precise whose abstract value disagrees with
+/// `prev` collapses to UNKNOWN. Precise entries are left intact (the
+/// kernel preserves them via the idmap; we use `precise_regs`).
+fn widen_imprecise_scalars_at_iter_next(prev: &State, cur: &mut State) {
+    use crate::analysis::machine::reg::Reg;
+
+    // Collect changes first; can't mutate while borrowed.
+    let mut regs_to_widen: Vec<Reg> = Vec::new();
+    for r in [
+        Reg::R0,
+        Reg::R1,
+        Reg::R2,
+        Reg::R3,
+        Reg::R4,
+        Reg::R5,
+        Reg::R6,
+        Reg::R7,
+        Reg::R8,
+        Reg::R9,
+    ] {
+        if cur.precise_regs.contains(&r) {
+            continue;
+        }
+        // Only widen scalar-typed regs; pointer types are kept exact
+        // (they participate in subsumption via id-loose rules).
+        let cur_ty = cur.types.get(r);
+        let prev_ty = prev.types.get(r);
+        if !matches!(cur_ty, RegType::ScalarValue) || !matches!(prev_ty, RegType::ScalarValue) {
+            continue;
+        }
+        let cur_iv = cur.domain.get_interval(r);
+        let prev_iv = prev.domain.get_interval(r);
+        let cur_tn = cur.get_tnum(r);
+        let prev_tn = prev.get_tnum(r);
+        if cur_iv != prev_iv || cur_tn != prev_tn {
+            regs_to_widen.push(r);
+        }
+    }
+    for r in regs_to_widen {
+        cur.domain.forget(r);
+        cur.set_tnum(r, Tnum::unknown());
+        cur.clear_scalar_id(r);
+    }
+
+    // Spilled scalar slots: walk both frames' stacks. Drop any slot
+    // whose abstract value disagrees and isn't precise.
+    use crate::analysis::machine::frame_stack::FrameLevel;
+    let n = cur.frames.depth().min(prev.frames.depth());
+    for fi in 0..n {
+        let level = FrameLevel::from_index(fi);
+        let prev_stack_offsets: Vec<i16> = prev.frames.get(level).stack.slot_offsets();
+        let mut to_invalidate: Vec<i16> = Vec::new();
+        for off in prev_stack_offsets {
+            let prev_ty = prev.frames.get(level).stack.get_slot_type(off);
+            let cur_ty = cur.frames.get(level).stack.get_slot_type(off);
+            if !matches!(prev_ty, RegType::ScalarValue)
+                || !matches!(cur_ty, RegType::ScalarValue)
+            {
+                continue;
+            }
+            let prev_slot = prev.frames.get(level).stack.get_slot(off);
+            let cur_slot = cur.frames.get(level).stack.get_slot(off);
+            let differs = match (prev_slot, cur_slot) {
+                (Some(p), Some(c)) => p.tnum != c.tnum || p.bounds != c.bounds,
+                _ => false,
+            };
+            let cur_precise = cur_slot.map(|s| s.precise).unwrap_or(false);
+            if differs && !cur_precise {
+                to_invalidate.push(off);
+            }
+        }
+        let cur_stack = &mut cur.frames.get_mut(level).stack;
+        for off in to_invalidate {
+            cur_stack.invalidate_slot(off);
+        }
+    }
 }
 
 fn clobber_caller_saved(state: &mut State) {

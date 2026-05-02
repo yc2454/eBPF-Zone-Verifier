@@ -157,6 +157,30 @@ pub fn analyze_program_full(
     );
     initial_state.domain.init_packet_anchors();
 
+    // Non-sleepable tracing programs (kprobe, tracepoint, raw_tp,
+    // perf_event) run with an implicit RCU read-side critical section
+    // held by the kernel before invoking the BPF prog. The kernel
+    // verifier records this via `env->cur_state->active_rcu_lock` set
+    // at program init for those types (verifier.c v6.15 ~L5803 comment
+    // "non-sleepable programs and sleepable programs with explicit
+    // bpf_rcu_read_lock()"). KF_RCU_PROTECTED iters initialized in
+    // such a prog see in_rcu_cs at `_new` time and get MEM_RCU (trusted)
+    // slot status. Sleepable variants (`fentry.s`, `iter.s`, `lsm.s`)
+    // do NOT auto-hold; they must call `bpf_rcu_read_lock` explicitly.
+    use crate::ast::ProgramKind;
+    let auto_rcu = matches!(
+        env.ctx.prog_kind,
+        ProgramKind::Kprobe
+            | ProgramKind::Tracepoint
+            | ProgramKind::RawTracepoint
+            | ProgramKind::RawTracepointWritable
+            | ProgramKind::PerfEvent
+    );
+    if auto_rcu {
+        initial_state.rcu_read_lock();
+        initial_state.implicit_rcu_at_entry = true;
+    }
+
     // W6.4a: struct_ops subprogs receive their args via the BPF_PROG
     // macro's ctx-array idiom — R1 stays as PtrToCtx (a `u64 *ctx`), and
     // each declared arg is unpacked at runtime via `*(u64 *)(ctx + 8*i)`.
