@@ -145,21 +145,66 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
             // pruning at the loop head eventually subsumes future
             // iterations once widening (or empty live-regs) makes the
             // body's effect on tracked state stable.
+            //
+            // Bucket F-D: also mirror the kernel's static may_goto
+            // machinery (`check_cond_jmp_op` BPF_JCOND arm, verifier.c
+            // v6.15 ~L16400-16410): on each visit, find a previous
+            // explored state at this same insn_idx, run
+            // `widen_imprecise_scalars` to coarsen scalars whose abstract
+            // value disagrees, and bump `may_goto_depth` on the queued
+            // state. The depth bump powers a separate RANGE_WITHIN prune
+            // class at this pc (~L19102) and defuses the EXACT inf-loop
+            // trap (~L19118). Without this, loops like
+            // `for (i=0; i<N && can_loop; i++) { arr[i]; cond_break; }`
+            // never converge: `i` is precision-marked at `arr[i]` and
+            // each iteration produces a fresh state, but the loop has
+            // both an `If`-style exit (`i < N`) and a may_goto, so our
+            // `force_widen_for_may_goto` (gated on `only_may_goto_exit`)
+            // never fires.
             let fallthrough_pc = state.pc + 1;
+            let cur_pc = state.pc;
+
+            // Snapshot a previous explored state at this insn for the
+            // widener (kernel `find_prev_entry`). The worklist driver
+            // calls `record_state` before `transfer`, so
+            // `explored_states[cur_pc].last()` IS the current state —
+            // skip it and take the second-most-recent. Without this
+            // skip the widener compares cur against itself and never
+            // coarsens anything.
+            let prev_snapshot: Option<State> = env
+                .explored_states
+                .get(&cur_pc)
+                .and_then(|prev_states| {
+                    let mut iter = prev_states.iter().rev().filter(|s| s.pc == cur_pc);
+                    iter.next();
+                    iter.next()
+                })
+                .cloned();
 
             if state.goto_budget() == 0 {
                 let mut state_fall = state;
                 state_fall.pc = fallthrough_pc;
+                state_fall.may_goto_depth = state_fall.may_goto_depth.saturating_add(1);
+                if let Some(prev) = prev_snapshot.as_ref() {
+                    call::kfunc::widen_imprecise_scalars_at_iter_next(prev, &mut state_fall);
+                }
                 return vec![state_fall];
             }
 
             let mut state_taken = state.clone();
             state_taken.consume_goto_budget();
             state_taken.pc = *target;
+            state_taken.may_goto_depth = state_taken.may_goto_depth.saturating_add(1);
 
             let mut state_fall = state;
             state_fall.consume_goto_budget();
             state_fall.pc = fallthrough_pc;
+            state_fall.may_goto_depth = state_fall.may_goto_depth.saturating_add(1);
+
+            if let Some(prev) = prev_snapshot.as_ref() {
+                call::kfunc::widen_imprecise_scalars_at_iter_next(prev, &mut state_taken);
+                call::kfunc::widen_imprecise_scalars_at_iter_next(prev, &mut state_fall);
+            }
 
             vec![state_taken, state_fall]
         }

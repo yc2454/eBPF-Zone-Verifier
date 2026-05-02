@@ -454,11 +454,77 @@ pub fn should_prune(
 
     let live_regs = &env.insn_aux_data[pc].live_regs;
 
+    // Bucket F-D: may_goto-specific RANGE_WITHIN prune class.
+    // Mirrors kernel `is_state_visited` (verifier.c v6.15 ~L19102):
+    //   if (is_may_goto_insn_at(env, insn_idx)) {
+    //       if (sl->state.may_goto_depth != cur->may_goto_depth &&
+    //           states_equal(env, &sl->state, cur, RANGE_WITHIN)) {
+    //           goto hit;
+    //       }
+    //   }
+    // RANGE_WITHIN: scalar precision marks are dropped — bounds/tnum
+    // containment is enough. Combined with the depth-bump in the
+    // `Instr::MayGoto` transfer, this lets bounded-but-precision-tight
+    // loops (cond_break1/2/3) converge: the body precision-marks `i`
+    // at the `arr[i]` access, but successive may_goto visits share a
+    // RANGE_WITHIN view of `i` modulo its widened range.
+    if pc < prog.instrs.len()
+        && matches!(prog.instrs[pc], Instr::If { .. } | Instr::MayGoto { .. })
+        && let Some(prev_states) = env.explored_states.get(&pc)
+    {
+        let is_may_goto = matches!(prog.instrs[pc], Instr::MayGoto { .. });
+        if is_may_goto && may_goto_range_within_prune(state, prev_states, live_regs, config) {
+            return true;
+        }
+    }
+
     if in_loop {
         handle_loop_pruning(env, state, pc, prog, live_regs, config)
     } else {
         handle_standard_pruning(env, state, pc, live_regs, config)
     }
+}
+
+/// Bucket F-D: RANGE_WITHIN prune class for may_goto pcs.
+///
+/// Tries to subsume `cur` against any prev state where the
+/// `may_goto_depth` differs (mandatory: same depth would hit the EXACT
+/// inf-loop trap instead). Subsumption is run with `cur`'s precision
+/// marks cleared — the kernel's RANGE_WITHIN equivalent — so a
+/// loop-counter that's been precision-marked at a body memory access
+/// can still converge once its abstract value lies inside the cached
+/// range.
+fn may_goto_range_within_prune(
+    cur: &State,
+    prev_states: &[State],
+    live_regs: &HashSet<Reg>,
+    config: &VerifierConfig,
+) -> bool {
+    // Build a precision-stripped clone of `cur` once. State carries
+    // precision in two places: `precise_regs` (per-reg) and
+    // `SpilledReg::precise` (per stack slot).
+    let mut relaxed = cur.clone();
+    relaxed.precise_regs.clear();
+    use crate::analysis::machine::frame_stack::FrameLevel;
+    for fi in 0..relaxed.frames.depth() {
+        let level = FrameLevel::from_index(fi);
+        let stack = &mut relaxed.frames.get_mut(level).stack;
+        for off in stack.slot_offsets() {
+            if let Some(slot) = stack.slots.get_mut(&off) {
+                slot.precise = false;
+            }
+        }
+    }
+
+    for prev in prev_states {
+        if prev.may_goto_depth == cur.may_goto_depth {
+            continue;
+        }
+        if state_subsumed_by(&relaxed, prev, live_regs, config) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Callee-saved registers that persist across calls and affect
@@ -483,7 +549,7 @@ fn state_subsumed_by(
             return false;
         }
     } else if !(types_subsumed_by(&cur.types, &old.types, live_regs)
-        && domain_subsumed_by(&cur.domain, &old.domain, live_regs, &cur.precise_regs)
+        && domain_subsumed_by(&cur.domain, &old.domain, live_regs, &old.precise_regs)
         && stack_subsumed_by(cur, old)
         && tnum_subsumed_by(cur, old, live_regs))
     {
@@ -931,16 +997,26 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
                 return false;
             }
 
-            // Precision (W2.3): a spilled scalar marked precise must match
-            // the cached slot exactly on tnum and bounds. Prevents pruning
-            // a bound-check-refined slot against a looser cached one.
+            // Precision: a precise *cached* slot requires the new slot
+            // to fall inside its range/tnum (kernel `regsafe` SCALAR
+            // verifier.c v6.15 L18357: precise old → range_within +
+            // tnum_in; non-precise old → free pass when live). Earlier
+            // we keyed on `new_s.precise` and demanded EXACT — that's
+            // stricter than the kernel and blocks may_goto-bounded
+            // loops where a body memory access precision-marks the
+            // counter (cond_break1/2/3, bucket F-D).
             let old_slot = old_frame.stack.get_slot(offset);
             let new_slot = new_frame.stack.get_slot(offset);
             if let (Some(old_s), Some(new_s)) = (old_slot, new_slot) {
-                if new_s.precise
-                    && (old_s.tnum != new_s.tnum || old_s.bounds != new_s.bounds)
-                {
-                    return false;
+                if old_s.precise {
+                    if !tnum_covers(&new_s.tnum, &old_s.tnum) {
+                        return false;
+                    }
+                    if !(old_s.bounds.min <= new_s.bounds.min
+                        && new_s.bounds.max <= old_s.bounds.max)
+                    {
+                        return false;
+                    }
                 }
             }
 
@@ -1015,8 +1091,8 @@ fn tnum_subsumed_by(cur_state: &State, old_state: &State, live_regs: &HashSet<Re
     for &r in live_regs {
         let cur = cur_state.get_tnum(r);
         let old = old_state.get_tnum(r);
-        if cur_state.is_reg_precise(r) {
-            if cur.mask != old.mask || cur.value != old.value {
+        if old_state.is_reg_precise(r) {
+            if !tnum_covers(&cur, &old) {
                 return false;
             }
         } else if !tnum_covers(&cur, &old) {

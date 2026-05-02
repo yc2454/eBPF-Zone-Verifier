@@ -79,6 +79,155 @@ impl<'a> VerifierEnv<'a> {
     pub fn failed(&self) -> bool {
         self.error.is_some()
     }
+
+    /// Backward precision walk — minimal kernel-aligned `mark_chain_precision`
+    /// (verifier.c v6.15 ~L4500-4900, simplified).
+    ///
+    /// At a precision sink (variable-offset memory access, kfunc/helper arg
+    /// requiring an exact value), the kernel walks the jmp_history backward
+    /// from the current insn, marking the offset register precise at every
+    /// prior cached state. As it walks, it tracks a *frontier* of regs whose
+    /// values transitively contributed to the sink:
+    ///   - `Mov dst, Reg(src)` — replace dst with src (precision flows past
+    ///     the move to the source's prior value).
+    ///   - `Alu dst = dst op Reg(src)` — keep dst (its prior value also
+    ///     contributed) and add src.
+    ///   - `Alu dst = dst op Imm(_)` — keep dst.
+    ///   - `Mov dst, Imm(_)` — drop dst (constant source has no chain).
+    ///   - `Load*` / `LoadMap` / `LoadPacket` / `LoadSx` — drop dst (loaded
+    ///     from memory; no further reg-level chain).
+    ///   - `Call` / `CallRel` — drop R0-R5 (caller-saved clobbered).
+    ///   - everything else — frontier unchanged.
+    ///
+    /// Stops walking when the frontier becomes empty or history runs out.
+    /// Marks every reg in the frontier precise on every cached state in
+    /// `explored_states[step.pc]` at each step.
+    ///
+    /// Bucket F-D / Option C: the load-bearing primitive that lets the
+    /// may_goto widener (`maybe_widen_reg` analogue) skip regs whose values
+    /// matter for downstream variable-offset bounds checks. Without this,
+    /// removing the over-aggressive branch precision-marker (which we
+    /// otherwise need) clobbers test1-4's variable-offset stores; with this,
+    /// the offset reg's lineage is preserved through widening sites.
+    pub fn mark_chain_precision_backward(
+        &mut self,
+        history_idx: usize,
+        sink_reg: Reg,
+    ) {
+        use crate::ast::{AluOp, CallKind, Instr, Operand};
+        let _ = CallKind::Helper { id: 0 }; // keep CallKind import; matched below
+
+        let mut frontier: HashSet<Reg> = HashSet::new();
+        frontier.insert(sink_reg);
+
+        let caller_saved = [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
+
+        let mut current = Some(history_idx);
+        // Bound the walk so a malformed history can't loop forever.
+        let mut budget: usize = 16_384;
+
+        while let Some(idx) = current {
+            if budget == 0 {
+                break;
+            }
+            budget -= 1;
+
+            let Some(step) = self.history.get(idx) else {
+                break;
+            };
+            let pc = step.pc;
+            let parent = step.parent_idx;
+
+            // Mark every frontier reg precise on every cached state at pc.
+            // The cached states' precision marks feed our pruning's
+            // `old.precise_regs`-keyed subsumption + the may_goto widener's
+            // skip-if-precise rule.
+            if let Some(states) = self.explored_states.get_mut(&pc) {
+                for s in states.iter_mut() {
+                    for &r in &frontier {
+                        s.precise_regs.insert(r);
+                    }
+                }
+            }
+
+            // Walk past the instruction at `pc`, updating frontier. Use
+            // the instruction stored on the breadcrumb (committed in
+            // history.rs) rather than re-borrowing `Program` — cheaper
+            // and removes a lifetime dependency from the call sites.
+            let instr_copy = step.instr;
+            {
+                let instr = &instr_copy;
+                match instr {
+                    Instr::Alu { op, dst, src, .. } => {
+                        if frontier.contains(dst) {
+                            match (op, src) {
+                                (AluOp::Mov, Operand::Reg(s)) => {
+                                    frontier.remove(dst);
+                                    frontier.insert(*s);
+                                }
+                                (AluOp::Mov, Operand::Imm(_)) => {
+                                    frontier.remove(dst);
+                                }
+                                (_, Operand::Reg(s)) => {
+                                    // dst = dst op src; both contribute.
+                                    frontier.insert(*s);
+                                }
+                                (_, Operand::Imm(_)) => {
+                                    // dst stays.
+                                }
+                            }
+                        }
+                    }
+                    Instr::MovSx { dst, src, .. } => {
+                        if frontier.contains(dst) {
+                            frontier.remove(dst);
+                            if let Operand::Reg(s) = src {
+                                frontier.insert(*s);
+                            }
+                        }
+                    }
+                    Instr::Load { dst, .. }
+                    | Instr::LoadSx { dst, .. }
+                    | Instr::LoadAcq { dst, .. }
+                    | Instr::LoadMap { dst, .. } => {
+                        frontier.remove(dst);
+                    }
+                    Instr::LoadPacket { .. } => {
+                        // BPF_LD_ABS / IND writes implicitly into R0.
+                        frontier.remove(&Reg::R0);
+                    }
+                    Instr::Endian { dst, .. } => {
+                        // Endian preserves value (just byte-swaps); precision
+                        // sticks to dst.
+                        let _ = dst;
+                    }
+                    Instr::Call { kind } => {
+                        // Helper / kfunc clobbers caller-saved on return.
+                        // R0 carries return value (no prior lineage), R1-R5
+                        // are clobbered.
+                        let _ = kind;
+                        for r in caller_saved {
+                            frontier.remove(&r);
+                        }
+                    }
+                    Instr::CallRel { .. } => {
+                        for r in caller_saved {
+                            frontier.remove(&r);
+                        }
+                    }
+                    _ => {
+                        // Store / If / Jmp / MayGoto / Atomic{store-only} / Exit:
+                        // no scalar-reg write, frontier unchanged.
+                    }
+                }
+            }
+
+            if frontier.is_empty() {
+                break;
+            }
+            current = parent;
+        }
+    }
 }
 
 /// Static pre-pass identifying subprog entry PCs whose body is unsafe

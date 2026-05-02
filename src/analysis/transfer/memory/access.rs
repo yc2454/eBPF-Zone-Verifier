@@ -23,11 +23,47 @@ pub enum AccessKind {
     HelperPrimitive,
 }
 
+/// True iff `base` has a variable (non-fixed) offset relative to its
+/// underlying anchor — i.e. some scalar was added to it whose exact value
+/// is not statically known. We look at the interval domain's `ptr_off` and
+/// check `var_off > 0`. Bucket F-D: variable-offset accesses are the
+/// canonical precision sinks for kernel `mark_chain_precision`.
+fn base_has_variable_offset(state: &State, base: Reg) -> bool {
+    use crate::domains::numeric::NumericDomain;
+    let NumericDomain::Interval(ref ivl) = state.domain else {
+        return false;
+    };
+    ivl.get_ptr_offset(base)
+        .map(|p| p.var_off > 0)
+        .unwrap_or(false)
+}
+
 /// Validates memory load safety.
 pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, off: i16) {
     let ctx = env.ctx;
     let base_type = state.types.get(base);
     let pc = state.pc;
+
+    // Bucket F-D / Option C: variable-offset access is a precision sink.
+    // Walk the History backward, marking the offset register's lineage
+    // precise on every cached state on the path. This preserves the bound
+    // through site-specific wideners (iter_next, may_goto, cb-return) so
+    // they skip the offset reg (kernel `maybe_widen_reg` / our
+    // `widen_imprecise_scalars_at_iter_next`).
+    // Bucket F-D groundwork: variable-offset access is the canonical
+    // precision sink for kernel `mark_chain_precision`. The backward
+    // walker is implemented in env.rs but disabled here pending the
+    // companion fixes (drop the over-aggressive branch-precision proxy +
+    // mid-loop bound preservation + the may_goto widener interactions
+    // we explored in this session). Re-enable when those land together.
+    let _enable_mark_chain_precision = false;
+    if _enable_mark_chain_precision
+        && let Some(hidx) = state.history_idx
+        && base != Reg::R10
+        && base_has_variable_offset(state, base)
+    {
+        env.mark_chain_precision_backward(hidx, base);
+    }
 
     match base_type {
         PtrToStack { frame_level } => {
@@ -247,6 +283,22 @@ pub fn check_store(
     let ctx = env.ctx;
     let base_ty = state.types.get(base);
     let pc = state.pc;
+
+    // Bucket F-D / Option C: variable-offset store is also a precision sink.
+    // Bucket F-D groundwork: variable-offset access is the canonical
+    // precision sink for kernel `mark_chain_precision`. The backward
+    // walker is implemented in env.rs but disabled here pending the
+    // companion fixes (drop the over-aggressive branch-precision proxy +
+    // mid-loop bound preservation + the may_goto widener interactions
+    // we explored in this session). Re-enable when those land together.
+    let _enable_mark_chain_precision = false;
+    if _enable_mark_chain_precision
+        && let Some(hidx) = state.history_idx
+        && base != Reg::R10
+        && base_has_variable_offset(state, base)
+    {
+        env.mark_chain_precision_backward(hidx, base);
+    }
 
     match base_ty {
         PtrToMapValue {

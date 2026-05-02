@@ -69,6 +69,15 @@ pub(crate) fn transfer_if(
     // W2.2: a branch that refines `left` is a use-site whose precision
     // matters for downstream safety reasoning. Mark both outgoing states
     // so pruning (W2.3) cannot generalise this register across the branch.
+    //
+    // Bucket F-D note (2026-05-02): this is a forward proxy for the
+    // kernel's `mark_chain_precision` (which walks backward from real
+    // precision sinks). The proxy over-marks compared to the kernel and
+    // blocks convergence on may_goto-bounded loops with array accesses
+    // (cond_break1). The full `mark_chain_precision_backward` helper now
+    // exists in `env.rs` but isn't yet wired in — closing F-D properly
+    // requires removing this proxy + wiring backward marking + handling
+    // the mid-loop bound preservation. See the bucket F-D memory note.
     state_then.mark_reg_precise(left);
     state_else.mark_reg_precise(left);
     if let Operand::Reg(r) = right {

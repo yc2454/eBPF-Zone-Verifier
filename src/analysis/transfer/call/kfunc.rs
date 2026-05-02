@@ -473,7 +473,7 @@ fn iter_next_fork(
 /// reg/slot not flagged precise whose abstract value disagrees with
 /// `prev` collapses to UNKNOWN. Precise entries are left intact (the
 /// kernel preserves them via the idmap; we use `precise_regs`).
-fn widen_imprecise_scalars_at_iter_next(prev: &State, cur: &mut State) {
+pub(crate) fn widen_imprecise_scalars_at_iter_next(prev: &State, cur: &mut State) {
     use crate::analysis::machine::reg::Reg;
 
     // Collect changes first; can't mutate while borrowed.
@@ -490,7 +490,13 @@ fn widen_imprecise_scalars_at_iter_next(prev: &State, cur: &mut State) {
         Reg::R8,
         Reg::R9,
     ] {
-        if cur.precise_regs.contains(&r) {
+        // Kernel `maybe_widen_reg` (verifier.c v6.15 ~L8752):
+        //   if (rold->precise || rcur->precise || regs_exact(...)) return;
+        // Skip if EITHER side carries a precision mark — `mark_chain_precision`
+        // populates `prev` (cached) precision retroactively when the
+        // backward walk lands on a checkpoint, so checking only `cur`
+        // would miss the lineage and over-widen.
+        if cur.precise_regs.contains(&r) || prev.precise_regs.contains(&r) {
             continue;
         }
         // Only widen scalar-typed regs; pointer types are kept exact
@@ -537,7 +543,9 @@ fn widen_imprecise_scalars_at_iter_next(prev: &State, cur: &mut State) {
                 _ => false,
             };
             let cur_precise = cur_slot.map(|s| s.precise).unwrap_or(false);
-            if differs && !cur_precise {
+            let prev_precise = prev_slot.map(|s| s.precise).unwrap_or(false);
+            // Skip widening if either side is precise (kernel parity).
+            if differs && !cur_precise && !prev_precise {
                 to_invalidate.push(off);
             }
         }

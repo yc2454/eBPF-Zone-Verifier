@@ -106,6 +106,16 @@ pub struct State {
     /// state's budget to be ≥ the candidate's (W3.1c).
     pub goto_budget: u32,
 
+    /// Static-analysis counter incremented each time the abstract
+    /// interpreter visits a `MayGoto` insn. Mirrors kernel
+    /// `bpf_verifier_state.may_goto_depth` (verifier.c v6.15 ~L1757,
+    /// bumped in `check_cond_jmp_op` ~L16407). Distinct from
+    /// `goto_budget`: this is the per-state visit count used to admit a
+    /// RANGE_WITHIN prune class at may_goto pcs (~L19102) and to defuse
+    /// the EXACT inf-loop trap on revisits (~L19118). Per-state, not
+    /// env-global — parallel DFS branches have independent depths.
+    pub may_goto_depth: u32,
+
     /// Program-default exception callback entry PC (W3.3a plumbing).
     /// Used when `bpf_throw` unwinds past every frame without finding a
     /// frame-local `exception_cb` (see [`CallFrame::exception_cb`]). A
@@ -142,6 +152,7 @@ impl State {
             implicit_rcu_at_entry: false,
             active_preempt_locks: 0,
             goto_budget: BPF_MAY_GOTO_LIMIT,
+            may_goto_depth: 0,
             program_exception_cb: None,
         }
     }
