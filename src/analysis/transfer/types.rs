@@ -907,6 +907,7 @@ pub(crate) fn update_call_types(
                     id: new_ptr_id(),
                     mem_size: hi as u64,
                     ref_id: None,
+                    dynptr_id: None,
                 },
             );
         }

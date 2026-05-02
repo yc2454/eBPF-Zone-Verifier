@@ -215,8 +215,14 @@ pub(crate) fn transfer_store(
             // W4.2: a stack write that overlaps any byte of an active
             // ref-bearing dynptr (today: ringbuf reservations) is the
             // kernel's "cannot overwrite referenced dynptr" rejection.
-            // Allowed for unreferenced dynptrs (Local/Skb/Xdp) — the
-            // overlap helper gates on `ref_id != 0`.
+            // Allowed for unreferenced dynptrs (Local/Skb/Xdp) — but
+            // the kernel still tears down the dynptr and invalidates
+            // any slices tagged with its `dynptr_id`
+            // (`destroy_if_dynptr_stack_slot`, verifier.c v6.15 L880).
+            // Without this destroy step, a slice taken via
+            // `bpf_dynptr_data` survives a corrupting partial write to
+            // the dynptr metadata and a later `*slice` deref leaks
+            // through.
             if state
                 .stack_at(frame_level)
                 .write_overlaps_referenced_dynptr(full_offset, size.bytes() as i64)
@@ -226,6 +232,19 @@ pub(crate) fn transfer_store(
                     off: full_offset,
                 });
                 return vec![];
+            }
+            let touched_dynptrs = state
+                .stack_at(frame_level)
+                .dynptr_pairs_touched_by_write(full_offset, size.bytes() as i64);
+            if !touched_dynptrs.is_empty() {
+                let stack = state.stack_at_mut(frame_level);
+                for (base_off, _) in &touched_dynptrs {
+                    stack.stack_clear_dynptr(*base_off);
+                    stack.stack_clear_dynptr(*base_off + 8);
+                }
+                for (_, vid) in &touched_dynptrs {
+                    state.invalidate_dynptr_slices(*vid);
+                }
             }
             // W3.2: same shape for open-coded iterators. Iter bodies
             // are opaque — only `*_new`/`*_next`/`*_destroy` may write

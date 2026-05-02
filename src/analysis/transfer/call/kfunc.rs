@@ -395,6 +395,7 @@ fn iter_next_fork(state: State, iter_arg: u8, kind: IterNextElemKind) -> Vec<Sta
             id: new_ptr_id(),
             mem_size: elem_size,
             ref_id: None,
+            dynptr_id: None,
         },
         IterNextElemKind::BtfId { type_name, flags } => RegType::PtrToBtfId {
             type_name,

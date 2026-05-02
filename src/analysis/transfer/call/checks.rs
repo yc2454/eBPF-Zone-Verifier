@@ -660,18 +660,31 @@ fn validate_dynptr_arg(ctx: &mut ValidationContext, uninit: bool, rdwr_only: boo
     let trail = stack.stack_get_dynptr(base_off + 8);
 
     if uninit {
-        if base.is_some() || trail.is_some() {
-            return ctx.fail_with_log(
-                VerificationError::InvalidArgType {
-                    pc: ctx.pc,
-                    reg: ctx.reg,
-                },
-                &format!(
-                    "[Verifier] pc {}: R{} dynptr ctor target already initialized",
-                    ctx.pc,
-                    ctx.arg_index + 1
-                ),
-            );
+        // Kernel `is_dynptr_reg_valid_uninit` (verifier.c v6.15 L934)
+        // returns true for stack slots — overwrite is allowed.
+        // `destroy_if_dynptr_stack_slot` (L880) runs first and only
+        // rejects if the existing dynptr is *refcounted*
+        // (`dynptr_type_refcounted`, our `Ringbuf` with `ref_id != 0`).
+        // For unrefcounted (`Local`/`Skb`/`Xdp`), it tears down both
+        // pair slots and invalidates slices tagged with the old
+        // `dynptr_id` — that destroy-and-sweep step is performed by
+        // the `DynptrInitOnArg` side-effect applier (which runs on
+        // success and already mutates the stack to stamp the new
+        // annotation), keeping `ctx.state` read-only here.
+        for slot in [base, trail].into_iter().flatten() {
+            if slot.ref_id != 0 {
+                return ctx.fail_with_log(
+                    VerificationError::InvalidArgType {
+                        pc: ctx.pc,
+                        reg: ctx.reg,
+                    },
+                    &format!(
+                        "[Verifier] pc {}: R{} cannot overwrite referenced dynptr",
+                        ctx.pc,
+                        ctx.arg_index + 1
+                    ),
+                );
+            }
         }
         return true;
     }

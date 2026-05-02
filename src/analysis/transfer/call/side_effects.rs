@@ -86,6 +86,27 @@ pub(crate) fn apply_call_proto_r0(
                 } else {
                     0
                 };
+                let dynptr_id = crate::analysis::machine::reg_types::new_dynptr_id();
+
+                // Pre-stamp destroy-and-sweep (kernel
+                // `destroy_if_dynptr_stack_slot`, verifier.c v6.15 L880):
+                // if the slot already holds an *unrefcounted* dynptr
+                // (refcounted is rejected by `validate_dynptr_arg`),
+                // invalidate slices that carry the old `dynptr_id` so
+                // their `PtrToAllocMem*` regs/slots demote to Scalar
+                // (mirrors `bpf_for_each_reg_in_vstate` at L913-919).
+                let mut victim_ids: Vec<u32> = Vec::new();
+                if let Some(slot) = state.stack_at(frame).stack_get_dynptr(base_off) {
+                    victim_ids.push(slot.dynptr_id);
+                }
+                if let Some(slot) = state.stack_at(frame).stack_get_dynptr(base_off + 8)
+                    && !victim_ids.contains(&slot.dynptr_id)
+                {
+                    victim_ids.push(slot.dynptr_id);
+                }
+                for vid in &victim_ids {
+                    state.invalidate_dynptr_slices(*vid);
+                }
 
                 // Initialize 16 stack bytes as scalar (the kernel's
                 // STACK_DYNPTR mark; programs may not read the body).
@@ -98,11 +119,11 @@ pub(crate) fn apply_call_proto_r0(
                 // Stamp annotation on both 8-byte slots of the pair.
                 stack.stack_set_dynptr(
                     base_off,
-                    DynptrSlot { kind, ref_id, rdonly, first_slot: true },
+                    DynptrSlot { kind, ref_id, rdonly, first_slot: true, dynptr_id },
                 );
                 stack.stack_set_dynptr(
                     base_off + 8,
-                    DynptrSlot { kind, ref_id, rdonly, first_slot: false },
+                    DynptrSlot { kind, ref_id, rdonly, first_slot: false, dynptr_id },
                 );
             }
             SideEffect::IterInitOnArg { arg, kind } => {
@@ -262,12 +283,14 @@ pub(crate) fn apply_call_proto_r0(
                     id,
                     mem_size,
                     ref_id: None,
+                    dynptr_id: None,
                 }
             } else {
                 RegType::PtrToAllocMem {
                     id,
                     mem_size,
                     ref_id: None,
+                    dynptr_id: None,
                 }
             };
             state.types.set(Reg::R0, ty);
@@ -337,24 +360,30 @@ pub(crate) fn apply_call_proto_r0(
             // Inherit the source dynptr's ref_id from R1 so that releasing
             // the dynptr (`bpf_ringbuf_submit_dynptr` etc.) invalidates the
             // returned slice pointer too — catches use-after-release.
-            // All current `PtrToAllocMemFromArg` users (`bpf_dynptr_data`,
-            // `bpf_dynptr_slice`, `bpf_dynptr_slice_rdwr`) have R1 as the
-            // source dynptr.
-            let ref_id = resolve_stack_arg(state, arg_reg(0))
-                .and_then(|(frame, off)| state.stack_at(frame).stack_get_dynptr(off))
-                .map(|slot| slot.ref_id)
-                .filter(|id| *id != 0);
+            // Also inherit `dynptr_id` (the per-instance identity) so
+            // overwriting the source dynptr with `bpf_dynptr_from_mem`
+            // (etc.) demotes the slice — mirrors kernel verifier.c v6.15
+            // L11701 `regs[BPF_REG_0].dynptr_id = meta.dynptr_id`. All
+            // current `PtrToAllocMemFromArg` users (`bpf_dynptr_data`,
+            // `bpf_dynptr_slice`, `bpf_dynptr_slice_rdwr`) have R1 as
+            // the source dynptr.
+            let src_slot = resolve_stack_arg(state, arg_reg(0))
+                .and_then(|(frame, off)| state.stack_at(frame).stack_get_dynptr(off));
+            let ref_id = src_slot.map(|s| s.ref_id).filter(|id| *id != 0);
+            let dynptr_id = src_slot.map(|s| s.dynptr_id);
             let ty = if proto.flags.contains(CallFlags::RET_NULL) {
                 RegType::PtrToAllocMemOrNull {
                     id,
                     mem_size,
                     ref_id,
+                    dynptr_id,
                 }
             } else {
                 RegType::PtrToAllocMem {
                     id,
                     mem_size,
                     ref_id,
+                    dynptr_id,
                 }
             };
             state.types.set(Reg::R0, ty);

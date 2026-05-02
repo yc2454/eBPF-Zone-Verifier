@@ -362,6 +362,39 @@ impl State {
         self.stack_mut().invalidate_ref(id);
     }
 
+    /// Demote every reg / spilled slot whose `PtrToAllocMem*` carries
+    /// the given dynptr identity to `ScalarValue`. Mirrors kernel
+    /// `verifier.c` v6.15 L913-919 inside `destroy_if_dynptr_stack_slot`,
+    /// which uses `bpf_for_each_reg_in_vstate` to find slices tagged
+    /// with the dynptr's id. Walks every frame's stack so a slice
+    /// stored across a subprog call is also caught.
+    pub fn invalidate_dynptr_slices(&mut self, dynptr_id: u32) {
+        for i in 0..self.types.regs.len() {
+            let demote = matches!(
+                self.types.regs[i],
+                RegType::PtrToAllocMem { dynptr_id: Some(did), .. }
+                    | RegType::PtrToAllocMemOrNull { dynptr_id: Some(did), .. }
+                    if did == dynptr_id
+            );
+            if demote {
+                self.types.regs[i] = RegType::ScalarValue;
+            }
+        }
+        for frame in self.frames.iter_mut() {
+            for (_off, spilled) in frame.stack.slots.iter_mut() {
+                let demote = matches!(
+                    spilled.reg_type,
+                    RegType::PtrToAllocMem { dynptr_id: Some(did), .. }
+                        | RegType::PtrToAllocMemOrNull { dynptr_id: Some(did), .. }
+                        if did == dynptr_id
+                );
+                if demote {
+                    spilled.reg_type = RegType::ScalarValue;
+                }
+            }
+        }
+    }
+
     /// Convert every reg holding `PtrToOwnedKptr` with the given
     /// `ref_id` from owning to non-owning: clear `ref_id`, set the
     /// `non_owning` flag, keep the type and offset. Mirrors kernel

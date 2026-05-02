@@ -265,21 +265,32 @@ pub fn validate_ptr_to_map_value(ctx: &mut ValidationContext) -> bool {
         return false;
     }
 
-    // If pointing to a map value, check size compatibility
-    if let RegType::PtrToMapValue { map_idx, .. } = actual {
+    // If pointing to a map value, check size compatibility.
+    // Kernel `check_helper_mem_access` (verifier.c v6.15 L8062) routes
+    // PTR_TO_MAP_VALUE through `check_map_access`, which only requires
+    // `reg->off + access_size <= map->value_size` — i.e. the source
+    // region holds at least `dest.value_size` bytes from its current
+    // offset onward. The source map's own `value_size` need not equal
+    // the destination's. This admits passing `&val` from a `.bss`
+    // synthetic map (whose `value_size` covers the whole section) as
+    // an `array_map`'s value source.
+    if let RegType::PtrToMapValue { map_idx, offset, .. } = actual {
         if let Some(map_def) = ctx.env.ctx.map_defs.get(map_idx) {
-            if map_def.value_size != target_info.value_size {
+            let off = offset.unwrap_or(0).max(0) as u64;
+            let remaining = (map_def.value_size as u64).saturating_sub(off);
+            if remaining < target_info.value_size as u64 {
                 ctx.fail_with_log(
                     VerificationError::InvalidArgType {
                         pc: ctx.pc,
                         reg: ctx.reg,
                     },
                     &format!(
-                        "[Verifier] pc {}: R{} map value size mismatch: expected {}, got {}",
+                        "[Verifier] pc {}: R{} map value too small: need {}, source has {} from offset {}",
                         ctx.pc,
                         ctx.arg_index + 1,
                         target_info.value_size,
-                        map_def.value_size
+                        remaining,
+                        off
                     ),
                 );
                 return false;

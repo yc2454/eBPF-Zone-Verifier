@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-02T01:36:16.748632+00:00",
+  "generated_at": "2026-05-02T02:37:30.170752+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -2417,8 +2417,7 @@
         },
         "dynptr_invalidate_slice_success": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 10: register: r3"
+          "ours": "PASS"
         },
         "dynptr_is_null_invalid": {
           "upstream": "ACCEPT",
@@ -2434,8 +2433,7 @@
         },
         "dynptr_overwrite_unref": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 10: register: r3"
+          "ours": "PASS"
         },
         "dynptr_partial_slot_invalidate": {
           "upstream": "ACCEPT",

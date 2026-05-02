@@ -168,7 +168,7 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
                 env.fail(VerificationError::UnsafeSocketAccess { pc, off, size });
             }
         }
-        PtrToAllocMem { id: _, mem_size, ref_id: _ } => {
+        PtrToAllocMem { mem_size, .. } => {
             // Bounded allocated memory (W4.2g: surfaced when
             // bpf_dynptr_slice's PtrToAllocMemOrNull return is
             // refined to PtrToAllocMem after a null check). Mirrors
@@ -329,7 +329,7 @@ pub fn check_store(
                 base_type: base_ty,
             });
         }
-        PtrToAllocMem { id: _, mem_size, ref_id: _ } => {
+        PtrToAllocMem { mem_size, .. } => {
             let access_end = off as i64 + size;
             if access_end > mem_size as i64 {
                 error!(

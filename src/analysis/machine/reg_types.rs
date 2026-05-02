@@ -128,11 +128,20 @@ pub enum RegType {
         /// register to `ScalarValue`, catching use-after-release on slice
         /// pointers obtained from a released dynptr.
         ref_id: Option<u32>,
+        /// Source dynptr identity for slice pointers (mirrors kernel
+        /// `bpf_reg_state::dynptr_id`). Set on the `PtrToAllocMem*`
+        /// returned by `bpf_dynptr_data` for *any* dynptr kind
+        /// (including unrefcounted `Local`); `None` for non-slice
+        /// allocations. On dynptr overwrite, `validate_dynptr_arg`
+        /// sweeps regs + slots demoting matches to `ScalarValue` —
+        /// catches use-after-reinit even when `ref_id` is None.
+        dynptr_id: Option<u32>,
     },
     PtrToAllocMem {
         id: u32,
         mem_size: u64,
         ref_id: Option<u32>,
+        dynptr_id: Option<u32>,
     },
     /// Refcounted pointer to a `struct bpf_cpumask` (W5.3). Mirrors
     /// `PtrToSocket` ref-tracking: `bpf_cpumask_create` mints a fresh
@@ -467,6 +476,23 @@ pub fn new_iter_id() -> u32 {
     use std::sync::atomic::{AtomicU32, Ordering};
     static ITER_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
     ITER_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
+}
+
+/// Fresh identity token for a dynptr instance. Minted at construction
+/// (`bpf_dynptr_from_mem`, `bpf_ringbuf_reserve_dynptr`,
+/// `bpf_dynptr_from_skb`, `bpf_dynptr_from_xdp`) and stamped on both
+/// pair slots. Slices returned by `bpf_dynptr_data` carry this id on
+/// the result `PtrToAllocMem*`. On dynptr overwrite/release, all regs
+/// + spilled slots whose `PtrToAllocMem*` carries the matching id are
+/// demoted to `ScalarValue` — mirrors kernel `verifier.c` v6.15
+/// `bpf_for_each_reg_in_vstate { if (dreg->dynptr_id == id) ... }`
+/// at L913-919 inside `destroy_if_dynptr_stack_slot`. Distinct from
+/// `ref_id` (acquire-tracked release id) so unrefcounted dynptrs
+/// (`Local`/`Skb`/`Xdp`, `ref_id == 0`) still get slice tracking.
+pub fn new_dynptr_id() -> u32 {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static DYNPTR_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
+    DYNPTR_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
 /// Classify types into families. Pointer and pointer-or-null variants

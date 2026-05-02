@@ -172,20 +172,24 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
         return vec![];
     }
 
-    // bpf_per_cpu_ptr / bpf_this_cpu_ptr: R1 must be a PERCPU pointer.
-    // A `PtrToMapKptr*` loaded from a non-percpu kptr slot (Unref/Ref/Rcu)
-    // does not carry the PERCPU flag, and the kernel rejects with
-    // "expected=percpu_ptr_". Standard arg-kind validators don't know
-    // about the new flag, so check here.
+    // bpf_per_cpu_ptr / bpf_this_cpu_ptr: R1 must be a PERCPU-flagged
+    // pointer. Kernel `check_helper_call` reports "type=<actual>
+    // expected=percpu_ptr_" for anything else (verifier.c v6.15
+    // ARG_PTR_TO_PERCPU_BTF_ID dispatch). Accept `PtrToMapKptr*` and
+    // `PtrToBtfId*` carrying the PERCPU flag; reject Scalar and other
+    // non-percpu pointer types.
     if helper == constants::BPF_THIS_CPU_PTR || helper == constants::BPF_PER_CPU_PTR {
         let r1 = state.types.get(Reg::R1);
-        if matches!(
+        let percpu_ok = matches!(
             r1,
-            RegType::PtrToMapKptr { .. } | RegType::PtrToMapKptrOrNull { .. }
-        ) && !r1
+            RegType::PtrToMapKptr { .. }
+                | RegType::PtrToMapKptrOrNull { .. }
+                | RegType::PtrToBtfId { .. }
+                | RegType::PtrToBtfIdOrNull { .. }
+        ) && r1
             .ptr_flags()
-            .contains(crate::analysis::machine::reg_types::PtrFlags::PERCPU)
-        {
+            .contains(crate::analysis::machine::reg_types::PtrFlags::PERCPU);
+        if !percpu_ok {
             env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
             return vec![];
         }
@@ -676,6 +680,40 @@ fn transfer_callback_helper(
 
     // Successor A: skip the callback and emit the helper's post-state.
     let mut skip_state = state.clone();
+    // Kernel-pessimism for sync callbacks: the callback could have
+    // re-initialized any dynptr reachable through its ctx arg, which
+    // invalidates slices tagged with the old `dynptr_id`. Mirrors the
+    // `bpf_for_each_reg_in_vstate` sweep done by
+    // `destroy_if_dynptr_stack_slot` (verifier.c v6.15 L913-919) once
+    // the kernel determines the ctx may alias a dynptr stack slot.
+    // Without this, `invalid_data_slices` (dynptr_fail.c) would accept
+    // a `*slice = 1` after `bpf_loop(.., &ptr, 0)`.
+    let cb_ctx_reg = match helper {
+        constants::BPF_LOOP
+        | constants::BPF_FOR_EACH_MAP_ELEM
+        | constants::BPF_USER_RINGBUF_DRAIN => Some(Reg::R3),
+        constants::BPF_FIND_VMA => Some(Reg::R4),
+        _ => None,
+    };
+    if let Some(ctx_reg) = cb_ctx_reg
+        && let RegType::PtrToStack { frame_level } = skip_state.types.get(ctx_reg)
+        && let Some(off) = skip_state.domain.get_distance_fixed(ctx_reg, Reg::R10)
+        && let Ok(base_off) = i16::try_from(off)
+    {
+        let touched = skip_state
+            .stack_at(frame_level)
+            .dynptr_pairs_touched_by_write(base_off as i64, 16);
+        if !touched.is_empty() {
+            let stack = skip_state.stack_at_mut(frame_level);
+            for (b, _) in &touched {
+                stack.stack_clear_dynptr(*b);
+                stack.stack_clear_dynptr(*b + 8);
+            }
+            for (_, vid) in &touched {
+                skip_state.invalidate_dynptr_slices(*vid);
+            }
+        }
+    }
     update_call_types(env, in_types, &mut skip_state, helper);
     apply_return_bounds(&mut skip_state, helper);
     if skip_state.types.get(Reg::R0) == RegType::ScalarValue
@@ -1025,6 +1063,7 @@ pub(crate) fn transfer_call_rel(
                             id,
                             mem_size: *mem_size as u64,
                             ref_id: None,
+                            dynptr_id: None,
                         },
                     );
                     state.domain.forget(*reg);

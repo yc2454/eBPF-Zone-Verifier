@@ -83,6 +83,13 @@ pub struct DynptrSlot {
     pub ref_id: u32,
     pub rdonly: bool,
     pub first_slot: bool,
+    /// Per-instance identity for slice tracking (mirrors kernel
+    /// `state->stack[spi].spilled_ptr.id`, verifier.c v6.15 L911).
+    /// Distinct from `ref_id`: minted for *every* dynptr (even
+    /// unrefcounted `Local`/`Skb`/`Xdp`) so slices can be invalidated
+    /// on overwrite via the kernel's `bpf_for_each_reg_in_vstate`
+    /// loop (L913-919). Both pair slots carry the same value.
+    pub dynptr_id: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -347,6 +354,35 @@ impl StackState {
             let slot_end = slot_start + 8;
             off < slot_end && write_end > slot_start
         })
+    }
+
+    /// Collect base offsets of every dynptr-pair (any kind) whose 16
+    /// bytes are touched by a stack write of `size` at `off`. Used to
+    /// destroy unrefcounted dynptrs (`Local`/`Skb`/`Xdp`) on direct
+    /// stack writes — kernel `destroy_if_dynptr_stack_slot`
+    /// (verifier.c v6.15 L880) clears both slots and invalidates slices
+    /// rather than rejecting the write. Returns base-slot offsets; the
+    /// caller is expected to clear `(base_off, base_off+8)` and run
+    /// `invalidate_dynptr_slices` on the slot's `dynptr_id`.
+    pub fn dynptr_pairs_touched_by_write(&self, off: i64, size: i64) -> Vec<(i16, u32)> {
+        let write_end = off + size;
+        let mut out: Vec<(i16, u32)> = Vec::new();
+        for (slot_off, spilled) in &self.slots {
+            let Some(d) = spilled.dynptr else { continue };
+            let slot_start = *slot_off as i64;
+            let slot_end = slot_start + 8;
+            if off < slot_end && write_end > slot_start {
+                let base_off = if d.first_slot {
+                    *slot_off
+                } else {
+                    *slot_off - 8
+                };
+                if !out.iter().any(|(b, _)| *b == base_off) {
+                    out.push((base_off, d.dynptr_id));
+                }
+            }
+        }
+        out
     }
 
     /// True if a direct read at `off..off+size` overlaps any byte of a
