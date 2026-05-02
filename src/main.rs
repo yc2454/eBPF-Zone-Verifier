@@ -234,7 +234,7 @@ fn run_verify(args: VerifyArgs, config: VerifierConfig) {
             }
         }
         InputKind::C => {
-            run_modern_selftest_file(&args.path, args.defines.as_deref(), &config);
+            run_modern_selftest_file(&args.path, args.defines.as_deref(), None, &config);
         }
         InputKind::Json => match args.test {
             Some(name) => selftest_single(&args.path, &name, &config),
@@ -362,8 +362,8 @@ fn run_pcc(sub: PccCmd, config: VerifierConfig) {
 
 fn run_dev(sub: DevCmd, config: VerifierConfig) {
     match sub {
-        DevCmd::SelftestFile { src, defines } => {
-            run_modern_selftest_file(&src, defines.as_deref(), &config);
+        DevCmd::SelftestFile { src, defines, upstream } => {
+            run_modern_selftest_file(&src, defines.as_deref(), upstream.as_deref(), &config);
         }
         DevCmd::SelftestSuite { progs_dir } => {
             run_modern_selftest_dir(&progs_dir, &config);
@@ -448,15 +448,43 @@ fn parse_extra_defines(arg: Option<&str>) -> Vec<String> {
     .unwrap_or_default()
 }
 
-fn run_modern_selftest_file(src: &str, defines_arg: Option<&str>, config: &VerifierConfig) {
-    use crate::testing::selftest::clang::DEFAULT_HEADERS_TAG;
+fn run_modern_selftest_file(
+    src: &str,
+    defines_arg: Option<&str>,
+    upstream_root: Option<&str>,
+    config: &VerifierConfig,
+) {
+    use crate::testing::selftest::clang::{self, DEFAULT_HEADERS_TAG};
     use crate::testing::selftest::runner;
 
     let headers = std::path::PathBuf::from("selftests/headers").join(DEFAULT_HEADERS_TAG);
-    let defines = parse_extra_defines(defines_arg);
-    let define_refs: Vec<&str> = defines.iter().map(|s| s.as_str()).collect();
-
-    match runner::run_file(std::path::Path::new(src), &headers, &define_refs, config) {
+    let mut defines = parse_extra_defines(defines_arg);
+    let res = match upstream_root {
+        Some(root) => {
+            let root = std::path::Path::new(root);
+            let inc = clang::upstream_include_dirs(&headers, root);
+            let iq = clang::upstream_iquote_dirs(&headers, root);
+            for d in clang::UPSTREAM_GLOBAL_DEFINES {
+                if !defines.iter().any(|s| s == d) {
+                    defines.push((*d).to_string());
+                }
+            }
+            let define_refs: Vec<&str> = defines.iter().map(|s| s.as_str()).collect();
+            runner::run_file_with_dirs(
+                std::path::Path::new(src),
+                &inc,
+                &iq,
+                &define_refs,
+                config,
+                &runner::RunAll,
+            )
+        }
+        None => {
+            let define_refs: Vec<&str> = defines.iter().map(|s| s.as_str()).collect();
+            runner::run_file(std::path::Path::new(src), &headers, &define_refs, config)
+        }
+    };
+    match res {
         Ok(report) => print_modern_report(&report),
         Err(e) => eprintln!("Error: {e:?}"),
     }

@@ -201,6 +201,10 @@ pub enum DevCmd {
     SelftestFile {
         src: String,
         defines: Option<String>,
+        /// Use the upstream-tree include set rooted at this kernel checkout
+        /// (mirrors `selftest-baseline-write-upstream` for one file).
+        #[arg(long)]
+        upstream: Option<String>,
     },
     /// Compile + verify every `.c` selftest in `progs_dir`
     SelftestSuite { progs_dir: String },

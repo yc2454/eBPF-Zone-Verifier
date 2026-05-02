@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-02T03:06:13.068813+00:00",
+  "generated_at": "2026-05-02T03:44:40.741036+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -675,10 +675,15 @@
     "bpf_iter_tasks.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/bpf_iter_tasks.c",
       "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling vendor/linux/tools/testing/selftests/bpf/progs/bpf_iter_tasks.c"
+        "dump_task": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "dump_task_sleepable": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -2298,20 +2303,29 @@
     "dummy_st_ops_fail.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/dummy_st_ops_fail.c",
       "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling vendor/linux/tools/testing/selftests/bpf/progs/dummy_st_ops_fail.c"
+        "test_unsupported_field_sleepable": {
+          "upstream": "REJECT",
+          "ours": "FALSE_ACCEPT"
         }
       }
     },
     "dummy_st_ops_success.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/dummy_st_ops_success.c",
       "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling vendor/linux/tools/testing/selftests/bpf/progs/dummy_st_ops_success.c"
+        "test_1": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "test_2": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "test_sleepable": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -3788,10 +3802,143 @@
     "irq.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/irq.c",
       "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling vendor/linux/tools/testing/selftests/bpf/progs/irq.c"
+        "irq_balance": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 8: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+        },
+        "irq_balance_n": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 22: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+        },
+        "irq_balance_subprog": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 12: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+        },
+        "irq_flag_overwrite": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_flag_overwrite_partial": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_global_subprog": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 3: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+        },
+        "irq_non_sleepable_global_subprog": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 3: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+        },
+        "irq_ooo_lock_cond_inv": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_ooo_refs_array": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_restore_3_subprog": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 26: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+        },
+        "irq_restore_4_subprog": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_restore_bad_arg": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_restore_invalid": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_restore_iter": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_restore_missing_1_subprog": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_restore_missing_2": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_restore_missing_2_subprog": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_restore_missing_3": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_restore_missing_3_minus_2": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_restore_missing_3_minus_2_subprog": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_restore_missing_3_subprog": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_restore_ooo": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_restore_ooo_3": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_restore_ooo_3_subprog": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_save_bad_arg": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_save_invalid": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_save_iter": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_sleepable_global_subprog_indirect": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_sleepable_helper": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_sleepable_helper_global_subprog": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_sleepable_kfunc": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_wrong_kfunc_class_1": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "irq_wrong_kfunc_class_2": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -5712,20 +5859,30 @@
     "mptcp_sock.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/mptcp_sock.c",
       "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling vendor/linux/tools/testing/selftests/bpf/progs/mptcp_sock.c"
+        "_sockops": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "trace_mptcp_pm_new_connection": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
     "mptcp_subflow.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/mptcp_subflow.c",
       "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling vendor/linux/tools/testing/selftests/bpf/progs/mptcp_subflow.c"
+        "_getsockopt_subflow": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "mptcp_subflow": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -5790,10 +5947,20 @@
     "net_timestamping.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/net_timestamping.c",
       "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling vendor/linux/tools/testing/selftests/bpf/progs/net_timestamping.c"
+        "bpf_test_sockopt": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "skops_sockopt": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "trace_tcp_sendmsg_locked": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -6168,33 +6335,15 @@
     },
     "profiler1.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/profiler1.c",
-      "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling vendor/linux/tools/testing/selftests/bpf/progs/profiler1.c"
-        }
-      }
+      "progs": {}
     },
     "profiler2.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/profiler2.c",
-      "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling vendor/linux/tools/testing/selftests/bpf/progs/profiler2.c"
-        }
-      }
+      "progs": {}
     },
     "profiler3.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/profiler3.c",
-      "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling vendor/linux/tools/testing/selftests/bpf/progs/profiler3.c"
-        }
-      }
+      "progs": {}
     },
     "pyperf100.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/pyperf100.c",
@@ -6643,20 +6792,88 @@
     "res_spin_lock.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/res_spin_lock.c",
       "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling vendor/linux/tools/testing/selftests/bpf/progs/res_spin_lock.c"
+        "res_spin_lock_test": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "res_spin_lock_test_AB": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "res_spin_lock_test_BA": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "res_spin_lock_test_held_lock_max": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
     "res_spin_lock_fail.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/res_spin_lock_fail.c",
       "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling vendor/linux/tools/testing/selftests/bpf/progs/res_spin_lock_fail.c"
+        "res_spin_lock_AA": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "res_spin_lock_arg": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "res_spin_lock_bad_off": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "res_spin_lock_cond_AA": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "res_spin_lock_irq_mismatch_1": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "res_spin_lock_irq_mismatch_2": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "res_spin_lock_mismatch_1": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "res_spin_lock_mismatch_2": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "res_spin_lock_no_lock_kptr": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "res_spin_lock_no_lock_map": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "res_spin_lock_ooo": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 11: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+        },
+        "res_spin_lock_ooo_irq": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 13: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+        },
+        "res_spin_lock_ooo_unlock": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "res_spin_lock_var_off": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -6748,10 +6965,20 @@
     "setget_sockopt.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/setget_sockopt.c",
       "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling vendor/linux/tools/testing/selftests/bpf/progs/setget_sockopt.c"
+        "_getsockopt": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "skops_sockopt": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "socket_post_create": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -6982,10 +7209,10 @@
     "sockopt_qos_to_cc.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/sockopt_qos_to_cc.c",
       "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling vendor/linux/tools/testing/selftests/bpf/progs/sockopt_qos_to_cc.c"
+        "sockopt_qos_to_cc": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -8396,10 +8623,15 @@
     "test_bpf_nf.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_bpf_nf.c",
       "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling vendor/linux/tools/testing/selftests/bpf/progs/test_bpf_nf.c"
+        "nf_skb_ct_test": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "nf_xdp_ct_test": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -8982,10 +9214,10 @@
     "test_deny_namespace.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_deny_namespace.c",
       "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling vendor/linux/tools/testing/selftests/bpf/progs/test_deny_namespace.c"
+        "test_userns_create": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -9572,10 +9804,30 @@
     "test_ldsx_insn.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_ldsx_insn.c",
       "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling vendor/linux/tools/testing/selftests/bpf/progs/test_ldsx_insn.c"
+        "BPF_PROG2": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "_getsockopt": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "_tc": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "map_val_prog": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+        },
+        "rdonly_map_prog": {
+          "upstream": "UNANNOTATED",
+          "ours": "SKIPPED",
+          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
         }
       }
     },
@@ -14588,10 +14840,95 @@
     "verifier_global_subprogs.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/verifier_global_subprogs.c",
       "progs": {
-        "<compile>": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "compiling vendor/linux/tools/testing/selftests/bpf/progs/verifier_global_subprogs.c"
+        "anon_user_mem_invalid": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "anon_user_mem_valid": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "arg_tag_ctx_fentry": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "arg_tag_ctx_fexit": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "arg_tag_ctx_fmod_ret": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "arg_tag_ctx_iter_task": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "arg_tag_ctx_kprobe": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "arg_tag_ctx_lsm": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "arg_tag_ctx_perf": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "arg_tag_ctx_raw_tp": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "arg_tag_ctx_raw_tp_btf": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "arg_tag_ctx_raw_tp_writable": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "arg_tag_ctx_struct_ops": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "arg_tag_ctx_syscall": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "arg_tag_ctx_tp": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "arg_tag_dynptr": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Kfunc btf_id 43009407 not allowed for program Unknown at pc 4"
+        },
+        "arg_tag_nonnull_ptr_good": {
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic load at pc 8: base R1+0 (type: PtrToAllocMemOrNull { id: 228505, mem_size: 4, ref_id: None, dynptr_id: None })"
+        },
+        "arg_tag_nullable_ptr_fail": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "chained_global_func_calls_bad": {
+          "upstream": "REJECT",
+          "ours": "FALSE_ACCEPT"
+        },
+        "chained_global_func_calls_success": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "guarded_unsupp_global_called": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
+        },
+        "unguarded_unsupp_global_called": {
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },

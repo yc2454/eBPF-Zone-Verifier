@@ -157,4 +157,74 @@ struct sched_ext_ops {
 
 /* ===== end sched_ext additions ===== */
 
+/* ===== v6.15 selftest-coverage additions =====
+ *
+ * Closes ERROR rows in the modernization baseline that come from
+ * upstream selftests referencing kfuncs/structs/enums absent from the
+ * v6.14 BTF base. Order doesn't matter — these are all leaf decls.
+ */
+
+/* irq.c, res_spin_lock.c, res_spin_lock_fail.c — reservation spinlock
+ * (post-v6.14 kfunc family). The struct is a one-word lock; only the
+ * size matters for verifier-side BTF lookup. */
+struct bpf_res_spin_lock {
+	__u32 val;
+};
+extern int bpf_res_spin_lock(struct bpf_res_spin_lock *lock) __weak __ksym;
+extern void bpf_res_spin_unlock(struct bpf_res_spin_lock *lock) __weak __ksym;
+extern int bpf_res_spin_lock_irqsave(struct bpf_res_spin_lock *lock,
+				     unsigned long *flags__irq_flag) __weak __ksym;
+extern void bpf_res_spin_unlock_irqrestore(struct bpf_res_spin_lock *lock,
+					   unsigned long *flags__irq_flag) __weak __ksym;
+
+/* res_spin_lock.c — referenced only inside a _Static_assert that pins
+ * the kernel-side `RES_NR_HELD` to 31. Field shape is opaque to the
+ * verifier; just need a 31-slot `locks[]`. */
+struct rqspinlock_held {
+	int cnt;
+	struct bpf_res_spin_lock *locks[31];
+};
+
+/* bpf_iter_tasks.c — bpf_copy_from_user_task_str kfunc (the
+ * non-_str variant is BPF helper #191, already in bpf_helper_defs.h). */
+extern int bpf_copy_from_user_task_str(void *dst, u32 dst__sz,
+				       const void *unsafe_ptr__ign,
+				       struct task_struct *tsk, u64 flags) __weak __ksym;
+
+/* dummy_st_ops_{success,fail}.c, verifier_global_subprogs.c —
+ * struct_ops bpf_dummy_ops vtable used by upstream st_ops self-tests.
+ * Field signatures must match include/linux/bpf.h exactly. */
+struct bpf_dummy_ops_state {
+	int val;
+};
+struct bpf_dummy_ops {
+	int (*test_1)(struct bpf_dummy_ops_state *state);
+	int (*test_2)(struct bpf_dummy_ops_state *state, int a1, unsigned short a2,
+		      char a3, unsigned long a4);
+	int (*test_sleepable)(struct bpf_dummy_ops_state *state);
+};
+
+/* net_timestamping.c — TX timestamping callbacks and the
+ * SK_BPF_CB_FLAGS sockopt. Defined as macros (not anonymous-enum
+ * extension) so they slot in cleanly without touching the base file. */
+#define SK_BPF_CB_TX_TIMESTAMPING	(1 << 0)
+#define SK_BPF_CB_FLAGS			1009
+#define BPF_SOCK_OPS_TSTAMP_SCHED_CB	16
+#define BPF_SOCK_OPS_TSTAMP_SND_SW_CB	17
+#define BPF_SOCK_OPS_TSTAMP_SND_HW_CB	18
+#define BPF_SOCK_OPS_TSTAMP_ACK_CB	19
+#define BPF_SOCK_OPS_TSTAMP_SENDMSG_CB	20
+
+/* setget_sockopt.c, sockopt_qos_to_cc.c, test_ldsx_insn.c —
+ * cgroup/sockopt program context. Mirrors uapi/linux/bpf.h. */
+struct bpf_sockopt {
+	struct bpf_sock *sk;
+	void *optval;
+	void *optval_end;
+	__s32 level;
+	__s32 optname;
+	__s32 optlen;
+	__s32 retval;
+};
+
 #endif /* __ZOVIA_VMLINUX_H */
