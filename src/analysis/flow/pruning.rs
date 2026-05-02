@@ -766,7 +766,18 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
             PtrToAllocMemOrNull { mem_size: ms2, ref_id: ri2, .. },
         ) => ms1 == ms2 && ri1 == ri2,
 
-        // Different types - no subsumption
+        // Default: structural equality. Covers variants without a
+        // looser explicit rule (PtrToBtfId, PtrToCpumask, PtrToArena,
+        // PtrToCgroup, PtrToTask, PtrToOwnedKptr, PtrToMapKptr,
+        // PtrToCallback, PtrToSockCommon, PtrToTcpSock, PtrToPacketMeta,
+        // and the *OrNull versions of the above). Without this fallback,
+        // identical pointer types compare unequal at prune-points and
+        // every state is treated as novel — that's the entire reason
+        // `bpf_cubic_cong_avoid` (and any struct_ops program with a
+        // long-lived `PtrToBtfId` arg in r6-r9) hits the complexity
+        // limit. PartialEq is derived on RegType, so structural ==
+        // is the right canonical check for these.
+        (a, b) if a == b => true,
         _ => false,
     }
 }

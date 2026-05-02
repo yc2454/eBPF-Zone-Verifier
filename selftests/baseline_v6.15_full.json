@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-02T02:37:30.170752+00:00",
+  "generated_at": "2026-05-02T03:06:13.068813+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -368,8 +368,7 @@
         },
         "bpf_cubic_cong_avoid": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid pointer arithmetic at pc 185"
+          "ours": "PASS"
         },
         "bpf_cubic_cwnd_event": {
           "upstream": "ACCEPT",

@@ -581,6 +581,43 @@ fn apply_w32_unsigned_fallback(
 
     then_s.domain.set_u32_bounds(target, t_min, t_max);
     else_s.domain.set_u32_bounds(target, e_min, e_max);
+
+    // Lift the refined low-32 numeric bound into the tnum mask so the
+    // subsequent `<<32 >>32` zero-extension idiom that LLVM emits after
+    // a W32 unsigned compare preserves the [t_min, t_max] range.
+    // Kernel `__reg32_bound_offset` does this via
+    // `tnum_with_subreg(reg->var_off, tnum_intersect(lo32, tnum_range(...)))`
+    // (verifier.c v6.15). Without this layer, even though our u32 bounds
+    // record [0, 63], the tnum's low-32 mask stays `0xffffffff`, and
+    // `r5 <<= 32; r5 >>= 32` produces a tnum with mask `0xffffffff`
+    // again — losing the bound at the next pointer-arithmetic check
+    // (e.g. `bpf_cubic.c::bpf_cubic_cong_avoid` pc 185).
+    refine_subreg_tnum(then_s, target, t_min, t_max);
+    refine_subreg_tnum(else_s, target, e_min, e_max);
+}
+
+/// Intersect the low-32 bits of `target`'s tnum with `Tnum::from_range`,
+/// preserving the upper 32 bits unchanged. No-op on empty/inconsistent
+/// ranges (caller flags those via numeric bounds).
+fn refine_subreg_tnum(state: &mut State, target: Reg, lo: u32, hi: u32) {
+    if lo > hi {
+        return;
+    }
+    let cur = state.get_tnum(target);
+    let lo32_cur = Tnum {
+        value: cur.value & 0xffff_ffff,
+        mask: cur.mask & 0xffff_ffff,
+    };
+    let lo32_range = Tnum::from_range(lo as u64, hi as u64);
+    let Some(lo32_new) = lo32_cur.intersect(lo32_range) else {
+        return;
+    };
+    // Recombine: keep upper 32 bits of `cur`, replace low 32 with refined.
+    let refined = Tnum {
+        value: (cur.value & 0xffff_ffff_0000_0000) | (lo32_new.value & 0xffff_ffff),
+        mask: (cur.mask & 0xffff_ffff_0000_0000) | (lo32_new.mask & 0xffff_ffff),
+    };
+    state.set_tnum(target, refined);
 }
 
 fn apply_w32_signed_fallback(
