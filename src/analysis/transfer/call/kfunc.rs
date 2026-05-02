@@ -453,14 +453,65 @@ fn iter_next_fork(
     // spilled-stack scalar that differs from the parent state's value
     // becomes UNKNOWN. Without this, simple counter-bearing loops like
     // `i++; while(iter_next(...)) {}` produce a fresh distinct state
-    // every iteration and the verifier never converges. Walking
-    // explored_states[pc] for the most-recent prior is our analogue of
-    // the kernel's `find_prev_entry(cur_st->parent, insn_idx)` —
-    // we don't track parent-state lineage, so the latest cached visit
-    // at this call site is the best available proxy.
-    if let Some(prev_states) = env.explored_states.get(&pc)
-        && let Some(prev) = prev_states.iter().rev().find(|s| s.pc == pc)
-    {
+    // every iteration and the verifier never converges.
+    //
+    // Skip the just-recorded current state in `explored_states[pc]`:
+    // the worklist driver (analysis/mod.rs:362-369) calls `record_state`
+    // BEFORE `transfer`, so `prev_states.last()` IS the current state.
+    // Comparing cur against itself was a no-op for the entire lifetime
+    // of this widener (same bug we hit at the may_goto site). Also skip
+    // any prev whose iter slot has a DIFFERENT id from cur's: that's a
+    // separate iter_new()/iter_destroy() cycle reusing the same stack
+    // slot, and widening across loops would clobber legitimately
+    // distinct values (`iter_multiple_sequential_loops`,
+    // `iter_search_loop`'s post-drain state). Mirrors the kernel's
+    // dfs_depth + same_callsites filter in `find_prev_entry`
+    // (verifier.c v6.15 ~L8723).
+    // Look up `cur`'s iter slot id and depth (BEFORE this iter_next
+    // call — the depth bump in `nonnull` already happened above for
+    // the queued state, but `state` cached pre-call holds the pre-bump
+    // depth). Only widen against a prev whose:
+    //   - iter slot has the same id (same iter loop, not a re-init), AND
+    //   - iter slot's depth is exactly cur's pre-bump depth - 1, i.e.
+    //     the immediately-prior iter step on this DFS path.
+    // Stricter than the kernel's `dfs_depth < cur->dfs_depth`, but
+    // we don't track DFS depth; consecutive-iter-depth is the closest
+    // proxy and avoids polluting the widener with a state from many
+    // iterations back (which can carry stale type info for callee-saved
+    // registers that the body reassigns later, e.g. iter_search_loop's
+    // `elem = v` capture).
+    let (cur_iter_id, cur_iter_depth): (Option<u32>, Option<u32>) = nonnull
+        .stack_at(frame)
+        .stack_get_iterator(base_off)
+        .map(|s| (Some(s.id), Some(s.depth)))
+        .unwrap_or((None, None));
+    let prev_snapshot: Option<State> = env
+        .explored_states
+        .get(&pc)
+        .and_then(|prev_states| {
+            let mut iter = prev_states
+                .iter()
+                .rev()
+                .filter(|s| s.pc == pc)
+                .filter(|s| {
+                    s.stack_at(frame)
+                        .stack_get_iterator(base_off)
+                        .map(|slot| {
+                            // `cur_iter_depth` is `nonnull`'s post-bump
+                            // depth (state.depth + 1). Cached prev states
+                            // hold the PRE-call depth (= state.depth at
+                            // their iter). Consecutive iter step means
+                            // prev.slot.depth + 2 == cur_iter_depth (i.e.
+                            // prev was state.depth - 1 the iter before).
+                            Some(slot.id) == cur_iter_id
+                                && cur_iter_depth.is_some_and(|d| slot.depth + 2 == d)
+                        })
+                        .unwrap_or(false)
+                });
+            iter.next()
+        })
+        .cloned();
+    if let Some(prev) = prev_snapshot.as_ref() {
         widen_imprecise_scalars_at_iter_next(prev, &mut nonnull);
     }
 
