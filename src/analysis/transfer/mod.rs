@@ -479,7 +479,7 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
                 return vec![];
             }
         }
-        return cb_exit_propagate(state);
+        return cb_exit_propagate(env, state);
     }
 
     if let Some(frame) = state.pop_frame() {
@@ -567,7 +567,7 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
 /// (PtrToStack carries frame_level); we pop the cb frame, restore
 /// caller regs, and—if the cb may iterate ≥ 2 times—invalidate the
 /// stack slots that differ from the snapshot taken at cb-entry.
-fn cb_exit_propagate(mut state: State) -> Vec<State> {
+fn cb_exit_propagate(env: &VerifierEnv, mut state: State) -> Vec<State> {
     use crate::analysis::machine::frame_stack::FrameLevel;
     use crate::analysis::machine::reg_types::RegType;
     use crate::analysis::transfer::call::transfer::apply_return_bounds_for_cb_helper;
@@ -628,5 +628,41 @@ fn cb_exit_propagate(mut state: State) -> Vec<State> {
     }
 
     state.pc = return_pc;
+
+    // Bucket F-D / cb-return widener (kernel verifier.c v6.15 ~L10903-10920):
+    //   prev_st = in_callback_fn ? find_prev_entry(env, state, *insn_idx) : NULL;
+    //   if (prev_st)
+    //       widen_imprecise_scalars(env, prev_st, state);
+    //
+    // The snapshot-based widening above (W3.4b cb-effect) widens stack
+    // slots the cb wrote during THIS iteration. The kernel additionally
+    // runs `widen_imprecise_scalars` between this post-cb state and a
+    // PRIOR post-cb visit at the same continuation pc — coarsening
+    // values that differ across iterations of a multi-iteration helper
+    // (bpf_loop, bpf_for_each_map_elem). This is the same machinery
+    // already wired at iter_next and may_goto.
+    //
+    // Gated on `should_widen` (set when nr_loops > 1 at the helper call
+    // site). For nr_loops ≤ 1 (or single-shot helpers like find_vma) the
+    // cb runs once; widening between successive call sites would
+    // destroy precision the test relies on (e.g.
+    // `bpf_loop_iter_limit_nested` enumerates exact post-cb values).
+    //
+    // Skip-cur logic mirrors the may_goto site: record_state precedes
+    // transfer in the worklist driver, so the most recent cached state
+    // at `return_pc` is the just-recorded current state — skip it and
+    // take the previous one.
+    if should_widen
+        && let Some(prev_states) = env.explored_states.get(&return_pc)
+    {
+        let mut iter = prev_states.iter().rev().filter(|s| s.pc == return_pc);
+        iter.next();
+        if let Some(prev) = iter.next() {
+            crate::analysis::transfer::call::kfunc::widen_imprecise_scalars_at_iter_next(
+                prev, &mut state,
+            );
+        }
+    }
+
     vec![state]
 }
