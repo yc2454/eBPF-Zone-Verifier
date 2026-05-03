@@ -65,7 +65,7 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             .get(&base)
             .copied()
             .unwrap_or(base);
-        env.mark_chain_precision_backward(hidx, sink);
+        env.mark_chain_precision_backward(hidx, state.parent_cache_id, sink);
     }
     let _ = base_has_variable_offset;
 
@@ -310,7 +310,7 @@ pub fn check_store(
     if let Some(hidx) = state.history_idx
         && let Some(&offset_reg) = state.var_off_contributor.get(&base)
     {
-        env.mark_chain_precision_backward(hidx, offset_reg);
+        env.mark_chain_precision_backward(hidx, state.parent_cache_id, offset_reg);
     }
     let _ = base_has_variable_offset;
 

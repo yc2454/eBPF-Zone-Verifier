@@ -44,6 +44,23 @@ pub struct State {
     /// History Index (for history tracking, optional)
     pub history_idx: Option<usize>,
 
+    /// Per-state parent-cached-state link, mirroring kernel
+    /// `bpf_verifier_state.parent` (verifier.c v6.15). Set to the
+    /// `cache_id` of the most recent cached predecessor on this
+    /// state's path. `None` at program entry. Followed by
+    /// `mark_chain_precision_backward` to mark precise on the
+    /// specific cached states along this path's lineage rather than
+    /// all cached states at each PC (which over-marks across
+    /// unrelated paths).
+    pub parent_cache_id: Option<u32>,
+
+    /// If this state has been cached (i.e. it lives inside
+    /// `env.explored_states[pc]`), the unique id assigned to it at
+    /// cache time. Used as the link target for descendants'
+    /// `parent_cache_id`. `None` for ephemeral (in-flight) states
+    /// before they're cached.
+    pub cache_id: Option<u32>,
+
     pub tnums: HashMap<Reg, Tnum>, // tnum info for R0-R10
 
     /// Identity tokens for scalar values. Two registers (or a register and
@@ -163,6 +180,8 @@ impl State {
             domain,
             pc,
             history_idx: None,
+            parent_cache_id: None,
+            cache_id: None,
             tnums: tnums.clone(),
             scalar_ids: HashMap::new(),
             precise_regs: HashSet::new(),

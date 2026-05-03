@@ -81,30 +81,38 @@ pub(crate) fn transfer_if(
     // marking precise there blocks widening at the may_goto inside the
     // body (cond_break1's pattern). A backward `if r != K goto head`
     // (test1) does need it.
-    // Default rule: backward-walk precision sink at back-edge compare-
-    // to-imm. Used only when kernel-precision regime is OFF.
-    if !crate::analysis::machine::env::kernel_precision_enabled()
-        && matches!(right, Operand::Imm(_))
-        && target < state.pc
-        && let Some(hidx) = state.history_idx
-    {
-        env.mark_chain_precision_backward(hidx, left);
-    }
-    // Kernel-precision regime: local-only mark at branch pc (kernel
-    // `check_cond_jmp_op` marks operands precise on every conditional
-    // branch). Local mark only — backward-walk pollutes cached states
-    // across PCs in our flat explored_states.
-    if crate::analysis::machine::env::kernel_precision_enabled()
-        && let Some(states) = env.explored_states.get_mut(&state.pc)
-    {
-        for s in states.iter_mut() {
-            s.precise_regs.insert(left);
-            if let Operand::Reg(r) = right {
-                s.precise_regs.insert(r);
+    // Precision sink at conditional branches. Two regimes:
+    //  - Default (flag-off): back-edge compare-to-imm (heuristic).
+    //  - Kernel-precision (flag-on): only when the comparison
+    //    *statically resolves* — kernel `check_cond_jmp_op` calls
+    //    mark_chain_precision only after `is_branch_taken` decides
+    //    the branch (one side is dead). Marking precise on every
+    //    conditional otherwise causes precision-mark blow-up that
+    //    propagate_precision then spreads further (bits_iter
+    //    state-explosion regression).
+    // Precision sink at conditional branches.
+    //  - Default (flag-off): back-edge compare-to-imm (heuristic).
+    //  - Kernel-precision (flag-on): only when the comparison
+    //    statically resolves (kernel `check_cond_jmp_op` calls
+    //    mark_chain_precision only after `is_branch_taken` decides).
+    if let Some(hidx) = state.history_idx {
+        let kernel_rule = crate::analysis::machine::env::kernel_precision_enabled();
+        let static_outcome = condition_outcome(&state, width, left, op, &right);
+        let fire = if kernel_rule {
+            static_outcome.is_some()
+        } else {
+            matches!(right, Operand::Imm(_)) && target < state.pc
+        };
+        if fire {
+            let pcid = state.parent_cache_id;
+            env.mark_chain_precision_backward(hidx, pcid, left);
+            if kernel_rule
+                && let Operand::Reg(r) = right
+            {
+                env.mark_chain_precision_backward(hidx, pcid, r);
             }
         }
     }
-    let _ = target;
 
     // Branch Type Refinement (For map and socket pointers)
     let instr = Instr::If {

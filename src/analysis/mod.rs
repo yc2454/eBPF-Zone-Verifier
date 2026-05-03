@@ -375,7 +375,11 @@ fn run_worklist(
         }
 
         // A.c RECORD STATE
-        merging::record_state(env, state.clone(), config.max_states_per_pc);
+        // Cache the cur state and link the continuing state's parent
+        // chain to the just-cached entry. Subsequent path forks
+        // inherit this `parent_cache_id` until the next checkpoint.
+        let cache_id = merging::record_state(env, state.clone(), config.max_states_per_pc);
+        state.parent_cache_id = Some(cache_id);
 
         // B. Global Complexity Limit (only count non-pruned states)
         env.insn_processed += 1;

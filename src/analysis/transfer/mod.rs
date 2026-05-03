@@ -317,17 +317,15 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
 
     // Kernel-aligned: main-program exit return-value precision sink
     // (verifier.c v6.15 check_return_code marks R0 precise before
-    // enforcing the prog-type retval range). Local-only mark — the
-    // backward walk variant over-marks across cached states from
-    // unrelated paths (bits_iter regression). Mark only the cached
-    // state(s) at this Exit pc so subsumption against the just-recorded
-    // state correctly enforces range_within for R0.
-    if state.at_main_frame() && crate::analysis::machine::env::kernel_precision_enabled() {
-        if let Some(states) = env.explored_states.get_mut(&pc) {
-            for s in states.iter_mut() {
-                s.precise_regs.insert(Reg::R0);
-            }
-        }
+    // enforcing the prog-type retval range). Per-path lineage walk
+    // via parent_cache_id — marks precise on this path's specific
+    // cached ancestors only, not all cached states at intermediate
+    // PCs.
+    if state.at_main_frame()
+        && crate::analysis::machine::env::kernel_precision_enabled()
+        && let Some(hidx) = state.history_idx
+    {
+        env.mark_chain_precision_backward(hidx, state.parent_cache_id, Reg::R0);
     }
 
     // Cluster B: per-attach-type retval range. When a finer rule applies
@@ -503,18 +501,13 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
             env.fail(VerificationError::InvalidReturnCode { pc });
             return vec![];
         }
-        // Kernel-aligned: callback return-value precision sink. Local
-        // mark only — the backward walk pollutes cached states at
-        // unrelated PCs (our explored_states is flat per-PC, not
-        // per-path-lineage like the kernel's parent links). Marking
-        // only cached states at this Exit pc is sufficient for the
-        // subsumption against the just-recorded state.
+        // Kernel-aligned: callback return-value precision sink
+        // (verifier.c v6.15 prepare_func_exit L10862). Per-path
+        // lineage walk via parent_cache_id.
         if crate::analysis::machine::env::kernel_precision_enabled()
-            && let Some(states) = env.explored_states.get_mut(&pc)
+            && let Some(hidx) = state.history_idx
         {
-            for s in states.iter_mut() {
-                s.precise_regs.insert(Reg::R0);
-            }
+            env.mark_chain_precision_backward(hidx, state.parent_cache_id, Reg::R0);
         }
         // W3.4c: bpf_loop / bpf_for_each_map_elem / bpf_user_ringbuf_drain
         // callbacks must return 0 (continue) or 1 (break). Timer callbacks

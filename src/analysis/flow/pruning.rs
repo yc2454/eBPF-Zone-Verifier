@@ -446,18 +446,14 @@ fn handle_loop_pruning(
         // Record hit BEFORE check_loop_convergence — eviction won't
         // touch the just-hit entry, but cleaner ordering.
         record_pruning_hit(env, pc, idx);
-        // Kernel-aligned: pull precision marks from the matched cached
-        // state into cur's ancestor chain (verifier.c v6.15
-        // propagate_precision L18828). Gated on the kernel-precision
-        // regime — under our default rule, propagating precision marks
-        // would tighten subsumption rather than relax it.
-        // propagate_precision intentionally not called: our flat per-PC
-        // explored_states cannot replay the kernel's per-path parent
-        // walk safely. Backward-walk pollutes cached states across
-        // unrelated PCs. The local-only sinks at exit/branch sites
-        // approximate the propagation effect at specific safety-critical
-        // points without the cross-PC pollution.
-        let _ = idx;
+        // Kernel-aligned propagate_precision (verifier.c v6.15 L18828).
+        // The walker now does a per-path lineage walk, so this is safe
+        // to enable under the kernel-precision regime.
+        if kernel_precision_enabled()
+            && let Some(prev) = env.explored_states.get(&pc).and_then(|v| v.get(idx)).cloned()
+        {
+            env.propagate_precision(state, &prev);
+        }
         // For convergence we still need the full prev_states list.
         let prev_states = env
             .explored_states
@@ -547,15 +543,12 @@ fn handle_standard_pruning(
     }
     if let Some(idx) = hit_idx {
         record_pruning_hit(env, pc, idx);
-        // Kernel-aligned propagate_precision (see loop pruning hit path
-        // for the documentation). Flag-gated.
-        // propagate_precision intentionally not called: our flat per-PC
-        // explored_states cannot replay the kernel's per-path parent
-        // walk safely. Backward-walk pollutes cached states across
-        // unrelated PCs. The local-only sinks at exit/branch sites
-        // approximate the propagation effect at specific safety-critical
-        // points without the cross-PC pollution.
-        let _ = idx;
+        // Kernel-aligned propagate_precision (per-path lineage walk).
+        if kernel_precision_enabled()
+            && let Some(prev) = env.explored_states.get(&pc).and_then(|v| v.get(idx)).cloned()
+        {
+            env.propagate_precision(state, &prev);
+        }
         true
     } else {
         record_pruning_misses(env, pc, &miss_idxs);

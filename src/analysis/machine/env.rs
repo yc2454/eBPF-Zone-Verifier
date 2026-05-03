@@ -186,6 +186,17 @@ pub struct VerifierEnv<'a> {
     /// check to the exception-cb-specific rule (R0 ∈ [0, 0] for fentry/
     /// fexit) without affecting ordinary main-program exits.
     pub analyzing_exception_cb: bool,
+
+    /// Monotonic counter for cache_id assignment. Each call to
+    /// `record_state` mints a fresh id (post-increment).
+    pub next_cache_id: u32,
+
+    /// Reverse map: cache_id -> (pc, idx_in_explored_states_at_pc).
+    /// Maintained by `record_state` (insertion) and the eviction path
+    /// in `record_state` (index updates after drain). Used by the
+    /// per-path precision walker to look up the specific cached state
+    /// referenced by a `parent_cache_id` chain.
+    pub cache_loc_by_id: HashMap<u32, (usize, usize)>,
 }
 
 impl<'a> VerifierEnv<'a> {
@@ -209,6 +220,8 @@ impl<'a> VerifierEnv<'a> {
             history: History::new(),
             certificate,
             analyzing_exception_cb: false,
+            next_cache_id: 0,
+            cache_loc_by_id: HashMap::new(),
         }
     }
 
@@ -255,147 +268,166 @@ impl<'a> VerifierEnv<'a> {
     pub fn mark_chain_precision_backward(
         &mut self,
         history_idx: usize,
+        parent_cache_id: Option<u32>,
         sink_reg: Reg,
     ) {
-        use crate::ast::{AluOp, CallKind, Instr, Operand};
-        let _ = CallKind::Helper { id: 0 }; // keep CallKind import; matched below
-
         let mut frontier: HashSet<Reg> = HashSet::new();
         frontier.insert(sink_reg);
 
         let caller_saved = [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
 
-        let mut current = Some(history_idx);
-        // Bound the walk so a malformed history can't loop forever.
+        let mut current_history: Option<usize> = Some(history_idx);
+        let mut current_parent_id: Option<u32> = parent_cache_id;
         let mut budget: usize = 16_384;
 
-        while let Some(idx) = current {
-            if budget == 0 {
-                break;
-            }
-            budget -= 1;
+        // Per-path lineage walk (kernel `__mark_chain_precision`,
+        // verifier.c v6.15 L4655). For each cache event in the chain:
+        // walk instructions back to the parent's boundary updating the
+        // frontier, then mark frontier regs precise on the SPECIFIC
+        // parent cached state (not all cached states at that PC). This
+        // is the per-path equivalent of kernel `st->parent` chain walk.
+        'outer: loop {
+            // Resolve the current parent's location and metadata.
+            let parent_loc = current_parent_id
+                .and_then(|id| self.cache_loc_by_id.get(&id).copied());
+            let (parent_history_stop, parent_grandparent_id) =
+                if let Some((pc, idx)) = parent_loc {
+                    let s = self
+                        .explored_states
+                        .get(&pc)
+                        .and_then(|v| v.get(idx));
+                    (
+                        s.and_then(|s| s.history_idx),
+                        s.and_then(|s| s.parent_cache_id),
+                    )
+                } else {
+                    (None, None)
+                };
 
-            let Some(step) = self.history.get(idx) else {
-                break;
-            };
-            let pc = step.pc;
-            let parent = step.parent_idx;
+            // Walk instructions back through current's local history,
+            // stopping when we cross the parent's boundary.
+            while let Some(idx) = current_history {
+                if budget == 0 {
+                    break 'outer;
+                }
+                budget -= 1;
 
-            // Mark every frontier reg precise on every cached state at pc.
-            // The cached states' precision marks feed our pruning's
-            // `old.precise_regs`-keyed subsumption + the may_goto widener's
-            // skip-if-precise rule.
-            if let Some(states) = self.explored_states.get_mut(&pc) {
-                for s in states.iter_mut() {
-                    for &r in &frontier {
-                        s.precise_regs.insert(r);
-                    }
+                if let Some(stop) = parent_history_stop
+                    && idx <= stop
+                {
+                    break;
+                }
+
+                let Some(step) = self.history.get(idx) else {
+                    break;
+                };
+                let parent_idx = step.parent_idx;
+                let instr_copy = step.instr;
+                update_frontier(&mut frontier, &instr_copy, &caller_saved);
+                current_history = parent_idx;
+
+                if frontier.is_empty() {
+                    break 'outer;
                 }
             }
 
-            // Walk past the instruction at `pc`, updating frontier. Use
-            // the instruction stored on the breadcrumb (committed in
-            // history.rs) rather than re-borrowing `Program` — cheaper
-            // and removes a lifetime dependency from the call sites.
-            let instr_copy = step.instr;
+            // Mark precise on the parent cached state with the
+            // frontier we've evolved back to its perspective. Per-path:
+            // only this cached state, not all states at its PC.
+            if let Some((pc, idx)) = parent_loc
+                && let Some(states) = self.explored_states.get_mut(&pc)
+                && let Some(s) = states.get_mut(idx)
             {
-                let instr = &instr_copy;
-                match instr {
-                    Instr::Alu { op, dst, src, .. } => {
-                        if frontier.contains(dst) {
-                            match (op, src) {
-                                (AluOp::Mov, Operand::Reg(s)) => {
-                                    frontier.remove(dst);
-                                    frontier.insert(*s);
-                                }
-                                (AluOp::Mov, Operand::Imm(_)) => {
-                                    frontier.remove(dst);
-                                }
-                                (_, Operand::Reg(s)) => {
-                                    // dst = dst op src; both contribute.
-                                    frontier.insert(*s);
-                                }
-                                (_, Operand::Imm(_)) => {
-                                    // dst stays.
-                                }
-                            }
-                        }
-                    }
-                    Instr::MovSx { dst, src, .. } => {
-                        if frontier.contains(dst) {
-                            frontier.remove(dst);
-                            if let Operand::Reg(s) = src {
-                                frontier.insert(*s);
-                            }
-                        }
-                    }
-                    Instr::Load { dst, .. }
-                    | Instr::LoadSx { dst, .. }
-                    | Instr::LoadAcq { dst, .. }
-                    | Instr::LoadMap { dst, .. } => {
-                        frontier.remove(dst);
-                    }
-                    Instr::LoadPacket { .. } => {
-                        // BPF_LD_ABS / IND writes implicitly into R0.
-                        frontier.remove(&Reg::R0);
-                    }
-                    Instr::Endian { dst, .. } => {
-                        // Endian preserves value (just byte-swaps); precision
-                        // sticks to dst.
-                        let _ = dst;
-                    }
-                    Instr::Call { kind } => {
-                        // Helper / kfunc clobbers caller-saved on return.
-                        // R0 carries return value (no prior lineage), R1-R5
-                        // are clobbered.
-                        let _ = kind;
-                        for r in caller_saved {
-                            frontier.remove(&r);
-                        }
-                    }
-                    Instr::CallRel { .. } => {
-                        for r in caller_saved {
-                            frontier.remove(&r);
-                        }
-                    }
-                    _ => {
-                        // Store / If / Jmp / MayGoto / Atomic{store-only} / Exit:
-                        // no scalar-reg write, frontier unchanged.
-                    }
+                for &r in &frontier {
+                    s.precise_regs.insert(r);
                 }
             }
 
-            if frontier.is_empty() {
+            // Recurse to grandparent: continue the instruction walk
+            // from parent's history boundary toward grandparent's.
+            if parent_grandparent_id.is_none() {
                 break;
             }
-            current = parent;
+            current_parent_id = parent_grandparent_id;
+            current_history = parent_history_stop;
         }
     }
 
     /// Propagate precision marks from a hit cached state into the current
     /// state's ancestor chain.
     ///
-    /// Mirrors kernel `propagate_precision` (verifier.c v6.15 L18828): when
-    /// the current path is subsumed by a cached state, the cached state's
-    /// precision marks identify which scalars *must* stay precise on this
-    /// path's continuation for correctness. The kernel pulls those marks
-    /// into the backtrack state and runs `mark_chain_precision_batch` to
-    /// push them backward into ancestors.
-    ///
-    /// We approximate that by calling `mark_chain_precision_backward` for
-    /// each scalar in `old.precise_regs`. Stack-slot precision is not yet
-    /// propagated here (the backward walker supports regs only); a future
-    /// extension could add slot support to the frontier.
-    ///
-    /// Gated by callers on `kernel_precision_enabled()` — calling this
-    /// uncondionally would tighten subsumption immediately and regress
-    /// the corpus under our existing `!precise → superset` rule. It only
-    /// pays off in conjunction with the kernel `!precise → accept` rule.
-    pub fn propagate_precision(&mut self, history_idx: usize, old: &State) {
+    /// Mirrors kernel `propagate_precision` (verifier.c v6.15 L18828):
+    /// when the current path is subsumed by a cached state, the cached
+    /// state's precision marks identify which scalars *must* stay
+    /// precise on this path's continuation for correctness. We pull
+    /// those marks and run `mark_chain_precision_backward` for each on
+    /// the CURRENT state's lineage, marking precise on the current
+    /// path's specific cached ancestors via `parent_cache_id`. Safe
+    /// under the kernel-precision regime because the walker writes
+    /// only to per-path-lineage cached states, not all-states-at-pc.
+    pub fn propagate_precision(&mut self, cur: &State, old: &State) {
         let regs: Vec<Reg> = old.precise_regs.iter().copied().collect();
+        let Some(history_idx) = cur.history_idx else { return };
         for r in regs {
-            self.mark_chain_precision_backward(history_idx, r);
+            self.mark_chain_precision_backward(history_idx, cur.parent_cache_id, r);
         }
+    }
+}
+
+/// Update `frontier` (the set of registers whose precision must
+/// propagate further back) given that we are *un-doing* `instr`.
+/// Pure free function so the walker can call it without re-borrowing
+/// `self`.
+fn update_frontier(
+    frontier: &mut HashSet<Reg>,
+    instr: &crate::ast::Instr,
+    caller_saved: &[Reg],
+) {
+    use crate::ast::{AluOp, Instr, Operand};
+    match instr {
+        Instr::Alu { op, dst, src, .. } => {
+            if frontier.contains(dst) {
+                match (op, src) {
+                    (AluOp::Mov, Operand::Reg(s)) => {
+                        frontier.remove(dst);
+                        frontier.insert(*s);
+                    }
+                    (AluOp::Mov, Operand::Imm(_)) => {
+                        frontier.remove(dst);
+                    }
+                    (_, Operand::Reg(s)) => {
+                        frontier.insert(*s);
+                    }
+                    (_, Operand::Imm(_)) => {}
+                }
+            }
+        }
+        Instr::MovSx { dst, src, .. } => {
+            if frontier.contains(dst) {
+                frontier.remove(dst);
+                if let Operand::Reg(s) = src {
+                    frontier.insert(*s);
+                }
+            }
+        }
+        Instr::Load { dst, .. }
+        | Instr::LoadSx { dst, .. }
+        | Instr::LoadAcq { dst, .. }
+        | Instr::LoadMap { dst, .. } => {
+            frontier.remove(dst);
+        }
+        Instr::LoadPacket { .. } => {
+            frontier.remove(&Reg::R0);
+        }
+        Instr::Endian { dst, .. } => {
+            let _ = dst;
+        }
+        Instr::Call { .. } | Instr::CallRel { .. } => {
+            for r in caller_saved {
+                frontier.remove(r);
+            }
+        }
+        _ => {}
     }
 }
 
