@@ -1034,17 +1034,19 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
                 }
         }
 
-        // Map value or null
+        // Map value or null. Like `PtrToAllocMem` below, the kernel
+        // mints a fresh `id` on every `bpf_map_lookup_elem` call —
+        // looping `map_val = bpf_map_lookup_elem(...); if (map_val) ...`
+        // produces non-equal-but-semantically-identical pointers across
+        // iterations and id-equality blocks loop-top subsumption.
+        // Structural identity is `map_idx` (which map); `id` is a per-
+        // call tag used for null-check narrowing on the *current*
+        // state's continuation, not for cross-state subsumption.
+        // Pattern observed in iters.c::iter_tricky_but_fine.
         (
-            PtrToMapValueOrNull {
-                id: id1,
-                map_idx: m1,
-            },
-            PtrToMapValueOrNull {
-                id: id2,
-                map_idx: m2,
-            },
-        ) => m1 == m2 && id1 == id2,
+            PtrToMapValueOrNull { map_idx: m1, .. },
+            PtrToMapValueOrNull { map_idx: m2, .. },
+        ) => m1 == m2,
 
         // Socket pointers
         (PtrToSocket { ref_id: id1 }, PtrToSocket { ref_id: id2 }) => id1 == id2,

@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-03T04:51:38.924804+00:00",
+  "generated_at": "2026-05-03T13:25:06.583462+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -3940,9 +3940,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/iters.c",
       "progs": {
         "checkpoint_states_deletion": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "clean_live_states": {
           "upstream": "ACCEPT",
@@ -4061,9 +4060,8 @@
           "note": "verifier timeout"
         },
         "iter_tricky_but_fine": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "iter_while_loop": {
           "upstream": "ACCEPT",
@@ -14876,7 +14874,7 @@
         "arg_tag_nonnull_ptr_good": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 8: base R1+0 (type: PtrToAllocMemOrNull { id: 766, mem_size: 4, ref_id: None, dynptr_id: None })"
+          "note": "Unsafe generic load at pc 8: base R1+0 (type: PtrToAllocMemOrNull { id: 1666, mem_size: 4, ref_id: None, dynptr_id: None })"
         },
         "arg_tag_nullable_ptr_fail": {
           "upstream": "ACCEPT",
