@@ -37,6 +37,87 @@ pub struct StateMetrics {
     pub miss_cnt: u32,
 }
 
+/// Per-PC histogram of *why* a `state_subsumed_by` check failed. Used
+/// by the end-of-analysis dump to figure out which subsumption sub-check
+/// is the dominant miss reason on timeout-prone tests — informs whether
+/// the next investment should be liveness (Stack), precision propagation
+/// (Types/Tnum/Domain/ScalarIdLinks), or widening breadth.
+///
+/// One entry is recorded per miss against the first sub-check that
+/// rejected; later sub-checks short-circuit so we don't see them. That's
+/// the right granularity for "which mechanism would unblock the most
+/// states."
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SubsumptionMissReason {
+    Types,
+    Domain,
+    Stack,
+    Tnum,
+    ScalarIdLinks,
+    ActiveLock,
+    GotoBudget,
+    ActiveRefs,
+    CallerFrame,
+}
+
+/// Coarse counters describing how `should_prune` decisions broke down.
+/// Lets the audit dump distinguish:
+///   - "we didn't even try to prune" (not a prune point, on-path skip)
+///   - "we tried but had no prev state to compare against" (first visit)
+///   - "we tried and went through standard or loop pruning"
+/// — which then composes with the miss-reason histogram to tell us
+/// whether the bottleneck is subsumption-failure (rework subsumption)
+/// or first-visit-explosion (rework prune-point density / loop detection).
+#[derive(Clone, Default, Debug)]
+pub struct PruningStats {
+    pub should_prune_calls: u64,
+    pub not_prune_point: u64,
+    pub on_path_skip: u64,
+    pub no_prev_states: u64,
+    pub std_pruning_calls: u64,
+    pub loop_pruning_calls: u64,
+}
+
+impl SubsumptionMissReason {
+    pub const ALL: [SubsumptionMissReason; 9] = [
+        SubsumptionMissReason::Types,
+        SubsumptionMissReason::Domain,
+        SubsumptionMissReason::Stack,
+        SubsumptionMissReason::Tnum,
+        SubsumptionMissReason::ScalarIdLinks,
+        SubsumptionMissReason::ActiveLock,
+        SubsumptionMissReason::GotoBudget,
+        SubsumptionMissReason::ActiveRefs,
+        SubsumptionMissReason::CallerFrame,
+    ];
+    pub fn idx(self) -> usize {
+        match self {
+            SubsumptionMissReason::Types => 0,
+            SubsumptionMissReason::Domain => 1,
+            SubsumptionMissReason::Stack => 2,
+            SubsumptionMissReason::Tnum => 3,
+            SubsumptionMissReason::ScalarIdLinks => 4,
+            SubsumptionMissReason::ActiveLock => 5,
+            SubsumptionMissReason::GotoBudget => 6,
+            SubsumptionMissReason::ActiveRefs => 7,
+            SubsumptionMissReason::CallerFrame => 8,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            SubsumptionMissReason::Types => "types",
+            SubsumptionMissReason::Domain => "domain",
+            SubsumptionMissReason::Stack => "stack",
+            SubsumptionMissReason::Tnum => "tnum",
+            SubsumptionMissReason::ScalarIdLinks => "scalar_id_links",
+            SubsumptionMissReason::ActiveLock => "active_lock",
+            SubsumptionMissReason::GotoBudget => "goto_budget",
+            SubsumptionMissReason::ActiveRefs => "active_refs",
+            SubsumptionMissReason::CallerFrame => "caller_frame",
+        }
+    }
+}
+
 pub struct VerifierEnv<'a> {
     pub ctx: &'a ExecContext,
     pub explored_states: HashMap<usize, Vec<State>>,
@@ -44,6 +125,15 @@ pub struct VerifierEnv<'a> {
     /// holds the hit/miss counters for `explored_states[pc][i]`. Drop
     /// the same index from both vectors on eviction.
     pub state_metrics: HashMap<usize, Vec<StateMetrics>>,
+    /// Per-PC histogram of subsumption-miss reasons (one bucket per
+    /// `SubsumptionMissReason` variant). `subsumption_misses[pc][r.idx()]`
+    /// is incremented every time the per-cached-state subsumption check
+    /// rejected with reason `r`. Used by the end-of-analysis dump.
+    pub subsumption_misses: HashMap<usize, [u64; 9]>,
+    /// Coarse counters for `should_prune` to disambiguate "subsumption
+    /// failed" from "subsumption never even attempted". Incremented in
+    /// `should_prune` and dumped alongside the miss histogram.
+    pub pruning_stats: PruningStats,
     pub insn_aux_data: Vec<InsnAuxData>,
     pub invalid_pc_set: HashSet<usize>,
     pub addr_space_cast_to_arena_pcs: HashSet<usize>,
@@ -81,6 +171,8 @@ impl<'a> VerifierEnv<'a> {
             ctx,
             explored_states: HashMap::new(),
             state_metrics: HashMap::new(),
+            subsumption_misses: HashMap::new(),
+            pruning_stats: PruningStats::default(),
             insn_aux_data: vec![InsnAuxData::default(); prog.instrs.len()],
             invalid_pc_set: prog.invalid_pc_set.clone(),
             addr_space_cast_to_arena_pcs: prog.addr_space_cast_to_arena_pcs.clone(),

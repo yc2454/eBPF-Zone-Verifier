@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use crate::analysis::machine::env::VerifierEnv;
+use crate::analysis::machine::env::{SubsumptionMissReason, VerifierEnv};
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::state::State;
@@ -345,29 +345,35 @@ fn handle_loop_pruning(
     // Walk prev_states once, recording the first hit (if any) and all
     // walked-past indices. We hold the borrow only inside this scope so
     // the metrics-update at the end can take `&mut env` cleanly.
-    let (hit_idx, miss_idxs, prev_first_budget, prev_last_budget, prev_states_len): (
+    let (hit_idx, miss_idxs, miss_reasons, prev_first_budget, prev_last_budget, prev_states_len): (
         Option<usize>,
         Vec<usize>,
+        Vec<SubsumptionMissReason>,
         Option<u32>,
         Option<u32>,
         usize,
     ) = if let Some(prev_states) = env.explored_states.get(&pc) {
         let mut h = None;
         let mut m: Vec<usize> = Vec::new();
+        let mut r: Vec<SubsumptionMissReason> = Vec::new();
         // Branchy loop tops can hold multiple cached states; match the
         // first that subsumes (kernel `is_state_visited` walks the
         // explored_state list, verifier.c v6.15 ~L19018).
         for (i, prev) in prev_states.iter().enumerate() {
-            if state_subsumed_by(state, prev, live_regs, config) {
-                h = Some(i);
-                break;
-            } else {
-                m.push(i);
+            match state_subsumed_by(state, prev, live_regs, config) {
+                Ok(()) => {
+                    h = Some(i);
+                    break;
+                }
+                Err(reason) => {
+                    m.push(i);
+                    r.push(reason);
+                }
             }
         }
         let f = prev_states.first().map(|s| s.goto_budget);
         let l = prev_states.last().map(|s| s.goto_budget);
-        (h, m, f, l, prev_states.len())
+        (h, m, r, f, l, prev_states.len())
     } else {
         return false;
     };
@@ -400,6 +406,7 @@ fn handle_loop_pruning(
 
     // Not subsumed: record misses + maybe evict, then apply widening.
     record_pruning_misses(env, pc, &miss_idxs);
+    record_subsumption_miss_reasons(env, pc, &miss_reasons);
 
     let only_may_goto_exit = !loop_has_if_exit(env, state, pc, prog);
     let may_goto_progress = prev_first_budget
@@ -431,13 +438,18 @@ fn handle_standard_pruning(
 ) -> bool {
     let mut hit_idx: Option<usize> = None;
     let mut miss_idxs: Vec<usize> = Vec::new();
+    let mut miss_reasons: Vec<SubsumptionMissReason> = Vec::new();
     if let Some(prev_states) = env.explored_states.get(&pc) {
         for (i, prev) in prev_states.iter().enumerate() {
-            if state_subsumed_by(state, prev, live_regs, config) {
-                hit_idx = Some(i);
-                break;
-            } else {
-                miss_idxs.push(i);
+            match state_subsumed_by(state, prev, live_regs, config) {
+                Ok(()) => {
+                    hit_idx = Some(i);
+                    break;
+                }
+                Err(reason) => {
+                    miss_idxs.push(i);
+                    miss_reasons.push(reason);
+                }
             }
         }
     }
@@ -446,7 +458,29 @@ fn handle_standard_pruning(
         true
     } else {
         record_pruning_misses(env, pc, &miss_idxs);
+        record_subsumption_miss_reasons(env, pc, &miss_reasons);
         false
+    }
+}
+
+/// Bump the per-PC subsumption-miss histogram. One increment per
+/// rejected sub-check, attributed to the *first* sub-check that
+/// rejected (later checks short-circuit). Cheap; safe to call on every
+/// miss path. The end-of-analysis dump reads this histogram.
+fn record_subsumption_miss_reasons(
+    env: &mut VerifierEnv,
+    pc: usize,
+    reasons: &[SubsumptionMissReason],
+) {
+    if reasons.is_empty() {
+        return;
+    }
+    let entry = env
+        .subsumption_misses
+        .entry(pc)
+        .or_insert([0u64; 9]);
+    for r in reasons {
+        entry[r.idx()] = entry[r.idx()].saturating_add(1);
     }
 }
 
@@ -460,7 +494,10 @@ pub fn should_prune(
 ) -> bool {
     let pc = state.pc;
 
+    env.pruning_stats.should_prune_calls += 1;
+
     if !is_prune_point(env, pc) {
+        env.pruning_stats.not_prune_point += 1;
         return false;
     }
 
@@ -474,7 +511,24 @@ pub fn should_prune(
     // Re-entry to a PC from a different depth (e.g. repeated call in a loop).
     // Must continue to reach the actual loop back-edge.
     if is_on_path && !in_loop {
+        env.pruning_stats.on_path_skip += 1;
         return false;
+    }
+
+    // Track whether we actually have prev states to compare against.
+    // Distinguishes "first visit (no work for cache to do)" from "had
+    // prev states; either hit or miss happened downstream".
+    if env
+        .explored_states
+        .get(&pc)
+        .map(|v| v.is_empty())
+        .unwrap_or(true)
+    {
+        env.pruning_stats.no_prev_states += 1;
+    } else if in_loop {
+        env.pruning_stats.loop_pruning_calls += 1;
+    } else {
+        env.pruning_stats.std_pruning_calls += 1;
     }
 
     let live_regs = env.insn_aux_data[pc].live_regs.clone();
@@ -606,7 +660,12 @@ fn may_goto_range_within_prune(
         if prev.may_goto_depth == cur.may_goto_depth {
             continue;
         }
-        if state_subsumed_by(&relaxed, prev, live_regs, config) {
+        // Misses on this auxiliary RANGE_WITHIN prune class are
+        // intentionally NOT recorded in the subsumption-miss histogram —
+        // they would inflate the "stack" / "tnum" buckets with the
+        // precision-stripped clone's behaviour, which isn't the same
+        // as the standard subsumption pipeline we're trying to measure.
+        if state_subsumed_by(&relaxed, prev, live_regs, config).is_ok() {
             return true;
         }
     }
@@ -620,26 +679,31 @@ fn callee_saved_regs() -> HashSet<Reg> {
 }
 
 /// Check if `cur` is subsumed by `old` (old covers all behaviors of cur).
+/// Returns `Ok(())` on success or `Err(reason)` identifying the *first*
+/// sub-check that rejected. The reason is what the
+/// `subsumption_misses` instrumentation aggregates per-PC.
 fn state_subsumed_by(
     cur: &State,
     old: &State,
     live_regs: &HashSet<Reg>,
     config: &VerifierConfig,
-) -> bool {
-    // Check current frame
-    if config.skip_dbm_check {
-        if !(types_subsumed_by(&cur.types, &old.types, live_regs)
-            && stack_subsumed_by(cur, old)
-            && tnum_subsumed_by(cur, old, live_regs))
-        {
-            return false;
-        }
-    } else if !(types_subsumed_by(&cur.types, &old.types, live_regs)
-        && domain_subsumed_by(&cur.domain, &old.domain, live_regs, &old.precise_regs)
-        && stack_subsumed_by(cur, old)
-        && tnum_subsumed_by(cur, old, live_regs))
+) -> Result<(), SubsumptionMissReason> {
+    // Order matters for instrumentation: the *first* rejecting check
+    // is what we record, so cheaper / more-fundamental checks come
+    // first to keep the histogram readable.
+    if !types_subsumed_by(&cur.types, &old.types, live_regs) {
+        return Err(SubsumptionMissReason::Types);
+    }
+    if !config.skip_dbm_check
+        && !domain_subsumed_by(&cur.domain, &old.domain, live_regs, &old.precise_regs)
     {
-        return false;
+        return Err(SubsumptionMissReason::Domain);
+    }
+    if !stack_subsumed_by(cur, old) {
+        return Err(SubsumptionMissReason::Stack);
+    }
+    if !tnum_subsumed_by(cur, old, live_regs) {
+        return Err(SubsumptionMissReason::Tnum);
     }
 
     // Cluster: regsafe scalar-id check.
@@ -650,7 +714,7 @@ fn state_subsumed_by(
     // it against `old` hides paths where the unlinked register stays
     // unbounded. Mirrors upstream `check_ids` in `regsafe`.
     if !scalar_id_links_subsumed_by(cur, old, live_regs) {
-        return false;
+        return Err(SubsumptionMissReason::ScalarIdLinks);
     }
 
     // Active-lock identity. When `old.active_lock` names a specific
@@ -662,7 +726,7 @@ fn state_subsumed_by(
     // `verifier_spin_lock::reg_id_for_map_value`, where one path
     // reassigns the lock-holding register to a different map_value.
     if !active_lock_subsumed_by(cur, old, live_regs) {
-        return false;
+        return Err(SubsumptionMissReason::ActiveLock);
     }
 
     // W3.1c: `old` must have at least as much may_goto budget remaining as
@@ -672,7 +736,7 @@ fn state_subsumed_by(
     // cur's future iterations are covered by an old state with a larger or
     // equal counter, pruning is sound.
     if old.goto_budget < cur.goto_budget {
-        return false;
+        return Err(SubsumptionMissReason::GotoBudget);
     }
 
     // Active refcount-tracked acquisitions (dynptr / sock / cpumask /
@@ -684,7 +748,7 @@ fn state_subsumed_by(
     // but not on old. Caught `dynptr_fail::ringbuf_missing_release2`,
     // where one branch releases both ptr1+ptr2 and the other only ptr1.
     if !cur.active_refs.is_subset(&old.active_refs) {
-        return false;
+        return Err(SubsumptionMissReason::ActiveRefs);
     }
 
     // Check caller frames: callee-saved registers (r6-r9) persist across
@@ -694,7 +758,7 @@ fn state_subsumed_by(
     let saved = callee_saved_regs();
     for (cur_frame, old_frame) in cur.frames.iter().zip(old.frames.iter()) {
         if !types_subsumed_by(&cur_frame.caller_types, &old_frame.caller_types, &saved) {
-            return false;
+            return Err(SubsumptionMissReason::CallerFrame);
         }
         if !config.skip_dbm_check
             && !domain_subsumed_by(
@@ -704,14 +768,14 @@ fn state_subsumed_by(
                 &HashSet::new(),
             )
         {
-            return false;
+            return Err(SubsumptionMissReason::CallerFrame);
         }
         if !caller_tnum_subsumed_by(cur_frame, old_frame, &saved) {
-            return false;
+            return Err(SubsumptionMissReason::CallerFrame);
         }
     }
 
-    true
+    Ok(())
 }
 
 /// Linkage class for a register, used by `scalar_id_links_subsumed_by`.
