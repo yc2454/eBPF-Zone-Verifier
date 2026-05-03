@@ -1217,6 +1217,15 @@ fn interval_subsumed_by(
 }
 
 fn stack_subsumed_by(cur: &State, old: &State) -> bool {
+    // Kernel-aligned idmap (verifier.c v6.15 `check_ids` in regsafe at
+    // STACK_ITER L18583): iter ids are minted fresh by every
+    // `bpf_iter_*_new` call, so literal `old.id == cur.id` always fails
+    // when an iter slot is re-initialized (e.g. nested iters: each outer
+    // iteration recreates the inner iter at the same stack slot with a
+    // fresh id). Build a per-comparison map `old_id → cur_id` and check
+    // for consistency: a given old id may map to exactly one cur id
+    // across the comparison.
+    let mut iter_idmap: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
     for (old_frame, new_frame) in old.frames.iter().zip(cur.frames.iter()) {
         let all_offsets: HashSet<i16> = old_frame
             .stack
@@ -1282,7 +1291,20 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
             let new_iter = new_slot.and_then(|s| s.iterator);
             let iter_eq_modulo_depth = match (old_iter, new_iter) {
                 (None, None) => true,
-                (Some(a), Some(b)) => a.kind == b.kind && a.state == b.state && a.id == b.id,
+                (Some(a), Some(b)) => {
+                    if a.kind != b.kind || a.state != b.state {
+                        false
+                    } else {
+                        // check_ids: id may be remapped, but consistently.
+                        match iter_idmap.get(&a.id) {
+                            Some(&mapped) => mapped == b.id,
+                            None => {
+                                iter_idmap.insert(a.id, b.id);
+                                true
+                            }
+                        }
+                    }
+                }
                 _ => false,
             };
             if !iter_eq_modulo_depth {
