@@ -593,6 +593,16 @@ impl Analyzer {
             .iter()
             .map(|(name, pc)| (*pc, name.clone()))
             .collect();
+        // Static call-graph closure of "may sleep" — used at CallRel
+        // sites under irq/preempt-disabled regions to reject calls into
+        // global subprogs whose body transitively reaches a MIGHT_SLEEP
+        // helper/kfunc. Independent of data flow.
+        let subprog_info = crate::analysis::flow::subprog::analyze_subprograms(&prog.instrs);
+        ctx.may_sleep_subprogs = crate::analysis::flow::subprog::compute_may_sleep_subprogs(
+            &prog.instrs,
+            &subprog_info,
+            &ctx.btf,
+        );
         ctx.flags |= extra_flags;
 
         // Load-time validation of `__exception_cb(<cb>)` decl-tags on the

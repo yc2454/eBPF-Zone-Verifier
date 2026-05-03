@@ -5,7 +5,7 @@
 
 mod alu;
 mod branch;
-mod call;
+pub(crate) mod call;
 mod common;
 mod memory;
 pub(crate) mod types;

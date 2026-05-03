@@ -2,7 +2,7 @@
 use crate::ast::{AttachKind, ProgramKind};
 use crate::parsing::btf::BtfContext;
 use crate::parsing::elf::{BpfMapDef, RelocInfo};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Per-argument entry-state typing for a struct_ops subprog (W6.4a).
 ///
@@ -190,6 +190,16 @@ pub struct ExecContext {
     /// "Unreleased reference id=N alloc_insn=0" rejection on
     /// struct_ops_refcounted_fail__ref_leak.c).
     pub struct_ops_refcounted_args: usize,
+    /// Subprogs (keyed by absolute start PC) whose body — directly or
+    /// transitively via CallRel — invokes a MIGHT_SLEEP helper or kfunc.
+    /// Computed once at runner setup via static call-graph closure.
+    /// Consumed by `transfer_call_rel` to reject CallRel into a global
+    /// may-sleep subprog from inside an irq- or preempt-disabled region
+    /// (kernel: "global functions that may sleep are not allowed in
+    /// non-sleepable context"). Independent of data flow — kernel
+    /// rejects regardless of whether any specific path through the
+    /// callee body actually reaches the sleepable call.
+    pub may_sleep_subprogs: HashSet<usize>,
 }
 
 pub fn default_exec_ctx() -> ExecContext {
@@ -210,6 +220,7 @@ pub fn default_exec_ctx() -> ExecContext {
         exception_callback: None,
         attach_flavor: None,
         struct_ops_refcounted_args: 0,
+        may_sleep_subprogs: HashSet::new(),
     }
 }
 

@@ -312,6 +312,14 @@ pub enum VerificationError {
         func: String,
         arg_index: usize,
     },
+    /// CallRel into a global subprog whose static call-graph reaches a
+    /// MIGHT_SLEEP helper/kfunc, from inside an irq- or preempt-disabled
+    /// region. Kernel: "global functions that may sleep are not allowed
+    /// in non-sleepable context".
+    GlobalFuncMaySleepInNonSleepable {
+        pc: usize,
+        func: String,
+    },
     LsmHookDisabled {
         hook: String,
     },
@@ -672,6 +680,12 @@ impl VerificationError {
                     func,
                     arg_index + 1,
                     pc
+                )
+            }
+            VerificationError::GlobalFuncMaySleepInNonSleepable { pc, func } => {
+                format!(
+                    "global functions that may sleep are not allowed in non-sleepable context: call to '{}' at pc {}",
+                    func, pc
                 )
             }
             VerificationError::KfuncNotAllowedForProgram { pc, btf_id, kind } => {

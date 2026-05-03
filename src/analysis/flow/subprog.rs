@@ -177,6 +177,103 @@ pub fn analyze_subprograms(instrs: &[Instr]) -> BTreeMap<usize, SubprogInfo> {
     subprogs
 }
 
+/// Names of kfuncs the kernel registers with `KF_SLEEPABLE` (i.e.
+/// callable only from sleepable context — equivalent to MIGHT_SLEEP for
+/// the global-subprog static walk). Independent of `get_kfunc_proto`'s
+/// `MIGHT_SLEEP` flag, since several sleepable kfuncs aren't yet on the
+/// proto path. Closes the irq/preempt FA tests
+/// (`irq_sleepable_global_subprog_indirect`,
+/// `irq_sleepable_helper_global_subprog`,
+/// `preempt_global_sleepable_subprog_indirect`) where the test bodies
+/// call `bpf_copy_from_user_str` (kfunc, not yet proto'd) inside an
+/// irq/preempt-disabled region via a global subprog.
+fn kfunc_name_might_sleep(name: &str) -> bool {
+    matches!(
+        name,
+        "bpf_copy_from_user_str"
+            | "bpf_copy_from_user_task"
+            | "bpf_copy_from_user_task_str"
+    )
+}
+
+/// Compute the set of subprog start-PCs whose body — directly or
+/// transitively via CallRel / PSEUDO_FUNC callbacks — invokes a
+/// MIGHT_SLEEP helper or kfunc. Mirrors the kernel verifier's static
+/// call-graph walk used to gate global-subprog calls under irq- /
+/// preempt-disabled regions ("global functions that may sleep are not
+/// allowed in non-sleepable context").
+///
+/// Independent of data flow: a may-sleep call inside a dead branch
+/// still marks the subprog. Kernel does the same (`fn->might_sleep`
+/// is structural, not path-sensitive).
+pub fn compute_may_sleep_subprogs(
+    instrs: &[Instr],
+    subprogs: &BTreeMap<usize, SubprogInfo>,
+    btf: &crate::parsing::btf::BtfContext,
+) -> HashSet<usize> {
+    use crate::analysis::transfer::call::signatures::{CallFlags, get_helper_proto, get_kfunc_proto};
+    use crate::ast::MapLoadKind;
+
+    // Direct may-sleep + outgoing CallRel/PseudoFunc edges per subprog.
+    let mut direct: HashSet<usize> = HashSet::new();
+    let mut edges: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
+
+    for (&start_pc, info) in subprogs.iter() {
+        let mut callees = BTreeSet::new();
+        for insn in &instrs[start_pc..info.end_pc] {
+            match insn {
+                Instr::Call { kind: CallKind::Helper { id }, .. } => {
+                    if let Some(proto) = get_helper_proto(*id)
+                        && proto.flags.contains(CallFlags::MIGHT_SLEEP)
+                    {
+                        direct.insert(start_pc);
+                    }
+                }
+                Instr::Call { kind: CallKind::Kfunc { btf_id, .. }, .. } => {
+                    let name = btf.kfunc_name(*btf_id);
+                    let proto_might_sleep = name
+                        .and_then(get_kfunc_proto)
+                        .map(|p| p.flags.contains(CallFlags::MIGHT_SLEEP))
+                        .unwrap_or(false);
+                    let name_might_sleep =
+                        name.map(kfunc_name_might_sleep).unwrap_or(false);
+                    if proto_might_sleep || name_might_sleep {
+                        direct.insert(start_pc);
+                    }
+                }
+                Instr::CallRel { target } => {
+                    callees.insert(*target);
+                }
+                Instr::LoadMap {
+                    kind: MapLoadKind::PseudoFunc { subprog_pc },
+                    ..
+                } => {
+                    callees.insert(*subprog_pc as usize);
+                }
+                _ => {}
+            }
+        }
+        edges.insert(start_pc, callees);
+    }
+
+    // Transitive closure: a subprog may-sleep if any callee may-sleep.
+    let mut may_sleep = direct.clone();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (&pc, callees) in edges.iter() {
+            if may_sleep.contains(&pc) {
+                continue;
+            }
+            if callees.iter().any(|c| may_sleep.contains(c)) {
+                may_sleep.insert(pc);
+                changed = true;
+            }
+        }
+    }
+    may_sleep
+}
+
 /// Per-subprog overhead the interpreter reserves at the bottom of the
 /// frame for `may_goto`'s iteration counter. Mirrors the kernel constant
 /// `BPF_MAY_GOTO_DEPTH` used in `check_max_stack_depth_subprog` —

@@ -932,6 +932,22 @@ pub(crate) fn transfer_call_rel(
         .cloned()
         .filter(|n| env.ctx.btf.is_global_func(n));
     if let Some(name) = callee_global.as_ref() {
+        // Static call-graph gate: kernel rejects a global subprog whose
+        // body transitively reaches a MIGHT_SLEEP helper/kfunc when the
+        // call site is inside an irq- or preempt-disabled region. Path-
+        // independent (closes irq_sleepable_*_subprog* and
+        // preempt_global_sleepable_subprog_indirect FAs that escape the
+        // per-call MIGHT_SLEEP gate when the dataflow-pruned path
+        // dead-codes the inner sleepable call).
+        if env.ctx.may_sleep_subprogs.contains(&target)
+            && (state.in_irq_disabled() || state.in_preempt_disabled())
+        {
+            env.fail(VerificationError::GlobalFuncMaySleepInNonSleepable {
+                pc,
+                func: name.clone(),
+            });
+            return vec![];
+        }
         if env.ctx.btf.func_returns_void(name) {
             env.fail(VerificationError::GlobalFuncMalformed {
                 pc,
