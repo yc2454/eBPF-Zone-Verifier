@@ -367,6 +367,28 @@ impl State {
         self.precise_regs.remove(&r);
     }
 
+    /// Drop ALL precision marks (regs + spilled stack scalars).
+    ///
+    /// Mirrors kernel `mark_all_scalars_imprecise` (verifier.c v6.15
+    /// L4543), called proactively at checkpoint to produce
+    /// maximally-permissive cached states. Precision is then
+    /// re-established on demand via `propagate_precision` when a child
+    /// path requires it for safety. Safe to call only under the kernel
+    /// precision regime (`kernel_precision_enabled()`); under our
+    /// existing rule, precise marks are required by the strict-equality
+    /// subsumption check, and clearing them at checkpoint would
+    /// over-permissive cached states.
+    pub fn mark_all_scalars_imprecise(&mut self) {
+        self.precise_regs.clear();
+        for frame in self.frames.iter_mut() {
+            for offset in frame.stack.slot_offsets() {
+                if let Some(slot) = frame.stack.get_slot_mut(offset) {
+                    slot.precise = false;
+                }
+            }
+        }
+    }
+
     /// All registers currently carrying `id`. Useful for refinement fan-out.
     pub fn regs_with_scalar_id(&self, id: u32) -> Vec<Reg> {
         self.scalar_ids

@@ -68,8 +68,20 @@ pub fn resolve_type_conflicts(env: &VerifierEnv, state: &mut State) {
 
 /// Record a state as explored at its PC.
 /// Enforces max_states_per_pc limit by removing oldest states when exceeded.
-pub fn record_state(env: &mut VerifierEnv, state: State, max_states_per_pc: usize) {
+pub fn record_state(env: &mut VerifierEnv, mut state: State, max_states_per_pc: usize) {
     let pc = state.pc;
+    // Kernel-aligned: clear inherited precision marks at checkpoint to
+    // produce maximally-permissive cached states (verifier.c v6.15
+    // mark_all_scalars_imprecise L4543, called proactively before
+    // forking out child states). Precision is then re-established on
+    // demand via `propagate_precision` when a child path requires it.
+    // Gated on the kernel-precision regime; under our default rule,
+    // clearing precise marks at checkpoint would over-permissive the
+    // cache (the strict-equality check on precise scalars catches real
+    // safety-critical refinements).
+    if crate::analysis::machine::env::kernel_precision_enabled() {
+        state.mark_all_scalars_imprecise();
+    }
     let states = env.explored_states.entry(pc).or_default();
     states.push(state);
     // Bucket F-A: parallel metrics vector. Same indices as states.

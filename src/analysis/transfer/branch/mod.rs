@@ -81,7 +81,15 @@ pub(crate) fn transfer_if(
     // marking precise there blocks widening at the may_goto inside the
     // body (cond_break1's pattern). A backward `if r != K goto head`
     // (test1) does need it.
-    if matches!(right, Operand::Imm(_))
+    // The back-edge sink is over-marking compared to the kernel: we
+    // mark every back-edge compare-to-imm precise, regardless of
+    // downstream use. Kernel marks precise only when the comparison
+    // statically determines the branch (mark_chain_precision is called
+    // after `is_branch_taken` resolves to a single side). Under the
+    // kernel-precision regime, leave this off and rely on the kernel's
+    // actual sinks (memory access, helper args, return-value, etc.).
+    if !crate::analysis::machine::env::kernel_precision_enabled()
+        && matches!(right, Operand::Imm(_))
         && target < state.pc
         && let Some(hidx) = state.history_idx
     {

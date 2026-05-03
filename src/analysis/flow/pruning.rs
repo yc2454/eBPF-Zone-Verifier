@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use crate::analysis::machine::env::{SubsumptionMissReason, VerifierEnv};
+use crate::analysis::machine::env::{SubsumptionMissReason, VerifierEnv, kernel_precision_enabled};
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::state::State;
@@ -446,6 +446,17 @@ fn handle_loop_pruning(
         // Record hit BEFORE check_loop_convergence — eviction won't
         // touch the just-hit entry, but cleaner ordering.
         record_pruning_hit(env, pc, idx);
+        // Kernel-aligned: pull precision marks from the matched cached
+        // state into cur's ancestor chain (verifier.c v6.15
+        // propagate_precision L18828). Gated on the kernel-precision
+        // regime — under our default rule, propagating precision marks
+        // would tighten subsumption rather than relax it.
+        if kernel_precision_enabled()
+            && let Some(hidx) = state.history_idx
+            && let Some(prev) = env.explored_states.get(&pc).and_then(|v| v.get(idx)).cloned()
+        {
+            env.propagate_precision(hidx, &prev);
+        }
         // For convergence we still need the full prev_states list.
         let prev_states = env
             .explored_states
@@ -535,6 +546,14 @@ fn handle_standard_pruning(
     }
     if let Some(idx) = hit_idx {
         record_pruning_hit(env, pc, idx);
+        // Kernel-aligned propagate_precision (see loop pruning hit path
+        // for the documentation). Flag-gated.
+        if kernel_precision_enabled()
+            && let Some(hidx) = state.history_idx
+            && let Some(prev) = env.explored_states.get(&pc).and_then(|v| v.get(idx)).cloned()
+        {
+            env.propagate_precision(hidx, &prev);
+        }
         true
     } else {
         record_pruning_misses(env, pc, &miss_idxs);
@@ -1105,13 +1124,23 @@ fn domain_subsumed_by(
     live_regs: &HashSet<Reg>,
     precise: &HashSet<Reg>,
 ) -> bool {
+    let kernel_rule = kernel_precision_enabled();
     for &r in live_regs {
         let (old_min, old_max) = old.get_interval(r);
         let (cur_min, cur_max) = cur.get_interval(r);
         if precise.contains(&r) {
-            if old_min != cur_min || old_max != cur_max {
+            if kernel_rule {
+                // Kernel rule: precise → range_within (old ⊇ cur, NOT
+                // exact eq). verifier.c v6.15 regsafe() L18387.
+                if !(old_min <= cur_min && old_max >= cur_max) {
+                    return false;
+                }
+            } else if old_min != cur_min || old_max != cur_max {
                 return false;
             }
+        } else if kernel_rule {
+            // Kernel rule: !precise → accept anything. verifier.c L18357.
+            continue;
         } else if !(old_min <= cur_min && old_max >= cur_max) {
             return false;
         }
@@ -1345,6 +1374,7 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
 }
 
 fn tnum_subsumed_by(cur_state: &State, old_state: &State, live_regs: &HashSet<Reg>) -> bool {
+    let kernel_rule = kernel_precision_enabled();
     for &r in live_regs {
         let cur = cur_state.get_tnum(r);
         let old = old_state.get_tnum(r);
@@ -1352,6 +1382,9 @@ fn tnum_subsumed_by(cur_state: &State, old_state: &State, live_regs: &HashSet<Re
             if !tnum_covers(&cur, &old) {
                 return false;
             }
+        } else if kernel_rule {
+            // Kernel rule: !precise → accept (skip tnum check).
+            continue;
         } else if !tnum_covers(&cur, &old) {
             return false;
         }

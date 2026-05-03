@@ -371,6 +371,40 @@ impl<'a> VerifierEnv<'a> {
             current = parent;
         }
     }
+
+    /// Propagate precision marks from a hit cached state into the current
+    /// state's ancestor chain.
+    ///
+    /// Mirrors kernel `propagate_precision` (verifier.c v6.15 L18828): when
+    /// the current path is subsumed by a cached state, the cached state's
+    /// precision marks identify which scalars *must* stay precise on this
+    /// path's continuation for correctness. The kernel pulls those marks
+    /// into the backtrack state and runs `mark_chain_precision_batch` to
+    /// push them backward into ancestors.
+    ///
+    /// We approximate that by calling `mark_chain_precision_backward` for
+    /// each scalar in `old.precise_regs`. Stack-slot precision is not yet
+    /// propagated here (the backward walker supports regs only); a future
+    /// extension could add slot support to the frontier.
+    ///
+    /// Gated by callers on `kernel_precision_enabled()` — calling this
+    /// uncondionally would tighten subsumption immediately and regress
+    /// the corpus under our existing `!precise → superset` rule. It only
+    /// pays off in conjunction with the kernel `!precise → accept` rule.
+    pub fn propagate_precision(&mut self, history_idx: usize, old: &State) {
+        let regs: Vec<Reg> = old.precise_regs.iter().copied().collect();
+        for r in regs {
+            self.mark_chain_precision_backward(history_idx, r);
+        }
+    }
+}
+
+/// Returns true when the experimental kernel-aligned precision regime is
+/// enabled via `ZOVIA_KERNEL_PRECISION=1`. Off by default during the
+/// rebuild — corpus drift under the new regime is sized via flag-on
+/// sweeps before flipping the default.
+pub fn kernel_precision_enabled() -> bool {
+    std::env::var("ZOVIA_KERNEL_PRECISION").ok().as_deref() == Some("1")
 }
 
 /// Static pre-pass identifying subprog entry PCs whose body is unsafe
