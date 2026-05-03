@@ -421,6 +421,18 @@ pub fn try_load_from_rodata(
     {
         let map = &env.ctx.map_defs[map_idx];
 
+        // Kernel-aligned: only constant-fold reads from frozen rodata
+        // maps (`bpf_map_is_rdonly`, verifier.c v6.15 L6928). `.data` and
+        // `.bss` may have an `initial_data` blob from the ELF, but they
+        // are read-write from the program's perspective and from
+        // userspace; the kernel does NOT mark loads from them as known
+        // constants. Folding them here defeats the `int i = zero`
+        // obfuscation pattern that selftests use to keep loop counters
+        // imprecise (see iters.c:iter_obfuscate_counter test comment).
+        if (map.map_flags & crate::common::constants::BPF_F_RDONLY_PROG) == 0 {
+            return false;
+        }
+
         if let Some(data) = &map.initial_data {
             let abs_off = ptr_val + insn_off as i64;
 

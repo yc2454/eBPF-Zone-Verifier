@@ -235,6 +235,15 @@ pub enum DevCmd {
         progs_dir: String,
         baseline: String,
     },
+    /// Diff a baseline against a fresh upstream-tree sweep, skipping
+    /// programs whose baseline outcome is non-deterministic (TIMEOUT,
+    /// ERROR, SKIPPED). Mirror of `selftest-baseline-write-upstream`
+    /// for the regression-gate workflow — typically much faster
+    /// because the known-timeout rows aren't re-run.
+    SelftestBaselineCheckUpstream {
+        upstream_root: String,
+        baseline: String,
+    },
     /// JSONL corpus emitter. Single Rust entrypoint that downstream
     /// Python harnesses (bench, prevail, baseline diff) read line-by-line.
     /// Records go to `--out FILE` (or stdout if omitted, but then verifier

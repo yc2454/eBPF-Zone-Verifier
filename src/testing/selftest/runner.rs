@@ -163,6 +163,23 @@ pub fn run_file_with_dirs(
     config: &VerifierConfig,
     filter: &dyn ProgFilter,
 ) -> Result<FileReport> {
+    // Single-file callers don't have a precomputed fingerprint; pay
+    // the (cheap) walk here. Sweep callers go through
+    // `run_file_with_dirs_inner` directly with a fingerprint computed
+    // once at sweep start.
+    let fp = clang::fingerprint_include_set(include_dirs, iquote_dirs);
+    run_file_with_dirs_inner(src, include_dirs, iquote_dirs, extra_defines, config, filter, fp)
+}
+
+fn run_file_with_dirs_inner(
+    src: &Path,
+    include_dirs: &[PathBuf],
+    iquote_dirs: &[PathBuf],
+    extra_defines: &[&str],
+    config: &VerifierConfig,
+    filter: &dyn ProgFilter,
+    include_fingerprint: u64,
+) -> Result<FileReport> {
     let progs = attrs::scrape(src)
         .with_context(|| format!("scraping attributes from {}", src.display()))?;
 
@@ -173,8 +190,15 @@ pub fn run_file_with_dirs(
     let obj = std::env::temp_dir().join(format!("zovia_selftest_{stem}.o"));
     let _ = std::fs::remove_file(&obj);
 
-    clang::compile_with_iquote(src, &obj, include_dirs, iquote_dirs, extra_defines)
-        .with_context(|| format!("compiling {}", src.display()))?;
+    clang::compile_with_iquote_cached(
+        src,
+        &obj,
+        include_dirs,
+        iquote_dirs,
+        extra_defines,
+        include_fingerprint,
+    )
+    .with_context(|| format!("compiling {}", src.display()))?;
 
     let analyzer = Analyzer::new(obj.to_str().unwrap(), with_selftest_caps(config));
     let basename = src
@@ -265,23 +289,43 @@ pub fn run_dir_with_dirs(
         .collect();
     entries.sort();
 
-    let mut out = Vec::with_capacity(entries.len());
-    for path in entries {
-        let mut defines: Vec<&str> = global_defines.to_vec();
-        defines.extend(defines_for_file(&path));
-        match run_file_with_dirs(&path, include_dirs, iquote_dirs, &defines, config, filter) {
-            Ok(r) => out.push(r),
-            Err(e) => out.push(FileReport {
-                source: path.clone(),
-                progs: vec![ProgReport {
-                    func_name: "<compile>".into(),
-                    description: String::new(),
-                    sec: String::new(),
-                    outcome: Outcome::Error(format!("{e}")),
-                }],
-            }),
-        }
-    }
+    // Compute the include-set fingerprint once for the whole sweep.
+    // The cached compile path keys cached `.o`s on this fingerprint so
+    // cache stays coherent if a header changes.
+    let include_fp = clang::fingerprint_include_set(include_dirs, iquote_dirs);
+
+    // Parallelize across files. Each file's `run_file_with_dirs_inner`
+    // already runs its progs in parallel, but on a typical file with
+    // 1–3 progs that didn't fan out enough to saturate the cores;
+    // outer parallelism dominates. Per-file `.o` paths are keyed on
+    // the source file stem so concurrent writes don't collide.
+    let out: Vec<FileReport> = entries
+        .into_par_iter()
+        .map(|path| {
+            let mut defines: Vec<&str> = global_defines.to_vec();
+            defines.extend(defines_for_file(&path));
+            match run_file_with_dirs_inner(
+                &path,
+                include_dirs,
+                iquote_dirs,
+                &defines,
+                config,
+                filter,
+                include_fp,
+            ) {
+                Ok(r) => r,
+                Err(e) => FileReport {
+                    source: path.clone(),
+                    progs: vec![ProgReport {
+                        func_name: "<compile>".into(),
+                        description: String::new(),
+                        sec: String::new(),
+                        outcome: Outcome::Error(format!("{e}")),
+                    }],
+                },
+            }
+        })
+        .collect();
     Ok(out)
 }
 
