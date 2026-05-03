@@ -375,6 +375,158 @@
     "cb_refs.c": {
       "expect": "reject",
       "note": "Negative callback-refs coverage; kernel prog_tests/cb_refs.c iterates each prog with autoload-one and ASSERT_ERR(cb_refs__load) — every prog is expected to fail load due to unreleased refs across cb boundaries."
+    },
+    "cgroup_hierarchical_stats.c": {
+      "expect": "accept",
+      "note": "Positive cgroup hierarchical stats coverage; prog_tests/cgroup_hierarchical_stats.c asserts cgroup_hierarchical_stats__open_and_load succeeds."
+    },
+    "cgroup_preorder.c": {
+      "expect": "accept",
+      "note": "Positive cgroup preorder traversal coverage; prog_tests/cgroup_preorder.c asserts cgroup_preorder__open_and_load succeeds."
+    },
+    "empty_skb.c": {
+      "expect": "accept",
+      "note": "Positive empty-skb coverage; prog_tests/empty_skb.c asserts empty_skb__open_and_load succeeds."
+    },
+    "get_func_args_test.c": {
+      "expect": "accept",
+      "note": "Positive bpf_get_func_arg coverage; prog_tests/get_func_args_test.c asserts get_func_args_test__open_and_load succeeds."
+    },
+    "ima.c": {
+      "expect": "accept",
+      "note": "Positive IMA-LSM coverage; prog_tests/test_ima.c calls ima__open_and_load with CHECK on the result."
+    },
+    "kfree_skb.c": {
+      "expect": "accept",
+      "note": "Positive kfree_skb tracepoint coverage; prog_tests/kfree_skb.c asserts kfree_skb__open_and_load succeeds."
+    },
+    "lsm.c": {
+      "expect": "accept",
+      "note": "Positive LSM coverage; prog_tests/test_lsm.c asserts lsm__open_and_load and lsm_tailcall__open_and_load both succeed."
+    },
+    "res_spin_lock.c": {
+      "expect": "accept",
+      "note": "Positive bpf_res_spin_lock coverage (sibling of res_spin_lock_fail.c); prog_tests/res_spin_lock.c asserts res_spin_lock__open_and_load succeeds."
+    },
+    "test_ns_current_pid_tgid.c": {
+      "expect": "accept",
+      "note": "Positive ns-aware pid/tgid coverage; prog_tests/ns_current_pid_tgid.c asserts test_ns_current_pid_tgid__load succeeds across multiple test cases."
+    },
+    "test_sock_fields.c": {
+      "expect": "accept",
+      "note": "Positive sock-fields coverage; prog_tests/sock_fields.c CHECKs test_sock_fields__open_and_load returns non-NULL."
+    },
+    "test_sockmap_strp.c": {
+      "expect": "accept",
+      "note": "Positive sockmap STRP coverage; prog_tests/sockmap_strp.c calls test_sockmap_strp__open_and_load and uses the result without rejection."
+    },
+    "test_uprobe.c": {
+      "expect": "accept",
+      "note": "Positive uprobe coverage; prog_tests/uprobe.c asserts test_uprobe__open_and_load succeeds (negative case is at attach time, not load)."
+    },
+    "test_uprobe_autoattach.c": {
+      "expect": "accept",
+      "note": "Positive uprobe-autoattach coverage; prog_tests/uprobe_autoattach.c asserts test_uprobe_autoattach__open_and_load succeeds."
+    },
+    "type_cast.c": {
+      "expect": "accept",
+      "note": "Positive bpf_type_cast coverage; prog_tests/type_cast.c asserts type_cast__load succeeds across multiple sub-tests."
+    },
+    "bpf_mod_race.c": {
+      "expect": "accept",
+      "note": "Positive module-race coverage; prog_tests/bpf_mod_race.c asserts bpf_mod_race__load succeeds before exercising the race."
+    },
+    "bpf_syscall_macro.c": {
+      "expect": "accept",
+      "note": "Positive BPF_KSYSCALL macro coverage; prog_tests/test_bpf_syscall_macro.c asserts bpf_syscall_macro__load succeeds."
+    },
+    "crypto_sanity.c": {
+      "expect": "accept",
+      "note": "Positive bpf_crypto coverage; prog_tests/crypto_sanity.c asserts crypto_sanity__open_and_load succeeds."
+    },
+    "find_vma.c": {
+      "expect": "accept",
+      "note": "Positive bpf_find_vma coverage (sibling of find_vma_fail1/2.c); prog_tests/find_vma.c calls find_vma__open_and_load after asserting the fail-siblings reject."
+    },
+    "free_timer.c": {
+      "expect": "accept",
+      "note": "Positive bpf_timer-free coverage; prog_tests/free_timer.c asserts free_timer__open_and_load succeeds."
+    },
+    "kmem_cache_iter.c": {
+      "expect": "accept",
+      "note": "Positive kmem-cache iterator coverage; prog_tests/kmem_cache_iter.c asserts kmem_cache_iter__open_and_load succeeds."
+    },
+    "net_timestamping.c": {
+      "expect": "accept",
+      "note": "Positive net-timestamping coverage; prog_tests/net_timestamping.c asserts net_timestamping__open_and_load succeeds."
+    },
+    "read_vsyscall.c": {
+      "expect": "accept",
+      "note": "Positive read-vsyscall coverage; prog_tests/read_vsyscall.c asserts read_vsyscall__open_and_load succeeds."
+    },
+    "setget_sockopt.c": {
+      "expect": "accept",
+      "note": "Positive bpf_setsockopt/getsockopt coverage; prog_tests/setget_sockopt.c asserts setget_sockopt__load succeeds."
+    },
+    "sockopt_multi.c": {
+      "expect": "accept",
+      "note": "Positive multi-attach sockopt coverage; prog_tests/sockopt_multi.c asserts sockopt_multi__open_and_load succeeds."
+    },
+    "struct_ops_private_stack.c": {
+      "expect": "accept",
+      "note": "Positive struct_ops private-stack coverage (sibling of struct_ops_private_stack_fail.c); prog_tests/struct_ops_private_stack.c asserts struct_ops_private_stack__load succeeds."
+    },
+    "syscall.c": {
+      "expect": "accept",
+      "note": "Positive bpf_syscall prog-type coverage; prog_tests/syscall.c asserts syscall__open_and_load succeeds across multiple sub-tests."
+    },
+    "test_assign_reuse.c": {
+      "expect": "accept",
+      "note": "Positive bpf_sk_assign reuseport coverage; prog_tests/assign_reuse.c asserts test_assign_reuse__load succeeds."
+    },
+    "test_cgroup1_hierarchy.c": {
+      "expect": "accept",
+      "note": "Positive cgroup-v1 hierarchy coverage; prog_tests/cgroup1_hierarchy.c asserts test_cgroup1_hierarchy__load succeeds."
+    },
+    "test_cls_redirect.c": {
+      "expect": "accept",
+      "note": "Positive bpf_redirect TC classifier coverage; prog_tests/cls_redirect.c CHECKs test_cls_redirect__load returns 0."
+    },
+    "test_global_map_resize.c": {
+      "expect": "accept",
+      "note": "Positive global-map resize coverage; prog_tests/global_map_resize.c asserts test_global_map_resize__load succeeds across multiple sub-tests."
+    },
+    "test_rdonly_maps.c": {
+      "expect": "accept",
+      "note": "Positive read-only-map coverage; prog_tests/rdonly_maps.c CHECKs bpf_object__load returns 0."
+    },
+    "test_subprogs_extable.c": {
+      "expect": "accept",
+      "note": "Positive subprog extable coverage; prog_tests/subprogs_extable.c asserts test_subprogs_extable__open_and_load succeeds."
+    },
+    "test_trampoline_count.c": {
+      "expect": "accept",
+      "note": "Positive trampoline-count coverage; prog_tests/trampoline_count.c asserts bpf_object__load succeeds."
+    },
+    "test_usdt.c": {
+      "expect": "accept",
+      "note": "Positive USDT coverage; prog_tests/usdt.c asserts test_usdt__open_and_load succeeds across multiple sub-tests (negative cases sit at attach time)."
+    },
+    "test_xdp_noinline.c": {
+      "expect": "accept",
+      "note": "Positive XDP noinline coverage; prog_tests/xdp_noinline.c asserts test_xdp_noinline__open_and_load succeeds."
+    },
+    "timer.c": {
+      "expect": "accept",
+      "note": "Positive bpf_timer coverage; prog_tests/timer.c asserts timer__open_and_load succeeds (negative cases live in timer_failure.c via RUN_TESTS)."
+    },
+    "timer_lockup.c": {
+      "expect": "accept",
+      "note": "Positive timer-lockup-detection coverage; prog_tests/timer_lockup.c asserts timer_lockup__open_and_load succeeds."
+    },
+    "test_log_fixup.c": {
+      "expect": "reject",
+      "note": "Negative log-fixup coverage; prog_tests/log_fixup.c repeatedly asserts ASSERT_ERR(test_log_fixup__load, \"load_fail\") — every prog is expected to fail load with specific log messages."
     }
   }
 }
