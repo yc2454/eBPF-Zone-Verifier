@@ -16,11 +16,34 @@ pub struct InsnAuxData {
     pub live_regs: HashSet<Reg>,
     /// Stack slot offsets (byte-granularity, relative to R10) that are live at this PC.
     pub live_slots: HashSet<i16>,
+    /// Bucket F-A: this pc is a "force checkpoint" — kernel keeps cached
+    /// states here longer (eviction threshold n=64 vs default n=3) to
+    /// preserve iter/may_goto/cb-call convergence checkpoints. Mirrors
+    /// kernel `mark_force_checkpoint` (verifier.c v6.15 L17085) which
+    /// flags iter_next kfunc calls, sync-callback-calling helpers
+    /// (bpf_loop / bpf_for_each_map_elem / bpf_user_ringbuf_drain),
+    /// and may_goto instructions.
+    pub force_checkpoint: bool,
+}
+
+/// Bucket F-A: per-cached-state hit/miss counters for explored-states
+/// eviction. Mirrors `bpf_verifier_state_list.{hit_cnt,miss_cnt}`
+/// (verifier.c v6.15 ~L19180-L19233). Indexed identically with
+/// `explored_states[pc]`: when an entry is evicted, both vectors drop
+/// the same index.
+#[derive(Clone, Default, Debug)]
+pub struct StateMetrics {
+    pub hit_cnt: u32,
+    pub miss_cnt: u32,
 }
 
 pub struct VerifierEnv<'a> {
     pub ctx: &'a ExecContext,
     pub explored_states: HashMap<usize, Vec<State>>,
+    /// Bucket F-A: parallel to `explored_states`. `state_metrics[pc][i]`
+    /// holds the hit/miss counters for `explored_states[pc][i]`. Drop
+    /// the same index from both vectors on eviction.
+    pub state_metrics: HashMap<usize, Vec<StateMetrics>>,
     pub insn_aux_data: Vec<InsnAuxData>,
     pub invalid_pc_set: HashSet<usize>,
     pub addr_space_cast_to_arena_pcs: HashSet<usize>,
@@ -57,6 +80,7 @@ impl<'a> VerifierEnv<'a> {
         VerifierEnv {
             ctx,
             explored_states: HashMap::new(),
+            state_metrics: HashMap::new(),
             insn_aux_data: vec![InsnAuxData::default(); prog.instrs.len()],
             invalid_pc_set: prog.invalid_pc_set.clone(),
             addr_space_cast_to_arena_pcs: prog.addr_space_cast_to_arena_pcs.clone(),

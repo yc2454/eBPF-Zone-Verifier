@@ -69,13 +69,22 @@ pub fn resolve_type_conflicts(env: &VerifierEnv, state: &mut State) {
 /// Record a state as explored at its PC.
 /// Enforces max_states_per_pc limit by removing oldest states when exceeded.
 pub fn record_state(env: &mut VerifierEnv, state: State, max_states_per_pc: usize) {
-    let states = env.explored_states.entry(state.pc).or_default();
+    let pc = state.pc;
+    let states = env.explored_states.entry(pc).or_default();
     states.push(state);
+    // Bucket F-A: parallel metrics vector. Same indices as states.
+    let metrics = env
+        .state_metrics
+        .entry(pc)
+        .or_default();
+    metrics.push(crate::analysis::machine::env::StateMetrics::default());
 
-    // Enforce limit: keep only the most recent states
+    // Enforce limit: keep only the most recent states. Apply the same
+    // drain to `state_metrics` so the two vectors stay aligned.
     if max_states_per_pc > 0 && states.len() > max_states_per_pc {
         let excess = states.len() - max_states_per_pc;
         states.drain(0..excess);
+        metrics.drain(0..excess);
     }
 }
 

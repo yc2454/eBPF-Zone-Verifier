@@ -234,7 +234,7 @@ fn run_verify(args: VerifyArgs, config: VerifierConfig) {
             }
         }
         InputKind::C => {
-            run_modern_selftest_file(&args.path, args.defines.as_deref(), None, &config);
+            run_modern_selftest_file(&args.path, args.defines.as_deref(), None, None, &config);
         }
         InputKind::Json => match args.test {
             Some(name) => selftest_single(&args.path, &name, &config),
@@ -362,8 +362,8 @@ fn run_pcc(sub: PccCmd, config: VerifierConfig) {
 
 fn run_dev(sub: DevCmd, config: VerifierConfig) {
     match sub {
-        DevCmd::SelftestFile { src, defines, upstream } => {
-            run_modern_selftest_file(&src, defines.as_deref(), upstream.as_deref(), &config);
+        DevCmd::SelftestFile { src, defines, upstream, func } => {
+            run_modern_selftest_file(&src, defines.as_deref(), upstream.as_deref(), func.as_deref(), &config);
         }
         DevCmd::SelftestSuite { progs_dir } => {
             run_modern_selftest_dir(&progs_dir, &config);
@@ -448,10 +448,18 @@ fn parse_extra_defines(arg: Option<&str>) -> Vec<String> {
     .unwrap_or_default()
 }
 
+struct OneFunc<'a>(&'a str);
+impl<'a> crate::testing::selftest::runner::ProgFilter for OneFunc<'a> {
+    fn should_run(&self, _file: &str, prog: &str) -> bool {
+        prog == self.0
+    }
+}
+
 fn run_modern_selftest_file(
     src: &str,
     defines_arg: Option<&str>,
     upstream_root: Option<&str>,
+    func_filter: Option<&str>,
     config: &VerifierConfig,
 ) {
     use crate::testing::selftest::clang::{self, DEFAULT_HEADERS_TAG};
@@ -470,18 +478,37 @@ fn run_modern_selftest_file(
                 }
             }
             let define_refs: Vec<&str> = defines.iter().map(|s| s.as_str()).collect();
-            runner::run_file_with_dirs(
-                std::path::Path::new(src),
-                &inc,
-                &iq,
-                &define_refs,
-                config,
-                &runner::RunAll,
-            )
+            match func_filter {
+                Some(name) => runner::run_file_with_dirs(
+                    std::path::Path::new(src),
+                    &inc,
+                    &iq,
+                    &define_refs,
+                    config,
+                    &OneFunc(name),
+                ),
+                None => runner::run_file_with_dirs(
+                    std::path::Path::new(src),
+                    &inc,
+                    &iq,
+                    &define_refs,
+                    config,
+                    &runner::RunAll,
+                ),
+            }
         }
         None => {
             let define_refs: Vec<&str> = defines.iter().map(|s| s.as_str()).collect();
-            runner::run_file(std::path::Path::new(src), &headers, &define_refs, config)
+            match func_filter {
+                Some(name) => runner::run_file_filtered(
+                    std::path::Path::new(src),
+                    &headers,
+                    &define_refs,
+                    config,
+                    &OneFunc(name),
+                ),
+                None => runner::run_file(std::path::Path::new(src), &headers, &define_refs, config),
+            }
         }
     };
     match res {

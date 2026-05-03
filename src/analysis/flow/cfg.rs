@@ -126,6 +126,14 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
                     succs.push(target);
                     init_explored_state(env, target);
                 }
+                // Bucket F-A: sync-callback-calling helpers are force-
+                // checkpoint sites (kernel `mark_force_checkpoint` at
+                // verifier.c L17489). Eviction threshold n=64 here vs
+                // n=3 elsewhere — keeps cb-call checkpoints alive long
+                // enough for cb-iteration convergence.
+                if pc < env.insn_aux_data.len() {
+                    env.insn_aux_data[pc].force_checkpoint = true;
+                }
             }
             if pc + 1 < n {
                 succs.push(pc + 1);
@@ -185,6 +193,11 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
             }
             succs.push(*target);
             init_explored_state(env, *target);
+            // Bucket F-A: may_goto is a force-checkpoint site (kernel
+            // `mark_force_checkpoint` at verifier.c L17557).
+            if pc < env.insn_aux_data.len() {
+                env.insn_aux_data[pc].force_checkpoint = true;
+            }
             Ok(succs)
         }
         Instr::CallRel { target } => {

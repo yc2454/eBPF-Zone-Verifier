@@ -205,6 +205,11 @@ pub enum DevCmd {
         /// (mirrors `selftest-baseline-write-upstream` for one file).
         #[arg(long)]
         upstream: Option<String>,
+        /// If set, only run programs whose function name matches.
+        /// Used for spot-checking individual ERROR rows without
+        /// re-running the whole file's worth of tests.
+        #[arg(long)]
+        func: Option<String>,
     },
     /// Compile + verify every `.c` selftest in `progs_dir`
     SelftestSuite { progs_dir: String },

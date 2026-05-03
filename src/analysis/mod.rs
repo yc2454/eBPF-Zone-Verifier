@@ -359,7 +359,7 @@ fn run_worklist(
         }
 
         // A.b PRUNING CHECK
-        if pruning::should_prune(&env, &mut state, config, prog) {
+        if pruning::should_prune(env, &mut state, config, prog) {
             info!("Pruned state at pc {}", state.pc);
             prune_count += 1;
             continue;

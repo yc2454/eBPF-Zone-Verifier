@@ -325,7 +325,7 @@ fn apply_widening(
 /// Handle pruning decision at a loop point.
 /// Returns Some(true) to prune, Some(false) to continue, None if no previous states.
 fn handle_loop_pruning(
-    env: &VerifierEnv,
+    env: &mut VerifierEnv,
     state: &mut State,
     pc: usize,
     prog: &Program,
@@ -342,64 +342,78 @@ fn handle_loop_pruning(
     // Apply bound before subsumption check
     apply_loop_bound(state, loop_bound);
 
-    let Some(prev_states) = env.explored_states.get(&pc) else {
+    // Walk prev_states once, recording the first hit (if any) and all
+    // walked-past indices. We hold the borrow only inside this scope so
+    // the metrics-update at the end can take `&mut env` cleanly.
+    let (hit_idx, miss_idxs, prev_first_budget, prev_last_budget, prev_states_len): (
+        Option<usize>,
+        Vec<usize>,
+        Option<u32>,
+        Option<u32>,
+        usize,
+    ) = if let Some(prev_states) = env.explored_states.get(&pc) {
+        let mut h = None;
+        let mut m: Vec<usize> = Vec::new();
+        // Branchy loop tops can hold multiple cached states; match the
+        // first that subsumes (kernel `is_state_visited` walks the
+        // explored_state list, verifier.c v6.15 ~L19018).
+        for (i, prev) in prev_states.iter().enumerate() {
+            if state_subsumed_by(state, prev, live_regs, config) {
+                h = Some(i);
+                break;
+            } else {
+                m.push(i);
+            }
+        }
+        let f = prev_states.first().map(|s| s.goto_budget);
+        let l = prev_states.last().map(|s| s.goto_budget);
+        (h, m, f, l, prev_states.len())
+    } else {
         return false;
     };
 
-    // Branchy loop tops can hold multiple cached states (e.g. an
-    // `iter_*_next` fork leaves both the non-null and null R0 paths
-    // cached at the same pc). Match against any of them — only checking
-    // `last()` would miss subsumption when the branches alternate.
-    // Mirrors kernel `is_state_visited` which iterates `list_for_each`
-    // over the full explored_state list (verifier.c v6.15 ~L19018).
-    let any_subsumes = prev_states
-        .iter()
-        .any(|old| state_subsumed_by(state, old, live_regs, config));
-
-    if let Some(old) = prev_states.last() {
-        if any_subsumes {
-            // Check if we can converge (widening effective + exit explored)
-            if check_loop_convergence(
-                env,
-                state,
-                pc,
-                prog,
-                prev_states,
-                live_regs,
-                loop_bound,
-                config,
-            ) {
-                return true;
-            }
-            // Subsumed but conditions not met (widening not effective or no exit path)
-            // Let complexity limit catch infinite loops - don't widen when already subsumed
-            return false;
+    if let Some(idx) = hit_idx {
+        // Record hit BEFORE check_loop_convergence — eviction won't
+        // touch the just-hit entry, but cleaner ordering.
+        record_pruning_hit(env, pc, idx);
+        // For convergence we still need the full prev_states list.
+        let prev_states = env
+            .explored_states
+            .get(&pc)
+            .cloned()
+            .unwrap_or_default();
+        if check_loop_convergence(
+            env,
+            state,
+            pc,
+            prog,
+            &prev_states,
+            live_regs,
+            loop_bound,
+            config,
+        ) {
+            return true;
         }
+        // Subsumed but conditions not met (widening not effective or no exit path)
+        return false;
+    }
 
-        // Not subsumed: apply widening to accelerate convergence.
-        //
-        // Force-widen when the loop's ONLY conditional exit is a may_goto
-        // (no `Instr::If` in the body and no static loop bound detected),
-        // and the goto_budget is strictly decreasing across `prev_states`.
-        // Without that, the body's per-iteration scalar mutation prevents
-        // subsumption forever and we hit the complexity limit. The budget
-        // decrement guarantees termination, so we can afford to lose
-        // precision on scalars the static bounds machinery can't pin down.
-        //
-        // Bounded loops with both an `If`-style exit AND a may_goto
-        // (e.g. test2's `for (i=0; i<N && can_loop; i++)`) already
-        // converge via `apply_loop_bound`, so we don't force-widen there
-        // — preserves the index-bound precision the array store inside
-        // needs.
-        let only_may_goto_exit = !loop_has_if_exit(env, state, pc, prog);
-        let may_goto_progress = prev_states
-            .first()
-            .zip(prev_states.last())
-            .map(|(f, l)| f.goto_budget > l.goto_budget)
-            .unwrap_or(false);
-        let force_widen_for_may_goto =
-            only_may_goto_exit && loop_bound.is_none() && may_goto_progress;
-        if config.use_widening || force_widen_for_may_goto {
+    // Not subsumed: record misses + maybe evict, then apply widening.
+    record_pruning_misses(env, pc, &miss_idxs);
+
+    let only_may_goto_exit = !loop_has_if_exit(env, state, pc, prog);
+    let may_goto_progress = prev_first_budget
+        .zip(prev_last_budget)
+        .map(|(f, l)| f > l)
+        .unwrap_or(false);
+    let force_widen_for_may_goto =
+        only_may_goto_exit && loop_bound.is_none() && may_goto_progress;
+    if (config.use_widening || force_widen_for_may_goto) && prev_states_len > 0 {
+        // Re-fetch the last cached state for widening (after eviction
+        // it may have shifted; take the last surviving one).
+        if let Some(prev_states) = env.explored_states.get(&pc)
+            && let Some(old) = prev_states.last().cloned().as_ref()
+        {
             apply_widening(state, old, live_regs, loop_bound);
         }
     }
@@ -409,26 +423,37 @@ fn handle_loop_pruning(
 
 /// Handle standard (non-loop) subsumption check.
 fn handle_standard_pruning(
-    env: &VerifierEnv,
+    env: &mut VerifierEnv,
     state: &State,
     pc: usize,
     live_regs: &HashSet<Reg>,
     config: &VerifierConfig,
 ) -> bool {
+    let mut hit_idx: Option<usize> = None;
+    let mut miss_idxs: Vec<usize> = Vec::new();
     if let Some(prev_states) = env.explored_states.get(&pc) {
-        for prev in prev_states {
+        for (i, prev) in prev_states.iter().enumerate() {
             if state_subsumed_by(state, prev, live_regs, config) {
-                return true;
+                hit_idx = Some(i);
+                break;
+            } else {
+                miss_idxs.push(i);
             }
         }
     }
-    false
+    if let Some(idx) = hit_idx {
+        record_pruning_hit(env, pc, idx);
+        true
+    } else {
+        record_pruning_misses(env, pc, &miss_idxs);
+        false
+    }
 }
 
 /// Check if we should prune this state (already covered by a previous exploration).
 /// For loop heads with conditional exits, applies widening to accelerate convergence.
 pub fn should_prune(
-    env: &VerifierEnv,
+    env: &mut VerifierEnv,
     state: &mut State,
     config: &VerifierConfig,
     prog: &Program,
@@ -452,36 +477,97 @@ pub fn should_prune(
         return false;
     }
 
-    let live_regs = &env.insn_aux_data[pc].live_regs;
+    let live_regs = env.insn_aux_data[pc].live_regs.clone();
 
     // Bucket F-D: may_goto-specific RANGE_WITHIN prune class.
-    // Mirrors kernel `is_state_visited` (verifier.c v6.15 ~L19102):
-    //   if (is_may_goto_insn_at(env, insn_idx)) {
-    //       if (sl->state.may_goto_depth != cur->may_goto_depth &&
-    //           states_equal(env, &sl->state, cur, RANGE_WITHIN)) {
-    //           goto hit;
-    //       }
-    //   }
-    // RANGE_WITHIN: scalar precision marks are dropped — bounds/tnum
-    // containment is enough. Combined with the depth-bump in the
-    // `Instr::MayGoto` transfer, this lets bounded-but-precision-tight
-    // loops (cond_break1/2/3) converge: the body precision-marks `i`
-    // at the `arr[i]` access, but successive may_goto visits share a
-    // RANGE_WITHIN view of `i` modulo its widened range.
     if pc < prog.instrs.len()
         && matches!(prog.instrs[pc], Instr::If { .. } | Instr::MayGoto { .. })
         && let Some(prev_states) = env.explored_states.get(&pc)
     {
         let is_may_goto = matches!(prog.instrs[pc], Instr::MayGoto { .. });
-        if is_may_goto && may_goto_range_within_prune(state, prev_states, live_regs, config) {
+        if is_may_goto && may_goto_range_within_prune(state, prev_states, &live_regs, config) {
             return true;
         }
     }
 
-    if in_loop {
-        handle_loop_pruning(env, state, pc, prog, live_regs, config)
+    let pruned = if in_loop {
+        handle_loop_pruning(env, state, pc, prog, &live_regs, config)
     } else {
-        handle_standard_pruning(env, state, pc, live_regs, config)
+        handle_standard_pruning(env, state, pc, &live_regs, config)
+    };
+    pruned
+}
+
+/// Bucket F-A: bump miss_cnt for every `prev_idx` and evict whose
+/// `miss_cnt > hit_cnt * n + n` (kernel verifier.c v6.15 L19222-L19233).
+/// `n = 64` at force-checkpoint pcs (iter_next, may_goto, sync-cb-call
+/// helpers); `n = 3` elsewhere. Caller passes the indices of every
+/// cached state that was walked-past during a failed subsumption check;
+/// hit cases use `record_pruning_hit` instead.
+fn record_pruning_misses(env: &mut VerifierEnv, pc: usize, miss_idxs: &[usize]) {
+    if miss_idxs.is_empty() {
+        return;
+    }
+    let force = env
+        .insn_aux_data
+        .get(pc)
+        .map(|a| a.force_checkpoint)
+        .unwrap_or(false);
+
+    let mut to_evict: Vec<usize> = Vec::new();
+    if let Some(metrics) = env.state_metrics.get_mut(&pc) {
+        for &i in miss_idxs {
+            if let Some(m) = metrics.get_mut(i) {
+                m.miss_cnt = m.miss_cnt.saturating_add(1);
+                // Kernel formula (verifier.c L19222):
+                //   n = is_force_checkpoint && sl->state.branches > 0 ? 64 : 3
+                // We don't track `branches`. Approximate via `hit_cnt`:
+                // cached states that have been hit at least once are
+                // "proven useful"; keep them longer (n=64 at force-
+                // checkpoint pcs). Unhit states use the smaller n,
+                // matching the kernel's `branches == 0` fast-evict.
+                // Non-force-checkpoint pcs use a slightly raised n=8
+                // (vs kernel's n=3) because we always increment miss_cnt
+                // — kernel gates that on the `add_new_state` heuristic
+                // (verifier.c L19141-L19144) which we don't model.
+                let n: u32 = if force {
+                    if m.hit_cnt > 0 { 64 } else { 3 }
+                } else {
+                    8
+                };
+                if m.miss_cnt > m.hit_cnt.saturating_mul(n).saturating_add(n) {
+                    to_evict.push(i);
+                }
+            }
+        }
+    }
+    if to_evict.is_empty() {
+        return;
+    }
+    // Sort descending so removals don't shift later indices.
+    to_evict.sort_unstable_by(|a, b| b.cmp(a));
+    if let Some(states) = env.explored_states.get_mut(&pc) {
+        for &i in &to_evict {
+            if i < states.len() {
+                states.remove(i);
+            }
+        }
+    }
+    if let Some(metrics) = env.state_metrics.get_mut(&pc) {
+        for &i in &to_evict {
+            if i < metrics.len() {
+                metrics.remove(i);
+            }
+        }
+    }
+}
+
+/// Bucket F-A: bump hit_cnt for the cached state at `prev_idx`.
+fn record_pruning_hit(env: &mut VerifierEnv, pc: usize, prev_idx: usize) {
+    if let Some(metrics) = env.state_metrics.get_mut(&pc)
+        && let Some(m) = metrics.get_mut(prev_idx)
+    {
+        m.hit_cnt = m.hit_cnt.saturating_add(1);
     }
 }
 
