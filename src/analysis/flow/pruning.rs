@@ -246,9 +246,27 @@ fn apply_loop_bound(state: &mut State, loop_bound: Option<(Reg, i64)>) -> bool {
 /// Check if widening was effective (bounds expanded compared to first visit).
 fn widening_was_effective(first: &State, last: &State, live_regs: &HashSet<Reg>) -> bool {
     live_regs.iter().any(|&r| {
+        // Interval widening: last covers strictly more values than first.
         let (first_min, first_max) = first.domain.get_interval(r);
         let (last_min, last_max) = last.domain.get_interval(r);
-        last_min < first_min || last_max > first_max
+        if last_min < first_min || last_max > first_max {
+            return true;
+        }
+        // Tnum widening: last has more unknown bits than first. Without
+        // this, scalar-counter loops where the interval was already
+        // maximally wide (e.g. [S64_MIN, S64_MAX] propagated from a
+        // boundary-crossing add) but the tnum was per-iteration precise
+        // can never converge — widening is happening on tnum each
+        // iteration but `widening_was_effective` only sees intervals.
+        // Pattern observed in
+        // verifier_bounds.c::crossing_64_bit_signed_boundary_2.
+        let first_tn = first.get_tnum(r);
+        let last_tn = last.get_tnum(r);
+        // last has *more* unknown bits than first iff (last.mask | first.mask) != first.mask.
+        if (last_tn.mask | first_tn.mask) != first_tn.mask {
+            return true;
+        }
+        false
     })
 }
 
@@ -463,7 +481,21 @@ fn handle_loop_pruning(
         .unwrap_or(false);
     let force_widen_for_may_goto =
         only_may_goto_exit && loop_bound.is_none() && may_goto_progress;
-    if (config.use_widening || force_widen_for_may_goto) && prev_states_len > 0 {
+    // Tnum-only divergence at a back-edge: a counter scalar incrementing
+    // each iteration produces tnum-precise values that never subsume,
+    // even though the *interval* domain happily widens. Apply tnum
+    // widening here so non-iter / non-may_goto goto-loops with scalar
+    // counters can converge — without affecting tests that miss for
+    // other reasons (stack/types/domain). Pattern observed in
+    // verifier_bounds.c::crossing_64_bit_signed_boundary_2 (counter r0
+    // incrementing in [S64_MIN, ...] until SLt branch exits).
+    let only_tnum_misses = !miss_reasons.is_empty()
+        && miss_reasons
+            .iter()
+            .all(|r| *r == SubsumptionMissReason::Tnum);
+    if (config.use_widening || force_widen_for_may_goto || only_tnum_misses)
+        && prev_states_len > 0
+    {
         // Re-fetch the last cached state for widening (after eviction
         // it may have shifted; take the last surviving one).
         if let Some(prev_states) = env.explored_states.get(&pc)
