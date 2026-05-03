@@ -550,12 +550,14 @@ fn dump_subsumption_miss_histogram(env: &VerifierEnv) {
     }
     let total_misses: u64 = global.iter().sum();
 
-    let total_hits: u64 = env
-        .state_metrics
-        .values()
-        .flatten()
-        .map(|m| m.hit_cnt as u64)
-        .sum();
+    // Use the lifetime counters, NOT `state_metrics.hit_cnt`. The
+    // per-state hit/miss counters disappear when the state is evicted
+    // by `record_state`'s max_states_per_pc drain (cap = 8 by
+    // default), so reading them at end-of-run undercounts wildly on
+    // workloads with > 8 distinct cached states per PC.
+    let total_hits: u64 = env.pruning_stats.lifetime_hits;
+    let total_misses_lifetime: u64 = env.pruning_stats.lifetime_misses;
+    let _ = env.state_metrics.values().flatten().count(); // keep import path used
     let total_cached: u64 = env
         .state_metrics
         .values()
@@ -601,7 +603,27 @@ fn dump_subsumption_miss_histogram(env: &VerifierEnv) {
         pct(ps.loop_pruning_calls, ps.should_prune_calls)
     );
     eprintln!(
-        "  cache hits: {total_hits}    cache misses: {total_misses}    miss-PCs: {n_pcs}"
+        "      of which bailed (no_cond_exit):    {} ({:.1}% of loop calls)",
+        ps.loop_no_cond_exit,
+        pct(ps.loop_no_cond_exit, ps.loop_pruning_calls)
+    );
+    eprintln!(
+        "      of which actually walked prev_states: {}",
+        ps.loop_walks_attempted
+    );
+    eprintln!(
+        "        no_prev / hit / miss / convergence-pruned: {} / {} / {} / {}",
+        ps.loop_walks_no_prev,
+        ps.loop_walks_hit,
+        ps.loop_walks_miss,
+        ps.loop_walks_pruned_via_convergence,
+    );
+    eprintln!(
+        "    may_goto RANGE_WITHIN hits: {}",
+        ps.may_goto_range_within_hits
+    );
+    eprintln!(
+        "  cache hits: {total_hits}    cache misses: {total_misses_lifetime} (per-reason histogram below sums to {total_misses})    miss-PCs: {n_pcs}"
     );
     eprintln!("  miss reasons (first-rejecting check, % of total misses):");
     let mut ranked: Vec<(SubsumptionMissReason, u64)> = SubsumptionMissReason::ALL

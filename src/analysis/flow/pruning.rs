@@ -273,6 +273,48 @@ fn check_loop_convergence(
     //    caller; this just controls when we *trust* the subsumption to
     //    let us prune.
     // 3. Exit path exists (bounded loop or exit was explored)
+    // Force-checkpoint PCs (iter_next kfuncs, may_goto, sync-cb-call
+    // helpers) carry their own convergence guarantee: the kernel's
+    // `is_state_visited` at these PCs treats subsumption alone as
+    // sufficient because the iter-id / budget / cb-state mechanics in
+    // the verifier semantics force termination independent of any
+    // scalar widening on body-live regs. Without this exception, our
+    // gates below (widening-effective + may_goto-progress) reject
+    // valid prunes for iter-based loops where the loop variable lives
+    // on the stack as an iter handle (not in a live register), and
+    // the body's effects on the iter handle aren't visible as
+    // "widening" in the live-reg sense. Audit on v6.15 corpus showed
+    // this single missing case accounted for ~6 timeouts (clean_live_
+    // states, widen_spill, iter_bpf_for_each_macro,
+    // iter_nested_deeply_iters, triple_continue, bad_words: all had
+    // many subsumption hits but `check_loop_convergence` returned
+    // false on every one, so the iter just kept iterating until cap).
+    // Iter-based convergence (kernel `is_state_visited` at iter_next):
+    // if the loop body contains a force-checkpoint PC (iter_next /
+    // may_goto / sync-cb-call helper), the iter-id mechanics in the
+    // kernel guarantee termination — subsumption at the loop head is
+    // sufficient, no scalar widening needed. Without this, our gates
+    // below (widening-effective + may_goto-progress) reject every
+    // valid prune for iter-based loops where the iter handle lives on
+    // the stack and the "loop variable" never appears as a live reg.
+    let body_has_force_checkpoint = state
+        .history_idx
+        .map(|idx| {
+            env.history
+                .loop_body_pcs(idx, pc, Some(state.num_frames()))
+                .into_iter()
+                .any(|body_pc| {
+                    env.insn_aux_data
+                        .get(body_pc)
+                        .map(|a| a.force_checkpoint)
+                        .unwrap_or(false)
+                })
+        })
+        .unwrap_or(false);
+    if body_has_force_checkpoint {
+        return true;
+    }
+
     if prev_states.len() < 2 {
         return false;
     }
@@ -334,8 +376,10 @@ fn handle_loop_pruning(
 ) -> bool {
     // Loops without conditional exits are infinite - let complexity limit catch them
     if !loop_has_conditional_exit(env, state, pc, prog) {
+        env.pruning_stats.loop_no_cond_exit += 1;
         return false;
     }
+    env.pruning_stats.loop_walks_attempted += 1;
 
     let loop_bound = detect_loop_bound(env, state, pc, prog);
 
@@ -375,10 +419,12 @@ fn handle_loop_pruning(
         let l = prev_states.last().map(|s| s.goto_budget);
         (h, m, r, f, l, prev_states.len())
     } else {
+        env.pruning_stats.loop_walks_no_prev += 1;
         return false;
     };
 
     if let Some(idx) = hit_idx {
+        env.pruning_stats.loop_walks_hit += 1;
         // Record hit BEFORE check_loop_convergence — eviction won't
         // touch the just-hit entry, but cleaner ordering.
         record_pruning_hit(env, pc, idx);
@@ -398,12 +444,14 @@ fn handle_loop_pruning(
             loop_bound,
             config,
         ) {
+            env.pruning_stats.loop_walks_pruned_via_convergence += 1;
             return true;
         }
         // Subsumed but conditions not met (widening not effective or no exit path)
         return false;
     }
 
+    env.pruning_stats.loop_walks_miss += 1;
     // Not subsumed: record misses + maybe evict, then apply widening.
     record_pruning_misses(env, pc, &miss_idxs);
     record_subsumption_miss_reasons(env, pc, &miss_reasons);
@@ -475,6 +523,7 @@ fn record_subsumption_miss_reasons(
     if reasons.is_empty() {
         return;
     }
+    env.pruning_stats.lifetime_misses += reasons.len() as u64;
     let entry = env
         .subsumption_misses
         .entry(pc)
@@ -540,6 +589,7 @@ pub fn should_prune(
     {
         let is_may_goto = matches!(prog.instrs[pc], Instr::MayGoto { .. });
         if is_may_goto && may_goto_range_within_prune(state, prev_states, &live_regs, config) {
+            env.pruning_stats.may_goto_range_within_hits += 1;
             return true;
         }
     }
@@ -618,6 +668,7 @@ fn record_pruning_misses(env: &mut VerifierEnv, pc: usize, miss_idxs: &[usize]) 
 
 /// Bucket F-A: bump hit_cnt for the cached state at `prev_idx`.
 fn record_pruning_hit(env: &mut VerifierEnv, pc: usize, prev_idx: usize) {
+    env.pruning_stats.lifetime_hits += 1;
     if let Some(metrics) = env.state_metrics.get_mut(&pc)
         && let Some(m) = metrics.get_mut(prev_idx)
     {

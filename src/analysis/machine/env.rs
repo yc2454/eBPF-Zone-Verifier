@@ -76,6 +76,33 @@ pub struct PruningStats {
     pub no_prev_states: u64,
     pub std_pruning_calls: u64,
     pub loop_pruning_calls: u64,
+    /// Of the `loop_pruning_calls`, how many bailed early because
+    /// `loop_has_conditional_exit` returned false. Distinguishes
+    /// "we identify the construct as a loop but can't see its exit"
+    /// (probably a missed iter_next-style exit pattern) from "we
+    /// reached subsumption but the cache didn't help."
+    pub loop_no_cond_exit: u64,
+    /// Of `should_prune` calls reaching the post-skip phase, how many
+    /// were short-circuited by the may_goto RANGE_WITHIN prune class
+    /// (counted *before* the std/loop branch, so it's not in those).
+    pub may_goto_range_within_hits: u64,
+    /// Per-call tracking inside `handle_loop_pruning` itself. The
+    /// outer `loop_pruning_calls` counts *attempts*; this is "we
+    /// actually walked prev_states." Difference would show if the
+    /// `loop_has_conditional_exit` bail-out happens after the counter
+    /// increment.
+    pub loop_walks_attempted: u64,
+    pub loop_walks_no_prev: u64,
+    pub loop_walks_hit: u64,
+    pub loop_walks_miss: u64,
+    pub loop_walks_pruned_via_convergence: u64,
+    /// Lifetime cache hits (every successful subsumption, even on
+    /// states that later get evicted via max_states_per_pc drain).
+    /// The per-state `StateMetrics.hit_cnt` is wrong for end-of-run
+    /// reporting because evicted entries take their counters with them;
+    /// these monotonic counters give the true picture.
+    pub lifetime_hits: u64,
+    pub lifetime_misses: u64,
 }
 
 impl SubsumptionMissReason {
