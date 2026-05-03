@@ -519,7 +519,7 @@ fn iter_next_fork(
         })
         .cloned();
     if let Some(prev) = prev_snapshot.as_ref() {
-        widen_imprecise_scalars_at_iter_next(prev, &mut nonnull);
+        widen_imprecise_scalars_at_iter_next_call(prev, &mut nonnull);
     }
 
     vec![nonnull, null]
@@ -532,6 +532,23 @@ fn iter_next_fork(
 /// `prev` collapses to UNKNOWN. Precise entries are left intact (the
 /// kernel preserves them via the idmap; we use `precise_regs`).
 pub(crate) fn widen_imprecise_scalars_at_iter_next(prev: &State, cur: &mut State) {
+    widen_imprecise_scalars_impl(prev, cur, false)
+}
+
+/// Same as `widen_imprecise_scalars_at_iter_next` but called at the
+/// actual `bpf_iter_*_next` kfunc invocation. Under flag-on
+/// (`ZOVIA_KERNEL_PRECISION=1`) drops the `prev.precise_regs` skip
+/// gate: walker writes precise marks proactively into cached states
+/// (kernel marks lazily), so by the time we reach iter_next the
+/// cached prev's precise set has future-tense annotations the kernel
+/// wouldn't yet have. cb-return/may_goto callers stay strict — those
+/// are different convergence regimes where prev-precise really does
+/// reflect the live precision contract.
+pub(crate) fn widen_imprecise_scalars_at_iter_next_call(prev: &State, cur: &mut State) {
+    widen_imprecise_scalars_impl(prev, cur, true)
+}
+
+fn widen_imprecise_scalars_impl(prev: &State, cur: &mut State, at_iter_next_call: bool) {
     use crate::analysis::machine::reg::Reg;
 
     // Bucket F-D: once the may_goto/iter_next has been visited many
@@ -571,9 +588,17 @@ pub(crate) fn widen_imprecise_scalars_at_iter_next(prev: &State, cur: &mut State
         // populates `prev` (cached) precision retroactively when the
         // backward walk lands on a checkpoint, so checking only `cur`
         // would miss the lineage and over-widen.
-        if !force_widen
-            && (cur.precise_regs.contains(&r) || prev.precise_regs.contains(&r))
-        {
+        //
+        // Under the kernel-precision regime at the actual iter_next
+        // kfunc call (`at_iter_next_call=true`), drop the
+        // prev.precise_regs gate. Walker writes precise marks
+        // proactively to cached states; kernel marks lazily — at iter
+        // next time the kernel's rold->precise is typically still
+        // false. Other callers (cb-return / may_goto) stay strict.
+        let kernel_rule = crate::analysis::machine::env::kernel_precision_enabled();
+        let drop_prev = kernel_rule && at_iter_next_call;
+        let prev_block = !drop_prev && prev.precise_regs.contains(&r);
+        if !force_widen && (cur.precise_regs.contains(&r) || prev_block) {
             continue;
         }
         // Only widen scalar-typed regs; pointer types are kept exact

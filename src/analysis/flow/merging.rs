@@ -134,6 +134,53 @@ pub fn record_state(
         }
     }
 
+    if crate::analysis::machine::env::dump_cache_growth_enabled() {
+        let states_now = env.explored_states.get(&pc).map(|v| v.as_slice()).unwrap_or(&[]);
+        let mut sigs: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for s in states_now {
+            let sig = s
+                .types
+                .regs
+                .iter()
+                .map(|r| format!("{:?}", r))
+                .collect::<Vec<_>>()
+                .join("|");
+            sigs.insert(sig);
+        }
+        eprintln!(
+            "[cache_growth] pc={} cache_size={} distinct_type_sigs={}",
+            pc,
+            states_now.len(),
+            sigs.len()
+        );
+    }
+
+    if let Some(target_pc) = crate::analysis::machine::env::dump_cache_growth_pc() {
+        if pc == target_pc {
+            let states_now =
+                env.explored_states.get(&pc).map(|v| v.as_slice()).unwrap_or(&[]);
+            let arrival_idx = states_now.len().saturating_sub(1);
+            eprintln!(
+                "[cache_growth_verbose] pc={} cache_size={} (arrival idx={})",
+                pc,
+                states_now.len(),
+                arrival_idx
+            );
+            for (i, s) in states_now.iter().enumerate() {
+                let marker = if i == arrival_idx { "*" } else { " " };
+                let regs = s
+                    .types
+                    .regs
+                    .iter()
+                    .enumerate()
+                    .map(|(ri, rt)| format!("R{}={:?}", ri, rt))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                eprintln!("  {}[{}] {}", marker, i, regs);
+            }
+        }
+    }
+
     cache_id
 }
 

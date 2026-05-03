@@ -1128,6 +1128,12 @@ fn domain_subsumed_by(
                 // Kernel rule: precise → range_within (old ⊇ cur, NOT
                 // exact eq). verifier.c v6.15 regsafe() L18387.
                 if !(old_min <= cur_min && old_max >= cur_max) {
+                    if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
+                        eprintln!(
+                            "[domain_miss] reg={:?} precise old=[{},{}] cur=[{},{}]",
+                            r, old_min, old_max, cur_min, cur_max
+                        );
+                    }
                     return false;
                 }
             } else if old_min != cur_min || old_max != cur_max {
@@ -1137,6 +1143,12 @@ fn domain_subsumed_by(
             // Kernel rule: !precise → accept anything. verifier.c L18357.
             continue;
         } else if !(old_min <= cur_min && old_max >= cur_max) {
+            if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
+                eprintln!(
+                    "[domain_miss] reg={:?} !precise old=[{},{}] cur=[{},{}]",
+                    r, old_min, old_max, cur_min, cur_max
+                );
+            }
             return false;
         }
     }
@@ -1172,6 +1184,9 @@ fn zone_subsumed_by(
                 continue;
             }
             if old_dbm.get(a, b) < cur_dbm.get(a, b) {
+                if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
+                    eprintln!("[domain_miss] anchor-anchor a={:?} b={:?}", a, b);
+                }
                 return false;
             }
         }
@@ -1198,9 +1213,15 @@ fn zone_subsumed_by(
     for &r in &live {
         for &a in &anchors {
             if old_dbm.get(r, a) < cur_dbm.get(r, a) {
+                if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
+                    eprintln!("[domain_miss] reg-anchor r={:?} a={:?}", r, a);
+                }
                 return false;
             }
             if old_dbm.get(a, r) < cur_dbm.get(a, r) {
+                if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
+                    eprintln!("[domain_miss] anchor-reg a={:?} r={:?}", a, r);
+                }
                 return false;
             }
         }

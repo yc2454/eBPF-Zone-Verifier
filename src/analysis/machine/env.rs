@@ -439,6 +439,24 @@ pub fn kernel_precision_enabled() -> bool {
     std::env::var("ZOVIA_KERNEL_PRECISION").ok().as_deref() == Some("1")
 }
 
+/// Cache-growth instrumentation flag. When set, `record_state` prints
+/// `(pc, cache_size, distinct_type_sigs)` to stderr on every insert.
+/// Used to diagnose state-graph traversal divergence between
+/// flag-off and flag-on under the precision rebuild.
+pub fn dump_cache_growth_enabled() -> bool {
+    std::env::var("ZOVIA_DUMP_CACHE_GROWTH").ok().as_deref() == Some("1")
+}
+
+/// If set to a numeric PC, `record_state` dumps full per-register
+/// type signatures at that PC for every cached state on each insert.
+/// Used to identify which register's type-shape diverges between
+/// flag-off and flag-on.
+pub fn dump_cache_growth_pc() -> Option<usize> {
+    std::env::var("ZOVIA_DUMP_CACHE_GROWTH_PC")
+        .ok()
+        .and_then(|s| s.parse().ok())
+}
+
 /// Static pre-pass identifying subprog entry PCs whose body is unsafe
 /// to use as a graph-add (`bpf_rbtree_add_impl` / `bpf_list_push_*`)
 /// `less` callback. Kernel verifier.c v6.15 rejects callbacks that
