@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-03T02:03:52.288328+00:00",
+  "generated_at": "2026-05-03T04:25:25.291403+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -3945,9 +3945,8 @@
           "note": "verifier timeout"
         },
         "clean_live_states": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "delayed_precision_mark": {
           "upstream": "ACCEPT",
@@ -3966,9 +3965,8 @@
           "ours": "PASS"
         },
         "iter_bpf_for_each_macro": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "iter_bpf_for_macro": {
           "upstream": "ACCEPT",
@@ -4050,9 +4048,8 @@
           "ours": "PASS"
         },
         "iter_stack_array_loop": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "iter_subprog_check_stacksafe": {
           "upstream": "ACCEPT",
@@ -4089,14 +4086,12 @@
           "ours": "PASS"
         },
         "triple_continue": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "widen_spill": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -13461,9 +13456,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/verifier_bits_iter.c",
       "progs": {
         "bad_words": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "bit_index": {
           "upstream": "ACCEPT",
@@ -14883,7 +14877,7 @@
         "arg_tag_nonnull_ptr_good": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 8: base R1+0 (type: PtrToAllocMemOrNull { id: 120923, mem_size: 4, ref_id: None, dynptr_id: None })"
+          "note": "Unsafe generic load at pc 8: base R1+0 (type: PtrToAllocMemOrNull { id: 2202, mem_size: 4, ref_id: None, dynptr_id: None })"
         },
         "arg_tag_nullable_ptr_fail": {
           "upstream": "ACCEPT",
