@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-03T19:01:55.503213+00:00",
+  "generated_at": "2026-05-03T19:33:11.006975+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -14868,8 +14868,7 @@
         },
         "arg_tag_nonnull_ptr_good": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 8: base R1+0 (type: PtrToAllocMemOrNull { id: 888, mem_size: 4, ref_id: None, dynptr_id: None })"
+          "ours": "PASS"
         },
         "arg_tag_nullable_ptr_fail": {
           "upstream": "ACCEPT",

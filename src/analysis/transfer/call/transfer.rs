@@ -983,7 +983,7 @@ pub(crate) fn transfer_call_rel(
                 // — the kernel emits "invalid read from stack" when
                 // the callee would later access bytes past the
                 // caller's allocation.
-                if let crate::parsing::btf::GlobalFuncArg::PtrToMem { mem_size } = arg
+                if let crate::parsing::btf::GlobalFuncArg::PtrToMem { mem_size, .. } = arg
                     && let RegType::PtrToStack { .. } = actual
                     && let Some(off) = state.domain.get_distance_fixed(*reg, Reg::R10)
                 {
@@ -1018,7 +1018,7 @@ pub(crate) fn transfer_call_rel(
                 // "kptr cannot be accessed indirectly by helper" extends
                 // to global subprog calls: a `PtrToMapValue` arg whose
                 // declared mem region overlaps a kptr field is rejected.
-                if let crate::parsing::btf::GlobalFuncArg::PtrToMem { mem_size } = arg
+                if let crate::parsing::btf::GlobalFuncArg::PtrToMem { mem_size, .. } = arg
                     && let RegType::PtrToMapValue {
                         offset: map_off,
                         map_idx,
@@ -1064,17 +1064,24 @@ pub(crate) fn transfer_call_rel(
                     state.types.set(*reg, RegType::ScalarValue);
                     state.domain.forget(*reg);
                 }
-                crate::parsing::btf::GlobalFuncArg::PtrToMem { mem_size } => {
+                crate::parsing::btf::GlobalFuncArg::PtrToMem { mem_size, nonnull } => {
                     let id = crate::analysis::machine::reg_types::new_ptr_id();
-                    state.types.set(
-                        *reg,
+                    let ty = if *nonnull {
+                        RegType::PtrToAllocMem {
+                            id,
+                            mem_size: *mem_size as u64,
+                            ref_id: None,
+                            dynptr_id: None,
+                        }
+                    } else {
                         RegType::PtrToAllocMemOrNull {
                             id,
                             mem_size: *mem_size as u64,
                             ref_id: None,
                             dynptr_id: None,
-                        },
-                    );
+                        }
+                    };
+                    state.types.set(*reg, ty);
                     state.domain.forget(*reg);
                 }
                 crate::parsing::btf::GlobalFuncArg::PtrToCtx => {
