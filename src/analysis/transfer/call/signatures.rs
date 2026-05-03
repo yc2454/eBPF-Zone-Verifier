@@ -45,6 +45,12 @@ pub enum ArgKind {
     PtrToMem,
     PtrToUninitMem,
     PtrToAllocMem,
+    /// Pointer to a const, NUL-terminated string in a read-only map
+    /// value (`.rodata`). Mirrors kernel `ARG_PTR_TO_CONST_STR`
+    /// (`verifier.c::check_reg_const_str`, v6.15 ~L9405): rejects
+    /// `PtrToMapValue` whose map is NOT `BPF_F_RDONLY_PROG`. Used by
+    /// `bpf_snprintf`'s fmt arg.
+    PtrToConstStr,
 
     // ---- Size ----
     ConstSize,
@@ -79,6 +85,11 @@ pub enum ArgKind {
     // ---- Nullable variants ----
     PtrToCtxOrNull,
     PtrToMemOrNull,
+    /// Writable buffer or NULL. Mirrors kernel
+    /// `ARG_PTR_TO_MEM | PTR_MAYBE_NULL` for write helpers like
+    /// `bpf_snprintf` (buf may be NULL when paired size = 0,
+    /// switching the helper into "compute formatted length only" mode).
+    PtrToUninitMemOrNull,
     PtrToStackOrNull,
     PtrToMapValueOrNull,
 
@@ -1208,9 +1219,9 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         // additionally validates fmt against const-rodata + matches data
         // entries against fmt specifiers (not modeled).
         constants::BPF_SNPRINTF => CallProto::with_args([
-            PtrToUninitMem,  // R1: buf
-            ConstSizeOrZero, // R2: sz
-            PtrToMem,        // R3: fmt (read-only; not size-paired — string)
+            PtrToUninitMemOrNull, // R1: buf (NULL OK with size=0; "compute length only")
+            ConstSizeOrZero,      // R2: sz
+            PtrToConstStr,        // R3: fmt — must be const string in rodata map
             PtrToMemOrNull,  // R4: data (u64 array; may be NULL if data_len=0)
             ConstSizeOrZero, // R5: data_len
         ])
@@ -2698,6 +2709,13 @@ pub(crate) fn get_nullable_ptr_size_pair(helper: u32, ptr_arg_index: usize) -> O
         constants::BPF_CSUM_DIFF => match ptr_arg_index {
             0 => Some(1), // R1's size is R2
             2 => Some(3), // R3's size is R4
+            _ => None,
+        },
+        // bpf_snprintf: R1=buf (UNINIT_MEM_OR_NULL) paired with R2=size,
+        //               R4=data (MEM_OR_NULL) paired with R5=data_len.
+        constants::BPF_SNPRINTF => match ptr_arg_index {
+            0 => Some(1),
+            3 => Some(4),
             _ => None,
         },
         // Add other helpers with PTR_OR_NULL + SIZE_OR_ZERO pairs

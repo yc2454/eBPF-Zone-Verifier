@@ -238,6 +238,7 @@ pub(crate) fn validate_single_arg(
         ArgKind::PtrToMem => validators::validate_ptr_to_mem(&mut ctx),
         ArgKind::PtrToUninitMem => validators::validate_ptr_to_uninit_mem(&mut ctx),
         ArgKind::PtrToAllocMem => validators::validate_ptr_to_alloc_mem(&mut ctx),
+        ArgKind::PtrToConstStr => validate_ptr_to_const_str(&mut ctx),
 
         // ---- Socket types ----
         ArgKind::PtrToSocket
@@ -296,6 +297,7 @@ pub(crate) fn validate_single_arg(
         // Nullable variants are handled above
         ArgKind::PtrToCtxOrNull
         | ArgKind::PtrToMemOrNull
+        | ArgKind::PtrToUninitMemOrNull
         | ArgKind::PtrToStackOrNull
         | ArgKind::PtrToMapValueOrNull => {
             // Should not reach here due to is_nullable_arg_type check
@@ -1000,6 +1002,58 @@ fn validate_ptr_to_callback(ctx: &mut ValidationContext) -> bool {
     true
 }
 
+/// ARG_PTR_TO_CONST_STR (kernel `verifier.c::check_reg_const_str`,
+/// v6.15 ~L9405): the arg must be a `PtrToMapValue` whose map carries
+/// `BPF_F_RDONLY_PROG` (i.e. `.rodata`). Used by `bpf_snprintf`'s fmt
+/// arg. Note: kernel additionally validates the string content (NUL-
+/// termination, format specifiers) but that's userspace-mutation-
+/// dependent at load time and not modelable statically — see
+/// `selftests/expectations.json` note on `test_snprintf_single`.
+fn validate_ptr_to_const_str(ctx: &mut ValidationContext) -> bool {
+    match ctx.actual {
+        RegType::PtrToMapValue { map_idx, .. } => {
+            let rdonly = ctx
+                .env
+                .ctx
+                .map_defs
+                .get(map_idx)
+                .map(|md| md.map_flags & constants::BPF_F_RDONLY_PROG != 0)
+                .unwrap_or(false);
+            if rdonly {
+                true
+            } else {
+                ctx.fail_with_log(
+                    VerificationError::InvalidArgType {
+                        pc: ctx.pc,
+                        reg: ctx.reg,
+                    },
+                    &format!(
+                        "[Verifier] pc {}: R{} does not point to a readonly map (ARG_PTR_TO_CONST_STR)",
+                        ctx.pc,
+                        ctx.arg_index + 1
+                    ),
+                );
+                false
+            }
+        }
+        _ => {
+            ctx.fail_with_log(
+                VerificationError::InvalidArgType {
+                    pc: ctx.pc,
+                    reg: ctx.reg,
+                },
+                &format!(
+                    "[Verifier] pc {}: R{} expected PTR_TO_CONST_STR, got {:?}",
+                    ctx.pc,
+                    ctx.arg_index + 1,
+                    ctx.actual
+                ),
+            );
+            false
+        }
+    }
+}
+
 fn validate_ptr_to_long(ctx: &mut ValidationContext) -> bool {
     match ctx.actual {
         RegType::PtrToStack { frame_level } => {
@@ -1452,7 +1506,10 @@ pub(crate) fn check_ptr_access_size(
                     return false;
                 }
                 // Also check stack slots are initialized for reads
-                if !matches!(ptr_arg_type, ArgKind::PtrToUninitMem) {
+                if !matches!(
+                    ptr_arg_type,
+                    ArgKind::PtrToUninitMem | ArgKind::PtrToUninitMemOrNull
+                ) {
                     check_stack_arg_readable(
                         env,
                         state,
@@ -1476,7 +1533,10 @@ pub(crate) fn check_ptr_access_size(
                         });
                         return false;
                     }
-                    if !matches!(ptr_arg_type, ArgKind::PtrToUninitMem) {
+                    if !matches!(
+                    ptr_arg_type,
+                    ArgKind::PtrToUninitMem | ArgKind::PtrToUninitMemOrNull
+                ) {
                         for off_candidate in lo..=hi {
                             check_stack_arg_readable(
                                 env,

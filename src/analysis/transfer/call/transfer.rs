@@ -516,7 +516,10 @@ fn initialize_uninit_mem_args(
     if let Some(sig) = get_helper_proto(helper) {
         for pair in sig.mem_size_pairs {
             if let Some(ptr_arg_type) = sig.args.get(pair.ptr_reg.idx().saturating_sub(2))
-                && matches!(ptr_arg_type, ArgKind::PtrToUninitMem)
+                && matches!(
+                    ptr_arg_type,
+                    ArgKind::PtrToUninitMem | ArgKind::PtrToUninitMemOrNull
+                )
             {
                 if let RegType::PtrToStack { frame_level } = in_types.get(pair.ptr_reg) {
                     if let Some(off) = state.domain.get_distance_fixed(pair.ptr_reg, Reg::R10) {

@@ -141,8 +141,8 @@
       "note": "W7.1: positive bpf_snprintf coverage (BPF_SNPRINTF macro + various fmt specifiers); kernel prog_tests/snprintf.c::test_snprintf_positive asserts load."
     },
     "test_snprintf_single.c": {
-      "expect": "reject",
-      "note": "W7.1: negative case — fmt arg is a non-const writable global, not rodata. Kernel prog_tests/snprintf.c::test_snprintf_negative asserts load FAILS at verifier."
+      "expect": "accept",
+      "note": "W7.1: the static program is loadable (`const char fmt[10]` lives in rodata, zero-initialized = empty NUL-terminated string, valid empty format). Kernel prog_tests/snprintf.c::test_snprintf_negative drives load-rejection by mutating skel->rodata->fmt with bad format strings BEFORE __load — a userspace mutation our static analyzer cannot model. Reclassified to `accept` so we match the kernel's behavior on the unmutated program."
     },
     "test_d_path.c": {
       "expect": "accept",

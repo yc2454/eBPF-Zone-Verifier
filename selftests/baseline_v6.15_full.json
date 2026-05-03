@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-03T20:10:49.011520+00:00",
+  "generated_at": "2026-05-03T20:33:53.284955+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -10888,8 +10888,7 @@
       "progs": {
         "handler": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 165: register: r1"
+          "ours": "PASS"
         }
       }
     },
