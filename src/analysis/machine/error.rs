@@ -248,6 +248,15 @@ pub enum VerificationError {
         pc: usize,
         helper: u32,
     },
+    /// Helper / kfunc marked `CallFlags::MIGHT_SLEEP` invoked inside
+    /// an explicit `bpf_rcu_read_lock` critical section. Mirrors kernel
+    /// verifier.c v6.15 L13549 ("kernel func is sleepable within
+    /// rcu_read_lock region"). Implicit-RCU-at-entry for kprobe/tp/
+    /// raw_tp/perf_event is excluded — those go through other gates.
+    SleepableInRcuReadSection {
+        pc: usize,
+        helper: u32,
+    },
     /// `bpf_preempt_enable` invoked with no matching disable.
     PreemptNotDisabled {
         pc: usize,
@@ -630,6 +639,12 @@ impl VerificationError {
             }
             VerificationError::UnreleasedRcuRead => {
                 "Unreleased RCU read-side section in program".to_string()
+            }
+            VerificationError::SleepableInRcuReadSection { pc, helper } => {
+                format!(
+                    "Sleepable helper/kfunc {} invoked inside bpf_rcu_read_lock region at pc {}",
+                    helper, pc
+                )
             }
             VerificationError::SleepableInPreemptDisabled { pc, helper } => {
                 format!(

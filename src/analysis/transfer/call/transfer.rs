@@ -1407,6 +1407,21 @@ pub(crate) fn apply_pre_call_lock_flags(
         });
         return false;
     }
+    // Explicit-RCU-CS region rejects sleepable calls (kernel verifier.c
+    // v6.15 L13549: "kernel func %s is sleepable within rcu_read_lock
+    // region"). Gated on explicit `bpf_rcu_read_lock` only — the
+    // implicit-RCU-at-entry baseline for non-sleepable tracing progs
+    // (kprobe/tp/raw_tp/perf_event) is excluded so MIGHT_SLEEP calls
+    // from those programs hit the (separate) "non-sleepable context"
+    // gates instead.
+    let explicit_rcu_baseline =
+        if state.implicit_rcu_at_entry { 1 } else { 0 };
+    if proto.flags.contains(CallFlags::MIGHT_SLEEP)
+        && state.rcu_read_depth > explicit_rcu_baseline
+    {
+        env.fail(VerificationError::SleepableInRcuReadSection { pc, helper });
+        return false;
+    }
 
     // bpf_res_spin_unlock{,_irqrestore} (kernel `process_spin_lock`,
     // is_lock=false, verifier.c v6.15 L8358-8379). Validates LIFO match

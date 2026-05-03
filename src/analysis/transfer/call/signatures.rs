@@ -2242,7 +2242,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             Anything, Anything, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::PtrToBtfIdNamed { type_name: "bpf_key" })
-        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL | CallFlags::MIGHT_SLEEP),
 
         "bpf_lookup_system_key" => CallProto::with_args([
             Anything, DontCare, DontCare, DontCare, DontCare,
