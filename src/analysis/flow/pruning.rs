@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use crate::analysis::machine::env::{SubsumptionMissReason, VerifierEnv, kernel_precision_enabled};
+use crate::analysis::machine::env::{SubsumptionMissReason, VerifierEnv};
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::state::State;
@@ -446,12 +446,10 @@ fn handle_loop_pruning(
         // Record hit BEFORE check_loop_convergence — eviction won't
         // touch the just-hit entry, but cleaner ordering.
         record_pruning_hit(env, pc, idx);
-        // Kernel-aligned propagate_precision (verifier.c v6.15 L18828).
-        // The walker now does a per-path lineage walk, so this is safe
-        // to enable under the kernel-precision regime.
-        if kernel_precision_enabled()
-            && let Some(prev) = env.explored_states.get(&pc).and_then(|v| v.get(idx)).cloned()
-        {
+        // Kernel-aligned propagate_precision (verifier.c v6.15 L18828):
+        // pull cached's precise-mark set into cur's parent-cache lineage
+        // so the path's continuation tracks the same precision contract.
+        if let Some(prev) = env.explored_states.get(&pc).and_then(|v| v.get(idx)).cloned() {
             env.propagate_precision(state, &prev);
         }
         // For convergence we still need the full prev_states list.
@@ -544,9 +542,7 @@ fn handle_standard_pruning(
     if let Some(idx) = hit_idx {
         record_pruning_hit(env, pc, idx);
         // Kernel-aligned propagate_precision (per-path lineage walk).
-        if kernel_precision_enabled()
-            && let Some(prev) = env.explored_states.get(&pc).and_then(|v| v.get(idx)).cloned()
-        {
+        if let Some(prev) = env.explored_states.get(&pc).and_then(|v| v.get(idx)).cloned() {
             env.propagate_precision(state, &prev);
         }
         true
@@ -1119,33 +1115,20 @@ fn domain_subsumed_by(
     live_regs: &HashSet<Reg>,
     precise: &HashSet<Reg>,
 ) -> bool {
-    let kernel_rule = kernel_precision_enabled();
+    // Kernel `regsafe` rule (verifier.c v6.15 L18357 / L18387):
+    //   - precise → range_within (old ⊇ cur)
+    //   - !precise → accept (kernel doesn't compare imprecise scalars
+    //     across cur/old at all).
     for &r in live_regs {
+        if !precise.contains(&r) {
+            continue;
+        }
         let (old_min, old_max) = old.get_interval(r);
         let (cur_min, cur_max) = cur.get_interval(r);
-        if precise.contains(&r) {
-            if kernel_rule {
-                // Kernel rule: precise → range_within (old ⊇ cur, NOT
-                // exact eq). verifier.c v6.15 regsafe() L18387.
-                if !(old_min <= cur_min && old_max >= cur_max) {
-                    if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
-                        eprintln!(
-                            "[domain_miss] reg={:?} precise old=[{},{}] cur=[{},{}]",
-                            r, old_min, old_max, cur_min, cur_max
-                        );
-                    }
-                    return false;
-                }
-            } else if old_min != cur_min || old_max != cur_max {
-                return false;
-            }
-        } else if kernel_rule {
-            // Kernel rule: !precise → accept anything. verifier.c L18357.
-            continue;
-        } else if !(old_min <= cur_min && old_max >= cur_max) {
+        if !(old_min <= cur_min && old_max >= cur_max) {
             if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
                 eprintln!(
-                    "[domain_miss] reg={:?} !precise old=[{},{}] cur=[{},{}]",
+                    "[domain_miss] reg={:?} precise old=[{},{}] cur=[{},{}]",
                     r, old_min, old_max, cur_min, cur_max
                 );
             }
@@ -1390,18 +1373,14 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
 }
 
 fn tnum_subsumed_by(cur_state: &State, old_state: &State, live_regs: &HashSet<Reg>) -> bool {
-    let kernel_rule = kernel_precision_enabled();
+    // Kernel rule: precise → tnum-cover; !precise → accept.
     for &r in live_regs {
+        if !old_state.is_reg_precise(r) {
+            continue;
+        }
         let cur = cur_state.get_tnum(r);
         let old = old_state.get_tnum(r);
-        if old_state.is_reg_precise(r) {
-            if !tnum_covers(&cur, &old) {
-                return false;
-            }
-        } else if kernel_rule {
-            // Kernel rule: !precise → accept (skip tnum check).
-            continue;
-        } else if !tnum_covers(&cur, &old) {
+        if !tnum_covers(&cur, &old) {
             return false;
         }
     }

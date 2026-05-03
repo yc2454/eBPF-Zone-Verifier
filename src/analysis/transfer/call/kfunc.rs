@@ -536,13 +536,13 @@ pub(crate) fn widen_imprecise_scalars_at_iter_next(prev: &State, cur: &mut State
 }
 
 /// Same as `widen_imprecise_scalars_at_iter_next` but called at the
-/// actual `bpf_iter_*_next` kfunc invocation. Under flag-on
-/// (`ZOVIA_KERNEL_PRECISION=1`) drops the `prev.precise_regs` skip
-/// gate: walker writes precise marks proactively into cached states
-/// (kernel marks lazily), so by the time we reach iter_next the
-/// cached prev's precise set has future-tense annotations the kernel
-/// wouldn't yet have. cb-return/may_goto callers stay strict — those
-/// are different convergence regimes where prev-precise really does
+/// actual `bpf_iter_*_next` kfunc invocation. Drops the
+/// `prev.precise_regs` skip gate: our walker writes precise marks
+/// proactively into cached states (kernel marks lazily), so by the
+/// time we reach iter_next the cached prev's precise set has
+/// future-tense annotations the kernel wouldn't yet have.
+/// cb-return / may_goto callers keep the strict gate — those are
+/// different convergence regimes where prev-precise really does
 /// reflect the live precision contract.
 pub(crate) fn widen_imprecise_scalars_at_iter_next_call(prev: &State, cur: &mut State) {
     widen_imprecise_scalars_impl(prev, cur, true)
@@ -589,15 +589,12 @@ fn widen_imprecise_scalars_impl(prev: &State, cur: &mut State, at_iter_next_call
         // backward walk lands on a checkpoint, so checking only `cur`
         // would miss the lineage and over-widen.
         //
-        // Under the kernel-precision regime at the actual iter_next
-        // kfunc call (`at_iter_next_call=true`), drop the
-        // prev.precise_regs gate. Walker writes precise marks
+        // At the actual iter_next kfunc call (`at_iter_next_call=true`),
+        // drop the prev.precise_regs gate. Walker writes precise marks
         // proactively to cached states; kernel marks lazily — at iter
         // next time the kernel's rold->precise is typically still
         // false. Other callers (cb-return / may_goto) stay strict.
-        let kernel_rule = crate::analysis::machine::env::kernel_precision_enabled();
-        let drop_prev = kernel_rule && at_iter_next_call;
-        let prev_block = !drop_prev && prev.precise_regs.contains(&r);
+        let prev_block = !at_iter_next_call && prev.precise_regs.contains(&r);
         if !force_widen && (cur.precise_regs.contains(&r) || prev_block) {
             continue;
         }

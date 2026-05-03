@@ -81,36 +81,19 @@ pub(crate) fn transfer_if(
     // marking precise there blocks widening at the may_goto inside the
     // body (cond_break1's pattern). A backward `if r != K goto head`
     // (test1) does need it.
-    // Precision sink at conditional branches. Two regimes:
-    //  - Default (flag-off): back-edge compare-to-imm (heuristic).
-    //  - Kernel-precision (flag-on): only when the comparison
-    //    *statically resolves* — kernel `check_cond_jmp_op` calls
-    //    mark_chain_precision only after `is_branch_taken` decides
-    //    the branch (one side is dead). Marking precise on every
-    //    conditional otherwise causes precision-mark blow-up that
-    //    propagate_precision then spreads further (bits_iter
-    //    state-explosion regression).
-    // Precision sink at conditional branches.
-    //  - Default (flag-off): back-edge compare-to-imm (heuristic).
-    //  - Kernel-precision (flag-on): only when the comparison
-    //    statically resolves (kernel `check_cond_jmp_op` calls
-    //    mark_chain_precision only after `is_branch_taken` decides).
-    if let Some(hidx) = state.history_idx {
-        let kernel_rule = crate::analysis::machine::env::kernel_precision_enabled();
-        let static_outcome = condition_outcome(&state, width, left, op, &right);
-        let fire = if kernel_rule {
-            static_outcome.is_some()
-        } else {
-            matches!(right, Operand::Imm(_)) && target < state.pc
-        };
-        if fire {
-            let pcid = state.parent_cache_id;
-            env.mark_chain_precision_backward(hidx, pcid, left);
-            if kernel_rule
-                && let Operand::Reg(r) = right
-            {
-                env.mark_chain_precision_backward(hidx, pcid, r);
-            }
+    // Precision sink at conditional branches. Kernel
+    // `check_cond_jmp_op` calls `mark_chain_precision` only after
+    // `is_branch_taken` decides the branch (one side is dead). Marking
+    // precise on every conditional causes precision-mark blow-up that
+    // `propagate_precision` then spreads further (bits_iter
+    // state-explosion).
+    if let Some(hidx) = state.history_idx
+        && let Some(_) = condition_outcome(&state, width, left, op, &right)
+    {
+        let pcid = state.parent_cache_id;
+        env.mark_chain_precision_backward(hidx, pcid, left);
+        if let Operand::Reg(r) = right {
+            env.mark_chain_precision_backward(hidx, pcid, r);
         }
     }
 

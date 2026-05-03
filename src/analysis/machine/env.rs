@@ -431,14 +431,6 @@ fn update_frontier(
     }
 }
 
-/// Returns true when the experimental kernel-aligned precision regime is
-/// enabled via `ZOVIA_KERNEL_PRECISION=1`. Off by default during the
-/// rebuild — corpus drift under the new regime is sized via flag-on
-/// sweeps before flipping the default.
-pub fn kernel_precision_enabled() -> bool {
-    std::env::var("ZOVIA_KERNEL_PRECISION").ok().as_deref() == Some("1")
-}
-
 /// Cache-growth instrumentation flag. When set, `record_state` prints
 /// `(pc, cache_size, distinct_type_sigs)` to stderr on every insert.
 /// Used to diagnose state-graph traversal divergence between

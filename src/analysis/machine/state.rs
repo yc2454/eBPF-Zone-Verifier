@@ -392,11 +392,7 @@ impl State {
     /// L4543), called proactively at checkpoint to produce
     /// maximally-permissive cached states. Precision is then
     /// re-established on demand via `propagate_precision` when a child
-    /// path requires it for safety. Safe to call only under the kernel
-    /// precision regime (`kernel_precision_enabled()`); under our
-    /// existing rule, precise marks are required by the strict-equality
-    /// subsumption check, and clearing them at checkpoint would
-    /// over-permissive cached states.
+    /// path requires it for safety.
     pub fn mark_all_scalars_imprecise(&mut self) {
         self.precise_regs.clear();
         for frame in self.frames.iter_mut() {

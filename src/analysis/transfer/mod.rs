@@ -322,7 +322,6 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     // cached ancestors only, not all cached states at intermediate
     // PCs.
     if state.at_main_frame()
-        && crate::analysis::machine::env::kernel_precision_enabled()
         && let Some(hidx) = state.history_idx
     {
         env.mark_chain_precision_backward(hidx, state.parent_cache_id, Reg::R0);
@@ -504,9 +503,7 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         // Kernel-aligned: callback return-value precision sink
         // (verifier.c v6.15 prepare_func_exit L10862). Per-path
         // lineage walk via parent_cache_id.
-        if crate::analysis::machine::env::kernel_precision_enabled()
-            && let Some(hidx) = state.history_idx
-        {
+        if let Some(hidx) = state.history_idx {
             env.mark_chain_precision_backward(hidx, state.parent_cache_id, Reg::R0);
         }
         // W3.4c: bpf_loop / bpf_for_each_map_elem / bpf_user_ringbuf_drain

@@ -90,9 +90,12 @@ pub fn record_state(
     env.next_cache_id = env.next_cache_id.wrapping_add(1);
     state.cache_id = Some(cache_id);
 
-    if crate::analysis::machine::env::kernel_precision_enabled() {
-        state.mark_all_scalars_imprecise();
-    }
+    // Kernel-aligned `mark_all_scalars_imprecise` (verifier.c v6.15
+    // L4543): cached snapshots are checkpointed in maximally-permissive
+    // form. Precision is then re-established on demand via the
+    // per-state parent-cache walker (`mark_chain_precision_backward`)
+    // when a downstream sink requires it for safety.
+    state.mark_all_scalars_imprecise();
 
     let states = env.explored_states.entry(pc).or_default();
     let idx = states.len();
