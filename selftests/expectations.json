@@ -2043,6 +2043,66 @@
     "test_subskeleton_lib.c": {
       "expect": "accept",
       "note": "Positive subskeleton coverage; loaded as a subskeleton view (test_subskeleton_lib__open(obj)) of the parent test_subskeleton skel which loads successfully."
+    },
+    "sendmsg6_prog.c": {
+      "expect": "accept",
+      "note": "Positive sock_addr-family coverage; prog_tests/sock_addr.c::BPF_SKEL_FUNCS macro loads each prog (positive + _deny_prog variants) via skel_name__load, where _deny_prog variants are runtime deniers \u2014 load itself succeeds."
+    },
+    "bind6_prog.c": {
+      "expect": "accept",
+      "note": "Positive sock_addr-family coverage; prog_tests/sock_addr.c::BPF_SKEL_FUNCS macro loads each prog (positive + _deny_prog variants) via skel_name__load, where _deny_prog variants are runtime deniers \u2014 load itself succeeds."
+    },
+    "connect6_prog.c": {
+      "expect": "accept",
+      "note": "Positive sock_addr-family coverage; prog_tests/sock_addr.c::BPF_SKEL_FUNCS macro loads each prog (positive + _deny_prog variants) via skel_name__load, where _deny_prog variants are runtime deniers \u2014 load itself succeeds."
+    },
+    "connect_unix_prog.c": {
+      "expect": "accept",
+      "note": "Positive sock_addr-family coverage; prog_tests/sock_addr.c::BPF_SKEL_FUNCS macro loads each prog (positive + _deny_prog variants) via skel_name__load, where _deny_prog variants are runtime deniers \u2014 load itself succeeds."
+    },
+    "sendmsg4_prog.c": {
+      "expect": "accept",
+      "note": "Positive sock_addr-family coverage; prog_tests/sock_addr.c::BPF_SKEL_FUNCS macro loads each prog (positive + _deny_prog variants) via skel_name__load, where _deny_prog variants are runtime deniers \u2014 load itself succeeds."
+    },
+    "sendmsg_unix_prog.c": {
+      "expect": "accept",
+      "note": "Positive sock_addr-family coverage; prog_tests/sock_addr.c::BPF_SKEL_FUNCS macro loads each prog (positive + _deny_prog variants) via skel_name__load, where _deny_prog variants are runtime deniers \u2014 load itself succeeds."
+    },
+    "getpeername4_prog.c": {
+      "expect": "accept",
+      "note": "Positive sock_addr-family coverage; prog_tests/sock_addr.c::BPF_SKEL_FUNCS macro loads each prog (positive + _deny_prog variants) via skel_name__load, where _deny_prog variants are runtime deniers \u2014 load itself succeeds."
+    },
+    "getpeername6_prog.c": {
+      "expect": "accept",
+      "note": "Positive sock_addr-family coverage; prog_tests/sock_addr.c::BPF_SKEL_FUNCS macro loads each prog (positive + _deny_prog variants) via skel_name__load, where _deny_prog variants are runtime deniers \u2014 load itself succeeds."
+    },
+    "getpeername_unix_prog.c": {
+      "expect": "accept",
+      "note": "Positive sock_addr-family coverage; prog_tests/sock_addr.c::BPF_SKEL_FUNCS macro loads each prog (positive + _deny_prog variants) via skel_name__load, where _deny_prog variants are runtime deniers \u2014 load itself succeeds."
+    },
+    "getsockname4_prog.c": {
+      "expect": "accept",
+      "note": "Positive sock_addr-family coverage; prog_tests/sock_addr.c::BPF_SKEL_FUNCS macro loads each prog (positive + _deny_prog variants) via skel_name__load, where _deny_prog variants are runtime deniers \u2014 load itself succeeds."
+    },
+    "getsockname6_prog.c": {
+      "expect": "accept",
+      "note": "Positive sock_addr-family coverage; prog_tests/sock_addr.c::BPF_SKEL_FUNCS macro loads each prog (positive + _deny_prog variants) via skel_name__load, where _deny_prog variants are runtime deniers \u2014 load itself succeeds."
+    },
+    "getsockname_unix_prog.c": {
+      "expect": "accept",
+      "note": "Positive sock_addr-family coverage; prog_tests/sock_addr.c::BPF_SKEL_FUNCS macro loads each prog (positive + _deny_prog variants) via skel_name__load, where _deny_prog variants are runtime deniers \u2014 load itself succeeds."
+    },
+    "recvmsg4_prog.c": {
+      "expect": "accept",
+      "note": "Positive sock_addr-family coverage; prog_tests/sock_addr.c::BPF_SKEL_FUNCS macro loads each prog (positive + _deny_prog variants) via skel_name__load, where _deny_prog variants are runtime deniers \u2014 load itself succeeds."
+    },
+    "recvmsg6_prog.c": {
+      "expect": "accept",
+      "note": "Positive sock_addr-family coverage; prog_tests/sock_addr.c::BPF_SKEL_FUNCS macro loads each prog (positive + _deny_prog variants) via skel_name__load, where _deny_prog variants are runtime deniers \u2014 load itself succeeds."
+    },
+    "recvmsg_unix_prog.c": {
+      "expect": "accept",
+      "note": "Positive sock_addr-family coverage; prog_tests/sock_addr.c::BPF_SKEL_FUNCS macro loads each prog (positive + _deny_prog variants) via skel_name__load, where _deny_prog variants are runtime deniers \u2014 load itself succeeds."
     }
   }
 }

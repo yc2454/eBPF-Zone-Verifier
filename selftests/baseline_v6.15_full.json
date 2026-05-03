@@ -231,14 +231,13 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/bind6_prog.c",
       "progs": {
         "bind_v6_deny_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "bind_v6_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe ctx access at pc 1: offset 64, size 8"
         }
       }
     },
@@ -1834,14 +1833,12 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/connect6_prog.c",
       "progs": {
         "connect_v6_deny_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "connect_v6_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -1900,14 +1897,13 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/connect_unix_prog.c",
       "progs": {
         "connect_unix_deny_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "connect_unix_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 6: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         }
       }
     },
@@ -3494,9 +3490,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/getpeername4_prog.c",
       "progs": {
         "getpeername_v4_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -3504,9 +3499,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/getpeername6_prog.c",
       "progs": {
         "getpeername_v6_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -3514,9 +3508,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/getpeername_unix_prog.c",
       "progs": {
         "getpeername_unix_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 6: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         }
       }
     },
@@ -3524,9 +3518,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/getsockname4_prog.c",
       "progs": {
         "getsockname_v4_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -3534,9 +3527,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/getsockname6_prog.c",
       "progs": {
         "getsockname_v6_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -3544,9 +3536,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/getsockname_unix_prog.c",
       "progs": {
         "getsockname_unix_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 6: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         }
       }
     },
@@ -6379,9 +6371,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/recvmsg4_prog.c",
       "progs": {
         "recvmsg4_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe ctx access at pc 0: offset 64, size 8"
         }
       }
     },
@@ -6389,9 +6381,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/recvmsg6_prog.c",
       "progs": {
         "recvmsg6_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe ctx access at pc 0: offset 64, size 8"
         }
       }
     },
@@ -6399,9 +6391,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/recvmsg_unix_prog.c",
       "progs": {
         "recvmsg_unix_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 6: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         }
       }
     },
@@ -6569,14 +6561,13 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/sendmsg4_prog.c",
       "progs": {
         "sendmsg_v4_deny_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "sendmsg_v4_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe ctx access at pc 26: offset 40, size 4"
         }
       }
     },
@@ -6584,29 +6575,27 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/sendmsg6_prog.c",
       "progs": {
         "sendmsg_v6_deny_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "sendmsg_v6_preserve_dst_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "sendmsg_v6_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe ctx access at pc 27: offset 56, size 4"
         },
         "sendmsg_v6_v4mapped_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe ctx access at pc 1: offset 56, size 4"
         },
         "sendmsg_v6_wildcard_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe ctx access at pc 1: offset 56, size 4"
         }
       }
     },
@@ -6614,14 +6603,13 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/sendmsg_unix_prog.c",
       "progs": {
         "sendmsg_unix_deny_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "sendmsg_unix_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 6: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         }
       }
     },
