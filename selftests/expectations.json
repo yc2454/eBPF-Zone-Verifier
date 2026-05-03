@@ -2103,6 +2103,174 @@
     "recvmsg_unix_prog.c": {
       "expect": "accept",
       "note": "Positive sock_addr-family coverage; prog_tests/sock_addr.c::BPF_SKEL_FUNCS macro loads each prog (positive + _deny_prog variants) via skel_name__load, where _deny_prog variants are runtime deniers \u2014 load itself succeeds."
+    },
+    "map_ptr_kern.c": {
+      "expect": "accept",
+      "note": "Positive map-pointer coverage; prog_tests/map_ptr.c asserts map_ptr_kern_lskel__load succeeds (lskel-style skeleton)."
+    },
+    "test_lirc_mode2_kern.c": {
+      "expect": "accept",
+      "note": "Positive LIRC mode2 coverage; loaded by test_lirc_mode2_user.c user-space tool."
+    },
+    "test_map_in_map_invalid.c": {
+      "expect": "accept",
+      "note": "Map-in-map runtime-create-failure test (NOT a load-failure test); loaded via test_maps.c::bpf_object__open(MAPINMAP_INVALID_PROG), failure is at bpf_object__create_map runtime, not load."
+    },
+    "test_ringbuf_map_key.c": {
+      "expect": "accept",
+      "note": "Positive ringbuf with map-key coverage; prog_tests/ringbuf.c loads test_ringbuf_map_key_lskel positively."
+    },
+    "test_ringbuf_n.c": {
+      "expect": "accept",
+      "note": "Positive ringbuf N-buffer coverage; prog_tests/ringbuf.c loads test_ringbuf_n_lskel positively."
+    },
+    "test_ringbuf_write.c": {
+      "expect": "accept",
+      "note": "Positive ringbuf write-side coverage; prog_tests/ringbuf.c loads test_ringbuf_write_lskel positively."
+    },
+    "test_sysctl_prog.c": {
+      "expect": "accept",
+      "note": "Positive sysctl coverage; loaded by user-space test_sysctl.c via .bpf.o path."
+    },
+    "test_tcpnotify_kern.c": {
+      "expect": "accept",
+      "note": "Positive TCP notify coverage; loaded by user-space test_tcpnotify_user.c."
+    },
+    "sockmap_parse_prog.c": {
+      "expect": "accept",
+      "note": "Positive sockmap parse-prog coverage; loaded by test_maps.c::test_sockmap via .bpf.o path."
+    },
+    "sockmap_tcp_msg_prog.c": {
+      "expect": "accept",
+      "note": "Positive sockmap TCP-msg-prog coverage; loaded by test_maps.c::test_sockmap via .bpf.o path."
+    },
+    "sockmap_verdict_prog.c": {
+      "expect": "accept",
+      "note": "Positive sockmap verdict-prog coverage; loaded by test_maps.c::test_sockmap via .bpf.o path."
+    },
+    "test_lwt_redirect.c": {
+      "expect": "accept",
+      "note": "Positive LWT redirect coverage; prog_tests/lwt_redirect.c loads via .bpf.o + tc filter add (expects load+attach success)."
+    },
+    "test_lwt_seg6local.c": {
+      "expect": "accept",
+      "note": "Positive LWT seg6local coverage; prog_tests/lwt_seg6local.c loads via .bpf.o + tc filter add."
+    },
+    "bench_local_storage_create.c": {
+      "expect": "accept",
+      "note": "Positive bench coverage; loaded by selftests/bpf/benchs/bench_*.c framework. All bench files are positive load+run."
+    },
+    "bloom_filter_bench.c": {
+      "expect": "accept",
+      "note": "Positive bench coverage; loaded by selftests/bpf/benchs/bench_*.c framework. All bench files are positive load+run."
+    },
+    "bpf_hashmap_full_update_bench.c": {
+      "expect": "accept",
+      "note": "Positive bench coverage; loaded by selftests/bpf/benchs/bench_*.c framework. All bench files are positive load+run."
+    },
+    "bpf_hashmap_lookup.c": {
+      "expect": "accept",
+      "note": "Positive bench coverage; loaded by selftests/bpf/benchs/bench_*.c framework. All bench files are positive load+run."
+    },
+    "bpf_loop_bench.c": {
+      "expect": "accept",
+      "note": "Positive bench coverage; loaded by selftests/bpf/benchs/bench_*.c framework. All bench files are positive load+run."
+    },
+    "crypto_bench.c": {
+      "expect": "accept",
+      "note": "Positive bench coverage; loaded by selftests/bpf/benchs/bench_*.c framework. All bench files are positive load+run."
+    },
+    "htab_mem_bench.c": {
+      "expect": "accept",
+      "note": "Positive bench coverage; loaded by selftests/bpf/benchs/bench_*.c framework. All bench files are positive load+run."
+    },
+    "local_storage_bench.c": {
+      "expect": "accept",
+      "note": "Positive bench coverage; loaded by selftests/bpf/benchs/bench_*.c framework. All bench files are positive load+run."
+    },
+    "local_storage_rcu_tasks_trace_bench.c": {
+      "expect": "accept",
+      "note": "Positive bench coverage; loaded by selftests/bpf/benchs/bench_*.c framework. All bench files are positive load+run."
+    },
+    "perfbuf_bench.c": {
+      "expect": "accept",
+      "note": "Positive bench coverage; loaded by selftests/bpf/benchs/bench_*.c framework. All bench files are positive load+run."
+    },
+    "ringbuf_bench.c": {
+      "expect": "accept",
+      "note": "Positive bench coverage; loaded by selftests/bpf/benchs/bench_*.c framework. All bench files are positive load+run."
+    },
+    "strncmp_bench.c": {
+      "expect": "accept",
+      "note": "Positive bench coverage; loaded by selftests/bpf/benchs/bench_*.c framework. All bench files are positive load+run."
+    },
+    "trigger_bench.c": {
+      "expect": "accept",
+      "note": "Positive bench coverage; loaded by selftests/bpf/benchs/bench_*.c framework. All bench files are positive load+run."
+    },
+    "linked_funcs1.c": {
+      "expect": "accept",
+      "note": "Positive BPF static-linking coverage; the pair is statically linked and loaded by prog_tests/linked_funcs.c / linked_maps.c / linked_vars.c / static_linked.c."
+    },
+    "linked_funcs2.c": {
+      "expect": "accept",
+      "note": "Positive BPF static-linking coverage; the pair is statically linked and loaded by prog_tests/linked_funcs.c / linked_maps.c / linked_vars.c / static_linked.c."
+    },
+    "linked_maps1.c": {
+      "expect": "accept",
+      "note": "Positive BPF static-linking coverage; the pair is statically linked and loaded by prog_tests/linked_funcs.c / linked_maps.c / linked_vars.c / static_linked.c."
+    },
+    "linked_maps2.c": {
+      "expect": "accept",
+      "note": "Positive BPF static-linking coverage; the pair is statically linked and loaded by prog_tests/linked_funcs.c / linked_maps.c / linked_vars.c / static_linked.c."
+    },
+    "linked_vars1.c": {
+      "expect": "accept",
+      "note": "Positive BPF static-linking coverage; the pair is statically linked and loaded by prog_tests/linked_funcs.c / linked_maps.c / linked_vars.c / static_linked.c."
+    },
+    "linked_vars2.c": {
+      "expect": "accept",
+      "note": "Positive BPF static-linking coverage; the pair is statically linked and loaded by prog_tests/linked_funcs.c / linked_maps.c / linked_vars.c / static_linked.c."
+    },
+    "test_static_linked1.c": {
+      "expect": "accept",
+      "note": "Positive BPF static-linking coverage; the pair is statically linked and loaded by prog_tests/linked_funcs.c / linked_maps.c / linked_vars.c / static_linked.c."
+    },
+    "test_static_linked2.c": {
+      "expect": "accept",
+      "note": "Positive BPF static-linking coverage; the pair is statically linked and loaded by prog_tests/linked_funcs.c / linked_maps.c / linked_vars.c / static_linked.c."
+    },
+    "map_percpu_stats.c": {
+      "expect": "accept",
+      "note": "Positive per-cpu map stats coverage; loaded by map_tests/map_percpu_stats.c subtest."
+    },
+    "read_bpf_task_storage_busy.c": {
+      "expect": "accept",
+      "note": "Positive task-storage busy-read coverage; positive coverage by name and convention (no negative naming)."
+    },
+    "test_tc_edt.c": {
+      "expect": "accept",
+      "note": "Positive TC EDT (Earliest Departure Time) coverage; loaded via tc filter add command."
+    },
+    "test_usdt_multispec.c": {
+      "expect": "accept",
+      "note": "Positive USDT multi-spec coverage; loaded via test_usdt user-space tool."
+    },
+    "xdp_features.c": {
+      "expect": "accept",
+      "note": "Positive XDP features coverage; loaded by xdp_features user-space tool."
+    },
+    "xdp_hw_metadata.c": {
+      "expect": "accept",
+      "note": "Positive XDP hardware-metadata coverage; loaded by xdp_hw_metadata user-space tool."
+    },
+    "xdp_synproxy_kern.c": {
+      "expect": "accept",
+      "note": "Positive XDP SYN-proxy coverage; loaded by xdp_synproxy user-space tool."
+    },
+    "test_tc_tunnel.c": {
+      "expect": "accept",
+      "note": "Positive TC tunnel coverage; loaded via tc filter add commands in test_tc_tunnel.sh."
     }
   }
 }
