@@ -2542,6 +2542,18 @@
     "fentry_recursive.c": {
       "expect": "accept",
       "note": "Positive recursive-attach coverage; prog_tests/recursive_attach.c asserts fentry_recursive__load OK across iterations."
+    },
+    "struct_ops_module.c": {
+      "expect": "accept",
+      "note": "Verifier-accept; prog_tests/test_struct_ops_module.c::ASSERT_ERR cases are at libbpf-side struct_ops zeroed/zeroed_op validation (post-verifier), not BPF verifier rejection."
+    },
+    "struct_ops_forgotten_cb.c": {
+      "expect": "accept",
+      "note": "Verifier-accept; prog_tests/test_struct_ops_module.c first test ASSERT_ERR on load is libbpf-side \"SEC(\\\"struct_ops\\\") program isnt referenced anywhere\" check (post-verifier)."
+    },
+    "freplace_dead_global_func.c": {
+      "expect": "accept",
+      "note": "Verifier-accept; prog_tests/global_func_dead_code.c second test ASSERT_ERR rejects based on freplace dead-target validation (kernel checks subprog presence in target) \u2014 we don't model freplace attach context."
     }
   }
 }
