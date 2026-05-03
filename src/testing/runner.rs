@@ -76,6 +76,34 @@ fn is_unsupported_struct_ops_member(ops_struct: &str, member: &str) -> bool {
         .any(|(s, m)| *s == ops_struct && *m == member)
 }
 
+/// Per-(ops_struct, member) allowlist of members that may be attached
+/// under `SEC("struct_ops.s/<member>")` (sleepable). The kernel module
+/// registering each ops struct populates a per-member sleepable mask
+/// (see `bpf_struct_ops::cfi_stubs` + `BPF_PROG_TYPE_STRUCT_OPS` attach
+/// validation in `bpf_struct_ops_map_link_create`); attempting to attach
+/// a non-listed member with the sleepable flavor is rejected with
+/// "attach to unsupported member <member> of struct <ops_struct>".
+///
+/// `bpf_dummy_ops`: only `test_sleepable` is sleepable-allowed (see
+/// `dummy_st_ops_fail.c::test_unsupported_field_sleepable` which
+/// attaches `.s/test_2` and is `__failure`-asserted).
+const STRUCT_OPS_SLEEPABLE_MEMBERS: &[(&str, &str)] = &[
+    ("bpf_dummy_ops", "test_sleepable"),
+];
+
+fn is_sleepable_allowed_struct_ops_member(ops_struct: &str, member: &str) -> bool {
+    STRUCT_OPS_SLEEPABLE_MEMBERS
+        .iter()
+        .any(|(s, m)| *s == ops_struct && *m == member)
+}
+
+/// True iff the SEC string requests the sleepable flavor of struct_ops
+/// (`struct_ops.s/<member>` or its libbpf-optional `?struct_ops.s/...`).
+fn is_struct_ops_sleepable_sec(section: &str) -> bool {
+    let s = section.strip_prefix('?').unwrap_or(section);
+    s.starts_with("struct_ops.s/")
+}
+
 /// Number of refcounted args declared on this subprog's struct_ops binding.
 /// Returns 0 when the subprog has no struct_ops binding or none of its
 /// args are refcounted. Consumed by `analyze_program_full` to seed
@@ -671,6 +699,22 @@ impl Analyzer {
                 .iter()
                 .find(|b| b.subprog == func.name)
                 && is_unsupported_struct_ops_member(&binding.ops_struct, &binding.member)
+            {
+                return AnalysisResult::Fail(VerificationError::UnsupportedStructOpsMember {
+                    ops_struct: binding.ops_struct.clone(),
+                    member: binding.member.clone(),
+                });
+            }
+            // Per-member sleepable gate: SEC("struct_ops.s/<member>") is
+            // only valid for members the kmod registered as sleepable.
+            // Otherwise kernel rejects with the same "attach to
+            // unsupported member" message.
+            if is_struct_ops_sleepable_sec(section)
+                && let Some(binding) = self
+                    .struct_ops_bindings
+                    .iter()
+                    .find(|b| b.subprog == func.name)
+                && !is_sleepable_allowed_struct_ops_member(&binding.ops_struct, &binding.member)
             {
                 return AnalysisResult::Fail(VerificationError::UnsupportedStructOpsMember {
                     ops_struct: binding.ops_struct.clone(),

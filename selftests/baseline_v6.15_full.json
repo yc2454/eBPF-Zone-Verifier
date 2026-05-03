@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-03T19:33:11.006975+00:00",
+  "generated_at": "2026-05-03T20:01:21.168013+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -2304,8 +2304,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/dummy_st_ops_fail.c",
       "progs": {
         "test_unsupported_field_sleepable": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
