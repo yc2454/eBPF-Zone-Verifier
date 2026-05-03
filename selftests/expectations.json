@@ -219,6 +219,82 @@
     "user_ringbuf_success.c": {
       "expect": "accept",
       "note": "Positive user_ringbuf coverage; kernel prog_tests/user_ringbuf.c asserts load succeeds."
+    },
+    "test_sk_lookup.c": {
+      "expect": "accept",
+      "note": "Positive sk_lookup coverage; kernel prog_tests/sk_lookup.c calls test_sk_lookup__open_and_load and CHECKs non-NULL before exercising runtime."
+    },
+    "exceptions.c": {
+      "expect": "accept",
+      "note": "Positive bpf_throw / exceptions coverage; kernel prog_tests/exceptions.c::test_exceptions calls exceptions__load with ASSERT_OK before runtime checks (the negative siblings live in exceptions_fail.c)."
+    },
+    "map_kptr.c": {
+      "expect": "accept",
+      "note": "Positive map kptr coverage; kernel prog_tests/map_kptr.c calls map_kptr__open_and_load with ASSERT_OK_PTR before exercising kptr ref/release."
+    },
+    "test_attach_probe.c": {
+      "expect": "accept",
+      "note": "Positive kprobe/uprobe attach coverage; kernel prog_tests/attach_probe.c asserts test_attach_probe__load and test_attach_probe_manual__open_and_load succeed (negative cases sit at attach time, not load)."
+    },
+    "test_check_mtu.c": {
+      "expect": "accept",
+      "note": "Positive bpf_check_mtu coverage; kernel prog_tests/check_mtu.c calls test_check_mtu__open_and_load / __load with ASSERT_OK before runtime checks."
+    },
+    "test_module_attach.c": {
+      "expect": "accept",
+      "note": "Positive module-attach coverage; kernel prog_tests/module_attach.c calls test_module_attach__load with ASSERT_OK before exercising attach."
+    },
+    "linked_list.c": {
+      "expect": "accept",
+      "note": "Positive linked_list kfunc coverage (sibling of linked_list_fail.c); kernel prog_tests/linked_list.c calls linked_list__open_and_load with ASSERT_OK_PTR before exercising push/pop."
+    },
+    "arena_atomics.c": {
+      "expect": "accept",
+      "note": "Positive arena atomics coverage; kernel prog_tests/arena_atomics.c calls arena_atomics__open + __load with ASSERT_OK before runtime checks."
+    },
+    "cgroup_tcp_skb.c": {
+      "expect": "accept",
+      "note": "Positive cgroup-skb coverage; kernel prog_tests/cgroup_tcp_skb.c calls cgroup_tcp_skb__open_and_load with ASSERT_OK on the resulting skel before install_filters."
+    },
+    "get_func_ip_test.c": {
+      "expect": "accept",
+      "note": "Positive bpf_get_func_ip coverage; kernel prog_tests/get_func_ip_test.c asserts get_func_ip_test__load + __attach succeed before runtime checks."
+    },
+    "fentry_test.c": {
+      "expect": "accept",
+      "note": "Positive fentry coverage; kernel prog_tests/fentry_test.c asserts fentry_test_lskel__open_and_load succeeds before runtime checks."
+    },
+    "fexit_bpf2bpf.c": {
+      "expect": "accept",
+      "note": "Positive fexit-on-bpf2bpf coverage; kernel prog_tests/fexit_bpf2bpf.c::test_fexit_bpf2bpf_common asserts bpf_object__load succeeds before exercising attach + runtime."
+    },
+    "fexit_test.c": {
+      "expect": "accept",
+      "note": "Positive fexit coverage; kernel prog_tests/fexit_test.c asserts fexit_test_lskel__open_and_load succeeds before runtime checks."
+    },
+    "local_kptr_stash.c": {
+      "expect": "accept",
+      "note": "Positive local-kptr-stash coverage (sibling of local_kptr_stash_fail.c); kernel prog_tests/local_kptr_stash.c repeatedly calls local_kptr_stash__open_and_load with ASSERT_OK_PTR before exercising add/remove."
+    },
+    "test_map_ops.c": {
+      "expect": "accept",
+      "note": "Positive map-ops coverage; kernel prog_tests/map_ops.c asserts test_map_ops__load + __attach succeed before runtime checks."
+    },
+    "atomics.c": {
+      "expect": "accept",
+      "note": "Positive atomic-ops coverage; kernel prog_tests/atomics.c asserts atomics_lskel__open_and_load succeeds before runtime checks."
+    },
+    "bpf_loop.c": {
+      "expect": "accept",
+      "note": "Positive bpf_loop helper coverage; kernel prog_tests/bpf_loop.c asserts bpf_loop__open_and_load succeeds before runtime checks."
+    },
+    "rbtree.c": {
+      "expect": "accept",
+      "note": "Positive rbtree kfunc coverage (sibling of rbtree_btf_fail__*.c); kernel prog_tests/rbtree.c repeatedly calls rbtree__open_and_load with ASSERT_OK_PTR before exercising add/remove."
+    },
+    "test_helper_restricted.c": {
+      "expect": "reject",
+      "note": "Negative helper-restriction coverage; kernel prog_tests/helper_restricted.c iterates each prog with autoload-one and ASSERT_ERR(load_should_fail) — every prog is expected to fail load due to helper-context restrictions."
     }
   }
 }

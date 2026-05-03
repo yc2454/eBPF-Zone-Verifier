@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-03T21:08:27.729687+00:00",
+  "generated_at": "2026-05-03T21:34:00.476407+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -36,54 +36,44 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/arena_atomics.c",
       "progs": {
         "add": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "and": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "cmpxchg": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "load_acquire": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "or": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "store_release": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "sub": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "uaf": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "xchg": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "xor": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -158,39 +148,32 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/atomics.c",
       "progs": {
         "add": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "and": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "cmpxchg": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "or": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "sub": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "xchg": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "xor": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -824,39 +807,33 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/bpf_loop.c",
       "progs": {
         "callback": {
-          "upstream": "UNANNOTATED",
+          "upstream": "UNKNOWN",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "note": "not in ELF: function 'callback' not found (looked in '.maps' and 31 other sections)"
         },
         "prog_invalid_flags": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "prog_nested_calls": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "prog_non_constant_callback": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "prog_null_ctx": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "stack_check": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -1545,49 +1522,41 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/cgroup_tcp_skb.c",
       "progs": {
         "client_egress": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "client_egress_srv": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "client_ingress": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "client_ingress_srv": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "needed_tcp_pkt": {
-          "upstream": "UNANNOTATED",
+          "upstream": "UNKNOWN",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "note": "not in ELF: function 'needed_tcp_pkt' not found (looked in 'license' and 31 other sections)"
         },
         "server_egress": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "server_egress_srv": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "server_ingress": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "server_ingress_srv": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -2790,84 +2759,70 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/exceptions.c",
       "progs": {
         "exception_assert_range": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "exception_assert_range_with": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "exception_bad_assert_range": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "exception_bad_assert_range_with": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "exception_ext": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "exception_ext_mod_cb_runtime": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "CFG error: unreachable insn at pc 10"
         },
         "exception_tail_call": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "exception_tail_call_target": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "exception_throw_always_1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "exception_throw_always_2": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "exception_throw_default": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "exception_throw_default_value": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "exception_throw_subprog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "exception_throw_unwind_1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "exception_throw_unwind_2": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "static_func": {
-          "upstream": "UNANNOTATED",
+          "upstream": "UNKNOWN",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "note": "not in ELF: function 'static_func' not found (looked in '.maps' and 29 other sections)"
         }
       }
     },
@@ -3112,44 +3067,37 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/fentry_test.c",
       "progs": {
         "test1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test2": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test3": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test4": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test5": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test6": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid pointer arithmetic at pc 8"
         },
         "test7": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test8": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -3157,44 +3105,41 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/fexit_bpf2bpf.c",
       "progs": {
         "new_get_constant": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "new_get_skb_ifindex": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "pc 1: R2 !read_ok"
         },
         "new_get_skb_len": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe ctx access at pc 1: offset 0, size 4"
         },
         "new_test_pkt_write_access_subprog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "pc 1: R2 !read_ok"
         },
         "test_main": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test_subprog1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test_subprog2": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid pointer arithmetic at pc 11"
         },
         "test_subprog3": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid pointer arithmetic at pc 6"
         }
       }
     },
@@ -3256,44 +3201,39 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/fexit_test.c",
       "progs": {
         "test1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test2": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test3": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test4": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid pointer arithmetic at pc 6"
         },
         "test5": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid pointer arithmetic at pc 8"
         },
         "test6": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid pointer arithmetic at pc 10"
         },
         "test7": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test8": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -3589,49 +3529,41 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/get_func_ip_test.c",
       "progs": {
         "test1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test2": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test3": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test4": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test5": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test6": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test7": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test8": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "unused": {
-          "upstream": "UNANNOTATED",
+          "upstream": "UNKNOWN",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "note": "not in ELF: function 'unused' not found (looked in 'license' and 43 other sections)"
         }
       }
     },
@@ -4755,59 +4687,59 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/linked_list.c",
       "progs": {
         "global_list_array_push_pop": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 12: register: r1"
         },
         "global_list_in_list": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 25: register: r1"
         },
         "global_list_push_pop": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 32: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "global_list_push_pop_multiple": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic load at pc 71: base R6+-4 (type: PtrToOwnedKptr { ref_id: Some(524), offset: 0, non_owning: false })"
         },
         "global_list_push_pop_nested": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 13: register: r1"
         },
         "inner_map_list_in_list": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 43: register: r1"
         },
         "inner_map_list_push_pop": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 26: register: r1"
         },
         "inner_map_list_push_pop_multiple": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 42: register: r1"
         },
         "map_list_in_list": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 36: register: r1"
         },
         "map_list_push_pop": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 39: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "map_list_push_pop_multiple": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic load at pc 79: base R8+-4 (type: PtrToOwnedKptr { ref_id: Some(278), offset: 0, non_owning: false })"
         }
       }
     },
@@ -5024,44 +4956,44 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/local_kptr_stash.c",
       "progs": {
         "less": {
-          "upstream": "UNANNOTATED",
+          "upstream": "UNKNOWN",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "note": "not in ELF: function 'less' not found (looked in '.maps' and 30 other sections)"
         },
         "refcount_acquire_without_unstash": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 14: register: r1"
         },
         "stash_local_with_root": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 30: register: r1"
         },
         "stash_plain": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 25: register: r1"
         },
         "stash_rb_nodes": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 38: register: r1"
         },
         "stash_refcounted_node": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 26: register: r1"
         },
         "stash_test_ref_kfunc": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 16: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "unstash_rb_node": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 18: register: r1"
         }
       }
     },
@@ -5322,69 +5254,68 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/map_kptr.c",
       "progs": {
         "test_cgrp_map_kptr": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic load at pc 12: base R6+0 (type: ScalarValue)"
         },
         "test_inode_map_kptr": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic load at pc 15: base R1+0 (type: PtrToMapKptrOrNull { pointee_btf_id: 10, ref_id: None, flags: PtrFlags(2) })"
         },
         "test_kptr_unref": {
-          "upstream": "UNANNOTATED",
+          "upstream": "UNKNOWN",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "note": "not in ELF: function 'test_kptr_unref' not found (looked in '.maps' and 37 other sections)"
         },
         "test_ls_map_kptr_ref1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 26: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "test_ls_map_kptr_ref2": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic load at pc 15: base R6+24 (type: PtrToMapKptrOrNull { pointee_btf_id: 10, ref_id: None, flags: PtrFlags(32) })"
         },
         "test_ls_map_kptr_ref_del": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test_map_in_map_kptr": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe map store at pc 161: map index 10, size 8"
         },
         "test_map_kptr": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic load at pc 56: base R1+0 (type: PtrToMapKptrOrNull { pointee_btf_id: 10, ref_id: None, flags: PtrFlags(2) })"
         },
         "test_map_kptr_ref1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 55: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "test_map_kptr_ref2": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic load at pc 13: base R7+24 (type: PtrToMapKptrOrNull { pointee_btf_id: 10, ref_id: None, flags: PtrFlags(32) })"
         },
         "test_map_kptr_ref3": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "test_sk_map_kptr": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic load at pc 16: base R1+0 (type: PtrToMapKptrOrNull { pointee_btf_id: 10, ref_id: None, flags: PtrFlags(2) })"
         },
         "test_task_map_kptr": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic load at pc 17: base R1+0 (type: PtrToMapKptrOrNull { pointee_btf_id: 10, ref_id: None, flags: PtrFlags(2) })"
         }
       }
     },
@@ -6330,34 +6261,34 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/rbtree.c",
       "progs": {
         "rbtree_add_and_remove": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic load at pc 48: base R6+-16 (type: PtrToOwnedKptr { ref_id: Some(13), offset: 0, non_owning: false })"
         },
         "rbtree_add_and_remove_array": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 65: register: r1"
         },
         "rbtree_add_nodes": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "CFG error: unreachable insn at pc 74"
         },
         "rbtree_add_nodes_nested": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "CFG error: unreachable insn at pc 74"
         },
         "rbtree_api_release_aliasing": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic load at pc 52: base R6+-8 (type: PtrToOwnedKptr { ref_id: Some(72), offset: 0, non_owning: false })"
         },
         "rbtree_first_and_remove": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe generic load at pc 71: base R0+-8 (type: PtrToOwnedKptr { ref_id: None, offset: 0, non_owning: false })"
         }
       }
     },
@@ -8297,64 +8228,54 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_attach_probe.c",
       "progs": {
         "handle_kprobe_auto": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "handle_kretprobe_auto": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "handle_uprobe_byname": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "handle_uprobe_byname2": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "handle_uprobe_byname3": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "handle_uprobe_byname3_sleepable": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 24: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "handle_uprobe_ref_ctr": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "handle_uretprobe_byname": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "handle_uretprobe_byname2": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "handle_uretprobe_byname3": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "handle_uretprobe_byname3_sleepable": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsupported modern BPF feature at pc 24: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
         },
         "handle_uretprobe_ref_ctr": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -8699,64 +8620,52 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_check_mtu.c",
       "progs": {
         "tc_exceed_mtu": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "tc_exceed_mtu_da": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "tc_input_len": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "tc_input_len_exceed": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "tc_minus_delta": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "tc_use_helper": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "xdp_exceed_mtu": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "xdp_input_len": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "xdp_input_len_exceed": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "xdp_minus_delta": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "xdp_use_helper": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "xdp_use_helper_basic": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -9493,49 +9402,41 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_helper_restricted.c",
       "progs": {
         "kprobe_spin_lock": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "REJECT",
+          "ours": "FALSE_ACCEPT"
         },
         "kprobe_timer": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "REJECT",
+          "ours": "FALSE_ACCEPT"
         },
         "perf_event_spin_lock": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "REJECT",
+          "ours": "FALSE_ACCEPT"
         },
         "perf_event_timer": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "REJECT",
+          "ours": "FALSE_ACCEPT"
         },
         "raw_tp_spin_lock": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "REJECT",
+          "ours": "FALSE_ACCEPT"
         },
         "raw_tp_timer": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "REJECT",
+          "ours": "FALSE_ACCEPT"
         },
         "timer_cb": {
-          "upstream": "UNANNOTATED",
+          "upstream": "UNKNOWN",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "note": "not in ELF: function 'timer_cb' not found (looked in '.maps' and 34 other sections)"
         },
         "tp_spin_lock": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "REJECT",
+          "ours": "FALSE_ACCEPT"
         },
         "tp_timer": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "REJECT",
+          "ours": "FALSE_ACCEPT"
         }
       }
     },
@@ -9975,44 +9876,37 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_map_ops.c",
       "progs": {
         "callback": {
-          "upstream": "UNANNOTATED",
+          "upstream": "UNKNOWN",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "note": "not in ELF: function 'callback' not found (looked in '.maps' and 42 other sections)"
         },
         "map_delete": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "map_for_each_fail": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "map_for_each_pass": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "map_peek": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "map_pop": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "map_push": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "map_update": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -10055,64 +9949,52 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_module_attach.c",
       "progs": {
         "handle_fentry": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "handle_fentry_explicit": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "handle_fentry_explicit_manual": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "handle_fentry_manual": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "handle_fexit": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "handle_fexit_ret": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "handle_fmod_ret": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "handle_raw_tp": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "handle_raw_tp_bare": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "handle_raw_tp_writable_bare": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "handle_tp_btf": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "kprobe_multi": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -10531,119 +10413,114 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_sk_lookup.c",
       "progs": {
         "access_ctx_sk": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 10: register: r2"
         },
         "check_ifindex": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Unsafe ctx access at pc 0: offset 64, size 4"
         },
         "ctx_narrow_access": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 149: register: r2"
         },
         "lookup_drop": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "lookup_pass": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "multi_prog_drop1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 7: register: r2"
         },
         "multi_prog_drop2": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 7: register: r2"
         },
         "multi_prog_pass1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 7: register: r2"
         },
         "multi_prog_pass2": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 7: register: r2"
         },
         "multi_prog_redir1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 5: register: r2"
         },
         "multi_prog_redir2": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 5: register: r2"
         },
         "redir_ip4": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 12: register: r2"
         },
         "redir_ip6": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 18: register: r2"
         },
         "redir_port": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 8: register: r2"
         },
         "reuseport_drop": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "reuseport_pass": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "select_sock_a": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 5: register: r2"
         },
         "select_sock_a_no_reuseport": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 5: register: r2"
         },
         "select_sock_b": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "sk_assign_eexist": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 5: register: r2"
         },
         "sk_assign_esocknosupport": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 5: register: r2"
         },
         "sk_assign_null": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 16: register: r2"
         },
         "sk_assign_replace_flag": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "ACCEPT",
+          "ours": "FALSE_REJECT",
+          "note": "Invalid argument type at pc 5: register: r2"
         }
       }
     },
