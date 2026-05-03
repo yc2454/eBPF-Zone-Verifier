@@ -127,6 +127,22 @@ pub fn assign_reg(dbm: &mut Dbm, x: Reg, y: Reg) {
     dbm.close();
 }
 
+/// Intersect `x`'s range with `y`'s — i.e. assume `x == y` while
+/// preserving any prior constraints on `x`. Unlike `assign_reg` this is
+/// the *constraint* form used by `if x == y` branches: the closure may
+/// derive a contradiction when `x`'s pre-branch range is incompatible
+/// with `y`'s, letting the caller prune the infeasible successor. We
+/// `sync_bounds` for both registers so the 32/64-bit shadow ranges
+/// reflect the new equality (e.g. an empty `u32` shadow surfaced when
+/// `y` is constant-3 and `x`'s prior `u32 >= 4` from a jmp32).
+pub fn intersect_eq_reg(dbm: &mut Dbm, x: Reg, y: Reg) {
+    dbm.add_constraint(x, y, 0);
+    dbm.add_constraint(y, x, 0);
+    dbm.close();
+    sync_bounds(dbm, x);
+    sync_bounds(dbm, y);
+}
+
 /// Establishes the relationship dst = src + imm (i.e., dst - src = imm).
 pub fn assign_reg_offset(dbm: &mut Dbm, dst: Reg, src: Reg, imm: i64) {
     dbm.forget_var(dst);
@@ -320,7 +336,12 @@ pub fn apply_mul_imm(dbm: &mut Dbm, dst: Reg, imm: i64) {
     dbm.close();
 }
 
-/// Performs dst /= imm.
+/// Performs dst /= imm. BPF DIV is unsigned, so a negative `imm`
+/// reinterprets to a huge unsigned divisor — the zone can't model that
+/// soundly with signed-i64 bounds. Mirror the interval domain: only
+/// narrow when `imm` and the dividend's range are both non-negative;
+/// otherwise forget. (SDIV is decoded separately and never reaches
+/// here with a meaningful negative imm.)
 pub fn apply_div_imm(dbm: &mut Dbm, reg: Reg, imm: i64) {
     if imm == 0 {
         return;
@@ -328,7 +349,7 @@ pub fn apply_div_imm(dbm: &mut Dbm, reg: Reg, imm: i64) {
     let (l, h) = get_interval(dbm, reg);
     forget(dbm, reg);
 
-    if l != i64::MIN && h != i64::MAX && l >= 0 && h >= 0 {
+    if imm > 0 && l != i64::MIN && h != i64::MAX && l >= 0 && h >= 0 {
         let new_lo = l / imm;
         let new_hi = h / imm;
         assume_ge_imm(dbm, reg, new_lo);

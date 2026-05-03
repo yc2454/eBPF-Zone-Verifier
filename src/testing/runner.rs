@@ -1,7 +1,9 @@
 // src/runner.rs
 
 use crate::analysis;
-use crate::analysis::machine::context::{EntryArg, default_exec_ctx, intern_btf_type_name};
+use crate::analysis::machine::context::{
+    EntryArg, default_exec_ctx, intern_btf_type_name, intern_btf_type_name_strict,
+};
 use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg::Reg;
 use crate::ast::ProgramKind;
@@ -12,8 +14,8 @@ use crate::parsing::btf::{self, BtfContext, StructOpsArg};
 use crate::parsing::elf;
 use crate::parsing::elf::struct_ops::{StructOpsBinding, extract_bindings};
 use crate::parsing::elf::{
-    BpfFuncInfo, BpfMapDef, get_functions_in_section, list_section_names, load_data_section_maps,
-    load_maps, load_raw_programs, load_relocations_for_function,
+    BpfFuncInfo, BpfMapDef, get_functions_in_section, list_section_names, load_btf_extern_maps,
+    load_data_section_maps, load_maps, load_raw_programs, load_relocations_for_function,
 };
 use crate::parsing::elf::{
     program_kind_for_object, try_load_combined_program_from_elf, try_load_function_from_elf,
@@ -35,6 +37,69 @@ fn is_struct_ops_arg_maybe_null(ops_struct: &str, member: &str, arg_idx: u8) -> 
         .any(|(s, m, i)| *s == ops_struct && *m == member && *i == arg_idx)
 }
 
+/// Per-(ops_struct, member, arg_idx) refcounted-arg table. The kernel
+/// marks struct_ops member parameters as "ref-acquired at entry" via the
+/// `__ref` suffix on the kmod-side parameter name (e.g.
+/// `bpf_testmod_ops__test_refcounted(int dummy, struct task_struct *task__ref)`).
+/// That suffix lives in the kmod's BTF — not in the BPF program's BTF —
+/// so we mirror it here as a static table, the same way
+/// STRUCT_OPS_MAYBE_NULL_ARGS mirrors per-arg PTR_MAYBE_NULL.
+///
+/// The verifier acquires a ref at function entry for each refcounted arg;
+/// failure to release it before exit fires UnreleasedReference, matching
+/// the kernel's "Unreleased reference id=N alloc_insn=0" rejection on
+/// programs like struct_ops_refcounted_fail__ref_leak.
+const STRUCT_OPS_REFCOUNTED_ARGS: &[(&str, &str, u8)] = &[
+    ("bpf_testmod_ops", "test_refcounted", 1),     // task__ref
+    ("bpf_testmod_ops", "test_return_ref_kptr", 1), // task__ref
+];
+
+fn is_struct_ops_arg_refcounted(ops_struct: &str, member: &str, arg_idx: u8) -> bool {
+    STRUCT_OPS_REFCOUNTED_ARGS
+        .iter()
+        .any(|(s, m, i)| *s == ops_struct && *m == member && *i == arg_idx)
+}
+
+/// Per-(ops_struct, member) table of struct_ops members the kernel module
+/// marks unsupported for BPF attach. The kmod's `bpf_struct_ops` registration
+/// validates this via `bpf_struct_ops_check_member`/`check_member` callbacks
+/// and per-struct allowlists. Without inspecting the kmod we mirror the
+/// known-unsupported entries here, matching the kernel's
+/// "attach to unsupported member <member> of struct <ops_struct>" rejection.
+const UNSUPPORTED_STRUCT_OPS_MEMBERS: &[(&str, &str)] = &[
+    ("bpf_testmod_ops", "unsupported_ops"),
+];
+
+fn is_unsupported_struct_ops_member(ops_struct: &str, member: &str) -> bool {
+    UNSUPPORTED_STRUCT_OPS_MEMBERS
+        .iter()
+        .any(|(s, m)| *s == ops_struct && *m == member)
+}
+
+/// Number of refcounted args declared on this subprog's struct_ops binding.
+/// Returns 0 when the subprog has no struct_ops binding or none of its
+/// args are refcounted. Consumed by `analyze_program_full` to seed
+/// `state.active_refs` at function entry — every refcounted arg becomes
+/// an outstanding reference the program must release before exit.
+pub(crate) fn struct_ops_refcounted_arg_count(
+    bindings: &[StructOpsBinding],
+    func_name: &str,
+) -> usize {
+    let Some(binding) = bindings.iter().find(|b| b.subprog == func_name) else {
+        return 0;
+    };
+    let mut n = 0;
+    // The arg_idx in STRUCT_OPS_REFCOUNTED_ARGS is the FUNC_PROTO position
+    // (0-based, including any leading scalars). Iterating the table here is
+    // O(k) for k=2; same ergonomics as the MAYBE_NULL lookup.
+    for (s, m, _) in STRUCT_OPS_REFCOUNTED_ARGS {
+        if *s == binding.ops_struct && *m == binding.member {
+            n += 1;
+        }
+    }
+    n
+}
+
 /// Result of analyzing a single section
 #[derive(Debug)]
 pub enum AnalysisResult {
@@ -48,6 +113,60 @@ impl AnalysisResult {
     pub fn is_pass(&self) -> bool {
         matches!(self, AnalysisResult::Pass)
     }
+}
+
+/// Cluster E: LSM hooks the kernel's `lsm/disabled_hooks_list` rejects at
+/// attach time. Mirrors `BPF_LSM_DISABLED_HOOKS` in `kernel/bpf/bpf_lsm.c`.
+/// Names match the SEC suffix (`SEC("lsm/<hook>")`).
+fn lsm_hook_is_disabled(hook: &str) -> bool {
+    matches!(
+        hook,
+        "vm_enough_memory"
+            | "inode_need_killpriv"
+            | "inode_getsecurity"
+            | "inode_setsecurity"
+            | "inode_listsecurity"
+            | "inode_copy_up_xattr"
+            | "getselfattr"
+            | "getprocattr"
+            | "setprocattr"
+            | "ismaclabel"
+            | "secid_to_secctx"
+            | "secctx_to_secid"
+            | "release_secctx"
+            | "d_instantiate"
+            | "ipc_getsecid"
+            | "key_getsecurity"
+            | "audit_rule_match"
+            | "audit_rule_init"
+            | "audit_rule_free"
+            | "module_request"
+    )
+}
+
+/// Kernel `__noreturn` functions the verifier rejects as fexit/fmod_ret
+/// attach targets ("Attaching fexit/fmod_ret to __noreturn functions is
+/// rejected."). Mirrors the kernel's `noreturn` attribute set walked by
+/// `check_attach_btf_id` — fexit fires on return, so attaching it to a
+/// function that never returns is a guaranteed loss-of-control. fentry
+/// is allowed; only the post-return tracers are rejected.
+fn is_noreturn_kernel_fn(name: &str) -> bool {
+    matches!(
+        name,
+        "__module_put_and_kthread_exit"
+            | "__kthread_exit"
+            | "__x64_sys_exit"
+            | "__x64_sys_exit_group"
+            | "__ia32_sys_exit"
+            | "__ia32_sys_exit_group"
+            | "do_exit"
+            | "do_group_exit"
+            | "do_task_dead"
+            | "kthread_complete_and_exit"
+            | "kthread_exit"
+            | "make_task_dead"
+            | "rewind_stack_and_make_dead"
+    )
 }
 
 fn make_entry_state() -> Dbm {
@@ -127,8 +246,10 @@ impl Analyzer {
         // Load maps (explicit + data sections)
         let explicit_maps = load_maps(path).unwrap_or_default();
         let data_maps = load_data_section_maps(path).unwrap_or_default();
+        let extern_maps = load_btf_extern_maps(path).unwrap_or_default();
         let mut all_maps = explicit_maps;
         all_maps.extend(data_maps);
+        all_maps.extend(extern_maps);
 
         // Apply map size overrides from config
         for m in &mut all_maps {
@@ -145,7 +266,7 @@ impl Analyzer {
 
         // Load BTF
         let btf_bytes = elf::prog::load_section_bytes(path, ".BTF", false).unwrap_or_default();
-        let btf = if !btf_bytes.is_empty() {
+        let mut btf = if !btf_bytes.is_empty() {
             btf::parse_btf(&btf_bytes).unwrap_or_else(|e| {
                 if config.verbosity > 0 {
                     println!("BTF Parse Warning: {}", e);
@@ -156,14 +277,35 @@ impl Analyzer {
             btf::BtfContext::new()
         };
 
+        // Patch BTF DATASEC member offsets from the ELF symbol table.
+        // clang emits all DATASEC entries with offset=0; libbpf rewrites
+        // them post-link from the symbol table. Without this, the
+        // SpecialField machinery sees every `.bss.X`/`.data.X` var at
+        // offset 0 and the offset-match check on
+        // MapValueSpecial{SpinLock/RbRoot/...} fails.
+        let raw_bytes = std::fs::read(path).ok();
+        if let Some(ref bytes) = raw_bytes
+            && let Ok(elf) = goblin::elf::Elf::parse(bytes)
+        {
+            let mut name_to_offset = std::collections::HashMap::new();
+            for sym in elf.syms.iter() {
+                if let Some(name) = elf.strtab.get_at(sym.st_name)
+                    && !name.is_empty()
+                {
+                    name_to_offset.insert(name.to_string(), sym.st_value as u32);
+                }
+            }
+            btf.patch_datasec_offsets(&name_to_offset);
+        }
+
         // W6.4a: extract struct_ops bindings once per ELF. Cheap; we
         // already have the BTF parsed and re-parse the ELF here.
-        let struct_ops_bindings = match std::fs::read(path) {
-            Ok(bytes) => match goblin::elf::Elf::parse(&bytes) {
-                Ok(elf) => extract_bindings(&bytes, &elf, &btf),
+        let struct_ops_bindings = match raw_bytes.as_deref() {
+            Some(bytes) => match goblin::elf::Elf::parse(bytes) {
+                Ok(elf) => extract_bindings(bytes, &elf, &btf),
                 Err(_) => Vec::new(),
             },
-            Err(_) => Vec::new(),
+            None => Vec::new(),
         };
 
         Analyzer {
@@ -280,11 +422,24 @@ impl Analyzer {
     /// pass/fail expectation). Returns `LoadError` if the function isn't
     /// found in the section.
     pub fn analyze_function(&self, section: &str, func_name: &str) -> AnalysisResult {
+        self.analyze_function_with_flags(section, func_name, 0)
+    }
+
+    /// Variant of [`analyze_function`] that ORs `extra_flags` into the
+    /// program's `ExecContext::flags` before analysis. Used by the
+    /// modern selftest runner to honor `__flag(...)` annotations such
+    /// as `BPF_F_STRICT_ALIGNMENT`.
+    pub fn analyze_function_with_flags(
+        &self,
+        section: &str,
+        func_name: &str,
+        extra_flags: u32,
+    ) -> AnalysisResult {
         // First try the section the caller asked for.
         let funcs = get_functions_in_section(&self.path, section).unwrap_or_default();
         if let Some(func) = funcs.iter().find(|f| f.name == func_name) {
             let func = func.clone();
-            return self.analyze_function_with_info(section, &func);
+            return self.analyze_function_with_info_flags(section, &func, extra_flags);
         }
 
         // Fallback: clang sometimes emits a program under a section name
@@ -302,7 +457,7 @@ impl Analyzer {
             let funcs = get_functions_in_section(&self.path, s).unwrap_or_default();
             if let Some(func) = funcs.iter().find(|f| f.name == func_name) {
                 let func = func.clone();
-                return self.analyze_function_with_info(s, &func);
+                return self.analyze_function_with_info_flags(s, &func, extra_flags);
             }
         }
 
@@ -319,11 +474,38 @@ impl Analyzer {
     /// calls now resolve to in-program PCs, so the verifier follows
     /// the chain instead of treating them as opaque helper calls.
     fn analyze_function_with_info(&self, section: &str, func: &BpfFuncInfo) -> AnalysisResult {
+        self.analyze_function_with_info_flags(section, func, 0)
+    }
+
+    fn analyze_function_with_info_flags(
+        &self,
+        section: &str,
+        func: &BpfFuncInfo,
+        extra_flags: u32,
+    ) -> AnalysisResult {
+        // Pre-resolve any `__exception_cb(<cb>)` decl_tag on this main
+        // FUNC. The cb is unreachable from main's CFG (no BpfCall reloc
+        // points to it), so the combiner won't pull it in by default.
+        // We pass it as an extra root so its body lands in `prog` and
+        // `func_offsets` exposes its entry PC, enabling the post-main
+        // exception-cb analysis pass below.
+        let cb_extra_roots: Vec<(String, String)> = self
+            .btf
+            .exception_callback_tags(&func.name)
+            .into_iter()
+            .next()
+            .and_then(|cb_name| {
+                find_section_for_func(&self.path, &cb_name)
+                    .map(|cb_section| (cb_section, cb_name))
+            })
+            .into_iter()
+            .collect();
         let (prog, pc_to_reloc, func_offsets) = match try_load_function_with_subprogs_from_elf(
             &self.path,
             section,
             &func.name,
             &self.maps,
+            &cb_extra_roots,
         ) {
             Ok(t) => t,
             Err(e) => {
@@ -353,7 +535,6 @@ impl Analyzer {
         if prog.instrs.is_empty() {
             return AnalysisResult::LoadError(format!("Empty function '{}'", func.name));
         }
-        let _ = &func_offsets;
 
         println!(
             "Test 'prog: {}, section: {}, func: {}': Lowered Program AST:",
@@ -377,15 +558,125 @@ impl Analyzer {
         ctx.btf = self.btf.clone();
         register_kfunc_relocs(&mut ctx.btf, &pc_to_reloc);
         ctx.pc_to_reloc = pc_to_reloc;
+        // Invert func_offsets (name → entry PC) into entry PC → name
+        // so the call-rel transfer can resolve a target PC to a
+        // function name and look up its BTF FUNC linkage.
+        ctx.pc_to_subprog_name = func_offsets
+            .iter()
+            .map(|(name, pc)| (*pc, name.clone()))
+            .collect();
+        ctx.flags |= extra_flags;
+
+        // Load-time validation of `__exception_cb(<cb>)` decl-tags on the
+        // main subprog. libbpf encodes the annotation as a DECL_TAG named
+        // `"exception_callback:<cb>"` targeting the main FUNC. The kernel
+        // rejects:
+        //   * more than one tag per main subprog,
+        //   * a cb whose FUNC_PROTO doesn't return a scalar integer,
+        //   * a cb whose FUNC_PROTO doesn't take exactly one integer arg.
+        // All three are flagged before analysis runs — the runtime
+        // `bpf_set_exception_callback` plumbing is unaffected.
+        let cb_tags = ctx.btf.exception_callback_tags(&func.name);
+        if cb_tags.len() > 1 {
+            return AnalysisResult::Fail(VerificationError::ExceptionCallbackInvalid {
+                reason: "multiple exception callback tags for main subprog".to_string(),
+            });
+        }
+        if let Some(cb_name) = cb_tags.into_iter().next() {
+            if let Err(reason) = ctx.btf.validate_exception_cb_signature(&cb_name) {
+                return AnalysisResult::Fail(VerificationError::ExceptionCallbackInvalid {
+                    reason,
+                });
+            }
+            // Static-scan the cb's body for `bpf_throw` kfunc relocations.
+            // The kernel marks an exception callback's frame as a callback
+            // subprog and rejects any `bpf_throw` from inside it
+            // (kernel: "cannot be called from callback subprog"). The cb
+            // is unreachable from main's CFG (registered via decl_tag,
+            // not called), so abstract interp never visits it — relocs
+            // give us the throw sites without needing a parallel
+            // analysis pass.
+            if cb_subprog_throws(&self.path, &self.maps, &cb_name) {
+                return AnalysisResult::Fail(VerificationError::ExceptionCallbackInvalid {
+                    reason: "cannot be called from callback subprog".to_string(),
+                });
+            }
+            ctx.exception_callback = Some(cb_name);
+        }
 
         // Determine program kind
         ctx.prog_kind = self.derive_program_kind(section);
+        // Subtype is the SEC suffix after the first delimiter — '/' for
+        // hook-bound sections (`cgroup/recvmsg6`, `lsm/file_mprotect`),
+        // or '.' for attach-flavored sections that carry no explicit
+        // hook (`kprobe.session`, `uprobe.session`). Falls through to
+        // None when neither is present (`raw_tp`, `tc`, ...).
+        ctx.attach_subtype = match section.to_lowercase().split_once('/') {
+            Some((_, sub)) => Some(sub.to_string()),
+            None => section
+                .to_lowercase()
+                .split_once('.')
+                .map(|(_, sub)| sub.to_string()),
+        };
+        // Companion to `attach_subtype`: capture the SEC's flavor
+        // prefix (`fentry`, `fexit`, `fmod_ret`, ...) so transfer
+        // checks can dispatch on tracing flavor without re-parsing.
+        ctx.attach_flavor = section
+            .to_lowercase()
+            .strip_prefix('?')
+            .unwrap_or(&section.to_lowercase())
+            .split_once('/')
+            .map(|(prefix, _)| prefix.trim_end_matches(".s").to_string());
+
+        // Cluster E: reject SEC("lsm/<hook>") for hooks the kernel's
+        // BPF_LSM_DISABLED_HOOKS list excludes from BPF attach.
+        if ctx.prog_kind == ProgramKind::Lsm
+            && let Some(hook) = ctx.attach_subtype.as_deref()
+            && lsm_hook_is_disabled(hook)
+        {
+            return AnalysisResult::Fail(VerificationError::LsmHookDisabled {
+                hook: hook.to_string(),
+            });
+        }
+
+        // Reject SEC("fexit/<noreturn>") and SEC("fmod_ret/<noreturn>")
+        // — fexit/fmod_ret fire after the attached function returns, so
+        // attaching them to a `__noreturn` kernel function is a kernel
+        // attach-time error ("Attaching fexit/fmod_ret to __noreturn
+        // functions is rejected."). fentry on the same target is fine.
+        let sec_lower = section.to_lowercase();
+        if (sec_lower.starts_with("fexit/")
+            || sec_lower.starts_with("fexit.s/")
+            || sec_lower.starts_with("fmod_ret/")
+            || sec_lower.starts_with("fmod_ret.s/"))
+            && let Some(target) = ctx.attach_subtype.as_deref()
+            && is_noreturn_kernel_fn(target)
+        {
+            return AnalysisResult::Fail(VerificationError::NoreturnAttachTarget {
+                target: target.to_string(),
+            });
+        }
 
         // W6.4a: for struct_ops subprogs, seed R1..Rn from the resolved
         // ops-struct member signature. derive_program_kind already
         // matched SEC("struct_ops*") to ProgramKind::StructOps; the
         // bindings cache resolves func_name → (ops_struct, member).
         if ctx.prog_kind == ProgramKind::StructOps {
+            // Reject SEC("struct_ops/<member>") whose <member> is on the
+            // kmod's unsupported list before any analysis runs. Mirrors
+            // the kernel's "attach to unsupported member ... of struct ..."
+            // (e.g. bpf_testmod_ops.unsupported_ops).
+            if let Some(binding) = self
+                .struct_ops_bindings
+                .iter()
+                .find(|b| b.subprog == func.name)
+                && is_unsupported_struct_ops_member(&binding.ops_struct, &binding.member)
+            {
+                return AnalysisResult::Fail(VerificationError::UnsupportedStructOpsMember {
+                    ops_struct: binding.ops_struct.clone(),
+                    member: binding.member.clone(),
+                });
+            }
             ctx.entry_args = self.struct_ops_entry_args(&func.name);
             // Also note whether the matched method returns void; the
             // analysis layer relaxes the exit-time R0-readability check
@@ -406,6 +697,8 @@ impl Analyzer {
             // context so transfer_kfunc_proto can enforce per-(ops, member)
             // kfunc-context allowlists.
             ctx.struct_ops_member = binding.map(|b| (b.ops_struct.clone(), b.member.clone()));
+            ctx.struct_ops_refcounted_args =
+                struct_ops_refcounted_arg_count(&self.struct_ops_bindings, &func.name);
         } else if matches!(
             ctx.prog_kind,
             ProgramKind::Lsm
@@ -413,6 +706,7 @@ impl Analyzer {
                 | ProgramKind::Tracepoint
                 | ProgramKind::RawTracepoint
                 | ProgramKind::RawTracepointWritable
+                | ProgramKind::SkReuseport
         ) {
             // Phase 7 wrap-up: extend the W6.4a struct_ops ctx-load idiom
             // to fentry/fexit/tp_btf/lsm/tracepoint. clang's BPF_PROG()
@@ -420,21 +714,141 @@ impl Analyzer {
             // we type each ctx slot from the function's BTF FUNC_PROTO.
             // No per-arg MAYBE_NULL table for these kinds (the kernel
             // marks fentry/LSM args as trusted/non-null by convention).
-            ctx.entry_args = self.btf.resolve_func_args(&func.name).map(|args| {
-                args.into_iter()
-                    .map(|a| match a {
-                        StructOpsArg::Scalar => EntryArg::Scalar,
-                        StructOpsArg::OpaquePtr => EntryArg::TrustedPtrBtfId {
-                            type_name: "struct",
-                            nullable: false,
-                        },
-                        StructOpsArg::TrustedPtr(name) => EntryArg::TrustedPtrBtfId {
-                            type_name: intern_btf_type_name(&name),
-                            nullable: false,
-                        },
-                    })
-                    .collect()
+            // For non-struct_ops tracing kinds, a bare `void *ctx`
+            // signature (e.g. `int handler(void *ctx)`) carries no real
+            // arg-type info — the program will be unpacked at runtime
+            // against the *attach target's* BTF, which we don't ship.
+            // Skip populating entry_args in that case so
+            // `validate_ctx_access` falls back to the static
+            // MAYBE_NULL table keyed by attach_subtype (the only path
+            // that surfaces nullable trusted-args for tp_btf raw-tp
+            // targets).
+            // When the SEC-tagged entry point is a `BPF_PROG()` wrapper —
+            // signature `void *ctx` — its outer BTF FUNC_PROTO is a bare
+            // void-ctx, useless for typing the ctx-array slot loads the
+            // wrapper emits. The macro's inner static function carries the
+            // user-declared typed args; libbpf names it
+            // `____<entry>` (4 underscores) and that's what BTF stores
+            // *unless* clang inlined it (the BPF_PROG inner is
+            // `static __always_inline`, so no separate FUNC entry
+            // survives in `-O2`). Try the inner first; if missing, fall
+            // back to the outer's signature, then to a static
+            // (prog_kind, attach_subtype) → arg-types table keyed off
+            // the BPF section name. The static table is the only thing
+            // that lets us type LSM/tp_btf hook args without shipping
+            // vmlinux BTF — what the kernel verifier resolves at attach
+            // time from the hook's vmlinux signature.
+            let bpf_prog_inner = format!("____{}", func.name);
+            let resolved = self
+                .btf
+                .resolve_func_args(&bpf_prog_inner)
+                .or_else(|| self.btf.resolve_func_args(&func.name));
+            ctx.entry_args = resolved.and_then(|args| {
+                let bare_void_ctx = args.len() == 1
+                    && matches!(args[0], StructOpsArg::OpaquePtr);
+                if bare_void_ctx {
+                    return None;
+                }
+                Some(
+                    args.into_iter()
+                        .map(|a| match a {
+                            StructOpsArg::Scalar => EntryArg::Scalar,
+                            StructOpsArg::OpaquePtr => EntryArg::TrustedPtrBtfId {
+                                type_name: "struct",
+                                nullable: false,
+                            },
+                            StructOpsArg::TrustedPtr(name) => EntryArg::TrustedPtrBtfId {
+                                // Strict variant: kfunc validators
+                                // (`validate_ptr_to_task` matching
+                                // `"task_struct"`) require the real
+                                // BTF type name on Lsm/Tracing/tp_btf
+                                // entry-arg pointers. struct_ops keeps
+                                // the lax `"unknown"` (see line 352)
+                                // because its handlers commonly write
+                                // through these args to embedded state
+                                // that mem_region_model doesn't
+                                // describe.
+                                type_name: intern_btf_type_name_strict(&name),
+                                nullable: false,
+                            },
+                        })
+                        .collect(),
+                )
             });
+
+            // Static (prog_kind, attach_subtype) → BPF_PROG entry-args
+            // fallback for the BPF_PROG()-wrapped LSM/tp_btf/tracing
+            // hooks whose inner typed function is `__always_inline` and
+            // therefore has no surviving FUNC entry in BTF (so the BPF
+            // path above's bpf_prog_inner lookup misses). The kernel
+            // resolves these from the attach target's vmlinux BTF — we
+            // mirror only the hooks our test corpus actually attaches to.
+            if ctx.entry_args.is_none() {
+                if let Some(target) = ctx.attach_subtype.as_deref() {
+                    let flavor = ctx.attach_flavor.as_deref();
+                    let table_args = match (ctx.prog_kind, flavor, target) {
+                        // LSM hooks. Args from include/linux/lsm_hooks.h's
+                        // `LSM_HOOK(...)` declarations. Trailing scalar
+                        // args (int, unsigned, etc.) are dropped — only
+                        // the BTF-typed pointer prefix matters; the
+                        // ctx-array load typing only fires for 8-byte
+                        // pointer fields, scalars fall through to
+                        // ScalarValue and pose no soundness issue.
+                        (ProgramKind::Lsm, _, "file_open") => {
+                            Some(vec![("file", false)])
+                        }
+                        (ProgramKind::Lsm, _, "task_alloc") => {
+                            Some(vec![("task_struct", false)])
+                        }
+                        (ProgramKind::Lsm, _, "inode_getattr") => {
+                            Some(vec![("path", false)])
+                        }
+                        (ProgramKind::Lsm, _, "inode_unlink") => {
+                            Some(vec![("inode", false), ("dentry", false)])
+                        }
+                        (ProgramKind::Lsm, _, "inode_rename") => Some(vec![
+                            ("inode", false),
+                            ("dentry", false),
+                            ("inode", false),
+                            ("dentry", false),
+                        ]),
+                        (ProgramKind::Lsm, _, "socket_bind") => Some(vec![
+                            ("socket", false),
+                            ("sockaddr", false),
+                        ]),
+                        (ProgramKind::Lsm, _, "socket_post_create") => {
+                            Some(vec![("socket", false)])
+                        }
+                        (ProgramKind::Lsm, _, "bprm_committed_creds") => {
+                            Some(vec![("linux_binprm", false)])
+                        }
+                        // tp_btf raw-tracepoint targets. Args from
+                        // include/trace/events/<sub>.h's TRACE_EVENT
+                        // declarations. clang `__always_inline`s the
+                        // BPF_PROG inner so we mirror the kernel's
+                        // attach-time vmlinux-BTF resolution with a
+                        // static table for hooks our corpus exercises.
+                        (ProgramKind::Tracing, Some("tp_btf"), "task_newtask") => {
+                            Some(vec![("task_struct", false)])
+                        }
+                        (ProgramKind::Tracing, Some("tp_btf"), "tcp_probe") => {
+                            Some(vec![("sock", false), ("sk_buff", false)])
+                        }
+                        _ => None,
+                    };
+                    if let Some(arg_specs) = table_args {
+                        ctx.entry_args = Some(
+                            arg_specs
+                                .into_iter()
+                                .map(|(name, nullable)| EntryArg::TrustedPtrBtfId {
+                                    type_name: intern_btf_type_name_strict(name),
+                                    nullable,
+                                })
+                                .collect(),
+                        );
+                    }
+                }
+            }
         }
 
         if self.config.verbosity > 0 {
@@ -449,7 +863,35 @@ impl Analyzer {
         let result = analysis::analyze_program(&ctx, &prog, entry, &self.config);
 
         match result {
-            Ok(_) => AnalysisResult::Pass,
+            Ok(_) => {
+                // Verify the body of any registered `__exception_cb`.
+                // Mirrors the kernel's `do_check_subprogs` force-marking the
+                // cb subprog as called: the cb is unreachable from main's
+                // CFG, so we drive a separate analysis pass over its body.
+                // The cb's entry PC lives in `func_offsets` (built by the
+                // combined-prog ELF loader); if the cb isn't in this map
+                // (e.g. fallback per-function load path), we skip — the
+                // static reloc-scan and signature checks already ran.
+                if let Some(cb_name) = ctx.exception_callback.as_deref()
+                    && let Some(&cb_entry_pc) = func_offsets.get(cb_name)
+                {
+                    let cb_entry = make_entry_state();
+                    if let Some(err) = analysis::analyze_exception_cb(
+                        &ctx,
+                        &prog,
+                        cb_entry,
+                        &self.config,
+                        cb_entry_pc,
+                    ) {
+                        return if err.description().contains("Complexity limit") {
+                            AnalysisResult::Timeout
+                        } else {
+                            AnalysisResult::Fail(err)
+                        };
+                    }
+                }
+                AnalysisResult::Pass
+            }
             Err(e) => {
                 if e.description().contains("Complexity limit") {
                     AnalysisResult::Timeout
@@ -497,6 +939,56 @@ impl Analyzer {
 
         // Determine program kind
         ctx.prog_kind = self.derive_program_kind(section);
+        // Subtype is the SEC suffix after the first delimiter — '/' for
+        // hook-bound sections (`cgroup/recvmsg6`, `lsm/file_mprotect`),
+        // or '.' for attach-flavored sections that carry no explicit
+        // hook (`kprobe.session`, `uprobe.session`). Falls through to
+        // None when neither is present (`raw_tp`, `tc`, ...).
+        ctx.attach_subtype = match section.to_lowercase().split_once('/') {
+            Some((_, sub)) => Some(sub.to_string()),
+            None => section
+                .to_lowercase()
+                .split_once('.')
+                .map(|(_, sub)| sub.to_string()),
+        };
+        // Companion to `attach_subtype`: capture the SEC's flavor
+        // prefix (`fentry`, `fexit`, `fmod_ret`, ...) so transfer
+        // checks can dispatch on tracing flavor without re-parsing.
+        ctx.attach_flavor = section
+            .to_lowercase()
+            .strip_prefix('?')
+            .unwrap_or(&section.to_lowercase())
+            .split_once('/')
+            .map(|(prefix, _)| prefix.trim_end_matches(".s").to_string());
+
+        // Cluster E: reject SEC("lsm/<hook>") for hooks the kernel's
+        // BPF_LSM_DISABLED_HOOKS list excludes from BPF attach.
+        if ctx.prog_kind == ProgramKind::Lsm
+            && let Some(hook) = ctx.attach_subtype.as_deref()
+            && lsm_hook_is_disabled(hook)
+        {
+            return AnalysisResult::Fail(VerificationError::LsmHookDisabled {
+                hook: hook.to_string(),
+            });
+        }
+
+        // Reject SEC("fexit/<noreturn>") and SEC("fmod_ret/<noreturn>")
+        // — fexit/fmod_ret fire after the attached function returns, so
+        // attaching them to a `__noreturn` kernel function is a kernel
+        // attach-time error ("Attaching fexit/fmod_ret to __noreturn
+        // functions is rejected."). fentry on the same target is fine.
+        let sec_lower = section.to_lowercase();
+        if (sec_lower.starts_with("fexit/")
+            || sec_lower.starts_with("fexit.s/")
+            || sec_lower.starts_with("fmod_ret/")
+            || sec_lower.starts_with("fmod_ret.s/"))
+            && let Some(target) = ctx.attach_subtype.as_deref()
+            && is_noreturn_kernel_fn(target)
+        {
+            return AnalysisResult::Fail(VerificationError::NoreturnAttachTarget {
+                target: target.to_string(),
+            });
+        }
 
         // Section-mode path: no per-subprog identity, so we don't seed
         // struct_ops entry_args here. For struct_ops we always go through
@@ -552,6 +1044,35 @@ impl Analyzer {
         }
         (all_pass, results)
     }
+}
+
+/// True if the named subprog's body contains a `bpf_throw` kfunc call.
+/// Walks every section in the .o looking for the function symbol, then
+/// scans that function's relocations for any `KfuncCall` whose
+/// `kfunc_name` is `"bpf_throw"`. Used to enforce the kernel's
+/// "cannot be called from callback subprog" rule against an
+/// `__exception_cb`-registered handler that the main program's CFG
+/// never reaches.
+fn cb_subprog_throws(path: &str, maps: &[BpfMapDef], cb_name: &str) -> bool {
+    let Ok(sections) = list_section_names(path) else {
+        return false;
+    };
+    for sec in &sections {
+        let Ok(funcs) = get_functions_in_section(path, sec) else {
+            continue;
+        };
+        let Some(func) = funcs.iter().find(|f| f.name == cb_name) else {
+            continue;
+        };
+        let Ok(relocs) = load_relocations_for_function(path, maps, sec, func.offset, func.size)
+        else {
+            return false;
+        };
+        return relocs
+            .values()
+            .any(|r| r.kfunc_name.as_deref() == Some("bpf_throw"));
+    }
+    false
 }
 
 /// Helper: Find section name for a given function symbol

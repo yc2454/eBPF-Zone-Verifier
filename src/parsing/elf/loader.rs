@@ -153,8 +153,9 @@ pub fn try_load_function_with_subprogs_from_elf(
     section: &str,
     func_name: &str,
     maps: &[BpfMapDef],
+    extra_roots: &[(String, String)],
 ) -> Result<(Program, HashMap<usize, RelocInfo>, HashMap<String, usize>), String> {
-    let combined = combine_function_with_subprogs(path, maps, section, func_name)
+    let combined = combine_function_with_subprogs(path, maps, section, func_name, extra_roots)
         .map_err(|e| format!("Failed to combine function with subprogs: {:?}", e))?;
 
     if combined.raw_insns.is_empty() {

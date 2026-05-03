@@ -164,6 +164,63 @@ pub enum VerificationError {
     UnreleasedReference,
     UnreleasedIterator,
     UnreleasedDynptr,
+    DynptrOverwrite {
+        pc: usize,
+        off: i64,
+    },
+    IteratorOverwrite {
+        pc: usize,
+        off: i64,
+    },
+    /// Stack write overlapped an active IRQ-flag slot. Mirrors kernel
+    /// "expected an initialized irq flag" produced when the slot's
+    /// `STACK_IRQ_FLAG` mark is destroyed by a direct write before
+    /// `bpf_local_irq_restore` runs.
+    IrqFlagOverwrite {
+        pc: usize,
+        off: i64,
+    },
+    /// IRQ-related kfunc rejected: arg slot type mismatch, LIFO order
+    /// violation, or BPF_EXIT inside an active IRQ region.
+    IrqState {
+        pc: usize,
+        reason: String,
+    },
+    /// Map-value access landed on a kptr field with a size other than
+    /// `BPF_DW` (8 bytes). Kernel: "kptr access size must be BPF_DW".
+    KptrAccessSizeMustBeDW {
+        pc: usize,
+        off: i64,
+        size: i64,
+    },
+    /// Map-value access partially overlaps a kptr field at an offset
+    /// other than the field's own (8-byte-aligned) offset. Kernel:
+    /// "kptr access misaligned expected=8 off=N".
+    KptrAccessMisaligned {
+        pc: usize,
+        off: i64,
+        expected: u8,
+    },
+    /// Variable-offset map-value access into a map whose value contains
+    /// kptr fields. Kernel: "kptr access cannot have variable offset".
+    KptrAccessVariableOffset {
+        pc: usize,
+        map_idx: usize,
+    },
+    /// Direct store to a referenced kptr slot (`__kptr` / `__rcu` /
+    /// `percpu_kptr`). Mutation must go through `bpf_kptr_xchg`.
+    /// Kernel: "store to referenced kptr disallowed".
+    KptrStoreToReferenced {
+        pc: usize,
+        off: i64,
+    },
+    /// Store to a `__uptr` field of a map value. The pointer is
+    /// userspace-owned; BPF programs may read it but must not write.
+    /// Kernel: "store to uptr disallowed".
+    UptrStoreDisallowed {
+        pc: usize,
+        off: i64,
+    },
     InvalidBtfType,
     LockAlreadyHeld {
         pc: usize,
@@ -184,6 +241,25 @@ pub enum VerificationError {
     },
     /// Program exit reached with one or more open RCU read-side sections.
     UnreleasedRcuRead,
+    /// Helper / kfunc marked `CallFlags::MIGHT_SLEEP` invoked while
+    /// `state.active_preempt_locks > 0`. Mirrors kernel verifier.c
+    /// v6.15 ~L11299 / ~L13565.
+    SleepableInPreemptDisabled {
+        pc: usize,
+        helper: u32,
+    },
+    /// `bpf_preempt_enable` invoked with no matching disable.
+    PreemptNotDisabled {
+        pc: usize,
+    },
+    /// Main-prog `BPF_EXIT` reached inside a preempt-disabled region.
+    /// Mirrors kernel verifier.c v6.15 ~L11096.
+    ExitInPreemptDisabled,
+    /// `bpf_tail_call` invoked inside a preempt-disabled region.
+    /// Mirrors kernel verifier.c v6.15 ~L11096.
+    TailCallInPreemptDisabled {
+        pc: usize,
+    },
     /// Helper / kfunc marked `CallFlags::SPIN_LOCK_HELD` invoked
     /// without an active spin_lock (W5.4). rbtree / list mutators
     /// require a held lock to prevent races on the per-map-value
@@ -211,6 +287,33 @@ pub enum VerificationError {
         pc: usize,
         helper: u32,
         kind: ProgramKind,
+    },
+    /// Cluster E: LSM attach hook is on the kernel's disabled list
+    /// (`getprocattr`, `setprocattr`, `ismaclabel`, `module_request`, ...).
+    /// Reported at program load — there is no instruction PC.
+    NoreturnAttachTarget {
+        target: String,
+    },
+    /// struct_ops program SEC names a member that the registering kernel
+    /// module marks as unsupported (e.g. bpf_testmod_ops.unsupported_ops).
+    /// Reported at program load. Mirrors the kernel's
+    /// "attach to unsupported member <member> of struct <ops_struct>".
+    UnsupportedStructOpsMember {
+        ops_struct: String,
+        member: String,
+    },
+    GlobalFuncMalformed {
+        pc: usize,
+        func: String,
+        reason: String,
+    },
+    GlobalFuncBadCallerArg {
+        pc: usize,
+        func: String,
+        arg_index: usize,
+    },
+    LsmHookDisabled {
+        hook: String,
     },
     /// Kfunc proto carries a `prog_type_allowlist` (W6.3) and the
     /// program's `ProgramKind` is not in it. Mirrors the kernel
@@ -252,6 +355,13 @@ pub enum VerificationError {
     UnsupportedModernFeature {
         pc: usize,
         feature: &'static str,
+    },
+    /// Load-time rejection of an `__exception_cb(name)` annotation.
+    /// Carries the kernel-style diagnostic verbatim — duplicates,
+    /// non-scalar return type, wrong arity, etc. Reported per main
+    /// subprog before analysis runs.
+    ExceptionCallbackInvalid {
+        reason: String,
     },
 }
 
@@ -438,6 +548,41 @@ impl VerificationError {
             VerificationError::UnreleasedReference => "Unreleased reference in program".to_string(),
             VerificationError::UnreleasedIterator => "Unreleased open-coded iterator in program".to_string(),
             VerificationError::UnreleasedDynptr => "Unreleased dynptr in program".to_string(),
+            VerificationError::DynptrOverwrite { pc, off } => format!(
+                "Cannot overwrite referenced dynptr at pc {} (stack off {})",
+                pc, off
+            ),
+            VerificationError::IteratorOverwrite { pc, off } => format!(
+                "Cannot overwrite open-coded iterator slot at pc {} (stack off {})",
+                pc, off
+            ),
+            VerificationError::IrqFlagOverwrite { pc, off } => format!(
+                "Cannot overwrite irq flag stack slot at pc {} (stack off {})",
+                pc, off
+            ),
+            VerificationError::IrqState { pc, reason } => {
+                format!("IRQ state error at pc {}: {}", pc, reason)
+            }
+            VerificationError::KptrAccessSizeMustBeDW { pc, off, size } => format!(
+                "kptr access size must be BPF_DW at pc {} (off {}, size {})",
+                pc, off, size
+            ),
+            VerificationError::KptrAccessMisaligned { pc, off, expected } => format!(
+                "kptr access misaligned expected={} off={} at pc {}",
+                expected, off, pc
+            ),
+            VerificationError::KptrAccessVariableOffset { pc, map_idx } => format!(
+                "kptr access cannot have variable offset (map {}) at pc {}",
+                map_idx, pc
+            ),
+            VerificationError::KptrStoreToReferenced { pc, off } => format!(
+                "store to referenced kptr disallowed at pc {} (off {})",
+                pc, off
+            ),
+            VerificationError::UptrStoreDisallowed { pc, off } => format!(
+                "store to uptr disallowed at pc {} (off {})",
+                pc, off
+            ),
             VerificationError::UnreleasedLock => "Unreleased lock in program".to_string(),
             VerificationError::InvalidBtfType => "Invalid BTF type".to_string(),
             VerificationError::LockAlreadyHeld { pc } => {
@@ -457,6 +602,24 @@ impl VerificationError {
             }
             VerificationError::UnreleasedRcuRead => {
                 "Unreleased RCU read-side section in program".to_string()
+            }
+            VerificationError::SleepableInPreemptDisabled { pc, helper } => {
+                format!(
+                    "Sleepable helper/kfunc {} in preempt-disabled region at pc {}",
+                    helper, pc
+                )
+            }
+            VerificationError::PreemptNotDisabled { pc } => {
+                format!("Unmatched bpf_preempt_enable at pc {}", pc)
+            }
+            VerificationError::ExitInPreemptDisabled => {
+                "BPF_EXIT in main prog inside bpf_preempt_disable-ed region".to_string()
+            }
+            VerificationError::TailCallInPreemptDisabled { pc } => {
+                format!(
+                    "tail_call cannot be used inside bpf_preempt_disable-ed region at pc {}",
+                    pc
+                )
             }
             VerificationError::NotInSpinLockSection { pc, helper } => {
                 format!(
@@ -483,6 +646,32 @@ impl VerificationError {
                 format!(
                     "Helper {} not allowed for program {:?} at pc {}",
                     helper, kind, pc
+                )
+            }
+            VerificationError::LsmHookDisabled { hook } => {
+                format!("LSM attach target points to disabled hook '{}'", hook)
+            }
+            VerificationError::NoreturnAttachTarget { target } => {
+                format!(
+                    "Attaching fexit/fmod_ret to __noreturn functions is rejected: '{}'",
+                    target
+                )
+            }
+            VerificationError::UnsupportedStructOpsMember { ops_struct, member } => {
+                format!(
+                    "attach to unsupported member {} of struct {}",
+                    member, ops_struct
+                )
+            }
+            VerificationError::GlobalFuncMalformed { pc, func, reason } => {
+                format!("global function '{}' at pc {} {}", func, pc, reason)
+            }
+            VerificationError::GlobalFuncBadCallerArg { pc, func, arg_index } => {
+                format!(
+                    "Caller passes invalid args into func '{}' (arg #{}) at pc {}",
+                    func,
+                    arg_index + 1,
+                    pc
                 )
             }
             VerificationError::KfuncNotAllowedForProgram { pc, btf_id, kind } => {
@@ -550,6 +739,7 @@ impl VerificationError {
             VerificationError::UnsupportedModernFeature { pc, feature } => {
                 format!("Unsupported modern BPF feature at pc {}: {}", pc, feature)
             }
+            VerificationError::ExceptionCallbackInvalid { reason } => reason.clone(),
         }
     }
 }

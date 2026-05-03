@@ -162,10 +162,119 @@ pub(crate) fn transfer_store(
 
     access::check_store(env, &state, base, access_size, off, src_type);
 
+    // Stores to an Unref kptr slot accept only NULL (proven zero) or a
+    // fresh acquired pointer (PtrToBtfId / PtrToMapKptr / PtrToOwnedKptr).
+    // A pointer that has had ALU applied to it lands in `ScalarValue`
+    // (the default arm of `update_ptr_arithmetic_type`), so checking
+    // src_type for non-pointer-non-zero closes the variable-offset and
+    // bad-arithmetic store cases. Kernel diagnostic family:
+    // "variable untrusted_ptr_ access var_off=(...)".
+    if !env.failed()
+        && let RegType::PtrToMapValue {
+            offset: map_off,
+            map_idx,
+            ..
+        } = state.types.get(base)
+        && let Some(map_def) = env.ctx.map_defs.get(map_idx)
+        && let Some(off_val) = super::map::resolve_const_map_off(&state, base, map_off, off)
+        && let Some(field) = super::map::kptr_field_at(map_def, off_val, access_size)
+    {
+        use crate::parsing::elf::KptrFieldKind;
+        if matches!(field.kind, KptrFieldKind::Unref) {
+            let src_is_zero = match src {
+                Operand::Imm(v) => *v == 0,
+                Operand::Reg(r) => {
+                    matches!(src_type, RegType::ScalarValue) && state.domain.proven_zero(*r)
+                }
+            };
+            let src_is_acquired_ptr = matches!(
+                src_type,
+                RegType::PtrToBtfId { .. }
+                    | RegType::PtrToMapKptr { .. }
+                    | RegType::PtrToMapKptrOrNull { .. }
+                    | RegType::PtrToOwnedKptr { .. }
+                    | RegType::PtrToOwnedKptrOrNull { .. }
+            );
+            if !src_is_zero && !src_is_acquired_ptr {
+                env.fail(VerificationError::InvalidArgType {
+                    pc: state.pc,
+                    reg: match src {
+                        Operand::Reg(r) => *r,
+                        Operand::Imm(_) => Reg::R0,
+                    },
+                });
+                return vec![];
+            }
+        }
+    }
+
     let base_type = state.types.get(base);
     if let RegType::PtrToStack { frame_level } = base_type {
         if let Some(base_off) = state.domain.get_distance_fixed(base, Reg::R10) {
             let full_offset = base_off + off as i64;
+            // W4.2: a stack write that overlaps any byte of an active
+            // ref-bearing dynptr (today: ringbuf reservations) is the
+            // kernel's "cannot overwrite referenced dynptr" rejection.
+            // Allowed for unreferenced dynptrs (Local/Skb/Xdp) — but
+            // the kernel still tears down the dynptr and invalidates
+            // any slices tagged with its `dynptr_id`
+            // (`destroy_if_dynptr_stack_slot`, verifier.c v6.15 L880).
+            // Without this destroy step, a slice taken via
+            // `bpf_dynptr_data` survives a corrupting partial write to
+            // the dynptr metadata and a later `*slice` deref leaks
+            // through.
+            if state
+                .stack_at(frame_level)
+                .write_overlaps_referenced_dynptr(full_offset, size.bytes() as i64)
+            {
+                env.fail(VerificationError::DynptrOverwrite {
+                    pc: state.pc,
+                    off: full_offset,
+                });
+                return vec![];
+            }
+            let touched_dynptrs = state
+                .stack_at(frame_level)
+                .dynptr_pairs_touched_by_write(full_offset, size.bytes() as i64);
+            if !touched_dynptrs.is_empty() {
+                let stack = state.stack_at_mut(frame_level);
+                for (base_off, _) in &touched_dynptrs {
+                    stack.stack_clear_dynptr(*base_off);
+                    stack.stack_clear_dynptr(*base_off + 8);
+                }
+                for (_, vid) in &touched_dynptrs {
+                    state.invalidate_dynptr_slices(*vid);
+                }
+            }
+            // W3.2: same shape for open-coded iterators. Iter bodies
+            // are opaque — only `*_new`/`*_next`/`*_destroy` may write
+            // them. Without this, `spill_at` silently wipes the iter
+            // annotation and a missing destroy slips by the exit-time
+            // `has_active_iterators` leak check.
+            if state
+                .stack_at(frame_level)
+                .access_overlaps_iterator(full_offset, size.bytes() as i64)
+            {
+                env.fail(VerificationError::IteratorOverwrite {
+                    pc: state.pc,
+                    off: full_offset,
+                });
+                return vec![];
+            }
+            // Same shape for IRQ flag slots — direct writes destroy the
+            // STACK_IRQ_FLAG mark; without this check, a missing
+            // `bpf_local_irq_restore` slips by the exit-time leak check
+            // (irq_flag_overwrite{,_partial} corpus tests).
+            if state
+                .stack_at(frame_level)
+                .access_overlaps_irq_flag(full_offset, size.bytes() as i64)
+            {
+                env.fail(VerificationError::IrqFlagOverwrite {
+                    pc: state.pc,
+                    off: full_offset,
+                });
+                return vec![];
+            }
             match src {
                 Operand::Reg(r) => {
                     state.spill_at(frame_level, *r, full_offset as i16, size);
@@ -330,6 +439,18 @@ pub fn try_load_from_rodata(
                     state.domain.forget(dst);
                     state.domain.assume_eq_imm(dst, val as i64);
                     state.types.set(dst, RegType::ScalarValue);
+                    // Clear the tnum too. forget() resets DBM and the
+                    // numeric bound is then pinned to `val`, but the
+                    // tnum is owned by State (not domain) and survives
+                    // — a prior iteration's stale const tnum can then
+                    // contradict the freshly-loaded DBM value, tripping
+                    // the cross-domain consistency check on the next
+                    // op. Surfaced by may_goto_c_code's loop reload of
+                    // `gvar`. Setting `unknown` (vs. the loaded const)
+                    // avoids over-constraining state subsumption — a
+                    // const tnum makes otherwise-equivalent iterations
+                    // look distinct and FRs `loop_inside_iter_volatile_limit`.
+                    state.set_tnum(dst, Tnum::unknown());
 
                     return true;
                 }

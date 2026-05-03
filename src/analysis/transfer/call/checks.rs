@@ -10,8 +10,8 @@ use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::state::State;
 use crate::analysis::transfer::memory::access::{self, AccessKind};
 use crate::analysis::transfer::memory::{
-    check_map_access, check_map_rw, check_packet_access, check_stack_access,
-    check_stack_arg_readable,
+    check_kptr_field_access, check_map_access, check_map_rw, check_packet_access,
+    check_stack_access, check_stack_arg_readable,
 };
 use crate::common::constants;
 use log::{error, info, warn};
@@ -29,6 +29,11 @@ use super::validators;
 pub(crate) struct MapInfo {
     pub(crate) key_size: u32,
     pub(crate) value_size: u32,
+    /// `BPF_MAP_TYPE_*` raw value. Lets validators dispatch on map
+    /// type — SOCKMAP/SOCKHASH accept sock pointers as their
+    /// `bpf_map_update_elem` value arg; BPF_MAP_TYPE_ARRAY accepts
+    /// PtrToMapValue, etc.
+    pub(crate) map_type: u32,
 }
 
 pub(crate) fn get_map_info(map_type: RegType, env: &VerifierEnv) -> Option<MapInfo> {
@@ -36,12 +41,14 @@ pub(crate) fn get_map_info(map_type: RegType, env: &VerifierEnv) -> Option<MapIn
         RegType::PtrToMapObject { map_idx } => env.ctx.map_defs.get(map_idx).map(|md| MapInfo {
             key_size: md.key_size,
             value_size: md.value_size,
+            map_type: md.type_,
         }),
         RegType::PtrToMapValue { map_idx, .. } => env.ctx.map_defs.get(map_idx).and_then(|md| {
             if let Some(inner) = md.inner_map_idx {
                 env.ctx.map_defs.get(inner).map(|inner_md| MapInfo {
                     key_size: inner_md.key_size,
                     value_size: inner_md.value_size,
+                    map_type: inner_md.type_,
                 })
             } else {
                 None
@@ -246,6 +253,9 @@ pub(crate) fn validate_single_arg(
         // ---- Simple pointer types (inline validation) ----
         ArgKind::PtrToCtx => validate_ptr_to_ctx(&mut ctx),
         ArgKind::PtrToBtfId => validate_ptr_to_btf_id(&mut ctx),
+        ArgKind::PtrToBtfIdNamed { type_name } => {
+            validate_ptr_to_btf_id_named(&mut ctx, type_name)
+        }
         ArgKind::PtrToStack => validate_ptr_to_stack(&mut ctx),
         ArgKind::PtrToLong => validate_ptr_to_long(&mut ctx),
         ArgKind::PtrToCallback => validate_ptr_to_callback(&mut ctx),
@@ -258,11 +268,17 @@ pub(crate) fn validate_single_arg(
         // ---- Iterator (W4.3) ----
         ArgKind::IterArg { kind, expected } => validate_iter_arg(&mut ctx, kind, expected),
 
+        // ---- IRQ flag ----
+        ArgKind::IrqFlagArg { uninit, kfunc_class } => {
+            validate_irq_flag_arg(&mut ctx, uninit, kfunc_class)
+        }
+
         // ---- Map-value special field (W5.1) ----
         ArgKind::MapValueSpecial { kind } => validate_map_value_special(&mut ctx, kind),
 
         // ---- Cpumask (W5.3) ----
         ArgKind::PtrToCpumask => validate_ptr_to_cpumask(&mut ctx),
+        ArgKind::PtrToCpumaskRead => validate_ptr_to_cpumask_read(&mut ctx),
 
         // ---- Cgroup (W6.3-followon) ----
         ArgKind::PtrToCgroup => validate_ptr_to_cgroup(&mut ctx),
@@ -322,7 +338,19 @@ pub(crate) fn validate_single_arg_inner(
 // ============================================================================
 
 fn validate_ptr_to_ctx(ctx: &mut ValidationContext) -> bool {
-    if !matches!(ctx.actual, RegType::PtrToCtx) {
+    use crate::analysis::machine::reg_types::PtrFlags;
+    let ok = matches!(ctx.actual, RegType::PtrToCtx)
+        // Kernel `check_kfunc_call` accepts both PTR_TO_CTX and a
+        // trusted `PTR_TO_BTF_ID + sk_buff` for kfuncs like
+        // `bpf_dynptr_from_skb`. The latter arises from `ctx->skb`
+        // of `bpf_nf_ctx` (Netfilter) — closes
+        // `verifier_netfilter_ctx::with_valid_ctx_access_test6`.
+        || matches!(
+            ctx.actual,
+            RegType::PtrToBtfId { type_name: "sk_buff", flags, .. }
+                if flags.contains(PtrFlags::TRUSTED)
+        );
+    if !ok {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,
@@ -357,6 +385,34 @@ fn validate_ptr_to_btf_id(ctx: &mut ValidationContext) -> bool {
     true
 }
 
+/// Strict variant: arg must be `PtrToBtfId{type_name == expected, ..}`.
+/// Drives kfuncs like `bpf_path_d_path` whose first arg is `struct
+/// path *` — closes the cluster B residual FA where the test passes
+/// `(struct path *)&file->f_task_work` (an interior pointer of type
+/// `callback_head` after our new field-arithmetic typing) to the
+/// kfunc.
+fn validate_ptr_to_btf_id_named(
+    ctx: &mut ValidationContext,
+    expected: &'static str,
+) -> bool {
+    match ctx.actual {
+        RegType::PtrToBtfId { type_name, .. } if type_name == expected => true,
+        _ => ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} expected PTR_TO_BTF_ID(struct {}), got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                expected,
+                ctx.actual
+            ),
+        ),
+    }
+}
+
 /// Validate `ArgKind::PtrToCpumask` (W5.3).
 ///
 /// Only the non-null `RegType::PtrToCpumask` is accepted: cpumask
@@ -365,6 +421,8 @@ fn validate_ptr_to_btf_id(ctx: &mut ValidationContext) -> bool {
 /// `PtrToCpumaskOrNull` would short-circuit fail because the pointer
 /// could legitimately be null at the call site.
 fn validate_ptr_to_cpumask(ctx: &mut ValidationContext) -> bool {
+    // Strict: mutating cpumask consumers only accept the
+    // acquire-tracked specialization. See ArgKind::PtrToCpumask docs.
     if !matches!(ctx.actual, RegType::PtrToCpumask { .. }) {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
@@ -373,6 +431,35 @@ fn validate_ptr_to_cpumask(ctx: &mut ValidationContext) -> bool {
             },
             &format!(
                 "[Verifier] pc {}: R{} expected PTR_TO_CPUMASK, got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                ctx.actual
+            ),
+        );
+    }
+    true
+}
+
+/// Validate `ArgKind::PtrToCpumaskRead` — read-only KF_RCU consumers.
+/// Accepts `PtrToCpumask` (the bpf_cpumask wrapper passes the const
+/// arg) and `PtrToBtfId{cpumask|bpf_cpumask, TRUSTED}` produced by the
+/// BTF field-load typing path (`task->cpus_ptr`, `&task->cpus_mask`).
+fn validate_ptr_to_cpumask_read(ctx: &mut ValidationContext) -> bool {
+    use crate::analysis::machine::reg_types::PtrFlags;
+    let is_btf_cpumask = matches!(
+        ctx.actual,
+        RegType::PtrToBtfId { type_name, flags, .. }
+            if (type_name == "cpumask" || type_name == "bpf_cpumask")
+                && flags.contains(PtrFlags::TRUSTED)
+    );
+    if !matches!(ctx.actual, RegType::PtrToCpumask { .. }) && !is_btf_cpumask {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType {
+                pc: ctx.pc,
+                reg: ctx.reg,
+            },
+            &format!(
+                "[Verifier] pc {}: R{} expected PTR_TO_CPUMASK_READ, got {:?}",
                 ctx.pc,
                 ctx.arg_index + 1,
                 ctx.actual
@@ -411,7 +498,22 @@ fn validate_ptr_to_cgroup(ctx: &mut ValidationContext) -> bool {
 /// accepted. `bpf_task_acquire`/`_release` consumers require the
 /// program to have null-checked an `OrNull` result first.
 fn validate_ptr_to_task(ctx: &mut ValidationContext) -> bool {
-    if !matches!(ctx.actual, RegType::PtrToTask { .. }) {
+    // PtrToTask covers acquire-tracked tasks (`bpf_task_acquire`,
+    // `bpf_task_from_pid`, `bpf_get_current_task_btf`). For BPF_PROG-style
+    // tracing/tp_btf/lsm programs that take `struct task_struct *task`
+    // directly (clang's BPF_PROG macro unpacks ctx[N*8] into the typed
+    // arg), the entry-arg seeder produces `PtrToBtfId{task_struct, TRUSTED}`
+    // — also accept that shape. Other kernel structs the BPF_PROG macro
+    // exposes via name use the generic `ArgKind::PtrToBtfId` validator;
+    // task is the special case because we have a dedicated reg-type
+    // specialization for it.
+    if !matches!(ctx.actual, RegType::PtrToTask { .. })
+        && !matches!(
+            ctx.actual,
+            RegType::PtrToBtfId { type_name: "task_struct", flags, .. }
+                if flags.contains(crate::analysis::machine::reg_types::PtrFlags::TRUSTED)
+        )
+    {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,
@@ -430,18 +532,25 @@ fn validate_ptr_to_task(ctx: &mut ValidationContext) -> bool {
 
 /// Validate `ArgKind::PtrToArena` (W5.5).
 ///
-/// Only the non-null `RegType::PtrToArena` is accepted: arena
-/// consumers (free_pages, future arena-aware kfuncs) all require the
-/// program to have null-checked the freshly-allocated pointer first.
+/// Kernel `verifier.c` ~L10370 (v6.15) for `ARG_PTR_TO_ARENA`:
+/// "only PTR_TO_ARENA or SCALAR make sense" — both shapes are
+/// accepted. A scalar arg is the runtime case where the program
+/// loaded an arena value from a `__arena *` global (loads from
+/// PtrToArena `mark_reg_unknown`, kernel `verifier.c` ~L7639) and
+/// passes it back into a free helper without re-casting. The kernel
+/// rejects everything else as "not a pointer to arena or scalar".
 fn validate_ptr_to_arena(ctx: &mut ValidationContext) -> bool {
-    if !matches!(ctx.actual, RegType::PtrToArena { .. }) {
+    if !matches!(
+        ctx.actual,
+        RegType::PtrToArena { .. } | RegType::ScalarValue
+    ) {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,
                 reg: ctx.reg,
             },
             &format!(
-                "[Verifier] pc {}: R{} expected PTR_TO_ARENA, got {:?}",
+                "[Verifier] pc {}: R{} expected PTR_TO_ARENA or SCALAR, got {:?}",
                 ctx.pc,
                 ctx.arg_index + 1,
                 ctx.actual
@@ -556,18 +665,31 @@ fn validate_dynptr_arg(ctx: &mut ValidationContext, uninit: bool, rdwr_only: boo
     let trail = stack.stack_get_dynptr(base_off + 8);
 
     if uninit {
-        if base.is_some() || trail.is_some() {
-            return ctx.fail_with_log(
-                VerificationError::InvalidArgType {
-                    pc: ctx.pc,
-                    reg: ctx.reg,
-                },
-                &format!(
-                    "[Verifier] pc {}: R{} dynptr ctor target already initialized",
-                    ctx.pc,
-                    ctx.arg_index + 1
-                ),
-            );
+        // Kernel `is_dynptr_reg_valid_uninit` (verifier.c v6.15 L934)
+        // returns true for stack slots — overwrite is allowed.
+        // `destroy_if_dynptr_stack_slot` (L880) runs first and only
+        // rejects if the existing dynptr is *refcounted*
+        // (`dynptr_type_refcounted`, our `Ringbuf` with `ref_id != 0`).
+        // For unrefcounted (`Local`/`Skb`/`Xdp`), it tears down both
+        // pair slots and invalidates slices tagged with the old
+        // `dynptr_id` — that destroy-and-sweep step is performed by
+        // the `DynptrInitOnArg` side-effect applier (which runs on
+        // success and already mutates the stack to stamp the new
+        // annotation), keeping `ctx.state` read-only here.
+        for slot in [base, trail].into_iter().flatten() {
+            if slot.ref_id != 0 {
+                return ctx.fail_with_log(
+                    VerificationError::InvalidArgType {
+                        pc: ctx.pc,
+                        reg: ctx.reg,
+                    },
+                    &format!(
+                        "[Verifier] pc {}: R{} cannot overwrite referenced dynptr",
+                        ctx.pc,
+                        ctx.arg_index + 1
+                    ),
+                );
+            }
         }
         return true;
     }
@@ -688,6 +810,101 @@ fn validate_iter_arg(
     true
 }
 
+/// Validate `ArgKind::IrqFlagArg`. Mirrors kernel
+/// `is_irq_flag_reg_valid_uninit` (~L1243) for `uninit=true`, and the
+/// release-side checks at `unmark_stack_slot_irq_flag` (~L1190) for
+/// `uninit=false`. The actual reg must be `PtrToStack` aimed at the
+/// 8-byte slot; for the destructor side, the slot's annotation must
+/// have a matching `kfunc_class` and an `id` equal to `active_irq_id`.
+fn validate_irq_flag_arg(
+    ctx: &mut ValidationContext,
+    uninit: bool,
+    kfunc_class: crate::analysis::machine::stack_state::IrqKfuncClass,
+) -> bool {
+    let RegType::PtrToStack { frame_level } = ctx.actual else {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
+            &format!(
+                "[Verifier] pc {}: R{} expected &irq_flag (PTR_TO_STACK), got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                ctx.actual
+            ),
+        );
+    };
+    let Some(off) = ctx.state.domain.get_distance_fixed(ctx.reg, Reg::R10) else {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
+            &format!("[Verifier] pc {}: irq flag arg has non-fixed stack offset", ctx.pc),
+        );
+    };
+    let Ok(base_off) = i16::try_from(off) else {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
+            &format!("[Verifier] pc {}: irq flag arg offset {} out of i16 range", ctx.pc, off),
+        );
+    };
+
+    let stack = ctx.state.stack_at(frame_level);
+    let cur = stack.stack_get_irq_flag(base_off);
+    if uninit {
+        // Reject if this slot already carries any tracked annotation:
+        // an existing IRQ flag (kernel "expected uninitialized"), an
+        // iterator (kernel "irq_save_iter" rejects similarly via
+        // STACK_ITER vs STACK_IRQ_FLAG mismatch), or a dynptr.
+        if cur.is_some() {
+            return ctx.fail_with_log(
+                VerificationError::IrqState {
+                    pc: ctx.pc,
+                    reason: "expected uninitialized irq flag slot".into(),
+                },
+                "irq_save on already-saved slot",
+            );
+        }
+        if stack.stack_get_iterator(base_off).is_some()
+            || stack.stack_get_dynptr(base_off).is_some()
+        {
+            return ctx.fail_with_log(
+                VerificationError::IrqState {
+                    pc: ctx.pc,
+                    reason: "expected uninitialized stack slot for irq flag".into(),
+                },
+                "irq_save on iterator/dynptr slot",
+            );
+        }
+        true
+    } else {
+        let Some(slot) = cur else {
+            return ctx.fail_with_log(
+                VerificationError::IrqState {
+                    pc: ctx.pc,
+                    reason: "expected an initialized irq flag".into(),
+                },
+                "irq_restore on uninitialized slot",
+            );
+        };
+        if slot.kfunc_class != kfunc_class {
+            return ctx.fail_with_log(
+                VerificationError::IrqState {
+                    pc: ctx.pc,
+                    reason: "irq flag acquired by different kfunc class".into(),
+                },
+                "irq_restore kfunc class mismatch",
+            );
+        }
+        match ctx.state.active_irq_id() {
+            Some(top) if top == slot.id => true,
+            _ => ctx.fail_with_log(
+                VerificationError::IrqState {
+                    pc: ctx.pc,
+                    reason: "cannot restore irq state out of order".into(),
+                },
+                "irq_restore LIFO violation",
+            ),
+        }
+    }
+}
+
 /// Validate `ArgKind::MapValueSpecial` (W5.1).
 ///
 /// The actual reg must be `PtrToMapValue { offset, map_idx }` where the
@@ -784,23 +1001,44 @@ fn validate_ptr_to_callback(ctx: &mut ValidationContext) -> bool {
 }
 
 fn validate_ptr_to_long(ctx: &mut ValidationContext) -> bool {
-    if let RegType::PtrToStack { frame_level } = ctx.actual {
-        let offset = ctx.state.domain.get_distance_fixed(ctx.reg, Reg::R10);
-        check_stack_access(
-            ctx.env,
-            ctx.state,
-            ctx.reg,
-            offset,
-            0,
-            8, // PtrToLong is 8-byte access
-            ctx.pc,
-            AccessKind::HelperPrimitive,
-            None,
-            frame_level,
-        );
-        !ctx.env.failed()
-    } else {
-        ctx.fail_with_log(
+    match ctx.actual {
+        RegType::PtrToStack { frame_level } => {
+            let offset = ctx.state.domain.get_distance_fixed(ctx.reg, Reg::R10);
+            check_stack_access(
+                ctx.env,
+                ctx.state,
+                ctx.reg,
+                offset,
+                0,
+                8, // PtrToLong is 8-byte access
+                ctx.pc,
+                AccessKind::HelperPrimitive,
+                None,
+                frame_level,
+            );
+            !ctx.env.failed()
+        }
+        // ARG_PTR_TO_LONG also accepts pointers into a writable map value
+        // (rodata-backed maps are rejected via the BPF_F_RDONLY_PROG flag).
+        RegType::PtrToMapValue { map_idx, .. } => {
+            let writable = ctx
+                .env
+                .ctx
+                .map_defs
+                .get(map_idx)
+                .map(|md| md.map_flags & constants::BPF_F_RDONLY_PROG == 0)
+                .unwrap_or(false);
+            if writable {
+                true
+            } else {
+                ctx.env.fail(VerificationError::MapStoreForbidden {
+                    pc: ctx.pc,
+                    map_idx,
+                });
+                false
+            }
+        }
+        _ => ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,
                 reg: ctx.reg,
@@ -811,7 +1049,7 @@ fn validate_ptr_to_long(ctx: &mut ValidationContext) -> bool {
                 ctx.arg_index + 1,
                 ctx.actual
             ),
-        )
+        ),
     }
 }
 
@@ -902,6 +1140,37 @@ pub(crate) fn validate_readable_mem(
             // Context can be read
             true
         }
+        // Ring-buffer reservations (`bpf_ringbuf_reserve`) and arena
+        // allocations carry their own bounds in `mem_size`. Kernel
+        // accepts these as ARG_PTR_TO_MEM (mirrors `verifier_ringbuf::
+        // passing_rb_mem_to_helpers`, which routes ringbuf-reserved
+        // memory into bpf_fib_lookup's params arg).
+        RegType::PtrToAllocMem { mem_size, .. } => {
+            if let Some(sz) = size
+                && sz as u64 > mem_size
+            {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!(
+                    "[Verifier] pc {}: alloc-mem {} bytes can't satisfy {}-byte read",
+                    pc, mem_size, sz
+                );
+                return false;
+            }
+            true
+        }
+        RegType::PtrToArena { mem_size, .. } => {
+            if let Some(sz) = size
+                && sz as u64 > mem_size
+            {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!(
+                    "[Verifier] pc {}: arena-mem {} bytes can't satisfy {}-byte read",
+                    pc, mem_size, sz
+                );
+                return false;
+            }
+            true
+        }
         _ => {
             env.fail(VerificationError::InvalidArgType { pc, reg });
             error!("[Verifier] pc {}: {:?} not a valid memory pointer", pc, reg);
@@ -940,19 +1209,44 @@ pub(crate) fn validate_writable_mem(
             }
             true
         }
-        RegType::PtrToMapValue { map_idx, .. } => {
+        RegType::PtrToMapValue {
+            map_idx,
+            offset: map_off,
+            ..
+        } => {
             let writable = env
                 .ctx
                 .map_defs
                 .get(map_idx)
-                .map(|md| md.map_flags != constants::BPF_F_RDONLY_PROG)
+                .map(|md| md.map_flags & constants::BPF_F_RDONLY_PROG == 0)
                 .unwrap_or(false);
-            if writable {
-                true
-            } else {
+            if !writable {
                 env.fail(VerificationError::MapStoreForbidden { pc, map_idx });
-                false
+                return false;
             }
+            // "kptr cannot be accessed indirectly by helper": helper
+            // write buffers must not overlap any kptr field. Reuses the
+            // same overlap logic as direct stores.
+            if let Some(map_def) = env.ctx.map_defs.get(map_idx)
+                && let Some(sz) = size
+            {
+                check_kptr_field_access(
+                    env,
+                    state,
+                    map_def,
+                    map_idx,
+                    reg,
+                    map_off,
+                    0,
+                    sz as i64,
+                    pc,
+                    /*is_store=*/ true,
+                );
+                if env.failed() {
+                    return false;
+                }
+            }
+            true
         }
         RegType::PtrToPacket => {
             // Packet pointers are NOT valid for uninit_mem arguments
@@ -1062,9 +1356,7 @@ pub(crate) fn check_single_mem_size_pair(
 
     // Check zero size
     if max_size == 0 {
-        if pair.allow_zero {
-            return true;
-        } else {
+        if !pair.allow_zero {
             env.fail(VerificationError::InvalidArgType {
                 pc,
                 reg: pair.size_reg,
@@ -1072,6 +1364,27 @@ pub(crate) fn check_single_mem_size_pair(
             error!("[Verifier] pc {}: {:?} cannot be 0", pc, pair.size_reg);
             return false;
         }
+        // Zero-size accesses are allowed by this helper, but the kernel
+        // still validates that the *pointer itself* is within bounds —
+        // a variable-offset stack pointer whose range escapes [-512, 0)
+        // is rejected even when no byte is actually accessed
+        // (`verifier_var_off::zero_sized_access_max_out_of_bound`).
+        // Fall through to `check_ptr_access_size` with size=0 only for
+        // pointer kinds where range validation makes sense at zero size;
+        // unknown / non-memory pointers are not re-checked here.
+        if matches!(ptr_type, RegType::PtrToStack { .. }) {
+            let ptr_arg_type = proto.args.get(pair.ptr_reg.idx() - 2).unwrap();
+            return check_ptr_access_size(
+                env,
+                state,
+                pair.ptr_reg,
+                ptr_type,
+                *ptr_arg_type,
+                0,
+                pc,
+            );
+        }
+        return true;
     }
 
     // Validate pointer can accommodate the access
@@ -1102,7 +1415,7 @@ pub(crate) fn check_ptr_access_size(
     pc: usize,
 ) -> bool {
     match ptr_type {
-        RegType::PtrToStack { .. } => {
+        RegType::PtrToStack { frame_level } => {
             if let Some(off) = state.domain.get_distance_fixed(ptr_reg, Reg::R10) {
                 // Stack: check [off, off + size) is within stack bounds
                 // Stack grows down, so valid range is [-512, 0)
@@ -1117,6 +1430,25 @@ pub(crate) fn check_ptr_access_size(
                         "[Verifier] pc {}: stack access [{}, {}) out of bounds",
                         pc, off, end_offset
                     );
+                    return false;
+                }
+                // W3.2 / W4.2: helper buffer access (read or write) may
+                // not overlap an active iter slot or dynptr body. The
+                // initialization check below is skipped for PtrToUninitMem
+                // (helper writes the bytes), so the opaque-body rule
+                // needs its own gate here to catch e.g. probe_read_kernel
+                // writing into an iter slot.
+                if state
+                    .stack_at(frame_level)
+                    .access_overlaps_iterator(off, size as i64)
+                    || state
+                        .stack_at(frame_level)
+                        .read_overlaps_dynptr(off, size as i64)
+                {
+                    env.fail(VerificationError::InvalidStackRead {
+                        pc,
+                        offset: off,
+                    });
                     return false;
                 }
                 // Also check stack slots are initialized for reads
@@ -1182,6 +1514,24 @@ pub(crate) fn check_ptr_access_size(
                 return false;
             };
 
+            // "kptr cannot be accessed indirectly by helper": helper
+            // mem-buffer args (the size comes from the paired size arg)
+            // must not overlap a kptr field.
+            check_kptr_field_access(
+                env,
+                state,
+                map_def,
+                map_idx,
+                ptr_reg,
+                offset,
+                0,
+                size as i64,
+                pc,
+                /*is_store=*/ true,
+            );
+            if env.failed() {
+                return false;
+            }
             check_map_access(
                 env,
                 state,

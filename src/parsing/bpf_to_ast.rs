@@ -72,6 +72,7 @@ fn branch_target_disp(pc: usize, disp: i32, len: usize, code: u8) -> Result<usiz
 pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
     let mut instrs = Vec::with_capacity(raw.len());
     let mut invalid_pc_set = HashSet::new();
+    let mut addr_space_cast_to_arena_pcs: HashSet<usize> = HashSet::new();
     let mut pc: usize = 0;
 
     while pc < raw.len() {
@@ -289,12 +290,26 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
             // plain MOV. This keeps `PtrToArena` mem_size and ref tracking
             // intact across the cast.
             0xbf => match insn.off {
-                0 | 1 => Instr::Alu {
-                    width: Width::W64,
-                    op: AluOp::Mov,
-                    dst,
-                    src: Operand::Reg(src),
-                },
+                0 | 1 => {
+                    // off=1 marks `bpf_addr_space_cast` (kernel
+                    // `verifier.c` ~L15361, v6.15). Valid imms are 1
+                    // (cast as(1)→as(0), result is PTR_TO_ARENA) and
+                    // 0x10000 (cast as(0)→as(1), result is unknown
+                    // scalar). Other imms are rejected by the kernel —
+                    // leave the lowering tolerant and let runtime
+                    // checks catch malformed inputs. Only the
+                    // `imm == 1` form needs special transfer handling
+                    // (Mov retypes dst to PtrToArena).
+                    if insn.off == 1 && insn.imm == 1 {
+                        addr_space_cast_to_arena_pcs.insert(pc);
+                    }
+                    Instr::Alu {
+                        width: Width::W64,
+                        op: AluOp::Mov,
+                        dst,
+                        src: Operand::Reg(src),
+                    }
+                }
                 8 | 16 | 32 => Instr::MovSx {
                     width: Width::W64,
                     src_bits: match insn.off {
@@ -710,14 +725,14 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 size: insn.imm as u32,
             },
 
-            // 0xd7: END_LE_64 (dst = to_le_64(dst))
-            // Supports imm = 16, 32, 64
-            // 0xd7 => Instr::Endian {
-            //     width: Width::W64,
-            //     dst: dst,
-            //     op: EndianOp::ToLe,
-            //     size: insn.imm as u32,
-            // },
+            // 0xd7: BPF_ALU64 | BPF_END | BPF_K — BSWAP (BPF v4).
+            // dst = bswap_{imm}(dst); imm ∈ {16, 32, 64}.
+            0xd7 => Instr::Endian {
+                width: Width::W64,
+                dst,
+                op: EndianOp::Bswap,
+                size: insn.imm as u32,
+            },
 
             // --- JMP ---
             // 0x95: exit (JMP | EXIT)
@@ -1241,6 +1256,18 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
                 }
             }
 
+            // 0xdd: JSLE_X_64 (if (s64)dst <= (s64)src goto target)
+            0xdd => {
+                let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
+                Instr::If {
+                    width: Width::W64,
+                    left: dst,
+                    op: CmpOp::SLe,
+                    right: Operand::Reg(src),
+                    target,
+                }
+            }
+
             // 0xde: JSLE32_X (if (s32)dst <= (s32)src goto target)
             0xde => {
                 let target = branch_target(pc, insn.off, raw.len(), insn.code)?;
@@ -1649,6 +1676,7 @@ pub fn lower_raw_to_program(raw: &[RawBpfInsn]) -> Result<Program, LowerError> {
     Ok(Program {
         instrs,
         invalid_pc_set,
+        addr_space_cast_to_arena_pcs,
     })
 }
 

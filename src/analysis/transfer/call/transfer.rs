@@ -66,10 +66,78 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             env.fail(VerificationError::UnreleasedReference {});
             return vec![];
         }
+        // Kernel `check_lock` path (verifier.c v6.15 ~L11096) gates
+        // tail_call alongside BPF_EXIT under preempt-disable: tail-calling
+        // out of a preempt-disabled region would jump into a different
+        // program with the disable count leaked.
+        if state.in_preempt_disabled() {
+            env.fail(VerificationError::TailCallInPreemptDisabled { pc });
+            return vec![];
+        }
+        // Kernel `check_lock` (verifier.c v6.15 ~L11086) also rejects
+        // bpf_tail_call inside an irq-disabled region.
+        if state.in_irq_disabled() {
+            env.fail(VerificationError::IrqState {
+                pc,
+                reason: "bpf_tail_call inside bpf_local_irq_save-ed region".into(),
+            });
+            return vec![];
+        }
+        // Kernel `verifier.c` v6.15 ~L11069: bpf_tail_call cannot be
+        // used inside a `bpf_rcu_read_lock`-ed region — the tail-call
+        // jumps into a different program with the RCU read lock leaked.
+        // Mirrors `tailcall_fail::reject_tail_call_rcu_lock`. Re-uses
+        // the existing InvalidArgType / R0 family — no dedicated
+        // variant for this rejection family elsewhere.
+        if state.in_rcu_read_section() {
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R0 });
+            return vec![];
+        }
         update_call_types(env, &in_types, &mut state, helper);
 
         for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
             state.domain.forget(r);
+        }
+
+        // Cluster D4: tail-called program may rewrite packet contents, so
+        // any packet pointer in callee-saved regs or stack slots is no
+        // longer valid afterwards. Invalidate them — accesses through
+        // such pointers must be rejected unless re-derived from
+        // skb->data after the tail call.
+        for r in Reg::ALL {
+            if r == Reg::R10 {
+                continue;
+            }
+            match state.types.get(r) {
+                RegType::PtrToPacket | RegType::PtrToPacketEnd | RegType::PtrToPacketMeta => {
+                    state.types.set(r, RegType::NotInit);
+                    state.domain.forget(r);
+                }
+                _ => {}
+            }
+        }
+        for frame in state.frames.iter_mut() {
+            for offset in frame.stack.slot_offsets() {
+                let ty = frame.stack.get_slot_type(offset);
+                if matches!(
+                    ty,
+                    RegType::PtrToPacket | RegType::PtrToPacketEnd | RegType::PtrToPacketMeta
+                ) {
+                    frame.stack.set_slot_type(offset, RegType::NotInit, None);
+                }
+            }
+            // Caller-saved register snapshots (r6-r9) restored on subprog
+            // exit must also be invalidated — otherwise main resumes with
+            // a stale packet pointer that survived the tail-call. Mirrors
+            // kernel `clear_all_pkt_pointers` walking every frame.
+            for r in [Reg::R6, Reg::R7, Reg::R8, Reg::R9] {
+                if matches!(
+                    frame.caller_types.get(r),
+                    RegType::PtrToPacket | RegType::PtrToPacketEnd | RegType::PtrToPacketMeta
+                ) {
+                    frame.caller_types.set(r, RegType::NotInit);
+                }
+            }
         }
 
         state.pc += 1;
@@ -78,6 +146,169 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
 
     // Special check for sk_release: R1 must have a reference
     if helper == constants::BPF_SK_RELEASE && state.types.get(Reg::R1).get_ref_id().is_none() {
+        env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+        return vec![];
+    }
+
+    // bpf_sk_release: not allowed in flow_dissector / sockops / tracing
+    // / sock-cgroup / lwt-* prog types (kernel's per-prog-type
+    // func_proto returns NULL for BPF_FUNC_sk_release in these).
+    // Closes the cluster-A sockmap_mutate FA on
+    // `test_flow_dissector_update` exposed once we widened
+    // `bpf_map_update_elem` R3 for SOCKMAP/SOCKHASH — without the
+    // widening, the test was rejected at the update site; with it,
+    // execution reaches sk_release, which the kernel separately
+    // forbids in flow_dissector.
+    if helper == constants::BPF_SK_RELEASE
+        && matches!(
+            env.ctx.prog_kind,
+            crate::ast::ProgramKind::FlowDissector
+                | crate::ast::ProgramKind::SockOps
+                | crate::ast::ProgramKind::Tracing
+                | crate::ast::ProgramKind::Tracepoint
+                | crate::ast::ProgramKind::RawTracepoint
+                | crate::ast::ProgramKind::RawTracepointWritable
+                | crate::ast::ProgramKind::Lsm
+                | crate::ast::ProgramKind::PerfEvent
+                | crate::ast::ProgramKind::Kprobe
+        )
+    {
+        env.fail(VerificationError::HelperNotAllowedForProgram {
+            pc,
+            helper,
+            kind: env.ctx.prog_kind,
+        });
+        return vec![];
+    }
+
+    // bpf_per_cpu_ptr / bpf_this_cpu_ptr: R1 must be a PERCPU-flagged
+    // pointer. Kernel `check_helper_call` reports "type=<actual>
+    // expected=percpu_ptr_" for anything else (verifier.c v6.15
+    // ARG_PTR_TO_PERCPU_BTF_ID dispatch). Accept `PtrToMapKptr*` and
+    // `PtrToBtfId*` carrying the PERCPU flag; reject Scalar and other
+    // non-percpu pointer types.
+    if helper == constants::BPF_THIS_CPU_PTR || helper == constants::BPF_PER_CPU_PTR {
+        let r1 = state.types.get(Reg::R1);
+        let percpu_ok = matches!(
+            r1,
+            RegType::PtrToMapKptr { .. }
+                | RegType::PtrToMapKptrOrNull { .. }
+                | RegType::PtrToBtfId { .. }
+                | RegType::PtrToBtfIdOrNull { .. }
+        ) && r1
+            .ptr_flags()
+            .contains(crate::analysis::machine::reg_types::PtrFlags::PERCPU);
+        if !percpu_ok {
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            return vec![];
+        }
+    }
+
+    // bpf_kptr_xchg(&map_value->kptr_field, new_obj):
+    //   - R1 must be a `PtrToMapValue` whose constant offset exactly hits
+    //     a *referenced* kptr slot (Ref/Rcu/Percpu). Unref slots reject:
+    //     kernel "off=N kptr isn't referenced kptr".
+    //   - R2 must be either NULL (scalar 0) or a reference-tracked
+    //     pointer (`get_ref_id().is_some()`). Kernel "R2 must be referenced".
+    //   - Return R0: `PtrToMapKptrOrNull` carrying the slot's
+    //     `pointee_btf_id` and matching flags, with a fresh `ref_id` —
+    //     this is the *previous* slot contents, ownership transferred to
+    //     the program. R2's ref is consumed (transferred into the map).
+    if helper == constants::BPF_KPTR_XCHG {
+        let r1 = state.types.get(Reg::R1);
+        let RegType::PtrToMapValue {
+            offset: r1_off_opt,
+            map_idx,
+            ..
+        } = r1
+        else {
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            return vec![];
+        };
+        let final_off = crate::analysis::transfer::memory::map::resolve_const_map_off(
+            &state, Reg::R1, r1_off_opt, 0,
+        );
+        let Some(off_val) = final_off else {
+            env.fail(VerificationError::KptrAccessVariableOffset { pc, map_idx });
+            return vec![];
+        };
+        let map_def = match env.ctx.map_defs.get(map_idx) {
+            Some(m) => m,
+            None => {
+                env.fail(VerificationError::MapNotFound { pc, map_idx });
+                return vec![];
+            }
+        };
+        let Some(field) =
+            crate::analysis::transfer::memory::map::kptr_field_at(map_def, off_val, 8)
+        else {
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            return vec![];
+        };
+        use crate::parsing::elf::KptrFieldKind;
+        if matches!(field.kind, KptrFieldKind::Unref | KptrFieldKind::Uptr) {
+            // Unref kptr: "off=N kptr isn't referenced kptr".
+            // Uptr: kptr_xchg has no meaning on a userspace-pointer slot —
+            // mirror the unref path's rejection.
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            return vec![];
+        }
+        let pointee_btf_id = field.pointee_btf_id;
+        let slot_flags = match field.kind {
+            KptrFieldKind::Ref => crate::analysis::machine::reg_types::PtrFlags::MEM_ALLOC,
+            KptrFieldKind::Rcu => crate::analysis::machine::reg_types::PtrFlags::RCU,
+            KptrFieldKind::Percpu => crate::analysis::machine::reg_types::PtrFlags::PERCPU,
+            KptrFieldKind::Unref | KptrFieldKind::Uptr => {
+                unreachable!("rejected above")
+            }
+        };
+
+        // R2: either NULL (scalar 0) or a ref-tracked pointer.
+        let r2 = state.types.get(Reg::R2);
+        let r2_ref = r2.get_ref_id();
+        let r2_is_null = matches!(r2, RegType::ScalarValue) && state.domain.proven_zero(Reg::R2);
+        if r2_ref.is_none() && !r2_is_null {
+            // "R2 must be referenced"
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
+            return vec![];
+        }
+
+        // Consume R2's ref (transfer ownership into the map).
+        if let Some(id) = r2_ref {
+            state.release_ref(id);
+            state.invalidate_ref(id);
+        }
+
+        // R0 = previous slot contents: PtrToMapKptrOrNull, fresh ref_id.
+        let new_ref = state.acquire_ref();
+        state.types.set(
+            Reg::R0,
+            RegType::PtrToMapKptrOrNull {
+                pointee_btf_id,
+                ref_id: Some(new_ref),
+                flags: slot_flags,
+            },
+        );
+        state.domain.forget(Reg::R0);
+        state.clear_scalar_id(Reg::R0);
+
+        // Forget caller-saved scalars (R1..R5) per helper-call ABI.
+        for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+            state.domain.forget(r);
+        }
+
+        state.pc += 1;
+        return vec![state];
+    }
+
+    // bpf_dynptr_from_mem: R1 (data pointer) must not be a stack pointer.
+    // The kernel's "Unsupported reg type fp for bpf_dynptr_from_mem data"
+    // — wrapping a stack region as a Local dynptr would let the dynptr
+    // outlive its frame. The generic `PtrToMem` validator accepts stack
+    // for most helpers, so we special-case here.
+    if helper == constants::BPF_DYNPTR_FROM_MEM
+        && matches!(state.types.get(Reg::R1), RegType::PtrToStack { .. })
+    {
         env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
         return vec![];
     }
@@ -108,6 +339,62 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
         return vec![];
     }
 
+    // F: sockmap/sockhash mutation via map_update_elem / map_delete_elem.
+    // Kernel's `may_update_sockmap` (net/core/sock_map.c) accepts every
+    // prog type except RawTracepoint / RawTracepointWritable (the
+    // verifier_sockmap_mutate.c `__failure` corpus pins down only those
+    // two as rejected). Mirror that denylist instead of an allowlist so
+    // SocketFilter / Tracing / Xdp / SkLookup / SkReuseport-mapped-Unknown
+    // / etc. all pass without enumeration.
+    if matches!(
+        helper,
+        constants::BPF_MAP_UPDATE_ELEM | constants::BPF_MAP_DELETE_ELEM
+    ) {
+        let map_idx = match state.types.get(Reg::R1) {
+            RegType::PtrToMapObject { map_idx } => Some(map_idx),
+            _ => None,
+        };
+        if let Some(idx) = map_idx
+            && let Some(map_def) = env.ctx.map_defs.get(idx)
+            && matches!(
+                map_def.type_,
+                constants::BPF_MAP_TYPE_SOCKMAP | constants::BPF_MAP_TYPE_SOCKHASH
+            )
+            && matches!(
+                env.ctx.prog_kind,
+                ProgramKind::RawTracepoint | ProgramKind::RawTracepointWritable
+            )
+        {
+            env.fail(VerificationError::HelperNotAllowedForProgram {
+                pc,
+                helper,
+                kind: env.ctx.prog_kind,
+            });
+            return vec![];
+        }
+    }
+
+    // bpf_ktime_get_coarse_ns: not in the helper whitelist for tracing
+    // program types (kprobe, tracepoint, perf_event, raw_tracepoint*).
+    // Mirrors kernel's per-prog-type helper allowlist (D1).
+    if helper == constants::BPF_KTIME_GET_COARSE_NS
+        && matches!(
+            env.ctx.prog_kind,
+            ProgramKind::Kprobe
+                | ProgramKind::Tracepoint
+                | ProgramKind::PerfEvent
+                | ProgramKind::RawTracepoint
+                | ProgramKind::RawTracepointWritable
+        )
+    {
+        env.fail(VerificationError::HelperNotAllowedForProgram {
+            pc,
+            helper,
+            kind: env.ctx.prog_kind,
+        });
+        return vec![];
+    }
+
     // bpf_d_path is restrictive
     if helper == constants::BPF_D_PATH {
         if !matches!(env.ctx.prog_kind, ProgramKind::Tracing | ProgramKind::Lsm) {
@@ -118,7 +405,8 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             });
             return vec![];
         } else if matches!(env.ctx.prog_kind, ProgramKind::Tracing)
-            && matches!(env.ctx.kfunc.as_deref(), Some("d_path"))
+            && (matches!(env.ctx.kfunc.as_deref(), Some("d_path"))
+                || matches!(env.ctx.attach_subtype.as_deref(), Some("d_path")))
         {
             env.fail(VerificationError::HelperNotAllowedForProgram {
                 pc,
@@ -264,6 +552,15 @@ fn initialize_uninit_mem_args(
 }
 
 /// Apply return value bounds based on helper semantics.
+/// Public re-export of `apply_return_bounds` for the cb-Exit
+/// propagation path in `transfer/mod.rs`. The cb-Exit path needs the
+/// same R0 bounds the helper would normally produce on its skip-path,
+/// minus the side-effect modeling that depends on caller-side
+/// `in_types`. `apply_return_bounds` is pure on-state.
+pub(crate) fn apply_return_bounds_for_cb_helper(state: &mut State, helper: u32) {
+    apply_return_bounds(state, helper);
+}
+
 fn apply_return_bounds(state: &mut State, helper: u32) {
     state.domain.forget(Reg::R0);
     state.set_tnum(Reg::R0, Tnum::unknown());
@@ -327,6 +624,7 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
                 RegType::PtrToBtfId {
                     type_name: "unknown",
                     flags: PtrFlags::UNTRUSTED,
+                    ref_id: None,
                 },
             );
         }
@@ -342,6 +640,7 @@ fn is_callback_helper(helper: u32) -> bool {
             | constants::BPF_FOR_EACH_MAP_ELEM
             | constants::BPF_TIMER_SET_CALLBACK
             | constants::BPF_USER_RINGBUF_DRAIN
+            | constants::BPF_FIND_VMA
     )
 }
 
@@ -353,6 +652,8 @@ fn callback_arg_reg(helper: u32) -> Reg {
         constants::BPF_TIMER_SET_CALLBACK => Reg::R2,
         // W6.5: bpf_user_ringbuf_drain(map, callback, ctx, flags)
         constants::BPF_USER_RINGBUF_DRAIN => Reg::R2,
+        // bpf_find_vma(task, addr, callback, callback_ctx, flags)
+        constants::BPF_FIND_VMA => Reg::R3,
         _ => unreachable!(),
     }
 }
@@ -388,6 +689,40 @@ fn transfer_callback_helper(
 
     // Successor A: skip the callback and emit the helper's post-state.
     let mut skip_state = state.clone();
+    // Kernel-pessimism for sync callbacks: the callback could have
+    // re-initialized any dynptr reachable through its ctx arg, which
+    // invalidates slices tagged with the old `dynptr_id`. Mirrors the
+    // `bpf_for_each_reg_in_vstate` sweep done by
+    // `destroy_if_dynptr_stack_slot` (verifier.c v6.15 L913-919) once
+    // the kernel determines the ctx may alias a dynptr stack slot.
+    // Without this, `invalid_data_slices` (dynptr_fail.c) would accept
+    // a `*slice = 1` after `bpf_loop(.., &ptr, 0)`.
+    let cb_ctx_reg = match helper {
+        constants::BPF_LOOP
+        | constants::BPF_FOR_EACH_MAP_ELEM
+        | constants::BPF_USER_RINGBUF_DRAIN => Some(Reg::R3),
+        constants::BPF_FIND_VMA => Some(Reg::R4),
+        _ => None,
+    };
+    if let Some(ctx_reg) = cb_ctx_reg
+        && let RegType::PtrToStack { frame_level } = skip_state.types.get(ctx_reg)
+        && let Some(off) = skip_state.domain.get_distance_fixed(ctx_reg, Reg::R10)
+        && let Ok(base_off) = i16::try_from(off)
+    {
+        let touched = skip_state
+            .stack_at(frame_level)
+            .dynptr_pairs_touched_by_write(base_off as i64, 16);
+        if !touched.is_empty() {
+            let stack = skip_state.stack_at_mut(frame_level);
+            for (b, _) in &touched {
+                stack.stack_clear_dynptr(*b);
+                stack.stack_clear_dynptr(*b + 8);
+            }
+            for (_, vid) in &touched {
+                skip_state.invalidate_dynptr_slices(*vid);
+            }
+        }
+    }
     update_call_types(env, in_types, &mut skip_state, helper);
     apply_return_bounds(&mut skip_state, helper);
     if skip_state.types.get(Reg::R0) == RegType::ScalarValue
@@ -410,16 +745,75 @@ fn transfer_callback_helper(
         return vec![skip_state];
     }
 
+    // Decide whether cb iteration could run ≥ 2 times — drives the widen
+    // decision on cb-Exit propagation. Mirrors kernel's
+    // `widen_imprecise_scalars` only triggering when find_prev_entry
+    // returns a previous iteration to compare against (verifier.c v6.15
+    // L10903–10920).
+    let cb_should_widen = match helper {
+        constants::BPF_LOOP => {
+            // nr_loops is caller's R1. If max ≤ 1, only one iter possible
+            // (concrete merge). Else widen.
+            let (_, hi) = state.domain.get_interval(Reg::R1);
+            hi > 1
+        }
+        // bpf_for_each_map_elem / user_ringbuf_drain / find_vma: variable
+        // count (depends on map size / ringbuf entries / vma matches).
+        // The kernel's iteration logic walks ≥ 2 entries when the cb's
+        // exit-state isn't iter-stable, so widen scalar effects across
+        // iterations — matches the `unsafe_find_vma` reject pattern in
+        // verifier_iterating_callbacks.c.
+        constants::BPF_FOR_EACH_MAP_ELEM
+        | constants::BPF_USER_RINGBUF_DRAIN
+        | constants::BPF_FIND_VMA => true,
+        _ => false,
+    };
+
+    // Pre-push: capture caller's ctx-arg register so we can install it
+    // as the cb's ctx parameter after the frame push (which clears the
+    // caller-side regs). For sync callbacks the kernel passes the
+    // caller's ctx pointer to a specific cb arg register
+    // (`set_loop_callback_state` etc., verifier.c v6.15 ~L10685+).
+    // Without this, the cb body's first read of ctx hits "R2 !read_ok".
+    let ctx_propagation: Option<(Reg, RegType, Tnum, (i64, i64))> = match helper {
+        // bpf_loop(nr_loops, cb, ctx, flags) → cb(idx, ctx); ctx → R2.
+        constants::BPF_LOOP
+        // bpf_user_ringbuf_drain(map, cb, ctx, flags) → cb(dynptr, ctx); ctx → R2.
+        | constants::BPF_USER_RINGBUF_DRAIN => {
+            let bounds = state.domain.get_interval(Reg::R3);
+            Some((Reg::R2, state.types.get(Reg::R3), state.get_tnum(Reg::R3), bounds))
+        }
+        // bpf_for_each_map_elem(map, cb, ctx, flags) → cb(map, key, val, ctx); ctx → R4.
+        constants::BPF_FOR_EACH_MAP_ELEM => {
+            let bounds = state.domain.get_interval(Reg::R3);
+            Some((Reg::R4, state.types.get(Reg::R3), state.get_tnum(Reg::R3), bounds))
+        }
+        // bpf_find_vma(task, addr, cb, ctx, flags) → cb(task, vma, ctx); caller's R4 → cb's R3.
+        constants::BPF_FIND_VMA => {
+            let bounds = state.domain.get_interval(Reg::R4);
+            Some((Reg::R3, state.types.get(Reg::R4), state.get_tnum(Reg::R4), bounds))
+        }
+        _ => None,
+    };
+
     let mut cb_state = state;
+    let caller_level_idx = cb_state.current_frame_level();
+    let caller_stack_snapshot =
+        cb_state.frames.get(caller_level_idx).stack.clone();
     cb_state.push_callback_frame(pc + 1, helper);
+    cb_state.frames.current_mut().set_cb_propagation(
+        caller_stack_snapshot,
+        caller_level_idx.index(),
+        cb_should_widen,
+    );
     update_call_rel_types(&mut cb_state);
     cb_state.domain.clear_packet_size_bounds();
 
     // Minimal arg typing: R1 is always a scalar (iteration index / map
     // pointer / map-elem pointer depending on helper); R2+ are left
-    // unsupported for now so callbacks that dereference them REJECT.
-    // Full per-helper arg typing lands alongside richer signature
-    // validation in a follow-up.
+    // unsupported for most helpers so callbacks that dereference them
+    // REJECT. Full per-helper arg typing lands alongside richer
+    // signature validation in a follow-up.
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
         cb_state.types.set(r, RegType::NotInit);
         cb_state.domain.forget(r);
@@ -430,6 +824,50 @@ fn transfer_callback_helper(
     cb_state.domain.forget(Reg::R1);
     cb_state.set_tnum(Reg::R1, Tnum::unknown());
     cb_state.alloc_scalar_id(Reg::R1);
+
+    // Install propagated ctx after the generic clear above.
+    if let Some((dst, ty, tnum, (lo, hi))) = ctx_propagation {
+        cb_state.types.set(dst, ty);
+        cb_state.set_tnum(dst, tnum);
+        cb_state.domain.forget(dst);
+        cb_state.domain.assign_interval(dst, lo, hi);
+        cb_state.clear_scalar_id(dst);
+    }
+
+    // Timer cb signature is `(struct bpf_map *, void *key, void *value)`
+    // — kernel `set_timer_callback_state` (verifier.c ~L10685, v6.15)
+    // sets R1=CONST_PTR_TO_MAP, R2=PTR_TO_MAP_KEY, R3=PTR_TO_MAP_VALUE
+    // off the timer's owning map. Without typed R2/R3 the cb body
+    // hits "R2 !read_ok" on the very first `Mov R1=R2`.
+    // Approximate with scalar pointers: the cb in
+    // `verifier_private_stack.c::private_stack_async_callback_2`
+    // immediately forwards `key` to a global subprog that
+    // dereferences it as `int *`, so a generic readable scalar
+    // suffices for that closure. Tighter typing (real PTR_TO_MAP_KEY
+    // / VALUE) is future work — surfaced as the next FR if any test
+    // does map-aware arithmetic in a timer cb.
+    if helper == constants::BPF_TIMER_SET_CALLBACK {
+        // R1=map ptr, R2=key ptr, R3=value ptr. We don't track
+        // PTR_TO_MAP_KEY/VALUE distinctly, so approximate with a lax
+        // BTF-typed pointer (type_name="unknown" gives the existing
+        // "unknown-layout" load/store policy: any offset accepted,
+        // loads produce ScalarValue). Concrete enough that subprogs
+        // dereferencing the key (e.g. `subprog1(key) → *val`) verify;
+        // loose enough that we don't claim more precision than the
+        // kernel actually requires for these pointer args.
+        use crate::analysis::machine::reg_types::PtrFlags;
+        let unknown_btf = || RegType::PtrToBtfId {
+            type_name: "unknown",
+            flags: PtrFlags::TRUSTED,
+            ref_id: None,
+        };
+        for r in [Reg::R1, Reg::R2, Reg::R3] {
+            cb_state.types.set(r, unknown_btf());
+            cb_state.domain.forget(r);
+            cb_state.set_tnum(r, Tnum::unknown());
+            cb_state.clear_scalar_id(r);
+        }
+    }
 
     cb_state.pc = cb_entry;
 
@@ -450,13 +888,244 @@ pub(crate) fn transfer_call_rel(
     target: usize,
 ) -> Vec<State> {
     let pc = state.pc;
-    if state.num_frames() >= 8 {
+    // Kernel: `state->curframe + 1 >= MAX_CALL_FRAMES (8)` rejects when
+    // the *new* frame's index would reach the limit. Our 1-based
+    // `num_frames()` counts the current depth. The kernel allows 8
+    // frames total (main + 7 subprog frames); a chain like
+    // `test_global_func4`'s `main → f7 → ... → f1` hits exactly 8
+    // frames at f1. Use `> 8` so we reject only on the *9th* push.
+    if state.num_frames() > 8 {
         env.fail(VerificationError::MaxCallDepthExceeded { pc });
         return vec![];
     }
 
+    // Reject any direct (or transitively-resolved) call whose target
+    // resolves to the registered exception callback. The kernel
+    // disallows the program from invoking its own exception_cb directly:
+    // unwinding is the only legal entry into it. Mirrors the kernel's
+    // "cannot call exception cb directly" diagnostic.
+    if let Some(cb_name) = env.ctx.exception_callback.as_deref()
+        && let Some(target_name) = env.ctx.pc_to_subprog_name.get(&target)
+        && target_name == cb_name
+    {
+        env.fail(VerificationError::ExceptionCallbackInvalid {
+            reason: "cannot call exception cb directly".to_string(),
+        });
+        return vec![];
+    }
+
+    // W6.5: global subprogs are verified independently against their
+    // declared BTF FUNC_PROTO. At each call site we must:
+    //   1. Reject malformed global signatures (void return, FWD args)
+    //      that the kernel would reject at function-load time.
+    //   2. Validate caller's R1..R5 against declared types (catches
+    //      "Caller passes invalid args into func#N").
+    //   3. After push_frame, override callee's R1..R5 with declared
+    //      types so the body is verified the way the kernel would —
+    //      pointers come in as PTR_TO_MEM | PTR_MAYBE_NULL, etc.
+    // Static subprogs skip all of this: callee inherits caller's
+    // concrete types, matching kernel `__noinline static` semantics.
+    let callee_global = env
+        .ctx
+        .pc_to_subprog_name
+        .get(&target)
+        .cloned()
+        .filter(|n| env.ctx.btf.is_global_func(n));
+    if let Some(name) = callee_global.as_ref() {
+        if env.ctx.btf.func_returns_void(name) {
+            env.fail(VerificationError::GlobalFuncMalformed {
+                pc,
+                func: name.clone(),
+                reason: "doesn't return scalar".to_string(),
+            });
+            return vec![];
+        }
+        if let Some(args) = env.ctx.btf.resolve_global_func_args(name) {
+            // Reject malformed args (FWD).
+            for (i, arg) in args.iter().enumerate() {
+                if let crate::parsing::btf::GlobalFuncArg::PtrToFwd { name: tname } = arg {
+                    env.fail(VerificationError::GlobalFuncMalformed {
+                        pc,
+                        func: name.clone(),
+                        reason: format!(
+                            "reference type('FWD {}') size cannot be determined (arg #{})",
+                            tname,
+                            i + 1
+                        ),
+                    });
+                    return vec![];
+                }
+            }
+            // Caller-side type compatibility check.
+            let arg_regs = [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
+            for (i, (arg, reg)) in args.iter().zip(arg_regs.iter()).enumerate() {
+                let actual = state.types.get(*reg);
+                // For scalars passed where a pointer is declared, the
+                // kernel admits only literal NULL — not arbitrary
+                // scalar values. Use the domain to prove the value is
+                // exactly 0; otherwise reject.
+                let scalar_is_zero = || {
+                    let (lo, hi) = state.domain.get_interval(*reg);
+                    lo == 0 && hi == 0
+                };
+                if !caller_arg_compatible(arg, actual, scalar_is_zero) {
+                    env.fail(VerificationError::GlobalFuncBadCallerArg {
+                        pc,
+                        func: name.clone(),
+                        arg_index: i,
+                    });
+                    return vec![];
+                }
+                // For PtrToStack passed to PtrToMem(mem_size), the
+                // kernel additionally verifies the caller's stack
+                // region is large enough and fully initialized. This
+                // catches "small struct passed to large declared arg"
+                // — the kernel emits "invalid read from stack" when
+                // the callee would later access bytes past the
+                // caller's allocation.
+                if let crate::parsing::btf::GlobalFuncArg::PtrToMem { mem_size } = arg
+                    && let RegType::PtrToStack { .. } = actual
+                    && let Some(off) = state.domain.get_distance_fixed(*reg, Reg::R10)
+                {
+                    crate::analysis::transfer::memory::check_stack_arg_readable(
+                        env,
+                        &state,
+                        off,
+                        *mem_size as i64,
+                        pc,
+                        crate::analysis::transfer::memory::access::AccessKind::HelperBuffer,
+                    );
+                    if env.failed() {
+                        return vec![];
+                    }
+                }
+                // Read-only map value (.rodata) passed to a writable
+                // PtrToMem arg: the global subprog signature has no
+                // `__arg_const` tag, so the callee may store through it.
+                // Kernel reports "Caller passes invalid args into func#N".
+                if let crate::parsing::btf::GlobalFuncArg::PtrToMem { .. } = arg
+                    && let RegType::PtrToMapValue { map_idx, .. } = actual
+                    && let Some(map_def) = env.ctx.map_defs.get(map_idx)
+                    && map_def.map_flags & crate::common::constants::BPF_F_RDONLY_PROG != 0
+                {
+                    env.fail(VerificationError::GlobalFuncBadCallerArg {
+                        pc,
+                        func: name.clone(),
+                        arg_index: i,
+                    });
+                    return vec![];
+                }
+                // "kptr cannot be accessed indirectly by helper" extends
+                // to global subprog calls: a `PtrToMapValue` arg whose
+                // declared mem region overlaps a kptr field is rejected.
+                if let crate::parsing::btf::GlobalFuncArg::PtrToMem { mem_size } = arg
+                    && let RegType::PtrToMapValue {
+                        offset: map_off,
+                        map_idx,
+                        ..
+                    } = actual
+                    && let Some(map_def) = env.ctx.map_defs.get(map_idx)
+                {
+                    crate::analysis::transfer::memory::check_kptr_field_access(
+                        env,
+                        &state,
+                        map_def,
+                        map_idx,
+                        *reg,
+                        map_off,
+                        0,
+                        *mem_size as i64,
+                        pc,
+                        /*is_store=*/ true,
+                    );
+                    if env.failed() {
+                        return vec![];
+                    }
+                }
+            }
+        }
+    }
+
     state.push_frame(pc + 1);
     update_call_rel_types(&mut state);
+
+    // Override callee R1..R5 with declared types for global subprogs.
+    // Pointer args become PtrToAllocMemOrNull bounded by the pointee's
+    // BTF size — the callee must null-check before dereferencing,
+    // which is the surface for `invalid mem access 'mem_or_null'`
+    // when the body unconditionally derefs.
+    if let Some(name) = callee_global.as_ref()
+        && let Some(args) = env.ctx.btf.resolve_global_func_args(name)
+    {
+        let arg_regs = [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
+        for (arg, reg) in args.iter().zip(arg_regs.iter()) {
+            match arg {
+                crate::parsing::btf::GlobalFuncArg::Scalar => {
+                    state.types.set(*reg, RegType::ScalarValue);
+                    state.domain.forget(*reg);
+                }
+                crate::parsing::btf::GlobalFuncArg::PtrToMem { mem_size } => {
+                    let id = crate::analysis::machine::reg_types::new_ptr_id();
+                    state.types.set(
+                        *reg,
+                        RegType::PtrToAllocMemOrNull {
+                            id,
+                            mem_size: *mem_size as u64,
+                            ref_id: None,
+                            dynptr_id: None,
+                        },
+                    );
+                    state.domain.forget(*reg);
+                }
+                crate::parsing::btf::GlobalFuncArg::PtrToCtx => {
+                    state.types.set(*reg, RegType::PtrToCtx);
+                    state.domain.forget(*reg);
+                }
+                crate::parsing::btf::GlobalFuncArg::PermissivePtr => {
+                    // Most `void *` global subprog args are ctx
+                    // pointers in practice; pick PtrToCtx as the
+                    // best guess for callee body verification.
+                    state.types.set(*reg, RegType::PtrToCtx);
+                    state.domain.forget(*reg);
+                }
+                crate::parsing::btf::GlobalFuncArg::PtrToFwd { .. } => {
+                    // Already rejected above; keep arm exhaustive.
+                }
+                crate::parsing::btf::GlobalFuncArg::PtrToBtfIdTrusted {
+                    type_name,
+                    nullable,
+                } => {
+                    use crate::analysis::machine::reg_types::PtrFlags;
+                    // type_name is a runtime string; the RegType variant
+                    // holds a `&'static str`, so leak the (small, bounded)
+                    // name once. Subsequent calls reuse the leaked copy
+                    // via the leak-safe identity check on the call site
+                    // path — bounded by the number of distinct kernel
+                    // types referenced as `__arg_trusted` in any one
+                    // verified ELF.
+                    let leaked: &'static str =
+                        Box::leak(type_name.clone().into_boxed_str());
+                    let flags = PtrFlags::TRUSTED;
+                    let ty = if *nullable {
+                        RegType::PtrToBtfIdOrNull {
+                            id: 0,
+                            type_name: leaked,
+                            flags,
+                            ref_id: None,
+                        }
+                    } else {
+                        RegType::PtrToBtfId {
+                            type_name: leaked,
+                            flags,
+                            ref_id: None,
+                        }
+                    };
+                    state.types.set(*reg, ty);
+                    state.domain.forget(*reg);
+                }
+            }
+        }
+    }
 
     // Clear packet size bounds for the callee.
     // The kernel verifier tracks bounds per-function, so each function
@@ -468,6 +1137,87 @@ pub(crate) fn transfer_call_rel(
     state.pc = target;
 
     vec![state]
+}
+
+/// Caller-side compatibility for a global subprog arg (W6.5). The
+/// kernel rejects calls whose actual reg type doesn't satisfy the
+/// declared kind:
+///   - declared Scalar: actual must be ScalarValue.
+///   - declared PtrToMem: actual must be a memory-style pointer
+///     (PtrToStack / PtrToMapValue / PtrToMem / PtrToAllocMem) OR
+///     a scalar that's *provably zero* (literal NULL — the kernel
+///     does not admit arbitrary scalars cast to a pointer).
+fn caller_arg_compatible<F: Fn() -> bool>(
+    declared: &crate::parsing::btf::GlobalFuncArg,
+    actual: RegType,
+    scalar_is_zero: F,
+) -> bool {
+    use crate::parsing::btf::GlobalFuncArg;
+    match declared {
+        GlobalFuncArg::Scalar => matches!(actual, RegType::ScalarValue),
+        GlobalFuncArg::PtrToMem { .. } => match actual {
+            RegType::PtrToStack { .. }
+            | RegType::PtrToMapValue { .. }
+            | RegType::PtrToMapValueOrNull { .. }
+            | RegType::PtrToAllocMem { .. }
+            | RegType::PtrToAllocMemOrNull { .. } => true,
+            RegType::ScalarValue => scalar_is_zero(),
+            _ => false,
+        },
+        GlobalFuncArg::PtrToCtx => matches!(actual, RegType::PtrToCtx),
+        GlobalFuncArg::PtrToFwd { .. } => false,
+        GlobalFuncArg::PtrToBtfIdTrusted {
+            nullable,
+            type_name,
+        } => match actual {
+            // `__arg_trusted` accepts any kernel BTF id pointer the
+            // caller produced (acquired or static). `__arg_nullable`
+            // additionally admits the OrNull variant and literal NULL.
+            RegType::PtrToBtfId { .. } => true,
+            RegType::PtrToBtfIdOrNull { .. } => *nullable,
+            // Acquire-tracked specializations (PtrToTask, PtrToSocket,
+            // …) are kernel BTF ids in disguise — accept them when the
+            // declared type_name matches. CO-RE flavor suffix
+            // (`task_struct___local`) just renames the same kernel
+            // type, so strip the trailing `___…` before matching.
+            RegType::PtrToTask { .. } | RegType::PtrToTaskOrNull { .. } => {
+                let base = type_name
+                    .split("___")
+                    .next()
+                    .unwrap_or(type_name.as_str());
+                base == "task_struct"
+                    && (matches!(actual, RegType::PtrToTask { .. }) || *nullable)
+            }
+            RegType::PtrToSocket { .. } | RegType::PtrToSocketOrNull { .. } => {
+                let base = type_name
+                    .split("___")
+                    .next()
+                    .unwrap_or(type_name.as_str());
+                base == "sock"
+                    && (matches!(actual, RegType::PtrToSocket { .. }) || *nullable)
+            }
+            RegType::PtrToCpumask { .. } | RegType::PtrToCpumaskOrNull { .. } => {
+                let base = type_name
+                    .split("___")
+                    .next()
+                    .unwrap_or(type_name.as_str());
+                base == "bpf_cpumask"
+                    && (matches!(actual, RegType::PtrToCpumask { .. }) || *nullable)
+            }
+            RegType::ScalarValue => *nullable && scalar_is_zero(),
+            _ => false,
+        },
+        GlobalFuncArg::PermissivePtr => match actual {
+            RegType::PtrToCtx
+            | RegType::PtrToStack { .. }
+            | RegType::PtrToMapValue { .. }
+            | RegType::PtrToMapValueOrNull { .. }
+            | RegType::PtrToAllocMem { .. }
+            | RegType::PtrToAllocMemOrNull { .. } => true,
+            RegType::ScalarValue => scalar_is_zero(),
+            _ => false,
+        },
+    }
 }
 
 /// Apply the W5.2 lock / RCU pre-call flags carried on `proto`.
@@ -529,16 +1279,69 @@ pub(crate) fn apply_pre_call_lock_flags(
             return false;
         }
         state.release_lock();
+        // Kernel `verifier.c` v6.15 L8382: `process_spin_lock` calls
+        // `invalidate_non_owning_refs` on unlock — non-owning refs
+        // produced by `bpf_rbtree_add` / `bpf_list_push_*` under this
+        // lock are only safe to dereference while the lock is held.
+        state.invalidate_non_owning_refs();
     }
 
     if proto.flags.contains(CallFlags::RCU_READ_LOCK) {
         state.rcu_read_lock();
     }
 
-    if proto.flags.contains(CallFlags::RCU_READ_UNLOCK) && !state.rcu_read_unlock() {
-        env.fail(VerificationError::RcuReadNotHeld { pc });
+    if proto.flags.contains(CallFlags::RCU_READ_UNLOCK) {
+        if !state.rcu_read_unlock() {
+            env.fail(VerificationError::RcuReadNotHeld { pc });
+            return false;
+        }
+        // Kernel verifier.c v6.15 ~L13543: on rcu_read_unlock, every
+        // MEM_RCU reg/slot is re-flagged PTR_UNTRUSTED. We mirror this
+        // for iter slots only — the use-after-unlock pattern (lock /
+        // iter_*_new / next / unlock / next or unlock / lock / next)
+        // is what `iters_task_failure::iter_tasks_lock_and_unlock`
+        // exercises. Other reg-type RCU promotions are out of scope.
+        if !state.in_rcu_read_section() {
+            state.invalidate_rcu_iter_slots();
+        }
+    }
+
+    // Preempt-region (kernel verifier.c v6.15 ~L13560).
+    //
+    // MIGHT_SLEEP is checked BEFORE PREEMPT_DISABLE/ENABLE state changes:
+    // a sleepable helper inside an existing disabled region rejects
+    // regardless of whether this call would itself toggle the count.
+    // (`bpf_preempt_disable` and `bpf_preempt_enable` themselves are not
+    // marked MIGHT_SLEEP.)
+    if proto.flags.contains(CallFlags::MIGHT_SLEEP) && state.in_preempt_disabled() {
+        env.fail(VerificationError::SleepableInPreemptDisabled { pc, helper });
         return false;
     }
+    // IRQ-disabled region also rejects sleepable calls (kernel
+    // verifier.c v6.15 ~L13576).
+    if proto.flags.contains(CallFlags::MIGHT_SLEEP) && state.in_irq_disabled() {
+        env.fail(VerificationError::IrqState {
+            pc,
+            reason: "sleepable call inside bpf_local_irq_save-ed region".into(),
+        });
+        return false;
+    }
+
+    if proto.flags.contains(CallFlags::PREEMPT_DISABLE) {
+        state.preempt_disable();
+    }
+
+    if proto.flags.contains(CallFlags::PREEMPT_ENABLE) && !state.preempt_enable() {
+        env.fail(VerificationError::PreemptNotDisabled { pc });
+        return false;
+    }
+
+    // IRQ_SAVE / IRQ_RESTORE: validator already checked the arg type;
+    // the side-effect handler mutates the state. We only set up the
+    // gate here for completeness symmetry — actual mutation is in
+    // `apply_call_proto_r0`'s side-effect loop.
+    // (No state changes here; gating belongs to the proto path's
+    // arg validator + side-effect applier.)
 
     true
 }
@@ -573,6 +1376,10 @@ pub(crate) fn restore_interval_ptr_offset_from_return(
                     off,
                     var_off,
                     range,
+                    // id not currently round-tripped across subprog
+                    // returns; conservative None loses id-aware
+                    // refinement at the boundary but is sound.
+                    id: None,
                 };
                 ivl.get_mut(Reg::R0).ptr_offset = Some(ptr_offset);
             }

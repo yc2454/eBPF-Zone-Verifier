@@ -109,8 +109,126 @@ fn fanout_scalar_bounds(state: &mut State, left: Reg) {
     }
 }
 
+/// `if r1 == r2` / `if r1 != r2` jeq-infer: when one operand is already
+/// a non-null pointer with an id (e.g. `PtrToMapValue`) and the branch
+/// implies r1 == r2, propagate the non-null type to the other operand
+/// if it's the matching nullable variant (same id). Mirrors upstream
+/// `find_equal_scalars` / jeq_infer_not_null logic.
+fn jeq_infer_not_null(state: &mut State, left: Reg, right: Reg, eq_branch: bool) {
+    if !eq_branch {
+        return;
+    }
+    let lty = state.types.get(left);
+    let rty = state.types.get(right);
+    // If `r1 == r2` and one side is a known non-null pointer, the other
+    // (if it's the matching nullable variant) is also non-null. Mirrors
+    // upstream `find_equal_scalars` / jeq_infer_not_null. Ids don't need
+    // to match — value-equality of two registers means they alias the
+    // same kernel pointer regardless of how each was tracked.
+    if matches!(lty, RegType::PtrToMapValue { .. })
+        && matches!(rty, RegType::PtrToMapValueOrNull { .. })
+    {
+        maybe_promote_map_val(state, right);
+        return;
+    }
+    if matches!(rty, RegType::PtrToMapValue { .. })
+        && matches!(lty, RegType::PtrToMapValueOrNull { .. })
+    {
+        maybe_promote_map_val(state, left);
+        return;
+    }
+    // Extend to acquire-tracked pointer families: a JEQ between a
+    // non-null variant and the matching nullable variant promotes the
+    // nullable side on the eq branch, regardless of ref_id (the JEQ
+    // itself proves they alias). Without this, refinement can only flow
+    // across registers via shared ref_id — which we deliberately don't
+    // link when ref_id is `None`, see `same_acquired_pointer`.
+    if let Some(reg) = nullable_partner(&lty, &rty) {
+        match reg {
+            JeqPartner::Right => promote_nullable(state, right, &rty),
+            JeqPartner::Left => promote_nullable(state, left, &lty),
+        }
+    }
+}
+
+enum JeqPartner {
+    Left,
+    Right,
+}
+
+fn nullable_partner(lty: &RegType, rty: &RegType) -> Option<JeqPartner> {
+    if is_non_null_acquired(lty) && is_nullable_matching(lty, rty) {
+        return Some(JeqPartner::Right);
+    }
+    if is_non_null_acquired(rty) && is_nullable_matching(rty, lty) {
+        return Some(JeqPartner::Left);
+    }
+    None
+}
+
+fn is_non_null_acquired(ty: &RegType) -> bool {
+    matches!(
+        ty,
+        RegType::PtrToSocket { .. }
+            | RegType::PtrToSockCommon { .. }
+            | RegType::PtrToTcpSock { .. }
+            | RegType::PtrToCpumask { .. }
+            | RegType::PtrToArena { .. }
+            | RegType::PtrToCgroup { .. }
+            | RegType::PtrToOwnedKptr { .. }
+    )
+}
+
+fn is_nullable_matching(non_null: &RegType, nullable: &RegType) -> bool {
+    matches!(
+        (non_null, nullable),
+        (RegType::PtrToSocket { .. }, RegType::PtrToSocketOrNull { .. })
+            | (
+                RegType::PtrToSockCommon { .. },
+                RegType::PtrToSockCommonOrNull { .. }
+            )
+            | (
+                RegType::PtrToTcpSock { .. },
+                RegType::PtrToTcpSockOrNull { .. }
+            )
+            | (
+                RegType::PtrToCpumask { .. },
+                RegType::PtrToCpumaskOrNull { .. }
+            )
+            | (RegType::PtrToArena { .. }, RegType::PtrToArenaOrNull { .. })
+            | (RegType::PtrToCgroup { .. }, RegType::PtrToCgroupOrNull { .. })
+            | (
+                RegType::PtrToOwnedKptr { .. },
+                RegType::PtrToOwnedKptrOrNull { .. }
+            )
+    )
+}
+
+fn promote_nullable(state: &mut State, reg: Reg, ty: &RegType) {
+    if let Some(non_null) = ty.to_non_null() {
+        state.types.set(reg, non_null);
+    }
+}
+
 /// Refines register types based on the outcome of a conditional branch.
 pub(crate) fn refine_branch(state: &mut State, instr: &Instr, branch_taken: bool) {
+    // jeq_infer_not_null: `if r1 (==|!=) r2`
+    if let Instr::If {
+        op,
+        left,
+        right: Operand::Reg(right),
+        ..
+    } = instr
+    {
+        let eq_branch = match op {
+            CmpOp::Eq => branch_taken,
+            CmpOp::Ne => !branch_taken,
+            _ => return,
+        };
+        jeq_infer_not_null(state, *left, *right, eq_branch);
+        return;
+    }
+
     if let Instr::If {
         op,
         left,
@@ -185,12 +303,18 @@ fn maybe_promote_btf_id(state: &mut State, reg: Reg) {
             id,
             type_name,
             flags,
+            ref_id,
         } = state.types.get(r)
             && id == target_id
         {
-            state
-                .types
-                .set(r, RegType::PtrToBtfId { type_name, flags });
+            state.types.set(
+                r,
+                RegType::PtrToBtfId {
+                    type_name,
+                    flags,
+                    ref_id,
+                },
+            );
         }
     }
     promote_stack_slots_all_frames(
@@ -201,9 +325,11 @@ fn maybe_promote_btf_id(state: &mut State, reg: Reg) {
                 id: _,
                 type_name,
                 flags,
+                ref_id,
             } => RegType::PtrToBtfId {
                 type_name,
                 flags: *flags,
+                ref_id: *ref_id,
             },
             _ => unreachable!(),
         },
@@ -212,23 +338,33 @@ fn maybe_promote_btf_id(state: &mut State, reg: Reg) {
 
 fn maybe_promote_mem(state: &mut State, reg: Reg) {
     let (target_id, _) = match state.types.get(reg) {
-        RegType::PtrToAllocMemOrNull { id, mem_size } => (id, mem_size),
+        RegType::PtrToAllocMemOrNull { id, mem_size, .. } => (id, mem_size),
         _ => return,
     };
     for r in Reg::ALL {
-        if let RegType::PtrToAllocMemOrNull { id, mem_size } = state.types.get(r)
+        if let RegType::PtrToAllocMemOrNull { id, mem_size, ref_id, dynptr_id } = state.types.get(r)
             && id == target_id
         {
-            state.types.set(r, RegType::PtrToAllocMem { id, mem_size });
+            state.types.set(
+                r,
+                RegType::PtrToAllocMem { id, mem_size, ref_id, dynptr_id },
+            );
         }
     }
     promote_stack_slots_all_frames(
         state,
         |ty| matches!(ty, RegType::PtrToAllocMemOrNull { id, .. } if *id == target_id),
         |ty| match ty {
-            RegType::PtrToAllocMemOrNull { id, mem_size } => RegType::PtrToAllocMem {
+            RegType::PtrToAllocMemOrNull {
+                id,
+                mem_size,
+                ref_id,
+                dynptr_id,
+            } => RegType::PtrToAllocMem {
                 id: *id,
                 mem_size: *mem_size,
+                ref_id: *ref_id,
+                dynptr_id: *dynptr_id,
             },
             _ => unreachable!(),
         },
@@ -239,35 +375,53 @@ fn maybe_promote_mem(state: &mut State, reg: Reg) {
 /// pointer family with the same ref_id — i.e. a null check on one
 /// should refine the other along the same branch. Covers all
 /// acquire-style RegTypes (sockets / cpumask / arena / owned-kptr).
+///
+/// Two `None` ids are NOT considered linked — they describe pointers
+/// the verifier never assigned a release-tracking identity to (e.g.
+/// successive `bpf_sk_fullsock(skb->sk)` calls produce two distinct
+/// nullable sockets, neither acquired). Cross-register null promotion
+/// across such pairs caused the `verifier_jeq_infer_not_null::
+/// unchanged_for_jeq_false_branch` FALSE_ACCEPT.
 fn same_acquired_pointer(t1: &RegType, t2: &RegType) -> bool {
+    fn linked(id1: &Option<u32>, id2: &Option<u32>) -> bool {
+        id1.is_some() && id1 == id2
+    }
     match (t1, t2) {
         (
             RegType::PtrToSocketOrNull { ref_id: id1 },
             RegType::PtrToSocketOrNull { ref_id: id2 },
-        ) => id1 == id2,
+        ) => linked(id1, id2),
         (
             RegType::PtrToSockCommonOrNull { ref_id: id1 },
             RegType::PtrToSockCommonOrNull { ref_id: id2 },
-        ) => id1 == id2,
+        ) => linked(id1, id2),
         (RegType::PtrToTcpSockOrNull { id: id1 }, RegType::PtrToTcpSockOrNull { id: id2 }) => {
-            id1 == id2
+            linked(id1, id2)
         }
         (
             RegType::PtrToCpumaskOrNull { ref_id: id1 },
             RegType::PtrToCpumaskOrNull { ref_id: id2 },
-        ) => id1 == id2,
+        ) => linked(id1, id2),
         (
             RegType::PtrToArenaOrNull { ref_id: id1, .. },
             RegType::PtrToArenaOrNull { ref_id: id2, .. },
-        ) => id1 == id2,
+        ) => linked(id1, id2),
         (
             RegType::PtrToCgroupOrNull { ref_id: id1 },
             RegType::PtrToCgroupOrNull { ref_id: id2 },
-        ) => id1 == id2,
+        ) => linked(id1, id2),
         (
             RegType::PtrToOwnedKptrOrNull { ref_id: id1 },
             RegType::PtrToOwnedKptrOrNull { ref_id: id2 },
-        ) => id1 == id2,
+        ) => linked(id1, id2),
+        (
+            RegType::PtrToTaskOrNull { ref_id: id1 },
+            RegType::PtrToTaskOrNull { ref_id: id2 },
+        ) => linked(id1, id2),
+        (
+            RegType::PtrToBtfIdOrNull { ref_id: id1, .. },
+            RegType::PtrToBtfIdOrNull { ref_id: id2, .. },
+        ) => linked(id1, id2),
         _ => false,
     }
 }
@@ -283,12 +437,30 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
         | RegType::PtrToCpumaskOrNull { ref_id }
         | RegType::PtrToArenaOrNull { ref_id, .. }
         | RegType::PtrToCgroupOrNull { ref_id }
-        | RegType::PtrToOwnedKptrOrNull { ref_id } => ref_id,
+        | RegType::PtrToOwnedKptrOrNull { ref_id }
+        | RegType::PtrToTaskOrNull { ref_id } => ref_id,
+        // PtrToBtfIdOrNull only carries a ref_id when minted by an
+        // ACQUIRE-flagged kfunc returning `RetKind::PtrToBtfIdNamed`
+        // (`bpf_get_task_exe_file`, `bpf_lookup_user_key`, …). The plain
+        // entry-arg / decl-tag path uses `ref_id: None` and falls
+        // through to the catch-all return below — no release needed on
+        // the null branch.
+        RegType::PtrToBtfIdOrNull { ref_id: Some(rid), .. } => Some(rid),
         _ => return,
     };
 
+    // Always refine the originating register itself; cross-register and
+    // stack-slot propagation is gated on a shared, *concrete* ref_id
+    // (`same_acquired_pointer` returns false when both ids are None —
+    // see comment there).
     if is_non_null {
+        if let Some(promoted) = reg_type.to_non_null() {
+            state.types.set(reg, promoted);
+        }
         for r in Reg::ALL {
+            if r == reg {
+                continue;
+            }
             let ty = state.types.get(r);
             if same_acquired_pointer(&reg_type, &ty) {
                 state.types.set(r, ty.to_non_null().unwrap());
@@ -303,7 +475,11 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
         if target_ref_id.is_some() {
             state.release_ref(target_ref_id.unwrap());
         }
+        state.types.set(reg, RegType::ScalarValue);
         for r in Reg::ALL {
+            if r == reg {
+                continue;
+            }
             let ty = state.types.get(r);
             if same_acquired_pointer(&reg_type, &ty) {
                 state.types.set(r, RegType::ScalarValue);

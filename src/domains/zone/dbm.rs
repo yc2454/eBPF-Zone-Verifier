@@ -297,6 +297,19 @@ impl Dbm {
                 return true;
             }
         }
+        // Empty 32/64-bit shadow ranges are also infeasible. They arise
+        // from jmp32 narrowing (`apply_w32_*_fallback`) where the
+        // 32-bit bounds get tightened past each other; the DBM
+        // diagonal stays >= 0 because relational entries are unchanged.
+        for b in &self.bounds {
+            if b.s32_min > b.s32_max
+                || b.u32_min > b.u32_max
+                || b.s64_min > b.s64_max
+                || b.u64_min > b.u64_max
+            {
+                return true;
+            }
+        }
         false
     }
 

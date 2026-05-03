@@ -3,7 +3,7 @@
 # Exit non-zero if any diff is non-empty. Run from the repo root.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 BIN="./target/release/zovia"
@@ -15,7 +15,7 @@ for f in tests/baselines/selftest_zone.json \
          tests/baselines/selftest_kernel_backport.json \
          tests/baselines/prevail.json; do
     if [ ! -f "$f" ]; then
-        echo "Missing $f — run tests/baselines/capture_baseline.sh first." >&2
+        echo "Missing $f — run scripts/capture_baselines.sh first." >&2
         exit 2
     fi
 done
@@ -33,8 +33,8 @@ run_selftest() {
     local tag="${mode}${suite:+_$suite}"
     local baseline="tests/baselines/selftest_${tag}.json"
     echo "== selftest ($mode${suite:+, $suite}) =="
-    $BIN -q $flag --max-insn 100000 selftest-suite "$dir" > "$TMP/$tag.log" 2>&1
-    python3 tests/baselines/canonicalize.py results/selftest/selftest_report.json "$TMP/selftest_$tag.json"
+    $BIN -q $flag --max-insn 100000 dev selftest-suite "$dir" > "$TMP/$tag.log" 2>&1
+    python3 scripts/canonicalize_selftest_report.py results/selftest/selftest_report.json "$TMP/selftest_$tag.json"
     if ! diff -u "$baseline" "$TMP/selftest_$tag.json"; then
         echo "DIFF in selftest $tag"
         fail=1
@@ -43,7 +43,8 @@ run_selftest() {
 
 run_prevail() {
     echo "== prevail =="
-    $BIN -q prevail-benchmark ~/ebpf-samples > "$TMP/prevail.log" 2>&1
+    # Prevail moved to scripts/prevail.py (Pass 2 step 4); same JSON shape.
+    scripts/prevail.py --output-dir results/prevail benchmark ~/ebpf-samples > "$TMP/prevail.log" 2>&1
     local src
     src="$(ls -t results/prevail/prevail_benchmark_*_results.json | head -1)"
     python3 - "$src" "$TMP/prevail.json" <<'PY'

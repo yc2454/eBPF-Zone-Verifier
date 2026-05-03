@@ -16,6 +16,25 @@ pub enum IterKind {
     Task,
     Css,
     Bits,
+    /// `struct bpf_iter_task_vma` from kernel/bpf/task_iter.c. The
+    /// program-visible struct is 8 bytes; `_next` returns
+    /// `struct vm_area_struct *` (TRUSTED).
+    TaskVma,
+    /// `struct bpf_iter_testmod_seq` from the bpf testmod (16-byte
+    /// program-visible struct). `_next` returns `s64 *` into the
+    /// iterator's own state.
+    TestmodSeq,
+}
+
+impl IterKind {
+    /// Mirrors the kernel's `KF_RCU_PROTECTED` annotation on iter
+    /// `*_new` kfuncs. When true, the slot trust state at init time
+    /// depends on whether we're in an RCU CS, and `bpf_rcu_read_unlock`
+    /// invalidates trust on outstanding slots of this kind. Currently
+    /// task and css iters; bits/num are pure userspace state.
+    pub fn is_rcu_protected(self) -> bool {
+        matches!(self, IterKind::Task | IterKind::Css)
+    }
 }
 
 /// Lifecycle state for an open-coded iterator slot. Transitions:
@@ -33,12 +52,31 @@ pub enum IterState {
 }
 
 /// Per-slot iterator annotation. `id` is a fresh token minted at `*_new`
-/// time (used by subsumption in W3.2c to match "same loop").
+/// time (used by subsumption in W3.2c to match "same loop"). `depth`
+/// mirrors kernel `iter.depth`: incremented on every ACTIVE-branch fork
+/// at `*_next`, used by iter-loop convergence to keep iterations
+/// distinguishable so the inf-loop detector doesn't fire on legitimate
+/// loops, and (paired with `widen_imprecise_scalars`) drives convergence
+/// at the iter_next call site itself. See kernel
+/// `process_iter_next_call` / `iter_active_depths_differ` (verifier.c
+/// v6.15 ~L8884 / ~L18965).
+///
+/// `untrusted` mirrors kernel `PTR_UNTRUSTED` on iter stack slots
+/// (verifier.c v6.15 `mark_stack_slots_iter` ~L1041). For an iter kind
+/// whose `_new` kfunc is `KF_RCU_PROTECTED` (currently `task`, `css`),
+/// the kernel sets `MEM_RCU` if `in_rcu_cs` at `_new` time, else
+/// `PTR_UNTRUSTED`. After `bpf_rcu_read_unlock`, every `MEM_RCU` reg/
+/// slot is re-flagged `PTR_UNTRUSTED` (~L13543), so an iter created
+/// inside a RCU CS becomes UNTRUSTED if the program later releases the
+/// lock and re-enters `_next`. `_next` itself rejects with
+/// "expected an RCU CS when using …" on UNTRUSTED slots (~L8691).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct IteratorSlot {
     pub kind: IterKind,
     pub state: IterState,
     pub id: u32,
+    pub depth: u32,
+    pub untrusted: bool,
 }
 
 /// Dynptr families (Phase 4 W4.2).
@@ -75,6 +113,40 @@ pub struct DynptrSlot {
     pub ref_id: u32,
     pub rdonly: bool,
     pub first_slot: bool,
+    /// Per-instance identity for slice tracking (mirrors kernel
+    /// `state->stack[spi].spilled_ptr.id`, verifier.c v6.15 L911).
+    /// Distinct from `ref_id`: minted for *every* dynptr (even
+    /// unrefcounted `Local`/`Skb`/`Xdp`) so slices can be invalidated
+    /// on overwrite via the kernel's `bpf_for_each_reg_in_vstate`
+    /// loop (L913-919). Both pair slots carry the same value.
+    pub dynptr_id: u32,
+}
+
+/// IRQ-flag kfunc class. Mirrors kernel `enum irq_kfunc_class`
+/// (verifier.c v6.15 ~L1206): `bpf_local_irq_save/restore` are
+/// `IRQ_NATIVE_KFUNC`; `bpf_res_spin_lock_irqsave/unlock_irqrestore`
+/// are `IRQ_LOCK_KFUNC`. `_restore` must use the same class as `_save`,
+/// otherwise kernel rejects with "irq flag acquired by … kfuncs cannot
+/// be restored with … kfuncs".
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum IrqKfuncClass {
+    Native,
+    Lock,
+}
+
+/// Per-slot IRQ-flag annotation. Stamped on the 8-byte stack slot that
+/// holds an irq flag at `bpf_local_irq_save` (or
+/// `bpf_res_spin_lock_irqsave`) time. Cleared on the matching
+/// `_restore`. Mirrors the kernel `STACK_IRQ_FLAG` slot type
+/// (verifier.c v6.15 ~L1184) plus `spilled_ptr.irq.kfunc_class`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct IrqFlagSlot {
+    /// Fresh id minted at acquire (kernel `++env->id_gen`). Used by the
+    /// LIFO ordering check in `release_irq_state`: must equal the
+    /// program-level `active_irq_id`, else "cannot restore irq state out
+    /// of order".
+    pub id: u32,
+    pub kfunc_class: IrqKfuncClass,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,6 +196,11 @@ pub struct SpilledReg {
     /// all access outside this module goes through
     /// `stack_{get,set,clear}_dynptr`.
     pub(crate) dynptr: Option<DynptrSlot>,
+    /// IRQ-flag annotation. Set on the 8-byte slot at
+    /// `bpf_local_irq_save` (or `_irqsave` lock variant); cleared on
+    /// matching `_restore`. Private — go through
+    /// `stack_{get,set,clear}_irq_flag`.
+    pub(crate) irq_flag: Option<IrqFlagSlot>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -199,6 +276,7 @@ impl StackState {
                     precise: false,
                     iterator: None,
                     dynptr: None,
+                    irq_flag: None,
                 },
             );
         }
@@ -233,6 +311,7 @@ impl StackState {
                 precise: false,
                 iterator: None,
                 dynptr: None,
+                    irq_flag: None,
             },
         );
     }
@@ -316,6 +395,144 @@ impl StackState {
         self.slots
             .values()
             .any(|s| s.dynptr.is_some_and(|d| d.ref_id != 0))
+    }
+
+    /// Read the IRQ-flag annotation at a stack offset, if any.
+    pub fn stack_get_irq_flag(&self, offset: i16) -> Option<IrqFlagSlot> {
+        self.slots.get(&offset).and_then(|s| s.irq_flag)
+    }
+
+    /// Set the IRQ-flag annotation on an already-initialized slot.
+    /// Callers must have written the slot's 8 bytes first
+    /// (typically via `update_store_types`).
+    pub fn stack_set_irq_flag(&mut self, offset: i16, flag: IrqFlagSlot) {
+        if let Some(spilled) = self.slots.get_mut(&offset) {
+            spilled.irq_flag = Some(flag);
+        }
+    }
+
+    /// Clear the IRQ-flag annotation at a stack offset (matched
+    /// `_restore`). No-op if absent.
+    pub fn stack_clear_irq_flag(&mut self, offset: i16) {
+        if let Some(spilled) = self.slots.get_mut(&offset) {
+            spilled.irq_flag = None;
+        }
+    }
+
+    /// True if any slot still holds an IRQ-flag annotation. Used at
+    /// EXIT to reject programs that leak an IRQ-disabled region.
+    pub fn has_unreleased_irq_flags(&self) -> bool {
+        self.slots.values().any(|s| s.irq_flag.is_some())
+    }
+
+    /// True if a write of `size` bytes at stack offset `off` would touch
+    /// any byte covered by an active dynptr slot. Each dynptr occupies a
+    /// 16-byte pair (two adjacent 8-byte slots, both annotated). A direct
+    /// stack write that overlaps any byte of the pair is the kernel's
+    /// "cannot overwrite referenced dynptr" / partial-slot-invalidate
+    /// rejection. We only flag *referenced* dynptrs (`ref_id != 0`) so
+    /// that overwriting a Local/Skb/Xdp dynptr — which the kernel allows
+    /// — stays accepted.
+    pub fn write_overlaps_referenced_dynptr(&self, off: i64, size: i64) -> bool {
+        let write_end = off + size;
+        self.slots.iter().any(|(slot_off, spilled)| {
+            let Some(d) = spilled.dynptr else {
+                return false;
+            };
+            if d.ref_id == 0 {
+                return false;
+            }
+            let slot_start = *slot_off as i64;
+            let slot_end = slot_start + 8;
+            off < slot_end && write_end > slot_start
+        })
+    }
+
+    /// Collect base offsets of every dynptr-pair (any kind) whose 16
+    /// bytes are touched by a stack write of `size` at `off`. Used to
+    /// destroy unrefcounted dynptrs (`Local`/`Skb`/`Xdp`) on direct
+    /// stack writes — kernel `destroy_if_dynptr_stack_slot`
+    /// (verifier.c v6.15 L880) clears both slots and invalidates slices
+    /// rather than rejecting the write. Returns base-slot offsets; the
+    /// caller is expected to clear `(base_off, base_off+8)` and run
+    /// `invalidate_dynptr_slices` on the slot's `dynptr_id`.
+    pub fn dynptr_pairs_touched_by_write(&self, off: i64, size: i64) -> Vec<(i16, u32)> {
+        let write_end = off + size;
+        let mut out: Vec<(i16, u32)> = Vec::new();
+        for (slot_off, spilled) in &self.slots {
+            let Some(d) = spilled.dynptr else { continue };
+            let slot_start = *slot_off as i64;
+            let slot_end = slot_start + 8;
+            if off < slot_end && write_end > slot_start {
+                let base_off = if d.first_slot {
+                    *slot_off
+                } else {
+                    *slot_off - 8
+                };
+                if !out.iter().any(|(b, _)| *b == base_off) {
+                    out.push((base_off, d.dynptr_id));
+                }
+            }
+        }
+        out
+    }
+
+    /// True if a direct read at `off..off+size` overlaps any byte of a
+    /// dynptr's body (W4.2). Programs may not read the dynptr metadata
+    /// bytes — they're opaque kernel state. Applies to *any* dynptr
+    /// kind, regardless of ref_id (the body of a Local/Skb/Xdp dynptr
+    /// is also not user-readable). Helpers reach into the dynptr via
+    /// `bpf_dynptr_read` / `bpf_dynptr_data` instead.
+    pub fn read_overlaps_dynptr(&self, off: i64, size: i64) -> bool {
+        let read_end = off + size;
+        self.slots.iter().any(|(slot_off, spilled)| {
+            if spilled.dynptr.is_none() {
+                return false;
+            }
+            let slot_start = *slot_off as i64;
+            let slot_end = slot_start + 8;
+            off < slot_end && read_end > slot_start
+        })
+    }
+
+    /// True if a stack access at `off..off+size` overlaps any byte of an
+    /// active open-coded iterator's body (W3.2). Iter structs span
+    /// `bpf_iter_size(kind)` bytes — the annotation lives only on the
+    /// base byte, so we resolve the size by looking at each annotated
+    /// slot. Applies to both reads and writes: programs treat iter
+    /// bodies as opaque (only `*_new`/`*_next`/`*_destroy` may touch
+    /// them). Without this, `spill_at` silently wipes the iter
+    /// annotation on a direct write and no leak is detected at exit.
+    pub fn access_overlaps_iterator(&self, off: i64, size: i64) -> bool {
+        let access_end = off + size;
+        self.slots.iter().any(|(slot_off, spilled)| {
+            let Some(iter) = spilled.iterator else {
+                return false;
+            };
+            let slot_start = *slot_off as i64;
+            let slot_end =
+                slot_start + crate::common::stack_objects::bpf_iter_size(iter.kind) as i64;
+            off < slot_end && access_end > slot_start
+        })
+    }
+
+    /// True if a stack access at `off..off+size` overlaps any byte of an
+    /// active IRQ-flag slot. Mirrors `access_overlaps_iterator`. The
+    /// IRQ flag occupies a fixed 8-byte slot. Used by `irq_flag_overwrite`
+    /// detection — direct writes invalidate the slot's STACK_IRQ_FLAG
+    /// mark in the kernel; we treat them as REJECT instead of silently
+    /// stripping the annotation, since otherwise a missing `_restore`
+    /// slips by the exit-time leak check.
+    pub fn access_overlaps_irq_flag(&self, off: i64, size: i64) -> bool {
+        let access_end = off + size;
+        self.slots.iter().any(|(slot_off, spilled)| {
+            if spilled.irq_flag.is_none() {
+                return false;
+            }
+            let slot_start = *slot_off as i64;
+            let slot_end = slot_start + 8;
+            off < slot_end && access_end > slot_start
+        })
     }
 
     pub fn live_slot_offsets(&self, live_regs: &HashSet<Reg>) -> Vec<i16> {

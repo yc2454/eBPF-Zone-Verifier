@@ -11,7 +11,7 @@ use crate::common::mem_region_model;
 use RegType::*;
 use log::error;
 
-use super::map::check_map_access;
+use super::map::{check_kptr_field_access, check_map_access};
 use super::packet::{check_packet_access, check_packet_meta_access};
 use super::stack::check_stack_access;
 
@@ -23,11 +23,51 @@ pub enum AccessKind {
     HelperPrimitive,
 }
 
+/// True iff `base` has a variable (non-fixed) offset relative to its
+/// underlying anchor — i.e. some scalar was added to it whose exact value
+/// is not statically known. We look at the interval domain's `ptr_off` and
+/// check `var_off > 0`. Bucket F-D: variable-offset accesses are the
+/// canonical precision sinks for kernel `mark_chain_precision`.
+fn base_has_variable_offset(state: &State, base: Reg) -> bool {
+    use crate::domains::numeric::NumericDomain;
+    let NumericDomain::Interval(ref ivl) = state.domain else {
+        return false;
+    };
+    ivl.get_ptr_offset(base)
+        .map(|p| p.var_off > 0)
+        .unwrap_or(false)
+}
+
 /// Validates memory load safety.
 pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, off: i16) {
     let ctx = env.ctx;
     let base_type = state.types.get(base);
     let pc = state.pc;
+
+    // Bucket F-D: every memory access is a precision sink. Walk the
+    // History backward marking the access's offset lineage precise on
+    // every cached state on the path. Mirrors kernel
+    // `mark_chain_precision` (verifier.c v6.15 ~L4500-4900). The walker
+    // traces Alu/Mov/Load/Call chains starting from `base` (the access
+    // pointer) and updates frontier across them; if the access has a
+    // recorded variable-offset contributor (`ptr += Reg(scalar)`), we
+    // start from the scalar instead — saves the walker some work but
+    // reaches the same lineage either way.
+    //
+    // Skip R10 — the frame pointer is never re-assigned, so walking
+    // from it is a no-op that just marks R10 precise on history's worth
+    // of cached states (wasted work, no behavior change).
+    if let Some(hidx) = state.history_idx
+        && base != Reg::R10
+    {
+        let sink = state
+            .var_off_contributor
+            .get(&base)
+            .copied()
+            .unwrap_or(base);
+        env.mark_chain_precision_backward(hidx, sink);
+    }
+    let _ = base_has_variable_offset;
 
     match base_type {
         PtrToStack { frame_level } => {
@@ -63,10 +103,22 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             map_idx,
         } => {
             if let Some(map_def) = ctx.map_defs.get(map_idx) {
-                if map_def.map_flags == constants::BPF_F_WRONLY_PROG {
+                if map_def.map_flags & constants::BPF_F_WRONLY_PROG != 0 {
                     error!("Map load is forbidden!");
                     env.fail(VerificationError::MapLoadForbidden { pc, map_idx });
                 }
+                check_kptr_field_access(
+                    env,
+                    state,
+                    map_def,
+                    map_idx,
+                    base,
+                    map_off_opt,
+                    off,
+                    size,
+                    pc,
+                    /*is_store=*/ false,
+                );
                 let map_limit = map_def.value_size as i64;
                 check_map_access(
                     env,
@@ -86,26 +138,24 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             }
         }
         PtrToMapValueOrNull { map_idx, .. } => {
-            let final_offset = off as i64;
-            let access_end = final_offset + size;
-            let map_limit = if let Some(def) = ctx.map_defs.get(map_idx) {
-                def.value_size as i64
-            } else {
-                constants::DEFAULT_MAP_VALUE_SIZE
-            };
-
-            if !(final_offset >= 0 && access_end <= map_limit) {
-                error!(
-                    "Unsafe nullable map load at pc {}: off {} limit {}",
-                    pc, final_offset, map_limit
-                );
-                env.fail(VerificationError::UnsafeMapLoad {
-                    pc,
-                    off: final_offset,
-                    size,
-                    limit: map_limit,
-                });
-            }
+            // Loads through a nullable map pointer are unconditionally
+            // rejected by the kernel — the user must null-check first
+            // (which promotes the type to PtrToMapValue). Without this,
+            // pruning that loses an unrefined nullable arrival lets
+            // subsequent loads slip through (cluster: regsafe).
+            error!(
+                "Load through PtrToMapValueOrNull at pc {}: requires null check",
+                pc
+            );
+            let _ = off;
+            let _ = size;
+            let _ = map_idx;
+            env.fail(VerificationError::UnsafeMapLoad {
+                pc,
+                off: off as i64,
+                size,
+                limit: 0,
+            });
         }
         PtrToTcpSock { .. } | PtrToSockCommon { .. } | PtrToSocket { .. } => {
             if !mem_region_model::is_valid_mem_region_read(state.types.get(base), off, size) {
@@ -132,14 +182,23 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             check_packet_meta_access(env, state, base, off, size, pc);
         }
         PtrToBtfId { .. } | PtrToMapObject { .. } => {
-            let is_unknown = match base_type {
+            // Skip the field-table check for any PtrToBtfId whose
+            // concrete kernel type isn't modeled in `mem_region_model`
+            // (e.g. `struct socket`, `struct task_struct`, `struct
+            // linux_binprm` for LSM hooks). The kernel relies on BTF for
+            // these and accepts any valid BTF field offset; without a
+            // BTF-driven check our hand table would over-reject the LSM
+            // / tp_btf corpus. PtrToMapObject and the modeled
+            // PtrToBtfId types (`bpf_iter_meta`) still go through the
+            // table.
+            let has_field_table = matches!(
+                base_type,
                 PtrToBtfId {
-                    type_name: "unknown",
+                    type_name: "bpf_iter_meta",
                     ..
-                } => true,
-                _ => false,
-            };
-            if !is_unknown
+                } | PtrToMapObject { .. }
+            );
+            if has_field_table
                 && !mem_region_model::is_valid_mem_region_read(state.types.get(base), off, size)
             {
                 error!(
@@ -149,7 +208,7 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
                 env.fail(VerificationError::UnsafeSocketAccess { pc, off, size });
             }
         }
-        PtrToAllocMem { id: _, mem_size } => {
+        PtrToAllocMem { mem_size, .. } => {
             // Bounded allocated memory (W4.2g: surfaced when
             // bpf_dynptr_slice's PtrToAllocMemOrNull return is
             // refined to PtrToAllocMem after a null check). Mirrors
@@ -168,20 +227,17 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
                 });
             }
         }
-        PtrToArena { ref_id: _, mem_size } => {
-            let access_end = off as i64 + size;
-            if off < 0 || access_end > mem_size as i64 {
-                error!(
-                    "Unsafe arena load at pc {}: base {:?}+{} size {} exceeds arena allocation size {}",
-                    pc, base, off, size, mem_size
-                );
-                env.fail(VerificationError::UnsafeMemoryLoad {
-                    pc,
-                    base,
-                    off,
-                    size,
-                });
-            }
+        PtrToArena { .. } => {
+            // Arena memory is sparse-mapped and lazily faulted: accesses
+            // outside the alloc'd page run zero-faults rather than reject.
+            // The kernel verifier therefore doesn't bounds-check arena
+            // loads against the alloc's `mem_size`, only against the
+            // arena's overall 4GB virtual range (modeled implicitly by
+            // the addr-space cast, which we don't trace). See
+            // `verifier_arena.c::basic_alloc2` (writes `page1 + 2*PAGE_SIZE`
+            // through a 2-page alloc) and `verifier_arena_large.c::big_alloc1`
+            // (`page2 +/- PAGE_SIZE`). Accept any offset; loaded value
+            // stays `ScalarValue` via the type-update path.
         }
         // Phase 7 wrap-up: lax field-access on trusted typed BTF
         // pointers we don't have a `mem_region_model` entry for.
@@ -232,6 +288,32 @@ pub fn check_store(
     let base_ty = state.types.get(base);
     let pc = state.pc;
 
+    // Bucket F-D / Option C: variable-offset store is also a precision sink.
+    // Bucket F-D: precision-mark the variable-offset contributor.
+    //
+    // When `base` was constructed via `Alu Add base, Reg(scalar)` in
+    // `arithmetic::handle_add`, the scalar that supplied the variable
+    // offset was recorded in `state.var_off_contributor[base]`. At the
+    // access (a precision sink), we walk the History backward from this
+    // step, marking the scalar's transitive lineage precise on every
+    // cached state on the path. This is what lets the kernel-aligned
+    // wideners at iter_next / may_goto / cb-return preserve the offset
+    // reg's bound across widening sites — without it, the widener
+    // clobbers the offset to UNKNOWN and the next iteration's bounds
+    // check fails.
+    //
+    // Mirrors kernel `mark_chain_precision` (verifier.c v6.15
+    // ~L4500-4900): kernel walks back from precision sinks and marks
+    // ancestors precise via id-link / ALU-source chasing. We use the
+    // explicit contributor map plus the AST-walk in
+    // `mark_chain_precision_backward` (env.rs) as the same chain.
+    if let Some(hidx) = state.history_idx
+        && let Some(&offset_reg) = state.var_off_contributor.get(&base)
+    {
+        env.mark_chain_precision_backward(hidx, offset_reg);
+    }
+    let _ = base_has_variable_offset;
+
     match base_ty {
         PtrToMapValue {
             id: _,
@@ -239,10 +321,14 @@ pub fn check_store(
             map_idx,
         } => {
             if let Some(map_def) = ctx.map_defs.get(map_idx) {
-                if map_def.map_flags == constants::BPF_F_RDONLY_PROG {
+                if map_def.map_flags & constants::BPF_F_RDONLY_PROG != 0 {
                     error!("Map store is forbidden!");
                     env.fail(VerificationError::MapStoreForbidden { pc, map_idx });
                 }
+                check_kptr_field_access(
+                    env, state, map_def, map_idx, base, map_off, off, size, pc,
+                    /*is_store=*/ true,
+                );
                 let map_limit = map_def.value_size as i64;
                 check_map_access(
                     env, state, map_limit, map_off, map_idx, base, map_def, off, size, pc,
@@ -309,7 +395,7 @@ pub fn check_store(
                 base_type: base_ty,
             });
         }
-        PtrToAllocMem { id: _, mem_size } => {
+        PtrToAllocMem { mem_size, .. } => {
             let access_end = off as i64 + size;
             if access_end > mem_size as i64 {
                 error!(
@@ -324,20 +410,22 @@ pub fn check_store(
                 });
             }
         }
-        PtrToArena { ref_id: _, mem_size } => {
-            let access_end = off as i64 + size;
-            if off < 0 || access_end > mem_size as i64 {
-                error!(
-                    "Unsafe arena store at pc {}: base {:?}+{} size {} exceeds arena allocation size {}",
-                    pc, base, off, size, mem_size
-                );
-                env.fail(VerificationError::UnsafeMemoryStore {
-                    pc,
-                    base,
-                    off,
-                    size,
-                });
-            }
+        PtrToOwnedKptr { .. } => {
+            // Stores into a freshly-allocated owned kptr (`m->key = 2`
+            // after `bpf_obj_new` / `bpf_refcount_acquire`) are allowed
+            // by kernel `verifier.c` v6.15 — `check_ptr_to_btf_access`
+            // for `MEM_ALLOC` falls through to BTF field-typed access,
+            // which we don't model precisely. Accept permissively here:
+            // the alternative is rejecting kernel-accepting programs.
+            // Bounds against the allocated object size are not tracked
+            // (`PtrToOwnedKptr` doesn't carry a size); future precision
+            // can attach the BTF id of the underlying type and bound
+            // against it.
+        }
+        PtrToArena { .. } => {
+            // Symmetric with the load side: arena memory is sparse-mapped,
+            // so OOB-looking stores zero-fault rather than reject. The
+            // kernel verifier doesn't bound stores against alloc size.
         }
         // W6.4a-followon: writes through a BTF-typed pointer.
         // Mirror the load-side policy at access.rs::update_load_types:

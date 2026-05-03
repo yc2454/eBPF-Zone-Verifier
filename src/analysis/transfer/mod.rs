@@ -8,7 +8,7 @@ mod branch;
 mod call;
 mod common;
 mod memory;
-mod types;
+pub(crate) mod types;
 
 use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::error::VerificationError;
@@ -135,26 +135,77 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
         }
 
         Instr::MayGoto { target } => {
-            // `may_goto` models a bounded back-edge: the kernel inlines a
-            // per-program counter check that either takes the jump (counter
-            // positive, decrement) or falls through (counter exhausted).
-            // We fork two successors accordingly. When the budget on this
-            // path is already zero, the taken edge is infeasible and only
-            // the fallthrough survives — this is what guarantees
-            // termination of the abstract interpreter on otherwise
-            // unbounded loops. No REJECT: the kernel itself doesn't reject
-            // here, it just stops iterating.
+            // `may_goto` (BPF_JCOND, v6.8) models a bounded back-edge.
+            // The kernel inlines a per-program counter that decrements on
+            // every execution of the may_goto, regardless of which edge
+            // is taken; once the counter hits zero the may_goto becomes
+            // a no-op (fall through). Mirroring that decrement on BOTH
+            // successors is what lets the abstract interpreter actually
+            // terminate: each loop iteration shrinks the budget, so
+            // pruning at the loop head eventually subsumes future
+            // iterations once widening (or empty live-regs) makes the
+            // body's effect on tracked state stable.
+            //
+            // Bucket F-D: also mirror the kernel's static may_goto
+            // machinery (`check_cond_jmp_op` BPF_JCOND arm, verifier.c
+            // v6.15 ~L16400-16410): on each visit, find a previous
+            // explored state at this same insn_idx, run
+            // `widen_imprecise_scalars` to coarsen scalars whose abstract
+            // value disagrees, and bump `may_goto_depth` on the queued
+            // state. The depth bump powers a separate RANGE_WITHIN prune
+            // class at this pc (~L19102) and defuses the EXACT inf-loop
+            // trap (~L19118). Without this, loops like
+            // `for (i=0; i<N && can_loop; i++) { arr[i]; cond_break; }`
+            // never converge: `i` is precision-marked at `arr[i]` and
+            // each iteration produces a fresh state, but the loop has
+            // both an `If`-style exit (`i < N`) and a may_goto, so our
+            // `force_widen_for_may_goto` (gated on `only_may_goto_exit`)
+            // never fires.
             let fallthrough_pc = state.pc + 1;
-            let mut state_fall = state.clone();
-            state_fall.pc = fallthrough_pc;
+            let cur_pc = state.pc;
+
+            // Snapshot a previous explored state at this insn for the
+            // widener (kernel `find_prev_entry`). The worklist driver
+            // calls `record_state` before `transfer`, so
+            // `explored_states[cur_pc].last()` IS the current state —
+            // skip it and take the second-most-recent. Without this
+            // skip the widener compares cur against itself and never
+            // coarsens anything.
+            let prev_snapshot: Option<State> = env
+                .explored_states
+                .get(&cur_pc)
+                .and_then(|prev_states| {
+                    let mut iter = prev_states.iter().rev().filter(|s| s.pc == cur_pc);
+                    iter.next();
+                    iter.next()
+                })
+                .cloned();
 
             if state.goto_budget() == 0 {
+                let mut state_fall = state;
+                state_fall.pc = fallthrough_pc;
+                state_fall.may_goto_depth = state_fall.may_goto_depth.saturating_add(1);
+                if let Some(prev) = prev_snapshot.as_ref() {
+                    call::kfunc::widen_imprecise_scalars_at_iter_next(prev, &mut state_fall);
+                }
                 return vec![state_fall];
             }
 
-            let mut state_taken = state;
+            let mut state_taken = state.clone();
             state_taken.consume_goto_budget();
             state_taken.pc = *target;
+            state_taken.may_goto_depth = state_taken.may_goto_depth.saturating_add(1);
+
+            let mut state_fall = state;
+            state_fall.consume_goto_budget();
+            state_fall.pc = fallthrough_pc;
+            state_fall.may_goto_depth = state_fall.may_goto_depth.saturating_add(1);
+
+            if let Some(prev) = prev_snapshot.as_ref() {
+                call::kfunc::widen_imprecise_scalars_at_iter_next(prev, &mut state_taken);
+                call::kfunc::widen_imprecise_scalars_at_iter_next(prev, &mut state_fall);
+            }
+
             vec![state_taken, state_fall]
         }
 
@@ -216,6 +267,17 @@ fn transfer_endian(
                 _ => state.domain.forget(dst),
             }
         }
+        EndianOp::Bswap => {
+            // BPF v4 BSWAP: byte-swap of the low `size` bits, independent of
+            // host endianness. Result fits in `size` bits — narrow, but the
+            // exact value is non-linear so the prior interval is forgotten.
+            match size {
+                16 => state.domain.apply_and_imm(dst, 0xFFFF),
+                32 => state.domain.apply_and_imm(dst, 0xFFFF_FFFF),
+                64 => state.domain.forget(dst),
+                _ => state.domain.forget(dst),
+            }
+        }
     }
 
     // 3. Handle Implicit 32-bit Zero Extension
@@ -234,11 +296,54 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
 
     let (r0_min, r0_max) = state.domain.get_interval(Reg::R0);
 
-    // Use the helper method on the ProgramKind stored in env
-    if env.ctx.prog_kind.requires_strict_return_code() && (r0_min < 0 || r0_max > 1) {
-        env.fail(VerificationError::InvalidReturnCode { pc: state.pc });
-        return vec![];
+    // Exception-callback exit: when the active analysis pass is
+    // verifying an `__exception_cb` body (`analyze_exception_cb`),
+    // mirror the kernel's `in_exception_callback_fn` behavior — apply
+    // the main-program exit rule at the cb's exit. For fentry/fexit
+    // attach flavors, that rule is R0 ∈ [0, 0] (kernel:
+    // "At program exit the register R0 has ... should be ..."). We do
+    // not enforce this on ordinary fentry main-program exits because
+    // the existing corpus relies on the looser local behavior; the
+    // tighter rule fires only inside the cb pass.
+    if env.analyzing_exception_cb
+        && state.at_main_frame()
+        && matches!(env.ctx.attach_flavor.as_deref(), Some("fentry") | Some("fexit"))
+    {
+        if r0_min != 0 || r0_max != 0 {
+            env.fail(VerificationError::InvalidReturnCode { pc: state.pc });
+            return vec![];
+        }
     }
+
+    // Cluster B: per-attach-type retval range. When a finer rule applies
+    // for the (prog_kind, attach_subtype) pair, prefer it over the coarse
+    // `requires_strict_return_code` check below — the kernel's per-hook
+    // ranges are tighter (e.g. cgroup/recvmsg* must return exactly 1).
+    if state.at_main_frame() {
+        if let Some(rule) = crate::ast::expected_retval_rule(
+            env.ctx.prog_kind,
+            env.ctx.attach_subtype.as_deref(),
+        ) {
+            let out_of_range = r0_min < rule.lo || r0_max > rule.hi;
+            let needs_known = rule.require_known
+                && (r0_min != r0_max
+                    || state.types.get(Reg::R0) != RegType::ScalarValue);
+            if out_of_range || needs_known {
+                env.fail(VerificationError::InvalidReturnCode { pc: state.pc });
+                return vec![];
+            }
+        } else if env.ctx.prog_kind.requires_strict_return_code()
+            && (r0_min < 0 || r0_max > 1)
+        {
+            env.fail(VerificationError::InvalidReturnCode { pc: state.pc });
+            return vec![];
+        }
+    }
+    // Kernel `check_return_code` only fires at the *main* program's
+    // exit — subprog (global_func) return values are unconstrained
+    // (test_global_func8::foo returns `bpf_get_prandom_u32()` and
+    // upstream accepts). Don't enforce the prog-type retval rule on
+    // non-main exits.
 
     // R0 must be readable at the main frame (it's the return value).
     // W6.4a-followon: void-returning struct_ops methods are exempt — the
@@ -262,12 +367,18 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     // W3.2b: open-coded iterators must be destroyed on every exit path.
     // An Active or Drained iterator slot anywhere in the frame stack is
     // a leak — parallel to unreleased refs above.
-    if state.at_main_frame()
-        && state
-            .frames
-            .iter()
-            .any(|f| f.stack.has_active_iterators())
-    {
+    //
+    // At main exit, walk all frames (defensive, though only frame[0] is
+    // live then). At non-main exit (subprog return), check the current
+    // frame: iter slots on the callee's stack vanish when the frame is
+    // popped, so an undestroyed iter is a leak — kernel emits
+    // "returning from callee: ... Unreleased reference".
+    let iter_leak = if state.at_main_frame() {
+        state.frames.iter().any(|f| f.stack.has_active_iterators())
+    } else {
+        state.frames.current().stack.has_active_iterators()
+    };
+    if iter_leak {
         env.fail(VerificationError::UnreleasedIterator);
         return vec![];
     }
@@ -275,30 +386,82 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     // W4.2c: ref-bearing dynptr slots (today: ringbuf reservations)
     // must be submitted or discarded on every exit path. Non-ref
     // dynptrs (Local/Skb/Xdp) are pure metadata over a pointer and
-    // need no release.
-    if state.at_main_frame()
-        && state
+    // need no release. Same per-frame logic as iterators above.
+    let dynptr_leak = if state.at_main_frame() {
+        state
             .frames
             .iter()
             .any(|f| f.stack.has_unreleased_dynptr_refs())
-    {
+    } else {
+        state.frames.current().stack.has_unreleased_dynptr_refs()
+    };
+    if dynptr_leak {
         env.fail(VerificationError::UnreleasedDynptr);
         return vec![];
     }
 
-    // Check if there is any unreleased locks
-    if state.has_active_lock() {
+    // Check if there is any unreleased locks. The kernel tracks a
+    // single program-level active_lock, so a subprog `exit` may leave
+    // the lock held for the caller to release (mirrors `verifier_spin_lock::
+    // lock_in_subprog_without_unlock`). Only enforce at the main frame.
+    if state.at_main_frame() && state.has_active_lock() {
         env.fail(VerificationError::UnreleasedLock);
         return vec![];
     }
 
-    // Check if any RCU read-side section is still open (W5.2)
-    if state.in_rcu_read_section() {
+    // Check if any RCU read-side section is still open (W5.2). For
+    // programs entered with the kernel's implicit RCU CS (kprobe,
+    // tracepoint, raw_tp, perf_event), depth=1 at exit is the
+    // kernel-supplied baseline — the kernel releases on return — so
+    // tolerate it. Anything above 1 in that case, or anything > 0 in
+    // sleepable / non-tracing programs, is an unreleased explicit
+    // bpf_rcu_read_lock.
+    let baseline = if state.implicit_rcu_at_entry { 1 } else { 0 };
+    if state.rcu_read_depth > baseline {
         env.fail(VerificationError::UnreleasedRcuRead);
         return vec![];
     }
 
-    if state.num_frames() >= 8 {
+    // Main-prog exit inside a preempt-disabled region (kernel verifier.c
+    // v6.15 ~L11096). Subprog exits are fine: kernel only checks at the
+    // root frame's BPF_EXIT, mirroring `check_lock` callers.
+    if state.at_main_frame() && state.in_preempt_disabled() {
+        env.fail(VerificationError::ExitInPreemptDisabled);
+        return vec![];
+    }
+
+    // Main-prog exit inside an IRQ-disabled region (kernel verifier.c
+    // v6.15 ~L11086). Same shape as the preempt check above. Subprog
+    // exits are fine — kernel only checks at the root frame.
+    if state.at_main_frame() && state.in_irq_disabled() {
+        env.fail(VerificationError::IrqState {
+            pc: state.pc,
+            reason: "BPF_EXIT in main prog inside bpf_local_irq_save-ed region".into(),
+        });
+        return vec![];
+    }
+    // Also reject leaked irq flag stack slots (parallel to
+    // has_active_iterators above).
+    let irq_leak = if state.at_main_frame() {
+        state.frames.iter().any(|f| f.stack.has_unreleased_irq_flags())
+    } else {
+        state.frames.current().stack.has_unreleased_irq_flags()
+    };
+    if irq_leak {
+        env.fail(VerificationError::IrqState {
+            pc: state.pc,
+            reason: "leaked irq flag stack slot at exit".into(),
+        });
+        return vec![];
+    }
+
+    // Exit-time sanity guard: depth at exit shouldn't exceed the
+    // kernel's MAX_CALL_FRAMES = 8. The pre-push `> 8` check in
+    // `transfer_call_rel` already prevents pushing a 9th frame, so
+    // hitting this at exit means a bug in frame bookkeeping. Use the
+    // same `> 8` rule so a legitimate `main → 7 subprogs → exit`
+    // chain (depth = 8 at the deepest) doesn't FR.
+    if state.num_frames() > 8 {
         env.fail(VerificationError::MaxCallDepthExceeded { pc: state.pc });
         return vec![];
     }
@@ -308,28 +471,40 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         return vec![];
     }
 
-    // W3.4b: a callback frame's Exit doesn't return into the caller —
-    // the helper's post-call state is emitted separately at the call
-    // site. We only validate the callback's R0 (must be a scalar — for
-    // bpf_loop specifically the kernel requires 0 or 1; we keep the
-    // check loose here and let future work tighten) and drop the path.
+    // W3.4b: a callback frame's Exit doesn't merge back into the caller
+    // by way of CallRel return semantics — the helper's post-call state
+    // is emitted separately at the call site (see
+    // `transfer_callback_helper`'s skip_state). What we DO emit here
+    // (bucket E) is a SECOND post-call state at the call site's pc+1
+    // that carries the cb's effects on caller-frame stack memory. This
+    // mirrors the kernel's iterative cb model (verifier.c v6.15
+    // ~L10903+): cb-touched scalar stack slots get widened on the
+    // surviving caller state when the cb may run ≥ 2 times. For
+    // nr_loops ≤ 1 (or single-shot helpers like find_vma) we keep the
+    // cb's writes concretely, since there's no "previous iteration" to
+    // widen against.
     if state.frames.current().is_callback() {
         if state.types.get(Reg::R0) != RegType::ScalarValue {
             env.fail(VerificationError::InvalidReturnCode { pc });
             return vec![];
         }
-        // W3.4c: bpf_loop callback must return 0 (continue) or 1 (break).
-        // Other callback helpers use their return value differently
-        // (for_each_map_elem: 0/1 too; timer: void) — only tighten what
-        // we know is kernel-enforced.
-        if state.frames.current().callback_helper() == Some(crate::common::constants::BPF_LOOP) {
+        // W3.4c: bpf_loop / bpf_for_each_map_elem / bpf_user_ringbuf_drain
+        // callbacks must return 0 (continue) or 1 (break). Timer callbacks
+        // are void-returning and not constrained here.
+        let cb_helper_id = state.frames.current().callback_helper();
+        if matches!(
+            cb_helper_id,
+            Some(crate::common::constants::BPF_LOOP)
+                | Some(crate::common::constants::BPF_FOR_EACH_MAP_ELEM)
+                | Some(crate::common::constants::BPF_USER_RINGBUF_DRAIN)
+        ) {
             let (lo, hi) = state.domain.get_interval(Reg::R0);
             if lo < 0 || hi > 1 {
                 env.fail(VerificationError::InvalidReturnCode { pc });
                 return vec![];
             }
         }
-        return vec![];
+        return cb_exit_propagate(env, state);
     }
 
     if let Some(frame) = state.pop_frame() {
@@ -407,4 +582,112 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     } else {
         vec![]
     }
+}
+
+/// Build a post-cb state at the helper call's pc+1 that carries the
+/// cb's effects on caller-frame memory. Mirrors kernel's
+/// `prepare_func_exit` cb-return path + `widen_imprecise_scalars`
+/// (verifier.c v6.15 ~L10898–10920). Caller-frame stack writes done
+/// via the cb's ctx pointer have already landed on the right frame
+/// (PtrToStack carries frame_level); we pop the cb frame, restore
+/// caller regs, and—if the cb may iterate ≥ 2 times—invalidate the
+/// stack slots that differ from the snapshot taken at cb-entry.
+fn cb_exit_propagate(env: &VerifierEnv, mut state: State) -> Vec<State> {
+    use crate::analysis::machine::frame_stack::FrameLevel;
+    use crate::analysis::machine::reg_types::RegType;
+    use crate::analysis::transfer::call::transfer::apply_return_bounds_for_cb_helper;
+    use crate::domains::tnum::Tnum;
+    use std::collections::HashSet;
+
+    let Some(frame) = state.pop_frame() else {
+        return vec![];
+    };
+    let return_pc = frame.return_pc;
+    let helper = frame.callback_helper().unwrap_or(0);
+    let should_widen = frame.cb_should_widen();
+    let caller_level = frame.caller_frame_level();
+    let snapshot = frame.caller_stack_snapshot().cloned();
+
+    // Restore caller regs (cb's R0 etc. are dropped).
+    state.types = frame.caller_types;
+    state.domain = frame.caller_domain;
+    state.tnums = frame.caller_tnums;
+
+    // Helper return value lives in R0; bounds depend on helper kind.
+    state.types.set(Reg::R0, RegType::ScalarValue);
+    apply_return_bounds_for_cb_helper(&mut state, helper);
+    state.clear_scalar_id(Reg::R0);
+
+    // Forget arg regs (helpers clobber R1..R5).
+    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+        state.types.set(r, RegType::ScalarValue);
+        state.domain.forget(r);
+        state.set_tnum(r, Tnum::unknown());
+        state.clear_scalar_id(r);
+    }
+
+    // Apply widening to caller-frame stack slots the cb touched. We
+    // detect "touched" by comparing each slot against the pre-cb
+    // snapshot. With cb_should_widen=false (nr_loops ≤ 1, find_vma)
+    // we keep the cb's writes concretely; this lets `_ok`-style tests
+    // verify with the post-cb concrete value while still abstracting
+    // multi-iteration cases.
+    if should_widen
+        && let (Some(snap), Some(idx)) = (snapshot, caller_level)
+    {
+        let caller_stack = state.stack_at_mut(FrameLevel::from_index(idx));
+        let mut all_offsets: HashSet<i16> = snap.slot_offsets().into_iter().collect();
+        all_offsets.extend(caller_stack.slot_offsets());
+        for off in all_offsets {
+            let snap_slot = snap.get_slot(off);
+            let cur_slot = caller_stack.get_slot(off);
+            let differs = match (snap_slot, cur_slot) {
+                (None, None) => false,
+                (None, Some(_)) | (Some(_), None) => true,
+                (Some(a), Some(b)) => a != b,
+            };
+            if differs {
+                caller_stack.invalidate_slot(off);
+            }
+        }
+    }
+
+    state.pc = return_pc;
+
+    // Bucket F-D / cb-return widener (kernel verifier.c v6.15 ~L10903-10920):
+    //   prev_st = in_callback_fn ? find_prev_entry(env, state, *insn_idx) : NULL;
+    //   if (prev_st)
+    //       widen_imprecise_scalars(env, prev_st, state);
+    //
+    // The snapshot-based widening above (W3.4b cb-effect) widens stack
+    // slots the cb wrote during THIS iteration. The kernel additionally
+    // runs `widen_imprecise_scalars` between this post-cb state and a
+    // PRIOR post-cb visit at the same continuation pc — coarsening
+    // values that differ across iterations of a multi-iteration helper
+    // (bpf_loop, bpf_for_each_map_elem). This is the same machinery
+    // already wired at iter_next and may_goto.
+    //
+    // Gated on `should_widen` (set when nr_loops > 1 at the helper call
+    // site). For nr_loops ≤ 1 (or single-shot helpers like find_vma) the
+    // cb runs once; widening between successive call sites would
+    // destroy precision the test relies on (e.g.
+    // `bpf_loop_iter_limit_nested` enumerates exact post-cb values).
+    //
+    // Skip-cur logic mirrors the may_goto site: record_state precedes
+    // transfer in the worklist driver, so the most recent cached state
+    // at `return_pc` is the just-recorded current state — skip it and
+    // take the previous one.
+    if should_widen
+        && let Some(prev_states) = env.explored_states.get(&return_pc)
+    {
+        let mut iter = prev_states.iter().rev().filter(|s| s.pc == return_pc);
+        iter.next();
+        if let Some(prev) = iter.next() {
+            crate::analysis::transfer::call::kfunc::widen_imprecise_scalars_at_iter_next(
+                prev, &mut state,
+            );
+        }
+    }
+
+    vec![state]
 }

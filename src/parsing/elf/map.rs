@@ -13,16 +13,39 @@ pub fn load_data_section_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>>
     let buf = fs::read(path)?;
     let elf = Elf::parse(&buf)?;
 
+    // Pre-parse BTF once so we can attach `btf_val_type_id` to the
+    // DATASEC for each synthetic data-section map. Without this,
+    // SpecialField validation (spin_lock, rb_root, …) on `private(name)`
+    // globals in `.bss.<name>` can't resolve any field because there's
+    // no value-type BTF on the synthetic map.
+    let btf_ctx = elf
+        .section_headers
+        .iter()
+        .find_map(|sh| {
+            if elf.shdr_strtab.get_at(sh.sh_name) == Some(".BTF") {
+                let start = sh.sh_offset as usize;
+                let end = start + sh.sh_size as usize;
+                if end <= buf.len() {
+                    return btf::parse_btf(&buf[start..end]).ok();
+                }
+            }
+            None
+        });
+
     let mut maps = vec![];
 
     for sh in &elf.section_headers {
         let name = elf.shdr_strtab.get_at(sh.sh_name).unwrap_or("");
 
+        // `.bss.<name>` mirrors `.data.<name>` / `.rodata.<name>` for
+        // libbpf's `private(name)` macro idiom (see e.g.
+        // `progs/refcounted_kptr.c`'s per-suite `.bss.A`/`.bss.B`/`.bss.C`).
         let is_data_section = name == ".rodata"
             || name == ".data"
             || name == ".bss"
             || name.starts_with(".rodata.")
-            || name.starts_with(".data.");
+            || name.starts_with(".data.")
+            || name.starts_with(".bss.");
 
         if is_data_section && sh.sh_size > 0 {
             let initial_data = if sh.sh_type == constants::SHT_NOBITS {
@@ -43,6 +66,10 @@ pub fn load_data_section_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>>
                 0
             };
 
+            let btf_val_type_id = btf_ctx
+                .as_ref()
+                .and_then(|ctx| ctx.find_datasec(name));
+
             maps.push(BpfMapDef {
                 type_: constants::BPF_MAP_TYPE_ARRAY,
                 key_size: 4,
@@ -50,13 +77,91 @@ pub fn load_data_section_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>>
                 max_entries: 1,
                 map_flags: extra_flags,
                 name: name.to_string(),
-                btf_val_type_id: None,
+                btf_val_type_id,
                 initial_data,
                 inner_map_idx: None,
+                kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
             });
         }
     }
 
+    Ok(maps)
+}
+
+/// Synthesize maps for libbpf-managed extern sections that don't appear as
+/// real ELF sections but are described in BTF DATASEC. Today only `.kconfig`
+/// is handled — these are scalar kernel-config externs declared with
+/// `extern <type> NAME __kconfig;`. libbpf builds the map at load time and
+/// patches `R_BPF_64_64` relocations against UND extern symbols into
+/// `BPF_PSEUDO_MAP_VALUE` LD_IMM64s. We mirror that here so the lowerer sees
+/// the LD_IMM64 + LDX pattern as a typed map-value access instead of a load
+/// from address 0 (the unrelocated default).
+///
+/// `.ksyms` (typed kernel-symbol externs) is intentionally not handled — those
+/// resolve via `BPF_PSEUDO_BTF_ID`, not `MAP_VALUE`.
+pub fn load_btf_extern_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
+    let buf = fs::read(&path)?;
+    let elf = Elf::parse(&buf)?;
+
+    let btf_ctx = elf.section_headers.iter().find_map(|sh| {
+        if elf.shdr_strtab.get_at(sh.sh_name) == Some(".BTF") {
+            let start = sh.sh_offset as usize;
+            let end = start + sh.sh_size as usize;
+            if end <= buf.len() {
+                return btf::parse_btf(&buf[start..end]).ok();
+            }
+        }
+        None
+    });
+
+    let Some(ctx) = btf_ctx else {
+        return Ok(vec![]);
+    };
+
+    let mut maps = vec![];
+    let sec_name = ".kconfig";
+    let Some(datasec_id) = ctx.find_datasec(sec_name) else {
+        return Ok(maps);
+    };
+    let entries = ctx.datasec_entries(datasec_id);
+    if entries.is_empty() {
+        return Ok(maps);
+    }
+
+    // clang emits `.kconfig` DATASEC entries with offset=0; libbpf assigns
+    // the real offsets at load time, sequentially with size-aligned packing.
+    // We mirror that deterministically here — the actual values are unknown
+    // at static-analysis time anyway, so as long as each var maps to a
+    // distinct, in-bounds offset, loads through the synthesized map produce
+    // ScalarValue (any) and verification proceeds.
+    let mut cur_off: u32 = 0;
+    let mut extern_var_offsets: Vec<(String, u32)> = Vec::new();
+    for entry in &entries {
+        let Some((name, _)) = ctx.var_info(entry.var_id) else {
+            continue;
+        };
+        let size = entry.size.max(1);
+        let align = size.next_power_of_two().min(8);
+        let aligned = cur_off.div_ceil(align) * align;
+        extern_var_offsets.push((name.to_string(), aligned));
+        cur_off = aligned + size;
+    }
+    let value_size = cur_off.max(8);
+
+    maps.push(BpfMapDef {
+        type_: constants::BPF_MAP_TYPE_ARRAY,
+        key_size: 4,
+        value_size,
+        max_entries: 1,
+        map_flags: constants::BPF_F_RDONLY_PROG,
+        name: sec_name.to_string(),
+        btf_val_type_id: Some(datasec_id),
+        initial_data: None,
+        inner_map_idx: None,
+        kptr_fields: Vec::new(),
+        extern_var_offsets,
+    });
     Ok(maps)
 }
 
@@ -89,7 +194,12 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                         } else {
                             28
                         };
-                        if offset + 20 <= section_data.len() {
+                        // Valueless maps (RINGBUF, ARENA, …) have BTF defs as
+                        // small as 16 bytes (just `type` + `max_entries`); the
+                        // legacy 20-byte minimum dropped them silently. Lower
+                        // the floor to one u32 (the type field) and let the
+                        // bounded `read_u32` helper cover any short tail.
+                        if offset + 4 <= section_data.len() {
                             let read_len = std::cmp::min(map_size, section_data.len() - offset);
                             let b = &section_data[offset..offset + read_len];
 
@@ -119,6 +229,8 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                                 btf_val_type_id: None,
                                 initial_data: None,
                                 inner_map_idx,
+                                kptr_fields: Vec::new(),
+            extern_var_offsets: Vec::new(),
                             });
                         }
                     }
@@ -162,6 +274,15 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                     // declarations with "no value-type BTF".
                     if m.btf_val_type_id.is_none() {
                         m.btf_val_type_id = btf_m.btf_val_type_id;
+                    }
+                    if m.kptr_fields.is_empty() && !btf_m.kptr_fields.is_empty() {
+                        m.kptr_fields = btf_m.kptr_fields.clone();
+                    }
+                    // BTF-described maps encode `__uint(map_flags, …)` in BTF;
+                    // the legacy `bpf_map_def` slot in the .maps section reads
+                    // as 0. Trust BTF when the section side is unset.
+                    if m.map_flags == 0 {
+                        m.map_flags = btf_m.map_flags;
                     }
                 }
             }

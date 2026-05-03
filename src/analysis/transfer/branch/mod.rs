@@ -66,14 +66,26 @@ pub(crate) fn transfer_if(
     // every register and stack slot sharing its scalar id.
     propagate_scalar_links(&mut state_then, &mut state_else, left);
 
-    // W2.2: a branch that refines `left` is a use-site whose precision
-    // matters for downstream safety reasoning. Mark both outgoing states
-    // so pruning (W2.3) cannot generalise this register across the branch.
-    state_then.mark_reg_precise(left);
-    state_else.mark_reg_precise(left);
-    if let Operand::Reg(r) = right {
-        state_then.mark_reg_precise(r);
-        state_else.mark_reg_precise(r);
+    // Bucket F-D: a back-edge compare-to-imm is a precision sink for
+    // the compared register. The kernel's `mark_chain_precision` walks
+    // backward from such sinks; without it, the loop counter widens at
+    // intermediate may_goto sites, the bounds derived from this compare
+    // don't propagate to downstream pointer arithmetic, and accumulator-
+    // style loops (test1: `*R2=R1; R2+=8; R1++`) run away in abstract
+    // interp because R1 widens before the next iteration's compare.
+    //
+    // Gate on **back-edge** (target < state.pc) to differentiate the
+    // loop-back-to-head pattern from forward-exit conditionals. A
+    // forward `if r < N goto exit` doesn't need the precision (the
+    // loop head's re-refinement on entry handles each iteration), and
+    // marking precise there blocks widening at the may_goto inside the
+    // body (cond_break1's pattern). A backward `if r != K goto head`
+    // (test1) does need it.
+    if matches!(right, Operand::Imm(_))
+        && target < state.pc
+        && let Some(hidx) = state.history_idx
+    {
+        env.mark_chain_precision_backward(hidx, left);
     }
 
     // Branch Type Refinement (For map and socket pointers)

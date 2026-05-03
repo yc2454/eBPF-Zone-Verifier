@@ -54,6 +54,52 @@ pub fn default_iquote_dirs(headers_root: &Path) -> Vec<PathBuf> {
     vec![headers_root.join("_quotes/q1/q2/q3")]
 }
 
+/// `-D` macros the upstream selftests Makefile sets globally for every
+/// BPF prog. Without these, ~25 tracing programs refuse to compile
+/// (`#error "Must specify a BPF target arch via __TARGET_ARCH_xxx"`).
+/// Applied on top of any `PER_FILE_DEFINES` entry for an individual file.
+pub const UPSTREAM_GLOBAL_DEFINES: &[&str] = &["__TARGET_ARCH_x86"];
+
+/// Include dirs for sweeping the *upstream* selftests tree directly
+/// (no re-vendoring). Layers our hand-written stubs on top of the
+/// in-tree headers so the libc shims still win where both define the
+/// same symbol. `upstream_root` is the root of a checked-out kernel
+/// (typically `vendor/linux/`).
+///
+/// Order:
+///   1. our `_stubs/`            — libc shims
+///   2. `selftests/headers/<tag>/` + `bpf/` — our pinned vendored copies
+///                                  of the most-used selftest/uapi headers
+///   3. upstream `tools/lib/`    — resolves `<bpf/bpf_endian.h>` etc.
+///   4. upstream `tools/lib/bpf`
+///   5. upstream `tools/include` + `tools/include/uapi`
+///   6. upstream `include/uapi`  — kernel-internal uapi (`linux/libc-compat.h`, …)
+///   7. upstream `arch/x86/include/uapi` — `<asm/byteorder.h>`, `<asm/ptrace.h>`
+///   8. upstream `tools/testing/selftests/bpf` + `progs` — sibling helper headers
+pub fn upstream_include_dirs(headers_root: &Path, upstream_root: &Path) -> Vec<PathBuf> {
+    let mut v = default_include_dirs(headers_root);
+    v.extend([
+        upstream_root.join("tools/lib"),
+        upstream_root.join("tools/lib/bpf"),
+        upstream_root.join("tools/include"),
+        upstream_root.join("tools/include/uapi"),
+        upstream_root.join("include/uapi"),
+        upstream_root.join("arch/x86/include/uapi"),
+        upstream_root.join("tools/testing/selftests/bpf"),
+        upstream_root.join("tools/testing/selftests/bpf/progs"),
+    ]);
+    v
+}
+
+/// `-iquote` dirs for upstream sweeps: the existing dummy depth-3 dir
+/// that handles `"../../../include/linux/filter.h"`-style ascents, plus
+/// the selftests/bpf dir for sibling quoted includes.
+pub fn upstream_iquote_dirs(headers_root: &Path, upstream_root: &Path) -> Vec<PathBuf> {
+    let mut v = default_iquote_dirs(headers_root);
+    v.push(upstream_root.join("tools/testing/selftests/bpf"));
+    v
+}
+
 /// Returns clang's resource-dir `include` path (where compiler intrinsic
 /// headers live: `stddef.h`, `stdarg.h`, `stdint.h`, …). We need to
 /// surface these as `-isystem` rather than rely on the host's `/usr/include`

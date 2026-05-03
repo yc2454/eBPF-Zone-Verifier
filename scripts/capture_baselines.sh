@@ -4,7 +4,7 @@
 # (the compact known-failures summary) is checked in.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 BIN="./target/release/zovia"
@@ -13,15 +13,16 @@ BIN="./target/release/zovia"
 capture_selftest() {
     local mode="$1" flag="$2" suite="$3" dir="$4"
     echo "== capturing selftest ($mode${suite:+, $suite}) =="
-    $BIN -q $flag --max-insn 100000 selftest-suite "$dir" > /dev/null 2>&1
-    python3 tests/baselines/canonicalize.py \
+    $BIN -q $flag --max-insn 100000 dev selftest-suite "$dir" > /dev/null 2>&1
+    python3 scripts/canonicalize_selftest_report.py \
         results/selftest/selftest_report.json \
         "tests/baselines/selftest_${mode}${suite:+_$suite}.json"
 }
 
 capture_prevail() {
     echo "== capturing prevail =="
-    $BIN -q prevail-benchmark ~/ebpf-samples > /dev/null 2>&1
+    # Prevail moved to scripts/prevail.py (Pass 2 step 4); same JSON shape.
+    scripts/prevail.py --output-dir results/prevail benchmark ~/ebpf-samples > /dev/null 2>&1
     local src
     src="$(ls -t results/prevail/prevail_benchmark_*_results.json | head -1)"
     python3 - "$src" tests/baselines/prevail.json <<'PY'
@@ -47,4 +48,4 @@ capture_selftest kernel "--kernel-mode" backport ./selftests/legacy/verifier_bac
 capture_prevail
 
 echo
-echo "Baselines written. Diff against them with tests/baselines/diff_baseline.sh"
+echo "Baselines written. Diff against them with scripts/diff_baselines.sh"

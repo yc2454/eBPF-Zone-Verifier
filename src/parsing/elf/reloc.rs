@@ -175,6 +175,13 @@ pub fn helper_id_by_name(name: &str) -> Option<u32> {
         "bpf_d_path" => Some(constants::BPF_D_PATH),
         "bpf_skc_to_unix_sock" => Some(constants::BPF_SKC_TO_UNIX_SOCK),
         "bpf_user_ringbuf_drain" => Some(constants::BPF_USER_RINGBUF_DRAIN),
+        "bpf_dynptr_from_mem" => Some(constants::BPF_DYNPTR_FROM_MEM),
+        "bpf_ringbuf_reserve_dynptr" => Some(constants::BPF_RINGBUF_RESERVE_DYNPTR),
+        "bpf_ringbuf_submit_dynptr" => Some(constants::BPF_RINGBUF_SUBMIT_DYNPTR),
+        "bpf_ringbuf_discard_dynptr" => Some(constants::BPF_RINGBUF_DISCARD_DYNPTR),
+        "bpf_dynptr_read" => Some(constants::BPF_DYNPTR_READ),
+        "bpf_dynptr_write" => Some(constants::BPF_DYNPTR_WRITE),
+        "bpf_dynptr_data" => Some(constants::BPF_DYNPTR_DATA),
         _ => None,
     }
 }
@@ -191,6 +198,17 @@ pub fn load_relocations<P: AsRef<Path>>(
     let mut map_name_to_idx: HashMap<&str, usize> = HashMap::new();
     for (i, m) in maps.iter().enumerate() {
         map_name_to_idx.insert(m.name.as_str(), i);
+    }
+
+    // Extern variables backed by libbpf-managed maps (today only `.kconfig`).
+    // For each, the synthesized map carries the (extern_name, offset) pairs;
+    // a `R_BPF_64_64` against a UND extern symbol with one of these names
+    // becomes a `MapValue` reloc into this map.
+    let mut extern_var_to_loc: HashMap<&str, (usize, i64)> = HashMap::new();
+    for (i, m) in maps.iter().enumerate() {
+        for (name, off) in &m.extern_var_offsets {
+            extern_var_to_loc.insert(name.as_str(), (i, *off as i64));
+        }
     }
 
     let mut section_idx_to_map_idx: HashMap<usize, usize> = HashMap::new();
@@ -331,11 +349,132 @@ pub fn load_relocations<P: AsRef<Path>>(
                             kfunc_name: None,
                         },
                     );
+                } else if let Some(&(map_idx, offset)) = extern_var_to_loc.get(name) {
+                    // libbpf-managed extern (e.g. `.kconfig` `__kconfig` var).
+                    // Symbol is UND in the ELF; the synthesized map carries
+                    // the in-value offset.
+                    pc_to_reloc.insert(
+                        pc,
+                        RelocInfo {
+                            map_idx,
+                            offset,
+                            helper_id: 0,
+                            kind: RelocKind::MapValue,
+                            bpf_call_target: None,
+                            kfunc_name: None,
+                        },
+                    );
+                } else {
+                    // PSEUDO_FUNC: callback-subprog pointer baked into an
+                    // LD_IMM64. Symbol is either the callee directly or
+                    // the section symbol with the byte offset stored in
+                    // the LD_IMM64's own imm field.
+                    let host_sh_offset =
+                        elf.section_headers[target_sec_idx].sh_offset as usize;
+                    let insn_file_offset = host_sh_offset + reloc.r_offset as usize;
+                    if let Some((fn_name, sec_name, off, size)) =
+                        resolve_pseudo_func_target(&elf, &buf, &sym, name, insn_file_offset)
+                    {
+                        pc_to_reloc.insert(
+                            pc,
+                            RelocInfo {
+                                map_idx: 0,
+                                offset: 0,
+                                helper_id: 0,
+                                kind: RelocKind::PseudoFunc,
+                                bpf_call_target: Some(BpfCallTarget {
+                                    func_name: fn_name,
+                                    section: sec_name,
+                                    offset_in_section: off,
+                                    size,
+                                }),
+                                kfunc_name: None,
+                            },
+                        );
+                    }
                 }
             }
         }
     }
     Ok(pc_to_reloc)
+}
+
+/// Resolve a `R_BPF_64_64` against an executable section as a callback
+/// function pointer (`BPF_PSEUDO_FUNC`). Returns the (function name,
+/// section name, byte offset within section, size) the LD_IMM64 should
+/// resolve to, or `None` if the symbol doesn't point at a function in an
+/// executable section.
+///
+/// Two clang-emitted shapes are handled:
+/// - Function symbol (`STT_FUNC`) directly naming the callback subprog.
+/// - Section symbol (`STT_SECTION`, name `.text`/empty) — the LD_IMM64's
+///   own low-imm carries the byte offset of the target within the
+///   section. We read it back from `buf` and look up the function symbol
+///   at that offset.
+fn resolve_pseudo_func_target(
+    elf: &Elf,
+    buf: &[u8],
+    sym: &goblin::elf::Sym,
+    sym_name: &str,
+    insn_file_offset: usize,
+) -> Option<(String, String, usize, usize)> {
+    use goblin::elf::sym::{STT_FUNC, STT_NOTYPE, STT_SECTION};
+    const SHF_EXECINSTR: u64 = 0x4;
+
+    if sym.st_shndx >= elf.section_headers.len() {
+        return None;
+    }
+    let target_sh = &elf.section_headers[sym.st_shndx];
+    if target_sh.sh_flags & SHF_EXECINSTR == 0 {
+        return None;
+    }
+    let target_sec_name = elf.shdr_strtab.get_at(target_sh.sh_name)?.to_string();
+
+    // Direct function symbol.
+    if sym.st_type() == STT_FUNC && !sym_name.is_empty() && !sym_name.starts_with('.') {
+        return Some((
+            sym_name.to_string(),
+            target_sec_name,
+            sym.st_value as usize,
+            sym.st_size as usize,
+        ));
+    }
+
+    // Section symbol — read the LD_IMM64's existing low-imm to get the
+    // byte offset of the callee within the referenced section. Insn is
+    // 8 bytes (code/regs/off/imm); imm starts at byte 4 (LE).
+    if sym.st_type() == STT_SECTION || sym_name.is_empty() || sym_name.starts_with('.') {
+        if insn_file_offset + 8 > buf.len() {
+            return None;
+        }
+        let imm_bytes = &buf[insn_file_offset + 4..insn_file_offset + 8];
+        let imm = i32::from_le_bytes(imm_bytes.try_into().ok()?);
+        let target_byte_off = sym.st_value as usize + imm as usize;
+
+        for s in elf.syms.iter() {
+            let st_type = s.st_type();
+            if st_type != STT_FUNC && st_type != STT_NOTYPE {
+                continue;
+            }
+            if s.st_shndx != sym.st_shndx {
+                continue;
+            }
+            if s.st_value as usize != target_byte_off {
+                continue;
+            }
+            let n = elf.strtab.get_at(s.st_name).unwrap_or("");
+            if n.is_empty() || n.starts_with('.') {
+                continue;
+            }
+            return Some((
+                n.to_string(),
+                target_sec_name,
+                target_byte_off,
+                s.st_size as usize,
+            ));
+        }
+    }
+    None
 }
 
 /// Resolve a symbol name to its location (section name, offset within section, size).
@@ -345,7 +484,8 @@ fn resolve_symbol_location(
     _buf: &[u8],
     symbol_name: &str,
 ) -> Option<(String, usize, usize)> {
-    use goblin::elf::sym::STT_FUNC;
+    use goblin::elf::sym::{STT_FUNC, STT_NOTYPE};
+    const SHF_EXECINSTR: u64 = 0x4;
 
     // Find the symbol by name
     for sym in elf.syms.iter() {
@@ -354,8 +494,13 @@ fn resolve_symbol_location(
             continue;
         }
 
-        // Must be a function symbol
-        if sym.st_type() != STT_FUNC {
+        // Function symbols are the common case; clang also emits some
+        // `static __naked __noinline` BPF subprogs with STT_NOTYPE binding
+        // pointing into a code section. Accept either, gated on the target
+        // section being executable so we don't accidentally match a data
+        // symbol whose name collides with a function.
+        let is_func_like = sym.st_type() == STT_FUNC || sym.st_type() == STT_NOTYPE;
+        if !is_func_like {
             continue;
         }
 
@@ -365,6 +510,9 @@ fn resolve_symbol_location(
         }
 
         let sh = &elf.section_headers[sym.st_shndx];
+        if sh.sh_flags & SHF_EXECINSTR == 0 {
+            continue;
+        }
         let sec_name = elf.shdr_strtab.get_at(sh.sh_name)?;
 
         return Some((
@@ -393,6 +541,17 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
     let mut map_name_to_idx: HashMap<&str, usize> = HashMap::new();
     for (i, m) in maps.iter().enumerate() {
         map_name_to_idx.insert(m.name.as_str(), i);
+    }
+
+    // Extern variables backed by libbpf-managed maps (today only `.kconfig`).
+    // For each, the synthesized map carries the (extern_name, offset) pairs;
+    // a `R_BPF_64_64` against a UND extern symbol with one of these names
+    // becomes a `MapValue` reloc into this map.
+    let mut extern_var_to_loc: HashMap<&str, (usize, i64)> = HashMap::new();
+    for (i, m) in maps.iter().enumerate() {
+        for (name, off) in &m.extern_var_offsets {
+            extern_var_to_loc.insert(name.as_str(), (i, *off as i64));
+        }
     }
 
     let mut section_idx_to_map_idx: HashMap<usize, usize> = HashMap::new();
@@ -437,7 +596,7 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                 Some(s) => s,
                 None => continue,
             };
-            let name = elf.strtab.get_at(sym.st_name).unwrap_or("");
+            let mut name = elf.strtab.get_at(sym.st_name).unwrap_or("").to_string();
 
             let mut r_type = reloc.r_type;
             if r_type == 0 {
@@ -452,6 +611,83 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                     }
                 }
             }
+
+            // Cluster D3: section-symbol BPF-to-BPF call relocation. clang
+            // emits `call <static __noinline subprog in .text>` as an
+            // R_BPF_64_32 reloc against the section's STT_SECTION symbol
+            // (name == "" or ".text") instead of the function symbol — the
+            // callsite's `imm` field carries the PC-relative offset (in
+            // 8-byte instruction units) to the callee within the same
+            // section. Resolve by finding the function symbol that lives
+            // at the destination offset.
+            let is_section_symbol = sym.st_type() == goblin::elf::sym::STT_SECTION
+                || (r_type == R_BPF_64_32
+                    && (name.is_empty() || name.starts_with('.')));
+            if r_type == R_BPF_64_32
+                && is_section_symbol
+                && sym.st_shndx < elf.section_headers.len()
+                && helper_id_by_name(&name).is_none()
+            {
+                let target_sec_idx_resolved = sym.st_shndx;
+                let host_sh = &elf.section_headers[target_sec_idx];
+                let host_sh_offset = host_sh.sh_offset as usize;
+                let insn_offset = host_sh_offset + reloc.r_offset as usize;
+                if insn_offset + 8 <= buf.len() {
+                    // BPF call insn is 8 bytes: code(1) regs(1) off(2) imm(4).
+                    let imm_off_bytes = &buf[insn_offset + 4..insn_offset + 8];
+                    let imm = i32::from_le_bytes(imm_off_bytes.try_into().unwrap());
+                    // Target byte offset within the *referenced* section.
+                    // The callsite is at byte `reloc.r_offset` within the
+                    // host section; the call's imm is in 8-byte insn units
+                    // and counts from the next insn (PC+1). Same-section
+                    // calls are the typical case; cross-section section-
+                    // symbol relocs (e.g. tc -> .text) are also common.
+                    let target_byte_off = if target_sec_idx_resolved == target_sec_idx {
+                        reloc.r_offset as i64 + 8 + (imm as i64) * 8
+                    } else {
+                        // Cross-section: imm encodes a relative offset in
+                        // 8-byte instruction units from "next insn", same
+                        // PC-relative form as same-section calls. With the
+                        // section symbol as the anchor (st_value == 0), the
+                        // resolved target is at (imm + 1) * 8 bytes in the
+                        // referenced section.
+                        sym.st_value as i64 + (imm as i64 + 1) * 8
+                    };
+                    // Prefer STT_FUNC (the actual subprog) over STT_NOTYPE
+                    // (labels generated by inline asm `l0_%=:` etc., which
+                    // the linker emits as local symbols at the same offset
+                    // when the subprog body starts with a labeled block).
+                    let mut best: Option<&str> = None;
+                    let mut best_is_func = false;
+                    for s in elf.syms.iter() {
+                        let st_type = s.st_type();
+                        let func_like = st_type == goblin::elf::sym::STT_FUNC
+                            || st_type == goblin::elf::sym::STT_NOTYPE;
+                        if !func_like {
+                            continue;
+                        }
+                        if s.st_shndx != target_sec_idx_resolved {
+                            continue;
+                        }
+                        if s.st_value as i64 != target_byte_off {
+                            continue;
+                        }
+                        let n = elf.strtab.get_at(s.st_name).unwrap_or("");
+                        if n.is_empty() || n.starts_with('.') {
+                            continue;
+                        }
+                        let is_func = st_type == goblin::elf::sym::STT_FUNC;
+                        if best.is_none() || (is_func && !best_is_func) {
+                            best = Some(n);
+                            best_is_func = is_func;
+                        }
+                    }
+                    if let Some(n) = best {
+                        name = n.to_string();
+                    }
+                }
+            }
+            let name = name.as_str();
 
             // Check relocation type
             if r_type == R_BPF_64_32 {
@@ -541,11 +777,79 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                             kfunc_name: None,
                         },
                     );
+                } else if let Some(&(map_idx, offset)) = extern_var_to_loc.get(name) {
+                    // libbpf-managed extern (e.g. `.kconfig` `__kconfig` var).
+                    pc_to_reloc.insert(
+                        func_pc,
+                        RelocInfo {
+                            map_idx,
+                            offset,
+                            helper_id: 0,
+                            kind: RelocKind::MapValue,
+                            bpf_call_target: None,
+                            kfunc_name: None,
+                        },
+                    );
+                } else {
+                    let host_sh_offset =
+                        elf.section_headers[target_sec_idx].sh_offset as usize;
+                    let insn_file_offset = host_sh_offset + reloc.r_offset as usize;
+                    if let Some((fn_name, sec_name, off, size)) =
+                        resolve_pseudo_func_target(&elf, &buf, &sym, name, insn_file_offset)
+                    {
+                        pc_to_reloc.insert(
+                            func_pc,
+                            RelocInfo {
+                                map_idx: 0,
+                                offset: 0,
+                                helper_id: 0,
+                                kind: RelocKind::PseudoFunc,
+                                bpf_call_target: Some(BpfCallTarget {
+                                    func_name: fn_name,
+                                    section: sec_name,
+                                    offset_in_section: off,
+                                    size,
+                                }),
+                                kfunc_name: None,
+                            },
+                        );
+                    }
                 }
             }
         }
     }
     Ok(pc_to_reloc)
+}
+
+/// Fix the LD_IMM64 imm pair for every `PseudoFunc` reloc whose callee
+/// PC is now known. The lowerer reads the LD_IMM64 as an i64 = (high <<
+/// 32) | low (zero-combined), so we sign-extend by setting `cont.imm =
+/// -1` for negative offsets and `0` otherwise.
+fn fix_pseudo_func_imms(
+    insns: &mut [RawBpfInsn],
+    relocs: &HashMap<usize, RelocInfo>,
+    func_offsets: &HashMap<String, usize>,
+) {
+    for (&ld_pc, reloc) in relocs.iter() {
+        if reloc.kind != RelocKind::PseudoFunc {
+            continue;
+        }
+        let Some(target) = reloc.bpf_call_target.as_ref() else {
+            continue;
+        };
+        let Some(&target_pc) = func_offsets.get(&target.func_name) else {
+            continue;
+        };
+        if ld_pc + 1 >= insns.len() {
+            continue;
+        }
+        let relative = (target_pc as i64) - (ld_pc as i64) - 2;
+        let low = relative as i32;
+        let high = if relative < 0 { -1 } else { 0 };
+        insns[ld_pc].src = 4; // BPF_PSEUDO_FUNC
+        insns[ld_pc].imm = low;
+        insns[ld_pc + 1].imm = high;
+    }
 }
 
 /// Patch raw BPF instructions with relocation info.
@@ -601,6 +905,10 @@ pub fn apply_relocs(insns: &mut [RawBpfInsn], pc_to_reloc: &HashMap<usize, Reloc
                         insn.src = 2;
                         insn.imm = reloc.helper_id as i32;
                     }
+                }
+                RelocKind::PseudoFunc => {
+                    // src/imm pair are written by `fix_pseudo_func_imms`
+                    // once the callee's combined PC is known.
                 }
             }
         }
@@ -773,6 +1081,8 @@ pub fn combine_program_with_subprogs<P: AsRef<Path> + Clone>(
         }
     }
 
+    fix_pseudo_func_imms(&mut combined_insns, &combined_relocs, &func_offsets);
+
     // Apply other relocations (maps, helpers)
     apply_relocs(&mut combined_insns, &combined_relocs);
 
@@ -802,6 +1112,7 @@ pub fn combine_function_with_subprogs<P: AsRef<Path> + Clone>(
     maps: &[BpfMapDef],
     main_section: &str,
     main_func: &str,
+    extra_roots: &[(String, String)],
 ) -> Result<CombinedProgram> {
     use super::prog::{get_functions_in_section, load_function_bytes};
     use crate::parsing::bpf_insn::decode_insns;
@@ -813,6 +1124,13 @@ pub fn combine_function_with_subprogs<P: AsRef<Path> + Clone>(
     let mut visited: HashSet<(String, String)> = HashSet::new();
     let mut queue: Vec<(String, String)> =
         vec![(main_section.to_string(), main_func.to_string())];
+    // Extra roots (e.g. an `__exception_cb` registered via decl_tag) get
+    // appended so their bodies are combined and tracked in
+    // `func_offsets`. They're unreachable from main's CFG, but the
+    // verifier needs their PC to drive a separate analysis pass.
+    for r in extra_roots {
+        queue.push(r.clone());
+    }
 
     while let Some((section, func_name)) = queue.pop() {
         if !visited.insert((section.clone(), func_name.clone())) {
@@ -840,12 +1158,60 @@ pub fn combine_function_with_subprogs<P: AsRef<Path> + Clone>(
         let func_relocs =
             load_relocations_for_function(&path, maps, &section, func.offset, func.size)?;
         for (local_pc, reloc) in func_relocs {
-            if reloc.kind == RelocKind::BpfCall
+            if matches!(reloc.kind, RelocKind::BpfCall | RelocKind::PseudoFunc)
                 && let Some(ref t) = reloc.bpf_call_target
             {
                 queue.push((t.section.clone(), t.func_name.clone()));
             }
             combined_relocs.insert(func_pc_in_combined + local_pc, reloc);
+        }
+
+        // Cluster D3 (cont.): same-section subprog-to-subprog calls don't
+        // carry a relocation — clang fills the call's imm with the real
+        // PC-relative offset directly, since the linker doesn't need to
+        // touch them. When we splice a subprog body into a different
+        // global PC than its original section position, those imms are
+        // stale; here we synthesize a `BpfCall` reloc per such insn so
+        // the imm-fixup loop below treats them like reloc'd calls.
+        for (local_pc, insn) in insns.iter().enumerate() {
+            // Skip if this slot already has a reloc.
+            if combined_relocs.contains_key(&(func_pc_in_combined + local_pc)) {
+                continue;
+            }
+            if insn.code != 0x85 || insn.src != 1 {
+                continue;
+            }
+            // Resolve the call's target byte offset within `section` and
+            // look for the function symbol there.
+            let func_byte_off = func.offset as i64;
+            let call_byte_off = func_byte_off + (local_pc as i64) * 8;
+            let target_byte_off = call_byte_off + 8 + (insn.imm as i64) * 8;
+            let mut target_func_name: Option<String> = None;
+            for f in &funcs {
+                if f.offset as i64 == target_byte_off {
+                    target_func_name = Some(f.name.clone());
+                    break;
+                }
+            }
+            if let Some(n) = target_func_name {
+                queue.push((section.clone(), n.clone()));
+                combined_relocs.insert(
+                    func_pc_in_combined + local_pc,
+                    RelocInfo {
+                        map_idx: 0,
+                        offset: 0,
+                        helper_id: 0,
+                        kind: RelocKind::BpfCall,
+                        bpf_call_target: Some(BpfCallTarget {
+                            func_name: n,
+                            section: section.clone(),
+                            offset_in_section: target_byte_off as usize,
+                            size: 0,
+                        }),
+                        kfunc_name: None,
+                    },
+                );
+            }
         }
 
         combined_insns.extend(insns);
@@ -863,6 +1229,11 @@ pub fn combine_function_with_subprogs<P: AsRef<Path> + Clone>(
             combined_insns[call_pc].src = 1; // BPF_PSEUDO_CALL
         }
     }
+
+    // Fix PseudoFunc LD_IMM64 imms similarly. Layout:
+    //   src = 4 (BPF_PSEUDO_FUNC)
+    //   imm pair = sign-extended (target_pc - ld_pc - 2) in 8-byte units
+    fix_pseudo_func_imms(&mut combined_insns, &combined_relocs, &func_offsets);
 
     apply_relocs(&mut combined_insns, &combined_relocs);
 

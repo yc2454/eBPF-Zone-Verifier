@@ -86,6 +86,25 @@ pub fn validate_const_map_ptr_of_type(
     ctx: &mut ValidationContext,
     required_type: u32,
 ) -> bool {
+    // Also accept a `__map`-suffixed kfunc-arg shape: any
+    // `PtrToBtfId{bpf_map, TRUSTED}` (kernel `verifier.c` ~L13227,
+    // `KF_ARG_PTR_TO_MAP` — "If argument has '__map' suffix expect
+    // 'struct bpf_map *'"). The runtime map type is not checked at
+    // verification time in this path; the kfunc body's
+    // `container_of(map, struct bpf_arena, map)` enforces it at
+    // runtime. Drives `verifier_arena.c::iter_maps1` where
+    // `bpf_arena_alloc_pages(ctx->map, …)` passes a typed bpf_map*
+    // loaded from the iter ctx, not a CONST_PTR_TO_MAP.
+    if let RegType::PtrToBtfId {
+        type_name, flags, ..
+    } = ctx.actual
+        && type_name == "bpf_map"
+        && flags.contains(crate::analysis::machine::reg_types::PtrFlags::TRUSTED)
+    {
+        let _ = required_type;
+        return true;
+    }
+
     if !validate_const_map_ptr(ctx) {
         return false;
     }
@@ -183,11 +202,45 @@ pub fn validate_ptr_to_map_key(ctx: &mut ValidationContext) -> bool {
 /// Validates PtrToMapValue argument type.
 /// Must point to readable memory with size matching the map's value_size.
 pub fn validate_ptr_to_map_value(ctx: &mut ValidationContext) -> bool {
+    use crate::analysis::machine::reg_types::PtrFlags;
+    use crate::common::constants;
     let Some(target_info) = ctx.map_info else {
         return true;
     };
 
     let actual = ctx.actual;
+
+    // SOCKMAP / SOCKHASH special-case: `bpf_map_update_elem`'s value
+    // arg (R3) is a socket pointer for these map types, not a map
+    // value. Kernel `sock_map_update_elem` checks ARG_PTR_TO_BTF_ID_SOCK_COMMON
+    // — accepts PtrToSocket / PtrToSockCommon / PtrToTcpSock and
+    // BTF-typed sock pointers (e.g. `skb->sk` typed as
+    // `PtrToBtfId{sock, TRUSTED}` via the cluster B BTF field-load
+    // typing). Closes the seven `verifier_sockmap_mutate.c` FRs.
+    let is_sock_map = matches!(
+        target_info.map_type,
+        constants::BPF_MAP_TYPE_SOCKMAP | constants::BPF_MAP_TYPE_SOCKHASH
+    );
+    if is_sock_map {
+        let sock_ok = matches!(
+            actual,
+            RegType::PtrToSocket { .. }
+                | RegType::PtrToSocketOrNull { .. }
+                | RegType::PtrToSockCommon { .. }
+                | RegType::PtrToSockCommonOrNull { .. }
+                | RegType::PtrToTcpSock { .. }
+                | RegType::PtrToTcpSockOrNull { .. }
+        ) || matches!(
+            actual,
+            RegType::PtrToBtfId { type_name, flags, .. }
+                if matches!(type_name, "sock" | "sock_common" | "tcp_sock" | "bpf_sock")
+                    && flags.contains(PtrFlags::TRUSTED)
+        );
+        if sock_ok {
+            return true;
+        }
+        // fall through to default error reporting below
+    }
 
     // Check compatible types
     if !matches!(
@@ -212,21 +265,32 @@ pub fn validate_ptr_to_map_value(ctx: &mut ValidationContext) -> bool {
         return false;
     }
 
-    // If pointing to a map value, check size compatibility
-    if let RegType::PtrToMapValue { map_idx, .. } = actual {
+    // If pointing to a map value, check size compatibility.
+    // Kernel `check_helper_mem_access` (verifier.c v6.15 L8062) routes
+    // PTR_TO_MAP_VALUE through `check_map_access`, which only requires
+    // `reg->off + access_size <= map->value_size` — i.e. the source
+    // region holds at least `dest.value_size` bytes from its current
+    // offset onward. The source map's own `value_size` need not equal
+    // the destination's. This admits passing `&val` from a `.bss`
+    // synthetic map (whose `value_size` covers the whole section) as
+    // an `array_map`'s value source.
+    if let RegType::PtrToMapValue { map_idx, offset, .. } = actual {
         if let Some(map_def) = ctx.env.ctx.map_defs.get(map_idx) {
-            if map_def.value_size != target_info.value_size {
+            let off = offset.unwrap_or(0).max(0) as u64;
+            let remaining = (map_def.value_size as u64).saturating_sub(off);
+            if remaining < target_info.value_size as u64 {
                 ctx.fail_with_log(
                     VerificationError::InvalidArgType {
                         pc: ctx.pc,
                         reg: ctx.reg,
                     },
                     &format!(
-                        "[Verifier] pc {}: R{} map value size mismatch: expected {}, got {}",
+                        "[Verifier] pc {}: R{} map value too small: need {}, source has {} from offset {}",
                         ctx.pc,
                         ctx.arg_index + 1,
                         target_info.value_size,
-                        map_def.value_size
+                        remaining,
+                        off
                     ),
                 );
                 return false;

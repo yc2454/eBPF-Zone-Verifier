@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 // src/btf.rs
-use crate::parsing::elf::BpfMapDef;
+use crate::parsing::elf::{BpfMapDef, KptrField, KptrFieldKind};
 use log::info;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -50,6 +50,44 @@ pub struct SpecialField {
     pub kind: SpecialFieldKind,
     pub offset: u32, // byte offset
     pub size: u32,
+}
+
+/// Result of looking up a struct/union member at a byte offset, for
+/// the verifier's load-typing path. See `BtfContext::field_at_offset`.
+#[derive(Debug, Clone)]
+pub struct BtfFieldInfo<'a> {
+    /// Member name (e.g. `"cpus_ptr"`, `"sk"`, `"f_path"`). Borrowed
+    /// from the BTF strings table; cheap to clone-into-static via the
+    /// `intern_btf_type_name_strict` cache when needed.
+    pub name: &'a str,
+    pub kind: BtfFieldKind,
+}
+
+/// What a struct/union member resolves to after walking through any
+/// modifier (TYPEDEF/CONST/VOLATILE/RESTRICT) and TYPE_TAG entries.
+#[derive(Debug, Clone)]
+pub enum BtfFieldKind {
+    /// Pointer field: `pointee_name` is the named struct it points to
+    /// (or None if the pointee isn't a named struct — function ptr,
+    /// pointer-to-primitive, …). `tags` collects all `TYPE_TAG`
+    /// modifiers seen along the way (kernel `__rcu`, `__percpu`,
+    /// `__user`, …) so the load site can lift them into the
+    /// resulting `RegType::PtrToBtfId.flags`.
+    Pointer {
+        pointee_name: Option<String>,
+        tags: Vec<&'static str>,
+    },
+    /// Embedded struct/union member (no PTR layer). `type_name` is the
+    /// BTF struct name. Used for `&base->field` interior-pointer
+    /// arithmetic to produce a typed pointer to the member.
+    Embedded {
+        type_name: Option<String>,
+        tags: Vec<&'static str>,
+    },
+    /// Primitive (int, enum, float).
+    Scalar,
+    /// Anything else — array, function-proto, void, … — caller decides.
+    Other,
 }
 
 impl SpecialFieldKind {
@@ -171,6 +209,153 @@ impl BtfContext {
         Some((name, ty.size_or_type))
     }
 
+    /// Look up a struct/union member at an exact byte offset and
+    /// classify it for the verifier's load-typing path.
+    ///
+    /// Returns `None` only when no member starts exactly at
+    /// `byte_offset` (or the type isn't a struct/union). Otherwise the
+    /// `BtfFieldInfo` carries:
+    ///   - `name` of the field (for the per-(struct, field) trusted
+    ///     allowlist consulted at the load site),
+    ///   - `kind` describing how the verifier should type a load or an
+    ///     `&base->field` arithmetic.
+    ///
+    /// Used by `update_load_types` to type loads from `PtrToBtfId{X}` at
+    /// known offsets, and by the pointer-arithmetic path to type
+    /// interior pointers `&base->field` to embedded sub-structs.
+    pub fn field_at_offset(
+        &self,
+        struct_id: u32,
+        byte_offset: u32,
+    ) -> Option<BtfFieldInfo<'_>> {
+        let id = self.peel_modifiers(struct_id);
+        let ty = self.types.get(&id)?;
+        if !matches!(ty.kind(), BTF_KIND_STRUCT | BTF_KIND_UNION) {
+            return None;
+        }
+        let bit_offset = byte_offset.checked_mul(8)?;
+        let member = ty.members.iter().find(|m| m.offset == bit_offset)?;
+        let field_name = self.get_string(member.name_off).unwrap_or("");
+
+        // Anonymous member at the same offset: descend into the
+        // nested struct/union to find a deeper-named field. The kernel
+        // UAPI uses this pattern via `__bpf_md_ptr(type, name)`, which
+        // wraps `name` in an anonymous union for ABI compatibility (e.g.
+        // `sk_reuseport_md.sk`, `bpf_iter__sockmap.sk`). field_at_offset
+        // would otherwise stop at the union's Embedded kind and miss
+        // the typed pointer member.
+        if field_name.is_empty() {
+            let inner_id = self.peel_modifiers(member.type_id);
+            if let Some(inner_ty) = self.types.get(&inner_id)
+                && matches!(inner_ty.kind(), BTF_KIND_STRUCT | BTF_KIND_UNION)
+            {
+                let inner_byte_offset = byte_offset - (bit_offset / 8);
+                if let Some(info) = self.field_at_offset(inner_id, inner_byte_offset) {
+                    return Some(info);
+                }
+            }
+        }
+
+        // Walk the member's type chain, recording any BTF_KIND_TYPE_TAG
+        // along the way (the kernel's `__rcu`, `__percpu`, `__user`
+        // attributes lower to TYPE_TAG entries the BPF backend
+        // preserves). The chain's terminal kind tells us whether this
+        // is a pointer field, an embedded struct, or a scalar.
+        let mut cur = member.type_id;
+        let mut tags: Vec<&'static str> = Vec::new();
+        for _ in 0..16 {
+            let Some(t) = self.types.get(&cur) else { break };
+            match t.kind() {
+                BTF_KIND_TYPE_TAG => {
+                    if let Some(n) = self.get_string(t.name_off) {
+                        // Tag names are short, well-known kernel
+                        // strings (`rcu`, `percpu`, `user`, …); leak
+                        // once so the consumer can compare with `==`.
+                        tags.push(Box::leak(n.to_string().into_boxed_str()));
+                    }
+                    cur = t.size_or_type;
+                }
+                BTF_KIND_TYPEDEF
+                | BTF_KIND_CONST
+                | BTF_KIND_VOLATILE
+                | BTF_KIND_RESTRICT => {
+                    cur = t.size_or_type;
+                }
+                BTF_KIND_PTR => {
+                    // Walk through any TYPE_TAG / TYPEDEF / CONST /
+                    // VOLATILE / RESTRICT on the pointee so we recover
+                    // a STRUCT/UNION's name when the BTF chain is e.g.
+                    // `PTR -> TYPE_TAG("rcu") -> STRUCT sock` (kernel
+                    // emits `__rcu`-tagged pointer fields this way).
+                    // Tags collected here also propagate up to `tags`
+                    // so the load site can lift them into PtrFlags.
+                    let mut p = t.size_or_type;
+                    let mut pointee_name: Option<String> = None;
+                    for _ in 0..16 {
+                        let Some(pt) = self.types.get(&p) else { break };
+                        match pt.kind() {
+                            BTF_KIND_TYPE_TAG => {
+                                if let Some(n) = self.get_string(pt.name_off) {
+                                    tags.push(Box::leak(n.to_string().into_boxed_str()));
+                                }
+                                p = pt.size_or_type;
+                            }
+                            BTF_KIND_TYPEDEF
+                            | BTF_KIND_CONST
+                            | BTF_KIND_VOLATILE
+                            | BTF_KIND_RESTRICT => {
+                                p = pt.size_or_type;
+                            }
+                            // STRUCT/UNION definitions and FWD
+                            // declarations both name the pointee. FWD
+                            // is what vmlinux BTF emits for kernel
+                            // structs whose layout the BPF prog
+                            // doesn't reference (e.g. `struct sock`
+                            // is FWD-only when the program just
+                            // passes the pointer through). We still
+                            // get a usable type_name for kfunc
+                            // matching.
+                            BTF_KIND_STRUCT | BTF_KIND_UNION | BTF_KIND_FWD => {
+                                pointee_name =
+                                    self.get_string(pt.name_off).map(|s| s.to_string());
+                                break;
+                            }
+                            _ => break,
+                        }
+                    }
+                    return Some(BtfFieldInfo {
+                        name: field_name,
+                        kind: BtfFieldKind::Pointer { pointee_name, tags },
+                    });
+                }
+                BTF_KIND_STRUCT | BTF_KIND_UNION => {
+                    let name = self.get_string(t.name_off).map(|s| s.to_string());
+                    return Some(BtfFieldInfo {
+                        name: field_name,
+                        kind: BtfFieldKind::Embedded { type_name: name, tags },
+                    });
+                }
+                BTF_KIND_INT | BTF_KIND_ENUM | BTF_KIND_ENUM64 | BTF_KIND_FLOAT => {
+                    return Some(BtfFieldInfo {
+                        name: field_name,
+                        kind: BtfFieldKind::Scalar,
+                    });
+                }
+                BTF_KIND_ARRAY => {
+                    return Some(BtfFieldInfo {
+                        name: field_name,
+                        kind: BtfFieldKind::Other,
+                    });
+                }
+                _ => break,
+            }
+        }
+        Some(BtfFieldInfo {
+            name: field_name,
+            kind: BtfFieldKind::Other,
+        })
+    }
+
     /// Looks up a struct member at a specific byte offset.
     /// Returns the Type ID of that member if found.
     pub fn resolve_field_type_id(&self, struct_id: u32, byte_offset: u32) -> Option<u32> {
@@ -216,13 +401,46 @@ impl BtfContext {
         false
     }
 
-    /// Find all special fields in a struct type
+    /// Find all special fields in a struct type. Also supports DATASEC
+    /// types (used for synthetic data-section maps like `.bss.<name>`):
+    /// each VAR's resolved struct name is checked against
+    /// [`SpecialFieldKind::from_type_name`], with the offset taken from
+    /// the DATASEC entry (already in bytes).
     pub fn find_special_fields(&self, type_id: u32) -> Vec<SpecialField> {
         let mut fields = Vec::new();
 
         let Some(ty) = self.types.get(&type_id) else {
             return fields;
         };
+
+        // DATASEC: each member is a VAR pointing at a struct/typedef.
+        // The kernel treats `.bss.<name>` as a single map value; each VAR
+        // declared in that section becomes a special field at its DATASEC
+        // offset if the VAR's type is one of the recognized special types
+        // (bpf_spin_lock, bpf_rb_root, …). Used by `private(name)`-style
+        // globals in tests like `refcounted_kptr.c`.
+        if ty.kind() == BTF_KIND_DATASEC {
+            for entry in self.datasec_entries(type_id) {
+                let Some((_var_name, target_id)) = self.var_info(entry.var_id) else {
+                    continue;
+                };
+                let resolved_id = self.peel_modifiers(target_id);
+                let Some(resolved_ty) = self.types.get(&resolved_id) else {
+                    continue;
+                };
+                let Some(type_name) = self.get_string(resolved_ty.name_off) else {
+                    continue;
+                };
+                if let Some(kind) = SpecialFieldKind::from_type_name(type_name) {
+                    fields.push(SpecialField {
+                        kind,
+                        offset: entry.offset,
+                        size: resolved_ty.size_or_type,
+                    });
+                }
+            }
+            return fields;
+        }
 
         for member in &ty.members {
             let Some(member_type) = self.types.get(&member.type_id) else {
@@ -383,6 +601,261 @@ impl BtfContext {
         Some(proto.size_or_type == 0)
     }
 
+    /// Classification of a global-subprog argument from BTF, used to
+    /// emit the kernel's "Caller passes invalid args" / "FWD size
+    /// cannot be determined" / "expected ..." errors and to seed the
+    /// callee's R1..R5 with declared types when verifying its body.
+    ///
+    /// Distinct from `StructOpsArg`: struct_ops's TrustedPtr is a
+    /// kernel-typed pointer, whereas a global subprog's pointer arg is
+    /// the kernel verifier's `PTR_TO_MEM | PTR_MAYBE_NULL` — bounded
+    /// by the pointee's BTF size, callee must null-check.
+    pub fn resolve_global_func_args(&self, func_name: &str) -> Option<Vec<GlobalFuncArg>> {
+        let (func_id, func_ty) = self.types.iter().find(|(_, ty)| {
+            ty.kind() == BTF_KIND_FUNC && self.get_string(ty.name_off) == Some(func_name)
+        })?;
+        let func_id = *func_id;
+        let proto = self.types.get(&func_ty.size_or_type)?;
+        if proto.kind() != BTF_KIND_FUNC_PROTO {
+            return None;
+        }
+
+        // Per-arg decl tags (e.g. `__arg_trusted`, `__arg_nullable`,
+        // `__arg_ctx`) target the FUNC btf_id with `component_idx`
+        // = arg index. Collect tags per index up front.
+        let mut tags_per_arg: std::collections::HashMap<i32, Vec<&str>> =
+            std::collections::HashMap::new();
+        for tag in self.decl_tags_for(func_id) {
+            if tag.component_idx >= 0 {
+                tags_per_arg
+                    .entry(tag.component_idx)
+                    .or_default()
+                    .push(tag.name.as_str());
+            }
+        }
+
+        Some(
+            proto
+                .members
+                .iter()
+                .enumerate()
+                .map(|(idx, p)| {
+                    let base = self.classify_global_func_arg(p.type_id);
+                    let empty = Vec::new();
+                    let tags = tags_per_arg.get(&(idx as i32)).unwrap_or(&empty);
+                    refine_global_arg_with_tags(base, tags, p.type_id, self)
+                })
+                .collect(),
+        )
+    }
+
+    /// Resolve the type-name for a BTF type used as a pointee. Strips
+    /// modifiers (CONST/VOLATILE/RESTRICT/TYPEDEF) and returns the
+    /// underlying STRUCT/UNION name when possible. Used by
+    /// `refine_global_arg_with_tags` to populate `PtrToBtfIdTrusted`.
+    fn pointee_struct_name(&self, ptr_type_id: u32) -> Option<String> {
+        let id = self.peel_modifiers(ptr_type_id);
+        let ty = self.types.get(&id)?;
+        if ty.kind() != BTF_KIND_PTR {
+            return None;
+        }
+        let pid = self.peel_modifiers(ty.size_or_type);
+        let pty = self.types.get(&pid)?;
+        Some(self.get_string(pty.name_off).unwrap_or("?").to_string())
+    }
+
+    fn classify_global_func_arg(&self, type_id: u32) -> GlobalFuncArg {
+        let id = self.peel_modifiers(type_id);
+        let Some(ty) = self.types.get(&id) else {
+            return GlobalFuncArg::Scalar;
+        };
+        match ty.kind() {
+            BTF_KIND_INT | BTF_KIND_ENUM | BTF_KIND_ENUM64 | BTF_KIND_FLOAT => {
+                GlobalFuncArg::Scalar
+            }
+            BTF_KIND_PTR => {
+                let pointee_id = self.peel_modifiers(ty.size_or_type);
+                let Some(pointee) = self.types.get(&pointee_id) else {
+                    // Unresolved pointee — typically `void *`, also
+                    // possible for opaque kernel types we don't have
+                    // BTF for. The kernel relies on DECL_TAG
+                    // annotations (`__arg_ctx`, `__arg_nullable`,
+                    // ...) to refine; without those we can't
+                    // distinguish ctx-typed from mem-typed `void *`.
+                    // Be permissive at the caller boundary: a
+                    // PermissivePtr accepts ctx, any mem pointer, or
+                    // NULL. Body verification loses some checks but
+                    // we don't false-reject legitimate `void *ctx`
+                    // global subprogs (test_global_func_ctx_args).
+                    return GlobalFuncArg::PermissivePtr;
+                };
+                match pointee.kind() {
+                    // FWD: struct declared but not defined — the kernel
+                    // can't determine its size, which is what test
+                    // global_func14 asserts.
+                    BTF_KIND_FWD => GlobalFuncArg::PtrToFwd {
+                        name: self.get_string(pointee.name_off).unwrap_or("?").to_string(),
+                    },
+                    BTF_KIND_STRUCT | BTF_KIND_UNION => {
+                        let pname = self.get_string(pointee.name_off).unwrap_or("");
+                        if is_ctx_struct_name(pname) {
+                            GlobalFuncArg::PtrToCtx
+                        } else {
+                            GlobalFuncArg::PtrToMem {
+                                mem_size: pointee.size_or_type,
+                            }
+                        }
+                    }
+                    BTF_KIND_INT | BTF_KIND_ENUM | BTF_KIND_ENUM64 | BTF_KIND_FLOAT => {
+                        GlobalFuncArg::PtrToMem {
+                            mem_size: pointee.size_or_type,
+                        }
+                    }
+                    // `int (*arr)[10]` etc.: pointer to a fixed-size array.
+                    // ARRAY's parsed members[0] carries (elem_type, nelems);
+                    // total mem_size = elem_size * nelems. Peel modifiers on
+                    // the elem so typedef'd elem types resolve. Required for
+                    // `test_global_func9` / `test_global_func16`'s
+                    // `quux(int (*arr)[10])` callee body to see R1 as a
+                    // 40-byte mem region.
+                    BTF_KIND_ARRAY => {
+                        let arr = pointee.members.first();
+                        let mem_size = arr
+                            .map(|m| {
+                                let elem_id = self.peel_modifiers(m.type_id);
+                                let elem_size = self
+                                    .types
+                                    .get(&elem_id)
+                                    .map(|t| t.size_or_type)
+                                    .unwrap_or(0);
+                                elem_size.saturating_mul(m.offset)
+                            })
+                            .unwrap_or(0);
+                        GlobalFuncArg::PtrToMem { mem_size }
+                    }
+                    _ => GlobalFuncArg::PtrToMem { mem_size: 0 },
+                }
+            }
+            _ => GlobalFuncArg::Scalar,
+        }
+    }
+
+    /// Returns true iff a BTF_KIND_FUNC by this name has GLOBAL linkage
+    /// (vs STATIC or EXTERN). Encoded in FUNC.info bits 0..16
+    /// (`BTF_FUNC_GLOBAL = 1`). The kernel verifies global subprogs
+    /// independently against their declared signature; static subprogs
+    /// inherit the caller's concrete types.
+    pub fn is_global_func(&self, func_name: &str) -> bool {
+        let Some(func_ty) = self.types.values().find(|ty| {
+            ty.kind() == BTF_KIND_FUNC && self.get_string(ty.name_off) == Some(func_name)
+        }) else {
+            return false;
+        };
+        (func_ty.info & 0xffff) == 1
+    }
+
+    /// True if the named function's declared return type is `void`
+    /// (BTF type id 0 in the FUNC_PROTO `size_or_type`). Used to
+    /// reject global subprogs declared with a void return —
+    /// "function 'foo' doesn't return scalar".
+    pub fn func_returns_void(&self, func_name: &str) -> bool {
+        let Some(func_ty) = self.types.values().find(|ty| {
+            ty.kind() == BTF_KIND_FUNC && self.get_string(ty.name_off) == Some(func_name)
+        }) else {
+            return false;
+        };
+        let Some(proto) = self.types.get(&func_ty.size_or_type) else {
+            return false;
+        };
+        proto.kind() == BTF_KIND_FUNC_PROTO && proto.size_or_type == 0
+    }
+
+    /// btf_id of the BTF_KIND_FUNC entry whose declared name is `func_name`,
+    /// or None if no such FUNC exists. Linear scan — only invoked at load
+    /// time per analyzed program.
+    pub fn find_func_id_by_name(&self, func_name: &str) -> Option<u32> {
+        self.types
+            .values()
+            .find(|ty| {
+                ty.kind() == BTF_KIND_FUNC && self.get_string(ty.name_off) == Some(func_name)
+            })
+            .map(|ty| ty.id)
+    }
+
+    /// Returns the cb-name strings of every `exception_callback:<cb>` decl
+    /// tag whose target FUNC is `main_func_name`. libbpf encodes
+    /// `__exception_cb(cb)` as a DECL_TAG with name string
+    /// `"exception_callback:<cb>"` attached to the main subprog FUNC.
+    /// More than one entry indicates a duplicate-tag error
+    /// (kernel: "multiple exception callback tags for main subprog").
+    pub fn exception_callback_tags(&self, main_func_name: &str) -> Vec<String> {
+        const PREFIX: &str = "exception_callback:";
+        let Some(func_id) = self.find_func_id_by_name(main_func_name) else {
+            return Vec::new();
+        };
+        self.decl_tags
+            .iter()
+            .filter(|t| t.target_type_id == func_id && t.name.starts_with(PREFIX))
+            .map(|t| t.name[PREFIX.len()..].to_string())
+            .collect()
+    }
+
+    /// Walk a type id past TYPEDEF/CONST/VOLATILE/RESTRICT modifiers and
+    /// return true if the underlying kind is an integer-class scalar
+    /// (INT / ENUM / ENUM64). Used to validate exception-callback
+    /// signatures and similar constraints. False for void (id 0),
+    /// pointers, structs, etc.
+    pub fn is_integer_scalar(&self, type_id: u32) -> bool {
+        if type_id == 0 {
+            return false;
+        }
+        let id = self.peel_modifiers(type_id);
+        match self.types.get(&id) {
+            Some(ty) => matches!(
+                ty.kind(),
+                BTF_KIND_INT | BTF_KIND_ENUM | BTF_KIND_ENUM64
+            ),
+            None => false,
+        }
+    }
+
+    /// Validate a registered exception-callback's BTF signature.
+    /// Returns Err with the kernel's exact diagnostic string if the
+    /// callback's FUNC_PROTO doesn't match the kernel's contract:
+    ///   * return type must be a scalar integer (kernel:
+    ///     "Global function <name>() doesn't return scalar.")
+    ///   * exactly one parameter of integer type (kernel:
+    ///     "exception cb only supports single integer argument")
+    ///
+    /// Returns Ok(()) when both checks pass, or when the cb FUNC isn't
+    /// in BTF (deferred to whatever path produces the missing-func
+    /// error elsewhere).
+    pub fn validate_exception_cb_signature(&self, cb_name: &str) -> Result<(), String> {
+        let Some(func_ty) = self.types.values().find(|ty| {
+            ty.kind() == BTF_KIND_FUNC && self.get_string(ty.name_off) == Some(cb_name)
+        }) else {
+            return Ok(());
+        };
+        let Some(proto) = self.types.get(&func_ty.size_or_type) else {
+            return Ok(());
+        };
+        if proto.kind() != BTF_KIND_FUNC_PROTO {
+            return Ok(());
+        }
+        // Kernel checks return type first: void or non-scalar return →
+        // "Global function ... doesn't return scalar."
+        if !self.is_integer_scalar(proto.size_or_type) {
+            return Err(format!(
+                "Global function {}() doesn't return scalar.",
+                cb_name
+            ));
+        }
+        if proto.members.len() != 1 || !self.is_integer_scalar(proto.members[0].type_id) {
+            return Err("exception cb only supports single integer argument".to_string());
+        }
+        Ok(())
+    }
+
     /// Resolve a subprog's parameter list directly from its BTF FUNC entry.
     ///
     /// clang -target bpf emits a `BTF_KIND_FUNC` for every defined function
@@ -413,6 +886,44 @@ impl BtfContext {
                 .map(|p| self.classify_param(p.type_id))
                 .collect(),
         )
+    }
+
+    /// Patch DATASEC member offsets from an ELF-symbol name→offset map.
+    /// clang emits BTF DATASEC entries with `offset = 0` for every var;
+    /// libbpf rewrites them post-link from the symbol table. We do the
+    /// same: for each DATASEC member whose VAR resolves to a name found
+    /// in `name_to_offset`, overwrite the entry's offset. Members not in
+    /// the map (or whose VAR has no name) are left untouched.
+    ///
+    /// Without this, `find_special_fields` on a `.bss.<name>` DATASEC
+    /// reports every var at offset 0, which fails the offset-match
+    /// check in MapValueSpecial validators (spin_lock at offset 32 vs
+    /// ".bss.A reports SpinLock at offset 0").
+    pub fn patch_datasec_offsets(&mut self, name_to_offset: &HashMap<String, u32>) {
+        // First, collect (var_id → name) from VAR entries so we don't
+        // borrow self both mutably and immutably in the loop below.
+        let var_names: HashMap<u32, String> = self
+            .types
+            .values()
+            .filter(|t| t.kind() == BTF_KIND_VAR)
+            .filter_map(|t| {
+                self.get_string(t.name_off)
+                    .map(|n| (t.id, n.to_string()))
+            })
+            .collect();
+        for ty in self.types.values_mut() {
+            if ty.kind() != BTF_KIND_DATASEC {
+                continue;
+            }
+            for member in ty.members.iter_mut() {
+                let Some(var_name) = var_names.get(&member.type_id) else {
+                    continue;
+                };
+                if let Some(&off) = name_to_offset.get(var_name) {
+                    member.offset = off;
+                }
+            }
+        }
     }
 
     /// Find a BTF_KIND_DATASEC by section name (e.g. ".struct_ops",
@@ -524,6 +1035,108 @@ pub enum StructOpsArg {
     OpaquePtr,
 }
 
+/// Classification of one parameter in a global subprog's BTF FUNC_PROTO.
+/// Drives the W6.5 "global function arg validation" path: caller-side
+/// type matching, callee-side R1..R5 entry-state seeding, and the
+/// `FWD size cannot be determined` rejection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GlobalFuncArg {
+    /// Integer / enum / float. Caller must pass a scalar; callee
+    /// receives a generic `ScalarValue` at entry.
+    Scalar,
+    /// Pointer to a sized struct/union/scalar with byte size `mem_size`.
+    /// Caller may pass any compatible memory pointer; callee receives
+    /// `PtrToAllocMemOrNull { mem_size }` and must null-check before
+    /// dereferencing — this is what produces the kernel's
+    /// "invalid mem access 'mem_or_null'" rejection inside the callee.
+    PtrToMem { mem_size: u32 },
+    /// Pointer to a recognized BPF context struct (`__sk_buff`,
+    /// `xdp_md`, `pt_regs`, ...). Caller must pass `PtrToCtx`; the
+    /// callee receives the same. Distinct from `PtrToMem` because the
+    /// kernel allows ctx-typed global subprog args without
+    /// MAYBE_NULL semantics — the ctx is always non-null.
+    PtrToCtx,
+    /// Pointer to a forward-declared struct (`struct S;` with no
+    /// definition). Size is unknown to BTF, so the kernel rejects
+    /// with "reference type('FWD S') size cannot be determined".
+    PtrToFwd { name: String },
+    /// `void *` or other unresolved pointer target — typically used
+    /// with kernel `__arg_ctx` / `__arg_nullable` DECL_TAG
+    /// annotations we don't yet parse. Caller accepts any pointer
+    /// kind plus NULL; callee receives PtrToCtx (the most common
+    /// real meaning) so body access is liberal but not pointer-leaky.
+    PermissivePtr,
+    /// Pointer to a kernel BTF struct passed with `__arg_trusted`.
+    /// Caller must pass `PtrToBtfId` (or `PtrToBtfIdOrNull` if the
+    /// arg is also `__arg_nullable`); callee receives the same.
+    /// Mirrors kernel's `KF_ARG_PTR_TO_BTF_ID | KF_TRUSTED_ARGS`
+    /// validation for global subprog args.
+    PtrToBtfIdTrusted {
+        type_name: String,
+        nullable: bool,
+    },
+}
+
+/// Refine a base `GlobalFuncArg` classification using `__arg_*` decl
+/// tags collected from BTF DECL_TAG entries targeting a FUNC's argument
+/// (component_idx = arg index). Recognized:
+///   - `arg_trusted` → if the base is a struct/empty pointer, switch to
+///     `PtrToBtfIdTrusted` (kernel treats it as a kernel BTF id).
+///   - `arg_nullable` → marks the argument as MAYBE_NULL on the
+///     trusted-ptr variant. No effect on `PtrToCtx`.
+///   - `arg_ctx` → upgrade an unresolved/struct pointer to PtrToCtx.
+fn refine_global_arg_with_tags(
+    base: GlobalFuncArg,
+    tags: &[&str],
+    arg_type_id: u32,
+    btf: &BtfContext,
+) -> GlobalFuncArg {
+    // Kernel encodes these via clang `btf_decl_tag("arg:<kind>")`.
+    let trusted = tags.iter().any(|t| *t == "arg:trusted");
+    let nullable = tags.iter().any(|t| *t == "arg:nullable");
+    let ctx_tag = tags.iter().any(|t| *t == "arg:ctx");
+    if ctx_tag {
+        return GlobalFuncArg::PtrToCtx;
+    }
+    if trusted {
+        // Need a struct-typed pointee — pull the name from BTF.
+        let type_name = btf
+            .pointee_struct_name(arg_type_id)
+            .unwrap_or_else(|| "?".to_string());
+        return GlobalFuncArg::PtrToBtfIdTrusted {
+            type_name,
+            nullable,
+        };
+    }
+    base
+}
+
+/// Names of struct types the kernel treats as a BPF program context
+/// when used as a pointer arg of a global subprog. Drives the
+/// caller-side "PtrToCtx is admissible" check in W6.5. Mirrors the
+/// kernel's per-prog-type ctx struct allowlist (kept loose: any
+/// recognized name is accepted regardless of the calling prog kind —
+/// a tighter check would require per-prog-type plumbing we defer).
+fn is_ctx_struct_name(name: &str) -> bool {
+    matches!(
+        name,
+        "__sk_buff"
+            | "xdp_md"
+            | "pt_regs"
+            | "bpf_user_pt_regs_t"
+            | "bpf_perf_event_data"
+            | "bpf_raw_tracepoint_args"
+            | "bpf_sock"
+            | "bpf_sock_addr"
+            | "bpf_sock_ops"
+            | "bpf_sysctl"
+            | "sk_msg_md"
+            | "sk_reuseport_md"
+            | "bpf_sockopt"
+            | "bpf_sk_lookup"
+    )
+}
+
 /// Parses the .BTF section into a structured Context for analysis
 pub fn parse_btf(bytes: &[u8]) -> Result<BtfContext, String> {
     if bytes.len() < 24 {
@@ -589,6 +1202,22 @@ pub fn parse_btf(bytes: &[u8]) -> Result<BtfContext, String> {
                 cursor += 4;
             }
             BTF_KIND_ARRAY => {
+                // Trailing `struct btf_array { u32 elem_type; u32 index_type;
+                // u32 nelems }`. ARRAY's header `size_or_type` slot is
+                // unused per BTF spec, so we reuse `members[0]` to carry
+                // `elem_type` (in type_id) and `nelems` (in offset). The
+                // index_type is always an integer kind we don't need.
+                if cursor + 12 <= type_end {
+                    let elem_type =
+                        u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
+                    let nelems =
+                        u32::from_le_bytes(bytes[cursor + 8..cursor + 12].try_into().unwrap());
+                    members.push(BtfMember {
+                        name_off: 0,
+                        type_id: elem_type,
+                        offset: nelems,
+                    });
+                }
                 cursor += 12;
             }
             BTF_KIND_VAR => {
@@ -750,6 +1379,193 @@ impl BtfTypeRaw {
     }
     fn vlen(&self) -> u32 {
         self.info & 0xffff
+    }
+}
+
+/// Classify a struct member's type_id as a kptr field by walking the
+/// chain of TYPE_TAGs / modifiers around the PTR.
+///
+/// The kernel emits two equivalent encodings for `struct foo __kptr *fld`
+/// depending on where `__attribute__((btf_type_tag("kptr")))` lands:
+///   (a) TYPE_TAG("kptr") -> PTR -> STRUCT foo
+///   (b) PTR -> TYPE_TAG("kptr") -> STRUCT foo
+/// Both are accepted. Returns `(KptrFieldKind, pointee_struct_btf_id)`
+/// when the field is a kptr; `None` otherwise.
+fn classify_kptr_field(
+    types: &[BtfTypeRaw],
+    field_type_id: u32,
+    get_str: &impl Fn(u32) -> String,
+) -> Option<(KptrFieldKind, u32)> {
+    let kind_from_tag = |name: &str| -> Option<KptrFieldKind> {
+        match name {
+            "kptr" => Some(KptrFieldKind::Ref),
+            "kptr_untrusted" => Some(KptrFieldKind::Unref),
+            "rcu" => Some(KptrFieldKind::Rcu),
+            "percpu_kptr" => Some(KptrFieldKind::Percpu),
+            "uptr" => Some(KptrFieldKind::Uptr),
+            _ => None,
+        }
+    };
+
+    // Peel modifiers + outer TYPE_TAGs until we either find a PTR or
+    // give up. Track the most-recently-seen kptr tag.
+    let mut kind: Option<KptrFieldKind> = None;
+    let mut curr = field_type_id;
+    for _ in 0..16 {
+        let t = types.get(curr as usize)?;
+        match t.kind() {
+            BTF_KIND_TYPEDEF | BTF_KIND_CONST | BTF_KIND_VOLATILE | BTF_KIND_RESTRICT => {
+                curr = t.size_or_type;
+            }
+            BTF_KIND_TYPE_TAG => {
+                let tag = get_str(t.name_off);
+                if let Some(k) = kind_from_tag(&tag) {
+                    kind = Some(k);
+                }
+                curr = t.size_or_type;
+            }
+            BTF_KIND_PTR => break,
+            _ => return None,
+        }
+    }
+    let ptr_t = types.get(curr as usize)?;
+    if ptr_t.kind() != BTF_KIND_PTR {
+        return None;
+    }
+    let mut pointee = ptr_t.size_or_type;
+
+    // Peel modifiers + inner TYPE_TAGs to reach the pointee struct,
+    // and pick up a kptr tag if it lives on the inner side.
+    for _ in 0..16 {
+        let t = match types.get(pointee as usize) {
+            Some(t) => t,
+            None => break,
+        };
+        match t.kind() {
+            BTF_KIND_TYPEDEF | BTF_KIND_CONST | BTF_KIND_VOLATILE | BTF_KIND_RESTRICT => {
+                pointee = t.size_or_type;
+            }
+            BTF_KIND_TYPE_TAG => {
+                let tag = get_str(t.name_off);
+                if let Some(k) = kind_from_tag(&tag) {
+                    kind = Some(k);
+                }
+                pointee = t.size_or_type;
+            }
+            _ => break,
+        }
+    }
+
+    kind.map(|k| (k, pointee))
+}
+
+/// Walk the members of `value_type_id` (expected STRUCT/UNION) and
+/// collect every kptr-typed field. Field offsets are returned in bytes.
+///
+/// Recurses into nested struct/union members so a `__uptr` (or other
+/// kptr-tagged) field inside an inner struct is reported with its absolute
+/// offset within the outer value type. Mirrors the kernel's
+/// `btf_find_struct_field` recursion via `BTF_FIELDS_F_RECUR` —
+/// uptr_failure.c::uptr_write_nested writes through `v->nested.udata`,
+/// which is reachable only via this recursion.
+fn extract_kptr_fields(
+    types: &[BtfTypeRaw],
+    value_type_id: u32,
+    get_str: &impl Fn(u32) -> String,
+) -> Vec<KptrField> {
+    let mut out = Vec::new();
+    extract_kptr_fields_recurse(types, value_type_id, 0, get_str, &mut out, 0);
+    out
+}
+
+fn extract_kptr_fields_recurse(
+    types: &[BtfTypeRaw],
+    value_type_id: u32,
+    base_byte_off: u32,
+    get_str: &impl Fn(u32) -> String,
+    out: &mut Vec<KptrField>,
+    depth: u32,
+) {
+    // Bound recursion so a pathological BTF can't blow the stack. The
+    // kernel uses MAX_RESOLVE_DEPTH = 32 in similar walks; 8 is plenty
+    // for realistic map values.
+    if depth > 8 {
+        return;
+    }
+    let Some(t) = types.get(value_type_id as usize) else {
+        return;
+    };
+    // Peel typedef chain to the underlying struct.
+    let mut t = t;
+    let mut peel = 0;
+    while matches!(
+        t.kind(),
+        BTF_KIND_TYPEDEF | BTF_KIND_CONST | BTF_KIND_VOLATILE | BTF_KIND_RESTRICT
+    ) && peel < 8
+    {
+        match types.get(t.size_or_type as usize) {
+            Some(inner) => {
+                t = inner;
+                peel += 1;
+            }
+            None => return,
+        }
+    }
+    if t.kind() != BTF_KIND_STRUCT && t.kind() != BTF_KIND_UNION {
+        return;
+    }
+    let nmembers = t.vlen() as usize;
+    let mut cur = 0usize;
+    for _ in 0..nmembers {
+        if cur + 12 > t.data.len() {
+            break;
+        }
+        let _name_off = u32::from_le_bytes(t.data[cur..cur + 4].try_into().unwrap());
+        let m_type_id = u32::from_le_bytes(t.data[cur + 4..cur + 8].try_into().unwrap());
+        let m_offset_bits = u32::from_le_bytes(t.data[cur + 8..cur + 12].try_into().unwrap());
+        cur += 12;
+        // Bottom 24 bits are the bit offset for non-bitfield members
+        // in BPF_F_BITFIELD_SIZE_GT_0; for full-width pointer/struct
+        // members the offset is byte-aligned and the upper bits are zero.
+        let bit_off = m_offset_bits & 0x00ff_ffff;
+        let member_byte_off = base_byte_off + bit_off / 8;
+        if let Some((kind, pointee_btf_id)) = classify_kptr_field(types, m_type_id, get_str) {
+            out.push(KptrField {
+                offset: member_byte_off,
+                kind,
+                pointee_btf_id,
+            });
+            continue;
+        }
+        // Not a kptr/uptr-tagged pointer at this slot — but if it's a
+        // nested struct/union, recurse so any kptr-tagged fields inside
+        // contribute with their absolute offset relative to the outer
+        // value type.
+        let mut inner_id = m_type_id;
+        let mut peel = 0;
+        while let Some(inner_t) = types.get(inner_id as usize) {
+            if !matches!(
+                inner_t.kind(),
+                BTF_KIND_TYPEDEF | BTF_KIND_CONST | BTF_KIND_VOLATILE | BTF_KIND_RESTRICT
+            ) || peel >= 8
+            {
+                break;
+            }
+            inner_id = inner_t.size_or_type;
+            peel += 1;
+        }
+        if let Some(inner_t) = types.get(inner_id as usize)
+            && matches!(inner_t.kind(), BTF_KIND_STRUCT | BTF_KIND_UNION)
+        {
+            extract_kptr_fields_recurse(
+                types,
+                inner_id,
+                member_byte_off,
+                get_str,
+                out,
+                depth + 1,
+            );
+        }
     }
 }
 
@@ -918,6 +1734,7 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                     let mut key_size = 0;
                     let mut max_entries = 0;
                     let mut map_type = 0u32;
+                    let mut map_flags = 0u32;
                     let mut btf_val_type_id = None; // STORE THIS!
 
                     let members = def_t.vlen() as usize;
@@ -988,6 +1805,13 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                             if let Some(val) = extract_btf_uint(&types, m_type_id) {
                                 key_size = val;
                             }
+                        } else if m_name == "map_flags" {
+                            // `__uint(map_flags, BPF_F_RDONLY_PROG)` — encoded as
+                            // pointer-to-array with nelems = flag value, same as
+                            // type/max_entries above.
+                            if let Some(val) = extract_btf_uint(&types, m_type_id) {
+                                map_flags = val;
+                            }
                         }
                     }
 
@@ -1000,6 +1824,13 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                         27 | 31 | 32 | 33 // RINGBUF, USER_RINGBUF, CGRP_STORAGE, ARENA
                     );
                     if is_map && (value_size > 0 || is_valueless_map) {
+                        let kptr_fields = btf_val_type_id
+                            .map(|id| extract_kptr_fields(&types, id, &get_str))
+                            .unwrap_or_default();
+                        if !kptr_fields.is_empty() {
+                            info!(target: "app", "[BTF] Map '{}' has {} kptr field(s): {:?}",
+                                name, kptr_fields.len(), kptr_fields);
+                        }
                         info!(target: "app", "[BTF] Found Map: '{}' (Type: {}, KeySize: {}, ValSize: {}, MaxEntries: {}, TypeID: {:?})",
                             name, map_type, key_size, value_size, max_entries, btf_val_type_id);
                         map_defs.push(BpfMapDef {
@@ -1008,10 +1839,12 @@ pub fn parse_btf_map_defs(bytes: &[u8]) -> Result<Vec<BpfMapDef>, String> {
                             key_size,
                             value_size,
                             max_entries,
-                            map_flags: 0,
+                            map_flags,
                             btf_val_type_id,
                             initial_data: None, // No initial data here
                             inner_map_idx: None,
+                            kptr_fields,
+                            extern_var_offsets: Vec::new(),
                         });
                     }
                 }

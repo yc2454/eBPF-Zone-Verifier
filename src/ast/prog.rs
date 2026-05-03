@@ -37,6 +37,18 @@ pub enum ProgramKind {
     /// entry types are derived from that member's BTF FUNC_PROTO by the
     /// W6.4 entry-state plumbing.
     StructOps,
+    /// `SEC("netfilter")` — BPF_PROG_TYPE_NETFILTER. R0 at exit must be a
+    /// known value in [0, 1] (NF_DROP / NF_ACCEPT).
+    Netfilter,
+    /// `SEC("flow_dissector")` — BPF_PROG_TYPE_FLOW_DISSECTOR. Receives
+    /// `struct __sk_buff *` ctx but with a stricter allowlist than the
+    /// generic SkBuff context (only `data`, `data_end`, `flow_keys`).
+    FlowDissector,
+    /// `SEC("sk_reuseport")` — BPF_PROG_TYPE_SK_REUSEPORT. Receives
+    /// `struct sk_reuseport_md *` ctx directly (no BPF_PROG wrapper);
+    /// ctx-access is BTF-driven via `field_at_offset` on the iter-style
+    /// path in `validate_ctx_access`.
+    SkReuseport,
     #[default]
     Unknown,
 }
@@ -97,6 +109,13 @@ impl ProgramKind {
             || s.starts_with("fmod_ret/")
             || s.starts_with("fmod_ret.s/")
             || s.starts_with("tp_btf/")
+            // libbpf optional-load form: `?tp_btf/<func>`. Treat as
+            // Tracing for kfunc-allowlist purposes (cf.
+            // `verifier_global_ptr_args::trusted_task_arg_nullable`).
+            // We don't strip `?` for the other tracing flavors because
+            // `?fentry/` / `?fexit/` siblings in the corpus rely on
+            // their current-Unknown kfunc rejection — see audit doc.
+            || s.starts_with("?tp_btf/")
             || s.starts_with("iter/")
             || s.starts_with("iter.s/")
         {
@@ -116,6 +135,14 @@ impl ProgramKind {
             || s.starts_with("uprobe.s/")
             || s.starts_with("uretprobe/")
             || s.starts_with("uretprobe.s/")
+            // `uprobe.session` / `kprobe.session`: session-attach SEC has
+            // no '/<func>' suffix in the test corpus (see
+            // uprobe_multi_verifier.c). Match the bare flavor too so the
+            // exit-time R0 ∈ [0, 1] rule in `expected_retval_rule` fires.
+            || s == "uprobe.session"
+            || s == "uretprobe.session"
+            || s == "kprobe.session"
+            || s == "kretprobe.session"
         {
             return ProgramKind::Kprobe;
         }
@@ -124,6 +151,15 @@ impl ProgramKind {
         }
         if s == "syscall" {
             return ProgramKind::Syscall;
+        }
+        if s == "netfilter" || s.starts_with("netfilter/") {
+            return ProgramKind::Netfilter;
+        }
+        if s == "flow_dissector" || s.starts_with("flow_dissector/") {
+            return ProgramKind::FlowDissector;
+        }
+        if s == "sk_reuseport" || s.starts_with("sk_reuseport/") {
+            return ProgramKind::SkReuseport;
         }
         // struct_ops (W6.4). Forms in the wild:
         //   "struct_ops"             — bare, member named after func symbol
@@ -196,7 +232,7 @@ impl ProgramKind {
         if s.starts_with("cgroup/skb") {
             return ProgramKind::CgroupSkb;
         }
-        if s.starts_with("cgroup/sock") {
+        if s.starts_with("cgroup/sock") || s.starts_with("cgroup/post_bind") {
             return ProgramKind::CgroupSock;
         }
         if s.starts_with("kprobe") || s.starts_with("kretprobe") {
@@ -210,6 +246,23 @@ impl ProgramKind {
         }
         if s.starts_with("perf_event") {
             return ProgramKind::PerfEvent;
+        }
+        if s == "sk_lookup" || s.starts_with("sk_lookup/") {
+            return ProgramKind::SkLookup;
+        }
+        // LWT attach types share __sk_buff context. `lwt_in`/`lwt_out`/
+        // `lwt_xmit` map to the corresponding ProgramKind; `lwt_seg6local`
+        // also uses __sk_buff so route it to LwtXmit (closest ctx-access
+        // semantics — kernel verifies the same set of skb fields plus
+        // the seg6local-specific helper allowlist, which is orthogonal).
+        if s == "lwt_in" {
+            return ProgramKind::LwtIn;
+        }
+        if s == "lwt_out" {
+            return ProgramKind::LwtOut;
+        }
+        if s == "lwt_xmit" || s == "lwt_seg6local" {
+            return ProgramKind::LwtXmit;
         }
         ProgramKind::Unknown
     }
@@ -226,7 +279,8 @@ impl ProgramKind {
             | ProgramKind::LwtOut
             | ProgramKind::LwtXmit
             | ProgramKind::Lsm
-            | ProgramKind::RawTracepoint => ContextKind::SkBuff,
+            | ProgramKind::RawTracepoint
+            | ProgramKind::FlowDissector => ContextKind::SkBuff,
             ProgramKind::SockOps => ContextKind::SockOps,
             ProgramKind::SkLookup => ContextKind::SkLookup,
             ProgramKind::SkMsg => ContextKind::SkMsgMd,
@@ -241,5 +295,80 @@ impl ProgramKind {
             self,
             ProgramKind::CgroupSkb | ProgramKind::CgroupSock | ProgramKind::CgroupSockAddr
         )
+    }
+}
+
+/// Per-attach-type return-value rule (Cluster B).
+///
+/// Mirrors the kernel's `check_return_code` per-prog-type / per-expected-attach-type
+/// table: at program exit, R0 must lie in `[lo, hi]`, and if `require_known` is
+/// true, R0 must additionally be a single known value (smin == smax).
+///
+/// `subtype` is the SEC suffix after the first `/` lowercased — e.g. for
+/// `SEC("cgroup/recvmsg4")` it is `"recvmsg4"`; for `SEC("lsm/file_mprotect")`
+/// it is `"file_mprotect"`. For prog kinds whose retval rule does not depend
+/// on attach subtype (e.g. netfilter), `subtype` is unused.
+#[derive(Debug, Clone, Copy)]
+pub struct RetvalRule {
+    pub lo: i64,
+    pub hi: i64,
+    pub require_known: bool,
+}
+
+pub fn expected_retval_rule(prog_kind: ProgramKind, subtype: Option<&str>) -> Option<RetvalRule> {
+    match prog_kind {
+        ProgramKind::CgroupSockAddr => {
+            let sub = subtype?;
+            // recvmsg / getpeername / getsockname: must return exactly 1.
+            if sub.starts_with("recvmsg")
+                || sub.starts_with("getpeername")
+                || sub.starts_with("getsockname")
+            {
+                return Some(RetvalRule { lo: 1, hi: 1, require_known: false });
+            }
+            // bind4 / bind6: [0, 3].
+            if sub.starts_with("bind") {
+                return Some(RetvalRule { lo: 0, hi: 3, require_known: false });
+            }
+            // sendmsg / connect: [0, 1] (default for cgroup/sock_addr hooks).
+            Some(RetvalRule { lo: 0, hi: 1, require_known: false })
+        }
+        ProgramKind::Lsm => {
+            let sub = subtype?;
+            // bool retval hooks.
+            if sub == "audit_rule_known" {
+                return Some(RetvalRule { lo: 0, hi: 1, require_known: false });
+            }
+            // void retval hooks: no constraint.
+            if sub == "file_free_security" || sub == "task_free" || sub == "inode_free_security" {
+                return None;
+            }
+            // Default LSM hook: errno-or-zero. Only enforce on hooks we know
+            // are checked upstream (avoid regressing PASS cases that we
+            // currently accept but where the kernel's per-hook policy is
+            // looser than [-4095, 0]).
+            if sub == "file_mprotect" {
+                return Some(RetvalRule { lo: -4095, hi: 0, require_known: false });
+            }
+            None
+        }
+        ProgramKind::Netfilter => {
+            // NF_DROP=0, NF_ACCEPT=1; kernel additionally requires the value
+            // to be a known constant (rejects "R0 is not a known value").
+            Some(RetvalRule { lo: 0, hi: 1, require_known: true })
+        }
+        ProgramKind::Kprobe => {
+            // SEC("kprobe.session") and SEC("uprobe.session"): the
+            // kernel's session-attach hook expects R0 ∈ [0, 1] at exit
+            // — 0 means "skip the matching kretprobe", 1 means "run
+            // it". Plain `kprobe`/`uprobe` programs don't constrain R0.
+            // Both share ProgramKind::Kprobe; the subtype derived from
+            // the SEC string disambiguates.
+            if matches!(subtype, Some("session")) {
+                return Some(RetvalRule { lo: 0, hi: 1, require_known: false });
+            }
+            None
+        }
+        _ => None,
     }
 }

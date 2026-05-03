@@ -21,9 +21,18 @@ fn callback_arg_reg(helper_id: u32) -> Option<Reg> {
 
 /// Scan backward from `call_pc` through the current linear run of
 /// instructions to find the PSEUDO_FUNC load that feeds `cb_reg`.
-/// Stops at the first branch/exit/call we see (simple basic-block walk);
-/// if later dataflow proves richer feeders, W3.4b can revisit.
+/// Follows reg-to-reg Mov chains (`Mov cb_reg, R6` → keep scanning for
+/// the PSEUDO_FUNC that fed `R6`). Stops at the first branch/exit/call
+/// we see (simple basic-block walk); if later dataflow proves richer
+/// feeders, W3.4b can revisit.
+///
+/// Caught `verifier_private_stack::private_stack_callback`, where the
+/// pattern is `LoadMap R6, PseudoFunc; Mov R2, R6; Call bpf_loop`. R2
+/// is the cb_reg for bpf_loop; without the chain-follow the scan saw
+/// `Mov R2, R6` as a foreign write and gave up, leaving the callback's
+/// body unreachable in DFS.
 fn find_pseudo_func_for_call(prog: &Program, call_pc: usize, cb_reg: Reg) -> Option<u32> {
+    let mut tracked = cb_reg;
     let mut pc = call_pc;
     while pc > 0 {
         pc -= 1;
@@ -32,12 +41,19 @@ fn find_pseudo_func_for_call(prog: &Program, call_pc: usize, cb_reg: Reg) -> Opt
                 dst,
                 kind: MapLoadKind::PseudoFunc { subprog_pc },
                 ..
-            } if *dst == cb_reg => return Some(*subprog_pc),
-            // Any write to cb_reg that isn't the PSEUDO_FUNC load breaks
-            // the direct feed — bail out conservatively.
+            } if *dst == tracked => return Some(*subprog_pc),
+            // `Mov tracked, Reg(src)` is an alias chain — keep scanning
+            // backward for the producer of `src`. Any other write to
+            // `tracked` (immediate Mov, arithmetic, load, foreign LoadMap)
+            // breaks the direct feed.
+            Instr::Alu { dst, op: crate::ast::AluOp::Mov, src: crate::ast::Operand::Reg(src), .. }
+                if *dst == tracked =>
+            {
+                tracked = *src;
+            }
             Instr::Alu { dst, .. } | Instr::MovSx { dst, .. } | Instr::Load { dst, .. }
             | Instr::LoadSx { dst, .. } | Instr::LoadMap { dst, .. }
-                if *dst == cb_reg =>
+                if *dst == tracked =>
             {
                 return None;
             }
@@ -82,6 +98,7 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
             | Instr::Exit
             | Instr::Call { .. }
             | Instr::CallRel { .. }
+            | Instr::MayGoto { .. }
     ) {
         if pc + 1 < n {
             succs.push(pc + 1);
@@ -108,6 +125,14 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
                 if target < n {
                     succs.push(target);
                     init_explored_state(env, target);
+                }
+                // Bucket F-A: sync-callback-calling helpers are force-
+                // checkpoint sites (kernel `mark_force_checkpoint` at
+                // verifier.c L17489). Eviction threshold n=64 here vs
+                // n=3 elsewhere — keeps cb-call checkpoints alive long
+                // enough for cb-iteration convergence.
+                if pc < env.insn_aux_data.len() {
+                    env.insn_aux_data[pc].force_checkpoint = true;
                 }
             }
             if pc + 1 < n {
@@ -149,6 +174,32 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
 
             Ok(succs)
         }
+        Instr::MayGoto { target } => {
+            // BPF_JCOND (v6.8) — bounded back-edge whose taken/fallthrough
+            // both reach reachable code. Modeled as a conditional jump:
+            // mark self + both edges as prune points and emit both
+            // successors. Without this, may_goto's `target` was dropped
+            // by the non-branch fall-through above and post-may_goto code
+            // (e.g. cond_break5's exit at pc 6) showed up as
+            // "CFG error: unreachable insn".
+            //
+            // Termination at runtime relies on `goto_budget` saturating
+            // and pruning at the loop head, not on CFG structure — so
+            // the static CFG just needs both edges visible.
+            init_explored_state(env, pc);
+            if pc + 1 < n {
+                succs.push(pc + 1);
+                init_explored_state(env, pc + 1);
+            }
+            succs.push(*target);
+            init_explored_state(env, *target);
+            // Bucket F-A: may_goto is a force-checkpoint site (kernel
+            // `mark_force_checkpoint` at verifier.c L17557).
+            if pc < env.insn_aux_data.len() {
+                env.insn_aux_data[pc].force_checkpoint = true;
+            }
+            Ok(succs)
+        }
         Instr::CallRel { target } => {
             // 1. Push the Function Entry (The Call)
             succs.push(*target);
@@ -184,7 +235,7 @@ fn get_successors(pc: usize, prog: &Program) -> Vec<usize> {
     match &prog.instrs[pc] {
         Instr::Exit => vec![],
         Instr::Jmp { target } => vec![*target],
-        Instr::If { target, .. } => {
+        Instr::If { target, .. } | Instr::MayGoto { target } => {
             let mut succs = vec![*target];
             if pc + 1 < n {
                 succs.push(pc + 1);

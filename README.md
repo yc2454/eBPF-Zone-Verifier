@@ -158,117 +158,143 @@ At PC 50, if only r0, r1, r6 are live:
 
 ## Usage
 
-The tool is run via `cargo run -- [flags] <subcommand> [args]`.
+The CLI is split into a small Rust binary (`zovia`, three user-facing
+verbs) and a set of Python tools under `scripts/` for corpus
+benchmarking and baseline diffing. Build with `cargo build --release`,
+then invoke `./target/release/zovia` (or `cargo run --release --`).
 
-### Subcommands
+### Top-level commands
 
-#### ELF Analysis
-* **`elf-list <elf_path>`**: Lists all sections, BPF programs, and maps in an ELF file.
-* **`elf-analyze <elf_path> <section_name>`**: Analyzes a specific BPF program in a section.
-* **`elf-analyze-func <elf_path> <func_name>`**: Analyzes a specific program by its function name.
-* **`elf-analyze-prog <elf_path>`**: Batch analyzes all code sections in the ELF file.
+```
+zovia elf    <path> [...]      Inspect ELF / BTF contents (no verification)
+zovia verify <path> [...]      Verify an eBPF program (auto-detects .o, .c, .json)
+zovia pcc    <gen|check|cycle> Proof-Carrying Code certificate workflows
+zovia dev    <subcommand>      Internal corpus / baseline / selftest harness
+```
 
-#### Benchmarks
-* **`bcf-benchmark <dir_path>`**: Runs the BCF (BPF Complexity Framework) benchmark suite. Recursively scans for `.o` files with naming pattern `clang-<VER>_-<OPT>_<SOURCE>.o`.
-* **`prevail-benchmark <dir_path>`**: Runs the PREVAIL benchmark suite on real-world eBPF programs. Files in `invalid/` subdirectory are expected to be rejected; all others should be accepted.
+`zovia --help` and `zovia <verb> --help` print the full clap-generated
+flag table — the canonical reference. Highlights below.
 
-#### Selftests
-* **`selftest-list <json_file>`**: Lists all tests contained in a JSON test file.
-* **`selftest-run <json_file>`**: Runs all tests in a specific JSON file.
-* **`selftest-single <json_file> <test_name>`**: Runs a single test by name from a JSON file.
-* **`selftest-suite <json_dir>`**: Runs all JSON test files found in a directory.
+#### `elf <path>`
 
-#### PREVAIL Catalogue Tests
-* **`prevail-list <catalogue.json>`**: Lists all tests in a PREVAIL catalogue.
-* **`prevail-run <catalogue.json>`**: Runs all tests in a catalogue (with expected outcomes).
-* **`prevail-single <catalogue.json> <test_name>`**: Runs a single test by name.
-
-### Configuration Flags
-
-Flags must be placed *before* the subcommand.
-
-#### Domain Mode
-
-| Flag | Description |
+| Flag | Effect |
 | --- | --- |
-| `--kernel-mode` | Simulate kernel verifier: interval domain + strict loop checks. |
-| `--zone-mode` | Use zone domain (default, more precise than kernel). |
+| *(none)* | List sections, programs, and maps |
+| `--section <S>` | Analyze a single section |
+| `--func <F>` | Analyze the section containing a given function |
+| `--all` | Analyze every code section in the file |
+| `--struct-ops <S>` | Diagnostic: dump the struct\_ops methods of struct `S` |
+| `--btf-func <F>` | Diagnostic: print BTF parameter list of FUNC `F` |
+| `--bindings` | Diagnostic: dump struct\_ops bindings recovered from `.struct_ops` sections |
 
-#### Loop Analysis
+#### `verify <path>`
 
-These flags control loop handling. `--kernel-mode` sets both automatically for kernel compatibility.
+Auto-detects input by extension:
+* `.o` → ELF (use `--section S`, `--func F`, or default to whole file)
+* `.c` → upstream selftest source, compiled via clang (use `--defines D1,D2,…`)
+* `.json` → legacy test catalogue. Bare `verify foo.json` lists tests; pick one with `--test "<name>"`. (Bulk runs live under `dev legacy-selftest`.)
 
-| Flag | Description | Default |
+`--kind elf|c|json` forces the input kind when the extension is missing or ambiguous.
+
+#### `pcc <gen|check|cycle>`
+
+```
+zovia pcc gen   <json> --test <name> [--out <cert>]    # zone-mode generation
+zovia pcc check <json> --test <name> --cert <path>     # interval-mode verify
+zovia pcc cycle <json> --test <name> [--out <cert>]    # gen + check in one
+```
+
+#### `dev <subcommand>`
+
+Internal harness commands; not part of the user-facing surface and
+subject to change. Run `zovia dev --help` for the list. Commonly used:
+
+* `dev selftest-file <prog.c> [defines]` — single upstream-style C selftest
+* `dev selftest-suite <progs_dir>` — every `.c` selftest in a directory
+* `dev selftest-baseline-write-upstream <upstream_root> <out.json>` — full sweep against a kernel checkout (writes the gold-standard baseline)
+* `dev selftest-baseline-check-modern <progs_dir> <baseline.json>` — fast in-place check (skips non-deterministic baseline rows)
+* `dev verify-corpus <dir> --out FILE.jsonl` — JSONL emitter (one record per file/section); the single Rust entrypoint that the Python harnesses sit on top of
+* `dev legacy-selftest {list|single|run|suite}` — pre-6.2 JSON corpus runner
+* `dev pcc-regress [manifest]` — PCC regression manifest
+
+### Configuration flags (global)
+
+All flags are global and may appear before *or* after the subcommand.
+
+| Flag | Effect |
+| --- | --- |
+| `-q`, `--quiet` | Errors only |
+| `-v`, `--verbose` | Trace execution |
+| `--very-verbose` | Full debug |
+| `--kernel-mode` | Simulate the kernel verifier (interval domain + strict loops; disables bounded-loop detection) |
+| `--zone-mode` | Zone domain (default, more precise) |
+| `--detect-bounded-loops` / `--no-detect-bounded-loops` | Pattern-match early loop convergence |
+| `--single-entry-loops` / `--multi-entry-loops` | Loop-entry strictness |
+| `--enable-private-stack` / `--disable-private-stack` | v6.12 private-stack model (default ON) |
+| `--max-insn <N>` | Step budget (default 1,000,000) |
+| `--max-states <N>` | Per-PC state cap for pruning (default 8) |
+| `--skip-dbm`, `--use-widening`, `--enable-path-trace` | Analysis tweaks |
+| `--debug-pc <PC>`, `--log-interval <N>` | Diagnostics |
+| `--map-override <name:size>` | Override a map's value size, repeatable |
+
+## Python harnesses (`scripts/`)
+
+Corpus walking, filtering, baseline diffing, bench reports, and CI
+gating live in Python on top of `dev verify-corpus`. The Rust binary
+stays focused on verification.
+
+| Script | Replaces | What it does |
 | --- | --- | --- |
-| `--detect-bounded-loops` | Use pattern matching for early loop convergence. | `true` |
-| `--no-detect-bounded-loops` | Disable bounded loop detection. | |
-| `--single-entry-loops` | Reject loops with jumps into middle (kernel behavior). | `false` |
-| `--multi-entry-loops` | Allow loops with any entry pattern. | `true` |
-
-#### General Options
-
-| Flag | Description | Default |
-| --- | --- | --- |
-| `-q`, `--quiet` | Minimal output (errors only). | |
-| `-v`, `--verbose` | Trace execution (Instruction-level logging). | |
-| `-vv`, `--very-verbose` | Full debug output (State & DBM details). | |
-| `--max-insn <N>` | Maximum instructions to process before aborting. | `1,000,000` |
-| `--skip-dbm` | Skip DBM comparisons in pruning (faster, less precise). | `false` |
-| `--use-widening` | Use widening in pruning (speeds up loops, potentially unsound). | `false` |
-| `--max-states <N>` | Maximum abstract states to keep per PC for pruning. | `8` |
-| `--debug-pc <N>` | Force verbose logging only around a specific PC. | `None` |
-| `--enable-path-trace` | Enable detailed path reconstruction for crash analysis. | `false` |
-| `--map-override <name:size>` | Manually specify a map's value size (e.g., `my_map:64`). | |
-| `--log-interval <N>` | Heartbeat log interval for long-running analyses. | `100,000` |
-
-### Benchmark Filters
-
-| Flag | Description | Example |
-| --- | --- | --- |
-| `--project <NAME>` | Filter by project subdirectory. | `--project cilium` |
-| `--compiler <NAME>` | Filter by compiler version (BCF only). | `--compiler clang-16` |
-| `--opt <LEVEL>` | Filter by optimization level (BCF only). | `--opt -O2` |
-| `--source <NAME>` | Filter by original source file name (BCF only). | `--source bpf_host` |
-| `--input-list <FILE>` | Use a specific file containing a list of ELF paths. | `--input-list files.txt` |
+| `scripts/baseline_diff.py` | `dev selftest-baseline-check{,-modern}`'s printer | Diffs two baseline JSONs (regressions / improvements / new / removed). `--modern-only` drops `legacy/...` rows. Exit 1 on any PASS→non-PASS regression. |
+| `scripts/bench.py` | `dev bcf-benchmark` (deleted) | BCF-style corpus benchmark. Walks a dir, parses `clang-<VER>_-<OPT>_<SOURCE>.o`, filters by `--project`/`--compiler`/`--opt`/`--source`, calls verify-corpus, aggregates and writes `results/bcf/<base>_<ts>_{report.txt,results.json}`. |
+| `scripts/prevail.py` | `dev prevail {list,run,single,benchmark}` (deleted) | Prevail catalogue runner + benchmark. Same JSON output shape as the old Rust path. |
+| `scripts/canonicalize_selftest_report.py` | (renamed from `tests/baselines/canonicalize.py`) | Canonicalizes a selftest report into the frozen baseline format. |
+| `scripts/capture_baselines.sh` | (renamed) | CI driver: refresh all four `selftest_*` baselines + `prevail.json` under `tests/baselines/`. |
+| `scripts/diff_baselines.sh` | (renamed) | CI gate: re-run and diff against the frozen baselines; exit 1 on diff. |
 
 ## Examples
 
 **1. Inspect an object file:**
 ```bash
-cargo run -- elf-list ./bpf_host.o
+zovia elf ./bpf_host.o
 ```
 
-**2. Analyze a specific section:**
+**2. Verify one section / one function / the whole file:**
 ```bash
-cargo run -- elf-analyze ./bpf_host.o tc
+zovia verify ./bpf_host.o --section tc
+zovia verify ./bpf_host.o --func handle_packet
+zovia verify ./bpf_host.o            # all sections
 ```
 
-**3. Run the "calls" selftest suite:**
+**3. Run a single legacy JSON test:**
 ```bash
-cargo run -- selftest-run ./selftests/legacy/verifier/calls.json
+zovia verify ./selftests/legacy/verifier/calls.json --test "calls: invalid kfunc call"
 ```
 
-**4. Run the BCF benchmark with filters:**
+**4. Generate and check a PCC certificate in one shot:**
 ```bash
-cargo run -- --project cilium --compiler clang-16 bcf-benchmark ./bpf-progs
+zovia pcc cycle pcc-tests/pcc_examples.json \
+    --test "pcc motivating: var add packet access (zone ok, kernel reject)"
 ```
 
-**5. Run the PREVAIL benchmark on real-world programs:**
+**5. Refresh and diff the v6.15 modernization baseline:**
 ```bash
-# Run on all projects
-cargo run -- prevail-benchmark ~/ebpf-samples
+# Full sweep against a kernel checkout (~5 min)
+zovia -q dev selftest-baseline-write-upstream vendor/linux /tmp/current.json
 
-# Filter to a specific project
-cargo run -- prevail-benchmark ~/ebpf-samples --project cilium
-
-# Test the invalid programs (expected rejections)
-cargo run -- prevail-benchmark ~/ebpf-samples --project invalid
+# Diff against the committed baseline
+scripts/baseline_diff.py selftests/baseline_v6.15_full.json /tmp/current.json --modern-only
 ```
 
-**6. Run selftests in kernel-compatible mode:**
+**6. BCF / prevail bench on a real-world corpus:**
 ```bash
-# Simulate kernel verifier behavior (interval domain + strict loop checks)
-cargo run -- --kernel-mode selftest-suite ./selftests/legacy/verifier
+scripts/bench.py   ~/ebpf-samples --project cilium --compiler clang-16
+scripts/prevail.py benchmark ~/ebpf-samples --project cilium
+```
+
+**7. Run modernized selftests in kernel-compatible mode:**
+```bash
+zovia --kernel-mode dev selftest-suite vendor/linux/tools/testing/selftests/bpf/progs
 ```
 
 ## Troubleshooting
@@ -330,12 +356,14 @@ src/
 ├── common/             # Configuration, utilities
 ├── parsing/            # ELF loading, instruction decoding, BTF
 │   └── elf/            # ELF-specific: maps, programs, relocations
-├── testing/            # Test runners and benchmarks
-│   ├── bcf_benchmark.rs    # BCF benchmark runner
-│   ├── benchmark_common.rs # Shared benchmark utilities
-│   ├── prevail.rs          # PREVAIL tests and benchmark
-│   ├── selftest.rs         # JSON-based test runner
-│   └── runner.rs           # Core analysis driver
+├── testing/            # Test runners (see also: scripts/ for the corpus harnesses)
+│   ├── runner.rs           # Core analysis driver (Analyzer)
+│   ├── jsonl.rs            # JSONL corpus emitter (`dev verify-corpus`)
+│   ├── legacy_selftest.rs  # Pre-6.2 JSON test corpus
+│   ├── pcc_test.rs         # PCC certificate workflows
+│   ├── selftest/           # Modern upstream selftest pipeline (clang + attrs)
+│   ├── scanner.rs          # ELF/BTF metadata extractor (`dev benchmark-scan`)
+│   └── logging.rs          # PC-range / register-trace filtering
 └── zone/               # Abstract domains
     ├── dbm.rs          # Difference Bound Matrix implementation
     ├── domain.rs       # Domain operations (assume, refine, etc.)

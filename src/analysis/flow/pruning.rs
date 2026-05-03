@@ -14,18 +14,52 @@ use crate::domains::tnum::Tnum;
 /// Check if the loop body contains a conditional branch (If instruction),
 /// which indicates the loop has a potential exit path.
 /// Only considers instructions at the same call depth as the loop head.
+/// Does this loop have at least one `Instr::If` exit? Used to distinguish
+/// "natural" loops with comparison-based exits (where domain refinement on
+/// the exit branch handles termination) from may_goto-only loops where the
+/// runtime budget is the only termination guarantee.
+fn loop_has_if_exit(env: &VerifierEnv, state: &State, pc: usize, prog: &Program) -> bool {
+    if let Some(idx) = state.history_idx {
+        let body_pcs = env.history.loop_body_pcs(idx, pc, Some(state.num_frames()));
+        for body_pc in body_pcs {
+            if body_pc < prog.instrs.len()
+                && matches!(prog.instrs[body_pc], Instr::If { .. })
+            {
+                return true;
+            }
+        }
+    }
+    if pc < prog.instrs.len() && matches!(prog.instrs[pc], Instr::If { .. }) {
+        return true;
+    }
+    false
+}
+
 fn loop_has_conditional_exit(env: &VerifierEnv, state: &State, pc: usize, prog: &Program) -> bool {
     if let Some(idx) = state.history_idx {
         // Only check PCs at the same frame depth (excludes callee instructions)
         let body_pcs = env.history.loop_body_pcs(idx, pc, Some(state.num_frames()));
         for body_pc in body_pcs {
-            if body_pc < prog.instrs.len() && matches!(prog.instrs[body_pc], Instr::If { .. }) {
+            if body_pc < prog.instrs.len()
+                && matches!(
+                    prog.instrs[body_pc],
+                    Instr::If { .. } | Instr::MayGoto { .. }
+                )
+            {
                 return true;
             }
         }
     }
-    // Also check the loop head itself
-    if pc < prog.instrs.len() && matches!(prog.instrs[pc], Instr::If { .. }) {
+    // Also check the loop head itself. `MayGoto` is a budget-bounded
+    // conditional exit (BPF_JCOND v6.8): the kernel inlines a hidden
+    // counter check that eventually short-circuits the back-edge, so the
+    // exit is guaranteed to be reachable.
+    if pc < prog.instrs.len()
+        && matches!(
+            prog.instrs[pc],
+            Instr::If { .. } | Instr::MayGoto { .. }
+        )
+    {
         return true;
     }
     false
@@ -104,12 +138,21 @@ fn loop_exit_was_explored(env: &VerifierEnv, state: &State, pc: usize, prog: &Pr
         }
     }
 
-    // For each If instruction in the loop body, check if its exit successor
-    // (the one that leaves the loop) has been explored
+    // For each conditional-exit instruction in the loop body (If or
+    // MayGoto), check if its exit successor (the one that leaves the
+    // loop) has been explored. MayGoto behaves the same way for this
+    // analysis: budget exhaustion guarantees one of its successors is
+    // an exit.
     for &body_pc in &body_pc_set {
-        if body_pc < prog.instrs.len()
-            && let Instr::If { target, .. } = &prog.instrs[body_pc]
-        {
+        if body_pc >= prog.instrs.len() {
+            continue;
+        }
+        let target_opt = match &prog.instrs[body_pc] {
+            Instr::If { target, .. } => Some(*target),
+            Instr::MayGoto { target } => Some(*target),
+            _ => None,
+        };
+        if let Some(target) = target_opt {
             let fall_through = body_pc + 1;
             // Check if fall-through exits the loop
             if !body_pc_set.contains(&fall_through)
@@ -118,7 +161,7 @@ fn loop_exit_was_explored(env: &VerifierEnv, state: &State, pc: usize, prog: &Pr
                 return true;
             }
             // Check if target exits the loop
-            if !body_pc_set.contains(target) && env.explored_states.contains_key(target) {
+            if !body_pc_set.contains(&target) && env.explored_states.contains_key(&target) {
                 return true;
             }
         }
@@ -223,7 +266,12 @@ fn check_loop_convergence(
 ) -> bool {
     // Only converge if:
     // 1. Widening was applied (prev_states >= 2)
-    // 2. Widening was effective (bounds expanded)
+    // 2. Either widening was effective (live regs' bounds expanded), or
+    //    the loop is may_goto-bounded (the runtime counter on its own
+    //    proves termination — no scalar needs to widen). Loop body
+    //    effects on live regs are still subsumption-checked by the
+    //    caller; this just controls when we *trust* the subsumption to
+    //    let us prune.
     // 3. Exit path exists (bounded loop or exit was explored)
     if prev_states.len() < 2 {
         return false;
@@ -231,7 +279,19 @@ fn check_loop_convergence(
 
     let first = &prev_states[0];
     let last = prev_states.last().unwrap();
-    if !widening_was_effective(first, last, live_regs) {
+
+    // may_goto loops decrement `goto_budget` on every iteration; once
+    // we're observably making progress on the budget the runtime is
+    // guaranteed to exit, so subsumption alone is sufficient. This is
+    // what `verifier_iterating_callbacks::cond_break5` needs — the
+    // body's `cnt1++` doesn't widen because cnt1 isn't live across
+    // the loop head, but the budget counts iterations down regardless.
+    let may_goto_bounded = first.goto_budget > last.goto_budget;
+
+    if !may_goto_bounded
+        && !live_regs.is_empty()
+        && !widening_was_effective(first, last, live_regs)
+    {
         return false;
     }
 
@@ -265,7 +325,7 @@ fn apply_widening(
 /// Handle pruning decision at a loop point.
 /// Returns Some(true) to prune, Some(false) to continue, None if no previous states.
 fn handle_loop_pruning(
-    env: &VerifierEnv,
+    env: &mut VerifierEnv,
     state: &mut State,
     pc: usize,
     prog: &Program,
@@ -282,32 +342,78 @@ fn handle_loop_pruning(
     // Apply bound before subsumption check
     apply_loop_bound(state, loop_bound);
 
-    let Some(prev_states) = env.explored_states.get(&pc) else {
+    // Walk prev_states once, recording the first hit (if any) and all
+    // walked-past indices. We hold the borrow only inside this scope so
+    // the metrics-update at the end can take `&mut env` cleanly.
+    let (hit_idx, miss_idxs, prev_first_budget, prev_last_budget, prev_states_len): (
+        Option<usize>,
+        Vec<usize>,
+        Option<u32>,
+        Option<u32>,
+        usize,
+    ) = if let Some(prev_states) = env.explored_states.get(&pc) {
+        let mut h = None;
+        let mut m: Vec<usize> = Vec::new();
+        // Branchy loop tops can hold multiple cached states; match the
+        // first that subsumes (kernel `is_state_visited` walks the
+        // explored_state list, verifier.c v6.15 ~L19018).
+        for (i, prev) in prev_states.iter().enumerate() {
+            if state_subsumed_by(state, prev, live_regs, config) {
+                h = Some(i);
+                break;
+            } else {
+                m.push(i);
+            }
+        }
+        let f = prev_states.first().map(|s| s.goto_budget);
+        let l = prev_states.last().map(|s| s.goto_budget);
+        (h, m, f, l, prev_states.len())
+    } else {
         return false;
     };
 
-    if let Some(old) = prev_states.last() {
-        if state_subsumed_by(state, old, live_regs, config) {
-            // Check if we can converge (widening effective + exit explored)
-            if check_loop_convergence(
-                env,
-                state,
-                pc,
-                prog,
-                prev_states,
-                live_regs,
-                loop_bound,
-                config,
-            ) {
-                return true;
-            }
-            // Subsumed but conditions not met (widening not effective or no exit path)
-            // Let complexity limit catch infinite loops - don't widen when already subsumed
-            return false;
+    if let Some(idx) = hit_idx {
+        // Record hit BEFORE check_loop_convergence — eviction won't
+        // touch the just-hit entry, but cleaner ordering.
+        record_pruning_hit(env, pc, idx);
+        // For convergence we still need the full prev_states list.
+        let prev_states = env
+            .explored_states
+            .get(&pc)
+            .cloned()
+            .unwrap_or_default();
+        if check_loop_convergence(
+            env,
+            state,
+            pc,
+            prog,
+            &prev_states,
+            live_regs,
+            loop_bound,
+            config,
+        ) {
+            return true;
         }
+        // Subsumed but conditions not met (widening not effective or no exit path)
+        return false;
+    }
 
-        // Not subsumed: apply widening to accelerate convergence
-        if config.use_widening {
+    // Not subsumed: record misses + maybe evict, then apply widening.
+    record_pruning_misses(env, pc, &miss_idxs);
+
+    let only_may_goto_exit = !loop_has_if_exit(env, state, pc, prog);
+    let may_goto_progress = prev_first_budget
+        .zip(prev_last_budget)
+        .map(|(f, l)| f > l)
+        .unwrap_or(false);
+    let force_widen_for_may_goto =
+        only_may_goto_exit && loop_bound.is_none() && may_goto_progress;
+    if (config.use_widening || force_widen_for_may_goto) && prev_states_len > 0 {
+        // Re-fetch the last cached state for widening (after eviction
+        // it may have shifted; take the last surviving one).
+        if let Some(prev_states) = env.explored_states.get(&pc)
+            && let Some(old) = prev_states.last().cloned().as_ref()
+        {
             apply_widening(state, old, live_regs, loop_bound);
         }
     }
@@ -317,26 +423,37 @@ fn handle_loop_pruning(
 
 /// Handle standard (non-loop) subsumption check.
 fn handle_standard_pruning(
-    env: &VerifierEnv,
+    env: &mut VerifierEnv,
     state: &State,
     pc: usize,
     live_regs: &HashSet<Reg>,
     config: &VerifierConfig,
 ) -> bool {
+    let mut hit_idx: Option<usize> = None;
+    let mut miss_idxs: Vec<usize> = Vec::new();
     if let Some(prev_states) = env.explored_states.get(&pc) {
-        for prev in prev_states {
+        for (i, prev) in prev_states.iter().enumerate() {
             if state_subsumed_by(state, prev, live_regs, config) {
-                return true;
+                hit_idx = Some(i);
+                break;
+            } else {
+                miss_idxs.push(i);
             }
         }
     }
-    false
+    if let Some(idx) = hit_idx {
+        record_pruning_hit(env, pc, idx);
+        true
+    } else {
+        record_pruning_misses(env, pc, &miss_idxs);
+        false
+    }
 }
 
 /// Check if we should prune this state (already covered by a previous exploration).
 /// For loop heads with conditional exits, applies widening to accelerate convergence.
 pub fn should_prune(
-    env: &VerifierEnv,
+    env: &mut VerifierEnv,
     state: &mut State,
     config: &VerifierConfig,
     prog: &Program,
@@ -360,13 +477,140 @@ pub fn should_prune(
         return false;
     }
 
-    let live_regs = &env.insn_aux_data[pc].live_regs;
+    let live_regs = env.insn_aux_data[pc].live_regs.clone();
 
-    if in_loop {
-        handle_loop_pruning(env, state, pc, prog, live_regs, config)
-    } else {
-        handle_standard_pruning(env, state, pc, live_regs, config)
+    // Bucket F-D: may_goto-specific RANGE_WITHIN prune class.
+    if pc < prog.instrs.len()
+        && matches!(prog.instrs[pc], Instr::If { .. } | Instr::MayGoto { .. })
+        && let Some(prev_states) = env.explored_states.get(&pc)
+    {
+        let is_may_goto = matches!(prog.instrs[pc], Instr::MayGoto { .. });
+        if is_may_goto && may_goto_range_within_prune(state, prev_states, &live_regs, config) {
+            return true;
+        }
     }
+
+    let pruned = if in_loop {
+        handle_loop_pruning(env, state, pc, prog, &live_regs, config)
+    } else {
+        handle_standard_pruning(env, state, pc, &live_regs, config)
+    };
+    pruned
+}
+
+/// Bucket F-A: bump miss_cnt for every `prev_idx` and evict whose
+/// `miss_cnt > hit_cnt * n + n` (kernel verifier.c v6.15 L19222-L19233).
+/// `n = 64` at force-checkpoint pcs (iter_next, may_goto, sync-cb-call
+/// helpers); `n = 3` elsewhere. Caller passes the indices of every
+/// cached state that was walked-past during a failed subsumption check;
+/// hit cases use `record_pruning_hit` instead.
+fn record_pruning_misses(env: &mut VerifierEnv, pc: usize, miss_idxs: &[usize]) {
+    if miss_idxs.is_empty() {
+        return;
+    }
+    let force = env
+        .insn_aux_data
+        .get(pc)
+        .map(|a| a.force_checkpoint)
+        .unwrap_or(false);
+
+    let mut to_evict: Vec<usize> = Vec::new();
+    if let Some(metrics) = env.state_metrics.get_mut(&pc) {
+        for &i in miss_idxs {
+            if let Some(m) = metrics.get_mut(i) {
+                m.miss_cnt = m.miss_cnt.saturating_add(1);
+                // Kernel formula (verifier.c L19222):
+                //   n = is_force_checkpoint && sl->state.branches > 0 ? 64 : 3
+                // We don't track `branches`. Approximate via `hit_cnt`:
+                // cached states that have been hit at least once are
+                // "proven useful"; keep them longer (n=64 at force-
+                // checkpoint pcs). Unhit states use the smaller n,
+                // matching the kernel's `branches == 0` fast-evict.
+                // Non-force-checkpoint pcs use a slightly raised n=8
+                // (vs kernel's n=3) because we always increment miss_cnt
+                // — kernel gates that on the `add_new_state` heuristic
+                // (verifier.c L19141-L19144) which we don't model.
+                let n: u32 = if force {
+                    if m.hit_cnt > 0 { 64 } else { 3 }
+                } else {
+                    8
+                };
+                if m.miss_cnt > m.hit_cnt.saturating_mul(n).saturating_add(n) {
+                    to_evict.push(i);
+                }
+            }
+        }
+    }
+    if to_evict.is_empty() {
+        return;
+    }
+    // Sort descending so removals don't shift later indices.
+    to_evict.sort_unstable_by(|a, b| b.cmp(a));
+    if let Some(states) = env.explored_states.get_mut(&pc) {
+        for &i in &to_evict {
+            if i < states.len() {
+                states.remove(i);
+            }
+        }
+    }
+    if let Some(metrics) = env.state_metrics.get_mut(&pc) {
+        for &i in &to_evict {
+            if i < metrics.len() {
+                metrics.remove(i);
+            }
+        }
+    }
+}
+
+/// Bucket F-A: bump hit_cnt for the cached state at `prev_idx`.
+fn record_pruning_hit(env: &mut VerifierEnv, pc: usize, prev_idx: usize) {
+    if let Some(metrics) = env.state_metrics.get_mut(&pc)
+        && let Some(m) = metrics.get_mut(prev_idx)
+    {
+        m.hit_cnt = m.hit_cnt.saturating_add(1);
+    }
+}
+
+/// Bucket F-D: RANGE_WITHIN prune class for may_goto pcs.
+///
+/// Tries to subsume `cur` against any prev state where the
+/// `may_goto_depth` differs (mandatory: same depth would hit the EXACT
+/// inf-loop trap instead). Subsumption is run with `cur`'s precision
+/// marks cleared — the kernel's RANGE_WITHIN equivalent — so a
+/// loop-counter that's been precision-marked at a body memory access
+/// can still converge once its abstract value lies inside the cached
+/// range.
+fn may_goto_range_within_prune(
+    cur: &State,
+    prev_states: &[State],
+    live_regs: &HashSet<Reg>,
+    config: &VerifierConfig,
+) -> bool {
+    // Build a precision-stripped clone of `cur` once. State carries
+    // precision in two places: `precise_regs` (per-reg) and
+    // `SpilledReg::precise` (per stack slot).
+    let mut relaxed = cur.clone();
+    relaxed.precise_regs.clear();
+    use crate::analysis::machine::frame_stack::FrameLevel;
+    for fi in 0..relaxed.frames.depth() {
+        let level = FrameLevel::from_index(fi);
+        let stack = &mut relaxed.frames.get_mut(level).stack;
+        for off in stack.slot_offsets() {
+            if let Some(slot) = stack.slots.get_mut(&off) {
+                slot.precise = false;
+            }
+        }
+    }
+
+    for prev in prev_states {
+        if prev.may_goto_depth == cur.may_goto_depth {
+            continue;
+        }
+        if state_subsumed_by(&relaxed, prev, live_regs, config) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Callee-saved registers that persist across calls and affect
@@ -391,10 +635,33 @@ fn state_subsumed_by(
             return false;
         }
     } else if !(types_subsumed_by(&cur.types, &old.types, live_regs)
-        && domain_subsumed_by(&cur.domain, &old.domain, live_regs, &cur.precise_regs)
+        && domain_subsumed_by(&cur.domain, &old.domain, live_regs, &old.precise_regs)
         && stack_subsumed_by(cur, old)
         && tnum_subsumed_by(cur, old, live_regs))
     {
+        return false;
+    }
+
+    // Cluster: regsafe scalar-id check.
+    // If two live registers share a scalar_id in `old` (so a future
+    // refinement on one will propagate to the other along the cached
+    // continuation), `cur` must also have them linked. Otherwise the
+    // cur-state's continuation would refine them independently — pruning
+    // it against `old` hides paths where the unlinked register stays
+    // unbounded. Mirrors upstream `check_ids` in `regsafe`.
+    if !scalar_id_links_subsumed_by(cur, old, live_regs) {
+        return false;
+    }
+
+    // Active-lock identity. When `old.active_lock` names a specific
+    // map_value (`ptr_id`), every live register that *currently* holds
+    // that map_value in `old` must still hold the same map_value in
+    // `cur` — otherwise a future `bpf_spin_unlock` along the cached
+    // continuation through such a register would mismatch the lock in
+    // `cur`. This caught the FALSE_ACCEPT in
+    // `verifier_spin_lock::reg_id_for_map_value`, where one path
+    // reassigns the lock-holding register to a different map_value.
+    if !active_lock_subsumed_by(cur, old, live_regs) {
         return false;
     }
 
@@ -405,6 +672,18 @@ fn state_subsumed_by(
     // cur's future iterations are covered by an old state with a larger or
     // equal counter, pruning is sound.
     if old.goto_budget < cur.goto_budget {
+        return false;
+    }
+
+    // Active refcount-tracked acquisitions (dynptr / sock / cpumask /
+    // kptr / ...) must be a subset in `cur` of those held by `old`. If
+    // `cur` carries an active ref that `old` doesn't, pruning would
+    // hide a leak: the cached continuation from `old` already proved
+    // there's no leaking exit, but along that continuation cur's extra
+    // ref never gets released — exit leak-check would catch it on cur
+    // but not on old. Caught `dynptr_fail::ringbuf_missing_release2`,
+    // where one branch releases both ptr1+ptr2 and the other only ptr1.
+    if !cur.active_refs.is_subset(&old.active_refs) {
         return false;
     }
 
@@ -432,6 +711,131 @@ fn state_subsumed_by(
         }
     }
 
+    true
+}
+
+/// Linkage class for a register, used by `scalar_id_links_subsumed_by`.
+///
+/// Two registers belong to the same equivalence class when a future
+/// refinement (e.g. null-check, range narrowing) on one will propagate
+/// to the other along the kernel verifier's id-tracking. This covers:
+///   - scalars sharing a `scalar_id`
+///   - id-bearing nullable pointer types (`PtrToMapValueOrNull`,
+///     `PtrToBtfIdOrNull`, `PtrToAllocMemOrNull`) sharing an id — null
+///     refinement promotes all class members to the non-null form.
+///   - the non-null forms `PtrToMapValue { id, .. }`, `PtrToAllocMem { id, .. }`
+///     — the id persists post-refinement and still drives propagation.
+///
+/// The numeric tag in `LinkageKind` keeps classes from different RegType
+/// variants disjoint even when their ids collide as `u32` values.
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+enum LinkageKind {
+    Scalar,
+    MapValue,
+    MapValueOrNull,
+    BtfIdOrNull,
+    AllocMem,
+    AllocMemOrNull,
+    /// Interval-mode packet-pointer family (kernel `reg->id`).
+    /// Two registers with the same `(PacketPtr, id)` share a variable
+    /// offset chain; a bounds check on one refines `range` for all.
+    /// Zone mode handles this via DBM cells, not ids — the
+    /// corresponding subsumption check lives in `zone_subsumed_by`.
+    PacketPtr,
+}
+
+fn linkage_key(state: &State, r: Reg) -> Option<(LinkageKind, u32)> {
+    use crate::analysis::machine::reg_types::RegType;
+    use crate::domains::numeric::NumericDomain;
+    match state.types.get(r) {
+        RegType::PtrToMapValueOrNull { id, .. } => Some((LinkageKind::MapValueOrNull, id)),
+        RegType::PtrToMapValue { id, .. } => Some((LinkageKind::MapValue, id)),
+        RegType::PtrToBtfIdOrNull { id, .. } => Some((LinkageKind::BtfIdOrNull, id)),
+        RegType::PtrToAllocMemOrNull { id, .. } => Some((LinkageKind::AllocMemOrNull, id)),
+        RegType::PtrToAllocMem { id, .. } => Some((LinkageKind::AllocMem, id)),
+        RegType::ScalarValue => state.scalar_id(r).map(|id| (LinkageKind::Scalar, id)),
+        RegType::PtrToPacket | RegType::PtrToPacketEnd | RegType::PtrToPacketMeta => {
+            if let NumericDomain::Interval(ref ivl) = state.domain {
+                ivl.get_ptr_offset(r)
+                    .and_then(|po| po.id)
+                    .map(|id| (LinkageKind::PacketPtr, id))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// `old.active_lock` constraint check: for every live register that
+/// holds the locked map_value in `old` (i.e. its `PtrToMapValue.id`
+/// equals `old.active_lock.ptr_id`), the same register in `cur` must
+/// still hold a map_value whose id equals `cur.active_lock.ptr_id`.
+///
+/// Encodes the rule that pruning must not collapse a state where the
+/// lock's owning register has been reassigned to a different map_value
+/// — `bpf_spin_unlock` later in the cached continuation would target
+/// the wrong identity. See `verifier_spin_lock::reg_id_for_map_value`.
+fn active_lock_subsumed_by(cur: &State, old: &State, live_regs: &HashSet<Reg>) -> bool {
+    use crate::analysis::machine::reg_types::RegType;
+    let Some(old_lock) = old.get_active_lock() else {
+        return true;
+    };
+    let cur_lock_ptr = cur.get_active_lock().map(|l| l.ptr_id);
+    for &r in live_regs {
+        if let RegType::PtrToMapValue { id: old_id, .. } = old.types.get(r) {
+            if old_id != old_lock.ptr_id {
+                continue;
+            }
+            // r holds the lock's map_value in `old`. Require the same
+            // in `cur`: cur.r must be a PtrToMapValue whose id matches
+            // cur's active_lock.
+            let RegType::PtrToMapValue { id: cur_id, .. } = cur.types.get(r) else {
+                return false;
+            };
+            if Some(cur_id) != cur_lock_ptr {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Conservative id-equivalence check used by `state_subsumed_by`.
+///
+/// Returns true iff every pair `(r1, r2)` of live regs in the same
+/// linkage class in `old` is also in the same linkage class in `cur`.
+/// This is the safe direction: `cur` may have MORE links than `old`
+/// (refinement narrows), but `old` cannot have links that `cur` lacks —
+/// those are exactly the cases where future refinement in old's
+/// continuation would silently miss propagation in cur. Mirrors
+/// upstream `check_ids` in `regsafe`.
+fn scalar_id_links_subsumed_by(
+    cur: &State,
+    old: &State,
+    live_regs: &HashSet<Reg>,
+) -> bool {
+    let live: Vec<Reg> = live_regs.iter().copied().collect();
+    for i in 0..live.len() {
+        for j in (i + 1)..live.len() {
+            let r1 = live[i];
+            let r2 = live[j];
+            let old_link = match (linkage_key(old, r1), linkage_key(old, r2)) {
+                (Some(a), Some(b)) if a == b => true,
+                _ => false,
+            };
+            if !old_link {
+                continue;
+            }
+            let cur_link = match (linkage_key(cur, r1), linkage_key(cur, r2)) {
+                (Some(a), Some(b)) if a == b => true,
+                _ => false,
+            };
+            if !cur_link {
+                return false;
+            }
+        }
+    }
     true
 }
 
@@ -502,7 +906,40 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
         // Stack pointers - DBM subsumption covers the numeric relationship
         (PtrToStack { frame_level: fl1 }, PtrToStack { frame_level: fl2 }) => fl1 == fl2,
 
-        // Different types - no subsumption
+        // PtrToAllocMem from `bpf_iter_*_next` etc.: the dispatcher mints
+        // a fresh `id` on every call, so two visits to the same loop top
+        // hold non-equal-but-semantically-identical allocs in the loop
+        // variable. Subsume when (mem_size, ref_id) match — `ref_id`
+        // None means unref-tracked iter-elem alloc, Some(N) means the
+        // alloc is owned by a tracked acquire (dynptr_data slice from
+        // a specific dynptr; ringbuf reservation). For the latter, the
+        // matching ref_id ensures we don't conflate two acquires;
+        // mem_size pins the bounds-check budget. Without this rule,
+        // unbounded `bpf_for_each` loops state-explode (each iter's
+        // fresh id breaks loop-top subsumption on the loop variable).
+        // The `id` field is intentionally ignored — it's a per-call
+        // tag, not a structural property.
+        (
+            PtrToAllocMem { mem_size: ms1, ref_id: ri1, .. },
+            PtrToAllocMem { mem_size: ms2, ref_id: ri2, .. },
+        ) => ms1 == ms2 && ri1 == ri2,
+        (
+            PtrToAllocMemOrNull { mem_size: ms1, ref_id: ri1, .. },
+            PtrToAllocMemOrNull { mem_size: ms2, ref_id: ri2, .. },
+        ) => ms1 == ms2 && ri1 == ri2,
+
+        // Default: structural equality. Covers variants without a
+        // looser explicit rule (PtrToBtfId, PtrToCpumask, PtrToArena,
+        // PtrToCgroup, PtrToTask, PtrToOwnedKptr, PtrToMapKptr,
+        // PtrToCallback, PtrToSockCommon, PtrToTcpSock, PtrToPacketMeta,
+        // and the *OrNull versions of the above). Without this fallback,
+        // identical pointer types compare unequal at prune-points and
+        // every state is treated as novel — that's the entire reason
+        // `bpf_cubic_cong_avoid` (and any struct_ops program with a
+        // long-lived `PtrToBtfId` arg in r6-r9) hits the complexity
+        // limit. PartialEq is derived on RegType, so structural ==
+        // is the right canonical check for these.
+        (a, b) if a == b => true,
         _ => false,
     }
 }
@@ -536,7 +973,7 @@ fn domain_subsumed_by(
     // critical for packet access safety and persist across calls.
     match (old, cur) {
         (NumericDomain::Zone(old_dbm), NumericDomain::Zone(cur_dbm)) => {
-            zone_subsumed_by(old_dbm, cur_dbm)
+            zone_subsumed_by(old_dbm, cur_dbm, live_regs)
         }
         (NumericDomain::Interval(old_ivl), NumericDomain::Interval(cur_ivl)) => {
             interval_subsumed_by(old_ivl, cur_ivl)
@@ -548,15 +985,60 @@ fn domain_subsumed_by(
     }
 }
 
-fn zone_subsumed_by(old_dbm: &crate::analysis::Dbm, cur_dbm: &crate::analysis::Dbm) -> bool {
-    // Zone domain: check anchor-to-anchor constraints directly
+fn zone_subsumed_by(
+    old_dbm: &crate::analysis::Dbm,
+    cur_dbm: &crate::analysis::Dbm,
+    live_regs: &HashSet<Reg>,
+) -> bool {
     let anchors = [Reg::AnchorData, Reg::AnchorDataEnd, Reg::AnchorDataMeta];
+
+    // Anchor↔anchor: packet-region geometry (e.g. `data_end - data >= N`).
     for &a in &anchors {
         for &b in &anchors {
             if a == b {
                 continue;
             }
-            // old must be at least as permissive: old.get(a,b) >= cur.get(a,b)
+            if old_dbm.get(a, b) < cur_dbm.get(a, b) {
+                return false;
+            }
+        }
+    }
+
+    // Live-reg pairs (including reg ↔ anchor): zone-mode analogue of
+    // the kernel's id-tracking for packet pointers. Without this,
+    // pruning collapses two states whose live registers differ in
+    // their *relation* to one another or to a packet anchor —
+    // e.g. one path established `r2 - r3 == 0` (`r2 = r3` aliasing)
+    // and the other did not, but their standalone intervals coincide.
+    // That's the FALSE_ACCEPT in
+    // `verifier_direct_packet_access::id_in_regsafe_bad_access`.
+    //
+    // For subsumption: `old` covers `cur` only if every directed cell
+    // `old.get(a, b) >= cur.get(a, b)` for live-reg pairs. (`>=` is
+    // the looser direction in difference-bound semantics — a larger
+    // upper bound on `a - b` is more permissive.)
+    let live: Vec<Reg> = live_regs
+        .iter()
+        .copied()
+        .filter(|r| !r.is_anchor())
+        .collect();
+    for &r in &live {
+        for &a in &anchors {
+            if old_dbm.get(r, a) < cur_dbm.get(r, a) {
+                return false;
+            }
+            if old_dbm.get(a, r) < cur_dbm.get(a, r) {
+                return false;
+            }
+        }
+    }
+    for i in 0..live.len() {
+        for j in 0..live.len() {
+            if i == j {
+                continue;
+            }
+            let a = live[i];
+            let b = live[j];
             if old_dbm.get(a, b) < cur_dbm.get(a, b) {
                 return false;
             }
@@ -601,16 +1083,26 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
                 return false;
             }
 
-            // Precision (W2.3): a spilled scalar marked precise must match
-            // the cached slot exactly on tnum and bounds. Prevents pruning
-            // a bound-check-refined slot against a looser cached one.
+            // Precision: a precise *cached* slot requires the new slot
+            // to fall inside its range/tnum (kernel `regsafe` SCALAR
+            // verifier.c v6.15 L18357: precise old → range_within +
+            // tnum_in; non-precise old → free pass when live). Earlier
+            // we keyed on `new_s.precise` and demanded EXACT — that's
+            // stricter than the kernel and blocks may_goto-bounded
+            // loops where a body memory access precision-marks the
+            // counter (cond_break1/2/3, bucket F-D).
             let old_slot = old_frame.stack.get_slot(offset);
             let new_slot = new_frame.stack.get_slot(offset);
             if let (Some(old_s), Some(new_s)) = (old_slot, new_slot) {
-                if new_s.precise
-                    && (old_s.tnum != new_s.tnum || old_s.bounds != new_s.bounds)
-                {
-                    return false;
+                if old_s.precise {
+                    if !tnum_covers(&new_s.tnum, &old_s.tnum) {
+                        return false;
+                    }
+                    if !(old_s.bounds.min <= new_s.bounds.min
+                        && new_s.bounds.max <= old_s.bounds.max)
+                    {
+                        return false;
+                    }
                 }
             }
 
@@ -629,9 +1121,22 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
             // via the existing W2.3 non-precise superset rule above —
             // this check is about the iterator identity itself, not
             // the loop variable.
+            // `depth` is intentionally ignored — it grows monotonically
+            // per iter_next ACTIVE-fork (kernel `iter.depth`) and is
+            // used by the inf-loop detector and `widen_imprecise_scalars`
+            // to keep iterations distinguishable, NOT by subsumption.
+            // Kernel `states_equal(RANGE_WITHIN)` for iter_next call
+            // sites doesn't compare `iter.depth` either; convergence
+            // here is exactly what allows e.g. `i++; while(iter_next)`
+            // loops to terminate.
             let old_iter = old_slot.and_then(|s| s.iterator);
             let new_iter = new_slot.and_then(|s| s.iterator);
-            if old_iter != new_iter {
+            let iter_eq_modulo_depth = match (old_iter, new_iter) {
+                (None, None) => true,
+                (Some(a), Some(b)) => a.kind == b.kind && a.state == b.state && a.id == b.id,
+                _ => false,
+            };
+            if !iter_eq_modulo_depth {
                 return false;
             }
 
@@ -672,8 +1177,8 @@ fn tnum_subsumed_by(cur_state: &State, old_state: &State, live_regs: &HashSet<Re
     for &r in live_regs {
         let cur = cur_state.get_tnum(r);
         let old = old_state.get_tnum(r);
-        if cur_state.is_reg_precise(r) {
-            if cur.mask != old.mask || cur.value != old.value {
+        if old_state.is_reg_precise(r) {
+            if !tnum_covers(&cur, &old) {
                 return false;
             }
         } else if !tnum_covers(&cur, &old) {

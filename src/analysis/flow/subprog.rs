@@ -3,7 +3,7 @@
 // Subprogram analysis: structure validation and stack overflow checking
 
 use crate::analysis::machine::reg::Reg;
-use crate::ast::{CallKind, Instr, Program, ProgramKind};
+use crate::ast::{AluOp, CallKind, Instr, Operand, Program, ProgramKind, Width};
 use crate::common::constants;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -126,10 +126,34 @@ pub fn analyze_subprograms(instrs: &[Instr]) -> BTreeMap<usize, SubprogInfo> {
     let mut entries: Vec<usize> = vec![0];
 
     for insn in instrs {
-        if let Instr::CallRel { target } = insn
-            && !entries.contains(target)
-        {
-            entries.push(*target);
+        match insn {
+            Instr::CallRel { target } => {
+                if !entries.contains(target) {
+                    entries.push(*target);
+                }
+            }
+            // `LD_IMM64 BPF_PSEUDO_FUNC` materializes a function pointer
+            // for callbacks — bpf_loop / bpf_for_each_map_elem (sync) and
+            // bpf_timer_set_callback / bpf_wq_set_callback_impl (async).
+            // Those subprogs are not reached via CallRel from the caller's
+            // body, but their PCs still need to be subprog boundaries:
+            // otherwise their body bleeds into the preceding subprog's
+            // range and any CallRel inside (e.g. `subprog1(key)` inside
+            // an async timer cb) is misattributed as a back-edge of the
+            // outer subprog. Kernel `verifier.c` ~L10477 handles async
+            // callbacks via `push_async_cb` (separate verifier root); we
+            // approximate by giving each callback target its own subprog
+            // boundary in the static call-chain analysis.
+            Instr::LoadMap {
+                kind: crate::ast::MapLoadKind::PseudoFunc { subprog_pc },
+                ..
+            } => {
+                let pc = *subprog_pc as usize;
+                if !entries.contains(&pc) {
+                    entries.push(pc);
+                }
+            }
+            _ => {}
         }
     }
     entries.sort();
@@ -153,22 +177,156 @@ pub fn analyze_subprograms(instrs: &[Instr]) -> BTreeMap<usize, SubprogInfo> {
     subprogs
 }
 
+/// Per-subprog overhead the interpreter reserves at the bottom of the
+/// frame for `may_goto`'s iteration counter. Mirrors the kernel constant
+/// `BPF_MAY_GOTO_DEPTH` used in `check_max_stack_depth_subprog` —
+/// a subprog containing any `may_goto` instruction needs an extra 8
+/// bytes of stack on top of its directly-accessed depth, so the
+/// effective per-subprog cap drops from 512 to 504.
+const MAY_GOTO_STACK_EXTRA: u16 = 8;
+
 /// Compute the maximum stack depth accessed by a sequence of Instrs.
+///
+/// Tracks a tiny "register holds R10 + const" alias table so accesses
+/// through derived stack pointers (`r1 = r10; r1 += -512; *(u32 *)(r1 + 0) = …`)
+/// count toward depth — the kernel's pre-walk does the equivalent via
+/// per-instruction `update_stack_depth` calls, and the FALSE_ACCEPT for
+/// `verifier_stack_ptr::stack_check_size_512_with_may_goto` was caused
+/// by missing exactly this idiom.
 fn compute_max_stack_depth(instrs: &[Instr]) -> u16 {
     let mut max_depth: u16 = 0;
+    let mut has_may_goto = false;
+
+    // Per-register: Some(off) means "this reg currently holds R10 + off"
+    // (off is signed so we can represent above-frame offsets, though the
+    // kernel rejects positive R10 offsets elsewhere). None ⇒ unknown /
+    // not a stack alias. R10 itself is always offset 0.
+    let mut alias: [Option<i64>; { Reg::ALL.len() }] = [None; { Reg::ALL.len() }];
+    alias[Reg::R10.idx()] = Some(0);
+
+    let track_access = |alias: &[Option<i64>; { Reg::ALL.len() }],
+                        base: Reg,
+                        off: i16,
+                        max_depth: &mut u16| {
+        if let Some(base_off) = alias[base.idx()] {
+            let total = base_off + off as i64;
+            if total < 0 {
+                let depth = (-total) as u64;
+                if depth <= u16::MAX as u64 {
+                    *max_depth = (*max_depth).max(depth as u16);
+                }
+            }
+        }
+    };
 
     for insn in instrs {
-        let off = match insn {
-            Instr::Store { base, off, .. } if *base == Reg::R10 => *off,
-            Instr::Load { base, off, .. } if *base == Reg::R10 => *off,
-            Instr::Atomic { base, off, .. } if *base == Reg::R10 => *off,
-            _ => continue,
-        };
-
-        if off < 0 {
-            let depth = (-off) as u16;
-            max_depth = max_depth.max(depth);
+        match insn {
+            Instr::MayGoto { .. } => {
+                has_may_goto = true;
+            }
+            Instr::Store { base, off, .. } => {
+                track_access(&alias, *base, *off, &mut max_depth);
+            }
+            Instr::StoreRel { base, off, .. } => {
+                track_access(&alias, *base, *off, &mut max_depth);
+            }
+            Instr::Load { base, off, dst, .. } => {
+                track_access(&alias, *base, *off, &mut max_depth);
+                // Load clobbers dst's alias (loaded value is data, not a
+                // stack pointer — even if base was a stack alias).
+                alias[dst.idx()] = None;
+            }
+            Instr::LoadSx { base, off, dst, .. } => {
+                track_access(&alias, *base, *off, &mut max_depth);
+                alias[dst.idx()] = None;
+            }
+            Instr::LoadAcq { base, off, dst, .. } => {
+                track_access(&alias, *base, *off, &mut max_depth);
+                alias[dst.idx()] = None;
+            }
+            Instr::Atomic { base, off, .. } => {
+                track_access(&alias, *base, *off, &mut max_depth);
+            }
+            // Alias propagation: only on 64-bit ALU (32-bit truncates the
+            // pointer half; the kernel rejects stack accesses through
+            // 32-bit-truncated pointers anyway).
+            Instr::Alu { width, op, dst, src } => {
+                if *dst == Reg::R10 {
+                    // Defensive: R10 is never written; preserve its 0 alias.
+                    continue;
+                }
+                if *width != Width::W64 {
+                    alias[dst.idx()] = None;
+                    continue;
+                }
+                match op {
+                    AluOp::Mov => match src {
+                        Operand::Reg(r) => {
+                            alias[dst.idx()] = alias[r.idx()];
+                        }
+                        Operand::Imm(_) => {
+                            alias[dst.idx()] = None;
+                        }
+                    },
+                    AluOp::Add => match src {
+                        Operand::Imm(k) => {
+                            if let Some(o) = alias[dst.idx()] {
+                                alias[dst.idx()] = Some(o + *k);
+                            }
+                        }
+                        Operand::Reg(_) => {
+                            alias[dst.idx()] = None;
+                        }
+                    },
+                    AluOp::Sub => match src {
+                        Operand::Imm(k) => {
+                            if let Some(o) = alias[dst.idx()] {
+                                alias[dst.idx()] = Some(o - *k);
+                            }
+                        }
+                        Operand::Reg(_) => {
+                            alias[dst.idx()] = None;
+                        }
+                    },
+                    _ => {
+                        alias[dst.idx()] = None;
+                    }
+                }
+            }
+            Instr::MovSx { dst, .. } => {
+                alias[dst.idx()] = None;
+            }
+            Instr::Endian { dst, .. } => {
+                alias[dst.idx()] = None;
+            }
+            Instr::LoadPacket { .. } => {
+                // BPF_LD_ABS / BPF_LD_IND clobber R0..R5.
+                for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                    alias[r.idx()] = None;
+                }
+            }
+            Instr::LoadMap { dst, .. } => {
+                alias[dst.idx()] = None;
+            }
+            Instr::Call { .. } | Instr::CallRel { .. } => {
+                // Helper / subprog call: R0 = retval (scalar/ptr, never
+                // stack alias); R1..R5 are clobbered.
+                for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                    alias[r.idx()] = None;
+                }
+            }
+            Instr::If { .. } | Instr::Jmp { .. } | Instr::Exit => {
+                // Control flow: linear walk doesn't model joins; conservatively
+                // accept that a register's alias may be inconsistent across
+                // branches. We accept some imprecision (a positive over-
+                // approximation of stack usage) in exchange for catching the
+                // common `r10 += -K; deref` idiom.
+            }
         }
+    }
+
+    if has_may_goto {
+        max_depth = max_depth.saturating_add(MAY_GOTO_STACK_EXTRA);
     }
 
     max_depth
@@ -277,7 +435,108 @@ pub fn check_stack_overflow(
         None,
         private_stack,
         &mut HashSet::new(),
-    )
+    )?;
+
+    // Kernel-aligned: `check_max_stack_depth` (verifier.c v6.15 ~L6627)
+    // also walks every `is_async_cb` subprog as its own root, because async
+    // callbacks (registered via `bpf_timer_set_callback`) execute on a
+    // fresh kernel stack — their chain depth must fit ≤MAX_BPF_STACK on
+    // its own, not added to main's. Without this, programs whose async-cb
+    // chain exceeds 512B but whose main path fits silently passed
+    // (e.g. async_stack_depth.c::async_call_root_check).
+    //
+    // Identify async cbs via static scan: any `LoadMap{PseudoFunc{pc}}`
+    // whose result feeds R2 of a `bpf_timer_set_callback` helper call
+    // marks `pc` as an async-cb root. (Sync-cb helpers like bpf_loop /
+    // bpf_for_each_map_elem use the same LD_IMM64 mechanism but execute
+    // on the caller's stack — kernel does NOT root them, so we don't
+    // either.)
+    for &root in &collect_async_cb_roots(&prog.instrs) {
+        check_call_chain(
+            prog,
+            &subprogs,
+            root,
+            0,
+            1,
+            None,
+            private_stack,
+            &mut HashSet::new(),
+        )?;
+    }
+    Ok(())
+}
+
+/// Static scan: collect subprog entry PCs that are registered as async
+/// callbacks via `bpf_timer_set_callback`. Mirrors the kernel marking
+/// `subprog_info[idx].is_async_cb = true` in `set_timer_callback_state`
+/// (verifier.c v6.15 ~L10481).
+///
+/// Heuristic: walk the instruction stream tracking, per register, the
+/// most recent `LoadMap{PseudoFunc{pc}}` written to it. When a
+/// `Call{Helper{BPF_TIMER_SET_CALLBACK}}` is reached, the value in R2
+/// at that point identifies the cb subprog. Any write to R2 that isn't
+/// such a load clears the alias.
+fn collect_async_cb_roots(instrs: &[Instr]) -> BTreeSet<usize> {
+    let mut roots = BTreeSet::new();
+    let mut pseudofunc_alias: [Option<usize>; { Reg::ALL.len() }] =
+        [None; { Reg::ALL.len() }];
+
+    let clear_dst = |alias: &mut [Option<usize>; { Reg::ALL.len() }], dst: Reg| {
+        alias[dst.idx()] = None;
+    };
+
+    for insn in instrs {
+        match insn {
+            Instr::LoadMap {
+                dst,
+                kind: crate::ast::MapLoadKind::PseudoFunc { subprog_pc },
+                ..
+            } => {
+                pseudofunc_alias[dst.idx()] = Some(*subprog_pc as usize);
+            }
+            Instr::LoadMap { dst, .. } => clear_dst(&mut pseudofunc_alias, *dst),
+            Instr::Alu {
+                op: AluOp::Mov,
+                dst,
+                src: Operand::Reg(s),
+                width: Width::W64,
+            } => {
+                pseudofunc_alias[dst.idx()] = pseudofunc_alias[s.idx()];
+            }
+            Instr::Alu { dst, .. } => clear_dst(&mut pseudofunc_alias, *dst),
+            Instr::MovSx { dst, .. }
+            | Instr::Endian { dst, .. }
+            | Instr::Load { dst, .. }
+            | Instr::LoadSx { dst, .. }
+            | Instr::LoadAcq { dst, .. } => clear_dst(&mut pseudofunc_alias, *dst),
+            Instr::Call {
+                kind: CallKind::Helper { id },
+            } => {
+                if *id == constants::BPF_TIMER_SET_CALLBACK
+                    && let Some(target) = pseudofunc_alias[Reg::R2.idx()]
+                {
+                    roots.insert(target);
+                }
+                // Helper clobbers R0..R5.
+                for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                    pseudofunc_alias[r.idx()] = None;
+                }
+            }
+            Instr::Call { .. } | Instr::CallRel { .. } => {
+                for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                    pseudofunc_alias[r.idx()] = None;
+                }
+            }
+            Instr::LoadPacket { .. } => {
+                for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                    pseudofunc_alias[r.idx()] = None;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    roots
 }
 
 #[allow(clippy::too_many_arguments)]

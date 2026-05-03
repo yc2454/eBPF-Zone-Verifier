@@ -88622,6 +88622,7 @@ struct sock {
 	struct callback_head sk_rcu;
 	netns_tracker ns_tracker;
 	struct xarray sk_user_frags;
+	__u32 sk_bpf_cb_flags;
 };
 
 struct inet_cork {
@@ -97314,7 +97315,7 @@ struct kernfs_iattrs {
 struct kernfs_node {
 	atomic_t count;
 	atomic_t active;
-	struct kernfs_node *parent;
+	struct kernfs_node *__parent;
 	const char *name;
 	struct rb_node rb;
 	const void *ns;
@@ -104301,7 +104302,22 @@ struct mpls_shim_hdr {
 
 struct mptcp_out_options {};
 
-struct mptcp_sock {};
+struct mptcp_subflow_context {
+	struct list_head node;
+	struct sock *tcp_sock;
+};
+
+struct mptcp_pm_data {
+	u8 subflows;
+};
+
+struct mptcp_sock {
+	u32 token;
+	char ca_name[16];
+	struct sock *first;
+	struct list_head conn_list;
+	struct mptcp_pm_data pm;
+};
 
 struct mq_inflight {
 	struct block_device *part;
@@ -107615,6 +107631,7 @@ struct nf_ct_ext;
 struct nf_conn {
 	struct nf_conntrack ct_general;
 	spinlock_t lock;
+	unsigned int mark;
 	u32 timeout;
 	struct nf_conntrack_tuple_hash tuplehash[2];
 	long unsigned int status;
@@ -131718,6 +131735,7 @@ struct tcp_sock {
 	struct tcp_fastopen_request *fastopen_req;
 	struct request_sock *fastopen_rsk;
 	struct saved_syn *saved_syn;
+	bool is_mptcp;
 	long: 64;
 	long: 64;
 	long: 64;

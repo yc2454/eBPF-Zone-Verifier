@@ -81,8 +81,34 @@ pub struct State {
     /// RCU read-side critical section nesting depth (W5.2). Incremented
     /// by `bpf_rcu_read_lock`, decremented by `bpf_rcu_read_unlock`.
     /// Helpers/kfuncs marked with `CallFlags::RCU` require depth > 0.
-    /// Program exit rejects if depth > 0 (`UnreleasedRcuRead`).
+    /// Program exit rejects if depth > [`Self::implicit_rcu_at_entry`].
     pub rcu_read_depth: u32,
+
+    /// True iff the program type runs with the kernel's implicit RCU
+    /// read-side CS held (kprobe / tracepoint / raw_tp / perf_event).
+    /// `analysis::mod` calls `rcu_read_lock()` once at entry for those,
+    /// so `rcu_read_depth` starts at 1 instead of 0. The exit check
+    /// (`UnreleasedRcuRead`) tolerates a residual depth of 1 in this
+    /// case — the kernel releases the lock for us when the prog returns.
+    pub implicit_rcu_at_entry: bool,
+
+    /// Preempt-disabled nesting count. Incremented by `bpf_preempt_disable`
+    /// kfunc, decremented by `bpf_preempt_enable`. Mirrors kernel
+    /// `bpf_verifier_state.active_preempt_locks` (verifier.c v6.15
+    /// ~L13560). Helpers/kfuncs marked `CallFlags::MIGHT_SLEEP` are
+    /// rejected when this is > 0; `BPF_EXIT` in main prog also rejects.
+    pub active_preempt_locks: u32,
+
+    /// LIFO stack of acquired IRQ-flag ids. Pushed by `bpf_local_irq_save`
+    /// (and `bpf_res_spin_lock_irqsave`); popped by the matching
+    /// `_restore`. `_restore` rejects unless the released id equals the
+    /// top of this stack (kernel `release_irq_state` ~L1611). Empty
+    /// means no IRQ-disabled region active. The TOP id is what the
+    /// kernel calls `state->active_irq_id`. Used by:
+    /// - EXIT-in-main-prog gate (kernel ~L11086).
+    /// - MIGHT_SLEEP gate inside region (kernel ~L13576).
+    /// - tail_call gate (kernel `check_lock` chain).
+    pub acquired_irq_ids: Vec<u32>,
 
     /// Remaining `may_goto` iterations on this path. Initialised to
     /// [`BPF_MAY_GOTO_LIMIT`] at entry. Decremented by the `may_goto`
@@ -90,6 +116,27 @@ pub struct State {
     /// taken edge is infeasible. Subsumption will require the pruned
     /// state's budget to be ≥ the candidate's (W3.1c).
     pub goto_budget: u32,
+
+    /// Static-analysis counter incremented each time the abstract
+    /// interpreter visits a `MayGoto` insn. Mirrors kernel
+    /// `bpf_verifier_state.may_goto_depth` (verifier.c v6.15 ~L1757,
+    /// bumped in `check_cond_jmp_op` ~L16407). Distinct from
+    /// `goto_budget`: this is the per-state visit count used to admit a
+    /// RANGE_WITHIN prune class at may_goto pcs (~L19102) and to defuse
+    /// the EXACT inf-loop trap on revisits (~L19118). Per-state, not
+    /// env-global — parallel DFS branches have independent depths.
+    pub may_goto_depth: u32,
+
+    /// Bucket F-D: maps each pointer register to the scalar register that
+    /// contributed its variable offset, if any. Set at `Alu Add ptr +
+    /// Reg(scalar)` (handle_add); cleared on dst-clobbering ops (Mov-from-
+    /// imm, Load, Mov-from-other-pointer, Mov-from-different-anchor). At
+    /// variable-offset memory access sites, the access checker calls
+    /// `mark_chain_precision_backward` on this scalar so the access's
+    /// bounds-critical lineage survives kernel-aligned widening at
+    /// iter_next / may_goto / cb-return (the wideners skip precise regs,
+    /// matching kernel `maybe_widen_reg` L8752).
+    pub var_off_contributor: HashMap<Reg, Reg>,
 
     /// Program-default exception callback entry PC (W3.3a plumbing).
     /// Used when `bpf_throw` unwinds past every frame without finding a
@@ -124,7 +171,12 @@ impl State {
             active_refs: HashSet::new(),
             active_lock: None,
             rcu_read_depth: 0,
+            implicit_rcu_at_entry: false,
+            active_preempt_locks: 0,
+            acquired_irq_ids: Vec::new(),
             goto_budget: BPF_MAY_GOTO_LIMIT,
+            may_goto_depth: 0,
+            var_off_contributor: HashMap::new(),
             program_exception_cb: None,
         }
     }
@@ -354,6 +406,108 @@ impl State {
         self.stack_mut().invalidate_ref(id);
     }
 
+    /// Demote every reg / spilled slot whose `PtrToAllocMem*` carries
+    /// the given dynptr identity to `ScalarValue`. Mirrors kernel
+    /// `verifier.c` v6.15 L913-919 inside `destroy_if_dynptr_stack_slot`,
+    /// which uses `bpf_for_each_reg_in_vstate` to find slices tagged
+    /// with the dynptr's id. Walks every frame's stack so a slice
+    /// stored across a subprog call is also caught.
+    /// Mark every RCU-protected iter slot as `untrusted` (kind ∈ task,
+    /// css). Mirrors kernel verifier.c v6.15 ~L13543: on
+    /// `bpf_rcu_read_unlock`, every reg/slot tagged MEM_RCU is
+    /// re-flagged PTR_UNTRUSTED. We track this on the iter slot only;
+    /// the iter's `_next` consumer rejects on the untrusted slot in the
+    /// next iteration. Called by `transfer_call` after a successful
+    /// `state.rcu_read_unlock()` that leaves us outside any RCU CS.
+    pub fn invalidate_rcu_iter_slots(&mut self) {
+        for frame in self.frames.iter_mut() {
+            let offsets = frame.stack.slot_offsets();
+            for off in offsets {
+                if let Some(slot) = frame.stack.stack_get_iterator(off)
+                    && slot.kind.is_rcu_protected()
+                    && !slot.untrusted
+                {
+                    frame.stack.stack_set_iterator(
+                        off,
+                        crate::analysis::machine::stack_state::IteratorSlot {
+                            untrusted: true,
+                            ..slot
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    pub fn invalidate_dynptr_slices(&mut self, dynptr_id: u32) {
+        for i in 0..self.types.regs.len() {
+            let demote = matches!(
+                self.types.regs[i],
+                RegType::PtrToAllocMem { dynptr_id: Some(did), .. }
+                    | RegType::PtrToAllocMemOrNull { dynptr_id: Some(did), .. }
+                    if did == dynptr_id
+            );
+            if demote {
+                self.types.regs[i] = RegType::ScalarValue;
+            }
+        }
+        for frame in self.frames.iter_mut() {
+            for (_off, spilled) in frame.stack.slots.iter_mut() {
+                let demote = matches!(
+                    spilled.reg_type,
+                    RegType::PtrToAllocMem { dynptr_id: Some(did), .. }
+                        | RegType::PtrToAllocMemOrNull { dynptr_id: Some(did), .. }
+                        if did == dynptr_id
+                );
+                if demote {
+                    spilled.reg_type = RegType::ScalarValue;
+                }
+            }
+        }
+    }
+
+    /// Convert every reg holding `PtrToOwnedKptr` with the given
+    /// `ref_id` from owning to non-owning: clear `ref_id`, set the
+    /// `non_owning` flag, keep the type and offset. Mirrors kernel
+    /// `verifier.c` v6.15 L12471 `ref_convert_owning_non_owning` —
+    /// fired by `bpf_rbtree_add` / `bpf_list_push_*` after they consume
+    /// the owning ref into the container. Stack-slot conversion not
+    /// modeled (no current test stores an OwnedKptr to stack across a
+    /// graph-add).
+    pub fn convert_ref_to_non_owning(&mut self, id: u32) {
+        for i in 0..self.types.regs.len() {
+            if let RegType::PtrToOwnedKptr {
+                ref_id: Some(rid),
+                offset,
+                ..
+            } = self.types.regs[i]
+                && rid == id
+            {
+                self.types.regs[i] = RegType::PtrToOwnedKptr {
+                    ref_id: None,
+                    offset,
+                    non_owning: true,
+                };
+            }
+        }
+    }
+
+    /// Drop every non-owning OwnedKptr reg back to ScalarValue. Fired
+    /// on `bpf_spin_unlock` — non-owning refs are only valid under the
+    /// lock that scoped the graph-add. Mirrors kernel `verifier.c`
+    /// v6.15 L10242 `invalidate_non_owning_refs` (called from L8382 on
+    /// spin_unlock).
+    pub fn invalidate_non_owning_refs(&mut self) {
+        for i in 0..self.types.regs.len() {
+            if let RegType::PtrToOwnedKptr {
+                non_owning: true, ..
+            } = self.types.regs[i]
+            {
+                self.types.regs[i] = RegType::ScalarValue;
+            }
+        }
+    }
+
     // ── Lock tracking ───────────────────────────────────────────
 
     pub fn acquire_lock(&mut self, ptr_id: u32, lock_offset: u32) {
@@ -393,6 +547,60 @@ impl State {
 
     pub fn in_rcu_read_section(&self) -> bool {
         self.rcu_read_depth > 0
+    }
+
+    // ── Preempt-disable tracking (kernel verifier.c v6.15 ~L13560) ──
+
+    pub fn preempt_disable(&mut self) {
+        self.active_preempt_locks = self.active_preempt_locks.saturating_add(1);
+    }
+
+    /// Decrement preempt-disable nesting. Returns `false` (caller must
+    /// reject as unmatched-enable) if no disable is active.
+    pub fn preempt_enable(&mut self) -> bool {
+        if self.active_preempt_locks == 0 {
+            return false;
+        }
+        self.active_preempt_locks -= 1;
+        true
+    }
+
+    pub fn in_preempt_disabled(&self) -> bool {
+        self.active_preempt_locks > 0
+    }
+
+    // ── IRQ-flag tracking (kernel verifier.c v6.15 ~L1184-L1626) ──
+
+    /// Mint a fresh IRQ id and push it on the LIFO stack. Caller is
+    /// responsible for stamping the corresponding stack slot via
+    /// `stack_set_irq_flag`.
+    pub fn irq_save(&mut self) -> u32 {
+        let id = crate::analysis::machine::reg_types::new_irq_id();
+        self.acquired_irq_ids.push(id);
+        id
+    }
+
+    /// Try to pop a saved IRQ id matching `id`. Returns `Ok(())` on
+    /// LIFO match; returns the active (top) id on out-of-order release;
+    /// returns `Err(None)` if no IRQ region is active.
+    pub fn irq_restore(&mut self, id: u32) -> Result<(), Option<u32>> {
+        let top = self.acquired_irq_ids.last().copied();
+        match top {
+            None => Err(None),
+            Some(t) if t == id => {
+                self.acquired_irq_ids.pop();
+                Ok(())
+            }
+            Some(t) => Err(Some(t)),
+        }
+    }
+
+    pub fn in_irq_disabled(&self) -> bool {
+        !self.acquired_irq_ids.is_empty()
+    }
+
+    pub fn active_irq_id(&self) -> Option<u32> {
+        self.acquired_irq_ids.last().copied()
     }
 
     // ── Stack spill/reload (current frame) ──────────────────────
@@ -441,6 +649,31 @@ impl State {
         // Only track as proper spill if 8-byte aligned
         let source_reg = if is_aligned { Some(reg) } else { None };
 
+        // Allocate (or reuse) a scalar id for any aligned scalar spill so
+        // the slot — and any same-width fill — joins the source's scalar
+        // equivalence class. Mirrors kernel's `assign_scalar_id_before_mov`
+        // at spill time. Without this, post-spill branch refinements on
+        // the source can't fan out to slot/fill, which leaves dead
+        // branches reachable in the verifier_spill_fill::*_ok tests.
+        let slot_scalar_id = if is_aligned
+            && size.bytes() <= 8
+            && matches!(preserved_type, RegType::ScalarValue)
+        {
+            let id = match self.scalar_ids.get(&reg).copied() {
+                Some(id) => id,
+                None => {
+                    let new_id = crate::analysis::machine::reg_types::new_scalar_id();
+                    self.scalar_ids.insert(reg, new_id);
+                    new_id
+                }
+            };
+            Some(id)
+        } else if size == MemSize::U64 && is_aligned {
+            self.scalar_ids.get(&reg).copied()
+        } else {
+            None
+        };
+
         let spilled = SpilledReg {
             source_reg,
             reg_type: preserved_type,
@@ -448,15 +681,11 @@ impl State {
             bounds: ScalarBounds { min, max },
             size,
             ptr_bounds,
-            // Carry the scalar id so fill_at can re-link the destination register.
-            scalar_id: if size == MemSize::U64 && is_aligned {
-                self.scalar_ids.get(&reg).copied()
-            } else {
-                None
-            },
+            scalar_id: slot_scalar_id,
             precise: is_aligned && size == MemSize::U64 && self.precise_regs.contains(&reg),
             iterator: None,
             dynptr: None,
+                    irq_flag: None,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -481,6 +710,7 @@ impl State {
                         precise: false,
                         iterator: None,
                         dynptr: None,
+                    irq_flag: None,
                     },
                 );
             }
@@ -527,6 +757,7 @@ impl State {
             precise: false,
             iterator: None,
             dynptr: None,
+                    irq_flag: None,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -551,6 +782,7 @@ impl State {
                         precise: false,
                         iterator: None,
                         dynptr: None,
+                    irq_flag: None,
                     },
                 );
             }
@@ -590,6 +822,90 @@ impl State {
         let is_aligned = (offset % 8) == 0;
         let sizes_match = spilled.source_reg.is_some() && spilled.size == size;
 
+        // Try to extract a precise (sub-)value when reading a narrower
+        // (or unaligned) slice of a wider spill whose enclosing tnum
+        // pins enough bits. Walk back up to 7 bytes to find the slot
+        // holding the actual spilled value. Placeholder bytes have
+        // tnum=unknown (mask=u64::MAX) and large size, so the
+        // alignment+const gates below let real spills win the search.
+        let narrowed_tnum: Option<Tnum> = if !sizes_match && size.bytes() <= 8 {
+            let mut found: Option<Tnum> = None;
+            for back in 0..8i16 {
+                let base = offset - back;
+                if let Some(s) = stack.get_slot(base) {
+                    // Aligned-base aligned-width spills are the only
+                    // ones we trust beyond the simple zero (STACK_ZERO)
+                    // case — kernel marks unaligned register spills
+                    // STACK_MISC. We treat constant-zero stores as
+                    // safe at any alignment to model STACK_ZERO.
+                    let base_aligned = base % 8 == 0;
+                    let covers = (back as usize) + size.bytes() <= s.size.bytes();
+                    if !covers {
+                        continue;
+                    }
+                    let trustable = base_aligned || (s.tnum.is_const() && s.tnum.value == 0);
+                    if !trustable {
+                        continue;
+                    }
+                    let shift = (back as u64) * 8;
+                    let v = s.tnum.value >> shift;
+                    let m = s.tnum.mask >> shift;
+                    let mask: u64 = match size {
+                        MemSize::U8 => 0xff,
+                        MemSize::U16 => 0xffff,
+                        MemSize::U32 => 0xffff_ffff,
+                        MemSize::U64 => u64::MAX,
+                    };
+                    let nm = m & mask;
+                    // Nothing pinned within the fill width → no info beyond
+                    // the existing unbounded fallback. Skip to avoid spurious
+                    // bounds (e.g. signed-overflow at U64) and pointless work.
+                    if nm == mask {
+                        break;
+                    }
+                    found = Some(Tnum {
+                        value: v & mask,
+                        mask: nm,
+                    });
+                    break;
+                }
+            }
+            found
+        } else {
+            None
+        };
+
+        // Special case: u32 LE-low fill of an aligned u64 scalar spill
+        // whose high 32 bits are known zero. The low half carries the
+        // full spilled value, so preserve tnum, bounds AND scalar_id —
+        // matching kernel's u32-fill-after-u64-spill-preserve-id rule.
+        // (Counterpart `_clear_id` test fails the high-bits-zero check.)
+        if !sizes_match
+            && size == MemSize::U32
+            && spilled.size == MemSize::U64
+            && is_aligned
+            && spilled.source_reg.is_some()
+            && matches!(spilled.reg_type, RegType::ScalarValue)
+            && (spilled.tnum.mask & 0xFFFFFFFF_00000000) == 0
+            && (spilled.tnum.value >> 32) == 0
+        {
+            self.types.set(dst, RegType::ScalarValue);
+            self.tnums.insert(dst, spilled.tnum.clone());
+            self.domain
+                .assign_interval(dst, spilled.bounds.min, spilled.bounds.max);
+            if let Some(id) = spilled.scalar_id {
+                self.scalar_ids.insert(dst, id);
+            } else {
+                self.scalar_ids.remove(&dst);
+            }
+            if spilled.precise {
+                self.precise_regs.insert(dst);
+            } else {
+                self.precise_regs.remove(&dst);
+            }
+            return true;
+        }
+
         if sizes_match && is_aligned {
             // Preserve type and bounds
             self.types.set(dst, spilled.reg_type);
@@ -617,6 +933,23 @@ impl State {
             if size == MemSize::U64 {
                 self.restore_anchor_info(dst, &spilled);
             }
+        } else if let Some(tn) = narrowed_tnum {
+            // Narrowing read of a wider spill whose tnum pins (some of)
+            // the bits we're loading (any byte offset within the wider
+            // value, LE byte order).
+            self.types.set(dst, RegType::ScalarValue);
+            let v = tn.value;
+            let m = tn.mask;
+            // Bounds derived from the narrowed tnum: low = pinned bits,
+            // high = pinned | unknown bits. For partial-knowledge tnums
+            // this is the tightest interval we can claim without the
+            // spill-time bounds.
+            let lo = v as i64;
+            let hi = (v | m) as i64;
+            self.tnums.insert(dst, tn);
+            self.domain.assign_interval(dst, lo, hi);
+            self.scalar_ids.remove(&dst);
+            self.precise_regs.remove(&dst);
         } else {
             // Size mismatch or unaligned - return unbounded scalar for the load size
             self.types.set(dst, RegType::ScalarValue);
@@ -704,6 +1037,10 @@ impl State {
                             off: *o,
                             var_off: v,
                             range: *range,
+                            // id not round-tripped through spill/fill
+                            // today; conservative None — loses id-aware
+                            // refinement on reload but stays sound.
+                            id: None,
                         };
 
                         // Set the PtrOffset on the register

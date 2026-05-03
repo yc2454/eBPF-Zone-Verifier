@@ -190,6 +190,25 @@ pub struct PtrOffset {
     /// After bounds check `if (ptr + N <= end)`, this is set to N
     /// Access check: off + size <= range
     pub range: Option<i64>,
+    /// Kernel-style packet-pointer identity (kernel: reg->id).
+    ///
+    /// Allocated fresh whenever a pointer first picks up a *variable*
+    /// offset — i.e. when a non-constant scalar is added to a packet
+    /// pointer. Propagated unchanged through `Mov`, constant adds, and
+    /// reg→reg copies; reset on overwrite.
+    ///
+    /// Two pointers with the same `Some(id)` are known to share their
+    /// variable offset, so a bounds-check refinement (`if r > end`) on
+    /// one propagates `range` to all members of the family. A `None`
+    /// id means "no variable offset chain" — refinement only affects
+    /// the triggering register itself.
+    ///
+    /// The id is the interval-mode analogue of relational tracking the
+    /// zone domain expresses directly via DBM cells; without it the
+    /// non-relational interval cannot tell apart two pointers that
+    /// happen to share the same numeric `var_off` but came from
+    /// independent arithmetic chains.
+    pub id: Option<u32>,
 }
 
 impl PtrOffset {
@@ -200,6 +219,7 @@ impl PtrOffset {
             off: 0,
             var_off: 0,
             range: None,
+            id: None,
         }
     }
 
@@ -211,6 +231,7 @@ impl PtrOffset {
             off,
             var_off: 0,
             range: None,
+            id: None,
         }
     }
 
@@ -222,6 +243,7 @@ impl PtrOffset {
             off,
             var_off,
             range: None,
+            id: None,
         }
     }
 

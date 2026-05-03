@@ -4,6 +4,7 @@
 // These mirror the zone/ops.rs interface but without relational constraints.
 
 use super::state::{IntervalState, PtrOffset, RegInterval, ScalarBounds};
+use crate::analysis::machine::reg_types::new_ptr_id;
 use crate::analysis::machine::reg::Reg;
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -116,6 +117,21 @@ pub fn assign_reg(state: &mut IntervalState, x: Reg, y: Reg) {
     }
 }
 
+/// Intersect x's bounds with y's (constraint form of `x == y`). Used by
+/// `if x == y` branch refinement; the result's emptiness is observable
+/// through `is_inconsistent`.
+pub fn intersect_eq_reg(state: &mut IntervalState, x: Reg, y: Reg) {
+    if x == Reg::Zero || x.is_anchor() {
+        return;
+    }
+    let yb = state.get(y).bounds.clone();
+    let xb = &mut state.get_bounds_mut(x);
+    xb.smin = xb.smin.max(yb.smin);
+    xb.smax = xb.smax.min(yb.smax);
+    xb.umin = xb.umin.max(yb.umin);
+    xb.umax = xb.umax.min(yb.umax);
+}
+
 /// Establishes the relationship dst = src + imm
 pub fn assign_reg_offset(state: &mut IntervalState, dst: Reg, src: Reg, imm: i64) {
     if dst == Reg::Zero || dst.is_anchor() {
@@ -139,6 +155,9 @@ pub fn assign_reg_offset(state: &mut IntervalState, dst: Reg, src: Reg, imm: i64
         var_off: po.var_off,
         // Adjust range: if we had range=8 and add offset=2, new range=6
         range: po.range.map(|r| r.saturating_sub(imm)),
+        // id propagates: a constant offset adjustment leaves the
+        // pointer in the same kernel-style identity family.
+        id: po.id,
     });
 
     state.set(
@@ -168,6 +187,7 @@ pub fn init_map_value_ptr(state: &mut IntervalState, reg: Reg) {
                 off: 0,
                 var_off: 0,
                 range: None,
+                id: None,
             }),
         },
     );
@@ -240,6 +260,7 @@ pub fn apply_add_reg(state: &mut IntervalState, dst: Reg, src: Reg) {
             po.off = po.off.saturating_add(src_const);
             // Adjust range: adding to offset decreases remaining safe range
             po.range = po.range.map(|r| r.saturating_sub(src_const));
+            // id preserved: constant add stays in the same chain.
         }
     } else {
         // Variable addition: use signed bounds to properly track negative offsets
@@ -254,6 +275,12 @@ pub fn apply_add_reg(state: &mut IntervalState, dst: Reg, src: Reg) {
             }
             // Adding variable invalidates proven range
             po.range = None;
+            // Mint a fresh kernel-style id when this is the first time
+            // the pointer picks up a variable offset; otherwise the
+            // existing chain absorbs the new variability.
+            if po.id.is_none() {
+                po.id = Some(new_ptr_id());
+            }
         }
     }
 }
@@ -292,6 +319,18 @@ pub fn apply_scalar_add_ptr(
         let new_off = po.off.saturating_add(scalar_lo);
         let new_var_off = po.var_off.saturating_add(scalar_range);
 
+        // Inherit the source pointer's id when it already has one
+        // (we're extending an existing chain). When it doesn't, mint
+        // a fresh id only if the scalar contributes variability —
+        // a constant add (scalar_lo == scalar_hi) keeps id None.
+        let new_id = if po.id.is_some() {
+            po.id
+        } else if scalar_range > 0 {
+            Some(new_ptr_id())
+        } else {
+            None
+        };
+
         state.set(
             dst,
             RegInterval {
@@ -302,6 +341,7 @@ pub fn apply_scalar_add_ptr(
                     var_off: new_var_off,
                     // Adding variable invalidates proven range
                     range: None,
+                    id: new_id,
                 }),
             },
         );

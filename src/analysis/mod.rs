@@ -157,14 +157,179 @@ pub fn analyze_program_full(
     );
     initial_state.domain.init_packet_anchors();
 
+    // Non-sleepable tracing programs (kprobe, tracepoint, raw_tp,
+    // perf_event) run with an implicit RCU read-side critical section
+    // held by the kernel before invoking the BPF prog. The kernel
+    // verifier records this via `env->cur_state->active_rcu_lock` set
+    // at program init for those types (verifier.c v6.15 ~L5803 comment
+    // "non-sleepable programs and sleepable programs with explicit
+    // bpf_rcu_read_lock()"). KF_RCU_PROTECTED iters initialized in
+    // such a prog see in_rcu_cs at `_new` time and get MEM_RCU (trusted)
+    // slot status. Sleepable variants (`fentry.s`, `iter.s`, `lsm.s`)
+    // do NOT auto-hold; they must call `bpf_rcu_read_lock` explicitly.
+    use crate::ast::ProgramKind;
+    let auto_rcu = matches!(
+        env.ctx.prog_kind,
+        ProgramKind::Kprobe
+            | ProgramKind::Tracepoint
+            | ProgramKind::RawTracepoint
+            | ProgramKind::RawTracepointWritable
+            | ProgramKind::PerfEvent
+    );
+    if auto_rcu {
+        initial_state.rcu_read_lock();
+        initial_state.implicit_rcu_at_entry = true;
+    }
+
     // W6.4a: struct_ops subprogs receive their args via the BPF_PROG
     // macro's ctx-array idiom — R1 stays as PtrToCtx (a `u64 *ctx`), and
     // each declared arg is unpacked at runtime via `*(u64 *)(ctx + 8*i)`.
     // The per-arg typing happens inside `validate_ctx_access` (see
     // src/common/ctx_model.rs), which consumes `ctx.entry_args` to type
     // the loaded values. No R1..Rn override is needed here.
+    //
+    // For struct_ops members declared with `__ref` parameters (the kmod
+    // marks the arg as ref-acquired at entry — e.g.
+    // bpf_testmod_ops.test_refcounted's `task__ref`), seed an outstanding
+    // reference per refcounted arg. The kernel reports "Unreleased
+    // reference id=N alloc_insn=0" if the program exits without releasing
+    // it; here, `state.has_unreleased_refs()` at exit fires
+    // `UnreleasedReference`. Programs that load the arg from ctx and call
+    // the matching release kfunc (e.g. `bpf_task_release`) drop the ref
+    // through the existing release path. The arg-position-to-ref-id
+    // binding isn't propagated to the loaded register here; that would be
+    // needed to type the loaded ctx slot as a refcounted PtrToTask, which
+    // we leave for a follow-up if a corresponding success-case test
+    // surfaces as a false-reject.
+    for _ in 0..ctx.struct_ops_refcounted_args {
+        initial_state.acquire_ref();
+    }
 
-    // 3. Setup Worklist
+    // 3. & 4. Run worklist analysis
+    let prune_count = run_worklist(&mut env, prog, config, initial_state);
+
+    // --- FINAL REPORT ---
+    let analysis_error = if let Some(err) = &env.error {
+        info!(target: "app", "\n[Verifier] FAILURE: {}", err.description());
+        if config.verbosity >= 1 {
+            info!(target: "app", "[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count);
+        }
+        Some(err.clone())
+    } else {
+        info!(target: "app", "\n[Verifier] Success! Verified {} instructions (pruned {} states).",
+                 env.insn_processed, prune_count);
+        if config.verbosity >= 1 {
+            info!(target: "app", "[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count);
+        }
+        None
+    };
+
+    // 5. Return Results
+    // NOTE: For backwards compatibility, dbms returns Vec<Dbm>.
+    // In Interval mode, we return empty Dbms since there's no underlying DBM.
+    let n = prog.instrs.len();
+    let mut results = Vec::with_capacity(n);
+
+    for i in 0..n {
+        if let Some(states) = env.explored_states.get(&i) {
+            if !states.is_empty() {
+                // Extract Dbm from Zone domain, or return empty for Interval
+                match &states[0].domain {
+                    NumericDomain::Zone(dbm) => results.push(dbm.clone()),
+                    NumericDomain::Interval(_) => results.push(Dbm::new()),
+                }
+            } else {
+                results.push(Dbm::new());
+            }
+        } else {
+            results.push(Dbm::new());
+        }
+    }
+
+    AnalysisResult {
+        dbms: results,
+        explored_states: env.explored_states,
+        error: analysis_error,
+    }
+}
+
+/// Verify the body of an `__exception_cb` callback subprog.
+///
+/// The cb is unreachable from main's CFG (registered via BTF decl_tag,
+/// not called) so the main analysis pass never visits it. The kernel
+/// handles this by force-marking the cb subprog as `called` in
+/// `do_check_subprogs`, which routes it through the normal global-subprog
+/// verification path. We don't have an equivalent global-subprog loop, so
+/// this function plays that role: build a fresh env, seed the cb's entry
+/// state (R1 = unknown SCALAR cookie, R10 = stack pointer), and run the
+/// worklist.
+///
+/// While the env's `analyzing_exception_cb` flag is set, `transfer_exit`
+/// applies the kernel's exception-cb-specific exit rule — for fentry/
+/// fexit programs, R0 must be in [0, 0] at cb exit (mirrors the kernel
+/// applying the main-program exit rule via `in_exception_callback_fn`).
+///
+/// Returns `Some(error)` if verification of the cb body fails; `None` on
+/// success. Caller is expected to surface the error as the parent
+/// program's failure verdict.
+pub fn analyze_exception_cb(
+    ctx: &ExecContext,
+    prog: &Program,
+    entry_dbm: Dbm,
+    config: &VerifierConfig,
+    cb_entry_pc: usize,
+) -> Option<VerificationError> {
+    let mut env = VerifierEnv::new(ctx, prog, None);
+    env.analyzing_exception_cb = true;
+
+    // Reuse program-level structural checks. These are idempotent — main
+    // analysis already ran them, but `env` is fresh here so we need its
+    // insn_aux_data populated (prune points, liveness) before the
+    // worklist body can run safely.
+    if let Err(e) = subprog::check_subprogs(prog) {
+        return Some(VerificationError::SubprogError { e });
+    }
+    if let Err(e) =
+        subprog::check_stack_overflow(prog, env.ctx.prog_kind, config.enable_private_stack)
+    {
+        return Some(VerificationError::SubprogError { e });
+    }
+    if let Err(e) = cfg::check_cfg(prog, &mut env, config) {
+        return Some(VerificationError::CfgError(e));
+    }
+    liveness::compute_liveness(prog, &mut env);
+
+    // Seed initial state at the cb's entry PC. The kernel's
+    // `btf_prepare_func_args` produces ARG_ANYTHING for the cookie arg;
+    // we mirror that with R1 = SCALAR with no interval bounds.
+    let initial_domain = match config.domain_mode {
+        DomainMode::Zone => NumericDomain::Zone(entry_dbm),
+        DomainMode::Interval => NumericDomain::new_interval(),
+    };
+    let mut initial_state = State::new(initial_domain, cb_entry_pc);
+    initial_state.types.set(Reg::R1, RegType::ScalarValue);
+    initial_state.types.set(
+        Reg::R10,
+        RegType::PtrToStack {
+            frame_level: FrameLevel::MAIN,
+        },
+    );
+    initial_state.domain.init_packet_anchors();
+
+    let _ = run_worklist(&mut env, prog, config, initial_state);
+
+    env.error
+}
+
+/// Worklist abstract-interpretation loop. Shared between the main-program
+/// analysis (`analyze_program_full`) and the exception-cb body pass
+/// (`analyze_exception_cb`). Returns the number of states pruned.
+fn run_worklist(
+    env: &mut VerifierEnv,
+    prog: &Program,
+    config: &VerifierConfig,
+    initial_state: State,
+) -> usize {
     let mut worklist = VecDeque::new();
     worklist.push_back(initial_state);
 
@@ -172,10 +337,8 @@ pub fn analyze_program_full(
         info!(target: "app", "[Analysis] Starting Abstract Interpretation...");
     }
 
-    // Track pruning statistics
     let mut prune_count: usize = 0;
 
-    // 4. Main Analysis Loop
     while let Some(mut state) = worklist.pop_back() {
         if env.failed() {
             error!(target: "app", "[Analysis] Aborted due to previous errors.");
@@ -196,14 +359,14 @@ pub fn analyze_program_full(
         }
 
         // A.b PRUNING CHECK
-        if pruning::should_prune(&env, &mut state, config, prog) {
+        if pruning::should_prune(env, &mut state, config, prog) {
             info!("Pruned state at pc {}", state.pc);
             prune_count += 1;
             continue;
         }
 
         // A.c RECORD STATE
-        merging::record_state(&mut env, state.clone(), config.max_states_per_pc);
+        merging::record_state(env, state.clone(), config.max_states_per_pc);
 
         // B. Global Complexity Limit (only count non-pruned states)
         env.insn_processed += 1;
@@ -277,7 +440,7 @@ pub fn analyze_program_full(
 
         // F. Transfer Function
         state.domain.set_current_pc(state.pc);
-        let mut successors = transfer::transfer(&mut env, state, instr);
+        let mut successors = transfer::transfer(env, state, instr);
         // F.1 Certificate-Aided Refinement (optional)
         // Replay-verify proof chains for each successor PC using explored_states.
         if let Some(ref cert) = env.certificate {
@@ -349,47 +512,5 @@ pub fn analyze_program_full(
         }
     }
 
-    // --- FINAL REPORT ---
-    let analysis_error = if let Some(err) = &env.error {
-        info!(target: "app", "\n[Verifier] FAILURE: {}", err.description());
-        if config.verbosity >= 1 {
-            info!(target: "app", "[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count);
-        }
-        Some(err.clone())
-    } else {
-        info!(target: "app", "\n[Verifier] Success! Verified {} instructions (pruned {} states).",
-                 env.insn_processed, prune_count);
-        if config.verbosity >= 1 {
-            info!(target: "app", "[Analysis] Finished. Total Steps: {}, Pruned: {}", env.insn_processed, prune_count);
-        }
-        None
-    };
-
-    // 5. Return Results
-    // NOTE: For backwards compatibility, dbms returns Vec<Dbm>.
-    // In Interval mode, we return empty Dbms since there's no underlying DBM.
-    let n = prog.instrs.len();
-    let mut results = Vec::with_capacity(n);
-
-    for i in 0..n {
-        if let Some(states) = env.explored_states.get(&i) {
-            if !states.is_empty() {
-                // Extract Dbm from Zone domain, or return empty for Interval
-                match &states[0].domain {
-                    NumericDomain::Zone(dbm) => results.push(dbm.clone()),
-                    NumericDomain::Interval(_) => results.push(Dbm::new()),
-                }
-            } else {
-                results.push(Dbm::new());
-            }
-        } else {
-            results.push(Dbm::new());
-        }
-    }
-
-    AnalysisResult {
-        dbms: results,
-        explored_states: env.explored_states,
-        error: analysis_error,
-    }
+    prune_count
 }

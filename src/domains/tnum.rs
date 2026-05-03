@@ -326,6 +326,29 @@ impl Tnum {
         }
     }
 
+    /// Build a tnum that contains every value in `[min, max]` (unsigned).
+    /// Mirrors kernel `tnum_range` (kernel/bpf/tnum.c). Used by W32
+    /// unsigned-compare branch refinement to lift the numeric bound on
+    /// the low 32 bits into the tnum's mask, so that subsequent
+    /// `<<32 >>32` zero-extension idioms preserve the range.
+    pub fn from_range(min: u64, max: u64) -> Tnum {
+        if min > max {
+            // Empty range — represent as unknown; caller should detect
+            // this via numeric bounds instead.
+            return Tnum::unknown();
+        }
+        let chi = min ^ max;
+        if chi == 0 {
+            return Tnum::constant(min);
+        }
+        let bits = 64 - chi.leading_zeros();
+        let delta = if bits >= 64 { u64::MAX } else { (1u64 << bits) - 1 };
+        Tnum {
+            value: min & !delta,
+            mask: delta,
+        }
+    }
+
     /// Intersect with another tnum (refine knowledge)
     /// Returns None if the intersection is empty (contradiction)
     pub fn intersect(self, other: Tnum) -> Option<Tnum> {

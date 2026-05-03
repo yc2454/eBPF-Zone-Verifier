@@ -101,19 +101,47 @@ pub enum RegType {
     PtrToBtfId {
         type_name: &'static str,
         flags: PtrFlags,
+        /// Optional acquired-reference id, set when the pointer was minted by a
+        /// `KF_ACQUIRE` kfunc (e.g. `bpf_get_task_exe_file`,
+        /// `bpf_lookup_user_key`, `bpf_kfunc_nested_acquire_*_test`). Released
+        /// by the corresponding `KF_RELEASE` kfunc (`bpf_put_file`,
+        /// `bpf_key_put`, `bpf_kfunc_nested_release_test`); `None` for
+        /// non-acquired BTF pointers (BPF_PROG arg loads, BTF field walks,
+        /// `__rcu`/decl-tag-trusted, …) where leak detection isn't tracked.
+        ref_id: Option<u32>,
     },
     PtrToBtfIdOrNull {
         id: u32, // For null-tracking across branches
         type_name: &'static str,
         flags: PtrFlags,
+        /// See `PtrToBtfId::ref_id`. After a null-check refinement to the
+        /// non-null variant the `ref_id` is preserved on the success branch
+        /// and dropped on the null branch.
+        ref_id: Option<u32>,
     },
     PtrToAllocMemOrNull {
         id: u32,
         mem_size: u64,
+        /// Optional ref_id linking this pointer to an owning acquire-tracked
+        /// resource (e.g. the source dynptr for a `bpf_dynptr_data` slice).
+        /// When the owning ref is released, `invalidate_ref` rewrites this
+        /// register to `ScalarValue`, catching use-after-release on slice
+        /// pointers obtained from a released dynptr.
+        ref_id: Option<u32>,
+        /// Source dynptr identity for slice pointers (mirrors kernel
+        /// `bpf_reg_state::dynptr_id`). Set on the `PtrToAllocMem*`
+        /// returned by `bpf_dynptr_data` for *any* dynptr kind
+        /// (including unrefcounted `Local`); `None` for non-slice
+        /// allocations. On dynptr overwrite, `validate_dynptr_arg`
+        /// sweeps regs + slots demoting matches to `ScalarValue` —
+        /// catches use-after-reinit even when `ref_id` is None.
+        dynptr_id: Option<u32>,
     },
     PtrToAllocMem {
         id: u32,
         mem_size: u64,
+        ref_id: Option<u32>,
+        dynptr_id: Option<u32>,
     },
     /// Refcounted pointer to a `struct bpf_cpumask` (W5.3). Mirrors
     /// `PtrToSocket` ref-tracking: `bpf_cpumask_create` mints a fresh
@@ -174,9 +202,46 @@ pub enum RegType {
     /// btf_id.
     PtrToOwnedKptr {
         ref_id: Option<u32>,
+        /// Signed byte-offset within the allocated object. Bumped by
+        /// `Add reg, K` / `Sub reg, K` (kernel `verifier.c` v6.15
+        /// ~L15170 preserves PTR_TO_BTF_ID|MEM_ALLOC through pointer
+        /// arithmetic and propagates `reg->off`). `bpf_obj_drop` /
+        /// `bpf_kptr_xchg` reject non-zero offsets ("R1 must have zero
+        /// offset when passed to release func" — verifier.c ~L13242).
+        offset: i32,
+        /// `NON_OWN_REF` flag (verifier.c v6.15 L12450 `ref_set_non_owning`).
+        /// Set after `bpf_rbtree_add` / `bpf_list_push_*` consumes the
+        /// owning ref; the original aliases keep their type but lose
+        /// `ref_id`. Non-owning refs are invalidated on `bpf_spin_unlock`
+        /// (verifier.c L8382 `invalidate_non_owning_refs`).
+        non_owning: bool,
     },
     PtrToOwnedKptrOrNull {
         ref_id: Option<u32>,
+    },
+    /// Pointer loaded from a kptr field of a map value. The four kptr
+    /// flavors (`__kptr_untrusted`, `__kptr`, `__rcu`, `__percpu_kptr`)
+    /// are encoded by `flags`, mirroring the kernel's
+    /// `PTR_TO_BTF_ID | MEM_*` flag scheme:
+    ///   - `Unref`   → `UNTRUSTED`
+    ///   - `Ref`     → `MEM_ALLOC` (trusted, refcounted; deref OK)
+    ///   - `Rcu`     → `RCU`       (deref OK while in `bpf_rcu_read_lock`)
+    ///   - `Percpu`  → `PERCPU`    (must pass through `bpf_*_cpu_ptr` first)
+    /// `pointee_btf_id` is the inner struct's BTF id (from the map's
+    /// BTF), used for type-matching in `bpf_kptr_xchg` and pointee-bounds
+    /// checks on deref. `ref_id` is set only when the pointer has been
+    /// taken out of the map via `bpf_kptr_xchg` (the prior contents),
+    /// participating in the existing reference-tracking machinery; loads
+    /// that don't transfer ownership leave it `None`.
+    PtrToMapKptr {
+        pointee_btf_id: u32,
+        ref_id: Option<u32>,
+        flags: PtrFlags,
+    },
+    PtrToMapKptrOrNull {
+        pointee_btf_id: u32,
+        ref_id: Option<u32>,
+        flags: PtrFlags,
     },
     /// Pointer to a callback subprogram, produced by `LD_IMM64 BPF_PSEUDO_FUNC`
     /// (W3.4a). Consumed by callback-taking helpers (`bpf_loop`,
@@ -207,6 +272,7 @@ impl RegType {
                 | PtrToCgroupOrNull { .. }
                 | PtrToTaskOrNull { .. }
                 | PtrToOwnedKptrOrNull { .. }
+                | PtrToMapKptrOrNull { .. }
                 | PtrToMapValue { .. }
                 | PtrToSocket { .. }
                 | PtrToSockCommon { .. }
@@ -216,6 +282,7 @@ impl RegType {
                 | PtrToCgroup { .. }
                 | PtrToTask { .. }
                 | PtrToOwnedKptr { .. }
+                | PtrToMapKptr { .. }
         )
     }
 
@@ -244,8 +311,31 @@ impl RegType {
             RegType::PtrToCgroupOrNull { ref_id } => Some(RegType::PtrToCgroup { ref_id }),
             RegType::PtrToTaskOrNull { ref_id } => Some(RegType::PtrToTask { ref_id }),
             RegType::PtrToOwnedKptrOrNull { ref_id } => {
-                Some(RegType::PtrToOwnedKptr { ref_id })
+                Some(RegType::PtrToOwnedKptr {
+                    ref_id,
+                    offset: 0,
+                    non_owning: false,
+                })
             }
+            RegType::PtrToMapKptrOrNull {
+                pointee_btf_id,
+                ref_id,
+                flags,
+            } => Some(RegType::PtrToMapKptr {
+                pointee_btf_id,
+                ref_id,
+                flags,
+            }),
+            RegType::PtrToBtfIdOrNull {
+                id: _,
+                type_name,
+                flags,
+                ref_id,
+            } => Some(RegType::PtrToBtfId {
+                type_name,
+                flags,
+                ref_id,
+            }),
             _ => None,
         }
     }
@@ -263,6 +353,8 @@ impl RegType {
                 | RegType::PtrToCgroupOrNull { .. }
                 | RegType::PtrToTaskOrNull { .. }
                 | RegType::PtrToOwnedKptrOrNull { .. }
+                | RegType::PtrToMapKptrOrNull { .. }
+                | RegType::PtrToBtfIdOrNull { .. }
         )
     }
 
@@ -271,6 +363,7 @@ impl RegType {
             RegType::PtrToMapValue {
                 offset, map_idx: _, ..
             } => offset,
+            RegType::PtrToOwnedKptr { offset, .. } => Some(offset as i64),
             _ => None,
         }
     }
@@ -303,6 +396,9 @@ impl RegType {
     pub fn ptr_flags(&self) -> PtrFlags {
         match *self {
             RegType::PtrToBtfId { flags, .. } | RegType::PtrToBtfIdOrNull { flags, .. } => flags,
+            RegType::PtrToMapKptr { flags, .. } | RegType::PtrToMapKptrOrNull { flags, .. } => {
+                flags
+            }
             _ => PtrFlags::empty(),
         }
     }
@@ -335,8 +431,15 @@ impl RegType {
             | RegType::PtrToCgroupOrNull { ref_id: id }
             | RegType::PtrToTask { ref_id: id }
             | RegType::PtrToTaskOrNull { ref_id: id }
-            | RegType::PtrToOwnedKptr { ref_id: id }
             | RegType::PtrToOwnedKptrOrNull { ref_id: id } => id,
+            RegType::PtrToOwnedKptr { ref_id, .. } => ref_id,
+            RegType::PtrToBtfId { ref_id, .. } | RegType::PtrToBtfIdOrNull { ref_id, .. } => ref_id,
+            RegType::PtrToMapKptr { ref_id, .. } | RegType::PtrToMapKptrOrNull { ref_id, .. } => {
+                ref_id
+            }
+            RegType::PtrToAllocMem { ref_id, .. } | RegType::PtrToAllocMemOrNull { ref_id, .. } => {
+                ref_id
+            }
             _ => None,
         }
     }
@@ -375,6 +478,31 @@ pub fn new_iter_id() -> u32 {
     ITER_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
+/// Fresh identity token for a dynptr instance. Minted at construction
+/// (`bpf_dynptr_from_mem`, `bpf_ringbuf_reserve_dynptr`,
+/// `bpf_dynptr_from_skb`, `bpf_dynptr_from_xdp`) and stamped on both
+/// pair slots. Slices returned by `bpf_dynptr_data` carry this id on
+/// the result `PtrToAllocMem*`. On dynptr overwrite/release, all regs
+/// + spilled slots whose `PtrToAllocMem*` carries the matching id are
+/// demoted to `ScalarValue` — mirrors kernel `verifier.c` v6.15
+/// `bpf_for_each_reg_in_vstate { if (dreg->dynptr_id == id) ... }`
+/// at L913-919 inside `destroy_if_dynptr_stack_slot`. Distinct from
+/// `ref_id` (acquire-tracked release id) so unrefcounted dynptrs
+/// (`Local`/`Skb`/`Xdp`, `ref_id == 0`) still get slice tracking.
+pub fn new_dynptr_id() -> u32 {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static DYNPTR_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
+    DYNPTR_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
+}
+
+/// Fresh id for an IRQ-flag stack slot at acquire (kernel
+/// `++env->id_gen` reused for `state->active_irq_id`).
+pub fn new_irq_id() -> u32 {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static IRQ_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
+    IRQ_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
+}
+
 /// Classify types into families. Pointer and pointer-or-null variants
 /// of the same kind share a family (e.g. PtrToMapValue and PtrToMapValueOrNull).
 pub fn type_family(ty: &RegType) -> u8 {
@@ -400,6 +528,7 @@ pub fn type_family(ty: &RegType) -> u8 {
         PtrToOwnedKptr { .. } | PtrToOwnedKptrOrNull { .. } => 17,
         PtrToCgroup { .. } | PtrToCgroupOrNull { .. } => 18,
         PtrToTask { .. } | PtrToTaskOrNull { .. } => 19,
+        PtrToMapKptr { .. } | PtrToMapKptrOrNull { .. } => 20,
     }
 }
 
@@ -478,14 +607,17 @@ mod tests {
         let trusted = RegType::PtrToBtfId {
             type_name: "x",
             flags: PtrFlags::TRUSTED,
+            ref_id: None,
         };
         let untrusted = RegType::PtrToBtfId {
             type_name: "x",
             flags: PtrFlags::UNTRUSTED,
+            ref_id: None,
         };
         let empty = RegType::PtrToBtfId {
             type_name: "x",
             flags: PtrFlags::empty(),
+            ref_id: None,
         };
         assert!(trusted.is_trusted());
         assert!(!trusted.is_untrusted());
@@ -508,14 +640,32 @@ mod tests {
     }
 
     #[test]
+    fn map_kptr_or_null_to_non_null_round_trip() {
+        let n = RegType::PtrToMapKptrOrNull {
+            pointee_btf_id: 12,
+            ref_id: Some(7),
+            flags: PtrFlags::UNTRUSTED,
+        };
+        assert!(n.is_nullable());
+        assert!(n.is_null_checked());
+        assert_eq!(n.get_ref_id(), Some(7));
+        assert!(n.is_untrusted());
+        let nn = n.to_non_null().expect("convertible");
+        assert!(matches!(nn, RegType::PtrToMapKptr { pointee_btf_id: 12, ref_id: Some(7), .. }));
+        assert_eq!(type_family(&n), type_family(&nn));
+    }
+
+    #[test]
     fn reg_type_equality_distinguishes_flags() {
         let a = RegType::PtrToBtfId {
             type_name: "x",
             flags: PtrFlags::TRUSTED,
+            ref_id: None,
         };
         let b = RegType::PtrToBtfId {
             type_name: "x",
             flags: PtrFlags::UNTRUSTED,
+            ref_id: None,
         };
         assert_ne!(a, b, "flags must participate in PartialEq to preserve old trusted-bool semantics");
     }

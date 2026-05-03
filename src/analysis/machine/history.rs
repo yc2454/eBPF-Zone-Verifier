@@ -5,6 +5,11 @@ pub struct Breadcrumb {
     pub pc: usize,
     /// We format the instruction string eagerly so we don't hold references to the Program
     pub instr_str: String,
+    /// The actual instruction at `pc` at the time of execution. Cloned so
+    /// `mark_chain_precision_backward` can walk the history without
+    /// re-borrowing `Program`. Cheap (Instr is a small enum); cost is
+    /// outweighed by the simplification at the walk site.
+    pub instr: Instr,
     /// The index of the previous step in the `History` vector
     pub parent_idx: Option<usize>,
     pub reg_types_str: String,
@@ -40,6 +45,7 @@ impl History {
         self.steps.push(Breadcrumb {
             pc,
             instr_str: format!("{:?}", instr),
+            instr: instr.clone(),
             reg_types_str,
             reg_ranges_str,
             depth,

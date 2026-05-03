@@ -52,21 +52,40 @@ pub fn validate_ptr_to_uninit_mem(ctx: &mut ValidationContext) -> bool {
 
 /// Validates PtrToAllocMem argument type.
 /// Must be a dynamically allocated memory pointer (e.g., from bpf_ringbuf_reserve).
+/// Rejects alloc-mem carrying a `ref_id` — that signals provenance from a
+/// dynptr slice (`bpf_dynptr_data` etc.), which the kernel reports as
+/// `type=mem expected=ringbuf_mem` at legacy `bpf_ringbuf_submit/discard`.
 pub fn validate_ptr_to_alloc_mem(ctx: &mut ValidationContext) -> bool {
-    if !matches!(ctx.actual, RegType::PtrToAllocMem { .. }) {
-        ctx.fail_with_log(
-            VerificationError::InvalidArgType {
-                pc: ctx.pc,
-                reg: ctx.reg,
-            },
-            &format!(
-                "[Verifier] pc {}: R{} expected PTR_TO_ALLOC_MEM, got {:?}",
-                ctx.pc,
-                ctx.arg_index + 1,
-                ctx.actual
-            ),
-        );
-        return false;
+    match ctx.actual {
+        RegType::PtrToAllocMem { ref_id: None, .. } => true,
+        RegType::PtrToAllocMem { ref_id: Some(_), .. } => {
+            ctx.fail_with_log(
+                VerificationError::InvalidArgType {
+                    pc: ctx.pc,
+                    reg: ctx.reg,
+                },
+                &format!(
+                    "[Verifier] pc {}: R{} type=mem expected=ringbuf_mem (alloc-mem from dynptr slice cannot be passed to legacy ringbuf API)",
+                    ctx.pc,
+                    ctx.arg_index + 1,
+                ),
+            );
+            false
+        }
+        _ => {
+            ctx.fail_with_log(
+                VerificationError::InvalidArgType {
+                    pc: ctx.pc,
+                    reg: ctx.reg,
+                },
+                &format!(
+                    "[Verifier] pc {}: R{} expected PTR_TO_ALLOC_MEM, got {:?}",
+                    ctx.pc,
+                    ctx.arg_index + 1,
+                    ctx.actual
+                ),
+            );
+            false
+        }
     }
-    true
 }

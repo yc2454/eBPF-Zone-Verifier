@@ -49,6 +49,20 @@ pub(crate) fn check_ptr_arithmetic(
         return true;
     }
 
+    // PtrToArena fast-path: kernel `verifier.c` ~L15191 (v6.15) —
+    // "Any arithmetic operations are allowed on arena pointers".
+    // The kernel returns 0 immediately when `dst_reg->type ==
+    // PTR_TO_ARENA`, regardless of src type or op. Mirror that:
+    // skip every other validation rule (MAX_VAR_OFF, op allowlist,
+    // ptr-ptr-sub same-type, etc.) for PtrToArena dst. This is what
+    // alloc_pages's `pg - base; >> 12` shape needs (Shr on a pointer
+    // is otherwise rejected as "Invalid pointer arithmetic"), and it
+    // matches arena's 4GB sparse-mapped semantics where bounds-checks
+    // are intentionally permissive.
+    if matches!(dst_type, RegType::PtrToArena { .. }) {
+        return true;
+    }
+
     // 2. Pointer <op> Pointer
     if dst_is_ptr && src_is_ptr {
         match op {
@@ -84,7 +98,17 @@ pub(crate) fn check_ptr_arithmetic(
                     );
                     return false;
                 }
-                if src_min < -constants::MAX_VAR_OFF || src_max > constants::MAX_VAR_OFF {
+                // PtrToArena lives in a 4GB sparse-mapped address space and
+                // the kernel verifier doesn't enforce MAX_VAR_OFF on its
+                // arithmetic — programs routinely walk by ARENA_SIZE-sized
+                // strides (see verifier_arena_large.c::big_alloc1's
+                // `base + ARENA_SIZE - PAGE_SIZE * 2`). Bounds are not checked
+                // at access either (sparse pages just zero-fault), so skip
+                // both the MAX_VAR_OFF and the i32::MAX MapValue clamp here.
+                let is_arena = matches!(dst_type, RegType::PtrToArena { .. });
+                if !is_arena
+                    && (src_min < -constants::MAX_VAR_OFF || src_max > constants::MAX_VAR_OFF)
+                {
                     return false;
                 }
                 if matches!(dst_type, RegType::PtrToMapValue { .. }) && src_max > i32::MAX as i64 {
@@ -117,7 +141,11 @@ pub(crate) fn check_ptr_arithmetic(
                     );
                     return false;
                 }
-                if dst_min < -constants::MAX_VAR_OFF || dst_max > constants::MAX_VAR_OFF {
+                // Symmetry with case 3 above: PtrToArena bypasses MAX_VAR_OFF.
+                let src_is_arena = matches!(src_type, RegType::PtrToArena { .. });
+                if !src_is_arena
+                    && (dst_min < -constants::MAX_VAR_OFF || dst_max > constants::MAX_VAR_OFF)
+                {
                     return false;
                 }
                 if src_type.is_packet_ptr()

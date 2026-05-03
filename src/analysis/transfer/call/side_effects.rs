@@ -12,7 +12,7 @@ use crate::analysis::machine::frame_stack::FrameLevel;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::{RegType, TypeState, new_iter_id, new_ptr_id};
 use crate::analysis::machine::stack_state::{
-    DynptrKind, DynptrSlot, IterState, IteratorSlot,
+    DynptrKind, DynptrSlot, IrqFlagSlot, IterState, IteratorSlot,
 };
 use crate::common::stack_objects::bpf_iter_size;
 use crate::analysis::machine::state::State;
@@ -45,8 +45,21 @@ pub(crate) fn apply_call_proto_r0(
                 // upstream. The kernel verifier likewise consults the
                 // pre-call type for the release target.
                 if let Some(ref_id) = in_types.get(reg).get_ref_id() {
-                    state.release_ref(ref_id);
-                    state.invalidate_ref(ref_id);
+                    if proto.flags.contains(CallFlags::RELEASE_NON_OWN) {
+                        // Graph-add (rbtree_add / list_push_*): the
+                        // owning ref is consumed by the container, but
+                        // the original alloc-pointer aliases stay
+                        // valid as non-owning refs under the lock
+                        // (verifier.c v6.15 L12471
+                        // `ref_convert_owning_non_owning`). Drop the
+                        // ref-tracking entry but retype aliases rather
+                        // than wiping them.
+                        state.release_ref(ref_id);
+                        state.convert_ref_to_non_owning(ref_id);
+                    } else {
+                        state.release_ref(ref_id);
+                        state.invalidate_ref(ref_id);
+                    }
                 }
             }
             SideEffect::SetExceptionCallbackFromArg { arg } => {
@@ -73,6 +86,27 @@ pub(crate) fn apply_call_proto_r0(
                 } else {
                     0
                 };
+                let dynptr_id = crate::analysis::machine::reg_types::new_dynptr_id();
+
+                // Pre-stamp destroy-and-sweep (kernel
+                // `destroy_if_dynptr_stack_slot`, verifier.c v6.15 L880):
+                // if the slot already holds an *unrefcounted* dynptr
+                // (refcounted is rejected by `validate_dynptr_arg`),
+                // invalidate slices that carry the old `dynptr_id` so
+                // their `PtrToAllocMem*` regs/slots demote to Scalar
+                // (mirrors `bpf_for_each_reg_in_vstate` at L913-919).
+                let mut victim_ids: Vec<u32> = Vec::new();
+                if let Some(slot) = state.stack_at(frame).stack_get_dynptr(base_off) {
+                    victim_ids.push(slot.dynptr_id);
+                }
+                if let Some(slot) = state.stack_at(frame).stack_get_dynptr(base_off + 8)
+                    && !victim_ids.contains(&slot.dynptr_id)
+                {
+                    victim_ids.push(slot.dynptr_id);
+                }
+                for vid in &victim_ids {
+                    state.invalidate_dynptr_slices(*vid);
+                }
 
                 // Initialize 16 stack bytes as scalar (the kernel's
                 // STACK_DYNPTR mark; programs may not read the body).
@@ -85,11 +119,11 @@ pub(crate) fn apply_call_proto_r0(
                 // Stamp annotation on both 8-byte slots of the pair.
                 stack.stack_set_dynptr(
                     base_off,
-                    DynptrSlot { kind, ref_id, rdonly, first_slot: true },
+                    DynptrSlot { kind, ref_id, rdonly, first_slot: true, dynptr_id },
                 );
                 stack.stack_set_dynptr(
                     base_off + 8,
-                    DynptrSlot { kind, ref_id, rdonly, first_slot: false },
+                    DynptrSlot { kind, ref_id, rdonly, first_slot: false, dynptr_id },
                 );
             }
             SideEffect::IterInitOnArg { arg, kind } => {
@@ -98,6 +132,13 @@ pub(crate) fn apply_call_proto_r0(
                     continue;
                 };
                 let size_bytes = bpf_iter_size(kind);
+                // Kernel `mark_stack_slots_iter` (verifier.c v6.15
+                // ~L1041): for KF_RCU_PROTECTED iter `_new` kfuncs (task,
+                // css), the slot is MEM_RCU (trusted) iff we're in an
+                // RCU CS at init time, otherwise PTR_UNTRUSTED. The
+                // subsequent `_next` call then rejects the UNTRUSTED
+                // slot with "expected an RCU CS when using …".
+                let untrusted = kind.is_rcu_protected() && !state.in_rcu_read_section();
                 let stack = state.stack_at_mut(frame);
                 for i in 0..size_bytes {
                     let byte_off = base_off as i64 + i as i64;
@@ -109,6 +150,8 @@ pub(crate) fn apply_call_proto_r0(
                         kind,
                         state: IterState::Active,
                         id: new_iter_id(),
+                        depth: 0,
+                        untrusted,
                     },
                 );
             }
@@ -118,6 +161,37 @@ pub(crate) fn apply_call_proto_r0(
                     continue;
                 };
                 state.stack_at_mut(frame).stack_clear_iterator(base_off);
+            }
+            SideEffect::IrqSaveOnArg { arg, kfunc_class } => {
+                let reg = arg_reg(arg);
+                let Some((frame, base_off)) = resolve_stack_arg(state, reg) else {
+                    continue;
+                };
+                // Initialize 8 stack bytes as scalar (kernel
+                // `mark_stack_slots_irq_flag` ~L1184 stamps STACK_IRQ_FLAG;
+                // we mirror with scalar bytes + the irq_flag annotation).
+                let stack = state.stack_at_mut(frame);
+                for i in 0..8 {
+                    let byte_off = base_off as i64 + i as i64;
+                    update_store_types(stack, RegType::ScalarValue, MemSize::U8, Some(byte_off));
+                }
+                let id = state.irq_save();
+                state.stack_at_mut(frame).stack_set_irq_flag(
+                    base_off,
+                    IrqFlagSlot { id, kfunc_class },
+                );
+            }
+            SideEffect::IrqRestoreFromArg { arg, kfunc_class: _ } => {
+                let reg = arg_reg(arg);
+                let Some((frame, base_off)) = resolve_stack_arg(state, reg) else {
+                    continue;
+                };
+                // Validator already enforced: slot has IRQ_FLAG, class
+                // matches, id == active_irq_id. Pop + clear annotation.
+                if let Some(slot) = state.stack_at(frame).stack_get_irq_flag(base_off) {
+                    let _ = state.irq_restore(slot.id);
+                }
+                state.stack_at_mut(frame).stack_clear_irq_flag(base_off);
             }
             SideEffect::DynptrReleaseFromArg { arg } => {
                 let reg = arg_reg(arg);
@@ -204,6 +278,30 @@ pub(crate) fn apply_call_proto_r0(
             state.types.set(Reg::R0, ty);
             true
         }
+        RetKind::PtrToBtfIdNamed { type_name } => {
+            use crate::analysis::machine::reg_types::PtrFlags;
+            let ref_id = if proto.flags.contains(CallFlags::ACQUIRE) {
+                Some(state.acquire_ref())
+            } else {
+                None
+            };
+            let ty = if proto.flags.contains(CallFlags::RET_NULL) {
+                RegType::PtrToBtfIdOrNull {
+                    id: new_ptr_id(),
+                    type_name,
+                    flags: PtrFlags::TRUSTED,
+                    ref_id,
+                }
+            } else {
+                RegType::PtrToBtfId {
+                    type_name,
+                    flags: PtrFlags::TRUSTED,
+                    ref_id,
+                }
+            };
+            state.types.set(Reg::R0, ty);
+            true
+        }
         RetKind::PtrToSockCommon => {
             let ref_id = if proto.flags.contains(CallFlags::ACQUIRE) {
                 Some(state.acquire_ref())
@@ -221,12 +319,30 @@ pub(crate) fn apply_call_proto_r0(
         RetKind::PtrToAllocMem { mem_size } => {
             let id = new_ptr_id();
             let ty = if proto.flags.contains(CallFlags::RET_NULL) {
-                RegType::PtrToAllocMemOrNull { id, mem_size }
+                RegType::PtrToAllocMemOrNull {
+                    id,
+                    mem_size,
+                    ref_id: None,
+                    dynptr_id: None,
+                }
             } else {
-                RegType::PtrToAllocMem { id, mem_size }
+                RegType::PtrToAllocMem {
+                    id,
+                    mem_size,
+                    ref_id: None,
+                    dynptr_id: None,
+                }
             };
             state.types.set(Reg::R0, ty);
             true
+        }
+        RetKind::IterNextBtfId { .. } => {
+            // Same dispatch shape as `IterNextElem` — both forking
+            // returns are split into successors before the flat-state
+            // applier runs.
+            unreachable!(
+                "RetKind::IterNextBtfId must be handled by the kfunc dispatcher fork"
+            );
         }
         RetKind::IterNextElem { .. } => {
             // The kfunc dispatcher forks IterNextElem into two
@@ -243,7 +359,11 @@ pub(crate) fn apply_call_proto_r0(
             let ty = if proto.flags.contains(CallFlags::RET_NULL) {
                 RegType::PtrToOwnedKptrOrNull { ref_id }
             } else {
-                RegType::PtrToOwnedKptr { ref_id }
+                RegType::PtrToOwnedKptr {
+                    ref_id,
+                    offset: 0,
+                    non_owning: false,
+                }
             };
             state.types.set(Reg::R0, ty);
             true
@@ -277,10 +397,34 @@ pub(crate) fn apply_call_proto_r0(
             let (_, max_size) = state.domain.get_interval(size_reg);
             let mem_size = max_size.max(0) as u64;
             let id = new_ptr_id();
+            // Inherit the source dynptr's ref_id from R1 so that releasing
+            // the dynptr (`bpf_ringbuf_submit_dynptr` etc.) invalidates the
+            // returned slice pointer too — catches use-after-release.
+            // Also inherit `dynptr_id` (the per-instance identity) so
+            // overwriting the source dynptr with `bpf_dynptr_from_mem`
+            // (etc.) demotes the slice — mirrors kernel verifier.c v6.15
+            // L11701 `regs[BPF_REG_0].dynptr_id = meta.dynptr_id`. All
+            // current `PtrToAllocMemFromArg` users (`bpf_dynptr_data`,
+            // `bpf_dynptr_slice`, `bpf_dynptr_slice_rdwr`) have R1 as
+            // the source dynptr.
+            let src_slot = resolve_stack_arg(state, arg_reg(0))
+                .and_then(|(frame, off)| state.stack_at(frame).stack_get_dynptr(off));
+            let ref_id = src_slot.map(|s| s.ref_id).filter(|id| *id != 0);
+            let dynptr_id = src_slot.map(|s| s.dynptr_id);
             let ty = if proto.flags.contains(CallFlags::RET_NULL) {
-                RegType::PtrToAllocMemOrNull { id, mem_size }
+                RegType::PtrToAllocMemOrNull {
+                    id,
+                    mem_size,
+                    ref_id,
+                    dynptr_id,
+                }
             } else {
-                RegType::PtrToAllocMem { id, mem_size }
+                RegType::PtrToAllocMem {
+                    id,
+                    mem_size,
+                    ref_id,
+                    dynptr_id,
+                }
             };
             state.types.set(Reg::R0, ty);
             true

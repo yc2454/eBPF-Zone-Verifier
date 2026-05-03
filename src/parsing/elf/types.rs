@@ -1,3 +1,40 @@
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KptrFieldKind {
+    /// `__kptr_untrusted` — unreferenced kptr. Loaded value is
+    /// `PtrToUntrustedKptrOrNull` and must be NULL-checked / ptr-cast'd
+    /// before use; cannot be stored back as a referenced kptr.
+    Unref,
+    /// `__kptr` — referenced kptr (refcounted). Direct stores are
+    /// disallowed; mutation is via `bpf_kptr_xchg`. Load yields
+    /// `PtrToRefKptrOrNull` (still ref-tracked through xchg semantics).
+    Ref,
+    /// `__rcu` (with kptr) — RCU-protected referenced kptr. Loaded
+    /// value carries MEM_RCU and is `PtrToRcuKptrOrNull`.
+    Rcu,
+    /// `percpu_kptr` — referenced percpu kptr. Loaded value is
+    /// `PtrToPercpuKptrOrNull` and must be passed through
+    /// `bpf_per_cpu_ptr` / `bpf_this_cpu_ptr` before deref.
+    Percpu,
+    /// `__uptr` — pointer to user-space memory (BPF_MAP_TYPE_TASK_STORAGE
+    /// values can carry user-space pointers populated by setsockopt-style
+    /// userspace writes). The kernel allows BPF programs to read the
+    /// pointer (deref-after-null-check is OK), but rejects any store to
+    /// the field — userspace owns the slot. Kernel:
+    /// "store to uptr disallowed".
+    Uptr,
+}
+
+#[derive(Clone, Debug)]
+pub struct KptrField {
+    /// Byte offset of the field within the map value struct.
+    pub offset: u32,
+    pub kind: KptrFieldKind,
+    /// BTF type id of the *pointee* struct (the inner type that the
+    /// `__kptr*` PTR points to). Used for type-matching in
+    /// `bpf_kptr_xchg` and pointee-struct bounds checks on deref.
+    pub pointee_btf_id: u32,
+}
+
 #[derive(Clone, Debug)]
 pub struct BpfMapDef {
     pub type_: u32,
@@ -10,6 +47,17 @@ pub struct BpfMapDef {
     pub btf_val_type_id: Option<u32>,
     pub initial_data: Option<Vec<u8>>,
     pub inner_map_idx: Option<usize>,
+    /// kptr fields embedded in the map value struct, extracted from BTF
+    /// TYPE_TAGs (`kptr`, `kptr_untrusted`, `rcu`, `percpu_kptr`).
+    /// Empty for legacy maps and data-section maps. See
+    /// `parse_btf_map_defs` for population.
+    pub kptr_fields: Vec<KptrField>,
+    /// libbpf-managed extern variables backed by this synthetic map
+    /// (`.kconfig` only today). Each entry is `(extern_name, offset_in_value)`.
+    /// Empty for normal maps. Populated by `load_btf_extern_maps` and consumed
+    /// by `load_relocations*` to resolve `R_BPF_64_64` against UND extern
+    /// symbols into a `RelocKind::MapValue` reloc into this map.
+    pub extern_var_offsets: Vec<(String, u32)>,
 }
 
 /// Represents a raw BPF program extracted from the ELF symbol table.
@@ -35,6 +83,13 @@ pub enum RelocKind {
     /// synthesized btf_id; the runner then registers the name → id mapping
     /// into the analysis-context BTF so the kfunc dispatcher can route it.
     KfuncCall,
+    /// LD_IMM64 with `BPF_PSEUDO_FUNC` (src=4): a callback subprog pointer
+    /// (consumed by `bpf_loop` / `bpf_for_each_map_elem` / `bpf_timer_set_callback`
+    /// / `bpf_user_ringbuf_drain` / `bpf_find_vma`). Clang emits these as
+    /// `R_BPF_64_64` against `.text` (or the function symbol); the combiner
+    /// fixes the LD_IMM64 imm pair to a PC-relative offset to the combined
+    /// target subprog and sets `src = 4`.
+    PseudoFunc,
 }
 
 /// Target information for a BPF-to-BPF function call

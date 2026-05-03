@@ -401,6 +401,21 @@ const SK_BUFF_FIELDS: &[CtxField] = &[
         readable: true,
         narrow_access: false,
     },
+    // struct bpf_sock *sk (offset 168, size 8)
+    // Kernel `bpf_skb_is_valid_access` permits read of `sk` for every
+    // skb-context prog type (SocketFilter, SchedCls, SchedAct, CgroupSkb,
+    // SkSkb, LWT, …). Modeled in the main field table rather than the
+    // CGROUP_SKB-only extended set so all prog kinds with SkBuff ctx see
+    // it. Returns a `PtrToSockCommon | NULL`; per-field-kind typing is
+    // wired through `CtxFieldKind::SockCommon`.
+    CtxField {
+        offset: 168,
+        size: MemSize::U64,
+        kind: CtxFieldKind::SockCommon,
+        writable: false,
+        readable: true,
+        narrow_access: false,
+    },
     // Additional fields can be added as needed...
 ];
 
@@ -436,14 +451,8 @@ const SK_BUFF_EXTENDED_FIELDS: &[CtxField] = &[
         readable: true,
         narrow_access: false,
     },
-    CtxField {
-        offset: 168,
-        size: MemSize::U64,
-        kind: CtxFieldKind::SockCommon,
-        writable: false,
-        readable: true,
-        narrow_access: false,
-    },
+    // (offset 168 `sk` is in the main SK_BUFF_FIELDS — kernel permits it
+    // for every skb-context prog type, not just CGROUP_SKB/SchedCls.)
     // __u32 gso_size (offset 176)
     CtxField {
         offset: 176,
@@ -1529,6 +1538,36 @@ fn apply_prog_type_overrides(prog_kind: ProgramKind, off: i16, info: &mut CtxAcc
 }
 
 // ===========================================================================
+// Per-tracepoint MAYBE_NULL arg table (tp_btf / raw_tp)
+// ===========================================================================
+
+/// `(tracepoint_target, arg_idx)` pairs whose kernel BTF marks the arg as
+/// `PTR_MAYBE_NULL`. The kernel rejects deref of these args before a null
+/// check ("invalid mem access 'trusted_ptr_or_null_'"). Mirrors what the
+/// kernel resolves from the tracepoint's `__bpf_trace_*` BTF; we maintain
+/// a static table because that BTF lives in vmlinux which we don't ship.
+///
+/// `arg_idx` is 0-based across the FUNC_PROTO params (matches the ctx
+/// slot index — `r1 = *(u64*)(r1 + 8*idx)`).
+const TP_BTF_MAYBE_NULL_ARGS: &[(&str, u8)] = &[
+    // sched_pi_setprio(struct task_struct *tsk, struct task_struct *pi_task) —
+    // `pi_task` (arg 1, 0-based) is the inheritor of a PI lock and may be NULL.
+    ("sched_pi_setprio", 1),
+    // bpf_testmod_test_raw_tp_null(struct task_struct *task) — task arg is
+    // declared with __nullable in the kmod's tracepoint definition.
+    ("bpf_testmod_test_raw_tp_null", 0),
+    // bpf_testmod_test_nullable_bare(struct bpf_testmod_test_read_ctx *) —
+    // ctx arg declared __nullable; covered by `test_tp_btf_nullable.c`.
+    ("bpf_testmod_test_nullable_bare", 0),
+];
+
+fn tp_btf_arg_is_maybe_null(tp_target: &str, arg_idx: u8) -> bool {
+    TP_BTF_MAYBE_NULL_ARGS
+        .iter()
+        .any(|(tp, idx)| *tp == tp_target && *idx == arg_idx)
+}
+
+// ===========================================================================
 // Public API
 // ===========================================================================
 
@@ -1557,6 +1596,59 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
     // these prog types; the runner now resolves entry_args from the
     // function's BTF FUNC_PROTO for non-struct_ops kinds via
     // `btf.resolve_func_args(func_name)`.
+    // Iter / sk_reuseport ctx loads: R1 holds a typed ctx pointer
+    // directly (no BPF_PROG wrapper). `*(u64 *)(r1 + off)` is a field
+    // load on the ctx struct, not the BPF_PROG ctx-array idiom. Look
+    // up `(ctx_struct, off)` in BTF and type the load via the
+    // `trusted_field_load` allowlist.
+    let is_direct_typed_ctx = matches!(prog_kind, ProgramKind::SkReuseport)
+        || (prog_kind == ProgramKind::Tracing
+            && matches!(env.ctx.attach_flavor.as_deref(), Some("iter")));
+    if is_direct_typed_ctx && size == 8 && off >= 0 && off % 8 == 0 {
+        if let Some(args) = env.ctx.entry_args.as_ref()
+            && let Some(arg0) = args.first()
+        {
+            use crate::analysis::machine::context::{
+                EntryArg, intern_btf_type_name_strict,
+            };
+            use crate::analysis::transfer::types::trusted_field_load;
+            use crate::parsing::btf::BtfFieldKind;
+            if let EntryArg::TrustedPtrBtfId { type_name, .. } = arg0 {
+                if let Some(struct_id) = env.ctx.btf.find_struct_by_name(type_name)
+                    && let Some(info) =
+                        env.ctx.btf.field_at_offset(struct_id, off as u32)
+                {
+                    if let BtfFieldKind::Pointer {
+                        pointee_name: Some(pointee),
+                        ..
+                    } = &info.kind
+                        && trusted_field_load(type_name, info.name)
+                    {
+                        let pointee_static = intern_btf_type_name_strict(pointee);
+                        return Some(CtxAccessInfo {
+                            kind: CtxFieldKind::TrustedPtr {
+                                type_name: pointee_static,
+                                nullable: false,
+                            },
+                            readable: true,
+                            writable: false,
+                        });
+                    }
+                }
+                // Fallback for non-allowlisted iter / sk_reuseport ctx
+                // fields: scalar (loose). Mirrors the existing iter
+                // behavior pre-cluster-#2 — the kernel admits these
+                // loads but our verifier doesn't have ctx-field
+                // metadata for every iter ctx struct.
+                return Some(CtxAccessInfo {
+                    kind: CtxFieldKind::Scalar,
+                    readable: true,
+                    writable: false,
+                });
+            }
+        }
+    }
+
     if matches!(
         prog_kind,
         ProgramKind::StructOps
@@ -1573,12 +1665,29 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
         if let Some(args) = env.ctx.entry_args.as_ref() {
             if idx < args.len() {
                 use crate::analysis::machine::context::EntryArg;
+                // tp_btf attach targets carry per-arg PTR_MAYBE_NULL in
+                // the kernel's tracepoint BTF (which we don't ship). The
+                // BPF program's declared arg type loses that flag — e.g.
+                // `BPF_PROG(h, struct foo *nullable_ctx)` resolves to
+                // TrustedPtr{nullable:false} from our BTF resolver, but
+                // the tracepoint marks slot N as nullable. Consult the
+                // static (target, idx) table so the kernel's
+                // "trusted_ptr_or_null_" rejection lands.
+                let nullable_from_table = matches!(
+                    env.ctx.attach_flavor.as_deref(),
+                    Some("tp_btf") | Some("raw_tp") | Some("raw_tp.w")
+                ) && env
+                    .ctx
+                    .attach_subtype
+                    .as_deref()
+                    .map(|tp| tp_btf_arg_is_maybe_null(tp, idx as u8))
+                    .unwrap_or(false);
                 let kind = match &args[idx] {
                     EntryArg::Scalar => CtxFieldKind::Scalar,
                     EntryArg::TrustedPtrBtfId { type_name, nullable } => {
                         CtxFieldKind::TrustedPtr {
                             type_name,
-                            nullable: *nullable,
+                            nullable: *nullable || nullable_from_table,
                         }
                     }
                 };
@@ -1598,14 +1707,92 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
         // it via the `type_name == "unknown"` lax policy. Loose but
         // sound: the kernel accepts everything we'd accept here.
         if !matches!(prog_kind, ProgramKind::StructOps) {
+            // tp_btf-specific: a few raw-tracepoint targets pass args
+            // marked PTR_MAYBE_NULL in the kernel's tracepoint BTF (e.g.
+            // sched_pi_setprio's `pi_task` is the inheritor of a PI lock
+            // and may legitimately be NULL). The kernel rejects deref
+            // before null-check with "invalid mem access
+            // 'trusted_ptr_or_null_'" — we mirror this via a static
+            // (target, arg_idx) table since we don't ship vmlinux BTF.
+            let nullable = matches!(
+                env.ctx.attach_flavor.as_deref(),
+                Some("tp_btf") | Some("raw_tp") | Some("raw_tp.w")
+            ) && env
+                .ctx
+                .attach_subtype
+                .as_deref()
+                .map(|tp| tp_btf_arg_is_maybe_null(tp, (off / 8) as u8))
+                .unwrap_or(false);
             return Some(CtxAccessInfo {
                 kind: CtxFieldKind::TrustedPtr {
                     type_name: "unknown",
+                    nullable,
+                },
+                readable: true,
+                writable: false,
+            });
+        }
+    }
+
+    // Cluster C1: for the BPF_PROG-style ctx prog kinds, the ctx is a
+    // BTF arg array. Only 8-byte aligned 8-byte loads are valid; narrow
+    // loads, misaligned loads, or negative offsets must reject. Without
+    // this guard, those fall through to the SkBuff/etc. fallback below
+    // and are silently accepted.
+    if matches!(
+        prog_kind,
+        ProgramKind::StructOps
+            | ProgramKind::Lsm
+            | ProgramKind::Tracing
+            | ProgramKind::Tracepoint
+            | ProgramKind::RawTracepoint
+            | ProgramKind::RawTracepointWritable
+    ) {
+        return None;
+    }
+
+    // Cluster C1: netfilter ctx is `struct bpf_nf_ctx { state; skb; }` —
+    // only 8-byte loads at off 0 (state) and off 8 (skb) are valid.
+    if prog_kind == ProgramKind::Netfilter {
+        if size == 8 && (off == 0 || off == 8) {
+            // bpf_nf_ctx { state @ 0; skb @ 8; }. Type the loaded
+            // value as the named struct so subsequent field reads
+            // (e.g. `state->pf` in
+            // `verifier_netfilter_ctx::with_valid_ctx_access_test6`)
+            // type-check. Writes through the loaded pointer remain
+            // rejected: PtrToBtfId{<name>, TRUSTED} stores fall into
+            // the access.rs check_store arm, which rejects since
+            // nf_hook_state / sk_buff aren't in mem_region_model
+            // (closes `with_invalid_ctx_access_test5`'s
+            // `state->sk = NULL` rejection).
+            let type_name = if off == 0 { "nf_hook_state" } else { "sk_buff" };
+            return Some(CtxAccessInfo {
+                kind: CtxFieldKind::TrustedPtr {
+                    type_name,
                     nullable: false,
                 },
                 readable: true,
                 writable: false,
             });
+        }
+        return None;
+    }
+
+    // Cluster C2: cgroup/post_bind4 and cgroup/post_bind6 use the BpfSock
+    // ctx but with stricter per-attach-subtype field restrictions:
+    //   - mark (off 16) is not readable in either post_bind4 or post_bind6
+    //   - src_ip6 (off 28..44) is not readable in post_bind4 (IPv4-only)
+    //   - src_ip4 (off 24) is not readable in post_bind6 (IPv6-only)
+    if prog_kind == ProgramKind::CgroupSock {
+        if let Some(sub) = env.ctx.attach_subtype.as_deref() {
+            let denied = match sub {
+                "post_bind4" => off == 16 || (28..44).contains(&off),
+                "post_bind6" => off == 16 || off == 24,
+                _ => false,
+            };
+            if denied {
+                return None;
+            }
         }
     }
 

@@ -30,6 +30,18 @@ pub struct ProgAttrs {
     /// `__msg("…")` substrings expected in the verifier log.
     pub msgs: Vec<String>,
     pub log_level: Option<u32>,
+    /// `__load_if_JITed()` — upstream test_loader only loads this prog
+    /// when JIT is enabled. We don't model JIT specifics (e.g. JIT-mode
+    /// may_goto stores its counter off-stack), so we treat such progs as
+    /// skipped: an ACCEPT verdict on them only applies under JIT, which
+    /// our (interpreter-mode) analysis cannot soundly assert.
+    pub load_if_jited: bool,
+    /// Program-load flags from `__flag(...)` annotations (encoded in
+    /// upstream as the `comment:test_prog_flags=...` BTF decl_tag).
+    /// We OR each flag into a single u32; the runner translates this
+    /// to `ExecContext::flags` so the analysis honors gate-style
+    /// flags such as `BPF_F_STRICT_ALIGNMENT`.
+    pub prog_flags: u32,
     /// Function name (the C identifier before the parameter list).
     pub func_name: String,
 }
@@ -127,6 +139,20 @@ fn apply_attrs(line: &str, cur: &mut ProgAttrs) {
     if has_word(line, "__failure_unpriv") {
         cur.failure_unpriv = true;
     }
+    if has_word(line, "__load_if_JITed") {
+        cur.load_if_jited = true;
+    }
+    if let Some(flag_name) = extract_macro_ident(line, "__flag") {
+        cur.prog_flags |= match flag_name.as_str() {
+            "BPF_F_STRICT_ALIGNMENT" => crate::common::constants::F_LOAD_WITH_STRICT_ALIGNMENT,
+            // Other flags (BPF_F_TEST_STATE_FREQ, BPF_F_ANY_ALIGNMENT,
+            // BPF_F_SLEEPABLE, …) aren't currently consumed by the
+            // analysis — leave them as no-ops rather than failing the
+            // scrape. test_loader treats unknown values as a fatal
+            // error, but for us silent-ignore is sound.
+            _ => 0,
+        };
+    }
     if let Some(n) = extract_int_arg(line, "__retval") {
         cur.retval = Some(n);
     }
@@ -201,6 +227,38 @@ fn extract_quoted_all(line: &str, macro_name: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// Extract `MACRO(IDENT)` identifier argument — for macros like
+/// `__flag(BPF_F_STRICT_ALIGNMENT)` whose arg is an unquoted symbol,
+/// not a string literal. Returns the first match on `line`.
+fn extract_macro_ident(line: &str, macro_name: &str) -> Option<String> {
+    let mut start = 0;
+    while let Some(idx) = line[start..].find(macro_name) {
+        let abs = start + idx;
+        let before_ok = abs == 0 || !is_ident_char(line.as_bytes()[abs - 1] as char);
+        let after = abs + macro_name.len();
+        if !before_ok || after >= line.len() {
+            start = abs + macro_name.len();
+            continue;
+        }
+        let rest = line[after..].trim_start();
+        if !rest.starts_with('(') {
+            start = abs + macro_name.len();
+            continue;
+        }
+        let inner = rest[1..].trim_start();
+        let close = inner.find(')')?;
+        let arg = inner[..close].trim();
+        if !arg.is_empty()
+            && !arg.starts_with('"')
+            && arg.chars().all(|c| is_ident_char(c))
+        {
+            return Some(arg.to_string());
+        }
+        start = abs + macro_name.len();
+    }
+    None
 }
 
 /// Extract `MACRO(N)` integer argument. Accepts decimal and `-N`.

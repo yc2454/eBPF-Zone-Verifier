@@ -4,7 +4,7 @@ pub mod instr;
 pub mod prog;
 
 pub use self::instr::{CallKind, Instr, Program};
-pub use self::prog::{AttachKind, ContextKind, ProgramKind};
+pub use self::prog::{AttachKind, ContextKind, ProgramKind, expected_retval_rule};
 
 use crate::analysis::machine::reg::Reg;
 
@@ -82,6 +82,9 @@ pub enum CmpOp {
 pub enum EndianOp {
     ToBe,
     ToLe,
+    /// BPF v4 BSWAP (alu64 | END | K, opcode 0xd7). Pure byte-swap of the
+    /// low `size` bits of `dst`, host-endianness independent.
+    Bswap,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -257,8 +257,9 @@ fn refine_data_region_bounds(
         //   - From R, we can access (off - off') bytes
         //   - Set R.range = max(R.range, proven_size - R.off)
         if proven_size > 0 {
-            propagate_packet_range(state, checked_reg, checked_var_off, proven_size);
+            propagate_packet_range(state, checked_reg, proven_size);
         }
+        let _ = checked_var_off;
     }
 
     if proves_upper {
@@ -278,16 +279,27 @@ fn refine_data_region_bounds(
     }
 }
 
-/// Propagate range to all packet pointer registers with compatible offsets.
-/// After proving that (pkt_data + checked_off + var_off) <= pkt_end,
-/// any register R at (pkt_data + R.off + var_off) can access (checked_off - R.off) bytes.
-fn propagate_packet_range(
-    state: &mut State,
-    _checked_reg: Reg,
-    checked_var_off: u64,
-    proven_size: i64,
-) {
-    // Get all packet pointer registers and update their ranges
+/// Propagate range to all packet pointer registers in the same kernel-style
+/// id family as `checked_reg`.
+///
+/// After proving `(pkt_data + checked_off + var_off) <= pkt_end`, every
+/// register that picked up the same variable offset chain (i.e. shares
+/// `checked_reg.ptr_offset.id`) can be refined the same way. Mirrors the
+/// kernel's `find_good_pkt_pointers`: only same-id pointers get the
+/// `range` widened.
+///
+/// When `checked_reg` has `id == None` (no variable offset, fully fixed
+/// pointer) the only register that picks up `range` is `checked_reg`
+/// itself — the previous `var_off`-based grouping conflated independent
+/// pointer chains and produced FALSE_ACCEPTs (e.g.
+/// `verifier_direct_packet_access::id_in_regsafe_bad_access`).
+fn propagate_packet_range(state: &mut State, checked_reg: Reg, proven_size: i64) {
+    let checked_id = if let NumericDomain::Interval(ref ivl) = state.domain {
+        ivl.get_ptr_offset(checked_reg).and_then(|po| po.id)
+    } else {
+        return;
+    };
+
     let mut updates: Vec<(Reg, i64)> = Vec::new();
 
     if let NumericDomain::Interval(ref ivl) = state.domain {
@@ -297,25 +309,36 @@ fn propagate_packet_range(
             }
 
             if let Some(ptr_off) = ivl.get_ptr_offset(reg) {
-                // Must be same anchor and var_off to be in the same "group"
-                if ptr_off.anchor == Reg::AnchorData && ptr_off.var_off == checked_var_off {
-                    // From this register, we can access up to (proven_size - this_reg.off) bytes
-                    let range_for_reg = proven_size.saturating_sub(ptr_off.off);
-                    // Include range=0 for registers at the boundary (offset == proven_size).
-                    // This is needed for negative offset accesses like *(reg + -N).
-                    if range_for_reg >= 0 {
-                        updates.push((reg, range_for_reg));
-                    }
+                if ptr_off.anchor != Reg::AnchorData {
+                    continue;
+                }
+                let in_family = match (checked_id, ptr_off.id) {
+                    // Variable-offset chain: only same-id members refine.
+                    (Some(a), Some(b)) => a == b,
+                    // No-id family (kernel `reg->id == 0`): all
+                    // pkt-pointers without an id share refinement —
+                    // they were never separated by variable arithmetic
+                    // and therefore all alias the same anchor.
+                    (None, None) => true,
+                    _ => false,
+                };
+                if !in_family {
+                    continue;
+                }
+                let range_for_reg = proven_size.saturating_sub(ptr_off.off);
+                // range=0 is still meaningful for boundary accesses like
+                // `*(reg + -N)` — keep the >= 0 guard.
+                if range_for_reg >= 0 {
+                    updates.push((reg, range_for_reg));
                 }
             }
         }
     }
 
-    // Apply updates to registers
     if let NumericDomain::Interval(ref mut ivl) = state.domain {
         for (reg, range) in updates {
             if let Some(ptr_off) = ivl.get_ptr_offset(reg).cloned() {
-                // Use -1 to represent "no range" so that range=0 is still an update
+                // -1 sentinel keeps range=0 a valid widening target.
                 let current_range = ptr_off.range.unwrap_or(-1);
                 if range > current_range {
                     let mut new_ptr_off = ptr_off;
@@ -326,9 +349,14 @@ fn propagate_packet_range(
         }
     }
 
-    // Propagate range to spilled packet pointers on ALL frames' stacks.
-    // The kernel's find_good_pkt_pointers does this, relying on id matching.
-    // Since we don't track id, we propagate to all matching slots.
+    // Spilled packet pointers don't currently round-trip their id
+    // through `PointerBounds::Interval`, so we keep the var_off-based
+    // approximation for them — see comment at the call site.
+    let checked_var_off = if let NumericDomain::Interval(ref ivl) = state.domain {
+        ivl.get_ptr_offset(checked_reg).map(|po| po.var_off).unwrap_or(0)
+    } else {
+        0
+    };
     propagate_packet_range_to_all_frames_stack(state, checked_var_off, proven_size);
 }
 
@@ -382,8 +410,13 @@ fn propagate_packet_range_to_all_frames_stack(
 /// Propagate range to all meta pointer registers with compatible offsets.
 /// After proving that (pkt_meta + checked_off + var_off) <= pkt_data,
 /// any register R at (pkt_meta + R.off + var_off) can access (checked_off - R.off) bytes.
-fn propagate_meta_range(state: &mut State, checked_var_off: u64, proven_size: i64) {
-    // Get all meta pointer registers and update their ranges
+fn propagate_meta_range(state: &mut State, checked_reg: Reg, proven_size: i64) {
+    let checked_id = if let NumericDomain::Interval(ref ivl) = state.domain {
+        ivl.get_ptr_offset(checked_reg).and_then(|po| po.id)
+    } else {
+        return;
+    };
+
     let mut updates: Vec<(Reg, i64)> = Vec::new();
 
     if let NumericDomain::Interval(ref ivl) = state.domain {
@@ -393,25 +426,28 @@ fn propagate_meta_range(state: &mut State, checked_var_off: u64, proven_size: i6
             }
 
             if let Some(ptr_off) = ivl.get_ptr_offset(reg) {
-                // Must be same anchor and var_off to be in the same "group"
-                if ptr_off.anchor == Reg::AnchorDataMeta && ptr_off.var_off == checked_var_off {
-                    // From this register, we can access up to (proven_size - this_reg.off) bytes
-                    let range_for_reg = proven_size.saturating_sub(ptr_off.off);
-                    // Include range=0 for registers at the boundary (offset == proven_size).
-                    // This is needed for negative offset accesses like *(reg + -N).
-                    if range_for_reg >= 0 {
-                        updates.push((reg, range_for_reg));
-                    }
+                if ptr_off.anchor != Reg::AnchorDataMeta {
+                    continue;
+                }
+                let in_family = match (checked_id, ptr_off.id) {
+                    (Some(a), Some(b)) => a == b,
+                    (None, _) => reg == checked_reg,
+                    _ => false,
+                };
+                if !in_family {
+                    continue;
+                }
+                let range_for_reg = proven_size.saturating_sub(ptr_off.off);
+                if range_for_reg >= 0 {
+                    updates.push((reg, range_for_reg));
                 }
             }
         }
     }
 
-    // Apply updates to registers
     if let NumericDomain::Interval(ref mut ivl) = state.domain {
         for (reg, range) in updates {
             if let Some(ptr_off) = ivl.get_ptr_offset(reg).cloned() {
-                // Use -1 to represent "no range" so that range=0 is still an update
                 let current_range = ptr_off.range.unwrap_or(-1);
                 if range > current_range {
                     let mut new_ptr_off = ptr_off;
@@ -422,7 +458,11 @@ fn propagate_meta_range(state: &mut State, checked_var_off: u64, proven_size: i6
         }
     }
 
-    // Also propagate range to spilled meta pointers on the stack
+    let checked_var_off = if let NumericDomain::Interval(ref ivl) = state.domain {
+        ivl.get_ptr_offset(checked_reg).map(|po| po.var_off).unwrap_or(0)
+    } else {
+        0
+    };
     propagate_meta_range_to_stack(state, checked_var_off, proven_size);
 }
 
@@ -562,8 +602,9 @@ fn refine_meta_region_bounds(
                     ivl.set_meta_size_bound(proven_size as u64);
                 }
             }
-            // Propagate range to all meta pointers with the same var_off
-            propagate_meta_range(state, meta_info.var_off, proven_size);
+            // Propagate range to meta pointers in the same id family.
+            let meta_reg = if is_meta_on_left { left } else { right };
+            propagate_meta_range(state, meta_reg, proven_size);
         }
     }
 

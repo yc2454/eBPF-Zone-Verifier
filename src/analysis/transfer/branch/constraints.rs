@@ -59,6 +59,13 @@ pub fn apply_jmp_constraints(
     } else if width == Width::W32 && matches!(op, CmpOp::SLt | CmpOp::SLe | CmpOp::SGt | CmpOp::SGe)
     {
         apply_w32_signed_fallback(then_s, else_s, left, op, resolved);
+    } else if width == Width::W32
+        && matches!(
+            op,
+            CmpOp::ULt | CmpOp::ULe | CmpOp::UGt | CmpOp::UGe | CmpOp::Eq | CmpOp::Ne
+        )
+    {
+        apply_w32_unsigned_fallback(then_s, else_s, left, op, resolved);
     }
 
     let imm_val = match resolved {
@@ -129,16 +136,24 @@ fn apply_cmp_to_domain(
         (CmpOp::Eq, Either::Right(imm)) => {
             then_domain.assume_eq_imm(left, imm);
             interval_propagate_scalars(then_domain, left, |d, r| d.assume_eq_imm(r, imm));
+            // else: left != imm — tighten if imm matches a boundary.
+            refine_ne_imm(else_domain, left, imm);
         }
         (CmpOp::Eq, Either::Left(reg)) => {
-            then_domain.assign_reg(left, reg);
+            then_domain.intersect_eq_reg(left, reg);
         }
         (CmpOp::Ne, Either::Right(imm)) => {
             else_domain.assume_eq_imm(left, imm);
             interval_propagate_scalars(else_domain, left, |d, r| d.assume_eq_imm(r, imm));
+            // then: left != imm — tighten if imm matches a boundary.
+            // Closes verifier_bounds::reg_{equal,not_equal}_const where
+            // `r4 &= 7; if r4 != 0 goto l0` should refine r4 to [1, 7]
+            // on the L0 path so `bpf_skb_store_bytes(..., r4)` (which
+            // requires `ARG_CONST_SIZE > 0`) accepts.
+            refine_ne_imm(then_domain, left, imm);
         }
         (CmpOp::Ne, Either::Left(reg)) => {
-            else_domain.assign_reg(left, reg);
+            else_domain.intersect_eq_reg(left, reg);
         }
         (CmpOp::UGe, Either::Right(imm)) => {
             then_domain.assume_ge_imm(left, imm);
@@ -241,6 +256,26 @@ fn apply_cmp_to_domain(
             else_domain.assume_ge(left, reg);
         }
         (CmpOp::Test, _) => {}
+    }
+}
+
+/// Refine `left != imm` against the domain's current interval.
+/// If the constant matches the lower or upper bound, raise/lower the
+/// boundary by one. Boundary-only refinement matches the kernel's
+/// `tnum`-based shrink: a `!= imm` where `imm` is in the interior
+/// can't tighten unsigned bounds.
+fn refine_ne_imm(domain: &mut NumericDomain, left: Reg, imm: i64) {
+    let (lo, hi) = domain.get_interval(left);
+    if lo == imm && lo < hi {
+        domain.assume_ge_imm(left, lo.saturating_add(1));
+        interval_propagate_scalars(domain, left, |d, r| {
+            d.assume_ge_imm(r, lo.saturating_add(1))
+        });
+    } else if hi == imm && lo < hi {
+        domain.assume_le_imm(left, hi.saturating_sub(1));
+        interval_propagate_scalars(domain, left, |d, r| {
+            d.assume_le_imm(r, hi.saturating_sub(1))
+        });
     }
 }
 
@@ -463,6 +498,128 @@ fn apply_signed_from_unsigned_range_domain(
     }
 }
 
+/// jmp32 unsigned/equality narrowing for the case where the full-width
+/// DBM constraint declined (`can_apply_dbm_constraint == false`) — i.e.
+/// the bounds don't fit in u32 and the kernel would have narrowed the
+/// `u32_min/u32_max` shadow range without affecting the upper 32 bits.
+/// Mirrors `apply_w32_signed_fallback` for the unsigned/Eq/Ne ops.
+fn apply_w32_unsigned_fallback(
+    then_s: &mut State,
+    else_s: &mut State,
+    left: Reg,
+    op: CmpOp,
+    right: Either<Reg, i64>,
+) {
+    // Mirror apply_unsigned_const_fallback's symmetry: if `left` is a
+    // known constant and `right` is a register, flip the op and narrow
+    // `right`'s 32-bit bounds instead. Otherwise narrow `left`.
+    let left_const = then_s.domain.get_fixed_value(left).or_else(|| {
+        let t = then_s.get_tnum(left);
+        if t.is_const() { Some(t.value as i64) } else { None }
+    });
+
+    let (target, rv, op) = match (left_const, right) {
+        (Some(k), Either::Left(reg)) => (reg, k as u32, flip_unsigned_cmp(op)),
+        (_, Either::Right(imm)) => (left, imm as u32, op),
+        (_, Either::Left(reg)) => match then_s.domain.get_fixed_value(reg) {
+            Some(v) => (left, v as u32, op),
+            None => return,
+        },
+    };
+
+    let (mut t_min, mut t_max) = then_s.domain.get_u32_bounds(target);
+    let (mut e_min, mut e_max) = else_s.domain.get_u32_bounds(target);
+
+    // Force the output bounds empty (signaling an infeasible branch
+    // through `is_inconsistent`) for ops whose constant pins them at a
+    // u32 boundary.
+    let force_empty = (1u32, 0u32);
+
+    match op {
+        CmpOp::UGt => {
+            if rv == u32::MAX {
+                (t_min, t_max) = force_empty;
+            } else {
+                t_min = t_min.max(rv + 1);
+            }
+            e_max = e_max.min(rv);
+        }
+        CmpOp::UGe => {
+            t_min = t_min.max(rv);
+            if rv == 0 {
+                (e_min, e_max) = force_empty;
+            } else {
+                e_max = e_max.min(rv - 1);
+            }
+        }
+        CmpOp::ULt => {
+            if rv == 0 {
+                (t_min, t_max) = force_empty;
+            } else {
+                t_max = t_max.min(rv - 1);
+            }
+            e_min = e_min.max(rv);
+        }
+        CmpOp::ULe => {
+            t_max = t_max.min(rv);
+            if rv == u32::MAX {
+                (e_min, e_max) = force_empty;
+            } else {
+                e_min = e_min.max(rv + 1);
+            }
+        }
+        CmpOp::Eq => {
+            t_min = t_min.max(rv);
+            t_max = t_max.min(rv);
+        }
+        CmpOp::Ne => {
+            e_min = e_min.max(rv);
+            e_max = e_max.min(rv);
+        }
+        _ => return,
+    }
+
+    then_s.domain.set_u32_bounds(target, t_min, t_max);
+    else_s.domain.set_u32_bounds(target, e_min, e_max);
+
+    // Lift the refined low-32 numeric bound into the tnum mask so the
+    // subsequent `<<32 >>32` zero-extension idiom that LLVM emits after
+    // a W32 unsigned compare preserves the [t_min, t_max] range.
+    // Kernel `__reg32_bound_offset` does this via
+    // `tnum_with_subreg(reg->var_off, tnum_intersect(lo32, tnum_range(...)))`
+    // (verifier.c v6.15). Without this layer, even though our u32 bounds
+    // record [0, 63], the tnum's low-32 mask stays `0xffffffff`, and
+    // `r5 <<= 32; r5 >>= 32` produces a tnum with mask `0xffffffff`
+    // again — losing the bound at the next pointer-arithmetic check
+    // (e.g. `bpf_cubic.c::bpf_cubic_cong_avoid` pc 185).
+    refine_subreg_tnum(then_s, target, t_min, t_max);
+    refine_subreg_tnum(else_s, target, e_min, e_max);
+}
+
+/// Intersect the low-32 bits of `target`'s tnum with `Tnum::from_range`,
+/// preserving the upper 32 bits unchanged. No-op on empty/inconsistent
+/// ranges (caller flags those via numeric bounds).
+fn refine_subreg_tnum(state: &mut State, target: Reg, lo: u32, hi: u32) {
+    if lo > hi {
+        return;
+    }
+    let cur = state.get_tnum(target);
+    let lo32_cur = Tnum {
+        value: cur.value & 0xffff_ffff,
+        mask: cur.mask & 0xffff_ffff,
+    };
+    let lo32_range = Tnum::from_range(lo as u64, hi as u64);
+    let Some(lo32_new) = lo32_cur.intersect(lo32_range) else {
+        return;
+    };
+    // Recombine: keep upper 32 bits of `cur`, replace low 32 with refined.
+    let refined = Tnum {
+        value: (cur.value & 0xffff_ffff_0000_0000) | (lo32_new.value & 0xffff_ffff),
+        mask: (cur.mask & 0xffff_ffff_0000_0000) | (lo32_new.mask & 0xffff_ffff),
+    };
+    state.set_tnum(target, refined);
+}
+
 fn apply_w32_signed_fallback(
     then_s: &mut State,
     else_s: &mut State,
@@ -470,21 +627,24 @@ fn apply_w32_signed_fallback(
     op: CmpOp,
     right: Either<Reg, i64>,
 ) {
-    let right_imm = match right {
-        Either::Right(imm) => imm,
-        Either::Left(reg) => {
-            if let Some(val) = then_s.domain.get_fixed_value(reg) {
-                val
-            } else {
-                return;
-            }
-        }
+    // Same const-symmetry as `apply_w32_unsigned_fallback`: if `left`
+    // is constant, flip the op and narrow `right` instead.
+    let left_const = then_s.domain.get_fixed_value(left).or_else(|| {
+        let t = then_s.get_tnum(left);
+        if t.is_const() { Some(t.value as i64) } else { None }
+    });
+
+    let (target, rv, op) = match (left_const, right) {
+        (Some(k), Either::Left(reg)) => (reg, k as i32, flip_signed_cmp(op)),
+        (_, Either::Right(imm)) => (left, imm as i32, op),
+        (_, Either::Left(reg)) => match then_s.domain.get_fixed_value(reg) {
+            Some(v) => (left, v as i32, op),
+            None => return,
+        },
     };
 
-    let rv = right_imm as i32;
-
-    let (mut t_s32_min, mut t_s32_max) = then_s.domain.get_s32_bounds(left);
-    let (mut e_s32_min, mut e_s32_max) = else_s.domain.get_s32_bounds(left);
+    let (mut t_s32_min, mut t_s32_max) = then_s.domain.get_s32_bounds(target);
+    let (mut e_s32_min, mut e_s32_max) = else_s.domain.get_s32_bounds(target);
 
     match op {
         CmpOp::SGt => {
@@ -510,8 +670,18 @@ fn apply_w32_signed_fallback(
         _ => return,
     }
 
-    then_s.domain.set_s32_bounds(left, t_s32_min, t_s32_max);
-    else_s.domain.set_s32_bounds(left, e_s32_min, e_s32_max);
+    then_s.domain.set_s32_bounds(target, t_s32_min, t_s32_max);
+    else_s.domain.set_s32_bounds(target, e_s32_min, e_s32_max);
+}
+
+fn flip_signed_cmp(op: CmpOp) -> CmpOp {
+    match op {
+        CmpOp::SGt => CmpOp::SLt,
+        CmpOp::SGe => CmpOp::SLe,
+        CmpOp::SLt => CmpOp::SGt,
+        CmpOp::SLe => CmpOp::SGe,
+        other => other,
+    }
 }
 
 fn interval_can_apply_constraint(state: &State, left: Reg, right: Either<Reg, i64>) -> bool {
