@@ -122,6 +122,33 @@ pub struct DynptrSlot {
     pub dynptr_id: u32,
 }
 
+/// IRQ-flag kfunc class. Mirrors kernel `enum irq_kfunc_class`
+/// (verifier.c v6.15 ~L1206): `bpf_local_irq_save/restore` are
+/// `IRQ_NATIVE_KFUNC`; `bpf_res_spin_lock_irqsave/unlock_irqrestore`
+/// are `IRQ_LOCK_KFUNC`. `_restore` must use the same class as `_save`,
+/// otherwise kernel rejects with "irq flag acquired by … kfuncs cannot
+/// be restored with … kfuncs".
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum IrqKfuncClass {
+    Native,
+    Lock,
+}
+
+/// Per-slot IRQ-flag annotation. Stamped on the 8-byte stack slot that
+/// holds an irq flag at `bpf_local_irq_save` (or
+/// `bpf_res_spin_lock_irqsave`) time. Cleared on the matching
+/// `_restore`. Mirrors the kernel `STACK_IRQ_FLAG` slot type
+/// (verifier.c v6.15 ~L1184) plus `spilled_ptr.irq.kfunc_class`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct IrqFlagSlot {
+    /// Fresh id minted at acquire (kernel `++env->id_gen`). Used by the
+    /// LIFO ordering check in `release_irq_state`: must equal the
+    /// program-level `active_irq_id`, else "cannot restore irq state out
+    /// of order".
+    pub id: u32,
+    pub kfunc_class: IrqKfuncClass,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScalarBounds {
     pub min: i64,
@@ -169,6 +196,11 @@ pub struct SpilledReg {
     /// all access outside this module goes through
     /// `stack_{get,set,clear}_dynptr`.
     pub(crate) dynptr: Option<DynptrSlot>,
+    /// IRQ-flag annotation. Set on the 8-byte slot at
+    /// `bpf_local_irq_save` (or `_irqsave` lock variant); cleared on
+    /// matching `_restore`. Private — go through
+    /// `stack_{get,set,clear}_irq_flag`.
+    pub(crate) irq_flag: Option<IrqFlagSlot>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -244,6 +276,7 @@ impl StackState {
                     precise: false,
                     iterator: None,
                     dynptr: None,
+                    irq_flag: None,
                 },
             );
         }
@@ -278,6 +311,7 @@ impl StackState {
                 precise: false,
                 iterator: None,
                 dynptr: None,
+                    irq_flag: None,
             },
         );
     }
@@ -361,6 +395,34 @@ impl StackState {
         self.slots
             .values()
             .any(|s| s.dynptr.is_some_and(|d| d.ref_id != 0))
+    }
+
+    /// Read the IRQ-flag annotation at a stack offset, if any.
+    pub fn stack_get_irq_flag(&self, offset: i16) -> Option<IrqFlagSlot> {
+        self.slots.get(&offset).and_then(|s| s.irq_flag)
+    }
+
+    /// Set the IRQ-flag annotation on an already-initialized slot.
+    /// Callers must have written the slot's 8 bytes first
+    /// (typically via `update_store_types`).
+    pub fn stack_set_irq_flag(&mut self, offset: i16, flag: IrqFlagSlot) {
+        if let Some(spilled) = self.slots.get_mut(&offset) {
+            spilled.irq_flag = Some(flag);
+        }
+    }
+
+    /// Clear the IRQ-flag annotation at a stack offset (matched
+    /// `_restore`). No-op if absent.
+    pub fn stack_clear_irq_flag(&mut self, offset: i16) {
+        if let Some(spilled) = self.slots.get_mut(&offset) {
+            spilled.irq_flag = None;
+        }
+    }
+
+    /// True if any slot still holds an IRQ-flag annotation. Used at
+    /// EXIT to reject programs that leak an IRQ-disabled region.
+    pub fn has_unreleased_irq_flags(&self) -> bool {
+        self.slots.values().any(|s| s.irq_flag.is_some())
     }
 
     /// True if a write of `size` bytes at stack offset `off` would touch
@@ -450,6 +512,25 @@ impl StackState {
             let slot_start = *slot_off as i64;
             let slot_end =
                 slot_start + crate::common::stack_objects::bpf_iter_size(iter.kind) as i64;
+            off < slot_end && access_end > slot_start
+        })
+    }
+
+    /// True if a stack access at `off..off+size` overlaps any byte of an
+    /// active IRQ-flag slot. Mirrors `access_overlaps_iterator`. The
+    /// IRQ flag occupies a fixed 8-byte slot. Used by `irq_flag_overwrite`
+    /// detection — direct writes invalidate the slot's STACK_IRQ_FLAG
+    /// mark in the kernel; we treat them as REJECT instead of silently
+    /// stripping the annotation, since otherwise a missing `_restore`
+    /// slips by the exit-time leak check.
+    pub fn access_overlaps_irq_flag(&self, off: i64, size: i64) -> bool {
+        let access_end = off + size;
+        self.slots.iter().any(|(slot_off, spilled)| {
+            if spilled.irq_flag.is_none() {
+                return false;
+            }
+            let slot_start = *slot_off as i64;
+            let slot_end = slot_start + 8;
             off < slot_end && access_end > slot_start
         })
     }

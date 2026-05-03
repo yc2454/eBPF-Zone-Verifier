@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-02T04:46:47.126313+00:00",
+  "generated_at": "2026-05-03T02:03:52.288328+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -3804,18 +3804,15 @@
       "progs": {
         "irq_balance": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 10: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "irq_balance_n": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 20: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "irq_balance_subprog": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 12: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "irq_flag_overwrite": {
           "upstream": "ACCEPT",
@@ -3827,13 +3824,11 @@
         },
         "irq_global_subprog": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 3: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "irq_non_sleepable_global_subprog": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 3: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "irq_ooo_lock_cond_inv": {
           "upstream": "ACCEPT",
@@ -3845,8 +3840,7 @@
         },
         "irq_restore_3_subprog": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 26: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "irq_restore_4_subprog": {
           "upstream": "ACCEPT",
@@ -3917,16 +3911,16 @@
           "ours": "PASS"
         },
         "irq_sleepable_global_subprog_indirect": {
-          "upstream": "ACCEPT",
-          "ours": "PASS"
+          "upstream": "REJECT",
+          "ours": "FALSE_ACCEPT"
         },
         "irq_sleepable_helper": {
           "upstream": "ACCEPT",
           "ours": "PASS"
         },
         "irq_sleepable_helper_global_subprog": {
-          "upstream": "ACCEPT",
-          "ours": "PASS"
+          "upstream": "REJECT",
+          "ours": "FALSE_ACCEPT"
         },
         "irq_sleepable_kfunc": {
           "upstream": "ACCEPT",
@@ -4152,9 +4146,8 @@
           "ours": "PASS"
         },
         "simplest_loop": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "wrong_sized_read_fail": {
           "upstream": "ACCEPT",
@@ -13477,19 +13470,16 @@
           "ours": "PASS"
         },
         "bits_copy": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "bits_memalloc": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "bits_too_big": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "bpf_iter_bits_new": {
           "upstream": "UNANNOTATED",
@@ -13501,14 +13491,12 @@
           "ours": "PASS"
         },
         "fewer_words": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "huge_words": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "max_words": {
           "upstream": "ACCEPT",
@@ -13523,14 +13511,12 @@
           "ours": "PASS"
         },
         "null_pointer": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "zero_words": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         }
       }
     },
@@ -14897,7 +14883,7 @@
         "arg_tag_nonnull_ptr_good": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 8: base R1+0 (type: PtrToAllocMemOrNull { id: 175653, mem_size: 4, ref_id: None, dynptr_id: None })"
+          "note": "Unsafe generic load at pc 8: base R1+0 (type: PtrToAllocMemOrNull { id: 120923, mem_size: 4, ref_id: None, dynptr_id: None })"
         },
         "arg_tag_nullable_ptr_fail": {
           "upstream": "ACCEPT",
@@ -15444,9 +15430,8 @@
           "ours": "PASS"
         },
         "cond_break1": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "cond_break2": {
           "upstream": "UNKNOWN",
@@ -15454,9 +15439,8 @@
           "note": "verifier timeout"
         },
         "cond_break3": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "cond_break4": {
           "upstream": "ACCEPT",

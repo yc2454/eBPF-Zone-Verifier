@@ -261,6 +261,20 @@ pub(crate) fn transfer_store(
                 });
                 return vec![];
             }
+            // Same shape for IRQ flag slots — direct writes destroy the
+            // STACK_IRQ_FLAG mark; without this check, a missing
+            // `bpf_local_irq_restore` slips by the exit-time leak check
+            // (irq_flag_overwrite{,_partial} corpus tests).
+            if state
+                .stack_at(frame_level)
+                .access_overlaps_irq_flag(full_offset, size.bytes() as i64)
+            {
+                env.fail(VerificationError::IrqFlagOverwrite {
+                    pc: state.pc,
+                    off: full_offset,
+                });
+                return vec![];
+            }
             match src {
                 Operand::Reg(r) => {
                     state.spill_at(frame_level, *r, full_offset as i16, size);

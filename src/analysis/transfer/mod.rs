@@ -430,6 +430,31 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         return vec![];
     }
 
+    // Main-prog exit inside an IRQ-disabled region (kernel verifier.c
+    // v6.15 ~L11086). Same shape as the preempt check above. Subprog
+    // exits are fine — kernel only checks at the root frame.
+    if state.at_main_frame() && state.in_irq_disabled() {
+        env.fail(VerificationError::IrqState {
+            pc: state.pc,
+            reason: "BPF_EXIT in main prog inside bpf_local_irq_save-ed region".into(),
+        });
+        return vec![];
+    }
+    // Also reject leaked irq flag stack slots (parallel to
+    // has_active_iterators above).
+    let irq_leak = if state.at_main_frame() {
+        state.frames.iter().any(|f| f.stack.has_unreleased_irq_flags())
+    } else {
+        state.frames.current().stack.has_unreleased_irq_flags()
+    };
+    if irq_leak {
+        env.fail(VerificationError::IrqState {
+            pc: state.pc,
+            reason: "leaked irq flag stack slot at exit".into(),
+        });
+        return vec![];
+    }
+
     // Exit-time sanity guard: depth at exit shouldn't exceed the
     // kernel's MAX_CALL_FRAMES = 8. The pre-push `> 8` check in
     // `transfer_call_rel` already prevents pushing a 9th frame, so

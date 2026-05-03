@@ -74,6 +74,15 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             env.fail(VerificationError::TailCallInPreemptDisabled { pc });
             return vec![];
         }
+        // Kernel `check_lock` (verifier.c v6.15 ~L11086) also rejects
+        // bpf_tail_call inside an irq-disabled region.
+        if state.in_irq_disabled() {
+            env.fail(VerificationError::IrqState {
+                pc,
+                reason: "bpf_tail_call inside bpf_local_irq_save-ed region".into(),
+            });
+            return vec![];
+        }
         // Kernel `verifier.c` v6.15 ~L11069: bpf_tail_call cannot be
         // used inside a `bpf_rcu_read_lock`-ed region — the tail-call
         // jumps into a different program with the RCU read lock leaked.
@@ -1308,6 +1317,15 @@ pub(crate) fn apply_pre_call_lock_flags(
         env.fail(VerificationError::SleepableInPreemptDisabled { pc, helper });
         return false;
     }
+    // IRQ-disabled region also rejects sleepable calls (kernel
+    // verifier.c v6.15 ~L13576).
+    if proto.flags.contains(CallFlags::MIGHT_SLEEP) && state.in_irq_disabled() {
+        env.fail(VerificationError::IrqState {
+            pc,
+            reason: "sleepable call inside bpf_local_irq_save-ed region".into(),
+        });
+        return false;
+    }
 
     if proto.flags.contains(CallFlags::PREEMPT_DISABLE) {
         state.preempt_disable();
@@ -1317,6 +1335,13 @@ pub(crate) fn apply_pre_call_lock_flags(
         env.fail(VerificationError::PreemptNotDisabled { pc });
         return false;
     }
+
+    // IRQ_SAVE / IRQ_RESTORE: validator already checked the arg type;
+    // the side-effect handler mutates the state. We only set up the
+    // gate here for completeness symmetry — actual mutation is in
+    // `apply_call_proto_r0`'s side-effect loop.
+    // (No state changes here; gating belongs to the proto path's
+    // arg validator + side-effect applier.)
 
     true
 }

@@ -99,6 +99,17 @@ pub struct State {
     /// rejected when this is > 0; `BPF_EXIT` in main prog also rejects.
     pub active_preempt_locks: u32,
 
+    /// LIFO stack of acquired IRQ-flag ids. Pushed by `bpf_local_irq_save`
+    /// (and `bpf_res_spin_lock_irqsave`); popped by the matching
+    /// `_restore`. `_restore` rejects unless the released id equals the
+    /// top of this stack (kernel `release_irq_state` ~L1611). Empty
+    /// means no IRQ-disabled region active. The TOP id is what the
+    /// kernel calls `state->active_irq_id`. Used by:
+    /// - EXIT-in-main-prog gate (kernel ~L11086).
+    /// - MIGHT_SLEEP gate inside region (kernel ~L13576).
+    /// - tail_call gate (kernel `check_lock` chain).
+    pub acquired_irq_ids: Vec<u32>,
+
     /// Remaining `may_goto` iterations on this path. Initialised to
     /// [`BPF_MAY_GOTO_LIMIT`] at entry. Decremented by the `may_goto`
     /// transfer function on the taken branch (W3.1b); once zero the
@@ -162,6 +173,7 @@ impl State {
             rcu_read_depth: 0,
             implicit_rcu_at_entry: false,
             active_preempt_locks: 0,
+            acquired_irq_ids: Vec::new(),
             goto_budget: BPF_MAY_GOTO_LIMIT,
             may_goto_depth: 0,
             var_off_contributor: HashMap::new(),
@@ -557,6 +569,40 @@ impl State {
         self.active_preempt_locks > 0
     }
 
+    // ── IRQ-flag tracking (kernel verifier.c v6.15 ~L1184-L1626) ──
+
+    /// Mint a fresh IRQ id and push it on the LIFO stack. Caller is
+    /// responsible for stamping the corresponding stack slot via
+    /// `stack_set_irq_flag`.
+    pub fn irq_save(&mut self) -> u32 {
+        let id = crate::analysis::machine::reg_types::new_irq_id();
+        self.acquired_irq_ids.push(id);
+        id
+    }
+
+    /// Try to pop a saved IRQ id matching `id`. Returns `Ok(())` on
+    /// LIFO match; returns the active (top) id on out-of-order release;
+    /// returns `Err(None)` if no IRQ region is active.
+    pub fn irq_restore(&mut self, id: u32) -> Result<(), Option<u32>> {
+        let top = self.acquired_irq_ids.last().copied();
+        match top {
+            None => Err(None),
+            Some(t) if t == id => {
+                self.acquired_irq_ids.pop();
+                Ok(())
+            }
+            Some(t) => Err(Some(t)),
+        }
+    }
+
+    pub fn in_irq_disabled(&self) -> bool {
+        !self.acquired_irq_ids.is_empty()
+    }
+
+    pub fn active_irq_id(&self) -> Option<u32> {
+        self.acquired_irq_ids.last().copied()
+    }
+
     // ── Stack spill/reload (current frame) ──────────────────────
 
     /// Spill into a specific frame (cross-frame, e.g. store via PtrToStack)
@@ -639,6 +685,7 @@ impl State {
             precise: is_aligned && size == MemSize::U64 && self.precise_regs.contains(&reg),
             iterator: None,
             dynptr: None,
+                    irq_flag: None,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -663,6 +710,7 @@ impl State {
                         precise: false,
                         iterator: None,
                         dynptr: None,
+                    irq_flag: None,
                     },
                 );
             }
@@ -709,6 +757,7 @@ impl State {
             precise: false,
             iterator: None,
             dynptr: None,
+                    irq_flag: None,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -733,6 +782,7 @@ impl State {
                         precise: false,
                         iterator: None,
                         dynptr: None,
+                    irq_flag: None,
                     },
                 );
             }

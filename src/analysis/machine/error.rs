@@ -172,6 +172,20 @@ pub enum VerificationError {
         pc: usize,
         off: i64,
     },
+    /// Stack write overlapped an active IRQ-flag slot. Mirrors kernel
+    /// "expected an initialized irq flag" produced when the slot's
+    /// `STACK_IRQ_FLAG` mark is destroyed by a direct write before
+    /// `bpf_local_irq_restore` runs.
+    IrqFlagOverwrite {
+        pc: usize,
+        off: i64,
+    },
+    /// IRQ-related kfunc rejected: arg slot type mismatch, LIFO order
+    /// violation, or BPF_EXIT inside an active IRQ region.
+    IrqState {
+        pc: usize,
+        reason: String,
+    },
     /// Map-value access landed on a kptr field with a size other than
     /// `BPF_DW` (8 bytes). Kernel: "kptr access size must be BPF_DW".
     KptrAccessSizeMustBeDW {
@@ -542,6 +556,13 @@ impl VerificationError {
                 "Cannot overwrite open-coded iterator slot at pc {} (stack off {})",
                 pc, off
             ),
+            VerificationError::IrqFlagOverwrite { pc, off } => format!(
+                "Cannot overwrite irq flag stack slot at pc {} (stack off {})",
+                pc, off
+            ),
+            VerificationError::IrqState { pc, reason } => {
+                format!("IRQ state error at pc {}: {}", pc, reason)
+            }
             VerificationError::KptrAccessSizeMustBeDW { pc, off, size } => format!(
                 "kptr access size must be BPF_DW at pc {} (off {}, size {})",
                 pc, off, size

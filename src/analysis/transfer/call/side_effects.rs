@@ -12,7 +12,7 @@ use crate::analysis::machine::frame_stack::FrameLevel;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::{RegType, TypeState, new_iter_id, new_ptr_id};
 use crate::analysis::machine::stack_state::{
-    DynptrKind, DynptrSlot, IterState, IteratorSlot,
+    DynptrKind, DynptrSlot, IrqFlagSlot, IterState, IteratorSlot,
 };
 use crate::common::stack_objects::bpf_iter_size;
 use crate::analysis::machine::state::State;
@@ -161,6 +161,37 @@ pub(crate) fn apply_call_proto_r0(
                     continue;
                 };
                 state.stack_at_mut(frame).stack_clear_iterator(base_off);
+            }
+            SideEffect::IrqSaveOnArg { arg, kfunc_class } => {
+                let reg = arg_reg(arg);
+                let Some((frame, base_off)) = resolve_stack_arg(state, reg) else {
+                    continue;
+                };
+                // Initialize 8 stack bytes as scalar (kernel
+                // `mark_stack_slots_irq_flag` ~L1184 stamps STACK_IRQ_FLAG;
+                // we mirror with scalar bytes + the irq_flag annotation).
+                let stack = state.stack_at_mut(frame);
+                for i in 0..8 {
+                    let byte_off = base_off as i64 + i as i64;
+                    update_store_types(stack, RegType::ScalarValue, MemSize::U8, Some(byte_off));
+                }
+                let id = state.irq_save();
+                state.stack_at_mut(frame).stack_set_irq_flag(
+                    base_off,
+                    IrqFlagSlot { id, kfunc_class },
+                );
+            }
+            SideEffect::IrqRestoreFromArg { arg, kfunc_class: _ } => {
+                let reg = arg_reg(arg);
+                let Some((frame, base_off)) = resolve_stack_arg(state, reg) else {
+                    continue;
+                };
+                // Validator already enforced: slot has IRQ_FLAG, class
+                // matches, id == active_irq_id. Pop + clear annotation.
+                if let Some(slot) = state.stack_at(frame).stack_get_irq_flag(base_off) {
+                    let _ = state.irq_restore(slot.id);
+                }
+                state.stack_at_mut(frame).stack_clear_irq_flag(base_off);
             }
             SideEffect::DynptrReleaseFromArg { arg } => {
                 let reg = arg_reg(arg);

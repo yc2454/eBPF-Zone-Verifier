@@ -10,7 +10,7 @@
 // act as infrastructure for W4.1b+.
 
 use crate::analysis::machine::reg::Reg;
-use crate::analysis::machine::stack_state::{DynptrKind, IterKind};
+use crate::analysis::machine::stack_state::{DynptrKind, IrqKfuncClass, IterKind};
 use crate::common::constants;
 use crate::parsing::btf::SpecialFieldKind;
 
@@ -112,6 +112,15 @@ pub enum ArgKind {
     /// - `Active`            — slot must be live (consumer: `*_next`).
     /// - `ActiveOrDrained`   — accept either (destructor sink).
     IterArg { kind: IterKind, expected: IterArgExpect },
+
+    // ---- IRQ flag ----
+    /// `unsigned long *` on the stack pointing at an 8-byte slot used
+    /// to hold an IRQ flag. `uninit = true` is the constructor (the
+    /// slot must have NO IRQ_FLAG annotation, NO iter/dynptr annotation,
+    /// and not carry an outstanding ref). `uninit = false` is the
+    /// destructor (slot must carry an IRQ_FLAG annotation whose
+    /// `kfunc_class` matches and whose `id` equals `active_irq_id`).
+    IrqFlagArg { uninit: bool, kfunc_class: IrqKfuncClass },
 
     // ---- Cpumask (W5.3) ----
     /// `struct bpf_cpumask *` argument — mutating consumers only
@@ -264,6 +273,14 @@ impl CallFlags {
     /// `bpf_refcount_acquire(n)` (under the same lock) fails its arg
     /// type check.
     pub const RELEASE_NON_OWN: Self = Self(1 << 16);
+    /// Pre-call: this kfunc disables IRQs and stamps `arg #0`'s stack
+    /// slot as an IRQ flag. Pushes a fresh id on `acquired_irq_ids`.
+    /// Drives the `IrqSaveOnArg` side effect.
+    pub const IRQ_SAVE: Self = Self(1 << 17);
+    /// Pre-call: this kfunc restores IRQ state from `arg #0`'s slot.
+    /// Rejects unless the slot's id matches `active_irq_id` (LIFO).
+    /// Drives the `IrqRestoreFromArg` side effect.
+    pub const IRQ_RESTORE: Self = Self(1 << 18);
 
     pub const fn empty() -> Self {
         Self(0)
@@ -425,6 +442,18 @@ pub enum SideEffect {
     /// at this slot; the applier wipes the annotation. Drives
     /// `bpf_iter_*_destroy`.
     IterDestroyOnArg { arg: u8 },
+    /// Stamp an IRQ-flag annotation on the 8-byte stack slot pointed to
+    /// by `arg`. Validator must already have rejected non-uninit slots
+    /// (kernel `is_irq_flag_reg_valid_uninit` ~L1243). The applier
+    /// mints a fresh id via `state.irq_save()`. Drives
+    /// `bpf_local_irq_save` and `bpf_res_spin_lock_irqsave`.
+    IrqSaveOnArg { arg: u8, kfunc_class: IrqKfuncClass },
+    /// Clear the IRQ-flag annotation on the slot pointed to by `arg`.
+    /// Validator must already have checked the slot has an IRQ_FLAG of
+    /// matching kfunc_class and that its id == active_irq_id (LIFO);
+    /// the applier pops the LIFO entry. Drives `bpf_local_irq_restore`
+    /// and `bpf_res_spin_unlock_irqrestore`.
+    IrqRestoreFromArg { arg: u8, kfunc_class: IrqKfuncClass },
 }
 
 // ============================================================================
@@ -1344,6 +1373,34 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar)
         .flags(CallFlags::PREEMPT_ENABLE),
+
+        // IRQ-region kfuncs (kernel verifier.c v6.15 ~L1184).
+        //
+        // void bpf_local_irq_save(unsigned long *flags)
+        // void bpf_local_irq_restore(unsigned long *flags)
+        //
+        // The validator (`IrqFlagArg`) enforces stack-pointer arg shape +
+        // uninit/init slot state + LIFO ordering; the side-effect handler
+        // mints the id, stamps the slot, and pushes/pops `acquired_irq_ids`.
+        "bpf_local_irq_save" => CallProto::with_args([
+            IrqFlagArg { uninit: true, kfunc_class: IrqKfuncClass::Native },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .side_effects(&[SideEffect::IrqSaveOnArg {
+            arg: 0,
+            kfunc_class: IrqKfuncClass::Native,
+        }]),
+
+        "bpf_local_irq_restore" => CallProto::with_args([
+            IrqFlagArg { uninit: false, kfunc_class: IrqKfuncClass::Native },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .side_effects(&[SideEffect::IrqRestoreFromArg {
+            arg: 0,
+            kfunc_class: IrqKfuncClass::Native,
+        }]),
 
         // RCU read-side kfuncs (kernel `verifier.c` v6.15: registered
         // in `common_btf_ids` as `KF_RCU_PROTECTS_ALLOC`/no-arg). The

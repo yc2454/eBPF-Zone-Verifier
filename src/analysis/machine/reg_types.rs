@@ -495,6 +495,14 @@ pub fn new_dynptr_id() -> u32 {
     DYNPTR_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
+/// Fresh id for an IRQ-flag stack slot at acquire (kernel
+/// `++env->id_gen` reused for `state->active_irq_id`).
+pub fn new_irq_id() -> u32 {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static IRQ_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
+    IRQ_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
+}
+
 /// Classify types into families. Pointer and pointer-or-null variants
 /// of the same kind share a family (e.g. PtrToMapValue and PtrToMapValueOrNull).
 pub fn type_family(ty: &RegType) -> u8 {

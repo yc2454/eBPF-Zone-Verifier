@@ -268,6 +268,11 @@ pub(crate) fn validate_single_arg(
         // ---- Iterator (W4.3) ----
         ArgKind::IterArg { kind, expected } => validate_iter_arg(&mut ctx, kind, expected),
 
+        // ---- IRQ flag ----
+        ArgKind::IrqFlagArg { uninit, kfunc_class } => {
+            validate_irq_flag_arg(&mut ctx, uninit, kfunc_class)
+        }
+
         // ---- Map-value special field (W5.1) ----
         ArgKind::MapValueSpecial { kind } => validate_map_value_special(&mut ctx, kind),
 
@@ -803,6 +808,101 @@ fn validate_iter_arg(
         );
     }
     true
+}
+
+/// Validate `ArgKind::IrqFlagArg`. Mirrors kernel
+/// `is_irq_flag_reg_valid_uninit` (~L1243) for `uninit=true`, and the
+/// release-side checks at `unmark_stack_slot_irq_flag` (~L1190) for
+/// `uninit=false`. The actual reg must be `PtrToStack` aimed at the
+/// 8-byte slot; for the destructor side, the slot's annotation must
+/// have a matching `kfunc_class` and an `id` equal to `active_irq_id`.
+fn validate_irq_flag_arg(
+    ctx: &mut ValidationContext,
+    uninit: bool,
+    kfunc_class: crate::analysis::machine::stack_state::IrqKfuncClass,
+) -> bool {
+    let RegType::PtrToStack { frame_level } = ctx.actual else {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
+            &format!(
+                "[Verifier] pc {}: R{} expected &irq_flag (PTR_TO_STACK), got {:?}",
+                ctx.pc,
+                ctx.arg_index + 1,
+                ctx.actual
+            ),
+        );
+    };
+    let Some(off) = ctx.state.domain.get_distance_fixed(ctx.reg, Reg::R10) else {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
+            &format!("[Verifier] pc {}: irq flag arg has non-fixed stack offset", ctx.pc),
+        );
+    };
+    let Ok(base_off) = i16::try_from(off) else {
+        return ctx.fail_with_log(
+            VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
+            &format!("[Verifier] pc {}: irq flag arg offset {} out of i16 range", ctx.pc, off),
+        );
+    };
+
+    let stack = ctx.state.stack_at(frame_level);
+    let cur = stack.stack_get_irq_flag(base_off);
+    if uninit {
+        // Reject if this slot already carries any tracked annotation:
+        // an existing IRQ flag (kernel "expected uninitialized"), an
+        // iterator (kernel "irq_save_iter" rejects similarly via
+        // STACK_ITER vs STACK_IRQ_FLAG mismatch), or a dynptr.
+        if cur.is_some() {
+            return ctx.fail_with_log(
+                VerificationError::IrqState {
+                    pc: ctx.pc,
+                    reason: "expected uninitialized irq flag slot".into(),
+                },
+                "irq_save on already-saved slot",
+            );
+        }
+        if stack.stack_get_iterator(base_off).is_some()
+            || stack.stack_get_dynptr(base_off).is_some()
+        {
+            return ctx.fail_with_log(
+                VerificationError::IrqState {
+                    pc: ctx.pc,
+                    reason: "expected uninitialized stack slot for irq flag".into(),
+                },
+                "irq_save on iterator/dynptr slot",
+            );
+        }
+        true
+    } else {
+        let Some(slot) = cur else {
+            return ctx.fail_with_log(
+                VerificationError::IrqState {
+                    pc: ctx.pc,
+                    reason: "expected an initialized irq flag".into(),
+                },
+                "irq_restore on uninitialized slot",
+            );
+        };
+        if slot.kfunc_class != kfunc_class {
+            return ctx.fail_with_log(
+                VerificationError::IrqState {
+                    pc: ctx.pc,
+                    reason: "irq flag acquired by different kfunc class".into(),
+                },
+                "irq_restore kfunc class mismatch",
+            );
+        }
+        match ctx.state.active_irq_id() {
+            Some(top) if top == slot.id => true,
+            _ => ctx.fail_with_log(
+                VerificationError::IrqState {
+                    pc: ctx.pc,
+                    reason: "cannot restore irq state out of order".into(),
+                },
+                "irq_restore LIFO violation",
+            ),
+        }
+    }
 }
 
 /// Validate `ArgKind::MapValueSpecial` (W5.1).
