@@ -327,6 +327,15 @@ pub enum VerificationError {
     /// MIGHT_SLEEP helper/kfunc, from inside an irq- or preempt-disabled
     /// region. Kernel: "global functions that may sleep are not allowed
     /// in non-sleepable context".
+    /// Kernel verifier.c L10538: a global subprog call site is inside a
+    /// held bpf_spin_lock region. The kernel rejects unconditionally
+    /// (path-independent) because global subprogs are verified separately
+    /// and may execute arbitrary helpers / kfuncs that are illegal under
+    /// lock. Static subprogs are inlined and exempt.
+    GlobalFuncCallUnderLock {
+        pc: usize,
+        func: String,
+    },
     GlobalFuncMaySleepInNonSleepable {
         pc: usize,
         func: String,
@@ -697,6 +706,12 @@ impl VerificationError {
                     func,
                     arg_index + 1,
                     pc
+                )
+            }
+            VerificationError::GlobalFuncCallUnderLock { pc, func } => {
+                format!(
+                    "global function calls are not allowed while holding a lock: call to '{}' at pc {}",
+                    func, pc
                 )
             }
             VerificationError::GlobalFuncMaySleepInNonSleepable { pc, func } => {

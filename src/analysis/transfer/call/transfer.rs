@@ -971,6 +971,17 @@ pub(crate) fn transfer_call_rel(
         .cloned()
         .filter(|n| env.ctx.btf.is_global_func(n));
     if let Some(name) = callee_global.as_ref() {
+        // Kernel verifier.c L10538: global subprog calls are unconditionally
+        // rejected while a bpf_spin_lock is held. Global subprogs are
+        // verified separately and may execute helpers/kfuncs that are
+        // disallowed under lock; static subprogs are inlined and exempt.
+        if state.has_active_lock() {
+            env.fail(VerificationError::GlobalFuncCallUnderLock {
+                pc,
+                func: name.clone(),
+            });
+            return vec![];
+        }
         // Static call-graph gate: kernel rejects a global subprog whose
         // body transitively reaches a MIGHT_SLEEP helper/kfunc when the
         // call site is inside an irq- or preempt-disabled region. Path-
