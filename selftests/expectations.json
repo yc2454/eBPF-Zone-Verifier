@@ -6,7 +6,7 @@
     "Why this exists: the bpf-selftests under selftests/progs/ use the in-source",
     "__success / __failure macros (test_loader convention). struct_ops corpus",
     "(also under selftests/progs/) and sched_ext corpus (under selftests/sched_ext/)",
-    "do not — verdicts there are asserted by per-test C harnesses in the kernel's",
+    "do not \u2014 verdicts there are asserted by per-test C harnesses in the kernel's",
     "tools/testing/selftests/{bpf,sched_ext}/ directory. We mirror that intent here.",
     "",
     "Verdict-source precedence consulted by the runner",
@@ -15,15 +15,14 @@
     "  2. This manifest (struct_ops / sched_ext convention)",
     "  3. Otherwise: Outcome::Skipped(\"no verdict source\")",
     "",
-    "Files keyed by basename — basenames are unique across our corpus and the",
+    "Files keyed by basename \u2014 basenames are unique across our corpus and the",
     "manifest stays stable across directory moves.",
     "",
     "Each entry MUST cite the kernel-side harness or in-source comment that",
     "establishes the verdict. Files whose kernel-side failure happens past the",
     "verifier (struct_ops map registration, GPL gating, sched_ext runtime exit)",
-    "should NOT appear here — delete them or leave as 'accept'."
+    "should NOT appear here \u2014 delete them or leave as 'accept'."
   ],
-
   "files": {
     "bpf_dctcp.c": {
       "expect": "accept",
@@ -37,7 +36,6 @@
       "expect": "accept",
       "note": "Kernel prog_tests/bpf_tcp_ca.c::test_dctcp_fallback expects load to succeed; the fallback semantic is asserted at runtime, not verify time."
     },
-
     "minimal.bpf.c": {
       "expect": "accept",
       "note": "Minimal sched_ext example; runner.c expects clean load + run."
@@ -102,7 +100,6 @@
       "expect": "accept",
       "note": "vtime dispatch from select_cpu; runner.c::select_cpu_vtime asserts load."
     },
-
     "ddsp_bogus_dsq_fail.bpf.c": {
       "expect": "accept",
       "note": "Despite '_fail' suffix, the bogus DSQ id (0xcafef00d) is detected at SCHEDULER RUNTIME. runner.c::ddsp_bogus_dsq_fail asserts SCX_EXIT_ERROR after run; load is expected to succeed."
@@ -127,7 +124,6 @@
       "expect": "reject",
       "note": "Dereferences MAYBE_NULL task_struct *to arg of .yield without null-check. Same shape as _dsp variant. runner.c::maybe_null asserts load fails."
     },
-
     "task_local_storage.c": {
       "expect": "accept",
       "note": "W7.1: tp_btf-based bpf_task_storage_get exercise; kernel prog_tests/task_local_storage.c::test_sys_enter_exit asserts load+attach succeed."
@@ -142,7 +138,7 @@
     },
     "test_snprintf_single.c": {
       "expect": "accept",
-      "note": "W7.1: the static program is loadable (`const char fmt[10]` lives in rodata, zero-initialized = empty NUL-terminated string, valid empty format). Kernel prog_tests/snprintf.c::test_snprintf_negative drives load-rejection by mutating skel->rodata->fmt with bad format strings BEFORE __load — a userspace mutation our static analyzer cannot model. Reclassified to `accept` so we match the kernel's behavior on the unmutated program."
+      "note": "W7.1: the static program is loadable (`const char fmt[10]` lives in rodata, zero-initialized = empty NUL-terminated string, valid empty format). Kernel prog_tests/snprintf.c::test_snprintf_negative drives load-rejection by mutating skel->rodata->fmt with bad format strings BEFORE __load \u2014 a userspace mutation our static analyzer cannot model. Reclassified to `accept` so we match the kernel's behavior on the unmutated program."
     },
     "test_d_path.c": {
       "expect": "accept",
@@ -150,7 +146,79 @@
     },
     "test_d_path_check_rdonly_mem.c": {
       "expect": "reject",
-      "note": "W7.1: bpf_d_path called with a rdonly-mem buf (from bpf_per_cpu_ptr on a __ksym). Kernel prog_tests/d_path.c asserts load FAILS — helpers cannot write into rdonly mem."
+      "note": "W7.1: bpf_d_path called with a rdonly-mem buf (from bpf_per_cpu_ptr on a __ksym). Kernel prog_tests/d_path.c asserts load FAILS \u2014 helpers cannot write into rdonly mem."
+    },
+    "linked_list_fail.c": {
+      "expect": "reject",
+      "note": "Negative tests for linked_list kfuncs (`bpf_list_push_*`, `_pop_*`, `_node_in`); kernel prog_tests/linked_list.c asserts load fails. All 36 progs are __failure-style by file naming."
+    },
+    "test_spin_lock_fail.c": {
+      "expect": "reject",
+      "note": "Negative bpf_spin_lock tests; kernel prog_tests/spin_lock.c::test_spin_lock_fail asserts load fails."
+    },
+    "kfunc_call_fail.c": {
+      "expect": "reject",
+      "note": "Negative kfunc-call tests; kernel prog_tests/kfunc_call.c asserts load fails."
+    },
+    "test_bpf_nf_fail.c": {
+      "expect": "reject",
+      "note": "Negative bpf_nf kfunc tests; kernel prog_tests/test_bpf_nf.c asserts load fails."
+    },
+    "struct_ops_private_stack_fail.c": {
+      "expect": "reject",
+      "note": "Negative struct_ops private-stack tests; kernel prog_tests/struct_ops_private_stack.c asserts load fails."
+    },
+    "find_vma_fail1.c": {
+      "expect": "reject",
+      "note": "Negative bpf_find_vma test; kernel prog_tests/find_vma.c asserts load fails."
+    },
+    "find_vma_fail2.c": {
+      "expect": "reject",
+      "note": "Negative bpf_find_vma test; kernel prog_tests/find_vma.c asserts load fails."
+    },
+    "tracing_failure.c": {
+      "expect": "reject",
+      "note": "Negative tracing-attach tests; kernel prog_tests/tracing_failure.c asserts attach fails (load may pass)."
+    },
+    "rbtree_btf_fail__add_wrong_type.c": {
+      "expect": "reject",
+      "note": "Negative rbtree BTF test; kernel prog_tests/rbtree.c asserts load fails on wrong-type add."
+    },
+    "rbtree_btf_fail__wrong_node_type.c": {
+      "expect": "reject",
+      "note": "Negative rbtree BTF test; kernel prog_tests/rbtree.c asserts load fails on wrong rb_node type."
+    },
+    "struct_ops_maybe_null_fail.c": {
+      "expect": "reject",
+      "note": "Negative struct_ops MAYBE_NULL test; kernel prog_tests/test_struct_ops_maybe_null.c asserts load fails."
+    },
+    "test_xdp_attach_fail.c": {
+      "expect": "reject",
+      "note": "Negative xdp attach test; kernel prog_tests/xdp_attach.c asserts attach fails."
+    },
+    "uptr_update_failure.c": {
+      "expect": "reject",
+      "note": "Negative __uptr update test; kernel prog_tests/uptr.c asserts load fails."
+    },
+    "cpumask_success.c": {
+      "expect": "accept",
+      "note": "Positive cpumask kfunc coverage; kernel prog_tests/cpumask.c asserts load succeeds for all entry points."
+    },
+    "dynptr_success.c": {
+      "expect": "accept",
+      "note": "Positive dynptr coverage; kernel prog_tests/dynptr.c::test_dynptr_success asserts load succeeds."
+    },
+    "task_kfunc_success.c": {
+      "expect": "accept",
+      "note": "Positive task kfunc coverage; kernel prog_tests/task_kfunc.c asserts load succeeds."
+    },
+    "cgrp_kfunc_success.c": {
+      "expect": "accept",
+      "note": "Positive cgroup kfunc coverage; kernel prog_tests/cgrp_kfunc.c asserts load succeeds."
+    },
+    "user_ringbuf_success.c": {
+      "expect": "accept",
+      "note": "Positive user_ringbuf coverage; kernel prog_tests/user_ringbuf.c asserts load succeeds."
     }
   }
 }
