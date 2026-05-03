@@ -1039,6 +1039,974 @@
     "bad_struct_ops.c": {
       "expect": "reject",
       "note": "Negative coverage; prog_tests/bad_struct_ops.c asserts load fails (auto-classified by batch 5 audit)."
+    },
+    "access_map_in_map.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bind4_prog.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_cc_cubic.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_flow.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_bpf_array_map.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_bpf_hash_map.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_bpf_link.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_bpf_map.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_bpf_percpu_array_map.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_bpf_percpu_hash_map.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_bpf_sk_storage_helpers.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_bpf_sk_storage_map.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_ipv6_route.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_ksym.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_netlink.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_sockmap.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_task_btf.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_task_file.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_task_stack.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_tasks.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_tcp4.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_tcp6.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_test_kern4.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_test_kern5.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_udp4.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_udp6.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_unix.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bpf_iter_vma_offset.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "btf_type_tag.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "cg_storage_multi_egress_only.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "cg_storage_multi_isolated.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "cg_storage_multi_shared.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "cgroup_getset_retval_getsockopt.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "cgroup_getset_retval_setsockopt.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "cgroup_skb_sk_lookup_kern.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "cgrp_ls_attach_cgroup.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "cgrp_ls_recursion.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "cgrp_ls_tp_btf.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "connect4_dropper.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "connect4_prog.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "connect_force_port4.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "connect_force_port6.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "dev_cgroup.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "epilogue_tailcall.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "exhandler_kern.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "fentry_many_args.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "fentry_recursive_target.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "fexit_bpf2bpf_simple.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "fexit_many_args.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "fmod_ret_freplace.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "for_each_array_map_elem.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "for_each_hash_map_elem.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "for_each_hash_modify.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "for_each_multi_maps.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "freplace_attach_probe.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "freplace_cls_redirect.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "freplace_connect4.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "freplace_connect_v4_prog.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "freplace_get_constant.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "freplace_global_func.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "freplace_progmap.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "freplace_unreliable_prog.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "get_cgroup_id_kern.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "get_func_ip_uprobe_test.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "iters_css.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "iters_css_task.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "iters_num.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "iters_task.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "iters_task_vma.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "kfunc_call_test.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "kfunc_call_test_subprog.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "kprobe_multi.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "kprobe_multi_empty.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "kprobe_multi_override.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "kprobe_multi_session.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "kprobe_multi_session_cookie.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "loop1.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "loop2.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "loop3.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "loop4.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "loop5.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "loop6.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "lsm_tailcall.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "map_in_map_btf.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "metadata_unused.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "metadata_used.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "missed_kprobe.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "missed_kprobe_recursion.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "missed_tp_recursion.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "mptcp_sock.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "mptcp_subflow.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "mptcpify.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "netcnt_prog.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "netif_receive_skb.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "netns_cookie_prog.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "normal_map_btf.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "percpu_alloc_array.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "percpu_alloc_cgrp_local_storage.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "priv_freplace_prog.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "rcu_tasks_trace_gp.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "set_global_vars.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "sock_addr_kern.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "sock_destroy_prog.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "socket_cookie_prog.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "struct_ops_autocreate2.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "struct_ops_detach.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "struct_ops_nulled_out_cb.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "struct_ops_private_stack_recur.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tailcall1.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tailcall2.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tailcall3.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tailcall4.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tailcall5.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tailcall6.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tailcall_bpf2bpf1.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tailcall_bpf2bpf2.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tailcall_bpf2bpf3.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tailcall_bpf2bpf4.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tailcall_bpf2bpf6.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tailcall_bpf2bpf_fentry.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tailcall_bpf2bpf_fexit.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tailcall_bpf2bpf_hierarchy1.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tailcall_bpf2bpf_hierarchy_fentry.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tailcall_freplace.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tailcall_poke.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "task_local_storage_exit_creds.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "task_ls_recursion.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "task_ls_uptr.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "task_storage_nodeadlock.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tc_bpf2bpf.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tc_dummy.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tcp_ca_incompl_cong_ops.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tcp_ca_kfunc.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tcp_ca_update.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tcp_ca_write_sk_pacing.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_attach_kprobe_sleepable.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_attach_probe_manual.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_btf_decl_tag.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_btf_newkv.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_btf_nokv.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_cls_redirect_dynptr.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_core_reloc_arrays.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_core_reloc_bitfields_direct.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_core_reloc_bitfields_probed.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_core_reloc_enum64val.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_core_reloc_enumval.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_core_reloc_existence.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_core_reloc_flavors.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_core_reloc_ints.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_core_reloc_kernel.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_core_reloc_misc.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_core_reloc_mods.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_core_reloc_module.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_core_reloc_nesting.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_core_reloc_primitives.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_core_reloc_ptr_as_arr.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_core_reloc_size.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_core_reloc_type_based.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_core_reloc_type_id.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_fsverity.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_get_stack_rawtp.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_get_stack_rawtp_err.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_get_xattr.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_ksyms_btf_null_check.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_ksyms_weak.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_l4lb.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_l4lb_noinline.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_l4lb_noinline_dynptr.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_misc_tcp_hdr_options.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_obj_id.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_parse_tcp_hdr_opt_dynptr.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_raw_tp_test_run.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_seg6_loop.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_select_reuseport_kern.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_send_signal_kern.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_set_remove_xattr.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_sig_in_xattr.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_sk_lookup_kern.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_skmsg_load_helpers.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_sockmap_change_tail.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_sockmap_drop_prog.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_sockmap_pass_prog.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_sockmap_progs_query.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_sockmap_skb_verdict_attach.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_sockmap_update.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_subprogs_unused.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_sysctl_loop1.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_sysctl_loop2.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_tc_dtime.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_tc_link.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_tc_neigh.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_tc_neigh_fib.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_tc_peer.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_tcpbpf_kern.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_trace_ext_tracing.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_tracepoint.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_tunnel_kern.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_urandom_usdt.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_verif_scale1.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_verif_scale2.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_verif_scale3.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_xdp_adjust_tail_grow.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_xdp_adjust_tail_shrink.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_xdp_context_test_run.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_xdp_dynptr.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_xdp_loop.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_xdp_meta.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_xdp_update_frags.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_xdp_with_cpumap_frags_helpers.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_xdp_with_cpumap_helpers.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_xdp_with_devmap_frags_helpers.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "test_xdp_with_devmap_helpers.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "token_lsm.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "trace_dummy_st_ops.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "tracing_struct_many_args.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "twfw.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "uprobe_multi.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "uprobe_multi_bench.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "uprobe_multi_consumers.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "uprobe_multi_pid_filter.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "uprobe_multi_session.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "uprobe_multi_session_cookie.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "uprobe_multi_session_recursive.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "uprobe_multi_session_single.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "uprobe_multi_usdt.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "uprobe_syscall_executed.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "xdp_dummy.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "xdp_metadata2.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "xdp_redirect_map.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "xdp_redirect_multi_kern.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "xdp_tx.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "xdping_kern.c": {
+      "expect": "accept",
+      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+    },
+    "bad_struct_ops2.c": {
+      "expect": "reject",
+      "note": "Negative coverage; auto-classified by batch 6 audit (referencing prog_tests driver asserts load fails)."
+    },
+    "bpf_iter_test_kern3.c": {
+      "expect": "reject",
+      "note": "Negative coverage; auto-classified by batch 6 audit (referencing prog_tests driver asserts load fails)."
+    },
+    "bpf_iter_test_kern6.c": {
+      "expect": "reject",
+      "note": "Negative coverage; auto-classified by batch 6 audit (referencing prog_tests driver asserts load fails)."
+    },
+    "btf_type_tag_user.c": {
+      "expect": "reject",
+      "note": "Negative coverage; auto-classified by batch 6 audit (referencing prog_tests driver asserts load fails)."
+    },
+    "cgrp_ls_negative.c": {
+      "expect": "reject",
+      "note": "Negative coverage; auto-classified by batch 6 audit (referencing prog_tests driver asserts load fails)."
+    },
+    "for_each_map_elem_write_key.c": {
+      "expect": "reject",
+      "note": "Negative coverage; auto-classified by batch 6 audit (referencing prog_tests driver asserts load fails)."
+    },
+    "strncmp_test.c": {
+      "expect": "reject",
+      "note": "Negative coverage; auto-classified by batch 6 audit (referencing prog_tests driver asserts load fails)."
+    },
+    "test_d_path_check_types.c": {
+      "expect": "reject",
+      "note": "Negative coverage; auto-classified by batch 6 audit (referencing prog_tests driver asserts load fails)."
+    },
+    "test_ksyms_btf_write_check.c": {
+      "expect": "reject",
+      "note": "Negative coverage; auto-classified by batch 6 audit (referencing prog_tests driver asserts load fails)."
+    },
+    "timer_mim_reject.c": {
+      "expect": "reject",
+      "note": "Negative coverage; auto-classified by batch 6 audit (referencing prog_tests driver asserts load fails)."
     }
   }
 }
