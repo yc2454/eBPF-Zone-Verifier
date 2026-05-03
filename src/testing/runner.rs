@@ -659,12 +659,19 @@ impl Analyzer {
         // Companion to `attach_subtype`: capture the SEC's flavor
         // prefix (`fentry`, `fexit`, `fmod_ret`, ...) so transfer
         // checks can dispatch on tracing flavor without re-parsing.
-        ctx.attach_flavor = section
-            .to_lowercase()
-            .strip_prefix('?')
-            .unwrap_or(&section.to_lowercase())
-            .split_once('/')
-            .map(|(prefix, _)| prefix.trim_end_matches(".s").to_string());
+        // For SECs with no `/` (bare attach types like `?kprobe`,
+        // `?perf_event`, `raw_tp`), fall back to the whole stripped SEC
+        // so consumers can still classify the flavor. Existing consumers
+        // ("fentry", "fexit", "iter") are unaffected.
+        ctx.attach_flavor = {
+            let lower = section.to_lowercase();
+            let stripped = lower.strip_prefix('?').unwrap_or(&lower);
+            let raw = match stripped.split_once('/') {
+                Some((prefix, _)) => prefix,
+                None => stripped,
+            };
+            Some(raw.trim_end_matches(".s").to_string())
+        };
 
         // Cluster E: reject SEC("lsm/<hook>") for hooks the kernel's
         // BPF_LSM_DISABLED_HOOKS list excludes from BPF attach.
@@ -1008,12 +1015,19 @@ impl Analyzer {
         // Companion to `attach_subtype`: capture the SEC's flavor
         // prefix (`fentry`, `fexit`, `fmod_ret`, ...) so transfer
         // checks can dispatch on tracing flavor without re-parsing.
-        ctx.attach_flavor = section
-            .to_lowercase()
-            .strip_prefix('?')
-            .unwrap_or(&section.to_lowercase())
-            .split_once('/')
-            .map(|(prefix, _)| prefix.trim_end_matches(".s").to_string());
+        // For SECs with no `/` (bare attach types like `?kprobe`,
+        // `?perf_event`, `raw_tp`), fall back to the whole stripped SEC
+        // so consumers can still classify the flavor. Existing consumers
+        // ("fentry", "fexit", "iter") are unaffected.
+        ctx.attach_flavor = {
+            let lower = section.to_lowercase();
+            let stripped = lower.strip_prefix('?').unwrap_or(&lower);
+            let raw = match stripped.split_once('/') {
+                Some((prefix, _)) => prefix,
+                None => stripped,
+            };
+            Some(raw.trim_end_matches(".s").to_string())
+        };
 
         // Cluster E: reject SEC("lsm/<hook>") for hooks the kernel's
         // BPF_LSM_DISABLED_HOOKS list excludes from BPF attach.

@@ -288,6 +288,17 @@ pub enum VerificationError {
         helper: u32,
         kind: ProgramKind,
     },
+    /// Kernel `check_map_prog_compatibility` (verifier.c L19910): a map
+    /// referenced by the prog has a record-field (BPF_SPIN_LOCK,
+    /// BPF_TIMER, BPF_LIST_HEAD, BPF_RB_ROOT) that's incompatible with
+    /// the program kind. Tracing prog types (kprobe, tracepoint,
+    /// raw_tp[_writable], perf_event) cannot use any of these; socket
+    /// filter cannot use spin_lock. Reported at program load — no PC.
+    MapProgIncompat {
+        map_name: String,
+        field: &'static str,
+        kind: ProgramKind,
+    },
     /// Cluster E: LSM attach hook is on the kernel's disabled list
     /// (`getprocattr`, `setprocattr`, `ismaclabel`, `module_request`, ...).
     /// Reported at program load — there is no instruction PC.
@@ -654,6 +665,12 @@ impl VerificationError {
                 format!(
                     "Helper {} not allowed for program {:?} at pc {}",
                     helper, kind, pc
+                )
+            }
+            VerificationError::MapProgIncompat { map_name, field, kind } => {
+                format!(
+                    "tracing/socket-filter prog {:?} cannot use map '{}' with {} field",
+                    kind, map_name, field
                 )
             }
             VerificationError::LsmHookDisabled { hook } => {
