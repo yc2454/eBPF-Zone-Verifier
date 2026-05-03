@@ -2554,6 +2554,52 @@
     "freplace_dead_global_func.c": {
       "expect": "accept",
       "note": "Verifier-accept; prog_tests/global_func_dead_code.c second test ASSERT_ERR rejects based on freplace dead-target validation (kernel checks subprog presence in target) \u2014 we don't model freplace attach context."
+    },
+    "test_autoload.c": {
+      "note": "Mixed via prog_tests/autoload.c \u2014 open_and_load expects fail (prog3 broken: fentry to non-existent symbol with fake CO-RE struct); after disabling prog3 autoload, prog1+prog2 load OK.",
+      "progs": {
+        "prog1": {
+          "expect": "accept",
+          "note": ""
+        },
+        "prog2": {
+          "expect": "accept",
+          "note": ""
+        },
+        "prog3": {
+          "expect": "reject",
+          "note": ""
+        }
+      }
+    },
+    "test_core_autosize.c": {
+      "note": "Mixed via prog_tests/core_autosize.c \u2014 handle_signed disabled in first pass (ASSERT_OK), re-enabled in second pass (ASSERT_ERR). Other 3 progs always loaded positively.",
+      "progs": {
+        "handle_samesize": {
+          "expect": "accept",
+          "note": ""
+        },
+        "handle_downsize": {
+          "expect": "accept",
+          "note": ""
+        },
+        "handle_probed": {
+          "expect": "accept",
+          "note": ""
+        },
+        "handle_signed": {
+          "expect": "reject",
+          "note": ""
+        }
+      }
+    },
+    "priv_prog.c": {
+      "expect": "accept",
+      "note": "Single xdp_prog1 prog. Tested in prog_tests/token.c with multiple LSM-capability scenarios; load result depends on token state. Our verifier doesnt model LSM tokens \u2014 accept-by-default; possible FA in cap-rejected scenarios."
+    },
+    "test_core_extern.c": {
+      "expect": "accept",
+      "note": "Single handle_sys_enter prog. Tested in prog_tests/core_extern.c across multiple kconfig values via opts.kconfig (some expect ASSERT_OK, some ASSERT_ERR depending on CONFIG_MISSING dead-code-eliminating bpf_missing_helper). File-level accept covers the positive cases."
     }
   }
 }
