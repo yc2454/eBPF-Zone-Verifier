@@ -451,12 +451,13 @@ fn handle_loop_pruning(
         // propagate_precision L18828). Gated on the kernel-precision
         // regime — under our default rule, propagating precision marks
         // would tighten subsumption rather than relax it.
-        if kernel_precision_enabled()
-            && let Some(hidx) = state.history_idx
-            && let Some(prev) = env.explored_states.get(&pc).and_then(|v| v.get(idx)).cloned()
-        {
-            env.propagate_precision(hidx, &prev);
-        }
+        // propagate_precision intentionally not called: our flat per-PC
+        // explored_states cannot replay the kernel's per-path parent
+        // walk safely. Backward-walk pollutes cached states across
+        // unrelated PCs. The local-only sinks at exit/branch sites
+        // approximate the propagation effect at specific safety-critical
+        // points without the cross-PC pollution.
+        let _ = idx;
         // For convergence we still need the full prev_states list.
         let prev_states = env
             .explored_states
@@ -548,12 +549,13 @@ fn handle_standard_pruning(
         record_pruning_hit(env, pc, idx);
         // Kernel-aligned propagate_precision (see loop pruning hit path
         // for the documentation). Flag-gated.
-        if kernel_precision_enabled()
-            && let Some(hidx) = state.history_idx
-            && let Some(prev) = env.explored_states.get(&pc).and_then(|v| v.get(idx)).cloned()
-        {
-            env.propagate_precision(hidx, &prev);
-        }
+        // propagate_precision intentionally not called: our flat per-PC
+        // explored_states cannot replay the kernel's per-path parent
+        // walk safely. Backward-walk pollutes cached states across
+        // unrelated PCs. The local-only sinks at exit/branch sites
+        // approximate the propagation effect at specific safety-critical
+        // points without the cross-PC pollution.
+        let _ = idx;
         true
     } else {
         record_pruning_misses(env, pc, &miss_idxs);

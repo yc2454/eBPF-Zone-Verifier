@@ -81,13 +81,8 @@ pub(crate) fn transfer_if(
     // marking precise there blocks widening at the may_goto inside the
     // body (cond_break1's pattern). A backward `if r != K goto head`
     // (test1) does need it.
-    // The back-edge sink is over-marking compared to the kernel: we
-    // mark every back-edge compare-to-imm precise, regardless of
-    // downstream use. Kernel marks precise only when the comparison
-    // statically determines the branch (mark_chain_precision is called
-    // after `is_branch_taken` resolves to a single side). Under the
-    // kernel-precision regime, leave this off and rely on the kernel's
-    // actual sinks (memory access, helper args, return-value, etc.).
+    // Default rule: backward-walk precision sink at back-edge compare-
+    // to-imm. Used only when kernel-precision regime is OFF.
     if !crate::analysis::machine::env::kernel_precision_enabled()
         && matches!(right, Operand::Imm(_))
         && target < state.pc
@@ -95,6 +90,21 @@ pub(crate) fn transfer_if(
     {
         env.mark_chain_precision_backward(hidx, left);
     }
+    // Kernel-precision regime: local-only mark at branch pc (kernel
+    // `check_cond_jmp_op` marks operands precise on every conditional
+    // branch). Local mark only — backward-walk pollutes cached states
+    // across PCs in our flat explored_states.
+    if crate::analysis::machine::env::kernel_precision_enabled()
+        && let Some(states) = env.explored_states.get_mut(&state.pc)
+    {
+        for s in states.iter_mut() {
+            s.precise_regs.insert(left);
+            if let Operand::Reg(r) = right {
+                s.precise_regs.insert(r);
+            }
+        }
+    }
+    let _ = target;
 
     // Branch Type Refinement (For map and socket pointers)
     let instr = Instr::If {
