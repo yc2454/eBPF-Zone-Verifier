@@ -87,13 +87,31 @@ pub(crate) fn transfer_if(
     // precise on every conditional causes precision-mark blow-up that
     // `propagate_precision` then spreads further (bits_iter
     // state-explosion).
-    if let Some(hidx) = state.history_idx
-        && let Some(_) = condition_outcome(&state, width, left, op, &right)
-    {
-        let pcid = state.parent_cache_id;
-        env.mark_chain_precision_backward(hidx, pcid, left);
-        if let Operand::Reg(r) = right {
-            env.mark_chain_precision_backward(hidx, pcid, r);
+    if let Some(hidx) = state.history_idx {
+        let static_resolves = condition_outcome(&state, width, left, op, &right).is_some();
+        // Back-edge compare-to-imm catches tight scalar loops where the
+        // exit predicate is `if r & C goto head` — the conditional
+        // doesn't statically resolve (r is imprecise), but without
+        // marking r precise the back-jump's precision contract isn't
+        // tracked and convergence happily prunes the loop after one
+        // iteration even when the kernel rejects via complexity limit
+        // (verifier_search_pruning.c::short_loop1). Suppress this
+        // sink when an iter slot is active on the stack — iter loops
+        // get their convergence proof from iter-id mechanics, and
+        // marking the conditional reg precise causes precision blow-up
+        // on bits_iter / iter_nested_deeply_iters.
+        let back_edge_imm = matches!(right, Operand::Imm(_)) && target < state.pc;
+        let in_iter_loop = state
+            .frames
+            .iter()
+            .any(|f| f.stack.has_active_iterators());
+        let fire = static_resolves || (back_edge_imm && !in_iter_loop);
+        if fire {
+            let pcid = state.parent_cache_id;
+            env.mark_chain_precision_backward(hidx, pcid, left);
+            if let Operand::Reg(r) = right {
+                env.mark_chain_precision_backward(hidx, pcid, r);
+            }
         }
     }
 
