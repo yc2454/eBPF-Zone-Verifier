@@ -48,11 +48,33 @@ pub enum Expect {
     Reject,
 }
 
+/// Per-program override inside a file entry. Used for files that mix
+/// positive and negative progs (test-loader convention with `SEC("?...")`
+/// + per-prog `bpf_program__set_autoload` toggling on the C-driver side —
+/// see `project_remaining_skipped_analysis_*`). Lookup precedence:
+///
+///   1. `__success` / `__failure` macro on the prog (extracted by attrs::scrape)
+///   2. file's `progs[<prog_name>]` per-prog override (this struct)
+///   3. file-level `expect` default
+///   4. otherwise `Outcome::Skipped("no verdict source")`
 #[derive(Debug, Clone, Deserialize)]
-pub struct Entry {
+pub struct ProgEntry {
     pub expect: Expect,
     #[serde(default)]
     pub note: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Entry {
+    /// File-level default. Optional when `progs` is non-empty: a file may
+    /// list per-prog overrides without any file-level fallback (un-overridden
+    /// progs then fall through to `Outcome::Skipped`).
+    #[serde(default)]
+    pub expect: Option<Expect>,
+    #[serde(default)]
+    pub note: String,
+    #[serde(default)]
+    pub progs: HashMap<String, ProgEntry>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -100,4 +122,17 @@ fn entries() -> &'static HashMap<String, Entry> {
 /// `None` if the file isn't listed (caller falls back to `Skipped`).
 pub fn lookup(file_basename: &str) -> Option<Entry> {
     entries().get(file_basename).cloned()
+}
+
+/// Look up the verdict for a specific prog inside a file, applying the
+/// per-prog override → file-level fallback precedence. Returns `None`
+/// when the file is not listed, or is listed but has neither a matching
+/// per-prog override nor a file-level `expect` (caller falls back to
+/// `Outcome::Skipped`).
+pub fn lookup_prog(file_basename: &str, prog_name: &str) -> Option<Expect> {
+    let entry = entries().get(file_basename)?;
+    if let Some(po) = entry.progs.get(prog_name) {
+        return Some(po.expect);
+    }
+    entry.expect
 }

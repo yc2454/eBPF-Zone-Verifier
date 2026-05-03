@@ -358,8 +358,8 @@ fn run_one(analyzer: &Analyzer, attrs: ProgAttrs, file_basename: &str) -> ProgRe
     let expected_accept = match (attrs.success, attrs.failure) {
         (true, false) => true,
         (false, true) => false,
-        _ => match expectations::lookup(file_basename) {
-            Some(e) => matches!(e.expect, expectations::Expect::Accept),
+        _ => match expectations::lookup_prog(file_basename, &attrs.func_name) {
+            Some(e) => matches!(e, expectations::Expect::Accept),
             None => {
                 return ProgReport {
                     func_name: attrs.func_name,

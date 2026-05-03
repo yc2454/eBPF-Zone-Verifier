@@ -2379,6 +2379,169 @@
     "verifier_tailcall_jit.c": {
       "expect": "accept",
       "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "rcu_read_lock.c": {
+      "note": "Mixed pos/neg via SEC(\"?...\") + per-prog autoload toggling in prog_tests/rcu_read_lock.c (test_success/test_rcuptr_acquire = accept; test_inproper_region/test_rcuptr_misuse = reject).",
+      "progs": {
+        "get_cgroup_id": {
+          "expect": "accept",
+          "note": ""
+        },
+        "task_succ": {
+          "expect": "accept",
+          "note": ""
+        },
+        "two_regions": {
+          "expect": "accept",
+          "note": ""
+        },
+        "non_sleepable_1": {
+          "expect": "accept",
+          "note": ""
+        },
+        "non_sleepable_2": {
+          "expect": "accept",
+          "note": ""
+        },
+        "task_trusted_non_rcuptr": {
+          "expect": "accept",
+          "note": ""
+        },
+        "rcu_read_lock_subprog": {
+          "expect": "accept",
+          "note": ""
+        },
+        "rcu_read_lock_global_subprog": {
+          "expect": "accept",
+          "note": ""
+        },
+        "rcu_read_lock_subprog_lock": {
+          "expect": "accept",
+          "note": ""
+        },
+        "rcu_read_lock_subprog_unlock": {
+          "expect": "accept",
+          "note": ""
+        },
+        "task_acquire": {
+          "expect": "accept",
+          "note": ""
+        },
+        "miss_lock": {
+          "expect": "reject",
+          "note": ""
+        },
+        "no_lock": {
+          "expect": "reject",
+          "note": ""
+        },
+        "miss_unlock": {
+          "expect": "reject",
+          "note": ""
+        },
+        "non_sleepable_rcu_mismatch": {
+          "expect": "reject",
+          "note": ""
+        },
+        "inproper_sleepable_helper": {
+          "expect": "reject",
+          "note": ""
+        },
+        "inproper_sleepable_kfunc": {
+          "expect": "reject",
+          "note": ""
+        },
+        "nested_rcu_region": {
+          "expect": "reject",
+          "note": ""
+        },
+        "rcu_read_lock_global_subprog_lock": {
+          "expect": "reject",
+          "note": ""
+        },
+        "rcu_read_lock_global_subprog_unlock": {
+          "expect": "reject",
+          "note": ""
+        },
+        "rcu_read_lock_sleepable_helper_global_subprog": {
+          "expect": "reject",
+          "note": ""
+        },
+        "rcu_read_lock_sleepable_kfunc_global_subprog": {
+          "expect": "reject",
+          "note": ""
+        },
+        "rcu_read_lock_sleepable_global_subprog_indirect": {
+          "expect": "reject",
+          "note": ""
+        },
+        "task_untrusted_rcuptr": {
+          "expect": "reject",
+          "note": ""
+        },
+        "cross_rcu_region": {
+          "expect": "reject",
+          "note": ""
+        }
+      }
+    },
+    "cgrp_ls_sleepable.c": {
+      "note": "Mixed via SEC(\"?...\") + per-prog autoload in prog_tests/cgrp_local_storage.c.",
+      "progs": {
+        "cgroup_iter": {
+          "expect": "accept",
+          "note": ""
+        },
+        "yes_rcu_lock": {
+          "expect": "accept",
+          "note": ""
+        },
+        "cgrp1_no_rcu_lock": {
+          "expect": "accept",
+          "note": ""
+        },
+        "no_rcu_lock": {
+          "expect": "reject",
+          "note": ""
+        }
+      }
+    },
+    "btf_type_tag_percpu.c": {
+      "note": "Mixed via SEC(\"?...\") + per-prog autoload in prog_tests/btf_tag.c (module + vmlinux variants).",
+      "progs": {
+        "test_percpu1": {
+          "expect": "reject",
+          "note": ""
+        },
+        "test_percpu2": {
+          "expect": "reject",
+          "note": ""
+        },
+        "test_percpu_load": {
+          "expect": "reject",
+          "note": ""
+        },
+        "test_percpu_helper": {
+          "expect": "accept",
+          "note": ""
+        }
+      }
+    },
+    "refcounted_kptr.c": {
+      "expect": "accept",
+      "note": "Positive coverage; rbtree_wrong_owner_remove_fail_* progs are runtime-failure tests (asserted via bpf_prog_test_run_opts retval), not load-failure. Load itself succeeds. The \"less\" subprog is a comparator helper."
+    },
+    "summarization.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/summarization.c iterates over each main_* prog with set_autoload(true) and ASSERT_OK on summarization__load."
+    },
+    "dummy_st_ops_success.c": {
+      "expect": "accept",
+      "note": "Positive struct_ops coverage; prog_tests/dummy_st_ops.c + token.c load dummy_st_ops_success__ skel positively."
+    },
+    "fentry_recursive.c": {
+      "expect": "accept",
+      "note": "Positive recursive-attach coverage; prog_tests/recursive_attach.c asserts fentry_recursive__load OK across iterations."
     }
   }
 }
