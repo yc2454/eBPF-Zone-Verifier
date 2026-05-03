@@ -133,6 +133,17 @@ pub enum ArgKind {
     /// `kfunc_class` matches and whose `id` equals `active_irq_id`).
     IrqFlagArg { uninit: bool, kfunc_class: IrqKfuncClass },
 
+    /// `bpf_res_spin_lock{,_irqsave}` / `_unlock{,_irqrestore}` arg.
+    /// Mirrors kernel `KF_ARG_PTR_TO_RES_SPIN_LOCK` (verifier.c v6.15
+    /// L13347): R must be `PtrToMapValue` or `PtrToOwnedKptr`; the
+    /// reg's `var_off + reg.off` must equal the BTF-recorded
+    /// `res_spin_lock` field offset of the pointee record (L8310);
+    /// the map/struct must carry a `bpf_res_spin_lock` field (L8305).
+    /// `is_irq` distinguishes the irqsave variant — used at the
+    /// acquire/release transfer to flag the entry's `is_irq` field
+    /// for the LIFO-match check.
+    ResSpinLockArg { is_irq: bool },
+
     // ---- Cpumask (W5.3) ----
     /// `struct bpf_cpumask *` argument — mutating consumers only
     /// (`bpf_cpumask_set_cpu`, `_clear_cpu`, `_clear`, `_copy`,
@@ -292,6 +303,17 @@ impl CallFlags {
     /// Rejects unless the slot's id matches `active_irq_id` (LIFO).
     /// Drives the `IrqRestoreFromArg` side effect.
     pub const IRQ_RESTORE: Self = Self(1 << 18);
+    /// Pre-call: `bpf_res_spin_lock` family acquire. The transfer
+    /// function forks the state at the call insn (kernel `push_stack`,
+    /// verifier.c v6.15 L13455-13479): success branch with R0=0 and
+    /// the lock pushed on `acquired_res_locks`; failure branch with R0
+    /// constrained to negative (no lock pushed). AA-deadlock check fires
+    /// before push.
+    pub const RES_SPIN_LOCK_ACQUIRE: Self = Self(1 << 19);
+    /// Pre-call: `bpf_res_spin_unlock` family. Validates LIFO match on
+    /// `acquired_res_locks` (kernel L8369-8376) — emits "different
+    /// lock" / "out of order" errors as appropriate.
+    pub const RES_SPIN_LOCK_RELEASE: Self = Self(1 << 20);
 
     pub const fn empty() -> Self {
         Self(0)
@@ -1411,6 +1433,56 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .side_effects(&[SideEffect::IrqRestoreFromArg {
             arg: 0,
             kfunc_class: IrqKfuncClass::Native,
+        }]),
+
+        // ---- bpf_res_spin_lock (resilient queued spin lock, kernel
+        // verifier.c v6.15 L8271+ `process_spin_lock` is_res_lock arm
+        // and L13455 push_stack state-fork). Returns int (0 = acquired,
+        // negative = failed-to-acquire); the call-site transfer forks
+        // the state into success (R0=0, lock pushed) and failure
+        // (R0 ∈ [-MAX_ERRNO, -1], no lock pushed) branches.
+        "bpf_res_spin_lock" => CallProto::with_args([
+            ResSpinLockArg { is_irq: false },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::RES_SPIN_LOCK_ACQUIRE),
+
+        "bpf_res_spin_unlock" => CallProto::with_args([
+            ResSpinLockArg { is_irq: false },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RES_SPIN_LOCK_RELEASE),
+
+        // _irqsave variant: arg #1 is also an IRQ-flag stack pointer
+        // (uninit at acquire, popped at restore). Combines the
+        // res-lock state-fork with the IRQ-flag stamp; class is
+        // `IrqKfuncClass::Lock` so a `bpf_local_irq_restore`
+        // (Native class) cannot release this flag and vice-versa
+        // (kernel "irq flag acquired by … kfuncs cannot be restored …").
+        "bpf_res_spin_lock_irqsave" => CallProto::with_args([
+            ResSpinLockArg { is_irq: true },
+            IrqFlagArg { uninit: true, kfunc_class: IrqKfuncClass::Lock },
+            DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::RES_SPIN_LOCK_ACQUIRE)
+        .side_effects(&[SideEffect::IrqSaveOnArg {
+            arg: 1,
+            kfunc_class: IrqKfuncClass::Lock,
+        }]),
+
+        "bpf_res_spin_unlock_irqrestore" => CallProto::with_args([
+            ResSpinLockArg { is_irq: true },
+            IrqFlagArg { uninit: false, kfunc_class: IrqKfuncClass::Lock },
+            DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RES_SPIN_LOCK_RELEASE)
+        .side_effects(&[SideEffect::IrqRestoreFromArg {
+            arg: 1,
+            kfunc_class: IrqKfuncClass::Lock,
         }]),
 
         // RCU read-side kfuncs (kernel `verifier.c` v6.15: registered

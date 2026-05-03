@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-03T20:38:00.063960+00:00",
+  "generated_at": "2026-05-03T20:49:40.577568+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -6830,13 +6830,11 @@
         },
         "res_spin_lock_ooo": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 11: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "res_spin_lock_ooo_irq": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Unsupported modern BPF feature at pc 13: kfunc call (BPF_PSEUDO_KFUNC_CALL)"
+          "ours": "PASS"
         },
         "res_spin_lock_ooo_unlock": {
           "upstream": "ACCEPT",

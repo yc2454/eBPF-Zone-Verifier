@@ -42,6 +42,12 @@ pub enum SpecialFieldKind {
     RbRoot,
     RbNode,
     Refcount,
+    /// `struct bpf_res_spin_lock` — resilient queued spin lock added in
+    /// kernel v6.15. Distinct from `SpinLock` so callers of
+    /// `bpf_res_spin_lock` cannot match a plain `bpf_spin_lock` field
+    /// (kernel verifier.c L8305 emits "map '<m>' has no valid
+    /// bpf_res_spin_lock" when the requested record-flavor is missing).
+    ResSpinLock,
     // Future types...
 }
 
@@ -94,6 +100,7 @@ impl SpecialFieldKind {
     fn from_type_name(name: &str) -> Option<Self> {
         match name {
             "bpf_spin_lock" => Some(Self::SpinLock),
+            "bpf_res_spin_lock" => Some(Self::ResSpinLock),
             "bpf_timer" => Some(Self::Timer),
             "bpf_list_head" => Some(Self::ListHead),
             "bpf_list_node" => Some(Self::ListNode),

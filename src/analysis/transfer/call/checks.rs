@@ -274,6 +274,8 @@ pub(crate) fn validate_single_arg(
             validate_irq_flag_arg(&mut ctx, uninit, kfunc_class)
         }
 
+        ArgKind::ResSpinLockArg { is_irq: _ } => validate_res_spin_lock_arg(&mut ctx),
+
         // ---- Map-value special field (W5.1) ----
         ArgKind::MapValueSpecial { kind } => validate_map_value_special(&mut ctx, kind),
 
@@ -982,6 +984,79 @@ fn validate_map_value_special(
         );
     }
     true
+}
+
+/// `bpf_res_spin_lock{,_irqsave}` / `_unlock{,_irqrestore}` arg.
+/// Mirrors kernel `process_spin_lock` (verifier.c v6.15 L8271+) for
+/// `is_res_lock = true`:
+///   - reg type must be `PtrToMapValue` or `PtrToOwnedKptr`
+///     (kernel "arg#0 doesn't point to map value or allocated object");
+///   - offset must be constant (we get this from the
+///     `PtrToMapValue.offset: Option<u32>` shape; PtrToOwnedKptr's
+///     offset is i32 always-known);
+///   - for `PtrToMapValue`: the map's value-type BTF must carry a
+///     `bpf_res_spin_lock` field at the constant offset (covers
+///     `no_lock_map`, `bad_off`, `var_off` siblings).
+///
+/// PtrToOwnedKptr-side field validation is not yet wired (kptr's
+/// underlying BTF id isn't on the variant); accepting it here means
+/// `res_spin_lock_no_lock_kptr` flips from PASS-via-Unsupported to FA.
+/// Documented as a known partial — see project memory.
+fn validate_res_spin_lock_arg(ctx: &mut ValidationContext) -> bool {
+    use crate::parsing::btf::SpecialFieldKind;
+    match ctx.actual {
+        RegType::PtrToMapValue { offset, map_idx, .. } => {
+            let Some(off) = offset else {
+                return ctx.fail_with_log(
+                    VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
+                    &format!(
+                        "[Verifier] pc {}: R{} bpf_res_spin_lock arg has variable offset",
+                        ctx.pc, ctx.arg_index + 1
+                    ),
+                );
+            };
+            let Some(map_def) = ctx.env.ctx.map_defs.get(map_idx) else {
+                return ctx.fail_with_log(
+                    VerificationError::MapNotFound { pc: ctx.pc, map_idx },
+                    "map not found",
+                );
+            };
+            let Some(val_type_id) = map_def.btf_val_type_id else {
+                return ctx.fail_with_log(
+                    VerificationError::InvalidBtfType,
+                    "map value-type BTF missing for res_spin_lock arg",
+                );
+            };
+            let fields = ctx.env.ctx.btf.find_special_fields(val_type_id);
+            let matched = fields
+                .iter()
+                .any(|f| f.kind == SpecialFieldKind::ResSpinLock && f.offset as i64 == off);
+            if !matched {
+                return ctx.fail_with_log(
+                    VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
+                    &format!(
+                        "[Verifier] pc {}: R{} bpf_res_spin_lock arg offset {} doesn't match any bpf_res_spin_lock field in map value",
+                        ctx.pc, ctx.arg_index + 1, off
+                    ),
+                );
+            }
+            true
+        }
+        RegType::PtrToOwnedKptr { .. } => {
+            // Accept; field-presence validation against the kptr's BTF
+            // struct is not yet plumbed — the variant doesn't carry
+            // the underlying btf_id. `res_spin_lock_no_lock_kptr` is
+            // the one corpus test affected.
+            true
+        }
+        _ => ctx.fail_with_log(
+            VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
+            &format!(
+                "[Verifier] pc {}: R{} bpf_res_spin_lock arg doesn't point to map value or allocated object (got {:?})",
+                ctx.pc, ctx.arg_index + 1, ctx.actual
+            ),
+        ),
+    }
 }
 
 fn validate_ptr_to_callback(ctx: &mut ValidationContext) -> bool {

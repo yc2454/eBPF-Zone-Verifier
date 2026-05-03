@@ -308,6 +308,98 @@ fn transfer_kfunc_proto(
         _ => {}
     }
 
+    // bpf_res_spin_lock{,_irqsave}: state-fork at the call site
+    // (kernel `push_stack`, verifier.c v6.15 L13455-13479). Success
+    // branch: R0 = 0, lock pushed on `acquired_res_locks`. Failure
+    // branch: R0 ∈ [-MAX_ERRNO, -1] (we approximate as ≤ -1 on the
+    // signed-32 axis), no lock pushed. AA-deadlock detection runs on
+    // the success-branch push (kernel L8331-8336).
+    if proto.flags.contains(CallFlags::RES_SPIN_LOCK_ACQUIRE) {
+        let arg = in_types.get(Reg::R1);
+        let (reg_id, ptr_id) = match arg {
+            RegType::PtrToMapValue { id, map_idx, .. } => (id, map_idx as u32),
+            RegType::PtrToOwnedKptr { ref_id, .. } => (ref_id.unwrap_or(0), 0u32),
+            _ => {
+                env.fail(
+                    crate::analysis::machine::error::VerificationError::InvalidArgType {
+                        pc,
+                        reg: Reg::R1,
+                    },
+                );
+                return vec![];
+            }
+        };
+        // AA detection (kernel L8331-8336).
+        if state.res_lock_already_held(reg_id, ptr_id) {
+            env.fail(
+                crate::analysis::machine::error::VerificationError::InvalidArgType {
+                    pc,
+                    reg: Reg::R1,
+                },
+            );
+            return vec![];
+        }
+        let is_irq = proto.side_effects.iter().any(|e| {
+            matches!(
+                e,
+                SideEffect::IrqSaveOnArg {
+                    kfunc_class:
+                        crate::analysis::machine::stack_state::IrqKfuncClass::Lock,
+                    ..
+                }
+            )
+        });
+        // Failure branch: clone state BEFORE pushing lock, set R0 < 0.
+        // Note: irqsave's IrqSaveOnArg side-effect would also have
+        // stamped the irq-flag slot. The kernel's failure branch
+        // skips push_stack for the irq flag slot too (only the
+        // success branch is "in critical section"). We approximate
+        // by running side-effects only on the success state below.
+        let mut fail = state.clone();
+        // Emulate apply_call_proto_r0 for the failure branch but
+        // bound R0 to negative.
+        fail.types.set(Reg::R0, RegType::ScalarValue);
+        fail.domain.forget(Reg::R0);
+        fail.set_tnum(Reg::R0, Tnum::unknown());
+        fail.clear_scalar_id(Reg::R0);
+        fail.domain.assume_le_imm(Reg::R0, -1);
+        // Caller-saved clobber on failure branch to match the
+        // post-call sequence below.
+        if !proto.flags.contains(CallFlags::FASTCALL) {
+            for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                fail.types.set(r, RegType::NotInit);
+                fail.domain.forget(r);
+                fail.set_tnum(r, Tnum::unknown());
+                fail.clear_scalar_id(r);
+            }
+        }
+        fail.pc += 1;
+
+        // Success branch: push the lock, run the existing
+        // post-call sequence below. Side-effects (IrqSaveOnArg for
+        // irqsave) ran already on the original `state` via
+        // apply_side_effects above; we leave them in place.
+        state.res_lock_acquire(reg_id, ptr_id, is_irq);
+        apply_call_proto_r0(&in_types, &mut state, proto);
+        // Success branch's R0 is the kfunc-return scalar — but
+        // semantically it's 0. Pin to a proven-zero scalar so the
+        // typical `if (bpf_res_spin_lock(&l)) return …;` correctly
+        // takes the fall-through (non-zero) branch as DEAD on the
+        // success path.
+        state.domain.assume_eq_imm(Reg::R0, 0);
+        state.set_tnum(Reg::R0, Tnum::constant(0));
+        if !proto.flags.contains(CallFlags::FASTCALL) {
+            for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                state.types.set(r, RegType::NotInit);
+                state.domain.forget(r);
+                state.set_tnum(r, Tnum::unknown());
+                state.clear_scalar_id(r);
+            }
+        }
+        state.pc += 1;
+        return vec![state, fail];
+    }
+
     apply_call_proto_r0(&in_types, &mut state, proto);
 
     // W7.2: kfuncs marked `bpf_fastcall` (v6.13) preserve R1..R5 — skip

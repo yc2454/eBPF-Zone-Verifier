@@ -1361,6 +1361,50 @@ pub(crate) fn apply_pre_call_lock_flags(
         return false;
     }
 
+    // bpf_res_spin_unlock{,_irqrestore} (kernel `process_spin_lock`,
+    // is_lock=false, verifier.c v6.15 L8358-8379). Validates LIFO match
+    // on `acquired_res_locks`; emits the kernel rejection family
+    // ("without taking a lock" / "different lock" / "out of order" /
+    // wrong-class).
+    if proto.flags.contains(CallFlags::RES_SPIN_LOCK_RELEASE) {
+        let arg = state.types.get(Reg::R1);
+        let (reg_id, ptr_id) = match arg {
+            RegType::PtrToMapValue { id, map_idx, .. } => (id, map_idx as u32),
+            RegType::PtrToOwnedKptr { ref_id, .. } => (ref_id.unwrap_or(0), 0u32),
+            _ => {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+                return false;
+            }
+        };
+        // Distinguish the irqsave flavor from the plain one. We piggy-
+        // back on the IRQ_RESTORE side-effect class — this kfunc has
+        // `IrqRestoreFromArg { kfunc_class: Lock }` only when it's the
+        // irqrestore variant; the plain `_unlock` doesn't.
+        let is_irq = proto.side_effects.iter().any(|e| {
+            matches!(
+                e,
+                super::signatures::SideEffect::IrqRestoreFromArg {
+                    kfunc_class: crate::analysis::machine::stack_state::IrqKfuncClass::Lock,
+                    ..
+                }
+            )
+        });
+        match state.res_lock_release(reg_id, ptr_id, is_irq) {
+            Ok(()) => {}
+            Err(crate::analysis::machine::state::ResLockReleaseError::Empty) => {
+                env.fail(VerificationError::LockNotHeld { pc });
+                return false;
+            }
+            Err(_) => {
+                // NotInStack / OutOfOrder / WrongClass — single error
+                // variant; specific kernel message string is lost but
+                // the rejection (and per-test classification) matches.
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+                return false;
+            }
+        }
+    }
+
     if proto.flags.contains(CallFlags::PREEMPT_DISABLE) {
         state.preempt_disable();
     }
