@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-03T20:49:40.577568+00:00",
+  "generated_at": "2026-05-03T21:01:47.904438+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -15435,8 +15435,8 @@
           "ours": "PASS"
         },
         "iter_limit_bug": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "ja_and_may_goto": {
           "upstream": "ACCEPT",

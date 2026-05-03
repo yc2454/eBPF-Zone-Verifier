@@ -799,6 +799,21 @@ fn transfer_callback_helper(
         _ => None,
     };
 
+    // Caller's ctx-arg base offset (relative to caller's R10). Captured
+    // before the move into cb_state below; needed to translate cb-body
+    // store offsets into caller-frame stack offsets for the widening
+    // propagation set.
+    let caller_ctx_base_off: Option<i64> = {
+        let caller_ctx_reg = match helper {
+            constants::BPF_LOOP
+            | constants::BPF_USER_RINGBUF_DRAIN
+            | constants::BPF_FOR_EACH_MAP_ELEM => Some(Reg::R3),
+            constants::BPF_FIND_VMA => Some(Reg::R4),
+            _ => None,
+        };
+        caller_ctx_reg.and_then(|r| state.domain.get_distance_fixed(r, Reg::R10))
+    };
+
     let mut cb_state = state;
     let caller_level_idx = cb_state.current_frame_level();
     let caller_stack_snapshot =
@@ -809,6 +824,27 @@ fn transfer_callback_helper(
         caller_level_idx.index(),
         cb_should_widen,
     );
+    // Pre-computed cb-body store offsets (relative to the cb's ctx-arg
+    // pointer). Translate to caller-frame offsets by adding the
+    // caller's ctx-arg base offset (distance from caller's R10), then
+    // stash on the cb frame so cb_exit_propagate can invalidate them
+    // on widening.
+    if let (Some(offsets), Some(base)) = (
+        env.cb_body_store_offsets.get(&cb_entry),
+        caller_ctx_base_off,
+    ) {
+        let translated: Vec<i16> = offsets
+            .iter()
+            .filter_map(|&cb_off| {
+                let total = base.checked_add(cb_off as i64)?;
+                i16::try_from(total).ok()
+            })
+            .collect();
+        cb_state
+            .frames
+            .current_mut()
+            .set_cb_writeable_caller_offsets(translated);
+    }
     update_call_rel_types(&mut cb_state);
     cb_state.domain.clear_packet_size_bounds();
 

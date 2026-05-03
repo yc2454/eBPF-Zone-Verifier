@@ -88,6 +88,17 @@ pub struct CallFrame {
     /// for nr_loops==1 (and find_vma which runs at most once) doesn't
     /// happen — those use concrete merge.
     cb_should_widen: bool,
+
+    /// Set of caller-frame stack offsets that ANY branch of the cb body
+    /// could write via the propagated ctx pointer. Pre-computed by a
+    /// static scan of the cb subprog at frame-push time. On cb-Exit
+    /// with `cb_should_widen` we invalidate all of these — not just
+    /// the slots THIS cb-exit branch happened to write — so that the
+    /// post-loop continuation reflects the kernel's multi-iteration
+    /// cb model where different branches can fire on different
+    /// iterations (e.g. `iter_limit_bug` where 2 iterations of a 3-
+    /// branch cb can land on `{ctx.a=42, ctx.b=42, ctx.c=7}`).
+    cb_writeable_caller_offsets: Vec<i16>,
 }
 
 impl Default for CallFrame {
@@ -105,6 +116,7 @@ impl Default for CallFrame {
             caller_stack_snapshot: None,
             caller_frame_level: None,
             cb_should_widen: false,
+            cb_writeable_caller_offsets: Vec::new(),
         }
     }
 }
@@ -150,6 +162,17 @@ impl CallFrame {
         self.caller_stack_snapshot = Some(caller_stack_snapshot);
         self.caller_frame_level = Some(caller_frame_level);
         self.cb_should_widen = should_widen;
+    }
+
+    /// Pre-computed caller-frame offsets the cb body may write through
+    /// its ctx pointer. Empty when no ctx-pointer arg or scan failed.
+    pub fn cb_writeable_caller_offsets(&self) -> &[i16] {
+        &self.cb_writeable_caller_offsets
+    }
+
+    /// Set the pre-computed cb-writeable caller offsets at frame push.
+    pub fn set_cb_writeable_caller_offsets(&mut self, offsets: Vec<i16>) {
+        self.cb_writeable_caller_offsets = offsets;
     }
 
     /// Register an exception callback entry PC on this frame. Overwrites
@@ -286,6 +309,7 @@ impl FrameStack {
             caller_stack_snapshot: None,
             caller_frame_level: None,
             cb_should_widen: false,
+            cb_writeable_caller_offsets: Vec::new(),
         };
         self.frames.push(frame);
         self.current_level()

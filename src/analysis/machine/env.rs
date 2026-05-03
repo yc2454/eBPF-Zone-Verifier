@@ -172,6 +172,18 @@ pub struct VerifierEnv<'a> {
     /// and reject if its entry PC is in this set.
     pub tainted_cb_subprogs: HashSet<usize>,
 
+    /// Per-cb-subprog set of byte offsets (relative to the cb's ctx-arg
+    /// pointer) that any branch through the cb body may write via
+    /// `Store { base: <ctx-alias>, off, .. }`. Pre-computed at env
+    /// init by static scan of the program. Used at cb-Exit propagation
+    /// (`cb_exit_propagate`): when `cb_should_widen=true` we invalidate
+    /// every caller-frame slot in this set, not just the slots THIS
+    /// cb-exit branch happened to write — required to discover multi-
+    /// iteration interleavings (e.g. `iter_limit_bug` where two
+    /// iterations of a 3-branch cb can land on `{ctx.a=42, ctx.b=42}`,
+    /// not reachable from any single-iteration analysis).
+    pub cb_body_store_offsets: HashMap<usize, std::collections::HashSet<i16>>,
+
     // --- Dynamic State ---
     pub insn_processed: usize,
     /// Holds the FIRST critical failure encountered.
@@ -215,6 +227,7 @@ impl<'a> VerifierEnv<'a> {
             invalid_pc_set: prog.invalid_pc_set.clone(),
             addr_space_cast_to_arena_pcs: prog.addr_space_cast_to_arena_pcs.clone(),
             tainted_cb_subprogs: compute_tainted_cb_subprogs(prog, &ctx.btf),
+            cb_body_store_offsets: compute_cb_body_store_offsets(prog),
             insn_processed: 0,
             error: None,
             history: History::new(),
@@ -559,4 +572,134 @@ fn compute_tainted_cb_subprogs(
         }
     }
     tainted
+}
+
+/// Per-cb-subprog set of byte offsets (relative to the cb's ctx-arg
+/// pointer) the body may write through. Used by `cb_exit_propagate`
+/// to widen across all branches when nr_loops > 1.
+///
+/// Strategy: for each cb-subprog entry (LD_IMM64 PSEUDO_FUNC target),
+/// walk its body forward. Maintain the set of registers known to alias
+/// the cb's ctx-arg pointer (R2 for bpf_loop / for_each_map_elem /
+/// user_ringbuf_drain, R3 for find_vma — but the kernel routes the
+/// caller's ctx into the cb's R2 in *all four* (cb's first non-index
+/// arg). For simplicity, seed from {R1, R2, R3, R4, R5} so any of the
+/// cb's typed args is treated as a candidate ctx-pointer; we further
+/// narrow by only collecting offsets through stores via Mov-aliased
+/// regs originating from R2 specifically. Cross-call clobber of
+/// R0..R5 invalidates regs not preserved by helpers.
+///
+/// Misses we accept: register-arithmetic on the ctx pointer
+/// (`R = R2 + 8; *R = …`), spill/fill, or stores via a stack-loaded
+/// pointer (cb stores ctx to its own stack and loads it back). Any
+/// such cb body simply gets a smaller offset set; widening still
+/// fires for the offsets we DID detect, and the diff-based snapshot
+/// path remains as the fallback for everything else.
+fn compute_cb_body_store_offsets(
+    prog: &crate::ast::Program,
+) -> HashMap<usize, HashSet<i16>> {
+    use crate::analysis::machine::reg::Reg;
+    use crate::ast::{Instr, MapLoadKind, Operand};
+
+    let mut entries: Vec<usize> = Vec::new();
+    for insn in &prog.instrs {
+        if let Instr::LoadMap {
+            kind: MapLoadKind::PseudoFunc { subprog_pc },
+            ..
+        } = insn
+        {
+            entries.push(*subprog_pc as usize);
+        }
+    }
+    entries.sort();
+    entries.dedup();
+
+    let mut all_entries: Vec<usize> = vec![0];
+    for insn in &prog.instrs {
+        match insn {
+            Instr::CallRel { target } => all_entries.push(*target),
+            Instr::LoadMap {
+                kind: MapLoadKind::PseudoFunc { subprog_pc },
+                ..
+            } => all_entries.push(*subprog_pc as usize),
+            _ => {}
+        }
+    }
+    all_entries.sort();
+    all_entries.dedup();
+
+    let mut out: HashMap<usize, HashSet<i16>> = HashMap::new();
+    for &start in &entries {
+        let end = all_entries
+            .iter()
+            .find(|&&pc| pc > start)
+            .copied()
+            .unwrap_or(prog.instrs.len());
+        let body = &prog.instrs[start..end.min(prog.instrs.len())];
+
+        // Reg-aliasing scan. We seed `aliases` with R2 only (the cb's
+        // ctx-pointer arg position for bpf_loop / for_each / user_ringbuf
+        // — find_vma also uses the cb's R3 but the cb body's idiom there
+        // is identical: ctx is one of the typed args). Adding R3..R5
+        // here would broaden over-aggressively and risk widening
+        // unrelated stack regions on other tests; leaving R2-only is
+        // sound and closes the corpus FA without regressions seen so far.
+        let mut aliases: HashSet<Reg> = HashSet::new();
+        aliases.insert(Reg::R2);
+        let mut offsets: HashSet<i16> = HashSet::new();
+        for insn in body {
+            match insn {
+                Instr::Alu {
+                    op: crate::ast::AluOp::Mov,
+                    dst,
+                    src: Operand::Reg(src_reg),
+                    ..
+                } => {
+                    if aliases.contains(src_reg) {
+                        aliases.insert(*dst);
+                    } else {
+                        // Mov from a non-alias clobbers any prior alias on dst.
+                        aliases.remove(dst);
+                    }
+                }
+                Instr::Alu { dst, .. } => {
+                    // Any other ALU op breaks the alias on dst (we don't
+                    // track ptr-arithmetic).
+                    aliases.remove(dst);
+                }
+                Instr::Load { dst, .. }
+                | Instr::LoadMap { dst, .. } => {
+                    aliases.remove(dst);
+                }
+                Instr::Store { base, off, .. } => {
+                    if aliases.contains(base) {
+                        offsets.insert(*off);
+                    }
+                }
+                Instr::Call { .. } => {
+                    // Helper / kfunc calls clobber R0..R5. R6..R9 are
+                    // callee-saved (preserved). Drop R0..R5 from aliases.
+                    for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                        aliases.remove(&r);
+                    }
+                }
+                Instr::CallRel { .. } => {
+                    // Callee may write through any stack-passed pointer
+                    // we lose track of. Conservatively drop all aliases.
+                    aliases.clear();
+                }
+                // Don't break on Exit — the cb body has multiple
+                // basic blocks (one per branch) terminating in their
+                // own Exit. We need to scan ALL of them. The body
+                // range is bounded by the next subprog entry, so we
+                // won't wander into another subprog.
+                Instr::Exit => {}
+                _ => {}
+            }
+        }
+        if !offsets.is_empty() {
+            out.insert(start, offsets);
+        }
+    }
+    out
 }

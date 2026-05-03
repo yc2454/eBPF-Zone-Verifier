@@ -625,6 +625,7 @@ fn cb_exit_propagate(env: &VerifierEnv, mut state: State) -> Vec<State> {
     let should_widen = frame.cb_should_widen();
     let caller_level = frame.caller_frame_level();
     let snapshot = frame.caller_stack_snapshot().cloned();
+    let cb_writeable: Vec<i16> = frame.cb_writeable_caller_offsets().to_vec();
 
     // Restore caller regs (cb's R0 etc. are dropped).
     state.types = frame.caller_types;
@@ -667,6 +668,19 @@ fn cb_exit_propagate(env: &VerifierEnv, mut state: State) -> Vec<State> {
             if differs {
                 caller_stack.invalidate_slot(off);
             }
+        }
+        // Also invalidate every slot the cb body could write through
+        // its ctx-pointer on ANY branch (pre-computed at env init via
+        // static scan). This is the kernel's multi-iteration cb model:
+        // when nr_loops > 1, different cb branches can fire on
+        // different iterations, so the post-loop continuation must
+        // reflect the union of all branches' effects (verifier.c v6.15
+        // ~L10903 widen_imprecise_scalars over iter-state). Without
+        // this, single-branch cb-exits leave non-this-branch slots
+        // concrete and the continuation falsely accepts patterns that
+        // require interleaved iterations (`iter_limit_bug`).
+        for off in cb_writeable {
+            caller_stack.invalidate_slot(off);
         }
     }
 
