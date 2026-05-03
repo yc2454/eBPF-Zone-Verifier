@@ -295,6 +295,86 @@
     "test_helper_restricted.c": {
       "expect": "reject",
       "note": "Negative helper-restriction coverage; kernel prog_tests/helper_restricted.c iterates each prog with autoload-one and ASSERT_ERR(load_should_fail) — every prog is expected to fail load due to helper-context restrictions."
+    },
+    "test_bpf_cookie.c": {
+      "expect": "accept",
+      "note": "Positive bpf_cookie coverage; kernel prog_tests/bpf_cookie.c calls test_bpf_cookie__open_and_load with ASSERT before exercising kprobe/uprobe attach with cookies."
+    },
+    "lsm_cgroup.c": {
+      "expect": "accept",
+      "note": "Positive LSM-cgroup coverage; kernel prog_tests/lsm_cgroup.c asserts lsm_cgroup__open_and_load (and lsm_cgroup_nonvoid sibling) succeed."
+    },
+    "uretprobe_stack.c": {
+      "expect": "accept",
+      "note": "Positive uretprobe stack-walk coverage; kernel prog_tests/uretprobe_stack.c asserts uretprobe_stack__open_and_load succeeds before runtime checks."
+    },
+    "core_kern.c": {
+      "expect": "accept",
+      "note": "Positive CO-RE-in-kernel coverage; kernel prog_tests/core_kern.c asserts core_kern_lskel__open_and_load succeeds."
+    },
+    "modify_return.c": {
+      "expect": "accept",
+      "note": "Positive bpf_modify_return coverage; kernel prog_tests/modify_return.c asserts modify_return__open_and_load succeeds before exercising fmod_ret."
+    },
+    "test_custom_sec_handlers.c": {
+      "expect": "accept",
+      "note": "Positive custom-section-handler coverage; kernel prog_tests/custom_sec_handlers.c registers libbpf section handlers and asserts ASSERT_OK on skel_load."
+    },
+    "test_fill_link_info.c": {
+      "expect": "accept",
+      "note": "Positive bpf_link info coverage; kernel prog_tests/fill_link_info.c asserts test_fill_link_info__open_and_load succeeds."
+    },
+    "test_sk_storage_tracing.c": {
+      "expect": "accept",
+      "note": "Positive sk_storage tracing-attach coverage; kernel prog_tests/sk_storage_tracing.c asserts test_sk_storage_tracing__open_and_load succeeds."
+    },
+    "test_xdp_vlan.c": {
+      "expect": "accept",
+      "note": "Positive XDP-vlan coverage; kernel prog_tests/xdp_vlan.c repeatedly asserts test_xdp_vlan__open_and_load succeeds before runtime checks."
+    },
+    "wq.c": {
+      "expect": "accept",
+      "note": "Positive bpf_wq coverage; kernel prog_tests/wq.c asserts wq__open_and_load succeeds (negative siblings live in wq_failures.c, which is exercised via RUN_TESTS for __failure annotations)."
+    },
+    "test_bpf_ma.c": {
+      "expect": "accept",
+      "note": "Positive bpf_mem_alloc coverage; kernel prog_tests/test_bpf_ma.c asserts ASSERT_OK on load."
+    },
+    "test_ldsx_insn.c": {
+      "expect": "accept",
+      "note": "Positive LDSX-insn coverage; kernel prog_tests/test_ldsx_insn.c repeatedly asserts test_ldsx_insn__load succeeds."
+    },
+    "test_overhead.c": {
+      "expect": "accept",
+      "note": "Positive attach-overhead microbench progs; kernel prog_tests/test_overhead.c asserts bpf_object__load succeeds before per-attach-type test_run."
+    },
+    "test_sockmap_listen.c": {
+      "expect": "accept",
+      "note": "Positive sockmap-listen coverage; kernel prog_tests/sockmap_listen.c asserts test_sockmap_listen__open_and_load succeeds before exercising redirect paths."
+    },
+    "test_spin_lock.c": {
+      "expect": "accept",
+      "note": "Positive bpf_spin_lock coverage (sibling of test_spin_lock_fail.c); kernel prog_tests/spin_lock.c asserts test_spin_lock__open_and_load succeeds."
+    },
+    "test_subprogs.c": {
+      "expect": "accept",
+      "note": "Positive subprog coverage; kernel prog_tests/subprogs.c asserts test_subprogs__open_and_load succeeds (and test_subprogs_unused sibling)."
+    },
+    "test_varlen.c": {
+      "expect": "accept",
+      "note": "Positive var-length-array coverage; kernel prog_tests/varlen.c asserts test_varlen__open_and_load succeeds."
+    },
+    "test_vmlinux.c": {
+      "expect": "accept",
+      "note": "Positive vmlinux-BTF coverage; kernel prog_tests/vmlinux.c asserts test_vmlinux__open_and_load succeeds."
+    },
+    "test_xdp_do_redirect.c": {
+      "expect": "accept",
+      "note": "Positive XDP redirect coverage; kernel prog_tests/xdp_do_redirect.c asserts test_xdp_do_redirect__load and __open_and_load succeed."
+    },
+    "cb_refs.c": {
+      "expect": "reject",
+      "note": "Negative callback-refs coverage; kernel prog_tests/cb_refs.c iterates each prog with autoload-one and ASSERT_ERR(cb_refs__load) — every prog is expected to fail load due to unreleased refs across cb boundaries."
     }
   }
 }
