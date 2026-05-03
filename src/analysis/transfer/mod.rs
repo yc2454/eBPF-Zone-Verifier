@@ -5,7 +5,7 @@
 
 mod alu;
 mod branch;
-mod call;
+pub(crate) mod call;
 mod common;
 mod memory;
 pub(crate) mod types;
@@ -315,6 +315,18 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         }
     }
 
+    // Kernel-aligned: main-program exit return-value precision sink
+    // (verifier.c v6.15 check_return_code marks R0 precise before
+    // enforcing the prog-type retval range). Per-path lineage walk
+    // via parent_cache_id — marks precise on this path's specific
+    // cached ancestors only, not all cached states at intermediate
+    // PCs.
+    if state.at_main_frame()
+        && let Some(hidx) = state.history_idx
+    {
+        env.mark_chain_precision_backward(hidx, state.parent_cache_id, Reg::R0);
+    }
+
     // Cluster B: per-attach-type retval range. When a finer rule applies
     // for the (prog_kind, attach_subtype) pair, prefer it over the coarse
     // `requires_strict_return_code` check below — the kernel's per-hook
@@ -488,6 +500,12 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
             env.fail(VerificationError::InvalidReturnCode { pc });
             return vec![];
         }
+        // Kernel-aligned: callback return-value precision sink
+        // (verifier.c v6.15 prepare_func_exit L10862). Per-path
+        // lineage walk via parent_cache_id.
+        if let Some(hidx) = state.history_idx {
+            env.mark_chain_precision_backward(hidx, state.parent_cache_id, Reg::R0);
+        }
         // W3.4c: bpf_loop / bpf_for_each_map_elem / bpf_user_ringbuf_drain
         // callbacks must return 0 (continue) or 1 (break). Timer callbacks
         // are void-returning and not constrained here.
@@ -607,6 +625,7 @@ fn cb_exit_propagate(env: &VerifierEnv, mut state: State) -> Vec<State> {
     let should_widen = frame.cb_should_widen();
     let caller_level = frame.caller_frame_level();
     let snapshot = frame.caller_stack_snapshot().cloned();
+    let cb_writeable: Vec<i16> = frame.cb_writeable_caller_offsets().to_vec();
 
     // Restore caller regs (cb's R0 etc. are dropped).
     state.types = frame.caller_types;
@@ -649,6 +668,19 @@ fn cb_exit_propagate(env: &VerifierEnv, mut state: State) -> Vec<State> {
             if differs {
                 caller_stack.invalidate_slot(off);
             }
+        }
+        // Also invalidate every slot the cb body could write through
+        // its ctx-pointer on ANY branch (pre-computed at env init via
+        // static scan). This is the kernel's multi-iteration cb model:
+        // when nr_loops > 1, different cb branches can fire on
+        // different iterations, so the post-loop continuation must
+        // reflect the union of all branches' effects (verifier.c v6.15
+        // ~L10903 widen_imprecise_scalars over iter-state). Without
+        // this, single-branch cb-exits leave non-this-branch slots
+        // concrete and the continuation falsely accepts patterns that
+        // require interleaved iterations (`iter_limit_bug`).
+        for off in cb_writeable {
+            caller_stack.invalidate_slot(off);
         }
     }
 

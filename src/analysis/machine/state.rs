@@ -17,6 +17,28 @@ pub struct LockState {
     pub lock_offset: u32, // offset of spin_lock within value (e.g., 4)
 }
 
+/// One entry on the `bpf_res_spin_lock` LIFO held-stack.
+/// `reg_id` is the call-site reg-id of the lock pointer; `ptr_id`
+/// disambiguates two acquires of the same map at different elements
+/// (kernel `find_lock_state` checks `reg->id` AND `ptr` together,
+/// verifier.c v6.15 L8326 / L8332).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResLockEntry {
+    pub reg_id: u32,
+    pub ptr_id: u32,
+    pub is_irq: bool,
+}
+
+/// Reasons a `bpf_res_spin_unlock` may fail. Distinct so the caller
+/// can map each to a specific verifier error variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResLockReleaseError {
+    Empty,
+    NotInStack,
+    OutOfOrder,
+    WrongClass,
+}
+
 /// Per-program `may_goto` iteration budget. Mirrors the kernel's
 /// `BPF_MAY_GOTO_LIMIT` (see `kernel/bpf/verifier.c`). Each time the
 /// verifier takes a `may_goto` back-edge it decrements this counter; the
@@ -43,6 +65,23 @@ pub struct State {
 
     /// History Index (for history tracking, optional)
     pub history_idx: Option<usize>,
+
+    /// Per-state parent-cached-state link, mirroring kernel
+    /// `bpf_verifier_state.parent` (verifier.c v6.15). Set to the
+    /// `cache_id` of the most recent cached predecessor on this
+    /// state's path. `None` at program entry. Followed by
+    /// `mark_chain_precision_backward` to mark precise on the
+    /// specific cached states along this path's lineage rather than
+    /// all cached states at each PC (which over-marks across
+    /// unrelated paths).
+    pub parent_cache_id: Option<u32>,
+
+    /// If this state has been cached (i.e. it lives inside
+    /// `env.explored_states[pc]`), the unique id assigned to it at
+    /// cache time. Used as the link target for descendants'
+    /// `parent_cache_id`. `None` for ephemeral (in-flight) states
+    /// before they're cached.
+    pub cache_id: Option<u32>,
 
     pub tnums: HashMap<Reg, Tnum>, // tnum info for R0-R10
 
@@ -110,6 +149,17 @@ pub struct State {
     /// - tail_call gate (kernel `check_lock` chain).
     pub acquired_irq_ids: Vec<u32>,
 
+    /// LIFO stack of `bpf_res_spin_lock` entries currently held on this
+    /// path. Mirrors the kernel `state->refs[]` filtered to
+    /// `REF_TYPE_RES_LOCK | REF_TYPE_RES_LOCK_IRQ` (verifier.c v6.15
+    /// L8331-8341). Each entry pairs the reg-id (`reg->id`) with the
+    /// owning object's pointer-id (map_idx for PtrToMapValue, or kptr
+    /// btf-id for PtrToOwnedKptr) so the AA-deadlock check
+    /// (`find_lock_state` L8326+) and the "different lock" / "out of
+    /// order" unlock checks (L8369-8376) can distinguish two acquires
+    /// of the same lock from two different locks of the same map.
+    pub acquired_res_locks: Vec<ResLockEntry>,
+
     /// Remaining `may_goto` iterations on this path. Initialised to
     /// [`BPF_MAY_GOTO_LIMIT`] at entry. Decremented by the `may_goto`
     /// transfer function on the taken branch (W3.1b); once zero the
@@ -163,6 +213,8 @@ impl State {
             domain,
             pc,
             history_idx: None,
+            parent_cache_id: None,
+            cache_id: None,
             tnums: tnums.clone(),
             scalar_ids: HashMap::new(),
             precise_regs: HashSet::new(),
@@ -174,6 +226,7 @@ impl State {
             implicit_rcu_at_entry: false,
             active_preempt_locks: 0,
             acquired_irq_ids: Vec::new(),
+            acquired_res_locks: Vec::new(),
             goto_budget: BPF_MAY_GOTO_LIMIT,
             may_goto_depth: 0,
             var_off_contributor: HashMap::new(),
@@ -367,6 +420,24 @@ impl State {
         self.precise_regs.remove(&r);
     }
 
+    /// Drop ALL precision marks (regs + spilled stack scalars).
+    ///
+    /// Mirrors kernel `mark_all_scalars_imprecise` (verifier.c v6.15
+    /// L4543), called proactively at checkpoint to produce
+    /// maximally-permissive cached states. Precision is then
+    /// re-established on demand via `propagate_precision` when a child
+    /// path requires it for safety.
+    pub fn mark_all_scalars_imprecise(&mut self) {
+        self.precise_regs.clear();
+        for frame in self.frames.iter_mut() {
+            for offset in frame.stack.slot_offsets() {
+                if let Some(slot) = frame.stack.get_slot_mut(offset) {
+                    slot.precise = false;
+                }
+            }
+        }
+    }
+
     /// All registers currently carrying `id`. Useful for refinement fan-out.
     pub fn regs_with_scalar_id(&self, id: u32) -> Vec<Reg> {
         self.scalar_ids
@@ -437,6 +508,30 @@ impl State {
                 }
             }
         }
+    }
+
+    /// Collect dynptr_ids of every Skb/Xdp dynptr currently registered
+    /// in any frame's stack. Mirrors the kernel's reg-walk in
+    /// `bpf_for_each_reg_in_vstate` over `xdp/skb_dynptr` slots
+    /// (verifier.c v6.15 L913-919). Used by packet-mutating helpers
+    /// (`bpf_xdp_adjust_head`, `bpf_skb_pull_data`, …) to invalidate
+    /// every slice derived from a packet dynptr — kernel rejects post-
+    /// mutation slice access with "invalid mem access 'scalar'"
+    /// (`dynptr_fail.c::xdp_invalid_data_slice1`).
+    pub fn collect_packet_dynptr_ids(&self) -> Vec<u32> {
+        use crate::analysis::machine::stack_state::DynptrKind;
+        let mut ids = Vec::new();
+        for frame in self.frames.iter() {
+            for off in frame.stack.slot_offsets() {
+                if let Some(d) = frame.stack.stack_get_dynptr(off as i16)
+                    && matches!(d.kind, DynptrKind::Skb | DynptrKind::Xdp)
+                    && d.first_slot
+                {
+                    ids.push(d.dynptr_id);
+                }
+            }
+        }
+        ids
     }
 
     pub fn invalidate_dynptr_slices(&mut self, dynptr_id: u32) {
@@ -597,6 +692,69 @@ impl State {
 
     pub fn in_irq_disabled(&self) -> bool {
         !self.acquired_irq_ids.is_empty()
+            || self
+                .acquired_res_locks
+                .iter()
+                .any(|e| e.is_irq)
+    }
+
+    /// True iff `(reg_id, ptr_id)` is already in the res-lock stack —
+    /// the AA-deadlock predicate (kernel `find_lock_state`,
+    /// verifier.c v6.15 L8326). `ptr_id` is the owning-object id
+    /// (map_idx for PtrToMapValue, kptr btf-id for PtrToOwnedKptr).
+    pub fn res_lock_already_held(&self, reg_id: u32, ptr_id: u32) -> bool {
+        self.acquired_res_locks
+            .iter()
+            .any(|e| e.reg_id == reg_id && e.ptr_id == ptr_id)
+    }
+
+    /// Push a res_spin_lock onto the held-stack. `is_irq` distinguishes
+    /// `bpf_res_spin_lock_irqsave` from the plain variant (kernel
+    /// REF_TYPE_RES_LOCK_IRQ vs REF_TYPE_RES_LOCK).
+    pub fn res_lock_acquire(&mut self, reg_id: u32, ptr_id: u32, is_irq: bool) {
+        self.acquired_res_locks.push(ResLockEntry {
+            reg_id,
+            ptr_id,
+            is_irq,
+        });
+    }
+
+    /// Try to release a res_spin_lock matching `(reg_id, ptr_id, is_irq)`.
+    /// Mirrors kernel L8369-8376:
+    ///   - `Empty` if no lock held (kernel "without taking a lock");
+    ///   - `NotInStack` if `(reg_id, ptr_id)` is not in the stack at all
+    ///     (kernel "unlock of different lock");
+    ///   - `OutOfOrder` if it's in the stack but not at top
+    ///     (kernel "cannot be out of order");
+    ///   - `WrongClass` if the top matches `(reg_id, ptr_id)` but the
+    ///     `is_irq` flavor disagrees (kernel "irq flag acquired by …
+    ///     kfuncs cannot be restored …" analogue for res-lock).
+    /// On success, pops the top entry.
+    pub fn res_lock_release(
+        &mut self,
+        reg_id: u32,
+        ptr_id: u32,
+        is_irq: bool,
+    ) -> Result<(), ResLockReleaseError> {
+        let Some(top) = self.acquired_res_locks.last() else {
+            return Err(ResLockReleaseError::Empty);
+        };
+        if top.reg_id == reg_id && top.ptr_id == ptr_id {
+            if top.is_irq != is_irq {
+                return Err(ResLockReleaseError::WrongClass);
+            }
+            self.acquired_res_locks.pop();
+            return Ok(());
+        }
+        let in_stack = self
+            .acquired_res_locks
+            .iter()
+            .any(|e| e.reg_id == reg_id && e.ptr_id == ptr_id);
+        if in_stack {
+            Err(ResLockReleaseError::OutOfOrder)
+        } else {
+            Err(ResLockReleaseError::NotInStack)
+        }
     }
 
     pub fn active_irq_id(&self) -> Option<u32> {

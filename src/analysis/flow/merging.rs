@@ -67,11 +67,41 @@ pub fn resolve_type_conflicts(env: &VerifierEnv, state: &mut State) {
 }
 
 /// Record a state as explored at its PC.
-/// Enforces max_states_per_pc limit by removing oldest states when exceeded.
-pub fn record_state(env: &mut VerifierEnv, state: State, max_states_per_pc: usize) {
+///
+/// Enforces max_states_per_pc limit by removing oldest states when
+/// exceeded. Returns the freshly-minted `cache_id` for the cached
+/// clone — callers should store this as the continuing state's
+/// `parent_cache_id` so the per-path precision walker can find this
+/// cached state as the path's most recent predecessor.
+///
+/// Kernel-aligned: under the kernel-precision regime, also clears
+/// inherited precision marks on the cached clone (mirrors
+/// `mark_all_scalars_imprecise` at checkpoint, verifier.c v6.15
+/// L4543). Precision is then re-established on demand via
+/// `propagate_precision` walking the per-path parent-cache-id chain.
+pub fn record_state(
+    env: &mut VerifierEnv,
+    mut state: State,
+    max_states_per_pc: usize,
+) -> u32 {
     let pc = state.pc;
+
+    let cache_id = env.next_cache_id;
+    env.next_cache_id = env.next_cache_id.wrapping_add(1);
+    state.cache_id = Some(cache_id);
+
+    // Kernel-aligned `mark_all_scalars_imprecise` (verifier.c v6.15
+    // L4543): cached snapshots are checkpointed in maximally-permissive
+    // form. Precision is then re-established on demand via the
+    // per-state parent-cache walker (`mark_chain_precision_backward`)
+    // when a downstream sink requires it for safety.
+    state.mark_all_scalars_imprecise();
+
     let states = env.explored_states.entry(pc).or_default();
+    let idx = states.len();
     states.push(state);
+    env.cache_loc_by_id.insert(cache_id, (pc, idx));
+
     // Bucket F-A: parallel metrics vector. Same indices as states.
     let metrics = env
         .state_metrics
@@ -80,12 +110,81 @@ pub fn record_state(env: &mut VerifierEnv, state: State, max_states_per_pc: usiz
     metrics.push(crate::analysis::machine::env::StateMetrics::default());
 
     // Enforce limit: keep only the most recent states. Apply the same
-    // drain to `state_metrics` so the two vectors stay aligned.
+    // drain to `state_metrics` so the two vectors stay aligned. Keep
+    // `cache_loc_by_id` consistent: the drained entries' cache_ids no
+    // longer have a valid (pc, idx) location, so remove them; the
+    // surviving entries shift left by `excess`, so update their idx.
     if max_states_per_pc > 0 && states.len() > max_states_per_pc {
         let excess = states.len() - max_states_per_pc;
+        // Collect cache_ids of evicted (front) and surviving entries.
+        let evicted_ids: Vec<u32> = states
+            .iter()
+            .take(excess)
+            .filter_map(|s| s.cache_id)
+            .collect();
+        let surviving_ids: Vec<u32> = states
+            .iter()
+            .skip(excess)
+            .filter_map(|s| s.cache_id)
+            .collect();
         states.drain(0..excess);
         metrics.drain(0..excess);
+        for id in evicted_ids {
+            env.cache_loc_by_id.remove(&id);
+        }
+        for (new_idx, id) in surviving_ids.iter().enumerate() {
+            env.cache_loc_by_id.insert(*id, (pc, new_idx));
+        }
     }
+
+    if crate::analysis::machine::env::dump_cache_growth_enabled() {
+        let states_now = env.explored_states.get(&pc).map(|v| v.as_slice()).unwrap_or(&[]);
+        let mut sigs: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for s in states_now {
+            let sig = s
+                .types
+                .regs
+                .iter()
+                .map(|r| format!("{:?}", r))
+                .collect::<Vec<_>>()
+                .join("|");
+            sigs.insert(sig);
+        }
+        eprintln!(
+            "[cache_growth] pc={} cache_size={} distinct_type_sigs={}",
+            pc,
+            states_now.len(),
+            sigs.len()
+        );
+    }
+
+    if let Some(target_pc) = crate::analysis::machine::env::dump_cache_growth_pc() {
+        if pc == target_pc {
+            let states_now =
+                env.explored_states.get(&pc).map(|v| v.as_slice()).unwrap_or(&[]);
+            let arrival_idx = states_now.len().saturating_sub(1);
+            eprintln!(
+                "[cache_growth_verbose] pc={} cache_size={} (arrival idx={})",
+                pc,
+                states_now.len(),
+                arrival_idx
+            );
+            for (i, s) in states_now.iter().enumerate() {
+                let marker = if i == arrival_idx { "*" } else { " " };
+                let regs = s
+                    .types
+                    .regs
+                    .iter()
+                    .enumerate()
+                    .map(|(ri, rt)| format!("R{}={:?}", ri, rt))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                eprintln!("  {}[{}] {}", marker, i, regs);
+            }
+        }
+    }
+
+    cache_id
 }
 
 /// Check if two types are compatible at a join point.

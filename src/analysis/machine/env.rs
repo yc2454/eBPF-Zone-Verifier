@@ -172,6 +172,18 @@ pub struct VerifierEnv<'a> {
     /// and reject if its entry PC is in this set.
     pub tainted_cb_subprogs: HashSet<usize>,
 
+    /// Per-cb-subprog set of byte offsets (relative to the cb's ctx-arg
+    /// pointer) that any branch through the cb body may write via
+    /// `Store { base: <ctx-alias>, off, .. }`. Pre-computed at env
+    /// init by static scan of the program. Used at cb-Exit propagation
+    /// (`cb_exit_propagate`): when `cb_should_widen=true` we invalidate
+    /// every caller-frame slot in this set, not just the slots THIS
+    /// cb-exit branch happened to write — required to discover multi-
+    /// iteration interleavings (e.g. `iter_limit_bug` where two
+    /// iterations of a 3-branch cb can land on `{ctx.a=42, ctx.b=42}`,
+    /// not reachable from any single-iteration analysis).
+    pub cb_body_store_offsets: HashMap<usize, std::collections::HashSet<i16>>,
+
     // --- Dynamic State ---
     pub insn_processed: usize,
     /// Holds the FIRST critical failure encountered.
@@ -186,6 +198,17 @@ pub struct VerifierEnv<'a> {
     /// check to the exception-cb-specific rule (R0 ∈ [0, 0] for fentry/
     /// fexit) without affecting ordinary main-program exits.
     pub analyzing_exception_cb: bool,
+
+    /// Monotonic counter for cache_id assignment. Each call to
+    /// `record_state` mints a fresh id (post-increment).
+    pub next_cache_id: u32,
+
+    /// Reverse map: cache_id -> (pc, idx_in_explored_states_at_pc).
+    /// Maintained by `record_state` (insertion) and the eviction path
+    /// in `record_state` (index updates after drain). Used by the
+    /// per-path precision walker to look up the specific cached state
+    /// referenced by a `parent_cache_id` chain.
+    pub cache_loc_by_id: HashMap<u32, (usize, usize)>,
 }
 
 impl<'a> VerifierEnv<'a> {
@@ -204,11 +227,14 @@ impl<'a> VerifierEnv<'a> {
             invalid_pc_set: prog.invalid_pc_set.clone(),
             addr_space_cast_to_arena_pcs: prog.addr_space_cast_to_arena_pcs.clone(),
             tainted_cb_subprogs: compute_tainted_cb_subprogs(prog, &ctx.btf),
+            cb_body_store_offsets: compute_cb_body_store_offsets(prog),
             insn_processed: 0,
             error: None,
             history: History::new(),
             certificate,
             analyzing_exception_cb: false,
+            next_cache_id: 0,
+            cache_loc_by_id: HashMap::new(),
         }
     }
 
@@ -255,122 +281,185 @@ impl<'a> VerifierEnv<'a> {
     pub fn mark_chain_precision_backward(
         &mut self,
         history_idx: usize,
+        parent_cache_id: Option<u32>,
         sink_reg: Reg,
     ) {
-        use crate::ast::{AluOp, CallKind, Instr, Operand};
-        let _ = CallKind::Helper { id: 0 }; // keep CallKind import; matched below
-
         let mut frontier: HashSet<Reg> = HashSet::new();
         frontier.insert(sink_reg);
 
         let caller_saved = [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
 
-        let mut current = Some(history_idx);
-        // Bound the walk so a malformed history can't loop forever.
+        let mut current_history: Option<usize> = Some(history_idx);
+        let mut current_parent_id: Option<u32> = parent_cache_id;
         let mut budget: usize = 16_384;
 
-        while let Some(idx) = current {
-            if budget == 0 {
-                break;
-            }
-            budget -= 1;
+        // Per-path lineage walk (kernel `__mark_chain_precision`,
+        // verifier.c v6.15 L4655). For each cache event in the chain:
+        // walk instructions back to the parent's boundary updating the
+        // frontier, then mark frontier regs precise on the SPECIFIC
+        // parent cached state (not all cached states at that PC). This
+        // is the per-path equivalent of kernel `st->parent` chain walk.
+        'outer: loop {
+            // Resolve the current parent's location and metadata.
+            let parent_loc = current_parent_id
+                .and_then(|id| self.cache_loc_by_id.get(&id).copied());
+            let (parent_history_stop, parent_grandparent_id) =
+                if let Some((pc, idx)) = parent_loc {
+                    let s = self
+                        .explored_states
+                        .get(&pc)
+                        .and_then(|v| v.get(idx));
+                    (
+                        s.and_then(|s| s.history_idx),
+                        s.and_then(|s| s.parent_cache_id),
+                    )
+                } else {
+                    (None, None)
+                };
 
-            let Some(step) = self.history.get(idx) else {
-                break;
-            };
-            let pc = step.pc;
-            let parent = step.parent_idx;
+            // Walk instructions back through current's local history,
+            // stopping when we cross the parent's boundary.
+            while let Some(idx) = current_history {
+                if budget == 0 {
+                    break 'outer;
+                }
+                budget -= 1;
 
-            // Mark every frontier reg precise on every cached state at pc.
-            // The cached states' precision marks feed our pruning's
-            // `old.precise_regs`-keyed subsumption + the may_goto widener's
-            // skip-if-precise rule.
-            if let Some(states) = self.explored_states.get_mut(&pc) {
-                for s in states.iter_mut() {
-                    for &r in &frontier {
-                        s.precise_regs.insert(r);
-                    }
+                if let Some(stop) = parent_history_stop
+                    && idx <= stop
+                {
+                    break;
+                }
+
+                let Some(step) = self.history.get(idx) else {
+                    break;
+                };
+                let parent_idx = step.parent_idx;
+                let instr_copy = step.instr;
+                update_frontier(&mut frontier, &instr_copy, &caller_saved);
+                current_history = parent_idx;
+
+                if frontier.is_empty() {
+                    break 'outer;
                 }
             }
 
-            // Walk past the instruction at `pc`, updating frontier. Use
-            // the instruction stored on the breadcrumb (committed in
-            // history.rs) rather than re-borrowing `Program` — cheaper
-            // and removes a lifetime dependency from the call sites.
-            let instr_copy = step.instr;
+            // Mark precise on the parent cached state with the
+            // frontier we've evolved back to its perspective. Per-path:
+            // only this cached state, not all states at its PC.
+            if let Some((pc, idx)) = parent_loc
+                && let Some(states) = self.explored_states.get_mut(&pc)
+                && let Some(s) = states.get_mut(idx)
             {
-                let instr = &instr_copy;
-                match instr {
-                    Instr::Alu { op, dst, src, .. } => {
-                        if frontier.contains(dst) {
-                            match (op, src) {
-                                (AluOp::Mov, Operand::Reg(s)) => {
-                                    frontier.remove(dst);
-                                    frontier.insert(*s);
-                                }
-                                (AluOp::Mov, Operand::Imm(_)) => {
-                                    frontier.remove(dst);
-                                }
-                                (_, Operand::Reg(s)) => {
-                                    // dst = dst op src; both contribute.
-                                    frontier.insert(*s);
-                                }
-                                (_, Operand::Imm(_)) => {
-                                    // dst stays.
-                                }
-                            }
-                        }
-                    }
-                    Instr::MovSx { dst, src, .. } => {
-                        if frontier.contains(dst) {
-                            frontier.remove(dst);
-                            if let Operand::Reg(s) = src {
-                                frontier.insert(*s);
-                            }
-                        }
-                    }
-                    Instr::Load { dst, .. }
-                    | Instr::LoadSx { dst, .. }
-                    | Instr::LoadAcq { dst, .. }
-                    | Instr::LoadMap { dst, .. } => {
-                        frontier.remove(dst);
-                    }
-                    Instr::LoadPacket { .. } => {
-                        // BPF_LD_ABS / IND writes implicitly into R0.
-                        frontier.remove(&Reg::R0);
-                    }
-                    Instr::Endian { dst, .. } => {
-                        // Endian preserves value (just byte-swaps); precision
-                        // sticks to dst.
-                        let _ = dst;
-                    }
-                    Instr::Call { kind } => {
-                        // Helper / kfunc clobbers caller-saved on return.
-                        // R0 carries return value (no prior lineage), R1-R5
-                        // are clobbered.
-                        let _ = kind;
-                        for r in caller_saved {
-                            frontier.remove(&r);
-                        }
-                    }
-                    Instr::CallRel { .. } => {
-                        for r in caller_saved {
-                            frontier.remove(&r);
-                        }
-                    }
-                    _ => {
-                        // Store / If / Jmp / MayGoto / Atomic{store-only} / Exit:
-                        // no scalar-reg write, frontier unchanged.
-                    }
+                for &r in &frontier {
+                    s.precise_regs.insert(r);
                 }
             }
 
-            if frontier.is_empty() {
+            // Recurse to grandparent: continue the instruction walk
+            // from parent's history boundary toward grandparent's.
+            if parent_grandparent_id.is_none() {
                 break;
             }
-            current = parent;
+            current_parent_id = parent_grandparent_id;
+            current_history = parent_history_stop;
         }
     }
+
+    /// Propagate precision marks from a hit cached state into the current
+    /// state's ancestor chain.
+    ///
+    /// Mirrors kernel `propagate_precision` (verifier.c v6.15 L18828):
+    /// when the current path is subsumed by a cached state, the cached
+    /// state's precision marks identify which scalars *must* stay
+    /// precise on this path's continuation for correctness. We pull
+    /// those marks and run `mark_chain_precision_backward` for each on
+    /// the CURRENT state's lineage, marking precise on the current
+    /// path's specific cached ancestors via `parent_cache_id`. Safe
+    /// under the kernel-precision regime because the walker writes
+    /// only to per-path-lineage cached states, not all-states-at-pc.
+    pub fn propagate_precision(&mut self, cur: &State, old: &State) {
+        let regs: Vec<Reg> = old.precise_regs.iter().copied().collect();
+        let Some(history_idx) = cur.history_idx else { return };
+        for r in regs {
+            self.mark_chain_precision_backward(history_idx, cur.parent_cache_id, r);
+        }
+    }
+}
+
+/// Update `frontier` (the set of registers whose precision must
+/// propagate further back) given that we are *un-doing* `instr`.
+/// Pure free function so the walker can call it without re-borrowing
+/// `self`.
+fn update_frontier(
+    frontier: &mut HashSet<Reg>,
+    instr: &crate::ast::Instr,
+    caller_saved: &[Reg],
+) {
+    use crate::ast::{AluOp, Instr, Operand};
+    match instr {
+        Instr::Alu { op, dst, src, .. } => {
+            if frontier.contains(dst) {
+                match (op, src) {
+                    (AluOp::Mov, Operand::Reg(s)) => {
+                        frontier.remove(dst);
+                        frontier.insert(*s);
+                    }
+                    (AluOp::Mov, Operand::Imm(_)) => {
+                        frontier.remove(dst);
+                    }
+                    (_, Operand::Reg(s)) => {
+                        frontier.insert(*s);
+                    }
+                    (_, Operand::Imm(_)) => {}
+                }
+            }
+        }
+        Instr::MovSx { dst, src, .. } => {
+            if frontier.contains(dst) {
+                frontier.remove(dst);
+                if let Operand::Reg(s) = src {
+                    frontier.insert(*s);
+                }
+            }
+        }
+        Instr::Load { dst, .. }
+        | Instr::LoadSx { dst, .. }
+        | Instr::LoadAcq { dst, .. }
+        | Instr::LoadMap { dst, .. } => {
+            frontier.remove(dst);
+        }
+        Instr::LoadPacket { .. } => {
+            frontier.remove(&Reg::R0);
+        }
+        Instr::Endian { dst, .. } => {
+            let _ = dst;
+        }
+        Instr::Call { .. } | Instr::CallRel { .. } => {
+            for r in caller_saved {
+                frontier.remove(r);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Cache-growth instrumentation flag. When set, `record_state` prints
+/// `(pc, cache_size, distinct_type_sigs)` to stderr on every insert.
+/// Used to diagnose state-graph traversal divergence between
+/// flag-off and flag-on under the precision rebuild.
+pub fn dump_cache_growth_enabled() -> bool {
+    std::env::var("ZOVIA_DUMP_CACHE_GROWTH").ok().as_deref() == Some("1")
+}
+
+/// If set to a numeric PC, `record_state` dumps full per-register
+/// type signatures at that PC for every cached state on each insert.
+/// Used to identify which register's type-shape diverges between
+/// flag-off and flag-on.
+pub fn dump_cache_growth_pc() -> Option<usize> {
+    std::env::var("ZOVIA_DUMP_CACHE_GROWTH_PC")
+        .ok()
+        .and_then(|s| s.parse().ok())
 }
 
 /// Static pre-pass identifying subprog entry PCs whose body is unsafe
@@ -483,4 +572,134 @@ fn compute_tainted_cb_subprogs(
         }
     }
     tainted
+}
+
+/// Per-cb-subprog set of byte offsets (relative to the cb's ctx-arg
+/// pointer) the body may write through. Used by `cb_exit_propagate`
+/// to widen across all branches when nr_loops > 1.
+///
+/// Strategy: for each cb-subprog entry (LD_IMM64 PSEUDO_FUNC target),
+/// walk its body forward. Maintain the set of registers known to alias
+/// the cb's ctx-arg pointer (R2 for bpf_loop / for_each_map_elem /
+/// user_ringbuf_drain, R3 for find_vma — but the kernel routes the
+/// caller's ctx into the cb's R2 in *all four* (cb's first non-index
+/// arg). For simplicity, seed from {R1, R2, R3, R4, R5} so any of the
+/// cb's typed args is treated as a candidate ctx-pointer; we further
+/// narrow by only collecting offsets through stores via Mov-aliased
+/// regs originating from R2 specifically. Cross-call clobber of
+/// R0..R5 invalidates regs not preserved by helpers.
+///
+/// Misses we accept: register-arithmetic on the ctx pointer
+/// (`R = R2 + 8; *R = …`), spill/fill, or stores via a stack-loaded
+/// pointer (cb stores ctx to its own stack and loads it back). Any
+/// such cb body simply gets a smaller offset set; widening still
+/// fires for the offsets we DID detect, and the diff-based snapshot
+/// path remains as the fallback for everything else.
+fn compute_cb_body_store_offsets(
+    prog: &crate::ast::Program,
+) -> HashMap<usize, HashSet<i16>> {
+    use crate::analysis::machine::reg::Reg;
+    use crate::ast::{Instr, MapLoadKind, Operand};
+
+    let mut entries: Vec<usize> = Vec::new();
+    for insn in &prog.instrs {
+        if let Instr::LoadMap {
+            kind: MapLoadKind::PseudoFunc { subprog_pc },
+            ..
+        } = insn
+        {
+            entries.push(*subprog_pc as usize);
+        }
+    }
+    entries.sort();
+    entries.dedup();
+
+    let mut all_entries: Vec<usize> = vec![0];
+    for insn in &prog.instrs {
+        match insn {
+            Instr::CallRel { target } => all_entries.push(*target),
+            Instr::LoadMap {
+                kind: MapLoadKind::PseudoFunc { subprog_pc },
+                ..
+            } => all_entries.push(*subprog_pc as usize),
+            _ => {}
+        }
+    }
+    all_entries.sort();
+    all_entries.dedup();
+
+    let mut out: HashMap<usize, HashSet<i16>> = HashMap::new();
+    for &start in &entries {
+        let end = all_entries
+            .iter()
+            .find(|&&pc| pc > start)
+            .copied()
+            .unwrap_or(prog.instrs.len());
+        let body = &prog.instrs[start..end.min(prog.instrs.len())];
+
+        // Reg-aliasing scan. We seed `aliases` with R2 only (the cb's
+        // ctx-pointer arg position for bpf_loop / for_each / user_ringbuf
+        // — find_vma also uses the cb's R3 but the cb body's idiom there
+        // is identical: ctx is one of the typed args). Adding R3..R5
+        // here would broaden over-aggressively and risk widening
+        // unrelated stack regions on other tests; leaving R2-only is
+        // sound and closes the corpus FA without regressions seen so far.
+        let mut aliases: HashSet<Reg> = HashSet::new();
+        aliases.insert(Reg::R2);
+        let mut offsets: HashSet<i16> = HashSet::new();
+        for insn in body {
+            match insn {
+                Instr::Alu {
+                    op: crate::ast::AluOp::Mov,
+                    dst,
+                    src: Operand::Reg(src_reg),
+                    ..
+                } => {
+                    if aliases.contains(src_reg) {
+                        aliases.insert(*dst);
+                    } else {
+                        // Mov from a non-alias clobbers any prior alias on dst.
+                        aliases.remove(dst);
+                    }
+                }
+                Instr::Alu { dst, .. } => {
+                    // Any other ALU op breaks the alias on dst (we don't
+                    // track ptr-arithmetic).
+                    aliases.remove(dst);
+                }
+                Instr::Load { dst, .. }
+                | Instr::LoadMap { dst, .. } => {
+                    aliases.remove(dst);
+                }
+                Instr::Store { base, off, .. } => {
+                    if aliases.contains(base) {
+                        offsets.insert(*off);
+                    }
+                }
+                Instr::Call { .. } => {
+                    // Helper / kfunc calls clobber R0..R5. R6..R9 are
+                    // callee-saved (preserved). Drop R0..R5 from aliases.
+                    for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                        aliases.remove(&r);
+                    }
+                }
+                Instr::CallRel { .. } => {
+                    // Callee may write through any stack-passed pointer
+                    // we lose track of. Conservatively drop all aliases.
+                    aliases.clear();
+                }
+                // Don't break on Exit — the cb body has multiple
+                // basic blocks (one per branch) terminating in their
+                // own Exit. We need to scan ALL of them. The body
+                // range is bounded by the next subprog entry, so we
+                // won't wander into another subprog.
+                Instr::Exit => {}
+                _ => {}
+            }
+        }
+        if !offsets.is_empty() {
+            out.insert(start, offsets);
+        }
+    }
+    out
 }

@@ -446,6 +446,12 @@ fn handle_loop_pruning(
         // Record hit BEFORE check_loop_convergence — eviction won't
         // touch the just-hit entry, but cleaner ordering.
         record_pruning_hit(env, pc, idx);
+        // Kernel-aligned propagate_precision (verifier.c v6.15 L18828):
+        // pull cached's precise-mark set into cur's parent-cache lineage
+        // so the path's continuation tracks the same precision contract.
+        if let Some(prev) = env.explored_states.get(&pc).and_then(|v| v.get(idx)).cloned() {
+            env.propagate_precision(state, &prev);
+        }
         // For convergence we still need the full prev_states list.
         let prev_states = env
             .explored_states
@@ -465,7 +471,21 @@ fn handle_loop_pruning(
             env.pruning_stats.loop_walks_pruned_via_convergence += 1;
             return true;
         }
-        // Subsumed but conditions not met (widening not effective or no exit path)
+        // Subsumed but convergence not yet provable (widening not
+        // effective on live regs OR exit path not yet explored). Apply
+        // widening against the cached state we just hit so the next
+        // iteration's cached entry covers a strictly wider scalar
+        // range than this one — eventually widening_was_effective
+        // fires and the loop converges. Without this, tight scalar
+        // loops where every iteration subsumes via `!precise → accept`
+        // (e.g. `verifier_bounds.c::crossing_64_bit_signed_boundary_2`)
+        // never converge: subsumption succeeds but widening only fires
+        // on misses, so the cached state never widens.
+        if let Some(prev_states) = env.explored_states.get(&pc)
+            && let Some(old) = prev_states.get(idx).cloned().as_ref()
+        {
+            apply_widening(state, old, live_regs, loop_bound);
+        }
         return false;
     }
 
@@ -535,6 +555,10 @@ fn handle_standard_pruning(
     }
     if let Some(idx) = hit_idx {
         record_pruning_hit(env, pc, idx);
+        // Kernel-aligned propagate_precision (per-path lineage walk).
+        if let Some(prev) = env.explored_states.get(&pc).and_then(|v| v.get(idx)).cloned() {
+            env.propagate_precision(state, &prev);
+        }
         true
     } else {
         record_pruning_misses(env, pc, &miss_idxs);
@@ -1105,14 +1129,23 @@ fn domain_subsumed_by(
     live_regs: &HashSet<Reg>,
     precise: &HashSet<Reg>,
 ) -> bool {
+    // Kernel `regsafe` rule (verifier.c v6.15 L18357 / L18387):
+    //   - precise → range_within (old ⊇ cur)
+    //   - !precise → accept (kernel doesn't compare imprecise scalars
+    //     across cur/old at all).
     for &r in live_regs {
+        if !precise.contains(&r) {
+            continue;
+        }
         let (old_min, old_max) = old.get_interval(r);
         let (cur_min, cur_max) = cur.get_interval(r);
-        if precise.contains(&r) {
-            if old_min != cur_min || old_max != cur_max {
-                return false;
+        if !(old_min <= cur_min && old_max >= cur_max) {
+            if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
+                eprintln!(
+                    "[domain_miss] reg={:?} precise old=[{},{}] cur=[{},{}]",
+                    r, old_min, old_max, cur_min, cur_max
+                );
             }
-        } else if !(old_min <= cur_min && old_max >= cur_max) {
             return false;
         }
     }
@@ -1148,6 +1181,9 @@ fn zone_subsumed_by(
                 continue;
             }
             if old_dbm.get(a, b) < cur_dbm.get(a, b) {
+                if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
+                    eprintln!("[domain_miss] anchor-anchor a={:?} b={:?}", a, b);
+                }
                 return false;
             }
         }
@@ -1174,9 +1210,15 @@ fn zone_subsumed_by(
     for &r in &live {
         for &a in &anchors {
             if old_dbm.get(r, a) < cur_dbm.get(r, a) {
+                if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
+                    eprintln!("[domain_miss] reg-anchor r={:?} a={:?}", r, a);
+                }
                 return false;
             }
             if old_dbm.get(a, r) < cur_dbm.get(a, r) {
+                if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
+                    eprintln!("[domain_miss] anchor-reg a={:?} r={:?}", a, r);
+                }
                 return false;
             }
         }
@@ -1345,14 +1387,14 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
 }
 
 fn tnum_subsumed_by(cur_state: &State, old_state: &State, live_regs: &HashSet<Reg>) -> bool {
+    // Kernel rule: precise → tnum-cover; !precise → accept.
     for &r in live_regs {
+        if !old_state.is_reg_precise(r) {
+            continue;
+        }
         let cur = cur_state.get_tnum(r);
         let old = old_state.get_tnum(r);
-        if old_state.is_reg_precise(r) {
-            if !tnum_covers(&cur, &old) {
-                return false;
-            }
-        } else if !tnum_covers(&cur, &old) {
+        if !tnum_covers(&cur, &old) {
             return false;
         }
     }

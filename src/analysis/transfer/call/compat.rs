@@ -233,6 +233,7 @@ pub fn is_nullable_arg_type(arg_type: ArgKind) -> bool {
         arg_type,
         ArgKind::PtrToCtxOrNull
             | ArgKind::PtrToMemOrNull
+            | ArgKind::PtrToUninitMemOrNull
             | ArgKind::PtrToStackOrNull
             | ArgKind::PtrToMapValueOrNull
     )
@@ -243,6 +244,7 @@ pub fn base_arg_type(arg_type: ArgKind) -> ArgKind {
     match arg_type {
         ArgKind::PtrToCtxOrNull => ArgKind::PtrToCtx,
         ArgKind::PtrToMemOrNull => ArgKind::PtrToMem,
+        ArgKind::PtrToUninitMemOrNull => ArgKind::PtrToUninitMem,
         ArgKind::PtrToStackOrNull => ArgKind::PtrToStack,
         ArgKind::PtrToMapValueOrNull => ArgKind::PtrToMapValue,
         other => other,

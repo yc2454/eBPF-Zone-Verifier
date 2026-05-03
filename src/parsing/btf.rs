@@ -42,6 +42,12 @@ pub enum SpecialFieldKind {
     RbRoot,
     RbNode,
     Refcount,
+    /// `struct bpf_res_spin_lock` — resilient queued spin lock added in
+    /// kernel v6.15. Distinct from `SpinLock` so callers of
+    /// `bpf_res_spin_lock` cannot match a plain `bpf_spin_lock` field
+    /// (kernel verifier.c L8305 emits "map '<m>' has no valid
+    /// bpf_res_spin_lock" when the requested record-flavor is missing).
+    ResSpinLock,
     // Future types...
 }
 
@@ -94,6 +100,7 @@ impl SpecialFieldKind {
     fn from_type_name(name: &str) -> Option<Self> {
         match name {
             "bpf_spin_lock" => Some(Self::SpinLock),
+            "bpf_res_spin_lock" => Some(Self::ResSpinLock),
             "bpf_timer" => Some(Self::Timer),
             "bpf_list_head" => Some(Self::ListHead),
             "bpf_list_node" => Some(Self::ListNode),
@@ -700,15 +707,19 @@ impl BtfContext {
                         let pname = self.get_string(pointee.name_off).unwrap_or("");
                         if is_ctx_struct_name(pname) {
                             GlobalFuncArg::PtrToCtx
+                        } else if pname == "bpf_dynptr" {
+                            GlobalFuncArg::PtrToDynptr
                         } else {
                             GlobalFuncArg::PtrToMem {
                                 mem_size: pointee.size_or_type,
+                                nonnull: false,
                             }
                         }
                     }
                     BTF_KIND_INT | BTF_KIND_ENUM | BTF_KIND_ENUM64 | BTF_KIND_FLOAT => {
                         GlobalFuncArg::PtrToMem {
                             mem_size: pointee.size_or_type,
+                            nonnull: false,
                         }
                     }
                     // `int (*arr)[10]` etc.: pointer to a fixed-size array.
@@ -731,9 +742,9 @@ impl BtfContext {
                                 elem_size.saturating_mul(m.offset)
                             })
                             .unwrap_or(0);
-                        GlobalFuncArg::PtrToMem { mem_size }
+                        GlobalFuncArg::PtrToMem { mem_size, nonnull: false }
                     }
-                    _ => GlobalFuncArg::PtrToMem { mem_size: 0 },
+                    _ => GlobalFuncArg::PtrToMem { mem_size: 0, nonnull: false },
                 }
             }
             _ => GlobalFuncArg::Scalar,
@@ -1049,7 +1060,11 @@ pub enum GlobalFuncArg {
     /// `PtrToAllocMemOrNull { mem_size }` and must null-check before
     /// dereferencing — this is what produces the kernel's
     /// "invalid mem access 'mem_or_null'" rejection inside the callee.
-    PtrToMem { mem_size: u32 },
+    /// `nonnull` is set when the arg carries the `__arg_nonnull` BTF
+    /// decl-tag; the kernel strips PTR_MAYBE_NULL from the callee
+    /// entry-state (btf.c:7831), so the body sees `PtrToAllocMem`
+    /// without needing a null-check.
+    PtrToMem { mem_size: u32, nonnull: bool },
     /// Pointer to a recognized BPF context struct (`__sk_buff`,
     /// `xdp_md`, `pt_regs`, ...). Caller must pass `PtrToCtx`; the
     /// callee receives the same. Distinct from `PtrToMem` because the
@@ -1075,6 +1090,15 @@ pub enum GlobalFuncArg {
         type_name: String,
         nullable: bool,
     },
+    /// Pointer to `struct bpf_dynptr`. Mirrors kernel
+    /// `ARG_PTR_TO_DYNPTR | MEM_RDONLY` (btf.c:7784) — caller must
+    /// pass a stack pointer to an initialized dynptr; callee body
+    /// consumes it via `bpf_dynptr_data`/`_slice`. Distinct from
+    /// `PtrToMem{16}` because (a) the slot is `DynptrSlot`, not raw
+    /// readable bytes, so the stack-readability check does not apply
+    /// and (b) the callee's R is preserved across the call boundary
+    /// rather than reseeded as `PtrToAllocMemOrNull`.
+    PtrToDynptr,
 }
 
 /// Refine a base `GlobalFuncArg` classification using `__arg_*` decl
@@ -1094,6 +1118,7 @@ fn refine_global_arg_with_tags(
     // Kernel encodes these via clang `btf_decl_tag("arg:<kind>")`.
     let trusted = tags.iter().any(|t| *t == "arg:trusted");
     let nullable = tags.iter().any(|t| *t == "arg:nullable");
+    let nonnull = tags.iter().any(|t| *t == "arg:nonnull");
     let ctx_tag = tags.iter().any(|t| *t == "arg:ctx");
     if ctx_tag {
         return GlobalFuncArg::PtrToCtx;
@@ -1107,6 +1132,11 @@ fn refine_global_arg_with_tags(
             type_name,
             nullable,
         };
+    }
+    if nonnull {
+        if let GlobalFuncArg::PtrToMem { mem_size, .. } = base {
+            return GlobalFuncArg::PtrToMem { mem_size, nonnull: true };
+        }
     }
     base
 }

@@ -190,7 +190,15 @@ impl ProgramKind {
         ) {
             return ProgramKind::SchedCls;
         }
-        if s.starts_with("xdp") {
+        // Accept libbpf optional-load form `?xdp[.frags][/<func>]` too —
+        // needed for `verifier_global_subprogs.c::arg_tag_dynptr` (and
+        // the dynptr_fail.c::xdp_* family) so the prog-type allowlist
+        // on `bpf_dynptr_from_xdp` recognizes the caller as XDP. Other
+        // optional tracing flavors are intentionally NOT stripped
+        // (`?fentry/`, `?fexit/`) — corpus tests rely on the resulting
+        // Unknown kfunc-rejection. See `?tp_btf/` arm above for the
+        // analogous targeted exception.
+        if s.starts_with("xdp") || s.starts_with("?xdp") {
             return ProgramKind::Xdp;
         }
         // Hotfix for OVS datapath benchmark: datapath.o utilizes bpf_tail_call

@@ -516,7 +516,10 @@ fn initialize_uninit_mem_args(
     if let Some(sig) = get_helper_proto(helper) {
         for pair in sig.mem_size_pairs {
             if let Some(ptr_arg_type) = sig.args.get(pair.ptr_reg.idx().saturating_sub(2))
-                && matches!(ptr_arg_type, ArgKind::PtrToUninitMem)
+                && matches!(
+                    ptr_arg_type,
+                    ArgKind::PtrToUninitMem | ArgKind::PtrToUninitMemOrNull
+                )
             {
                 if let RegType::PtrToStack { frame_level } = in_types.get(pair.ptr_reg) {
                     if let Some(off) = state.domain.get_distance_fixed(pair.ptr_reg, Reg::R10) {
@@ -796,6 +799,21 @@ fn transfer_callback_helper(
         _ => None,
     };
 
+    // Caller's ctx-arg base offset (relative to caller's R10). Captured
+    // before the move into cb_state below; needed to translate cb-body
+    // store offsets into caller-frame stack offsets for the widening
+    // propagation set.
+    let caller_ctx_base_off: Option<i64> = {
+        let caller_ctx_reg = match helper {
+            constants::BPF_LOOP
+            | constants::BPF_USER_RINGBUF_DRAIN
+            | constants::BPF_FOR_EACH_MAP_ELEM => Some(Reg::R3),
+            constants::BPF_FIND_VMA => Some(Reg::R4),
+            _ => None,
+        };
+        caller_ctx_reg.and_then(|r| state.domain.get_distance_fixed(r, Reg::R10))
+    };
+
     let mut cb_state = state;
     let caller_level_idx = cb_state.current_frame_level();
     let caller_stack_snapshot =
@@ -806,6 +824,27 @@ fn transfer_callback_helper(
         caller_level_idx.index(),
         cb_should_widen,
     );
+    // Pre-computed cb-body store offsets (relative to the cb's ctx-arg
+    // pointer). Translate to caller-frame offsets by adding the
+    // caller's ctx-arg base offset (distance from caller's R10), then
+    // stash on the cb frame so cb_exit_propagate can invalidate them
+    // on widening.
+    if let (Some(offsets), Some(base)) = (
+        env.cb_body_store_offsets.get(&cb_entry),
+        caller_ctx_base_off,
+    ) {
+        let translated: Vec<i16> = offsets
+            .iter()
+            .filter_map(|&cb_off| {
+                let total = base.checked_add(cb_off as i64)?;
+                i16::try_from(total).ok()
+            })
+            .collect();
+        cb_state
+            .frames
+            .current_mut()
+            .set_cb_writeable_caller_offsets(translated);
+    }
     update_call_rel_types(&mut cb_state);
     cb_state.domain.clear_packet_size_bounds();
 
@@ -932,6 +971,22 @@ pub(crate) fn transfer_call_rel(
         .cloned()
         .filter(|n| env.ctx.btf.is_global_func(n));
     if let Some(name) = callee_global.as_ref() {
+        // Static call-graph gate: kernel rejects a global subprog whose
+        // body transitively reaches a MIGHT_SLEEP helper/kfunc when the
+        // call site is inside an irq- or preempt-disabled region. Path-
+        // independent (closes irq_sleepable_*_subprog* and
+        // preempt_global_sleepable_subprog_indirect FAs that escape the
+        // per-call MIGHT_SLEEP gate when the dataflow-pruned path
+        // dead-codes the inner sleepable call).
+        if env.ctx.may_sleep_subprogs.contains(&target)
+            && (state.in_irq_disabled() || state.in_preempt_disabled())
+        {
+            env.fail(VerificationError::GlobalFuncMaySleepInNonSleepable {
+                pc,
+                func: name.clone(),
+            });
+            return vec![];
+        }
         if env.ctx.btf.func_returns_void(name) {
             env.fail(VerificationError::GlobalFuncMalformed {
                 pc,
@@ -983,7 +1038,7 @@ pub(crate) fn transfer_call_rel(
                 // — the kernel emits "invalid read from stack" when
                 // the callee would later access bytes past the
                 // caller's allocation.
-                if let crate::parsing::btf::GlobalFuncArg::PtrToMem { mem_size } = arg
+                if let crate::parsing::btf::GlobalFuncArg::PtrToMem { mem_size, .. } = arg
                     && let RegType::PtrToStack { .. } = actual
                     && let Some(off) = state.domain.get_distance_fixed(*reg, Reg::R10)
                 {
@@ -1018,7 +1073,7 @@ pub(crate) fn transfer_call_rel(
                 // "kptr cannot be accessed indirectly by helper" extends
                 // to global subprog calls: a `PtrToMapValue` arg whose
                 // declared mem region overlaps a kptr field is rejected.
-                if let crate::parsing::btf::GlobalFuncArg::PtrToMem { mem_size } = arg
+                if let crate::parsing::btf::GlobalFuncArg::PtrToMem { mem_size, .. } = arg
                     && let RegType::PtrToMapValue {
                         offset: map_off,
                         map_idx,
@@ -1064,17 +1119,24 @@ pub(crate) fn transfer_call_rel(
                     state.types.set(*reg, RegType::ScalarValue);
                     state.domain.forget(*reg);
                 }
-                crate::parsing::btf::GlobalFuncArg::PtrToMem { mem_size } => {
+                crate::parsing::btf::GlobalFuncArg::PtrToMem { mem_size, nonnull } => {
                     let id = crate::analysis::machine::reg_types::new_ptr_id();
-                    state.types.set(
-                        *reg,
+                    let ty = if *nonnull {
+                        RegType::PtrToAllocMem {
+                            id,
+                            mem_size: *mem_size as u64,
+                            ref_id: None,
+                            dynptr_id: None,
+                        }
+                    } else {
                         RegType::PtrToAllocMemOrNull {
                             id,
                             mem_size: *mem_size as u64,
                             ref_id: None,
                             dynptr_id: None,
-                        },
-                    );
+                        }
+                    };
+                    state.types.set(*reg, ty);
                     state.domain.forget(*reg);
                 }
                 crate::parsing::btf::GlobalFuncArg::PtrToCtx => {
@@ -1090,6 +1152,13 @@ pub(crate) fn transfer_call_rel(
                 }
                 crate::parsing::btf::GlobalFuncArg::PtrToFwd { .. } => {
                     // Already rejected above; keep arm exhaustive.
+                }
+                crate::parsing::btf::GlobalFuncArg::PtrToDynptr => {
+                    // Preserve caller's stack pointer + dynptr-slot
+                    // state so the callee's `bpf_dynptr_data` / `_slice`
+                    // calls can resolve the slot. Kernel
+                    // ARG_PTR_TO_DYNPTR | MEM_RDONLY (btf.c:7784) — no
+                    // override.
                 }
                 crate::parsing::btf::GlobalFuncArg::PtrToBtfIdTrusted {
                     type_name,
@@ -1207,6 +1276,7 @@ fn caller_arg_compatible<F: Fn() -> bool>(
             RegType::ScalarValue => *nullable && scalar_is_zero(),
             _ => false,
         },
+        GlobalFuncArg::PtrToDynptr => matches!(actual, RegType::PtrToStack { .. }),
         GlobalFuncArg::PermissivePtr => match actual {
             RegType::PtrToCtx
             | RegType::PtrToStack { .. }
@@ -1325,6 +1395,50 @@ pub(crate) fn apply_pre_call_lock_flags(
             reason: "sleepable call inside bpf_local_irq_save-ed region".into(),
         });
         return false;
+    }
+
+    // bpf_res_spin_unlock{,_irqrestore} (kernel `process_spin_lock`,
+    // is_lock=false, verifier.c v6.15 L8358-8379). Validates LIFO match
+    // on `acquired_res_locks`; emits the kernel rejection family
+    // ("without taking a lock" / "different lock" / "out of order" /
+    // wrong-class).
+    if proto.flags.contains(CallFlags::RES_SPIN_LOCK_RELEASE) {
+        let arg = state.types.get(Reg::R1);
+        let (reg_id, ptr_id) = match arg {
+            RegType::PtrToMapValue { id, map_idx, .. } => (id, map_idx as u32),
+            RegType::PtrToOwnedKptr { ref_id, .. } => (ref_id.unwrap_or(0), 0u32),
+            _ => {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+                return false;
+            }
+        };
+        // Distinguish the irqsave flavor from the plain one. We piggy-
+        // back on the IRQ_RESTORE side-effect class — this kfunc has
+        // `IrqRestoreFromArg { kfunc_class: Lock }` only when it's the
+        // irqrestore variant; the plain `_unlock` doesn't.
+        let is_irq = proto.side_effects.iter().any(|e| {
+            matches!(
+                e,
+                super::signatures::SideEffect::IrqRestoreFromArg {
+                    kfunc_class: crate::analysis::machine::stack_state::IrqKfuncClass::Lock,
+                    ..
+                }
+            )
+        });
+        match state.res_lock_release(reg_id, ptr_id, is_irq) {
+            Ok(()) => {}
+            Err(crate::analysis::machine::state::ResLockReleaseError::Empty) => {
+                env.fail(VerificationError::LockNotHeld { pc });
+                return false;
+            }
+            Err(_) => {
+                // NotInStack / OutOfOrder / WrongClass — single error
+                // variant; specific kernel message string is lost but
+                // the rejection (and per-test classification) matches.
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+                return false;
+            }
+        }
     }
 
     if proto.flags.contains(CallFlags::PREEMPT_DISABLE) {

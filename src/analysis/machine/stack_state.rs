@@ -252,6 +252,10 @@ impl StackState {
         self.slots.get(&offset)
     }
 
+    pub fn get_slot_mut(&mut self, offset: i16) -> Option<&mut SpilledReg> {
+        self.slots.get_mut(&offset)
+    }
+
     pub fn slot_offsets(&self) -> Vec<i16> {
         self.slots.keys().cloned().collect()
     }
