@@ -81,9 +81,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/arena_htab.c",
       "progs": {
         "arena_htab_llvm": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Caller passes invalid args into func 'htab_update_elem' (arg #1) at pc 85"
         }
       }
     },
@@ -95,14 +95,12 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/arena_list.c",
       "progs": {
         "arena_list_add": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "arena_list_del": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -110,9 +108,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/arena_spin_lock.c",
       "progs": {
         "prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -138,9 +135,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/atomic_bounds.c",
       "progs": {
         "sub": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -181,14 +177,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/bad_struct_ops.c",
       "progs": {
         "test_1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_ACCEPT",
+          "upstream": "REJECT",
+          "note": "soundness!"
         },
         "test_2": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_ACCEPT",
+          "upstream": "REJECT",
+          "note": "soundness!"
         }
       }
     },
@@ -256,14 +252,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/bind_perm.c",
       "progs": {
         "bind_v4_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe ctx access at pc 1: offset 64, size 8"
         },
         "bind_v6_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe ctx access at pc 1: offset 64, size 8"
         }
       }
     },
@@ -296,14 +292,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/bloom_filter_map.c",
       "progs": {
         "check_bloom": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "pc 13: R3 !read_ok"
         },
         "inner_map": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "pc 25: R3 !read_ok"
         }
       }
     },
@@ -590,9 +586,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/bpf_iter_setsockopt.c",
       "progs": {
         "change_tcp_cc": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe generic load at pc 6: base R0+16 (type: ScalarValue"
         }
       }
     },
@@ -600,9 +596,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/bpf_iter_setsockopt_unix.c",
       "progs": {
         "change_sndbuf": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe generic load at pc 2: base R6+776 (type: ScalarValue"
         }
       }
     },
@@ -900,9 +896,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/bprm_opts.c",
       "progs": {
         "secure_exec": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -1353,9 +1348,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/cgroup_ancestor.c",
       "progs": {
         "log_cgroup_id": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 5: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         }
       }
     },
@@ -1437,14 +1432,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/cgroup_iter.c",
       "progs": {
         "cgroup_id": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN",
+          "note": "not in ELF: function 'cgroup_id' not found (looked in 'license' and 28 other sections"
         },
         "cgroup_id_printer": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe generic load at pc 2: base R1+0 (type: ScalarValue"
         }
       }
     },
@@ -1473,9 +1468,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/cgroup_skb_direct_packet_access.c",
       "progs": {
         "direct_packet_access": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -1498,9 +1492,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/cgroup_storage.c",
       "progs": {
         "bpf_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -1917,14 +1910,12 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/connect_ping.c",
       "progs": {
         "connect_v4_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "connect_v6_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -1977,9 +1968,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/core_kern_overflow.c",
       "progs": {
         "core_relo_proto": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -2233,9 +2223,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/decap_sanity.c",
       "progs": {
         "decap_sanity": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe generic load at pc 28: base R7+128 (type: ScalarValue"
         }
       }
     },
@@ -3163,14 +3153,12 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/fexit_sleep.c",
       "progs": {
         "nanosleep_fentry": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "nanosleep_fexit": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -3218,9 +3206,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/fib_lookup.c",
       "progs": {
         "fib_lookup": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -3454,14 +3441,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/get_branch_snapshot.c",
       "progs": {
         "gbs_in_range": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN",
+          "note": "not in ELF: function 'gbs_in_range' not found (looked in 'license' and 28 other sections"
         },
         "test1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "ERROR",
+          "upstream": "ACCEPT",
+          "note": ": verifier timeout"
         }
       }
     },
@@ -3646,9 +3633,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/htab_update.c",
       "progs": {
         "lookup_elem_raw": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -3679,9 +3665,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/inner_array_lookup.c",
       "progs": {
         "handle__sys_enter": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -3689,9 +3674,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/ip_check_defrag.c",
       "progs": {
         "defrag": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -4297,9 +4281,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/jit_probe_mem.c",
       "progs": {
         "test_jit_probe_mem": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         }
       }
     },
@@ -4452,14 +4436,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/kfunc_module_order.c",
       "progs": {
         "call_kfunc_xy": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 0: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         },
         "call_kfunc_yx": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 0: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         }
       }
     },
@@ -4614,9 +4598,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/kptr_xchg_inline.c",
       "progs": {
         "kptr_xchg_inline": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Invalid argument type at pc 3: register: r1"
         }
       }
     },
@@ -4913,9 +4897,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/load_bytes_relative.c",
       "progs": {
         "load_bytes_relative": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -5101,14 +5084,13 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/lru_bug.c",
       "progs": {
         "nanosleep": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Invalid argument type at pc 27: register: r0"
         },
         "printk": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -5631,9 +5613,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/mmap_inner_array.c",
       "progs": {
         "add_to_list_in_inner_array": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe map store at pc 33: map index 0, size 8"
         }
       }
     },
@@ -5924,9 +5906,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/perf_event_stackmap.c",
       "progs": {
         "oncpu": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -6009,14 +5990,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/preempted_bpf_ma_op.c",
       "progs": {
         "BPF_PROG2": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN",
+          "note": "not in ELF: function 'BPF_PROG2' not found (looked in 'fentry/bpf_fentry_test4' and 36 other sections"
         },
         "del_array": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN",
+          "note": "not in ELF: function 'del_array' not found (looked in 'license' and 36 other sections"
         }
       }
     },
@@ -6024,9 +6005,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/prepare.c",
       "progs": {
         "program": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -6194,9 +6174,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/raw_tp_null.c",
       "progs": {
         "test_raw_tp_null": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -6497,9 +6476,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/recursion.c",
       "progs": {
         "on_delete": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -6787,14 +6765,13 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/sk_storage_omem_uncharge.c",
       "progs": {
         "bpf_local_storage_destroy": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 10: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         },
         "inet6_sock_destruct": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -6802,9 +6779,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/skb_load_bytes.c",
       "progs": {
         "skb_process": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -6812,9 +6788,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/skb_pkt_end.c",
       "progs": {
         "main_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -6911,14 +6886,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/sock_iter_batch.c",
       "progs": {
         "iter_tcp_soreuse": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 6: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         },
         "iter_udp_soreuse": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 6: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         }
       }
     },
@@ -6976,14 +6951,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/sockopt_inherit.c",
       "progs": {
         "_getsockopt": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Invalid argument type at pc 23: register: r2"
         },
         "_setsockopt": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Invalid argument type at pc 23: register: r2"
         }
       }
     },
@@ -7011,9 +6986,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/sockopt_qos_to_cc.c",
       "progs": {
         "sockopt_qos_to_cc": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe generic load at pc 31: base R6+0 (type: ScalarValue"
         }
       }
     },
@@ -7021,14 +6996,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/sockopt_sk.c",
       "progs": {
         "_getsockopt": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe generic load at pc 5: base R1+4 (type: ScalarValue"
         },
         "_setsockopt": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe generic load at pc 5: base R1+4 (type: ScalarValue"
         }
       }
     },
@@ -7036,9 +7011,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/stacktrace_map_skip.c",
       "progs": {
         "oncpu": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -7181,9 +7155,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/struct_ops_maybe_null.c",
       "progs": {
         "test_maybe_null": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -7230,9 +7203,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/struct_ops_multi_pages.c",
       "progs": {
         "BPF_PROG": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN",
+          "note": "not in ELF: function 'BPF_PROG' not found (looked in 'struct_ops/tramp_' and 66 other sections"
         }
       }
     },
@@ -7302,9 +7275,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/struct_ops_refcounted.c",
       "progs": {
         "refcounted": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Invalid argument type at pc 4: register: r1"
         }
       }
     },
@@ -8129,9 +8102,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/tcp_rtt.c",
       "progs": {
         "_sockops": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe ctx access at pc 1: offset 184, size 8"
         }
       }
     },
@@ -8139,9 +8112,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_access_variable_array.c",
       "progs": {
         "fentry_fentry": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -8262,14 +8234,12 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_autoattach.c",
       "progs": {
         "prog1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "prog2": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -8389,14 +8359,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_bpf_nf.c",
       "progs": {
         "nf_skb_ct_test": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 16: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         },
         "nf_xdp_ct_test": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 16: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         }
       }
     },
@@ -8456,9 +8426,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_btf_map_in_map.c",
       "progs": {
         "handle__sys_enter": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -8496,9 +8465,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_btf_skc_cls_ingress.c",
       "progs": {
         "cls_ingress": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe socket access at pc 71: offset 72, size 4"
         }
       }
     },
@@ -8506,14 +8475,12 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_build_id.c",
       "progs": {
         "uprobe_nofault": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "uprobe_sleepable": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -8540,14 +8507,12 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_cgroup_link.c",
       "progs": {
         "egress": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "egress_alt": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -8687,9 +8652,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_core_read_macros.c",
       "progs": {
         "handler": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -8882,9 +8846,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_core_retro.c",
       "progs": {
         "handle_sys_enter": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -8953,9 +8916,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_deny_namespace.c",
       "progs": {
         "test_userns_create": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -8963,9 +8925,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_enable_stats.c",
       "progs": {
         "test_enable_stats": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -8973,9 +8934,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_endian.c",
       "progs": {
         "sys_enter": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -9062,9 +9022,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_global_data.c",
       "progs": {
         "load_static_data": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -9234,14 +9193,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_global_func_args.c",
       "progs": {
         "save_value": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN",
+          "note": "not in ELF: function 'save_value' not found (looked in '.maps' and 30 other sections"
         },
         "test_cls": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe memory store at pc 107: base R1, offset 0, size 8"
         }
       }
     },
@@ -9314,9 +9273,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_hash_large_key.c",
       "progs": {
         "bpf_hash_large_key_test": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Invalid argument type at pc 18: register: r2"
         }
       }
     },
@@ -9366,9 +9325,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_kernel_flag.c",
       "progs": {
         "bpf": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -9413,9 +9371,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_ksyms.c",
       "progs": {
         "handler": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -9423,9 +9380,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_ksyms_btf.c",
       "progs": {
         "handler": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Invalid argument type at pc 15: register: r1"
         }
       }
     },
@@ -9458,14 +9415,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_ksyms_module.c",
       "progs": {
         "load": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 6: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         },
         "load_256": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 1: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         }
       }
     },
@@ -9556,14 +9513,12 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_legacy_printk.c",
       "progs": {
         "handle_legacy": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "handle_modern": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -9571,9 +9526,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_libbpf_get_fd_by_id_opts.c",
       "progs": {
         "check_access": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -9581,14 +9535,12 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_link_pinning.c",
       "progs": {
         "raw_tp_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "tp_btf_prog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -9645,9 +9597,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_lookup_and_delete.c",
       "progs": {
         "bpf_lookup_and_delete_test": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Invalid argument type at pc 13: register: r2"
         }
       }
     },
@@ -9655,9 +9607,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_lookup_key.c",
       "progs": {
         "bpf": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -9665,14 +9616,12 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_lwt_ip_encap.c",
       "progs": {
         "bpf_lwt_encap_gre": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "bpf_lwt_encap_gre6": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -9705,9 +9654,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_lwt_reroute.c",
       "progs": {
         "test_lwt_reroute": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -9740,9 +9688,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_map_in_map.c",
       "progs": {
         "xdp_mimtest0": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -9760,9 +9707,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_map_init.c",
       "progs": {
         "sysenter_getpgid": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Invalid argument type at pc 13: register: r2"
         }
       }
     },
@@ -9770,9 +9717,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_map_lock.c",
       "progs": {
         "bpf_map_lock_test": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -9780,14 +9726,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_map_lookup_percpu_elem.c",
       "progs": {
         "read_percpu_elem_callback": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN",
+          "note": "not in ELF: function 'read_percpu_elem_callback' not found (looked in '.maps' and 30 other sections"
         },
         "sysenter_getuid": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe generic load at pc 66: base R0+0 (type: ScalarValue"
         }
       }
     },
@@ -9833,14 +9779,13 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_migrate_reuseport.c",
       "progs": {
         "drop_ack": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "migrate_reuseport": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe generic load at pc 4: base R1+72 (type: ScalarValue"
         }
       }
     },
@@ -9858,9 +9803,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_mmap.c",
       "progs": {
         "test_mmap": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -9921,9 +9865,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_netfilter_link_attach.c",
       "progs": {
         "nf_link_attach_test": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -9988,14 +9931,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_parse_tcp_hdr_opt.c",
       "progs": {
         "parse_hdr_opt": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN",
+          "note": "not in ELF: function 'parse_hdr_opt' not found (looked in 'license' and 28 other sections"
         },
         "xdp_ingress_v6": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "ERROR",
+          "upstream": "ACCEPT",
+          "note": ": verifier timeout"
         }
       }
     },
@@ -10018,14 +9961,12 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_pe_preserve_elems.c",
       "progs": {
         "read_array_1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "read_array_2": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -10033,9 +9974,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_perf_branches.c",
       "progs": {
         "perf_branches": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -10043,9 +9983,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_perf_buffer.c",
       "progs": {
         "handle_sys_enter": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -10053,9 +9992,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_perf_link.c",
       "progs": {
         "handler": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -10063,9 +10001,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_perf_skip.c",
       "progs": {
         "handler": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -10081,9 +10018,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_pkt_access.c",
       "progs": {
         "test_pkt_access": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -10091,9 +10027,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_pkt_md_access.c",
       "progs": {
         "test_pkt_md_access": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe ctx access at pc 12: offset 16, size 2"
         }
       }
     },
@@ -10101,9 +10037,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_probe_read_user_str.c",
       "progs": {
         "on_write": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -10111,14 +10046,13 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_probe_user.c",
       "progs": {
         "handle_sys_connect": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "handle_sys_socketcall": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN",
+          "note": "not in ELF: function 'handle_sys_socketcall' not found (looked in 'ksyscall/socketcall' and 27 other sections"
         }
       }
     },
@@ -10126,14 +10060,13 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_prog_array_init.c",
       "progs": {
         "entry": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Invalid argument type at pc 11: register: r0"
         },
         "tailcall_1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -10141,14 +10074,12 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_ptr_untrusted.c",
       "progs": {
         "lsm_run": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "raw_tp_run": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -10188,9 +10119,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_ringbuf.c",
       "progs": {
         "test_ringbuf": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Invalid argument type at pc 25: register: r1"
         }
       }
     },
@@ -10208,9 +10139,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_ringbuf_multi.c",
       "progs": {
         "test_ringbuf": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Invalid argument type at pc 12: register: r2"
         }
       }
     },
@@ -10308,9 +10239,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_sk_assign.c",
       "progs": {
         "bpf_sk_assign_test": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe socket access at pc 93: offset 72, size 4"
         }
       }
     },
@@ -10528,9 +10459,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_skb_ctx.c",
       "progs": {
         "process": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe ctx access at pc 40: offset 184, size 8"
         }
       }
     },
@@ -10538,9 +10469,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_skb_helpers.c",
       "progs": {
         "test_skb_helpers": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -10548,9 +10478,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_skc_to_unix_sock.c",
       "progs": {
         "unix_listen": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe generic load at pc 11: base R0+776 (type: ScalarValue"
         }
       }
     },
@@ -10558,9 +10488,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_skeleton.c",
       "progs": {
         "handler": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Invalid argument type at pc 106: register: r2"
         }
       }
     },
@@ -10863,9 +10793,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_stack_var_off.c",
       "progs": {
         "probe": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -10873,9 +10802,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_stacktrace_build_id.c",
       "progs": {
         "oncpu": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -10883,9 +10811,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_stacktrace_map.c",
       "progs": {
         "oncpu": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -10966,9 +10893,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_subskeleton.c",
       "progs": {
         "handler1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 3: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         }
       }
     },
@@ -11025,9 +10952,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_task_pt_regs.c",
       "progs": {
         "handle_uprobe": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -11035,14 +10961,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_task_under_cgroup.c",
       "progs": {
         "lsm_run": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Kfunc btf_id 253682351 not allowed for program Lsm at pc 11"
         },
         "tp_btf_run": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 26: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         }
       }
     },
@@ -11050,14 +10976,12 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_tc_bpf.c",
       "progs": {
         "cls": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "pkt_ptr": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -11065,9 +10989,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_tc_change_tail.c",
       "progs": {
         "change_tail": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -11335,9 +11258,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_tcp_custom_syncookie.c",
       "progs": {
         "tcp_custom_syncookie": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe socket access at pc 218: offset 72, size 4"
         }
       }
     },
@@ -11345,14 +11268,13 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_tcp_estats.c",
       "progs": {
         "_dummy_tracepoint": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "tcp_estats_ev_init": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN",
+          "note": "not in ELF: function 'tcp_estats_ev_init' not found (looked in '.maps' and 28 other sections"
         }
       }
     },
@@ -11360,14 +11282,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_tcp_hdr_options.c",
       "progs": {
         "estab": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe ctx access at pc 11: offset 84, size 4"
         },
         "skops_want_cookie": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN",
+          "note": "not in ELF: function 'skops_want_cookie' not found (looked in '.maps' and 31 other sections"
         }
       }
     },
@@ -11395,9 +11317,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_time_tai.c",
       "progs": {
         "time_tai": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -11419,9 +11340,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_trace_ext.c",
       "progs": {
         "test_pkt_md_access_new": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -11631,14 +11551,12 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_unpriv_bpf_disabled.c",
       "progs": {
         "handle_perf_event": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "sys_nanosleep_enter": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -11801,9 +11719,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_verify_pkcs7_sig.c",
       "progs": {
         "bpf": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Invalid argument type at pc 38: register: r2"
         }
       }
     },
@@ -11836,14 +11754,13 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_xdp.c",
       "progs": {
         "_xdp_tx_iptunnel": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "count_tx": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN",
+          "note": "not in ELF: function 'count_tx' not found (looked in '.maps' and 28 other sections"
         }
       }
     },
@@ -11880,14 +11797,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_xdp_bpf2bpf.c",
       "progs": {
         "trace_on_entry": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsafe generic load at pc 2: base R1+0 (type: ScalarValue"
         },
         "trace_on_exit": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Invalid pointer arithmetic at pc 1"
         }
       }
     },
@@ -11955,14 +11872,12 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_xdp_link.c",
       "progs": {
         "tc_handler": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "xdp_handler": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -12160,9 +12075,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/timer_crash.c",
       "progs": {
         "sys_enter": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -12203,14 +12117,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/timer_mim.c",
       "progs": {
         "test1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Invalid BTF type"
         },
         "timer_cb2": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN",
+          "note": "not in ELF: function 'timer_cb2' not found (looked in '.maps' and 31 other sections"
         }
       }
     },
@@ -12258,9 +12172,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/trace_printk.c",
       "progs": {
         "sys_enter": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -12268,9 +12181,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/trace_vprintk.c",
       "progs": {
         "sys_enter": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -12291,9 +12203,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/tracing_struct.c",
       "progs": {
         "BPF_PROG2": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN",
+          "note": "not in ELF: function 'BPF_PROG2' not found (looked in 'fentry/bpf_testmod_test_struct_arg_6' and 47 other sections"
         }
       }
     },
@@ -12426,14 +12338,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/udp_limit.c",
       "progs": {
         "sock": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Invalid argument type at pc 8: register: r2"
         },
         "sock_release": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Invalid argument type at pc 8: register: r2"
         }
       }
     },
@@ -12691,9 +12603,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/uprobe_syscall.c",
       "progs": {
         "uretprobe": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -19127,14 +19038,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/vrf_socket_lookup.c",
       "progs": {
         "tc_socket_lookup": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Invalid argument type at pc 48: register: r1"
         },
         "xdp_socket_lookup": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Invalid argument type at pc 48: register: r1"
         }
       }
     },
@@ -19268,14 +19179,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/xdp_flowtable.c",
       "progs": {
         "xdp_flowtable_do_lookup": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 134: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         },
         "xdp_flowtable_offload_check_iphdr": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN",
+          "note": "not in ELF: function 'xdp_flowtable_offload_check_iphdr' not found (looked in '.maps' and 27 other sections"
         }
       }
     },
@@ -19298,14 +19209,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/xdp_metadata.c",
       "progs": {
         "bpf_xdp_metadata_rx_timestamp": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN",
+          "note": "not in ELF: function 'bpf_xdp_metadata_rx_timestamp' not found (looked in '.maps' and 27 other sections"
         },
         "rx": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 45: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         }
       }
     },
@@ -19448,14 +19359,13 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/xdpwall.c",
       "progs": {
         "edgewall": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "tcphdr_only_contains_flag": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN",
+          "note": "not in ELF: function 'tcphdr_only_contains_flag' not found (looked in '.maps' and 28 other sections"
         }
       }
     },
@@ -19463,14 +19373,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/xfrm_info.c",
       "progs": {
         "get_xfrm_info": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         },
         "set_xfrm_info": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 8: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         }
       }
     },

@@ -294,7 +294,7 @@
     },
     "test_helper_restricted.c": {
       "expect": "reject",
-      "note": "Negative helper-restriction coverage; kernel prog_tests/helper_restricted.c iterates each prog with autoload-one and ASSERT_ERR(load_should_fail) — every prog is expected to fail load due to helper-context restrictions."
+      "note": "Negative helper-restriction coverage; kernel prog_tests/helper_restricted.c iterates each prog with autoload-one and ASSERT_ERR(load_should_fail) \u2014 every prog is expected to fail load due to helper-context restrictions."
     },
     "test_bpf_cookie.c": {
       "expect": "accept",
@@ -374,7 +374,7 @@
     },
     "cb_refs.c": {
       "expect": "reject",
-      "note": "Negative callback-refs coverage; kernel prog_tests/cb_refs.c iterates each prog with autoload-one and ASSERT_ERR(cb_refs__load) — every prog is expected to fail load due to unreleased refs across cb boundaries."
+      "note": "Negative callback-refs coverage; kernel prog_tests/cb_refs.c iterates each prog with autoload-one and ASSERT_ERR(cb_refs__load) \u2014 every prog is expected to fail load due to unreleased refs across cb boundaries."
     },
     "cgroup_hierarchical_stats.c": {
       "expect": "accept",
@@ -526,7 +526,519 @@
     },
     "test_log_fixup.c": {
       "expect": "reject",
-      "note": "Negative log-fixup coverage; prog_tests/log_fixup.c repeatedly asserts ASSERT_ERR(test_log_fixup__load, \"load_fail\") — every prog is expected to fail load with specific log messages."
+      "note": "Negative log-fixup coverage; prog_tests/log_fixup.c repeatedly asserts ASSERT_ERR(test_log_fixup__load, \"load_fail\") \u2014 every prog is expected to fail load with specific log messages."
+    },
+    "arena_htab.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/arena_htab.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "arena_list.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/arena_list.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "arena_spin_lock.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/arena_spin_lock.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "atomic_bounds.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/atomic_bounds.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "bind_perm.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/bind_perm.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "bloom_filter_map.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/bloom_filter_map.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "bpf_iter_setsockopt.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/bpf_iter_setsockopt.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "bpf_iter_setsockopt_unix.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/bpf_iter_setsockopt_unix.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "bprm_opts.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/test_bprm_opts.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "cgroup_ancestor.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/cgroup_ancestor.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "cgroup_iter.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/cgroup_iter.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "cgroup_skb_direct_packet_access.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/cgroup_skb_direct_packet_access.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "cgroup_storage.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/cgroup_storage.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "connect_ping.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/connect_ping.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "decap_sanity.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/decap_sanity.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "fib_lookup.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/fib_lookup.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "get_branch_snapshot.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/get_branch_snapshot.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "htab_update.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/htab_update.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "inner_array_lookup.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/inner_array_lookup.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "ip_check_defrag.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/ip_check_defrag.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "jit_probe_mem.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/jit_probe_mem.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "kfunc_module_order.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/kfunc_module_order.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "kptr_xchg_inline.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/kptr_xchg_inline.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "lru_bug.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/lru_bug.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "mmap_inner_array.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/test_mmap_inner_array.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "perf_event_stackmap.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/perf_event_stackmap.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "preempted_bpf_ma_op.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/preempted_bpf_ma_op.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "prepare.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/prepare.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "raw_tp_null.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/raw_tp_null.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "recursion.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/recursion.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "sk_storage_omem_uncharge.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/sk_storage_omem_uncharge.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "skb_load_bytes.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/skb_load_bytes.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "skb_pkt_end.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/test_skb_pkt_end.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "sock_iter_batch.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/sock_iter_batch.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "sockopt_inherit.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/sockopt_inherit.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "sockopt_qos_to_cc.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/sockopt_qos_to_cc.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "sockopt_sk.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/sockopt_sk.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "stacktrace_map_skip.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/stacktrace_map_skip.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "struct_ops_maybe_null.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/test_struct_ops_maybe_null.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "struct_ops_multi_pages.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/test_struct_ops_multi_pages.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "tcp_rtt.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/tcp_rtt.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_access_variable_array.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/access_variable_array.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_autoattach.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/autoattach.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_bpf_nf.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/bpf_nf.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_btf_map_in_map.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/btf_map_in_map.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_btf_skc_cls_ingress.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/btf_skc_cls_ingress.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_build_id.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/build_id.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_cgroup_link.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/cgroup_link.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_core_read_macros.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/core_read_macros.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_core_retro.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/core_retro.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_deny_namespace.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/deny_namespace.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_enable_stats.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/enable_stats.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_endian.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/endian.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_hash_large_key.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/hash_large_key.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_kernel_flag.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/kernel_flag.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_ksyms.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/ksyms.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_ksyms_btf.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/ksyms_btf.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_ksyms_module.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/ksyms_module.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_legacy_printk.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/legacy_printk.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_libbpf_get_fd_by_id_opts.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/libbpf_get_fd_by_id_opts.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_link_pinning.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/link_pinning.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_lookup_and_delete.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/lookup_and_delete.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_lookup_key.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/lookup_key.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_map_init.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/map_init.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_map_lookup_percpu_elem.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/map_lookup_percpu_elem.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_migrate_reuseport.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/migrate_reuseport.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_netfilter_link_attach.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/netfilter_link_attach.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_parse_tcp_hdr_opt.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/parse_tcp_hdr_opt.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_pe_preserve_elems.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/pe_preserve_elems.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_perf_branches.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/perf_branches.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_perf_buffer.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/perf_buffer.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_perf_link.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/perf_link.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_perf_skip.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/perf_skip.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_probe_read_user_str.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/probe_read_user_str.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_prog_array_init.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/prog_array_init.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_ptr_untrusted.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/ptr_untrusted.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_skc_to_unix_sock.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/skc_to_unix_sock.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_skeleton.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/skeleton.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_stack_var_off.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/stack_var_off.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_stacktrace_build_id.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/stacktrace_build_id.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_subskeleton.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/subskeleton.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_task_pt_regs.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/task_pt_regs.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_task_under_cgroup.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/task_under_cgroup.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_tc_bpf.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/tc_bpf.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_tc_change_tail.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/tc_change_tail.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_tcp_custom_syncookie.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/tcp_custom_syncookie.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_tcp_hdr_options.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/tcp_hdr_options.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_time_tai.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/time_tai.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_trace_ext.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/trace_ext.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_unpriv_bpf_disabled.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/unpriv_bpf_disabled.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_verify_pkcs7_sig.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/verify_pkcs7_sig.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_xdp_bpf2bpf.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/xdp_bpf2bpf.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_xdp_link.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/xdp_link.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "timer_crash.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/timer_crash.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "timer_mim.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/timer_mim.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "trace_printk.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/trace_printk.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "trace_vprintk.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/trace_vprintk.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "tracing_struct.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/tracing_struct.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "udp_limit.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/udp_limit.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "uprobe_syscall.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/uprobe_syscall.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "vrf_socket_lookup.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/vrf_socket_lookup.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "xdp_flowtable.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/xdp_flowtable.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "xdp_metadata.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/xdp_metadata.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "xdpwall.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/xdpwall.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "xfrm_info.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/xfrm_info.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "core_kern_overflow.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/core_kern_overflow.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "fexit_sleep.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/fexit_sleep.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "load_bytes_relative.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/load_bytes_relative.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "struct_ops_refcounted.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/test_struct_ops_refcounted.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_global_data.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/global_data.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_global_func_args.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/global_func_args.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_lwt_ip_encap.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/lwt_ip_encap.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_lwt_reroute.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/lwt_reroute.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_map_in_map.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/map_in_map.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_map_lock.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/map_lock.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_mmap.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/mmap.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_pkt_access.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/pkt_access.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_pkt_md_access.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/pkt_md_access.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_probe_user.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/probe_user.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_ringbuf.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/ringbuf.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_sk_assign.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/sk_assign.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_skb_ctx.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/skb_ctx.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_skb_helpers.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/skb_helpers.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_stacktrace_map.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/stacktrace_map.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_tcp_estats.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/tcp_estats.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_xdp.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/xdp.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "test_ringbuf_multi.c": {
+      "expect": "accept",
+      "note": "Positive coverage; prog_tests/ringbuf_multi.c loads the skel and proceeds with runtime/attach checks (auto-classified by batch 5 audit)."
+    },
+    "bad_struct_ops.c": {
+      "expect": "reject",
+      "note": "Negative coverage; prog_tests/bad_struct_ops.c asserts load fails (auto-classified by batch 5 audit)."
     }
   }
 }
