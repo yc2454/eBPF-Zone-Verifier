@@ -471,7 +471,21 @@ fn handle_loop_pruning(
             env.pruning_stats.loop_walks_pruned_via_convergence += 1;
             return true;
         }
-        // Subsumed but conditions not met (widening not effective or no exit path)
+        // Subsumed but convergence not yet provable (widening not
+        // effective on live regs OR exit path not yet explored). Apply
+        // widening against the cached state we just hit so the next
+        // iteration's cached entry covers a strictly wider scalar
+        // range than this one — eventually widening_was_effective
+        // fires and the loop converges. Without this, tight scalar
+        // loops where every iteration subsumes via `!precise → accept`
+        // (e.g. `verifier_bounds.c::crossing_64_bit_signed_boundary_2`)
+        // never converge: subsumption succeeds but widening only fires
+        // on misses, so the cached state never widens.
+        if let Some(prev_states) = env.explored_states.get(&pc)
+            && let Some(old) = prev_states.get(idx).cloned().as_ref()
+        {
+            apply_widening(state, old, live_regs, loop_bound);
+        }
         return false;
     }
 

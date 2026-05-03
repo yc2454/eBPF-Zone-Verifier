@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-03T17:22:00.793190+00:00",
+  "generated_at": "2026-05-03T18:56:47.296896+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -13559,9 +13559,8 @@
           "ours": "PASS"
         },
         "crossing_64_bit_signed_boundary_2": {
-          "upstream": "UNKNOWN",
-          "ours": "ERROR",
-          "note": "verifier timeout"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "for_wa_0_wb_wa": {
           "upstream": "ACCEPT",
@@ -14870,7 +14869,7 @@
         "arg_tag_nonnull_ptr_good": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 8: base R1+0 (type: PtrToAllocMemOrNull { id: 1026, mem_size: 4, ref_id: None, dynptr_id: None })"
+          "note": "Unsafe generic load at pc 8: base R1+0 (type: PtrToAllocMemOrNull { id: 903, mem_size: 4, ref_id: None, dynptr_id: None })"
         },
         "arg_tag_nullable_ptr_fail": {
           "upstream": "ACCEPT",
