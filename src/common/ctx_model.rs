@@ -513,6 +513,14 @@ const XDP_MD_FIELDS: &[CtxField] = &[
         readable: true,
         narrow_access: false,
     },
+];
+
+/// XDP devmap-only ctx fields. Per kernel verifier (xdp_func_proto +
+/// bpf_xdp_dev_md_is_valid_access), `egress_ifindex` is rejected unless
+/// the program's `expected_attach_type == BPF_XDP_DEVMAP`. libbpf
+/// derives that from `SEC("xdp/devmap")` / `SEC("xdp.frags/devmap")`,
+/// which the runner reflects as `attach_subtype == Some("devmap")`.
+const XDP_MD_DEVMAP_FIELDS: &[CtxField] = &[
     // __u32 egress_ifindex
     CtxField {
         offset: 20,
@@ -1394,6 +1402,7 @@ fn lookup_region(ctx_kind: ContextKind, off: i16, size: i64) -> Option<CtxAccess
 fn get_field_tables(
     ctx_kind: ContextKind,
     prog_kind: ProgramKind,
+    attach_subtype: Option<&str>,
 ) -> Option<(&'static [CtxField], &'static [CtxField])> {
     match ctx_kind {
         ContextKind::SkBuff => {
@@ -1405,7 +1414,16 @@ fn get_field_tables(
             };
             Some((SK_BUFF_FIELDS, extended))
         }
-        ContextKind::XdpMd => Some((XDP_MD_FIELDS, &[])),
+        ContextKind::XdpMd => {
+            // egress_ifindex is gated on BPF_XDP_DEVMAP attach type
+            // (SEC("xdp/devmap") / SEC("xdp.frags/devmap")).
+            let extended: &[CtxField] = if attach_subtype == Some("devmap") {
+                XDP_MD_DEVMAP_FIELDS
+            } else {
+                &[]
+            };
+            Some((XDP_MD_FIELDS, extended))
+        }
         ContextKind::BpfSockAddr => Some((SOCK_ADDR_FIELDS, &[])),
         ContextKind::SkLookup => Some((SK_LOOKUP_FIELDS, &[])),
         ContextKind::SockOps => Some((SOCK_OPS_FIELDS, &[])),
@@ -1811,7 +1829,11 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
         return Some(info);
     }
 
-    let (base, extended) = match get_field_tables(ctx_kind, prog_kind) {
+    let (base, extended) = match get_field_tables(
+        ctx_kind,
+        prog_kind,
+        env.ctx.attach_subtype.as_deref(),
+    ) {
         Some(tables) => tables,
         None => {
             return Some(CtxAccessInfo {
