@@ -2600,6 +2600,63 @@
     "test_core_extern.c": {
       "expect": "accept",
       "note": "Single handle_sys_enter prog. Tested in prog_tests/core_extern.c across multiple kconfig values via opts.kconfig (some expect ASSERT_OK, some ASSERT_ERR depending on CONFIG_MISSING dead-code-eliminating bpf_missing_helper). File-level accept covers the positive cases."
+    },
+    "exceptions_ext.c": {
+      "expect": "accept",
+      "note": "All 9 progs body-load OK in isolation; kernel rejection in prog_tests/exceptions.c is at attach-target validation (set_attach_target to exception_ext_mod_cb_runtime fails for fentry/fexit/fmod_ret with -EINVAL). We dont model attach-target validation, so accept-by-default; kernel-side -EINVAL cases will FA but body-valid cases match."
+    },
+    "summarization_freplace.c": {
+      "expect": "accept",
+      "note": "All 4 freplace progs body-load OK; kernel rejection is at freplace target compatibility validation (changes_pkt_data cannot replace does_not_change targets, might_sleep cannot replace does_not_sleep targets) \u2014 attach-target machinery we dont model."
+    },
+    "struct_ops_autocreate.c": {
+      "expect": "accept",
+      "note": "Verifier-accept; prog_tests/struct_ops_autocreate.c::cant_load_full_object ASSERT_ERR is libbpf-side struct_ops BTF init_kern check (testmod_2 BTF mismatch), POST-verifier. Other test variants ASSERT_OK after disabling autocreate."
+    },
+    "test_log_buf.c": {
+      "note": "Mixed via prog_tests/log_buf.c \u2014 good_prog loads, bad_prog has invalid map value access (intentional). When loaded together skel load fails because of bad_prog.",
+      "progs": {
+        "good_prog": {
+          "expect": "accept",
+          "note": ""
+        },
+        "bad_prog": {
+          "expect": "reject",
+          "note": ""
+        }
+      }
+    },
+    "kfunc_call_destructive.c": {
+      "expect": "accept",
+      "note": "Single prog tested twice in prog_tests/kfunc_call.c \u2014 first ASSERT_OK with caps, then ASSERT_EQ(-13) after CAP_SYS_BOOT removed. We dont model capability state \u2014 accept-by-default."
+    },
+    "dynptr_fail.c": {
+      "expect": "accept",
+      "note": "get_map_val_dynptr is a subprog helper in dynptr_fail.c; rest annotated __failure. File-level accept covers the unannotated helper only (annotation precedence preserves real test progs)."
+    },
+    "exceptions_fail.c": {
+      "expect": "accept",
+      "note": "exception_cb_bad_arg_0 is an exception-callback subprog; rest annotated. File-level accept covers it only."
+    },
+    "wq_failures.c": {
+      "expect": "accept",
+      "note": "wq_callback is the work-queue callback subprog; rest annotated. File-level accept covers it only."
+    },
+    "verifier_iterating_callbacks.c": {
+      "expect": "accept",
+      "note": "unsafe_on_2nd_iter_cb is an iterator callback subprog; rest annotated. File-level accept covers it only."
+    },
+    "verifier_subprog_precision.c": {
+      "expect": "accept",
+      "note": "identity_subprog is a helper subprog; rest annotated. File-level accept covers it only."
+    },
+    "test_global_func_ctx_args.c": {
+      "expect": "accept",
+      "note": "kprobe_typedef_ctx_subprog is a subprog; rest annotated. File-level accept covers it only."
+    },
+    "test_kfunc_dynptr_param.c": {
+      "expect": "accept",
+      "note": "dynptr_data_null is a subprog; rest annotated. File-level accept covers it only."
     }
   }
 }
