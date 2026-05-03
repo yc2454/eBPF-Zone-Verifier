@@ -2271,6 +2271,114 @@
     "test_tc_tunnel.c": {
       "expect": "accept",
       "note": "Positive TC tunnel coverage; loaded via tc filter add commands in test_tc_tunnel.sh."
+    },
+    "pro_epilogue.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "verifier_map_ptr_mixing.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "verifier_runtime_jit.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "pro_epilogue_goto_start.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "tailcall_bpf2bpf_hierarchy2.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "verifier_ref_tracking.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "verifier_unpriv.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "epilogue_exit.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "pro_epilogue_with_kfunc.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "tailcall_bpf2bpf_hierarchy3.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "test_kfunc_param_nullable.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "async_stack_depth.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "cgrp_kfunc_failure.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "cpumask_failure.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "crypto_basic.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "nested_trust_failure.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "struct_ops_refcounted_fail__global_subprog.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "task_kfunc_failure.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "test_global_func9.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "test_tp_btf_nullable.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "verifier_bits_iter.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "verifier_bpf_fastcall.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "verifier_cfg.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "verifier_jeq_infer_not_null.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "verifier_kfunc_prog_types.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "verifier_sockmap_mutate.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
+    },
+    "verifier_tailcall_jit.c": {
+      "expect": "accept",
+      "note": "B3 scaffolding: file is predominantly __success/__failure-annotated; file-level accept covers only the unannotated test-scaffolding progs (tail-call dummies, TRACE_EVENT helpers, subprog helpers) which load fine. Annotation precedence ensures real test progs keep their per-prog verdict."
     }
   }
 }

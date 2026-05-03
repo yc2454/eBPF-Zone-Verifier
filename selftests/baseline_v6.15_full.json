@@ -121,9 +121,8 @@
           "ours": "PASS"
         },
         "timer_cb": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN"
         }
       }
     },
@@ -1516,9 +1515,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/cgrp_kfunc_failure.c",
       "progs": {
         "TRACE_EVENT": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN"
         },
         "cgrp_kfunc_acquire_fp": {
           "upstream": "ACCEPT",
@@ -1942,9 +1940,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/cpumask_failure.c",
       "progs": {
         "TRACE_EVENT": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN"
         },
         "test_acquire_wrong_cpumask": {
           "upstream": "ACCEPT",
@@ -2128,9 +2125,9 @@
           "ours": "PASS"
         },
         "crypto_release": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 67: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         }
       }
     },
@@ -2645,14 +2642,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/epilogue_exit.c",
       "progs": {
         "syscall_epilogue_exit0": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         },
         "syscall_epilogue_exit1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         },
         "test_epilogue_exit": {
           "upstream": "ACCEPT",
@@ -5555,9 +5552,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/nested_trust_failure.c",
       "progs": {
         "TRACE_EVENT": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN"
         },
         "test_invalid_nested_user_cpus": {
           "upstream": "ACCEPT",
@@ -5879,24 +5875,23 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/pro_epilogue.c",
       "progs": {
         "__kfunc_btf_root": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN"
         },
         "syscall_epilogue": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         },
         "syscall_pro_epilogue": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         },
         "syscall_prologue": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         },
         "test_epilogue": {
           "upstream": "ACCEPT",
@@ -5916,19 +5911,19 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/pro_epilogue_goto_start.c",
       "progs": {
         "syscall_epilogue_goto_start": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         },
         "syscall_pro_epilogue_goto_start": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         },
         "syscall_prologue_goto_start": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         },
         "test_epilogue_goto_start": {
           "upstream": "ACCEPT",
@@ -5948,14 +5943,13 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/pro_epilogue_with_kfunc.c",
       "progs": {
         "__kfunc_btf_root": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN"
         },
         "syscall_pro_epilogue": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 4: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         },
         "test_kfunc_pro_epilogue": {
           "upstream": "ACCEPT",
@@ -7111,9 +7105,8 @@
           "ours": "PASS"
         },
         "subprog_release": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN"
         }
       }
     },
@@ -7426,19 +7419,16 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/tailcall_bpf2bpf_hierarchy2.c",
       "progs": {
         "classifier_0": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "classifier_1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "subprog_tail0": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN"
         },
         "tailcall_bpf2bpf_hierarchy_2": {
           "upstream": "ACCEPT",
@@ -7450,14 +7440,12 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/tailcall_bpf2bpf_hierarchy3.c",
       "progs": {
         "classifier_0": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "subprog_tail": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN"
         },
         "tailcall_bpf2bpf_hierarchy_3": {
           "upstream": "ACCEPT",
@@ -7530,9 +7518,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/task_kfunc_failure.c",
       "progs": {
         "TRACE_EVENT": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN"
         },
         "task_access_comm1": {
           "upstream": "ACCEPT",
@@ -8927,9 +8914,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_global_func9.c",
       "progs": {
         "foo": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN"
         },
         "global_func9": {
           "upstream": "ACCEPT",
@@ -9100,14 +9086,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_kfunc_param_nullable.c",
       "progs": {
         "kfunc_dynptr_nullable_test1": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 7: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         },
         "kfunc_dynptr_nullable_test2": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 7: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         },
         "kfunc_dynptr_nullable_test3": {
           "upstream": "ACCEPT",
@@ -11008,9 +10994,8 @@
           "ours": "PASS"
         },
         "handle_tp_btf_nullable_bare2": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -12601,9 +12586,8 @@
           "ours": "PASS"
         },
         "bpf_iter_bits_new": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN"
         },
         "destroy_uninit": {
           "upstream": "ACCEPT",
@@ -13131,9 +13115,9 @@
           "ours": "PASS"
         },
         "kfunc_bpf_rdonly_cast": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_REJECT",
+          "upstream": "ACCEPT",
+          "note": "Unsupported modern BPF feature at pc 5: kfunc call (BPF_PSEUDO_KFUNC_CALL"
         },
         "may_goto_interaction_arm64": {
           "upstream": "ACCEPT",
@@ -13266,9 +13250,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/verifier_cfg.c",
       "progs": {
         "check_cfg": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN"
         },
         "conditional_loop": {
           "upstream": "ACCEPT",
@@ -14668,9 +14651,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/verifier_jeq_infer_not_null.c",
       "progs": {
         "if": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN"
         },
         "null_ptr_to_map_value": {
           "upstream": "ACCEPT",
@@ -14739,9 +14721,8 @@
           "ours": "PASS"
         },
         "task_kfunc_load_test": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN"
         },
         "task_kfunc_perf_event": {
           "upstream": "ACCEPT",
@@ -15181,24 +15162,20 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/verifier_map_ptr_mixing.c",
       "progs": {
         "dummy_prog_24_socket": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "dummy_prog_42_socket": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "dummy_prog_loop1_socket": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "dummy_prog_loop2_socket": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "lookup_hash_map_in_map": {
           "upstream": "ACCEPT",
@@ -15805,19 +15782,16 @@
           "ours": "PASS"
         },
         "dummy_prog_24_tc": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "dummy_prog_42_tc": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "dummy_prog_loop1_tc": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "ld_abs_while_holding_reference": {
           "upstream": "ACCEPT",
@@ -16096,24 +16070,20 @@
           "ours": "PASS"
         },
         "dummy_prog_24_socket": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "dummy_prog_42_socket": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "dummy_prog_loop1_socket": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "dummy_prog_loop2_socket": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "negative_index_to_tail_call": {
           "upstream": "ACCEPT",
@@ -16984,9 +16954,8 @@
           "ours": "PASS"
         },
         "test_sockmap_delete": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN"
         },
         "test_sockops_delete": {
           "upstream": "ACCEPT",
@@ -17623,9 +17592,8 @@
           "ours": "PASS"
         },
         "sub": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN"
         }
       }
     },
@@ -17679,19 +17647,16 @@
           "ours": "PASS"
         },
         "dummy_prog_24_socket": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "dummy_prog_42_socket": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "dummy_prog_loop1_socket": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "fill_of_different_pointers_st": {
           "upstream": "ACCEPT",
