@@ -391,6 +391,12 @@ fn run_dev(sub: DevCmd, config: VerifierConfig) {
         } => {
             run_baseline_check_modern(&progs_dir, &baseline, &config);
         }
+        DevCmd::SelftestBaselineCheckUpstream {
+            upstream_root,
+            baseline,
+        } => {
+            run_baseline_check_upstream(&upstream_root, &baseline, &config);
+        }
         DevCmd::VerifyCorpus {
             dir,
             input_list,
@@ -861,6 +867,39 @@ fn run_baseline_check_modern(progs_dir: &str, stored: &str, config: &VerifierCon
     }
 }
 
+/// Mirror of `run_baseline_check_modern` that uses the upstream-tree
+/// include/iquote setup. The `DeterministicFilter` short-circuits the
+/// known TIMEOUT/ERROR rows — those are the long pole on a full upstream
+/// sweep — so this command iterates orders of magnitude faster than
+/// `selftest-baseline-write-upstream` while still catching every
+/// PASS/FALSE_REJECT/FALSE_ACCEPT regression.
+fn run_baseline_check_upstream(upstream_root: &str, stored: &str, config: &VerifierConfig) {
+    use crate::testing::selftest::baseline::{Baseline, CheckFilter, DeterministicFilter, diff};
+
+    let baseline = match Baseline::read(stored) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("Error reading baseline {stored}: {e:?}");
+            std::process::exit(2);
+        }
+    };
+
+    let progs_dir_str = validate_upstream_root_progs_dir(upstream_root);
+
+    let det_filter = DeterministicFilter::from_baseline(&baseline);
+    let check_filter = CheckFilter {
+        filter: &det_filter,
+        baseline: &baseline,
+    };
+    let current = sweep_upstream_only(&progs_dir_str, upstream_root, config, &check_filter);
+    let d = diff(&baseline, &current);
+
+    print_diff(&d, "(upstream)");
+    if !d.regressions.is_empty() {
+        std::process::exit(1);
+    }
+}
+
 fn run_baseline_write(progs_dir: &str, legacy_json_dir: &str, out: &str, config: &VerifierConfig) {
     use crate::testing::selftest::runner::RunAll;
     let bl = sweep_modern_and_legacy(progs_dir, legacy_json_dir, config, &RunAll);
@@ -871,9 +910,10 @@ fn run_baseline_write(progs_dir: &str, legacy_json_dir: &str, out: &str, config:
     println!("Wrote baseline ({} files) to {out}", bl.files.len());
 }
 
-fn run_baseline_write_upstream(upstream_root: &str, out: &str, config: &VerifierConfig) {
-    use crate::testing::selftest::runner::RunAll;
-
+/// Validate that `upstream_root` looks like a kernel checkout and return
+/// the absolute path to the BPF progs directory. Exits with code 2 if
+/// the layout is wrong — same diagnostic both write and check use.
+fn validate_upstream_root_progs_dir(upstream_root: &str) -> String {
     let root = Path::new(upstream_root);
     let required = [
         "tools/include",
@@ -896,9 +936,15 @@ fn run_baseline_write_upstream(upstream_root: &str, out: &str, config: &Verifier
         eprintln!("Hint: pass the kernel-checkout root (e.g. `vendor/linux`), not the selftests dir.");
         std::process::exit(2);
     }
+    root.join("tools/testing/selftests/bpf/progs")
+        .to_string_lossy()
+        .into_owned()
+}
 
-    let progs_dir = root.join("tools/testing/selftests/bpf/progs");
-    let progs_dir_str = progs_dir.to_string_lossy().into_owned();
+fn run_baseline_write_upstream(upstream_root: &str, out: &str, config: &VerifierConfig) {
+    use crate::testing::selftest::runner::RunAll;
+
+    let progs_dir_str = validate_upstream_root_progs_dir(upstream_root);
 
     let bl = sweep_upstream_only(&progs_dir_str, upstream_root, config, &RunAll);
 

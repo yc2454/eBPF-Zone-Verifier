@@ -177,6 +177,137 @@ pub fn compile_with_iquote<P: AsRef<Path>, Q: AsRef<Path>>(
     Ok(())
 }
 
+// ============================================================
+// Compile cache
+//
+// Sweeping the v6.15 corpus invokes clang ~849 times per run.
+// Source files don't change between sweeps in a development session,
+// so re-compiling each time burns the bulk of the wall clock for no
+// reason. Cache keyed on (source SHA, include-set fingerprint,
+// defines): on hit we just copy the cached .o; on miss we clang and
+// store. Cache survives across runs (`target/zovia-selftest-cache/`)
+// and across `cargo build` (only `cargo clean` wipes it).
+//
+// The include-set fingerprint is computed once per sweep by walking
+// every `.h` under each include/iquote dir and hashing
+// (path, mtime, size). Bumping a single header invalidates every
+// cached .o in that sweep — that's correct: we don't know which
+// header a given .c actually included without compiling. False
+// invalidation is fine; false hits would silently feed stale objects
+// into the verifier, which is what we must not do.
+// ============================================================
+
+const COMPILE_CACHE_VERSION: u32 = 1;
+
+/// FNV-1a 64-bit. Stable across processes/runs (unlike DefaultHasher),
+/// zero-dep, fast enough for our key inputs (KB-scale source files +
+/// header-fingerprint blobs). Collision probability for a few thousand
+/// entries is astronomical.
+fn fnv1a_64(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+fn collect_header_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            collect_header_files(&p, out);
+        } else if matches!(p.extension().and_then(|s| s.to_str()), Some("h") | Some("inc")) {
+            out.push(p);
+        }
+    }
+}
+
+/// Walk every `.h`/`.inc` under each include/iquote dir, hash
+/// (path, mtime_secs, size). Compute once per sweep — caller threads
+/// the result through to per-file compiles.
+pub fn fingerprint_include_set(include_dirs: &[PathBuf], iquote_dirs: &[PathBuf]) -> u64 {
+    let mut h = fnv1a_64(b"zovia-include-set-v1");
+    for dir in include_dirs.iter().chain(iquote_dirs.iter()) {
+        let mut entries: Vec<PathBuf> = Vec::new();
+        collect_header_files(dir, &mut entries);
+        entries.sort();
+        for path in entries {
+            let Ok(meta) = std::fs::metadata(&path) else {
+                continue;
+            };
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let mut state: Vec<u8> = path.to_string_lossy().as_bytes().to_vec();
+            state.extend_from_slice(&mtime.to_le_bytes());
+            state.extend_from_slice(&meta.len().to_le_bytes());
+            h ^= fnv1a_64(&state);
+            h = h.wrapping_mul(0x100000001b3);
+        }
+    }
+    h
+}
+
+fn compile_cache_key(src: &Path, include_fingerprint: u64, defines: &[&str]) -> Option<String> {
+    let bytes = std::fs::read(src).ok()?;
+    let src_hash = fnv1a_64(&bytes);
+    let mut sorted: Vec<&str> = defines.to_vec();
+    sorted.sort_unstable();
+    let mut defs_buf: Vec<u8> = Vec::new();
+    for d in sorted {
+        defs_buf.extend_from_slice(d.as_bytes());
+        defs_buf.push(0);
+    }
+    let defs_hash = fnv1a_64(&defs_buf);
+    Some(format!(
+        "v{}-{:016x}-{:016x}-{:016x}",
+        COMPILE_CACHE_VERSION, src_hash, include_fingerprint, defs_hash
+    ))
+}
+
+fn compile_cache_dir() -> PathBuf {
+    PathBuf::from("target/zovia-selftest-cache")
+}
+
+/// Cache-aware variant of [`compile_with_iquote`]. On hit, copies the
+/// cached `.o` into `out_path` and skips clang entirely. On miss,
+/// invokes clang and stores the result. Caller computes
+/// `include_fingerprint` once per sweep via [`fingerprint_include_set`].
+pub fn compile_with_iquote_cached<P: AsRef<Path>, Q: AsRef<Path>>(
+    src: P,
+    out_path: Q,
+    include_dirs: &[PathBuf],
+    iquote_dirs: &[PathBuf],
+    extra_defines: &[&str],
+    include_fingerprint: u64,
+) -> Result<()> {
+    let src = src.as_ref();
+    let out = out_path.as_ref();
+    let Some(key) = compile_cache_key(src, include_fingerprint, extra_defines) else {
+        // Couldn't read source — fall back to plain compile so the
+        // error path is the same.
+        return compile_with_iquote(src, out, include_dirs, iquote_dirs, extra_defines);
+    };
+    let cache_dir = compile_cache_dir();
+    let cached = cache_dir.join(format!("{key}.o"));
+    if cached.exists() {
+        std::fs::copy(&cached, out)
+            .with_context(|| format!("copying cached .o from {}", cached.display()))?;
+        return Ok(());
+    }
+    compile_with_iquote(src, out, include_dirs, iquote_dirs, extra_defines)?;
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let _ = std::fs::copy(out, &cached);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
