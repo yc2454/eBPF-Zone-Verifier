@@ -878,9 +878,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/bpf_tcp_nogpl.c",
       "progs": {
         "nogpltcp_init": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_ACCEPT",
+          "upstream": "REJECT",
+          "note": "soundness!"
         }
       }
     },
@@ -2190,9 +2190,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/csum_diff_test.c",
       "progs": {
         "compute_checksum": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -5082,9 +5081,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/lsm_cgroup_nonvoid.c",
       "progs": {
         "nonvoid_socket_clone": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         }
       }
     },
@@ -7905,9 +7903,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/tcp_ca_unsupp_cong_op.c",
       "progs": {
         "unsupp_cong_op_get_info": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_ACCEPT",
+          "upstream": "REJECT",
+          "note": "soundness!"
         }
       }
     },
@@ -10228,9 +10226,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_sk_storage_trace_itself.c",
       "progs": {
         "trace_bpf_sk_storage_free": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_ACCEPT",
+          "upstream": "REJECT",
+          "note": "soundness!"
         }
       }
     },
@@ -10403,9 +10401,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_sockmap_invalid_update.c",
       "progs": {
         "bpf_sockmap": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "REJECT"
         }
       }
     },
@@ -10703,14 +10700,13 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_subskeleton_lib.c",
       "progs": {
         "lib_perf_handler": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "PASS",
+          "upstream": "ACCEPT"
         },
         "lib_routine": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN",
+          "note": "not in ELF: function 'lib_routine' not found (looked in '.maps' and 31 other sections"
         }
       }
     },
@@ -11563,9 +11559,9 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/test_xdp_devmap_helpers.c",
       "progs": {
         "xdpdm_devlog": {
-          "upstream": "UNANNOTATED",
-          "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "ours": "FALSE_ACCEPT",
+          "upstream": "REJECT",
+          "note": "soundness!"
         }
       }
     },
@@ -11810,14 +11806,14 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/timer_failure.c",
       "progs": {
         "BPF_PROG2": {
-          "upstream": "UNKNOWN",
           "ours": "SKIPPED",
-          "note": "not in ELF: function 'BPF_PROG2' not found (looked in 'fentry/bpf_fentry_test1' and 28 other sections)"
+          "upstream": "UNKNOWN",
+          "note": "not in ELF: function 'BPF_PROG2' not found (looked in 'fentry/bpf_fentry_test1' and 28 other sections"
         },
         "timer_cb_ret_bad": {
-          "upstream": "UNANNOTATED",
           "ours": "SKIPPED",
-          "note": "no verdict source (no __success/__failure and not in selftests/expectations.json)"
+          "upstream": "UNKNOWN",
+          "note": "not in ELF: function 'timer_cb_ret_bad' not found (looked in '.maps' and 28 other sections"
         }
       }
     },

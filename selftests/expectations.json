@@ -2007,6 +2007,42 @@
     "timer_mim_reject.c": {
       "expect": "reject",
       "note": "Negative coverage; auto-classified by batch 6 audit (referencing prog_tests driver asserts load fails)."
+    },
+    "bpf_tcp_nogpl.c": {
+      "expect": "reject",
+      "note": "Negative non-GPL struct_ops; prog_tests/bpf_tcp_ca.c asserts ASSERT_NULL on bpf_tcp_nogpl__open_and_load (verifier rejects struct_ops with non-GPL license)."
+    },
+    "tcp_ca_unsupp_cong_op.c": {
+      "expect": "reject",
+      "note": "Negative TCP-CA struct_ops; prog_tests/bpf_tcp_ca.c asserts ASSERT_NULL on tcp_ca_unsupp_cong_op__open_and_load (verifier rejects unsupported cong-op signature)."
+    },
+    "test_sk_storage_trace_itself.c": {
+      "expect": "reject",
+      "note": "Negative recursive sk_storage tracing; prog_tests/sk_storage_tracing.c asserts ASSERT_NULL on test_sk_storage_trace_itself__open_and_load (verifier rejects self-tracing recursion)."
+    },
+    "test_sockmap_invalid_update.c": {
+      "expect": "reject",
+      "note": "Negative sockmap-update coverage; prog_tests/sockmap_basic.c asserts ASSERT_NULL on test_sockmap_invalid_update__open_and_load."
+    },
+    "test_xdp_devmap_helpers.c": {
+      "expect": "reject",
+      "note": "Negative XDP devmap helper coverage; prog_tests/xdp_devmap_attach.c asserts ASSERT_EQ(skel, NULL) \u2014 load rejected for XDP program accessing egress ifindex without attach type."
+    },
+    "timer_failure.c": {
+      "expect": "reject",
+      "note": "Negative bpf_timer coverage (sibling of timer.c); prog_tests/timer.c::RUN_TESTS(timer_failure) \u2014 file naming convention indicates all progs are __failure-style negative tests."
+    },
+    "lsm_cgroup_nonvoid.c": {
+      "expect": "accept",
+      "note": "Positive non-void LSM-cgroup coverage (sibling of lsm_cgroup.c); prog_tests/lsm_cgroup.c calls lsm_cgroup_nonvoid__open_and_load and proceeds with attach checks."
+    },
+    "csum_diff_test.c": {
+      "expect": "accept",
+      "note": "Positive bpf_csum_diff coverage; prog_tests/test_csum_diff.c asserts ASSERT_EQ(err, 0) on csum_diff_test__load."
+    },
+    "test_subskeleton_lib.c": {
+      "expect": "accept",
+      "note": "Positive subskeleton coverage; loaded as a subskeleton view (test_subskeleton_lib__open(obj)) of the parent test_subskeleton skel which loads successfully."
     }
   }
 }
