@@ -1117,6 +1117,13 @@ pub(crate) fn transfer_call_rel(
                 crate::parsing::btf::GlobalFuncArg::PtrToFwd { .. } => {
                     // Already rejected above; keep arm exhaustive.
                 }
+                crate::parsing::btf::GlobalFuncArg::PtrToDynptr => {
+                    // Preserve caller's stack pointer + dynptr-slot
+                    // state so the callee's `bpf_dynptr_data` / `_slice`
+                    // calls can resolve the slot. Kernel
+                    // ARG_PTR_TO_DYNPTR | MEM_RDONLY (btf.c:7784) — no
+                    // override.
+                }
                 crate::parsing::btf::GlobalFuncArg::PtrToBtfIdTrusted {
                     type_name,
                     nullable,
@@ -1233,6 +1240,7 @@ fn caller_arg_compatible<F: Fn() -> bool>(
             RegType::ScalarValue => *nullable && scalar_is_zero(),
             _ => false,
         },
+        GlobalFuncArg::PtrToDynptr => matches!(actual, RegType::PtrToStack { .. }),
         GlobalFuncArg::PermissivePtr => match actual {
             RegType::PtrToCtx
             | RegType::PtrToStack { .. }

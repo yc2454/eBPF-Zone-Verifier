@@ -700,6 +700,8 @@ impl BtfContext {
                         let pname = self.get_string(pointee.name_off).unwrap_or("");
                         if is_ctx_struct_name(pname) {
                             GlobalFuncArg::PtrToCtx
+                        } else if pname == "bpf_dynptr" {
+                            GlobalFuncArg::PtrToDynptr
                         } else {
                             GlobalFuncArg::PtrToMem {
                                 mem_size: pointee.size_or_type,
@@ -1081,6 +1083,15 @@ pub enum GlobalFuncArg {
         type_name: String,
         nullable: bool,
     },
+    /// Pointer to `struct bpf_dynptr`. Mirrors kernel
+    /// `ARG_PTR_TO_DYNPTR | MEM_RDONLY` (btf.c:7784) — caller must
+    /// pass a stack pointer to an initialized dynptr; callee body
+    /// consumes it via `bpf_dynptr_data`/`_slice`. Distinct from
+    /// `PtrToMem{16}` because (a) the slot is `DynptrSlot`, not raw
+    /// readable bytes, so the stack-readability check does not apply
+    /// and (b) the callee's R is preserved across the call boundary
+    /// rather than reseeded as `PtrToAllocMemOrNull`.
+    PtrToDynptr,
 }
 
 /// Refine a base `GlobalFuncArg` classification using `__arg_*` decl

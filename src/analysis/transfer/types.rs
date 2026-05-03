@@ -942,6 +942,16 @@ pub(crate) fn update_call_types(
         state
             .frames
             .invalidate_caller_reg_type(|ty| ty.is_packet_ptr(), RegType::NotInit);
+        // Slices derived from a packet dynptr (`bpf_dynptr_slice` /
+        // `_slice_rdwr` over an skb/xdp dynptr) become invalid when
+        // the helper mutates packet data. Kernel sweeps every reg +
+        // stack slot whose dynptr_id matches a packet-source dynptr
+        // (verifier.c v6.15 L913-919). Mirrors `dynptr_fail.c`
+        // `xdp_invalid_data_slice1/2` and the skb counterparts.
+        let packet_dids = state.collect_packet_dynptr_ids();
+        for did in packet_dids {
+            state.invalidate_dynptr_slices(did);
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-03T20:33:53.284955+00:00",
+  "generated_at": "2026-05-03T20:38:00.063960+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -14862,8 +14862,7 @@
         },
         "arg_tag_dynptr": {
           "upstream": "ACCEPT",
-          "ours": "FALSE_REJECT",
-          "note": "Kfunc btf_id 43009407 not allowed for program Unknown at pc 4"
+          "ours": "PASS"
         },
         "arg_tag_nonnull_ptr_good": {
           "upstream": "ACCEPT",

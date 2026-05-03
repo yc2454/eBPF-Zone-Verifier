@@ -476,6 +476,30 @@ impl State {
         }
     }
 
+    /// Collect dynptr_ids of every Skb/Xdp dynptr currently registered
+    /// in any frame's stack. Mirrors the kernel's reg-walk in
+    /// `bpf_for_each_reg_in_vstate` over `xdp/skb_dynptr` slots
+    /// (verifier.c v6.15 L913-919). Used by packet-mutating helpers
+    /// (`bpf_xdp_adjust_head`, `bpf_skb_pull_data`, …) to invalidate
+    /// every slice derived from a packet dynptr — kernel rejects post-
+    /// mutation slice access with "invalid mem access 'scalar'"
+    /// (`dynptr_fail.c::xdp_invalid_data_slice1`).
+    pub fn collect_packet_dynptr_ids(&self) -> Vec<u32> {
+        use crate::analysis::machine::stack_state::DynptrKind;
+        let mut ids = Vec::new();
+        for frame in self.frames.iter() {
+            for off in frame.stack.slot_offsets() {
+                if let Some(d) = frame.stack.stack_get_dynptr(off as i16)
+                    && matches!(d.kind, DynptrKind::Skb | DynptrKind::Xdp)
+                    && d.first_slot
+                {
+                    ids.push(d.dynptr_id);
+                }
+            }
+        }
+        ids
+    }
+
     pub fn invalidate_dynptr_slices(&mut self, dynptr_id: u32) {
         for i in 0..self.types.regs.len() {
             let demote = matches!(
