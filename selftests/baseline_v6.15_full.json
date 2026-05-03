@@ -122,7 +122,8 @@
         },
         "timer_cb": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'timer_cb' not found (looked in '.maps' and 28 other sections)"
         }
       }
     },
@@ -273,7 +274,8 @@
         },
         "log_result": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'log_result' not found (looked in '.maps' and 31 other sections)"
         }
       }
     },
@@ -415,7 +417,8 @@
         },
         "loop_update_callback": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'loop_update_callback' not found (looked in '.maps' and 30 other sections)"
         }
       }
     },
@@ -429,7 +432,8 @@
         },
         "patch_key": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'patch_key' not found (looked in '.maps' and 30 other sections)"
         }
       }
     },
@@ -826,7 +830,8 @@
         },
         "empty_callback": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'empty_callback' not found (looked in 'license' and 28 other sections)"
         }
       }
     },
@@ -1514,7 +1519,8 @@
       "progs": {
         "TRACE_EVENT": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'TRACE_EVENT' not found (looked in 'license' and 31 other sections)"
         },
         "cgrp_kfunc_acquire_fp": {
           "upstream": "ACCEPT",
@@ -1938,7 +1944,8 @@
       "progs": {
         "TRACE_EVENT": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'TRACE_EVENT' not found (looked in 'license' and 31 other sections)"
         },
         "test_acquire_wrong_cpumask": {
           "upstream": "ACCEPT",
@@ -2379,7 +2386,8 @@
         },
         "get_map_val_dynptr": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'get_map_val_dynptr' not found (looked in '.maps' and 45 other sections)"
         },
         "global": {
           "upstream": "ACCEPT",
@@ -2819,7 +2827,8 @@
       "progs": {
         "exception_cb_bad_arg_0": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'exception_cb_bad_arg_0' not found (looked in '.maps' and 32 other sections)"
         },
         "reject_async_callback_throw": {
           "upstream": "ACCEPT",
@@ -3533,7 +3542,8 @@
         },
         "write_htab": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'write_htab' not found (looked in 'license' and 32 other sections)"
         }
       }
     },
@@ -4873,7 +4883,8 @@
       "progs": {
         "do_lookup": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'do_lookup' not found (looked in '.maps' and 31 other sections)"
         },
         "get_local": {
           "ours": "PASS",
@@ -5239,107 +5250,133 @@
         },
         "check_array": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_array' not found (looked in '.maps' and 31 other sections)"
         },
         "check_array_of_maps": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_array_of_maps' not found (looked in '.maps' and 31 other sections)"
         },
         "check_cgroup_array": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_cgroup_array' not found (looked in '.maps' and 31 other sections)"
         },
         "check_cgroup_storage": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_cgroup_storage' not found (looked in '.maps' and 31 other sections)"
         },
         "check_cpumap": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_cpumap' not found (looked in '.maps' and 31 other sections)"
         },
         "check_devmap": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_devmap' not found (looked in '.maps' and 31 other sections)"
         },
         "check_devmap_hash": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_devmap_hash' not found (looked in '.maps' and 31 other sections)"
         },
         "check_hash": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_hash' not found (looked in '.maps' and 31 other sections)"
         },
         "check_hash_of_maps": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_hash_of_maps' not found (looked in '.maps' and 31 other sections)"
         },
         "check_lpm_trie": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_lpm_trie' not found (looked in '.maps' and 31 other sections)"
         },
         "check_lru_hash": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_lru_hash' not found (looked in '.maps' and 31 other sections)"
         },
         "check_lru_percpu_hash": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_lru_percpu_hash' not found (looked in '.maps' and 31 other sections)"
         },
         "check_percpu_array": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_percpu_array' not found (looked in '.maps' and 31 other sections)"
         },
         "check_percpu_cgroup_storage": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_percpu_cgroup_storage' not found (looked in '.maps' and 31 other sections)"
         },
         "check_percpu_hash": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_percpu_hash' not found (looked in '.maps' and 31 other sections)"
         },
         "check_perf_event_array": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_perf_event_array' not found (looked in '.maps' and 31 other sections)"
         },
         "check_prog_array": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_prog_array' not found (looked in '.maps' and 31 other sections)"
         },
         "check_queue": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_queue' not found (looked in '.maps' and 31 other sections)"
         },
         "check_reuseport_sockarray": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_reuseport_sockarray' not found (looked in '.maps' and 31 other sections)"
         },
         "check_ringbuf": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_ringbuf' not found (looked in '.maps' and 31 other sections)"
         },
         "check_sk_storage": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_sk_storage' not found (looked in '.maps' and 31 other sections)"
         },
         "check_sockhash": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_sockhash' not found (looked in '.maps' and 31 other sections)"
         },
         "check_sockmap": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_sockmap' not found (looked in '.maps' and 31 other sections)"
         },
         "check_stack": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_stack' not found (looked in '.maps' and 31 other sections)"
         },
         "check_stack_trace": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_stack_trace' not found (looked in '.maps' and 31 other sections)"
         },
         "check_xskmap": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_xskmap' not found (looked in '.maps' and 31 other sections)"
         }
       }
     },
@@ -5534,7 +5571,8 @@
       "progs": {
         "TRACE_EVENT": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'TRACE_EVENT' not found (looked in '.maps' and 30 other sections)"
         },
         "test_invalid_nested_user_cpus": {
           "upstream": "ACCEPT",
@@ -5812,11 +5850,13 @@
       "progs": {
         "BPF_PROG2": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'BPF_PROG2' not found (looked in 'fentry/bpf_fentry_test1' and 36 other sections)"
         },
         "del_array": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'del_array' not found (looked in 'license' and 36 other sections)"
         }
       }
     },
@@ -5856,7 +5896,8 @@
       "progs": {
         "__kfunc_btf_root": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function '__kfunc_btf_root' not found (looked in 'license' and 35 other sections)"
         },
         "syscall_epilogue": {
           "ours": "FALSE_REJECT",
@@ -5924,7 +5965,8 @@
       "progs": {
         "__kfunc_btf_root": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function '__kfunc_btf_root' not found (looked in 'license' and 31 other sections)"
         },
         "syscall_pro_epilogue": {
           "ours": "FALSE_REJECT",
@@ -6316,7 +6358,8 @@
       "progs": {
         "less": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'less' not found (looked in '.maps' and 34 other sections)"
         },
         "rbtree_refcounted_node_ref_escapes": {
           "upstream": "ACCEPT",
@@ -6464,7 +6507,8 @@
         },
         "get_flags": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'get_flags' not found (looked in '.maps' and 30 other sections)"
         }
       }
     },
@@ -6811,7 +6855,8 @@
       "progs": {
         "local_strncmp": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'local_strncmp' not found (looked in 'license' and 28 other sections)"
         },
         "strncmp_helper": {
           "ours": "PASS",
@@ -6898,7 +6943,8 @@
       "progs": {
         "dangling_subprog": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'dangling_subprog' not found (looked in 'license' and 24 other sections)"
         }
       }
     },
@@ -6980,7 +7026,8 @@
       "progs": {
         "BPF_PROG": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'BPF_PROG' not found (looked in 'struct_ops/tramp_' and 66 other sections)"
         }
       }
     },
@@ -7065,7 +7112,8 @@
         },
         "subprog_release": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'subprog_release' not found (looked in 'license' and 30 other sections)"
         }
       }
     },
@@ -7377,7 +7425,8 @@
         },
         "subprog_tail0": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'subprog_tail0' not found (looked in '.maps' and 31 other sections)"
         },
         "tailcall_bpf2bpf_hierarchy_2": {
           "upstream": "ACCEPT",
@@ -7394,7 +7443,8 @@
         },
         "subprog_tail": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'subprog_tail' not found (looked in '.maps' and 30 other sections)"
         },
         "tailcall_bpf2bpf_hierarchy_3": {
           "upstream": "ACCEPT",
@@ -7468,7 +7518,8 @@
       "progs": {
         "TRACE_EVENT": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'TRACE_EVENT' not found (looked in 'license' and 36 other sections)"
         },
         "task_access_comm1": {
           "upstream": "ACCEPT",
@@ -7703,7 +7754,8 @@
       "progs": {
         "cong_control": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'cong_control' not found (looked in '.struct_ops' and 27 other sections)"
         }
       }
     },
@@ -8858,7 +8910,8 @@
       "progs": {
         "foo": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'foo' not found (looked in '.maps' and 28 other sections)"
         },
         "global_func9": {
           "upstream": "ACCEPT",
@@ -8906,7 +8959,8 @@
         },
         "kprobe_typedef_ctx_subprog": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'kprobe_typedef_ctx_subprog' not found (looked in 'license' and 33 other sections)"
         },
         "kprobe_workaround_ctx": {
           "upstream": "ACCEPT",
@@ -10677,7 +10731,8 @@
       "progs": {
         "throttle_flow": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'throttle_flow' not found (looked in '.maps' and 28 other sections)"
         }
       }
     },
@@ -11752,7 +11807,8 @@
       "progs": {
         "BPF_PROG2": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'BPF_PROG2' not found (looked in 'fentry/bpf_testmod_test_struct_arg_1' and 47 other sections)"
         }
       }
     },
@@ -11761,7 +11817,8 @@
       "progs": {
         "BPF_PROG2": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'BPF_PROG2' not found (looked in 'fentry/bpf_testmod_test_struct_arg_7' and 38 other sections)"
         }
       }
     },
@@ -11814,7 +11871,8 @@
         },
         "inc_counter": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'inc_counter' not found (looked in 'license' and 51 other sections)"
         },
         "trigger_count": {
           "ours": "PASS",
@@ -12527,7 +12585,8 @@
         },
         "bpf_iter_bits_new": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'bpf_iter_bits_new' not found (looked in 'license' and 35 other sections)"
         },
         "destroy_uninit": {
           "upstream": "ACCEPT",
@@ -13191,7 +13250,8 @@
       "progs": {
         "check_cfg": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'check_cfg' not found (looked in 'socket' and 26 other sections)"
         },
         "conditional_loop": {
           "upstream": "ACCEPT",
@@ -14570,7 +14630,8 @@
         },
         "unsafe_on_2nd_iter_cb": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'unsafe_on_2nd_iter_cb' not found (looked in '.maps' and 41 other sections)"
         },
         "unsafe_on_zero_iter": {
           "upstream": "ACCEPT",
@@ -14591,7 +14652,8 @@
       "progs": {
         "if": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'if' not found (looked in '.maps' and 28 other sections)"
         },
         "null_ptr_to_map_value": {
           "upstream": "ACCEPT",
@@ -14661,7 +14723,8 @@
         },
         "task_kfunc_load_test": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'task_kfunc_load_test' not found (looked in 'license' and 36 other sections)"
         },
         "task_kfunc_perf_event": {
           "upstream": "ACCEPT",
@@ -16894,7 +16957,8 @@
         },
         "test_sockmap_delete": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'test_sockmap_delete' not found (looked in '.maps' and 47 other sections)"
         },
         "test_sockops_delete": {
           "upstream": "ACCEPT",
@@ -17341,7 +17405,8 @@
         },
         "identity_subprog": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'identity_subprog' not found (looked in '.data.vals' and 29 other sections)"
         },
         "parent_callee_saved_reg_precise": {
           "upstream": "ACCEPT",
@@ -17531,7 +17596,8 @@
         },
         "sub": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'sub' not found (looked in '.maps' and 29 other sections)"
         }
       }
     },
@@ -18593,7 +18659,8 @@
         },
         "wq_callback": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'wq_callback' not found (looked in '.maps' and 31 other sections)"
         }
       }
     },
@@ -18671,7 +18738,8 @@
       "progs": {
         "bpf_xdp_metadata_rx_timestamp": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'bpf_xdp_metadata_rx_timestamp' not found (looked in '.maps' and 28 other sections)"
         },
         "rx": {
           "ours": "FALSE_REJECT",
@@ -18774,7 +18842,8 @@
       "progs": {
         "swap_eth_addr": {
           "ours": "SKIPPED",
-          "upstream": "UNKNOWN"
+          "upstream": "UNKNOWN",
+          "note": ": not in ELF: function 'swap_eth_addr' not found (looked in '.maps' and 31 other sections)"
         },
         "syncookie_tc": {
           "ours": "FALSE_REJECT",
