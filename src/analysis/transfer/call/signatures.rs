@@ -1639,6 +1639,59 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Scalar)
         .mem_size_pairs(&pairs::DYNPTR_WRITE),
 
+        // int bpf_dynptr_adjust(const struct bpf_dynptr *ptr,
+        //                        u32 start, u32 end)
+        //
+        // Trims the dynptr's view to [start, end). Read-only on the
+        // dynptr (mutates internal offset/size, not the buffer), so any
+        // initialized dynptr (including rdonly) is acceptable. The
+        // `__failure` sibling (`dynptr_fail::dynptr_adjust_invalid`)
+        // passes `{}` — our `DynptrArg{uninit:false}` rejects it.
+        "bpf_dynptr_adjust" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false }, // R1: ptr
+            Anything, // R2: start
+            Anything, // R3: end
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // bool bpf_dynptr_is_null(const struct bpf_dynptr *ptr)
+        "bpf_dynptr_is_null" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // bool bpf_dynptr_is_rdonly(const struct bpf_dynptr *ptr)
+        "bpf_dynptr_is_rdonly" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // __u32 bpf_dynptr_size(const struct bpf_dynptr *ptr)
+        "bpf_dynptr_size" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // bpf_dynptr_clone deliberately NOT registered. Two `__failure`
+        // siblings in `dynptr_fail.c` rely on kernel-only rejection
+        // mechanisms we don't model:
+        //   - `clone_invalidate1`: kernel propagates parent invalidation
+        //     to all clones (after `bpf_ringbuf_submit_dynptr(&ptr)`,
+        //     reads through the clone fail). We don't track parent/clone
+        //     lineage on dynptr slots.
+        //   - `clone_xdp_packet_data`: kernel propagates source `Xdp`
+        //     kind onto the clone, so subsequent `bpf_xdp_adjust_head`
+        //     invalidates the clone's slice. We'd default the clone to
+        //     `Local` and miss the invalidation cascade.
+        // Registering the proto without these mechanisms unmasks both as
+        // PASS → FALSE_ACCEPT. Closing `test_dynptr_clone` (1 FR) isn't
+        // worth opening 2 FAs; revisit when clone-lineage is modeled.
+
         // void *bpf_dynptr_data(const struct bpf_dynptr *ptr, u32 offset, u32 len)
         //
         // Returns a pointer into the dynptr's backing memory bounded by
