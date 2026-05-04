@@ -339,6 +339,21 @@ impl ProgramKind {
         if s == "redir_egress" || s == "redir_egress_nomac" {
             return ProgramKind::LwtOut;
         }
+        // Custom SEC names used by test_lwt_seg6local.c. The userspace
+        // driver loads these via `ip route ... encap bpf in obj <obj>
+        // sec encap_srh ...` (LwtIn-style encap insertion) or
+        // `... encap seg6local action End.BPF endpoint obj <obj>
+        // sec <add_egr_x|pop_egr|inspect_t> ...` (LwtSeg6local action
+        // BPF endpoints). Both classes share the __sk_buff ctx layout;
+        // routing the seg6local actions to LwtXmit (which we already
+        // route lwt_seg6local to above) gives them the correct
+        // skb->data / skb->data_end packet typing.
+        if s == "encap_srh" {
+            return ProgramKind::LwtIn;
+        }
+        if s == "add_egr_x" || s == "pop_egr" || s == "inspect_t" {
+            return ProgramKind::LwtXmit;
+        }
         ProgramKind::Unknown
     }
 
