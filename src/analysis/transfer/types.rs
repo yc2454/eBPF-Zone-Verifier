@@ -679,6 +679,27 @@ pub fn trusted_field_load(struct_name: &str, field_name: &str) -> bool {
         // `PtrToBtfId{bpf_map, TRUSTED}` as its `__map`-suffixed arg
         // (kernel `verifier.c` ~L13227 KF_ARG_PTR_TO_MAP).
         | ("bpf_iter__bpf_map", "map")
+        // ── A3 cgroup chain (2026-05-04) ───────────────────────────
+        // cgroup.kn → kernfs_node. Used by cgroup_id() helper
+        // (`cgrp->kn->id`) — appears in cgroup_hierarchical_stats and
+        // cgrp_kfunc_success::test_cgrp_from_id.
+        | ("cgroup", "kn")
+        // task_struct.cgroups → css_set. Trusted while the task is
+        // trusted; the standard idiom for any cgroup-storage helper
+        // call from a tracing program is
+        // `bpf_get_current_task_btf()->cgroups->dfl_cgrp`.
+        | ("task_struct", "cgroups")
+        // css_set.dfl_cgrp → cgroup. Pairs with (task_struct, cgroups)
+        // for the bpf_get_current_task_btf-rooted helper-arg path
+        // (percpu_alloc_cgrp_local_storage, cgrp_ls_*).
+        | ("css_set", "dfl_cgrp")
+        // sock.<descent-to-sk_cgrp_data.cgroup>. The kernel admits
+        // `sk->sk_cgrp_data.cgroup` from any trusted sock pointer.
+        // `field_at_offset` descends through the embedded
+        // `sock_cgroup_data` struct so the leaf field name is
+        // `cgroup` (offset 664 in tcp_sock via the inet_conn chain).
+        // Closes the cgrp_ls_attach_cgroup helper-arg path.
+        | ("sock", "cgroup")
     )
 }
 
