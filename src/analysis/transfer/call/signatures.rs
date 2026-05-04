@@ -2888,6 +2888,61 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Void),
 
+        // ---- testmod sock-addr-syscall kfuncs (sock_addr_kern.c) ----
+        //
+        // Test kfuncs registered by bpf_testmod for the
+        // sock_addr/syscall integration coverage. All called from
+        // SEC("syscall") programs with a pointer to a per-test args
+        // struct (`init_sock_args` / `addr_args` / `sendmsg_args`)
+        // sitting on the syscall caller's input buffer; void or int
+        // return. Pure additive — no acquire/release.
+        //
+        //   int  bpf_kfunc_init_sock(struct init_sock_args *args)
+        //   void bpf_kfunc_close_sock(void)
+        //   int  bpf_kfunc_call_kernel_connect(struct addr_args *args)
+        //   int  bpf_kfunc_call_kernel_bind(struct addr_args *args)
+        //   int  bpf_kfunc_call_kernel_listen(void)
+        //   int  bpf_kfunc_call_kernel_sendmsg(struct sendmsg_args *args)
+        //   int  bpf_kfunc_call_sock_sendmsg(struct sendmsg_args *args)
+        //   int  bpf_kfunc_call_kernel_getsockname(struct addr_args *args)
+        //   int  bpf_kfunc_call_kernel_getpeername(struct addr_args *args)
+        "bpf_kfunc_init_sock" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_close_sock" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "bpf_kfunc_call_kernel_connect" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_call_kernel_bind" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_call_kernel_listen" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_call_kernel_sendmsg" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_call_sock_sendmsg" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_call_kernel_getsockname" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_call_kernel_getpeername" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
         // ---- Sched_ext kfuncs (W6.4b) ----
         //
         // All gated to `ProgramKind::StructOps` — the kernel registers
