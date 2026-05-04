@@ -21,6 +21,12 @@ impl PtrFlags {
     pub const PERCPU: PtrFlags = PtrFlags(1 << 4);
     pub const MEM_ALLOC: PtrFlags = PtrFlags(1 << 5);
     pub const NON_OWN_REF: PtrFlags = PtrFlags(1 << 6);
+    /// `__user` BTF type tag — kernel pointer addressing user-space memory.
+    /// Direct deref is rejected; programs must use `bpf_copy_from_user`.
+    /// Set on entry-arg ctx-array slot loads whose attach-target arg has
+    /// `__user` in its vmlinux/module BTF (mirrored via a static table
+    /// in runner.rs `ATTACH_TARGET_ARG_TAGS`).
+    pub const USER: PtrFlags = PtrFlags(1 << 7);
 
     pub const fn empty() -> Self {
         PtrFlags(0)

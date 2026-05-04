@@ -36,6 +36,13 @@ pub enum CtxFieldKind {
     TrustedPtr {
         type_name: &'static str,
         nullable: bool,
+        /// BTF TYPE_TAG flags from the attach-target arg (USER /
+        /// PERCPU). Default empty for static ctx-field tables; the
+        /// fentry/LSM/tp_btf lax fallback populates this from
+        /// `runner::tracing_attach_arg_tag_flags(attach_subtype, arg_idx)`.
+        /// Propagated to `RegType::PtrToBtfId.flags` by transfer/types.rs;
+        /// rejected at deref by access.rs.
+        tag_flags: crate::analysis::machine::reg_types::PtrFlags,
     },
 }
 
@@ -1322,6 +1329,7 @@ const TRACE_ITER_TASK_FIELDS: &[CtxField] = &[
         kind: CtxFieldKind::TrustedPtr {
             type_name: "bpf_iter_meta",
             nullable: false,
+            tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
         },
         writable: false,
         readable: true,
@@ -1334,6 +1342,7 @@ const TRACE_ITER_TASK_FIELDS: &[CtxField] = &[
         kind: CtxFieldKind::TrustedPtr {
             type_name: "task_struct",
             nullable: true,
+            tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
         },
         writable: false,
         readable: true,
@@ -1647,6 +1656,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                             kind: CtxFieldKind::TrustedPtr {
                                 type_name: pointee_static,
                                 nullable: false,
+                                tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
                             },
                             readable: true,
                             writable: false,
@@ -1706,6 +1716,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                         CtxFieldKind::TrustedPtr {
                             type_name,
                             nullable: *nullable || nullable_from_table,
+                            tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
                         }
                     }
                 };
@@ -1741,10 +1752,20 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                 .as_deref()
                 .map(|tp| tp_btf_arg_is_maybe_null(tp, (off / 8) as u8))
                 .unwrap_or(false);
+            // BTF TYPE_TAG flags from the attach-target's kernel BTF
+            // (USER / PERCPU). We don't ship vmlinux/module BTF, so the
+            // table in runner.rs mirrors the small set of attach targets
+            // the test corpus exercises. arg_idx is kernel-side
+            // (0 = first user-declared arg), matching `off / 8`.
+            let tag_flags = crate::testing::runner::tracing_attach_arg_tag_flags(
+                env.ctx.attach_subtype.as_deref(),
+                (off / 8) as u8,
+            );
             return Some(CtxAccessInfo {
                 kind: CtxFieldKind::TrustedPtr {
                     type_name: "unknown",
                     nullable,
+                    tag_flags,
                 },
                 readable: true,
                 writable: false,
@@ -1788,6 +1809,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                 kind: CtxFieldKind::TrustedPtr {
                     type_name,
                     nullable: false,
+                    tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
                 },
                 readable: true,
                 writable: false,

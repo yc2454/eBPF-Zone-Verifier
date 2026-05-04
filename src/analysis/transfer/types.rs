@@ -402,14 +402,21 @@ pub(crate) fn update_load_types(
                     CtxFieldKind::TrustedPtr {
                         type_name,
                         nullable,
+                        tag_flags,
                     } => {
+                        // Compose TRUSTED with attach-target tag flags
+                        // (USER / PERCPU). Direct deref of USER/PERCPU
+                        // pointers is rejected at the load-site check
+                        // in memory/access.rs — programs must go through
+                        // bpf_copy_from_user / bpf_per_cpu_ptr first.
+                        let flags = PtrFlags::TRUSTED.union(tag_flags);
                         if nullable {
                             state.types.set(
                                 dst,
                                 RegType::PtrToBtfIdOrNull {
                                     id: new_ptr_id(),
                                     type_name,
-                                    flags: PtrFlags::TRUSTED,
+                                    flags,
                                     ref_id: None,
                                 },
                             );
@@ -418,7 +425,7 @@ pub(crate) fn update_load_types(
                                 dst,
                                 RegType::PtrToBtfId {
                                     type_name,
-                                    flags: PtrFlags::TRUSTED,
+                                    flags,
                                     ref_id: None,
                                 },
                             );

@@ -182,6 +182,32 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             check_packet_meta_access(env, state, base, off, size, pc);
         }
         PtrToBtfId { .. } | PtrToMapObject { .. } => {
+            // Reject direct deref of `__user` / `__percpu` BTF type-tag
+            // pointers. Kernel propagates these tags from the attach
+            // target's vmlinux/module BTF to R1..Rn at load time; the
+            // verifier rejects the load via `btf_struct_access` →
+            // -EACCES. Programs must use bpf_copy_from_user /
+            // bpf_per_cpu_ptr first.
+            //
+            // Closes btf_type_tag_user.c::test_user1, test_sys_getsockname,
+            // and btf_type_tag_percpu.c::test_percpu1 (via the
+            // ATTACH_TARGET_ARG_TAGS table in runner.rs, consulted in
+            // ctx_model.rs's lax fallback for fentry/LSM/tp_btf).
+            use crate::analysis::machine::reg_types::PtrFlags;
+            let tags = base_type.ptr_flags();
+            if tags.contains(PtrFlags::USER) || tags.contains(PtrFlags::PERCPU) {
+                error!(
+                    "Direct deref of __user/__percpu PtrToBtfId at pc {}: {:?}",
+                    pc, base_type
+                );
+                env.fail(VerificationError::UnsafeGenericLoad {
+                    pc,
+                    base,
+                    off,
+                    base_type,
+                });
+                return;
+            }
             // Skip the field-table check for any PtrToBtfId whose
             // concrete kernel type isn't modeled in `mem_region_model`
             // (e.g. `struct socket`, `struct task_struct`, `struct

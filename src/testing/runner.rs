@@ -198,6 +198,49 @@ fn lsm_hook_is_disabled(hook: &str) -> bool {
 /// `test_spin_unlock` declare `?fentry/bpf_spin_{lock,unlock}` and
 /// expect attach failure (note in expectations.json:
 /// "kernel prog_tests/tracing_failure.c asserts attach fails").
+/// Per-(attach_target, kernel_arg_idx) BTF TYPE_TAG flags carried by the
+/// kernel function's arg in vmlinux/module BTF. The kernel verifier's
+/// attach-time entry-arg seeder propagates these tags onto the BPF
+/// program's R1..Rn (e.g. `__user` → reject direct deref). We don't
+/// load module/vmlinux BTF, so mirror just the targets the test corpus
+/// exercises.
+///
+/// `arg_idx` is **kernel-side**: 0 = first user-declared arg of the
+/// attach target. Matches `(off / 8)` at the BPF_PROG ctx-array load
+/// site, since clang emits one slot per user-declared kernel arg.
+const ATTACH_TARGET_ARG_TAGS: &[(&str, u8, crate::analysis::machine::reg_types::PtrFlags)] = &[
+    // bpf_testmod_test_btf_type_tag_user_N(struct ... __user *arg)
+    ("bpf_testmod_test_btf_type_tag_user_1", 0,
+        crate::analysis::machine::reg_types::PtrFlags::USER),
+    ("bpf_testmod_test_btf_type_tag_user_2", 0,
+        crate::analysis::machine::reg_types::PtrFlags::USER),
+    // bpf_testmod_test_btf_type_tag_percpu_N(struct ... __percpu *arg)
+    ("bpf_testmod_test_btf_type_tag_percpu_1", 0,
+        crate::analysis::machine::reg_types::PtrFlags::PERCPU),
+    ("bpf_testmod_test_btf_type_tag_percpu_2", 0,
+        crate::analysis::machine::reg_types::PtrFlags::PERCPU),
+    // __sys_getsockname(int fd, struct sockaddr __user *usockaddr,
+    //                   int __user *usockaddr_len)
+    ("__sys_getsockname", 1, crate::analysis::machine::reg_types::PtrFlags::USER),
+    ("__sys_getsockname", 2, crate::analysis::machine::reg_types::PtrFlags::USER),
+];
+
+pub fn tracing_attach_arg_tag_flags(
+    target: Option<&str>,
+    arg_idx: u8,
+) -> crate::analysis::machine::reg_types::PtrFlags {
+    let Some(target) = target else {
+        return crate::analysis::machine::reg_types::PtrFlags::empty();
+    };
+    ATTACH_TARGET_ARG_TAGS
+        .iter()
+        .filter(|(t, i, _)| *t == target && *i == arg_idx)
+        .fold(
+            crate::analysis::machine::reg_types::PtrFlags::empty(),
+            |acc, (_, _, f)| acc.union(*f),
+        )
+}
+
 fn is_tracing_attach_denied(target: &str) -> bool {
     matches!(
         target,

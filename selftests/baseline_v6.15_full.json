@@ -1,6 +1,6 @@
 {
   "tag": "v6.15",
-  "generated_at": "2026-05-04T00:53:30.646103+00:00",
+  "generated_at": "2026-05-04T01:14:48.871844+00:00",
   "files": {
     "access_map_in_map.c": {
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/access_map_in_map.c",
@@ -1210,8 +1210,8 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/btf_type_tag_percpu.c",
       "progs": {
         "test_percpu1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test_percpu2": {
           "upstream": "ACCEPT",
@@ -1232,12 +1232,12 @@
       "source": "vendor/linux/tools/testing/selftests/bpf/progs/btf_type_tag_user.c",
       "progs": {
         "test_sys_getsockname": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test_user1": {
-          "upstream": "REJECT",
-          "ours": "FALSE_ACCEPT"
+          "upstream": "ACCEPT",
+          "ours": "PASS"
         },
         "test_user2": {
           "upstream": "ACCEPT",
@@ -3211,7 +3211,7 @@
         "test_pkt_access": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "pc 35: R3 !read_ok"
+          "note": "pc 39: R3 !read_ok"
         }
       }
     },
@@ -3221,7 +3221,7 @@
         "test_pkt_access": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "pc 35: R2 !read_ok"
+          "note": "pc 53: R2 !read_ok"
         }
       }
     },
@@ -4541,7 +4541,7 @@
         "global_list_push_pop_multiple": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 71: base R6+-4 (type: PtrToOwnedKptr { ref_id: Some(616), offset: 0, non_owning: false })"
+          "note": "Unsafe generic load at pc 71: base R6+-4 (type: PtrToOwnedKptr { ref_id: Some(524), offset: 0, non_owning: false })"
         },
         "global_list_push_pop_nested": {
           "upstream": "ACCEPT",
@@ -4576,7 +4576,7 @@
         "map_list_push_pop_multiple": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 79: base R8+-4 (type: PtrToOwnedKptr { ref_id: Some(403), offset: 0, non_owning: false })"
+          "note": "Unsafe generic load at pc 79: base R8+-4 (type: PtrToOwnedKptr { ref_id: Some(298), offset: 0, non_owning: false })"
         }
       }
     },
@@ -6048,7 +6048,7 @@
         "rbtree_add_and_remove": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 48: base R6+-16 (type: PtrToOwnedKptr { ref_id: Some(38), offset: 0, non_owning: false })"
+          "note": "Unsafe generic load at pc 48: base R6+-16 (type: PtrToOwnedKptr { ref_id: Some(30), offset: 0, non_owning: false })"
         },
         "rbtree_add_and_remove_array": {
           "upstream": "ACCEPT",
@@ -6068,7 +6068,7 @@
         "rbtree_api_release_aliasing": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 52: base R6+-8 (type: PtrToOwnedKptr { ref_id: Some(49), offset: 0, non_owning: false })"
+          "note": "Unsafe generic load at pc 52: base R6+-8 (type: PtrToOwnedKptr { ref_id: Some(46), offset: 0, non_owning: false })"
         },
         "rbtree_first_and_remove": {
           "upstream": "ACCEPT",
@@ -7706,7 +7706,7 @@
         "on_enter": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic load at pc 28: base R0+216 (type: PtrToMapKptrOrNull { pointee_btf_id: 15, ref_id: Some(56), flags: PtrFlags(32) })"
+          "note": "Unsafe generic load at pc 28: base R0+216 (type: PtrToMapKptrOrNull { pointee_btf_id: 15, ref_id: Some(135), flags: PtrFlags(32) })"
         }
       }
     },
@@ -11219,22 +11219,22 @@
         "urand_read_with_sema": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 37: base R6+0 (type: PtrToAllocMemOrNull { id: 444, mem_size: 8, ref_id: None, dynptr_id: None })"
+          "note": "Unsafe generic store at pc 37: base R6+0 (type: PtrToAllocMemOrNull { id: 366, mem_size: 8, ref_id: None, dynptr_id: None })"
         },
         "urand_read_without_sema": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 37: base R6+0 (type: PtrToAllocMemOrNull { id: 442, mem_size: 8, ref_id: None, dynptr_id: None })"
+          "note": "Unsafe generic store at pc 37: base R6+0 (type: PtrToAllocMemOrNull { id: 361, mem_size: 8, ref_id: None, dynptr_id: None })"
         },
         "urandlib_read_with_sema": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 37: base R6+0 (type: PtrToAllocMemOrNull { id: 450, mem_size: 8, ref_id: None, dynptr_id: None })"
+          "note": "Unsafe generic store at pc 37: base R6+0 (type: PtrToAllocMemOrNull { id: 372, mem_size: 8, ref_id: None, dynptr_id: None })"
         },
         "urandlib_read_without_sema": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 37: base R6+0 (type: PtrToAllocMemOrNull { id: 446, mem_size: 8, ref_id: None, dynptr_id: None })"
+          "note": "Unsafe generic store at pc 37: base R6+0 (type: PtrToAllocMemOrNull { id: 369, mem_size: 8, ref_id: None, dynptr_id: None })"
         }
       }
     },
@@ -11244,17 +11244,17 @@
         "usdt0": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 145: base R6+0 (type: PtrToAllocMemOrNull { id: 459, mem_size: 8, ref_id: None, dynptr_id: None })"
+          "note": "Unsafe generic store at pc 116: base R6+0 (type: PtrToAllocMemOrNull { id: 385, mem_size: 8, ref_id: None, dynptr_id: None })"
         },
         "usdt12": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 246: base R6+0 (type: PtrToAllocMemOrNull { id: 473, mem_size: 8, ref_id: None, dynptr_id: None })"
+          "note": "Unsafe generic store at pc 215: base R6+0 (type: PtrToAllocMemOrNull { id: 408, mem_size: 8, ref_id: None, dynptr_id: None })"
         },
         "usdt3": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 193: base R6+0 (type: PtrToAllocMemOrNull { id: 470, mem_size: 8, ref_id: None, dynptr_id: None })"
+          "note": "Unsafe generic store at pc 253: base R6+0 (type: PtrToAllocMemOrNull { id: 395, mem_size: 8, ref_id: None, dynptr_id: None })"
         }
       }
     },
@@ -11264,7 +11264,7 @@
         "usdt_100": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Unsafe generic store at pc 26: base R6+0 (type: PtrToAllocMemOrNull { id: 482, mem_size: 8, ref_id: None, dynptr_id: None })"
+          "note": "Unsafe generic store at pc 26: base R6+0 (type: PtrToAllocMemOrNull { id: 429, mem_size: 8, ref_id: None, dynptr_id: None })"
         }
       }
     },
@@ -12308,7 +12308,7 @@
         "test_user_ringbuf_protocol": {
           "upstream": "ACCEPT",
           "ours": "FALSE_REJECT",
-          "note": "Invalid argument type at pc 50: register: r1"
+          "note": "Invalid argument type at pc 110: register: r1"
         }
       }
     },
