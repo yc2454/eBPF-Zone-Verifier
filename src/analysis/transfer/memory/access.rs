@@ -270,9 +270,10 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
         // Mirrors the W6.4a-followon `PtrToBtfId{type_name: "unknown"}`
         // policy — accept any field read; result is `ScalarValue` (or a
         // nested PtrToBtfId if narrower modeling lands later).
-        PtrToTask { .. } => {
+        PtrToTask { .. } | PtrToCgroup { .. } => {
             // accept; loaded value left as `ScalarValue` by the
-            // type-update path
+            // type-update path (or PtrToBtfId for allowlisted
+            // pointer fields via trusted_field_load).
         }
         ScalarValue | NotInit => {
             error!(
