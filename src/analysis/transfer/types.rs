@@ -891,26 +891,41 @@ pub(crate) fn update_call_types(
             }
         }
 
-        // SKC to TCP sock conversion - returns PTR_TO_TCP_SOCK_OR_NULL
+        // SKC to TCP sock conversion - returns PTR_TO_TCP_SOCK_OR_NULL.
+        // Two acceptance shapes for R1:
+        //   (a) acquire-tracked (ref_id Some) — refcounted sock pointer
+        //       from bpf_sk_lookup_*; R0 inherits the same ref_id.
+        //   (b) ctx-derived (trusted, no ref_id) — e.g. bpf_iter__tcp's
+        //       `sk_common` field is typed PtrToBtfId{sock_common,
+        //       TRUSTED} with ref_id: None via the universal
+        //       bpf_iter__* allowlist. The kernel's KF_RCU treatment
+        //       admits these without acquire-tracking; we mirror by
+        //       producing PtrToTcpSockOrNull{id: None} so downstream
+        //       deref typing flows.
         constants::BPF_SKC_TO_TCP_SOCK
         | constants::BPF_SKC_TO_TCP6_SOCK
         | constants::BPF_SKC_TO_TCP_TIMEWAIT_SOCK
         | constants::BPF_SKC_TO_TCP_REQUEST_SOCK => {
-            if let Some(ref_id) = state.types.get(Reg::R1).get_ref_id() {
+            let r1 = state.types.get(Reg::R1);
+            let ref_id = r1.get_ref_id();
+            let trusted = r1.is_trusted();
+            if ref_id.is_some() || trusted {
                 state
                     .types
-                    .set(Reg::R0, RegType::PtrToTcpSockOrNull { id: Some(ref_id) });
+                    .set(Reg::R0, RegType::PtrToTcpSockOrNull { id: ref_id });
             }
         }
 
-        // SKC to UDP/Unix - return SOCK_COMMON for now (simplified)
+        // SKC to UDP/Unix - return SOCK_COMMON. Same two-shape
+        // acceptance as the TCP variants (see comment above).
         constants::BPF_SKC_TO_UDP6_SOCK | constants::BPF_SKC_TO_UNIX_SOCK => {
-            if let Some(ref_id) = state.types.get(Reg::R1).get_ref_id() {
+            let r1 = state.types.get(Reg::R1);
+            let ref_id = r1.get_ref_id();
+            let trusted = r1.is_trusted();
+            if ref_id.is_some() || trusted {
                 state.types.set(
                     Reg::R0,
-                    RegType::PtrToSockCommonOrNull {
-                        ref_id: Some(ref_id),
-                    },
+                    RegType::PtrToSockCommonOrNull { ref_id },
                 );
             }
         }
