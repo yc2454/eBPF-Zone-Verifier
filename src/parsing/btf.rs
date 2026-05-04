@@ -613,6 +613,23 @@ impl BtfContext {
         self.get_string(ty.name_off)
     }
 
+    /// Like `struct_name`, but also returns the declared name for
+    /// BTF_KIND_FWD types (forward declarations of opaque kernel
+    /// structs). Programs that hold typed `__kptr` fields to opaque
+    /// kernel types (e.g. `struct bpf_cpumask __kptr *`) carry only a
+    /// FWD entry for the inner type — the full struct definition lives
+    /// in vmlinux BTF, not the program's BTF. Validators that key off
+    /// the pointee type name (e.g. cpumask kfuncs accepting a kptr to
+    /// `bpf_cpumask`) need this fallback.
+    pub fn struct_or_fwd_name(&self, type_id: u32) -> Option<&str> {
+        let id = self.peel_modifiers(type_id);
+        let ty = self.types.get(&id)?;
+        if !matches!(ty.kind(), BTF_KIND_STRUCT | BTF_KIND_UNION | BTF_KIND_FWD) {
+            return None;
+        }
+        self.get_string(ty.name_off)
+    }
+
     /// Resolve the parameter list of a single struct_ops member.
     ///
     /// Walks `struct <struct_name> { ... <member_name>; ... }`, finds the

@@ -438,7 +438,8 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
         | RegType::PtrToArenaOrNull { ref_id, .. }
         | RegType::PtrToCgroupOrNull { ref_id }
         | RegType::PtrToOwnedKptrOrNull { ref_id, .. }
-        | RegType::PtrToTaskOrNull { ref_id } => ref_id,
+        | RegType::PtrToTaskOrNull { ref_id }
+        | RegType::PtrToMapKptrOrNull { ref_id, .. } => ref_id,
         // PtrToBtfIdOrNull only carries a ref_id when minted by an
         // ACQUIRE-flagged kfunc returning `RetKind::PtrToBtfIdNamed`
         // (`bpf_get_task_exe_file`, `bpf_lookup_user_key`, …). The plain

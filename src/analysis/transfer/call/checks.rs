@@ -441,7 +441,19 @@ fn validate_ptr_to_btf_id_named(
 fn validate_ptr_to_cpumask(ctx: &mut ValidationContext) -> bool {
     // Strict: mutating cpumask consumers only accept the
     // acquire-tracked specialization. See ArgKind::PtrToCpumask docs.
-    if !matches!(ctx.actual, RegType::PtrToCpumask { .. }) {
+    // Also accept an acquire-tracked `PtrToMapKptr{bpf_cpumask, ref_id:
+    // Some}` produced by `bpf_kptr_xchg` — semantically the same
+    // refcounted-cpumask handoff (closes test_insert_remove_release's
+    // bpf_cpumask_release call site).
+    let is_acquired_map_kptr = matches!(
+        ctx.actual,
+        RegType::PtrToMapKptr { ref_id: Some(_), pointee_btf_id, .. }
+            if matches!(
+                ctx.env.ctx.btf.struct_or_fwd_name(pointee_btf_id),
+                Some("bpf_cpumask")
+            )
+    );
+    if !matches!(ctx.actual, RegType::PtrToCpumask { .. }) && !is_acquired_map_kptr {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,
@@ -460,8 +472,13 @@ fn validate_ptr_to_cpumask(ctx: &mut ValidationContext) -> bool {
 
 /// Validate `ArgKind::PtrToCpumaskRead` — read-only KF_RCU consumers.
 /// Accepts `PtrToCpumask` (the bpf_cpumask wrapper passes the const
-/// arg) and `PtrToBtfId{cpumask|bpf_cpumask, TRUSTED}` produced by the
-/// BTF field-load typing path (`task->cpus_ptr`, `&task->cpus_mask`).
+/// arg), `PtrToBtfId{cpumask|bpf_cpumask, TRUSTED}` produced by the
+/// BTF field-load typing path (`task->cpus_ptr`, `&task->cpus_mask`),
+/// and `PtrToMapKptr{cpumask|bpf_cpumask}` loaded from a `__kptr` /
+/// `__rcu` map field — TRUSTED unconditionally, or RCU when inside
+/// an active `bpf_rcu_read_lock` section (mirrors kernel KF_RCU
+/// acceptance of MEM_RCU pointers; out-of-RCU loads keep failing
+/// with the kernel's "must be a rcu pointer" rejection).
 fn validate_ptr_to_cpumask_read(ctx: &mut ValidationContext) -> bool {
     use crate::analysis::machine::reg_types::PtrFlags;
     let is_btf_cpumask = matches!(
@@ -470,7 +487,28 @@ fn validate_ptr_to_cpumask_read(ctx: &mut ValidationContext) -> bool {
             if (type_name == "cpumask" || type_name == "bpf_cpumask")
                 && flags.contains(PtrFlags::TRUSTED)
     );
-    if !matches!(ctx.actual, RegType::PtrToCpumask { .. }) && !is_btf_cpumask {
+    let is_map_kptr_cpumask = if let RegType::PtrToMapKptr { pointee_btf_id, ref_id, flags } =
+        ctx.actual
+    {
+        let name = ctx.env.ctx.btf.struct_or_fwd_name(pointee_btf_id);
+        let name_ok = matches!(name, Some("cpumask") | Some("bpf_cpumask"));
+        // Acquire-tracked (ref_id Some — from bpf_kptr_xchg) is trusted
+        // unconditionally. Otherwise the load came from a `__kptr` /
+        // `__rcu` field at-rest in a map; the kernel admits these as
+        // KF_RCU-compatible only inside an active bpf_rcu_read_lock
+        // region (rejected as "must be a rcu pointer" otherwise).
+        let trust_ok = ref_id.is_some()
+            || flags.contains(PtrFlags::TRUSTED)
+            || ((flags.contains(PtrFlags::RCU) || flags.contains(PtrFlags::MEM_ALLOC))
+                && ctx.state.in_rcu_read_section());
+        name_ok && trust_ok
+    } else {
+        false
+    };
+    if !matches!(ctx.actual, RegType::PtrToCpumask { .. })
+        && !is_btf_cpumask
+        && !is_map_kptr_cpumask
+    {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,
