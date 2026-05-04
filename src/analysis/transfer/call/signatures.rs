@@ -3145,6 +3145,71 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar),
 
+        // ---- xfrm info kfuncs (xfrm_info.c) ----
+        //   int bpf_skb_set_xfrm_info(struct __sk_buff *, const struct bpf_xfrm_info *)
+        //   int bpf_skb_get_xfrm_info(struct __sk_buff *, struct bpf_xfrm_info *)
+        "bpf_skb_set_xfrm_info" => CallProto::with_args([
+            PtrToCtx, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_skb_get_xfrm_info" => CallProto::with_args([
+            PtrToCtx, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- bpf_task_under_cgroup ----
+        // long bpf_task_under_cgroup(struct task_struct *task,
+        //                            struct cgroup *ancestor)
+        // Used by test_task_under_cgroup.c. task / ancestor are
+        // Anything to accept PtrToTask/PtrToCgroup minted by the
+        // existing acquire kfuncs.
+        "bpf_task_under_cgroup" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- testmod cross-module kfuncs (test_ksyms_module.c) ----
+        //   void bpf_testmod_test_mod_kfunc(int)
+        //   void bpf_testmod_invalid_mod_kfunc(void)  (weak — present
+        //   only when the test module is loaded; programs guard with
+        //   ksym null check)
+        "bpf_testmod_test_mod_kfunc" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "bpf_testmod_invalid_mod_kfunc" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        // ---- bpf_copy_from_user_str ----
+        // int bpf_copy_from_user_str(void *dst, u32 size,
+        //                            const void *unsafe_ptr, u64 flags)
+        // Used by test_attach_probe.c sleepable uprobes. Modeled with
+        // a writable pointer + size pair so the bounds check matches
+        // the kernel's KF_ARG_PTR_TO_UNINIT_MEM rules.
+        "bpf_copy_from_user_str" => CallProto::with_args([
+            PtrToUninitMem, ConstSize, Anything, Anything, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .mem_size_pairs(&pairs::COPY_FROM_USER_STR)
+        // KF_SLEEPABLE: rejects calls inside preempt-disabled or
+        // IRQ-disabled regions. Kernel `fn->might_sleep`. Without
+        // this flag, irq.c::irq_sleepable_kfunc and
+        // preempt_lock.c::preempt_sleepable_kfunc would PASS→FA.
+        .flags(CallFlags::MIGHT_SLEEP),
+
+        // ---- bpf_get_kmem_cache (kmem_cache_iter.c) ----
+        // struct kmem_cache *bpf_get_kmem_cache(u64 addr)
+        // Returns a kernel slab cache pointer. Programs only use it
+        // for null-check + map-lookup-by-pointer-value (no field
+        // access on the returned pointer in test corpus), so a
+        // Scalar return is sufficient.
+        "bpf_get_kmem_cache" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
         // ---- Sched_ext kfuncs (W6.4b) ----
         //
         // All gated to `ProgramKind::StructOps` — the kernel registers
@@ -3431,6 +3496,9 @@ pub(super) mod pairs {
 
     // ---- bpf_cpumask_populate(R1=dst, R2=src, R3=src__sz) ----
     pub static CPUMASK_POPULATE: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+
+    // ---- bpf_copy_from_user_str(R1=dst, R2=size, R3=unsafe_ptr, R4=flags) ----
+    pub static COPY_FROM_USER_STR: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
 }
 
 /// W7.2: returns true if the helper is in the kernel's `is_fastcall_helper_call`
