@@ -490,6 +490,17 @@ const SK_BUFF_EXTENDED_FIELDS: &[CtxField] = &[
         readable: true,
         narrow_access: false,
     },
+    // __u64 hwtstamp (offset 184). Kernel hardware timestamp (set by
+    // NIC drivers via skb_hwtstamps). Read-only for BPF programs;
+    // test_skb_ctx::process reads via `Load U64 base+184`.
+    CtxField {
+        offset: 184,
+        size: MemSize::U64,
+        kind: CtxFieldKind::Scalar,
+        writable: false,
+        readable: true,
+        narrow_access: false,
+    },
 ];
 
 /// struct xdp_md (XDP context)
@@ -1770,7 +1781,15 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
     let is_direct_typed_ctx = matches!(prog_kind, ProgramKind::SkReuseport)
         || (prog_kind == ProgramKind::Tracing
             && matches!(env.ctx.attach_flavor.as_deref(), Some("iter")));
-    if is_direct_typed_ctx && size == 8 && off >= 0 && off % 8 == 0 {
+    // Direct typed ctx loads: 8-byte pointer fields and 1/2/4/8-byte
+    // scalar fields. The size-8/off%8 path resolves pointer-typed
+    // fields via BTF (allowlisted); the size-1/2/4/8 path falls
+    // through to Scalar so per-iter-subtype ctx structs that we
+    // don't model in detail (bpf_iter__tcp::uid, bpf_iter__task_file
+    // ::fd, etc.) accept the loads the kernel admits.
+    if is_direct_typed_ctx && size > 0 && off >= 0 && (size & (size - 1)) == 0 && size <= 8
+        && off % size as i16 == 0
+    {
         if let Some(args) = env.ctx.entry_args.as_ref()
             && let Some(arg0) = args.first()
         {
@@ -1780,7 +1799,8 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
             use crate::analysis::transfer::types::trusted_field_load;
             use crate::parsing::btf::BtfFieldKind;
             if let EntryArg::TrustedPtrBtfId { type_name, .. } = arg0 {
-                if let Some(struct_id) = env.ctx.btf.find_struct_by_name(type_name)
+                if size == 8
+                    && let Some(struct_id) = env.ctx.btf.find_struct_by_name(type_name)
                     && let Some(info) =
                         env.ctx.btf.field_at_offset(struct_id, off as u32)
                 {
@@ -1806,7 +1826,8 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                 // fields: scalar (loose). Mirrors the existing iter
                 // behavior pre-cluster-#2 — the kernel admits these
                 // loads but our verifier doesn't have ctx-field
-                // metadata for every iter ctx struct.
+                // metadata for every iter ctx struct. Now extended
+                // to also cover sub-8-byte aligned reads.
                 return Some(CtxAccessInfo {
                     kind: CtxFieldKind::Scalar,
                     readable: true,

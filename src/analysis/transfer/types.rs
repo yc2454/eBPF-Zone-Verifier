@@ -614,6 +614,18 @@ fn implied_btf_struct_name(ty: &RegType) -> Option<&'static str> {
 }
 
 pub fn trusted_field_load(struct_name: &str, field_name: &str) -> bool {
+    // Universal `bpf_iter__*` pointer fields. The kernel emits
+    // bpf_iter ctx structs as `struct bpf_iter__X { struct
+    // bpf_iter_meta *meta; <iter-payload-pointers...>; }`. The
+    // payload pointers are marked PTR_TRUSTED while the iter is
+    // alive — same lifetime band as the ctx itself. Programs read
+    // them via `ctx->task`, `ctx->sk_common`, `ctx->file`, etc.,
+    // then deref BTF fields. Allowlisting all iter-prefix structs'
+    // pointer fields covers the per-iter-subtype fan-out without
+    // enumerating each one.
+    if struct_name.starts_with("bpf_iter__") {
+        return true;
+    }
     matches!(
         (struct_name, field_name),
         // task_struct.cpus_ptr — `cpumask_t *` carrying the task's
