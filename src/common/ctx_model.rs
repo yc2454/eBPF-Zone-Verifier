@@ -639,21 +639,21 @@ const SOCK_ADDR_FIELDS: &[CtxField] = &[
         readable: true,
         narrow_access: false,
     },
-    // __u32 msg_src_ip4
+    // __u32 msg_src_ip4 — kernel allows 1,2,4-byte read and 4-byte write
     CtxField {
         offset: 40,
         size: MemSize::U32,
         kind: CtxFieldKind::Scalar,
-        writable: false,
+        writable: true,
         readable: true,
         narrow_access: false,
     },
-    // __u32 msg_src_ip6[4]
+    // __u32 msg_src_ip6[4] — kernel allows 1,2,4,8-byte read and 4,8-byte write
     CtxField {
         offset: 44,
         size: MemSize::U32,
         kind: CtxFieldKind::Scalar,
-        writable: false,
+        writable: true,
         readable: true,
         narrow_access: false,
     },
@@ -661,7 +661,7 @@ const SOCK_ADDR_FIELDS: &[CtxField] = &[
         offset: 48,
         size: MemSize::U32,
         kind: CtxFieldKind::Scalar,
-        writable: false,
+        writable: true,
         readable: true,
         narrow_access: false,
     },
@@ -669,7 +669,7 @@ const SOCK_ADDR_FIELDS: &[CtxField] = &[
         offset: 52,
         size: MemSize::U32,
         kind: CtxFieldKind::Scalar,
-        writable: false,
+        writable: true,
         readable: true,
         narrow_access: false,
     },
@@ -677,15 +677,20 @@ const SOCK_ADDR_FIELDS: &[CtxField] = &[
         offset: 56,
         size: MemSize::U32,
         kind: CtxFieldKind::Scalar,
-        writable: false,
+        writable: true,
         readable: true,
         narrow_access: false,
     },
-    // __bpf_md_ptr(struct bpf_sock *, sk)
+    // __bpf_md_ptr(struct bpf_sock *, sk). The union is __attribute__((aligned(8)))
+    // so the field starts at offset 64, NOT 60 — `msg_src_ip6[4]` ends at 60 and
+    // the alignment pad pushes the ptr to 64. Tests in bind_perm.c, bind4_prog.c,
+    // bind6_prog.c, connect_force_port{4,6}.c read sk via `Load U64 base+64`.
+    // The sk pointer is read-only at the sock_addr context; we model it as
+    // SockCommon (PtrToSockCommonOrNull) so callers null-check before deref.
     CtxField {
-        offset: 60,
+        offset: 64,
         size: MemSize::U64,
-        kind: CtxFieldKind::Scalar,
+        kind: CtxFieldKind::SockCommon,
         writable: false,
         readable: true,
         narrow_access: false,
