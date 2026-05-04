@@ -1274,13 +1274,15 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         .ret(RetKind::Scalar),
 
         // ---- W7.1: bpf_strncmp ----
-        // (s1: PtrToMem, s1_sz: ConstSize, s2: PtrToMem) -> s32
-        // Kernel additionally requires s2 to be a const string (rodata);
-        // we relax to PtrToMem.
+        // (s1: PtrToMem, s1_sz: ConstSize, s2: PtrToConstStr) -> s32
+        // Kernel rejects writable / non-NUL-terminated comparands via
+        // ARG_PTR_TO_CONST_STR (validate_ptr_to_const_str enforces
+        // BPF_F_RDONLY_PROG + NUL-within-rodata-bounds). Closes
+        // strncmp_bad_writable_target and strncmp_bad_not_null_term_target.
         constants::BPF_STRNCMP => CallProto::with_args([
-            PtrToMem,  // R1: s1
-            ConstSize, // R2: s1_sz
-            PtrToMem,  // R3: s2 (const string in rodata)
+            PtrToMem,       // R1: s1
+            ConstSize,      // R2: s1_sz
+            PtrToConstStr,  // R3: s2 (rodata, NUL-terminated)
             DontCare,
             DontCare,
         ])
