@@ -411,6 +411,14 @@ fn validate_ptr_to_btf_id_named(
         (e, RegType::PtrToBtfId { type_name, .. }) if type_name == e => true,
         ("cgroup", RegType::PtrToCgroup { .. }) => true,
         ("task_struct", RegType::PtrToTask { .. }) => true,
+        // Acquire-tracked PtrToMapKptr from bpf_kptr_xchg, where the
+        // pointee btf-id resolves to the requested struct name.
+        // Mirrors the cpumask + cgroup validate_ptr_to_* extensions.
+        (e, RegType::PtrToMapKptr { ref_id: Some(_), pointee_btf_id, .. })
+            if ctx.env.ctx.btf.struct_or_fwd_name(pointee_btf_id) == Some(e) =>
+        {
+            true
+        }
         _ => false,
     };
     if matches {
@@ -537,12 +545,30 @@ fn validate_ptr_to_cgroup(ctx: &mut ValidationContext) -> bool {
     // programs that take `struct cgroup *cgrp` directly, the entry-arg
     // seeder produces `PtrToBtfId{cgroup, TRUSTED}` — also accept that
     // shape. Mirrors the validate_ptr_to_task fallback.
+    // PtrToMapKptr{cgroup}: either acquire-tracked (ref_id Some, from
+    // bpf_kptr_xchg) or a raw `__kptr` field load (ref_id None). The
+    // kernel admits either for KF_RCU consumers like
+    // bpf_cgroup_ancestor; KF_TRUSTED_ARGS / KF_RELEASE consumers
+    // require acquire-tracked. We don't differentiate at this layer
+    // (CallFlags isn't plumbed in), so the more-permissive form is
+    // chosen — surfaces FAs on cgrp_kfunc_failure tests that intend
+    // the raw-load → release rejection ("must be referenced or
+    // trusted"), kept per feedback_additive_vs_invasive.md.
+    let is_map_kptr_cgroup = matches!(
+        ctx.actual,
+        RegType::PtrToMapKptr { pointee_btf_id, .. }
+            if matches!(
+                ctx.env.ctx.btf.struct_or_fwd_name(pointee_btf_id),
+                Some("cgroup")
+            )
+    );
     if !matches!(ctx.actual, RegType::PtrToCgroup { .. })
         && !matches!(
             ctx.actual,
             RegType::PtrToBtfId { type_name: "cgroup", flags, .. }
                 if flags.contains(crate::analysis::machine::reg_types::PtrFlags::TRUSTED)
         )
+        && !is_map_kptr_cgroup
     {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
