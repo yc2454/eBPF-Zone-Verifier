@@ -174,6 +174,51 @@ fn transfer_kfunc_proto(
         }
     }
 
+    // Graph-mutation `__contains` cross-arg check: for
+    // `bpf_list_push_{front,back}_impl` and `bpf_rbtree_add_impl`,
+    // R1 is the head (PtrToMapValue at the head's offset within a map
+    // value carrying a `bpf_list_head` / `bpf_rb_root` field decorated
+    // with `__contains(<struct>, <member>)`). R2 is the node, a
+    // `PtrToOwnedKptr` whose `offset` must equal the contained
+    // struct's `<member>` byte offset.
+    //
+    // Lite scope (this commit): offset comparison only — closes the
+    // `incorrect_node_off*` family in `linked_list_fail.c`. The
+    // companion struct-type check (no_node_value_type,
+    // incorrect_value_type) needs `pointee_btf_id` on PtrToOwnedKptr,
+    // which is a separate representation change.
+    {
+        let kfunc_name = env.ctx.btf.kfunc_name(btf_id).map(|s| s.to_string());
+        let is_graph_add = matches!(
+            kfunc_name.as_deref(),
+            Some("bpf_list_push_front_impl")
+                | Some("bpf_list_push_back_impl")
+                | Some("bpf_rbtree_add_impl")
+        );
+        if is_graph_add
+            && let RegType::PtrToMapValue { offset: Some(head_off), map_idx, .. } =
+                in_types.get(Reg::R1)
+            && let RegType::PtrToOwnedKptr { offset: node_off, .. } = in_types.get(Reg::R2)
+            && let Some(map_def) = env.ctx.map_defs.get(map_idx)
+            && let Some(val_type_id) = map_def.btf_val_type_id
+        {
+            let fields = env.ctx.btf.find_special_fields(val_type_id);
+            if let Some(field) =
+                fields.iter().find(|f| f.offset as i64 == head_off)
+                && let Some(contains) = field.contains.as_ref()
+                && (node_off as i64) != contains.node_offset as i64
+            {
+                env.fail(
+                    crate::analysis::machine::error::VerificationError::InvalidArgType {
+                        pc,
+                        reg: Reg::R2,
+                    },
+                );
+                return vec![];
+            }
+        }
+    }
+
     // KF_RELEASE precondition: every `ReleaseRefFromArg{N}` arg must be a
     // refcounted pointer (i.e. carry a `ref_id`). Kernel rejects calls
     // like `bpf_put_file(file)` on a non-acquired (e.g. BPF_PROG entry)

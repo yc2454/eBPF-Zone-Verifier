@@ -56,6 +56,26 @@ pub struct SpecialField {
     pub kind: SpecialFieldKind,
     pub offset: u32, // byte offset
     pub size: u32,
+    /// `__contains(struct, member)` decoration on a `bpf_list_head` /
+    /// `bpf_rb_root` field. Decoded from a BTF DECL_TAG named
+    /// `"contains:<struct>:<member>"` attached to the head field. The
+    /// kernel uses this to validate the second arg of
+    /// `bpf_list_push_{front,back}` / `bpf_rbtree_add`: the node pointer
+    /// must be at the declared `node_offset` inside the declared
+    /// container struct. Closes a subset of `linked_list_fail.c` /
+    /// `rbtree_btf_fail__add_wrong_type.c` by offset comparison alone
+    /// (full pointee-struct match needs PtrToOwnedKptr to carry a
+    /// `pointee_btf_id`, which is a separate representation change).
+    pub contains: Option<ContainsInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContainsInfo {
+    /// Name of the contained struct (the `<struct>` in `__contains(struct, member)`).
+    pub struct_name: String,
+    /// Byte offset of the `bpf_list_node` / `bpf_rb_node` member named
+    /// in the decl_tag, within `struct_name`.
+    pub node_offset: u32,
 }
 
 /// Result of looking up a struct/union member at a byte offset, for
@@ -439,17 +459,25 @@ impl BtfContext {
                     continue;
                 };
                 if let Some(kind) = SpecialFieldKind::from_type_name(type_name) {
+                    // `__contains` decl_tags on a `private(name)` global
+                    // (e.g. `ghead __contains(foo, node2)`) attach to the
+                    // VAR's btf_id — clang routes the variable-decl
+                    // attribute to the VAR, not the DATASEC.
+                    let contains = self
+                        .decl_tags_for(entry.var_id)
+                        .find_map(|t| self.parse_contains_tag(&t.name));
                     fields.push(SpecialField {
                         kind,
                         offset: entry.offset,
                         size: resolved_ty.size_or_type,
+                        contains,
                     });
                 }
             }
             return fields;
         }
 
-        for member in &ty.members {
+        for (member_idx, member) in ty.members.iter().enumerate() {
             let Some(member_type) = self.types.get(&member.type_id) else {
                 continue;
             };
@@ -458,10 +486,19 @@ impl BtfContext {
             };
 
             if let Some(kind) = SpecialFieldKind::from_type_name(name) {
+                // `__contains` decl_tags on a struct member (e.g.
+                // `struct map_value { ...; struct bpf_list_head head
+                // __contains(foo, node2); };`) attach to the parent
+                // struct's btf_id with `component_idx == member_idx`.
+                let contains = self
+                    .decl_tags_for(type_id)
+                    .filter(|t| t.component_idx == member_idx as i32)
+                    .find_map(|t| self.parse_contains_tag(&t.name));
                 fields.push(SpecialField {
                     kind,
                     offset: member.offset / 8,
                     size: member_type.size_or_type,
+                    contains,
                 });
             }
         }
@@ -487,6 +524,26 @@ impl BtfContext {
     /// Find a STRUCT (or UNION) BTF type by its declared name. Linear
     /// scan — only called once per struct_ops program at entry-state
     /// setup, so the cost is irrelevant. Returns the BTF type id.
+    /// Parse a `"contains:<struct>:<member>"` decl_tag name into a
+    /// resolved [`ContainsInfo`]. Returns `None` if the prefix doesn't
+    /// match, the named struct isn't in BTF, or the member doesn't
+    /// exist in that struct. The member must be a `bpf_list_node` /
+    /// `bpf_rb_node` field; we don't enforce that here (the kernel
+    /// does), but the offset reported is the member's byte offset.
+    fn parse_contains_tag(&self, tag: &str) -> Option<ContainsInfo> {
+        let body = tag.strip_prefix("contains:")?;
+        let (struct_name, member_name) = body.split_once(':')?;
+        let struct_id = self.find_struct_by_name(struct_name)?;
+        let ty = self.types.get(&struct_id)?;
+        let member = ty.members.iter().find(|m| {
+            self.get_string(m.name_off) == Some(member_name)
+        })?;
+        Some(ContainsInfo {
+            struct_name: struct_name.to_string(),
+            node_offset: member.offset / 8,
+        })
+    }
+
     pub fn find_struct_by_name(&self, name: &str) -> Option<u32> {
         for ty in self.types.values() {
             if !matches!(ty.kind(), BTF_KIND_STRUCT | BTF_KIND_UNION) {
