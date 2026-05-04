@@ -2091,6 +2091,166 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .flags(CallFlags::FASTCALL)
         .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
 
+        // u32 bpf_cpumask_first_and(const struct cpumask *src1,
+        //                           const struct cpumask *src2)
+        "bpf_cpumask_first_and" => CallProto::with_args([
+            PtrToCpumaskRead, PtrToCpumaskRead, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // u32 bpf_cpumask_weight(const struct cpumask *cpumask)
+        "bpf_cpumask_weight" => CallProto::with_args([
+            PtrToCpumaskRead, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // u32 bpf_cpumask_any_distribute(const struct cpumask *src)
+        "bpf_cpumask_any_distribute" => CallProto::with_args([
+            PtrToCpumaskRead, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // u32 bpf_cpumask_any_and_distribute(const struct cpumask *src1,
+        //                                    const struct cpumask *src2)
+        "bpf_cpumask_any_and_distribute" => CallProto::with_args([
+            PtrToCpumaskRead, PtrToCpumaskRead, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // ---- Read-only predicates (return bool) ----
+
+        // bool bpf_cpumask_equal(const struct cpumask *src1, const struct cpumask *src2)
+        "bpf_cpumask_equal" => CallProto::with_args([
+            PtrToCpumaskRead, PtrToCpumaskRead, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // bool bpf_cpumask_intersects(const struct cpumask *src1, const struct cpumask *src2)
+        "bpf_cpumask_intersects" => CallProto::with_args([
+            PtrToCpumaskRead, PtrToCpumaskRead, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // bool bpf_cpumask_subset(const struct cpumask *src1, const struct cpumask *src2)
+        "bpf_cpumask_subset" => CallProto::with_args([
+            PtrToCpumaskRead, PtrToCpumaskRead, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // bool bpf_cpumask_empty(const struct cpumask *cpumask)
+        "bpf_cpumask_empty" => CallProto::with_args([
+            PtrToCpumaskRead, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // bool bpf_cpumask_full(const struct cpumask *cpumask)
+        "bpf_cpumask_full" => CallProto::with_args([
+            PtrToCpumaskRead, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // ---- Mutators that modify their first arg (PtrToCpumask) ----
+
+        // void bpf_cpumask_clear_cpu(u32 cpu, struct bpf_cpumask *cpumask)
+        "bpf_cpumask_clear_cpu" => CallProto::with_args([
+            Anything, PtrToCpumask, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // bool bpf_cpumask_test_and_set_cpu(u32 cpu, struct bpf_cpumask *cpumask)
+        "bpf_cpumask_test_and_set_cpu" => CallProto::with_args([
+            Anything, PtrToCpumask, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // bool bpf_cpumask_test_and_clear_cpu(u32 cpu, struct bpf_cpumask *cpumask)
+        "bpf_cpumask_test_and_clear_cpu" => CallProto::with_args([
+            Anything, PtrToCpumask, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // void bpf_cpumask_setall(struct bpf_cpumask *cpumask)
+        "bpf_cpumask_setall" => CallProto::with_args([
+            PtrToCpumask, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // void bpf_cpumask_clear(struct bpf_cpumask *cpumask)
+        "bpf_cpumask_clear" => CallProto::with_args([
+            PtrToCpumask, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // bool bpf_cpumask_and(struct bpf_cpumask *dst,
+        //                      const struct cpumask *src1,
+        //                      const struct cpumask *src2)
+        "bpf_cpumask_and" => CallProto::with_args([
+            PtrToCpumask, PtrToCpumaskRead, PtrToCpumaskRead, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // void bpf_cpumask_or(struct bpf_cpumask *dst,
+        //                     const struct cpumask *src1,
+        //                     const struct cpumask *src2)
+        "bpf_cpumask_or" => CallProto::with_args([
+            PtrToCpumask, PtrToCpumaskRead, PtrToCpumaskRead, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // void bpf_cpumask_xor(struct bpf_cpumask *dst,
+        //                      const struct cpumask *src1,
+        //                      const struct cpumask *src2)
+        "bpf_cpumask_xor" => CallProto::with_args([
+            PtrToCpumask, PtrToCpumaskRead, PtrToCpumaskRead, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // void bpf_cpumask_copy(struct bpf_cpumask *dst, const struct cpumask *src)
+        "bpf_cpumask_copy" => CallProto::with_args([
+            PtrToCpumask, PtrToCpumaskRead, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // int bpf_cpumask_populate(struct cpumask *cpumask,
+        //                          void *src, size_t src__sz)
+        // R2/R3 form a mem+size pair — kernel rejects "leads to invalid
+        // memory access" when sz exceeds the source buffer (matches
+        // cpumask_failure::test_populate_invalid_source's __failure
+        // expectation). Destination expects writable cpumask wrapper.
+        "bpf_cpumask_populate" => CallProto::with_args([
+            PtrToCpumask, PtrToMem, ConstSize, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .mem_size_pairs(&pairs::CPUMASK_POPULATE)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
         // ---- Cgroup kfuncs (W6.3-followon) ----
         //
         // Parallels the cpumask family: `RegType::PtrToCgroup{,OrNull}`,
@@ -2763,6 +2923,9 @@ pub(super) mod pairs {
 
     // ---- Slice cluster (W4.2g) ----
     pub static DYNPTR_SLICE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+
+    // ---- bpf_cpumask_populate(R1=dst, R2=src, R3=src__sz) ----
+    pub static CPUMASK_POPULATE: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
 }
 
 /// W7.2: returns true if the helper is in the kernel's `is_fastcall_helper_call`
