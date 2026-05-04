@@ -554,7 +554,7 @@ pub(crate) fn update_load_types(
             let type_name = implied_btf_struct_name(t).unwrap();
             let mut typed = false;
             if let Some(struct_id) = env.ctx.btf.find_struct_by_name(type_name)
-                && let Some(info) = env.ctx.btf.field_at_offset(struct_id, off as u32)
+                && let Some(info) = env.ctx.btf.field_at_offset_descend(struct_id, off as u32)
                 && let BtfFieldKind::Pointer {
                     pointee_name: Some(pointee),
                     ..

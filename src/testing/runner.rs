@@ -1173,6 +1173,27 @@ impl Analyzer {
                         (ProgramKind::Tracing, Some("tp_btf"), "sched_switch") => {
                             Some(vec![("task_struct", false), ("task_struct", false)])
                         }
+                        // ── A3 cgroup-related fentry/fexit targets ──────
+                        // cgroup_attach_task(struct cgroup *dst_cgrp,
+                        //                    struct task_struct *leader,
+                        //                    bool threadgroup)
+                        (ProgramKind::Tracing, Some("fentry"), "cgroup_attach_task")
+                        | (ProgramKind::Tracing, Some("fexit"), "cgroup_attach_task") => {
+                            Some(vec![("cgroup", false), ("task_struct", false)])
+                        }
+                        // bpf_rstat_flush(struct cgroup *cgrp,
+                        //                 struct cgroup *parent, int cpu)
+                        (ProgramKind::Tracing, Some("fentry"), "bpf_rstat_flush")
+                        | (ProgramKind::Tracing, Some("fexit"), "bpf_rstat_flush") => {
+                            Some(vec![("cgroup", false), ("cgroup", false)])
+                        }
+                        // inet_stream_connect(struct socket *sock,
+                        //                     struct sockaddr *uaddr,
+                        //                     int addr_len, int flags)
+                        (ProgramKind::Tracing, Some("fentry"), "inet_stream_connect")
+                        | (ProgramKind::Tracing, Some("fexit"), "inet_stream_connect") => {
+                            Some(vec![("socket", false), ("sockaddr", false)])
+                        }
                         _ => None,
                     };
                     if let Some(arg_specs) = table_args {

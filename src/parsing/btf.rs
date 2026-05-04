@@ -256,6 +256,62 @@ impl BtfContext {
     /// Used by `update_load_types` to type loads from `PtrToBtfId{X}` at
     /// known offsets, and by the pointer-arithmetic path to type
     /// interior pointers `&base->field` to embedded sub-structs.
+    /// Like `field_at_offset`, but additionally descends through any
+    /// NAMED embedded struct/union members whose [start, start+size)
+    /// range contains `byte_offset`. The kernel's `btf_struct_access`
+    /// walks embedded struct members; programs frequently emit a
+    /// single `Load[ptr+N]` for a multi-level field access like
+    /// `sock->sk_cgrp_data.cgroup` (offset 664 in tcp_sock,
+    /// `sk_cgrp_data` is a named embedded struct, `.cgroup` is at
+    /// offset 0 within it).
+    ///
+    /// Kept distinct from `field_at_offset` because some callers
+    /// (kfunc validators on `&task->cpus_mask` etc.) want the OUTER
+    /// named member's identity; this variant always returns the leaf.
+    pub fn field_at_offset_descend(
+        &self,
+        struct_id: u32,
+        byte_offset: u32,
+    ) -> Option<BtfFieldInfo<'_>> {
+        // Fast path: exact-offset hit, descend only when needed.
+        if let Some(info) = self.field_at_offset(struct_id, byte_offset)
+            && !matches!(info.kind, BtfFieldKind::Embedded { .. })
+        {
+            return Some(info);
+        }
+        let id = self.peel_modifiers(struct_id);
+        let ty = self.types.get(&id)?;
+        if !matches!(ty.kind(), BTF_KIND_STRUCT | BTF_KIND_UNION) {
+            return None;
+        }
+        let bit_offset = byte_offset.checked_mul(8)?;
+        // Find the member whose [start_bits, start_bits+size_bits)
+        // covers bit_offset. Iterate in reverse so a strictly-inner
+        // member wins over a same-start outer (matters for
+        // anonymous-union ABI patterns where multiple members share
+        // offset 0).
+        let member = ty.members.iter().rev().find(|m| {
+            if m.offset > bit_offset {
+                return false;
+            }
+            let size_bytes = self.type_size_bytes(m.type_id);
+            if size_bytes == 0 {
+                return m.offset == bit_offset;
+            }
+            m.offset + size_bytes * 8 > bit_offset
+        })?;
+        let inner_id = self.peel_modifiers(member.type_id);
+        if let Some(inner_ty) = self.types.get(&inner_id)
+            && matches!(inner_ty.kind(), BTF_KIND_STRUCT | BTF_KIND_UNION)
+        {
+            let inner_byte_offset = byte_offset - member.offset / 8;
+            if let Some(info) = self.field_at_offset_descend(inner_id, inner_byte_offset) {
+                return Some(info);
+            }
+        }
+        None
+    }
+
     pub fn field_at_offset(
         &self,
         struct_id: u32,
