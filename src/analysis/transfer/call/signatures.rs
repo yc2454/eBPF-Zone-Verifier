@@ -2775,6 +2775,119 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar),
 
+        // ---- TCP CC algorithm ksyms (BBR / DCTCP / CUBIC) ----
+        //
+        // tcp_ca_kfunc.c and bpf_cc_cubic.c reach into the kernel's
+        // bbr / dctcp / cubictcp implementations via __ksym externs.
+        // Same shape as the tcp_reno_* family above: each takes a
+        // sock pointer (typed PtrToBtfId by struct_ops entry-state
+        // plumbing) plus scalars; void or u32 return. Pure additive
+        // registration — no acquire/release, no allowlist.
+        //
+        //   void bbr_init(struct sock *sk)
+        //   void bbr_main(struct sock *sk, u32 ack, int flag,
+        //                 const struct rate_sample *rs)
+        //   u32  bbr_sndbuf_expand(struct sock *sk)
+        //   u32  bbr_undo_cwnd(struct sock *sk)
+        //   void bbr_cwnd_event(struct sock *sk, enum tcp_ca_event event)
+        //   u32  bbr_ssthresh(struct sock *sk)
+        //   u32  bbr_min_tso_segs(struct sock *sk)
+        //   void bbr_set_state(struct sock *sk, u8 new_state)
+        "bbr_init" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "bbr_main" => CallProto::with_args([
+            PtrToBtfId, Anything, Anything, Anything, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "bbr_sndbuf_expand" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bbr_undo_cwnd" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bbr_cwnd_event" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "bbr_ssthresh" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bbr_min_tso_segs" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bbr_set_state" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        //   void dctcp_init(struct sock *sk)
+        //   void dctcp_update_alpha(struct sock *sk, u32 flags)
+        //   void dctcp_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
+        //   u32  dctcp_ssthresh(struct sock *sk)
+        //   u32  dctcp_cwnd_undo(struct sock *sk)
+        //   void dctcp_state(struct sock *sk, u8 new_state)
+        "dctcp_init" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "dctcp_update_alpha" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "dctcp_cwnd_event" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "dctcp_ssthresh" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "dctcp_cwnd_undo" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "dctcp_state" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        //   void cubictcp_init(struct sock *sk)
+        //   u32  cubictcp_recalc_ssthresh(struct sock *sk)
+        //   void cubictcp_cong_avoid(struct sock *sk, u32 ack, u32 acked)
+        //   void cubictcp_state(struct sock *sk, u8 new_state)
+        //   void cubictcp_cwnd_event(struct sock *sk, enum tcp_ca_event event)
+        //   void cubictcp_acked(struct sock *sk, const struct ack_sample *sample)
+        "cubictcp_init" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "cubictcp_recalc_ssthresh" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "cubictcp_cong_avoid" => CallProto::with_args([
+            PtrToBtfId, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "cubictcp_state" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "cubictcp_cwnd_event" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "cubictcp_acked" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
         // ---- Sched_ext kfuncs (W6.4b) ----
         //
         // All gated to `ProgramKind::StructOps` — the kernel registers
