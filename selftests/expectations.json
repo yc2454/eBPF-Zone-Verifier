@@ -193,8 +193,8 @@
       "note": "Negative struct_ops MAYBE_NULL test; kernel prog_tests/test_struct_ops_maybe_null.c asserts load fails."
     },
     "test_xdp_attach_fail.c": {
-      "expect": "reject",
-      "note": "Negative xdp attach test; kernel prog_tests/xdp_attach.c asserts attach fails."
+      "expect": "accept",
+      "note": "Positive coverage despite the file name. The tp prog is a tracepoint observer that must load+attach successfully so it can catch the failure event from a SEPARATE xdp_dummy.bpf.o whose attach fails (prog_tests/xdp_attach.c::test_xdp_attach_fail). Misclassified by batch-5 auto-classifier off the file name; corrected 2026-05-03."
     },
     "uptr_update_failure.c": {
       "expect": "reject",
