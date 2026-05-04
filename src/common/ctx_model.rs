@@ -683,6 +683,93 @@ const SOCK_ADDR_FIELDS: &[CtxField] = &[
     },
 ];
 
+/// struct bpf_sockopt (BPF_PROG_TYPE_CGROUP_SOCKOPT context — used by
+/// `SEC("cgroup/getsockopt")` and `SEC("cgroup/setsockopt")` programs).
+///
+/// Reference: linux/include/uapi/linux/bpf.h and
+/// kernel/bpf/cgroup.c::cgroup_sockopt_is_valid_access (v6.15).
+///
+/// Layout (offsets verified against kernel `offsetof`):
+///   __bpf_md_ptr(struct bpf_sock *, sk)        @  0..8   RO ptr_to_socket
+///   __bpf_md_ptr(void *,           optval)     @  8..16  RO packet_start
+///   __bpf_md_ptr(void *,           optval_end) @ 16..24  RO packet_end
+///   __s32                           level      @ 24..28
+///   __s32                           optname    @ 28..32
+///   __s32                           optlen     @ 32..36
+///   __s32                           retval     @ 36..40
+///
+/// All scalar fields are read-permissive; we mark them writable too. The
+/// kernel actually scopes writes (level/optname only writable from
+/// setsockopt; retval only writable from setsockopt; optlen writable from
+/// either) but we don't currently distinguish attach types here. No
+/// PASS-row in the corpus depends on a stricter rule, and the FRs we are
+/// closing only exercise reads + retval writes.
+const BPF_SOCKOPT_FIELDS: &[CtxField] = &[
+    // struct bpf_sock *sk (offset 0)
+    CtxField {
+        offset: 0,
+        size: MemSize::U64,
+        kind: CtxFieldKind::SockCommon,
+        writable: false,
+        readable: true,
+        narrow_access: false,
+    },
+    // void *optval (offset 8)
+    CtxField {
+        offset: 8,
+        size: MemSize::U64,
+        kind: CtxFieldKind::PacketStart,
+        writable: false,
+        readable: true,
+        narrow_access: false,
+    },
+    // void *optval_end (offset 16)
+    CtxField {
+        offset: 16,
+        size: MemSize::U64,
+        kind: CtxFieldKind::PacketEnd,
+        writable: false,
+        readable: true,
+        narrow_access: false,
+    },
+    // __s32 level (offset 24)
+    CtxField {
+        offset: 24,
+        size: MemSize::U32,
+        kind: CtxFieldKind::Scalar,
+        writable: true,
+        readable: true,
+        narrow_access: false,
+    },
+    // __s32 optname (offset 28)
+    CtxField {
+        offset: 28,
+        size: MemSize::U32,
+        kind: CtxFieldKind::Scalar,
+        writable: true,
+        readable: true,
+        narrow_access: false,
+    },
+    // __s32 optlen (offset 32)
+    CtxField {
+        offset: 32,
+        size: MemSize::U32,
+        kind: CtxFieldKind::Scalar,
+        writable: true,
+        readable: true,
+        narrow_access: false,
+    },
+    // __s32 retval (offset 36)
+    CtxField {
+        offset: 36,
+        size: MemSize::U32,
+        kind: CtxFieldKind::Scalar,
+        writable: true,
+        readable: true,
+        narrow_access: false,
+    },
+];
+
 const SOCK_ADDR_USER_IP6_START: i16 = 8;
 const SOCK_ADDR_USER_IP6_END: i16 = 24; // 8 + 4*4 = 23
 const SOCK_ADDR_MSG_SRC_IP6_START: i16 = 44;
@@ -1434,6 +1521,7 @@ fn get_field_tables(
             Some((XDP_MD_FIELDS, extended))
         }
         ContextKind::BpfSockAddr => Some((SOCK_ADDR_FIELDS, &[])),
+        ContextKind::BpfSockopt => Some((BPF_SOCKOPT_FIELDS, &[])),
         ContextKind::SkLookup => Some((SK_LOOKUP_FIELDS, &[])),
         ContextKind::SockOps => Some((SOCK_OPS_FIELDS, &[])),
         ContextKind::BpfSock => Some((BPF_SOCK_FIELDS, &[])),

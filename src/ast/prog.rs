@@ -23,6 +23,11 @@ pub enum ProgramKind {
     RawTracepoint,
     RawTracepointWritable,
     CgroupSockAddr,
+    /// `SEC("cgroup/getsockopt")` and `SEC("cgroup/setsockopt")` —
+    /// BPF_PROG_TYPE_CGROUP_SOCKOPT. Receives `struct bpf_sockopt *` ctx;
+    /// distinguishes attach type via the SEC suffix so retval-write rules
+    /// can be enforced (kernel allows write only for setsockopt).
+    CgroupSockopt,
     Lsm,
     Tracing,
     /// `SEC("syscall")` — BPF_PROG_TYPE_SYSCALL (kernel v5.11+).
@@ -63,6 +68,7 @@ pub enum ContextKind {
     BpfSock,
     SkMsgMd,
     BpfSockAddr,
+    BpfSockopt,
     PtRegs,
     IterTask,
     Unknown,
@@ -240,6 +246,12 @@ impl ProgramKind {
         if s.starts_with("cgroup/skb") {
             return ProgramKind::CgroupSkb;
         }
+        // cgroup/getsockopt and cgroup/setsockopt must be matched before the
+        // generic "cgroup/sock*" arm below, otherwise they collapse into
+        // CgroupSock and pick up the wrong (bpf_sock) context layout.
+        if s.starts_with("cgroup/getsockopt") || s.starts_with("cgroup/setsockopt") {
+            return ProgramKind::CgroupSockopt;
+        }
         if s.starts_with("cgroup/sock") || s.starts_with("cgroup/post_bind") {
             return ProgramKind::CgroupSock;
         }
@@ -293,6 +305,7 @@ impl ProgramKind {
             ProgramKind::SkLookup => ContextKind::SkLookup,
             ProgramKind::SkMsg => ContextKind::SkMsgMd,
             ProgramKind::CgroupSockAddr => ContextKind::BpfSockAddr,
+            ProgramKind::CgroupSockopt => ContextKind::BpfSockopt,
             ProgramKind::CgroupSock => ContextKind::BpfSock,
             _ => ContextKind::Unknown,
         }
