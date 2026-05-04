@@ -184,6 +184,23 @@ fn lsm_hook_is_disabled(hook: &str) -> bool {
 /// `check_attach_btf_id` — fexit fires on return, so attaching it to a
 /// function that never returns is a guaranteed loss-of-control. fentry
 /// is allowed; only the post-return tracers are rejected.
+/// Kernel functions tracing programs (fentry/fexit/fmod_ret/raw_tp)
+/// cannot attach to. The kernel rejects at attach time (not load) via
+/// `check_attach_btf_id`'s BPF helper allowlist — these are core
+/// locking/CS primitives whose recursion or pre/post observation by
+/// BPF would race with the verifier's locking model.
+///
+/// Test coverage: `tracing_failure.c::test_spin_lock` and
+/// `test_spin_unlock` declare `?fentry/bpf_spin_{lock,unlock}` and
+/// expect attach failure (note in expectations.json:
+/// "kernel prog_tests/tracing_failure.c asserts attach fails").
+fn is_tracing_attach_denied(target: &str) -> bool {
+    matches!(
+        target,
+        "bpf_spin_lock" | "bpf_spin_unlock"
+    )
+}
+
 fn is_noreturn_kernel_fn(name: &str) -> bool {
     matches!(
         name,
@@ -738,6 +755,28 @@ impl Analyzer {
             });
         }
 
+        // Tracing-attach denylist (fentry/fexit/fmod_ret to bpf_spin_lock,
+        // bpf_spin_unlock, ...). Leading `?` in optional-load SECs is
+        // already stripped from `attach_subtype`.
+        let is_tracing_attach_sec = sec_lower.starts_with("fentry/")
+            || sec_lower.starts_with("fentry.s/")
+            || sec_lower.starts_with("fexit/")
+            || sec_lower.starts_with("fexit.s/")
+            || sec_lower.starts_with("fmod_ret/")
+            || sec_lower.starts_with("fmod_ret.s/")
+            || sec_lower.starts_with("?fentry/")
+            || sec_lower.starts_with("?fentry.s/")
+            || sec_lower.starts_with("?fexit/")
+            || sec_lower.starts_with("?fexit.s/");
+        if is_tracing_attach_sec
+            && let Some(target) = ctx.attach_subtype.as_deref()
+            && is_tracing_attach_denied(target)
+        {
+            return AnalysisResult::Fail(VerificationError::TracingAttachDenied {
+                target: target.to_string(),
+            });
+        }
+
         // W6.4a: for struct_ops subprogs, seed R1..Rn from the resolved
         // ops-struct member signature. derive_program_kind already
         // matched SEC("struct_ops*") to ProgramKind::StructOps; the
@@ -1106,6 +1145,28 @@ impl Analyzer {
             && is_noreturn_kernel_fn(target)
         {
             return AnalysisResult::Fail(VerificationError::NoreturnAttachTarget {
+                target: target.to_string(),
+            });
+        }
+
+        // Tracing-attach denylist (fentry/fexit/fmod_ret to bpf_spin_lock,
+        // bpf_spin_unlock, ...). Leading `?` in optional-load SECs is
+        // already stripped from `attach_subtype`.
+        let is_tracing_attach_sec = sec_lower.starts_with("fentry/")
+            || sec_lower.starts_with("fentry.s/")
+            || sec_lower.starts_with("fexit/")
+            || sec_lower.starts_with("fexit.s/")
+            || sec_lower.starts_with("fmod_ret/")
+            || sec_lower.starts_with("fmod_ret.s/")
+            || sec_lower.starts_with("?fentry/")
+            || sec_lower.starts_with("?fentry.s/")
+            || sec_lower.starts_with("?fexit/")
+            || sec_lower.starts_with("?fexit.s/");
+        if is_tracing_attach_sec
+            && let Some(target) = ctx.attach_subtype.as_deref()
+            && is_tracing_attach_denied(target)
+        {
+            return AnalysisResult::Fail(VerificationError::TracingAttachDenied {
                 target: target.to_string(),
             });
         }

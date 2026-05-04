@@ -314,6 +314,14 @@ pub enum VerificationError {
     NoreturnAttachTarget {
         target: String,
     },
+    /// Tracing prog (fentry/fexit/fmod_ret/raw_tp) attaches to a kernel
+    /// function on the BPF helper attach-deny list (e.g. bpf_spin_lock,
+    /// bpf_spin_unlock). Kernel rejects at attach, not load — but our
+    /// verifier collapses both into the per-prog outcome so this fires
+    /// at static SEC validation. Mirrors `tracing_failure.c`.
+    TracingAttachDenied {
+        target: String,
+    },
     /// struct_ops program SEC names a member that the registering kernel
     /// module marks as unsupported (e.g. bpf_testmod_ops.unsupported_ops).
     /// Reported at program load. Mirrors the kernel's
@@ -712,6 +720,12 @@ impl VerificationError {
             VerificationError::NoreturnAttachTarget { target } => {
                 format!(
                     "Attaching fexit/fmod_ret to __noreturn functions is rejected: '{}'",
+                    target
+                )
+            }
+            VerificationError::TracingAttachDenied { target } => {
+                format!(
+                    "Tracing program cannot attach to denied kernel function '{}'",
                     target
                 )
             }
