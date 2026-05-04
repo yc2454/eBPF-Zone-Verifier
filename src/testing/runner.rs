@@ -53,6 +53,24 @@ fn is_struct_ops_arg_maybe_null(ops_struct: &str, member: &str, arg_idx: u8) -> 
 /// failure to release it before exit fires UnreleasedReference, matching
 /// the kernel's "Unreleased reference id=N alloc_insn=0" rejection on
 /// programs like struct_ops_refcounted_fail__ref_leak.
+/// Per-(ops_struct, member) `priv_stack_requested` table. The kernel
+/// kmod's `check_member` callback sets `prog->aux->priv_stack_requested`
+/// for specific members; only those members get PRIV_STACK_ADAPTIVE in
+/// `bpf_enable_priv_stack`. Without it, the verifier accumulates depth
+/// across the bpf2bpf call chain (`check_max_stack_depth_subprog`).
+///
+/// Source: vendor/linux/tools/testing/selftests/bpf/test_kmods/bpf_testmod.c
+/// `st_ops3_check_member`.
+const STRUCT_OPS_PRIV_STACK_REQUESTED: &[(&str, &str)] = &[
+    ("bpf_testmod_ops3", "test_1"),
+];
+
+fn struct_ops_member_priv_stack_requested(ops_struct: &str, member: &str) -> bool {
+    STRUCT_OPS_PRIV_STACK_REQUESTED
+        .iter()
+        .any(|(s, m)| *s == ops_struct && *m == member)
+}
+
 const STRUCT_OPS_REFCOUNTED_ARGS: &[(&str, &str, u8)] = &[
     ("bpf_testmod_ops", "test_refcounted", 1),     // task__ref
     ("bpf_testmod_ops", "test_return_ref_kptr", 1), // task__ref
@@ -904,6 +922,9 @@ impl Analyzer {
             ctx.struct_ops_member = binding.map(|b| (b.ops_struct.clone(), b.member.clone()));
             ctx.struct_ops_refcounted_args =
                 struct_ops_refcounted_arg_count(&self.struct_ops_bindings, &func.name);
+            ctx.priv_stack_requested = binding
+                .map(|b| struct_ops_member_priv_stack_requested(&b.ops_struct, &b.member))
+                .unwrap_or(false);
         } else if matches!(
             ctx.prog_kind,
             ProgramKind::Lsm

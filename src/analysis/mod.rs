@@ -109,7 +109,15 @@ pub fn analyze_program_full(
     }
 
     if let Err(e) =
-        subprog::check_stack_overflow(prog, env.ctx.prog_kind, config.enable_private_stack)
+        subprog::check_stack_overflow(
+            prog,
+            env.ctx.prog_kind,
+            config.enable_private_stack
+                && match env.ctx.prog_kind {
+                    crate::ast::ProgramKind::StructOps => env.ctx.priv_stack_requested,
+                    _ => true,
+                },
+        )
     {
         error!(target: "app", "[Analysis] Stack Error: {}", e);
         return AnalysisResult {
@@ -313,7 +321,15 @@ pub fn analyze_exception_cb(
         return Some(VerificationError::SubprogError { e });
     }
     if let Err(e) =
-        subprog::check_stack_overflow(prog, env.ctx.prog_kind, config.enable_private_stack)
+        subprog::check_stack_overflow(
+            prog,
+            env.ctx.prog_kind,
+            config.enable_private_stack
+                && match env.ctx.prog_kind {
+                    crate::ast::ProgramKind::StructOps => env.ctx.priv_stack_requested,
+                    _ => true,
+                },
+        )
     {
         return Some(VerificationError::SubprogError { e });
     }

@@ -190,6 +190,16 @@ pub struct ExecContext {
     /// "Unreleased reference id=N alloc_insn=0" rejection on
     /// struct_ops_refcounted_fail__ref_leak.c).
     pub struct_ops_refcounted_args: usize,
+    /// Per-(ops_struct, member) `priv_stack_requested` flag set by the
+    /// kmod's `check_member` callback (kernel test_kmods/bpf_testmod.c
+    /// `st_ops3_check_member`). Determines whether `bpf_enable_priv_stack`
+    /// returns PRIV_STACK_ADAPTIVE for this struct_ops member: when
+    /// false, `check_max_stack_depth_subprog` accumulates depth across
+    /// the bpf2bpf call chain and rejects > MAX_BPF_STACK (512). When
+    /// true, each subprog's stack is independently bounded ≤ 512.
+    /// Mirrored via the `STRUCT_OPS_PRIV_STACK_REQUESTED` table in
+    /// runner.rs since we don't load module BTF.
+    pub priv_stack_requested: bool,
     /// Subprogs (keyed by absolute start PC) whose body — directly or
     /// transitively via CallRel — invokes a MIGHT_SLEEP helper or kfunc.
     /// Computed once at runner setup via static call-graph closure.
@@ -220,6 +230,7 @@ pub fn default_exec_ctx() -> ExecContext {
         exception_callback: None,
         attach_flavor: None,
         struct_ops_refcounted_args: 0,
+        priv_stack_requested: false,
         may_sleep_subprogs: HashSet::new(),
     }
 }
