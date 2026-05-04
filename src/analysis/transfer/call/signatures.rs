@@ -3220,6 +3220,30 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar),
 
+        // ---- bpf_sock_addr_set_sun_path ----
+        // int bpf_sock_addr_set_sun_path(struct bpf_sock_addr_kern *,
+        //                                const __u8 *sun_path,
+        //                                __u32 sun_path__sz)
+        // Used by connect_unix_prog.c, getsockname_unix_prog.c,
+        // getpeername_unix_prog.c, sendmsg_unix_prog.c,
+        // recvmsg_unix_prog.c. Programs only use the int return for
+        // an early-return; sa_kern field access still depends on
+        // bpf_core_cast typing (separate gap).
+        "bpf_sock_addr_set_sun_path" => CallProto::with_args([
+            Anything, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- bpf_get_fsverity_digest ----
+        // int bpf_get_fsverity_digest(struct file *,
+        //                             struct bpf_dynptr *digest_ptr)
+        // Used by test_fsverity.c, test_sig_in_xattr.c. file arg is
+        // Anything to accept the BPF_PROG-entry PtrToBtfId{file}.
+        "bpf_get_fsverity_digest" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
         // ---- Sched_ext kfuncs (W6.4b) ----
         //
         // All gated to `ProgramKind::StructOps` — the kernel registers
