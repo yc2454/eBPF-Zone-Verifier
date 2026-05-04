@@ -70,6 +70,15 @@ pub fn load_data_section_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>>
                 .as_ref()
                 .and_then(|ctx| ctx.find_datasec(name));
 
+            // `private(NAME) static struct foo __kptr * x` lives in a
+            // synthetic `.data..NAME` (or `.bss..NAME`) datasec. Extract
+            // the embedded kptr fields from the datasec's VAR entries
+            // so `bpf_kptr_xchg(&x, …)` and the kptr-load typing path
+            // see the same metadata as explicit `.maps`-section maps.
+            let kptr_fields = btf_val_type_id
+                .and_then(|id| btf_ctx.as_ref().map(|ctx| ctx.extract_datasec_kptr_fields(id)))
+                .unwrap_or_default();
+
             maps.push(BpfMapDef {
                 type_: constants::BPF_MAP_TYPE_ARRAY,
                 key_size: 4,
@@ -80,7 +89,7 @@ pub fn load_data_section_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>>
                 btf_val_type_id,
                 initial_data,
                 inner_map_idx: None,
-                kptr_fields: Vec::new(),
+                kptr_fields,
             extern_var_offsets: Vec::new(),
             });
         }
