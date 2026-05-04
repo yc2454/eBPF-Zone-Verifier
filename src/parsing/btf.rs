@@ -72,10 +72,16 @@ pub struct SpecialField {
 #[derive(Debug, Clone)]
 pub struct ContainsInfo {
     /// Name of the contained struct (the `<struct>` in `__contains(struct, member)`).
+    /// Always available — taken straight from the decl_tag string.
     pub struct_name: String,
     /// Byte offset of the `bpf_list_node` / `bpf_rb_node` member named
-    /// in the decl_tag, within `struct_name`.
-    pub node_offset: u32,
+    /// in the decl_tag, within `struct_name`. `None` when the named
+    /// struct isn't in the prog's BTF (clang drops types that are only
+    /// referenced via decl_tag strings, e.g. `rbtree_btf_fail__add_wrong_type.c`
+    /// where `node_data` is named only in `__contains(node_data, node)`).
+    /// Validators must skip the offset check when this is None and rely
+    /// on the struct-name comparison alone.
+    pub node_offset: Option<u32>,
 }
 
 /// Result of looking up a struct/union member at a byte offset, for
@@ -533,14 +539,24 @@ impl BtfContext {
     fn parse_contains_tag(&self, tag: &str) -> Option<ContainsInfo> {
         let body = tag.strip_prefix("contains:")?;
         let (struct_name, member_name) = body.split_once(':')?;
-        let struct_id = self.find_struct_by_name(struct_name)?;
-        let ty = self.types.get(&struct_id)?;
-        let member = ty.members.iter().find(|m| {
-            self.get_string(m.name_off) == Some(member_name)
-        })?;
+        // The named struct may have been stripped by clang when it is
+        // referenced only through the decl_tag string and never used as
+        // a value type (rbtree_btf_fail__add_wrong_type.c). Preserve the
+        // name regardless; node_offset becomes None and the offset gate
+        // is skipped, leaving the struct-name comparison as the only
+        // structural check.
+        let node_offset = self
+            .find_struct_by_name(struct_name)
+            .and_then(|sid| self.types.get(&sid))
+            .and_then(|ty| {
+                ty.members
+                    .iter()
+                    .find(|m| self.get_string(m.name_off) == Some(member_name))
+            })
+            .map(|m| m.offset / 8);
         Some(ContainsInfo {
             struct_name: struct_name.to_string(),
-            node_offset: member.offset / 8,
+            node_offset,
         })
     }
 

@@ -574,6 +574,7 @@ impl State {
             if let RegType::PtrToOwnedKptr {
                 ref_id: Some(rid),
                 offset,
+                pointee_btf_id,
                 ..
             } = self.types.regs[i]
                 && rid == id
@@ -582,6 +583,7 @@ impl State {
                     ref_id: None,
                     offset,
                     non_owning: true,
+                    pointee_btf_id,
                 };
             }
         }

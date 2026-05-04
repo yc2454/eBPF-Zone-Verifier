@@ -221,9 +221,20 @@ pub enum RegType {
         /// `ref_id`. Non-owning refs are invalidated on `bpf_spin_unlock`
         /// (verifier.c L8382 `invalidate_non_owning_refs`).
         non_owning: bool,
+        /// Local-BTF type id of the allocated struct (the type passed to
+        /// `bpf_obj_new(typeof(*x))`, or copied from the source through
+        /// `bpf_refcount_acquire` / list/rbtree pop kfuncs). `None` when
+        /// the source kfunc didn't surface a type id (e.g. lite-scope
+        /// `bpf_rbtree_first` whose `__contains` head BTF id is not yet
+        /// threaded through). Consumed by the `__contains` cross-arg
+        /// validator on `bpf_list_push_*` / `bpf_rbtree_add` to reject
+        /// type-mismatched node pushes (kernel verifier.c v6.15 L13160
+        /// `ref_btf_id != ds_head->ds_data->btf_id`).
+        pointee_btf_id: Option<u32>,
     },
     PtrToOwnedKptrOrNull {
         ref_id: Option<u32>,
+        pointee_btf_id: Option<u32>,
     },
     /// Pointer loaded from a kptr field of a map value. The four kptr
     /// flavors (`__kptr_untrusted`, `__kptr`, `__rcu`, `__percpu_kptr`)
@@ -316,11 +327,12 @@ impl RegType {
             }
             RegType::PtrToCgroupOrNull { ref_id } => Some(RegType::PtrToCgroup { ref_id }),
             RegType::PtrToTaskOrNull { ref_id } => Some(RegType::PtrToTask { ref_id }),
-            RegType::PtrToOwnedKptrOrNull { ref_id } => {
+            RegType::PtrToOwnedKptrOrNull { ref_id, pointee_btf_id } => {
                 Some(RegType::PtrToOwnedKptr {
                     ref_id,
                     offset: 0,
                     non_owning: false,
+                    pointee_btf_id,
                 })
             }
             RegType::PtrToMapKptrOrNull {
@@ -436,8 +448,8 @@ impl RegType {
             | RegType::PtrToCgroup { ref_id: id }
             | RegType::PtrToCgroupOrNull { ref_id: id }
             | RegType::PtrToTask { ref_id: id }
-            | RegType::PtrToTaskOrNull { ref_id: id }
-            | RegType::PtrToOwnedKptrOrNull { ref_id: id } => id,
+            | RegType::PtrToTaskOrNull { ref_id: id } => id,
+            RegType::PtrToOwnedKptrOrNull { ref_id, .. } => ref_id,
             RegType::PtrToOwnedKptr { ref_id, .. } => ref_id,
             RegType::PtrToBtfId { ref_id, .. } | RegType::PtrToBtfIdOrNull { ref_id, .. } => ref_id,
             RegType::PtrToMapKptr { ref_id, .. } | RegType::PtrToMapKptrOrNull { ref_id, .. } => {

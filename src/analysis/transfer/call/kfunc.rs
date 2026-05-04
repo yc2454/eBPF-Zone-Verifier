@@ -198,7 +198,8 @@ fn transfer_kfunc_proto(
         if is_graph_add
             && let RegType::PtrToMapValue { offset: Some(head_off), map_idx, .. } =
                 in_types.get(Reg::R1)
-            && let RegType::PtrToOwnedKptr { offset: node_off, .. } = in_types.get(Reg::R2)
+            && let RegType::PtrToOwnedKptr { offset: node_off, pointee_btf_id, .. } =
+                in_types.get(Reg::R2)
             && let Some(map_def) = env.ctx.map_defs.get(map_idx)
             && let Some(val_type_id) = map_def.btf_val_type_id
         {
@@ -206,15 +207,40 @@ fn transfer_kfunc_proto(
             if let Some(field) =
                 fields.iter().find(|f| f.offset as i64 == head_off)
                 && let Some(contains) = field.contains.as_ref()
-                && (node_off as i64) != contains.node_offset as i64
             {
-                env.fail(
-                    crate::analysis::machine::error::VerificationError::InvalidArgType {
-                        pc,
-                        reg: Reg::R2,
-                    },
-                );
-                return vec![];
+                let off_mismatch = match contains.node_offset {
+                    Some(n) => (node_off as i64) != n as i64,
+                    None => false,
+                };
+                // Pointee-struct check: when the node carries a known
+                // pointee_btf_id (planted by bpf_obj_new_impl /
+                // bpf_refcount_acquire / list+rbtree pop kfuncs), reject
+                // when its struct name doesn't match the head's
+                // `__contains(<struct>, ...)` declaration. Closes
+                // rbtree_btf_fail__add_wrong_type, where node_data2's
+                // node-member offset coincidentally matches node_data's
+                // declared offset (both 8); only the struct identity
+                // distinguishes them. None ⇒ unknown pointee, fall back
+                // to offset-only check (preserves prior behavior for
+                // `bpf_rbtree_first` whose pointee threading is lite).
+                let type_mismatch = match pointee_btf_id {
+                    Some(id) => env
+                        .ctx
+                        .btf
+                        .struct_name(id)
+                        .map(|n| n != contains.struct_name.as_str())
+                        .unwrap_or(false),
+                    None => false,
+                };
+                if off_mismatch || type_mismatch {
+                    env.fail(
+                        crate::analysis::machine::error::VerificationError::InvalidArgType {
+                            pc,
+                            reg: Reg::R2,
+                        },
+                    );
+                    return vec![];
+                }
             }
         }
     }
@@ -446,6 +472,90 @@ fn transfer_kfunc_proto(
     }
 
     apply_call_proto_r0(&in_types, &mut state, proto);
+
+    // Populate `pointee_btf_id` on the freshly-minted PtrToOwnedKptr in
+    // R0 for kfuncs that surface a known pointee type:
+    //   - bpf_obj_new_impl: R1 is `local_type_id` (a u64 known scalar
+    //     planted by clang's `bpf_obj_new(typeof(*x))` macro). The kernel
+    //     verifier reads it and stores it on the returned reg's btf_id
+    //     (verifier.c v6.15 ~L13117); we mirror that.
+    //   - bpf_refcount_acquire_impl: copy from R1 (which is itself a
+    //     PtrToOwnedKptr at this site).
+    //   - bpf_list_pop_*/bpf_rbtree_first/remove: copy the head's
+    //     `__contains` struct btf_id from the SpecialField on R1.
+    //
+    // Without this, the `__contains` cross-arg check at the next
+    // graph-add call falls back to offset-only comparison and misses
+    // `rbtree_btf_fail__add_wrong_type` (R2's pointee struct is the
+    // wrong type but its node-member offset coincidentally matches the
+    // declared __contains offset).
+    if let Some(kfunc_name) = env.ctx.btf.kfunc_name(btf_id) {
+        let pointee = match kfunc_name {
+            "bpf_obj_new_impl" => state
+                .domain
+                .get_fixed_value(Reg::R1)
+                .and_then(|v| u32::try_from(v).ok()),
+            "bpf_refcount_acquire_impl" => match in_types.get(Reg::R1) {
+                RegType::PtrToOwnedKptr {
+                    pointee_btf_id, ..
+                } => pointee_btf_id,
+                _ => None,
+            },
+            "bpf_list_pop_front"
+            | "bpf_list_pop_back"
+            | "bpf_rbtree_first"
+            | "bpf_rbtree_remove" => {
+                if let RegType::PtrToMapValue {
+                    offset: Some(head_off),
+                    map_idx,
+                    ..
+                } = in_types.get(Reg::R1)
+                    && let Some(map_def) = env.ctx.map_defs.get(map_idx)
+                    && let Some(val_type_id) = map_def.btf_val_type_id
+                {
+                    let fields = env.ctx.btf.find_special_fields(val_type_id);
+                    fields
+                        .iter()
+                        .find(|f| f.offset as i64 == head_off)
+                        .and_then(|f| f.contains.as_ref())
+                        .and_then(|c| env.ctx.btf.find_struct_by_name(&c.struct_name))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        if let Some(btf_id) = pointee {
+            match state.types.get(Reg::R0) {
+                RegType::PtrToOwnedKptr {
+                    ref_id,
+                    offset,
+                    non_owning,
+                    ..
+                } => {
+                    state.types.set(
+                        Reg::R0,
+                        RegType::PtrToOwnedKptr {
+                            ref_id,
+                            offset,
+                            non_owning,
+                            pointee_btf_id: Some(btf_id),
+                        },
+                    );
+                }
+                RegType::PtrToOwnedKptrOrNull { ref_id, .. } => {
+                    state.types.set(
+                        Reg::R0,
+                        RegType::PtrToOwnedKptrOrNull {
+                            ref_id,
+                            pointee_btf_id: Some(btf_id),
+                        },
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
 
     // W7.2: kfuncs marked `bpf_fastcall` (v6.13) preserve R1..R5 — skip
     // the caller-saved clobber so clang-emitted no-spill sequences

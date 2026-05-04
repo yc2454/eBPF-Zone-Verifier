@@ -114,6 +114,7 @@ fn update_ptr_arithmetic_type(
             ref_id,
             offset,
             non_owning,
+            pointee_btf_id,
         } => {
             // Kernel `verifier.c` v6.15 ~L15170: PTR_TO_BTF_ID|MEM_ALLOC
             // preserves type through pointer arithmetic; `reg->off` is
@@ -134,6 +135,7 @@ fn update_ptr_arithmetic_type(
                     ref_id,
                     offset: new_offset,
                     non_owning,
+                    pointee_btf_id,
                 },
             );
         }
