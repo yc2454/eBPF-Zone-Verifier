@@ -3010,6 +3010,56 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar),
 
+        // ---- testmod struct_ops prologue/epilogue test kfuncs ----
+        // Used by pro_epilogue.c, pro_epilogue_goto_start.c,
+        // epilogue_exit.c (`syscall_*` SEC programs that thunk into
+        // the struct_ops test infrastructure). Each takes
+        // `struct st_ops_args *args` and returns int.
+        //
+        //   int bpf_kfunc_st_ops_test_prologue(struct st_ops_args *)
+        //   int bpf_kfunc_st_ops_test_epilogue(struct st_ops_args *)
+        //   int bpf_kfunc_st_ops_test_pro_epilogue(struct st_ops_args *)
+        "bpf_kfunc_st_ops_test_prologue" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_st_ops_test_epilogue" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_st_ops_test_pro_epilogue" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- testmod cross-module ordering test kfuncs ----
+        // kfunc_module_order.c: two kfuncs registered from different
+        // modules to exercise cross-module dispatch. No args.
+        //
+        //   int bpf_test_modorder_retx(void)  // returns 'x'
+        //   int bpf_test_modorder_rety(void)  // returns 'y'
+        "bpf_test_modorder_retx" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_test_modorder_rety" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- bpf_send_signal_task ----
+        // test_send_signal_kern.c: targeted signal-delivery kfunc.
+        //   int bpf_send_signal_task(struct task_struct *task,
+        //                            int sig, enum pid_type type,
+        //                            u64 value)
+        // task arg is Anything to accept the PtrToTask result of
+        // bpf_task_from_pid (and any other future task-pointer reg
+        // type) without re-implementing per-arg trust gates.
+        "bpf_send_signal_task" => CallProto::with_args([
+            Anything, Anything, Anything, Anything, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
         // ---- Sched_ext kfuncs (W6.4b) ----
         //
         // All gated to `ProgramKind::StructOps` — the kernel registers
