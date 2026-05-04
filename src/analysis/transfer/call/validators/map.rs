@@ -141,32 +141,26 @@ pub fn validate_ptr_to_map_key(ctx: &mut ValidationContext) -> bool {
 
     let actual = ctx.actual;
 
-    // If pointing to another map value, check size compatibility
-    if let RegType::PtrToMapValue { map_idx, .. } = actual {
-        if let Some(map_def) = ctx.env.ctx.map_defs.get(map_idx) {
-            if map_def.value_size != target_info.value_size {
-                ctx.fail_with_log(
-                    VerificationError::InvalidArgType {
-                        pc: ctx.pc,
-                        reg: ctx.reg,
-                    },
-                    &format!(
-                        "[Verifier] pc {}: R{} map value size mismatch: expected {}, got {}",
-                        ctx.pc,
-                        ctx.arg_index + 1,
-                        target_info.value_size,
-                        map_def.key_size
-                    ),
-                );
-                return false;
-            }
-        } else {
-            ctx.env.fail(VerificationError::MapNotFound {
-                pc: ctx.pc,
-                map_idx,
-            });
-            return false;
-        }
+    // (Source-map size compat check removed.) The previous check rejected
+    // when `source_map.value_size != target_map.value_size`, comparing
+    // VALUE sizes of two unrelated maps for a KEY arg — which is wrong:
+    //   - For a KEY arg, the source memory just needs to hold >= the
+    //     target's `key_size` bytes from its current offset onward.
+    //   - The .bss/.rodata synthetic maps that wrap globals have their
+    //     own value_size (size of the section), unrelated to the
+    //     target's value_size, so the equality check spuriously
+    //     rejected `bpf_map_lookup_elem(&map, &GLOBAL_KEY)` patterns
+    //     wherever the section size differed.
+    // The proper bound check is delegated to `validate_readable_mem`
+    // below with `Some(target_info.key_size)`.
+    if let RegType::PtrToMapValue { map_idx, .. } = actual
+        && ctx.env.ctx.map_defs.get(map_idx).is_none()
+    {
+        ctx.env.fail(VerificationError::MapNotFound {
+            pc: ctx.pc,
+            map_idx,
+        });
+        return false;
     }
 
     // For stack pointers used as keys in bpf_map_update_elem, check that
