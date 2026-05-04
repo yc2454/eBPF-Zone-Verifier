@@ -201,7 +201,13 @@ fn lsm_hook_is_disabled(hook: &str) -> bool {
 fn is_tracing_attach_denied(target: &str) -> bool {
     matches!(
         target,
+        // Locked-helper family: see tracing_failure.c.
         "bpf_spin_lock" | "bpf_spin_unlock"
+        // sk_storage subsystem: tracing self-recursion. Kernel
+        // `bpf_sk_storage_tracing_allowed` rejects fentry attach to
+        // bpf_sk_storage_free (the helper would re-enter the storage
+        // subsystem). See test_sk_storage_trace_itself.c.
+        | "bpf_sk_storage_free"
     )
 }
 
