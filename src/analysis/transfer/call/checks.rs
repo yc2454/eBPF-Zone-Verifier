@@ -494,7 +494,18 @@ fn validate_ptr_to_cpumask_read(ctx: &mut ValidationContext) -> bool {
 /// (`bpf_cgroup_acquire` / `_release`) require the program to have
 /// null-checked the freshly-minted ref first.
 fn validate_ptr_to_cgroup(ctx: &mut ValidationContext) -> bool {
-    if !matches!(ctx.actual, RegType::PtrToCgroup { .. }) {
+    // PtrToCgroup covers acquire-tracked cgroups (`bpf_cgroup_acquire`,
+    // `bpf_cgroup_from_id`). For BPF_PROG-style tp_btf/lsm/tracing
+    // programs that take `struct cgroup *cgrp` directly, the entry-arg
+    // seeder produces `PtrToBtfId{cgroup, TRUSTED}` — also accept that
+    // shape. Mirrors the validate_ptr_to_task fallback.
+    if !matches!(ctx.actual, RegType::PtrToCgroup { .. })
+        && !matches!(
+            ctx.actual,
+            RegType::PtrToBtfId { type_name: "cgroup", flags, .. }
+                if flags.contains(crate::analysis::machine::reg_types::PtrFlags::TRUSTED)
+        )
+    {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,

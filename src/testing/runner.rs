@@ -1060,6 +1060,19 @@ impl Analyzer {
                         (ProgramKind::Tracing, Some("tp_btf"), "tcp_probe") => {
                             Some(vec![("sock", false), ("sk_buff", false)])
                         }
+                        // cgroup_mkdir: TRACE_EVENT(cgroup_mkdir,
+                        //   TP_PROTO(struct cgroup *cgrp, const char *path))
+                        // const char* trailing scalar is dropped.
+                        (ProgramKind::Tracing, Some("tp_btf"), "cgroup_mkdir") => {
+                            Some(vec![("cgroup", false)])
+                        }
+                        // sched_switch: TRACE_EVENT(sched_switch,
+                        //   TP_PROTO(bool preempt, struct task_struct *prev,
+                        //            struct task_struct *next, ...))
+                        // First scalar arg dropped.
+                        (ProgramKind::Tracing, Some("tp_btf"), "sched_switch") => {
+                            Some(vec![("task_struct", false), ("task_struct", false)])
+                        }
                         _ => None,
                     };
                     if let Some(arg_specs) = table_args {
