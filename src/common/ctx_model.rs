@@ -1043,6 +1043,27 @@ const SOCK_OPS_FIELDS: &[CtxField] = &[
         readable: true,
         narrow_access: true,
     },
+    // __bpf_md_ptr(struct bpf_sock *, sk) at offset 184. The kernel
+    // bpf_sock_ops struct has many u32/u64 tcp fields before this
+    // (snd_cwnd, srtt_us, rcv_nxt, …, bytes_received, bytes_acked);
+    // we don't model those scalar fields exhaustively. Adding `sk`
+    // unmasks tests that previously rejected on "Unsafe ctx access at
+    // offset 184" (because the field wasn't modeled), in particular
+    // sock_ops programs that pass `ctx->sk` to `bpf_map_update_elem`
+    // on a sockmap — kernel rejects "cannot update sockmap in this
+    // context" via a per-prog-type map-helper restriction that we
+    // don't model. That's a real verifier-coverage gap; the
+    // resulting FAs (test_sockmap_invalid_update::bpf_sockmap,
+    // verifier_sockmap_mutate::test_sockops_update) are honest
+    // signals that we need to add the prog-type-vs-map-helper gate.
+    CtxField {
+        offset: 184,
+        size: MemSize::U64,
+        kind: CtxFieldKind::SockCommon,
+        writable: false,
+        readable: true,
+        narrow_access: false,
+    },
 ];
 
 /// struct bpf_sock (CGROUP_SOCK context)

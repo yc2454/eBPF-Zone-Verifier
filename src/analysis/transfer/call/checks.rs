@@ -399,22 +399,36 @@ fn validate_ptr_to_btf_id_named(
     ctx: &mut ValidationContext,
     expected: &'static str,
 ) -> bool {
-    match ctx.actual {
-        RegType::PtrToBtfId { type_name, .. } if type_name == expected => true,
-        _ => ctx.fail_with_log(
-            VerificationError::InvalidArgType {
-                pc: ctx.pc,
-                reg: ctx.reg,
-            },
-            &format!(
-                "[Verifier] pc {}: R{} expected PTR_TO_BTF_ID(struct {}), got {:?}",
-                ctx.pc,
-                ctx.arg_index + 1,
-                expected,
-                ctx.actual
-            ),
-        ),
+    // The specialized PtrTo<X> reg-types (PtrToCgroup, PtrToTask, …) are
+    // semantically the same kernel struct as the generic
+    // PtrToBtfId{type_name=<X>} produced by BTF-typed entry args. A caller
+    // that demands "any PTR_TO_BTF_ID for struct cgroup" should accept the
+    // specialized form too — otherwise threading an acquired
+    // `bpf_task_get_cgroup1(...)` result into `bpf_cgrp_storage_get(R2=cgrp)`
+    // rejects on a type-equivalence we deliberately model with a narrower
+    // representation.
+    let matches = match (expected, ctx.actual) {
+        (e, RegType::PtrToBtfId { type_name, .. }) if type_name == e => true,
+        ("cgroup", RegType::PtrToCgroup { .. }) => true,
+        ("task_struct", RegType::PtrToTask { .. }) => true,
+        _ => false,
+    };
+    if matches {
+        return true;
     }
+    ctx.fail_with_log(
+        VerificationError::InvalidArgType {
+            pc: ctx.pc,
+            reg: ctx.reg,
+        },
+        &format!(
+            "[Verifier] pc {}: R{} expected PTR_TO_BTF_ID(struct {}), got {:?}",
+            ctx.pc,
+            ctx.arg_index + 1,
+            expected,
+            ctx.actual
+        ),
+    )
 }
 
 /// Validate `ArgKind::PtrToCpumask` (W5.3).
@@ -920,51 +934,67 @@ fn validate_map_value_special(
     ctx: &mut ValidationContext,
     kind: crate::parsing::btf::SpecialFieldKind,
 ) -> bool {
-    let RegType::PtrToMapValue { offset, map_idx, .. } = ctx.actual else {
-        return ctx.fail_with_log(
-            VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
-            &format!(
-                "[Verifier] pc {}: R{} expected PTR_TO_MAP_VALUE aimed at {:?} field, got {:?}",
-                ctx.pc,
-                ctx.arg_index + 1,
-                kind,
-                ctx.actual
-            ),
-        );
-    };
-    let Some(off) = offset else {
-        return ctx.fail_with_log(
-            VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
-            &format!(
-                "[Verifier] pc {}: R{} {:?}-field arg has variable offset",
-                ctx.pc,
-                ctx.arg_index + 1,
-                kind
-            ),
-        );
-    };
-    let Some(map_def) = ctx.env.ctx.map_defs.get(map_idx) else {
-        return ctx.fail_with_log(
-            VerificationError::MapNotFound { pc: ctx.pc, map_idx },
-            &format!(
-                "[Verifier] pc {}: R{} {:?}-field arg references unknown map idx {}",
-                ctx.pc,
-                ctx.arg_index + 1,
-                kind,
-                map_idx
-            ),
-        );
-    };
-    let Some(val_type_id) = map_def.btf_val_type_id else {
-        return ctx.fail_with_log(
-            VerificationError::InvalidBtfType,
-            &format!(
-                "[Verifier] pc {}: R{} {:?}-field arg's map has no value-type BTF",
-                ctx.pc,
-                ctx.arg_index + 1,
-                kind
-            ),
-        );
+    // Resolve (pointee_btf_id, byte_offset) for either:
+    //   - PtrToMapValue → map value BTF + reg offset
+    //   - PtrToOwnedKptr (bpf_obj_new'd struct) → pointee_btf_id + reg offset
+    // Kernel `process_spin_lock` at verifier.c v6.15 L8271 accepts both
+    // ("arg#0 doesn't point to map value or allocated object" is the
+    // negated error). Without this, every linked_list / local_kptr_stash
+    // test that calls `bpf_spin_lock(&node->lock)` after `bpf_obj_new`
+    // rejects.
+    let (val_type_id, off) = match ctx.actual {
+        RegType::PtrToMapValue { offset, map_idx, .. } => {
+            let Some(off) = offset else {
+                return ctx.fail_with_log(
+                    VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
+                    &format!(
+                        "[Verifier] pc {}: R{} {:?}-field arg has variable offset",
+                        ctx.pc,
+                        ctx.arg_index + 1,
+                        kind
+                    ),
+                );
+            };
+            let Some(map_def) = ctx.env.ctx.map_defs.get(map_idx) else {
+                return ctx.fail_with_log(
+                    VerificationError::MapNotFound { pc: ctx.pc, map_idx },
+                    &format!(
+                        "[Verifier] pc {}: R{} {:?}-field arg references unknown map idx {}",
+                        ctx.pc,
+                        ctx.arg_index + 1,
+                        kind,
+                        map_idx
+                    ),
+                );
+            };
+            let Some(val_type_id) = map_def.btf_val_type_id else {
+                return ctx.fail_with_log(
+                    VerificationError::InvalidBtfType,
+                    &format!(
+                        "[Verifier] pc {}: R{} {:?}-field arg's map has no value-type BTF",
+                        ctx.pc,
+                        ctx.arg_index + 1,
+                        kind
+                    ),
+                );
+            };
+            (val_type_id, off)
+        }
+        RegType::PtrToOwnedKptr { pointee_btf_id: Some(btf_id), offset, .. } => {
+            (btf_id, offset as i64)
+        }
+        _ => {
+            return ctx.fail_with_log(
+                VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
+                &format!(
+                    "[Verifier] pc {}: R{} expected PTR_TO_MAP_VALUE or PTR_TO_OWNED_KPTR aimed at {:?} field, got {:?}",
+                    ctx.pc,
+                    ctx.arg_index + 1,
+                    kind,
+                    ctx.actual
+                ),
+            );
+        }
     };
     let fields = ctx.env.ctx.btf.find_special_fields(val_type_id);
     let matched = fields

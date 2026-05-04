@@ -1342,12 +1342,22 @@ const CPUMASK_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 5] = [
     crate::ast::ProgramKind::StructOps,
 ];
 
-/// Cgroup kfunc family allowlist — same set as cpumask. Aliased
-/// rather than reusing the cpumask constant directly so future
-/// per-family divergence (e.g. cgroup-only access from `cgroup/skb`)
-/// can be encoded without unwiring callers.
-const CGROUP_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 5] =
-    CPUMASK_KFUNC_PROG_TYPES;
+/// Cgroup kfunc family allowlist. Mirrors the kernel's cgroup_kfunc_set
+/// registration: tracing/tracepoint/perf_event/syscall/struct_ops (the
+/// cpumask base) **plus LSM** — kernel registers the cgroup kfunc id_set
+/// against BPF_PROG_TYPE_LSM (selftests like
+/// iters_css_task::iter_css_task_for_each + test_task_under_cgroup::lsm_run
+/// rely on LSM hooks calling bpf_cgroup_from_id/_acquire). Broken out
+/// from the cpumask alias so the LSM addition doesn't bleed into cpumask
+/// (cpumask kfuncs are not registered for LSM upstream).
+const CGROUP_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 6] = [
+    crate::ast::ProgramKind::Syscall,
+    crate::ast::ProgramKind::Tracing,
+    crate::ast::ProgramKind::Tracepoint,
+    crate::ast::ProgramKind::PerfEvent,
+    crate::ast::ProgramKind::StructOps,
+    crate::ast::ProgramKind::Lsm,
+];
 
 /// Task kfunc family allowlist (Phase 7 wrap-up). Mirrors the kernel's
 /// `tasks_kfunc_set` registration: tracing (fentry/fexit/tp_btf), LSM,
@@ -1638,6 +1648,54 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar)
         .mem_size_pairs(&pairs::DYNPTR_WRITE),
+
+        // ---- XDP metadata kfuncs (NIC-driven RX metadata getters) ----
+        //
+        // All three take an XDP context plus output ptr(s). Used by
+        // xdp_metadata.c, xdp_metadata2.c (freplace), xdp_hw_metadata.c.
+        // Output buffer size is implicit in the C type; modeled as
+        // PtrToUninitMem (writable mem of any size).
+
+        "bpf_xdp_metadata_rx_timestamp" => CallProto::with_args([
+            PtrToCtx, PtrToUninitMem, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .prog_type_allowlist(&XDP_DYNPTR_KFUNC_PROG_TYPES),
+
+        "bpf_xdp_metadata_rx_hash" => CallProto::with_args([
+            PtrToCtx, PtrToUninitMem, PtrToUninitMem, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .prog_type_allowlist(&XDP_DYNPTR_KFUNC_PROG_TYPES),
+
+        "bpf_xdp_metadata_rx_vlan_tag" => CallProto::with_args([
+            PtrToCtx, PtrToUninitMem, PtrToUninitMem, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .prog_type_allowlist(&XDP_DYNPTR_KFUNC_PROG_TYPES),
+
+        // int bpf_dynptr_clone(const struct bpf_dynptr *ptr,
+        //                      struct bpf_dynptr *clone__init)
+        //
+        // Initializes `clone__init` as a fresh dynptr. Kernel propagates
+        // source kind + rdonly onto the clone; we stamp DynptrKind::Local
+        // with rdonly=false because we don't track parent-to-clone
+        // invalidation lineage or propagate Xdp/Skb source kind. Those
+        // are REAL coverage gaps that surface as FAs on
+        // dynptr_fail::clone_invalidate1 + clone_xdp_packet_data —
+        // suppressing the kfunc to mask them would be dishonest about
+        // the verifier's coverage. Keep registered; surface the FAs.
+        "bpf_dynptr_clone" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false },
+            DynptrArg { uninit: true, rdwr_only: false },
+            DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::DynptrInitOnArg {
+            arg: 1,
+            kind: DynptrKind::Local,
+            rdonly: false,
+        }]),
 
         // int bpf_dynptr_adjust(const struct bpf_dynptr *ptr,
         //                        u32 start, u32 end)
@@ -2340,6 +2398,30 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Void)
         .flags(CallFlags::RELEASE)
         .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }])
+        .prog_type_allowlist(&CGROUP_KFUNC_PROG_TYPES),
+
+        // struct cgroup *bpf_cgroup_ancestor(struct cgroup *cgrp, int level)
+        // KF_ACQUIRE | KF_RCU | KF_RET_NULL — returns the ancestor at
+        // the given level (or NULL) with a refcount the caller must
+        // release.
+        "bpf_cgroup_ancestor" => CallProto::with_args([
+            PtrToCgroup, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToCgroup)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL)
+        .prog_type_allowlist(&CGROUP_KFUNC_PROG_TYPES),
+
+        // struct cgroup *bpf_task_get_cgroup1(struct task_struct *task,
+        //                                    int hierarchy_id)
+        // KF_ACQUIRE | KF_RCU | KF_RET_NULL — looks up the v1 cgroup
+        // the task is attached to in the named hierarchy. Used by the
+        // bpf_cgrp_storage_* callers in cgrp_ls_*.c (recursion, tp_btf,
+        // sleepable) and by test_cgroup1_hierarchy::lsm_*_run.
+        "bpf_task_get_cgroup1" => CallProto::with_args([
+            PtrToTask, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToCgroup)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL)
         .prog_type_allowlist(&CGROUP_KFUNC_PROG_TYPES),
 
         // ---- Task kfuncs (Phase 7 wrap-up) ----

@@ -108,51 +108,81 @@ impl ProgramKind {
         if s.starts_with("tcx/") || s.starts_with("netkit/") {
             return ProgramKind::SchedCls;
         }
-        if s.starts_with("fentry/")
-            || s.starts_with("fentry.s/")
-            || s.starts_with("fexit/")
-            || s.starts_with("fexit.s/")
-            || s.starts_with("fmod_ret/")
-            || s.starts_with("fmod_ret.s/")
-            || s.starts_with("tp_btf/")
-            // libbpf optional-load form: `?tp_btf/<func>`. Treat as
-            // Tracing for kfunc-allowlist purposes (cf.
-            // `verifier_global_ptr_args::trusted_task_arg_nullable`).
-            // We don't strip `?` for the other tracing flavors because
-            // `?fentry/` / `?fexit/` siblings in the corpus rely on
-            // their current-Unknown kfunc rejection — see audit doc.
+        // Normalize libbpf's optional-load `?` prefix for tracing-class
+        // SECs (fentry/fexit/fmod_ret/iter/lsm/raw_tp/uprobe/kprobe/
+        // tracepoint/perf_event/syscall/freplace). The `?` is purely
+        // libbpf-internal optionality — kernel reaches the same prog_type
+        // and applies the same kfunc/helper allowlists either way. The
+        // strip is TARGETED to tracing-class prefixes (not blanket) so
+        // unrelated SECs (struct_ops, xdp, cgroup_skb) keep their
+        // bespoke handling.
+        let tr_view: &str = match s.strip_prefix('?') {
+            Some(rest)
+                if rest.starts_with("fentry/")
+                    || rest.starts_with("fentry.s/")
+                    || rest.starts_with("fexit/")
+                    || rest.starts_with("fexit.s/")
+                    || rest.starts_with("fmod_ret/")
+                    || rest.starts_with("fmod_ret.s/")
+                    || rest.starts_with("iter/")
+                    || rest.starts_with("iter.s/")
+                    || rest.starts_with("lsm/")
+                    || rest.starts_with("lsm.s/")
+                    || rest.starts_with("raw_tp/")
+                    || rest.starts_with("raw_tp.w/")
+                    || rest == "raw_tp"
+                    || rest == "raw_tp.w"
+                    || rest.starts_with("uprobe/")
+                    || rest.starts_with("uprobe.s/")
+                    || rest.starts_with("uretprobe/")
+                    || rest.starts_with("uretprobe.s/")
+                    || rest.starts_with("kprobe/")
+                    || rest.starts_with("kretprobe/")
+                    || rest.starts_with("tracepoint/")
+                    || rest == "tracepoint"
+                    || rest.starts_with("perf_event")
+                    || rest == "syscall"
+                    || rest.starts_with("freplace/") =>
+            {
+                rest
+            }
+            _ => &s,
+        };
+        if tr_view.starts_with("fentry/")
+            || tr_view.starts_with("fentry.s/")
+            || tr_view.starts_with("fexit/")
+            || tr_view.starts_with("fexit.s/")
+            || tr_view.starts_with("fmod_ret/")
+            || tr_view.starts_with("fmod_ret.s/")
+            || tr_view.starts_with("tp_btf/")
             || s.starts_with("?tp_btf/")
-            || s.starts_with("iter/")
-            || s.starts_with("iter.s/")
+            || tr_view.starts_with("iter/")
+            || tr_view.starts_with("iter.s/")
         {
             return ProgramKind::Tracing;
         }
-        if s == "raw_tp"
-            || s.starts_with("raw_tp/")
-            || s.starts_with("raw_tp.w/")
-            || s == "raw_tp.w"
+        if tr_view == "raw_tp"
+            || tr_view.starts_with("raw_tp/")
+            || tr_view.starts_with("raw_tp.w/")
+            || tr_view == "raw_tp.w"
         {
             return ProgramKind::RawTracepoint;
         }
-        if s.starts_with("lsm/") || s.starts_with("lsm.s/") {
+        if tr_view.starts_with("lsm/") || tr_view.starts_with("lsm.s/") {
             return ProgramKind::Lsm;
         }
-        if s.starts_with("uprobe/")
-            || s.starts_with("uprobe.s/")
-            || s.starts_with("uretprobe/")
-            || s.starts_with("uretprobe.s/")
-            // `uprobe.session` / `kprobe.session`: session-attach SEC has
-            // no '/<func>' suffix in the test corpus (see
-            // uprobe_multi_verifier.c). Match the bare flavor too so the
-            // exit-time R0 ∈ [0, 1] rule in `expected_retval_rule` fires.
-            || s == "uprobe.session"
-            || s == "uretprobe.session"
-            || s == "kprobe.session"
-            || s == "kretprobe.session"
+        if tr_view.starts_with("uprobe/")
+            || tr_view.starts_with("uprobe.s/")
+            || tr_view.starts_with("uretprobe/")
+            || tr_view.starts_with("uretprobe.s/")
+            || tr_view == "uprobe.session"
+            || tr_view == "uretprobe.session"
+            || tr_view == "kprobe.session"
+            || tr_view == "kretprobe.session"
         {
             return ProgramKind::Kprobe;
         }
-        if s == "syscall" {
+        if tr_view == "syscall" {
             return ProgramKind::Syscall;
         }
         if s == "netfilter" || s.starts_with("netfilter/") {
@@ -268,16 +298,16 @@ impl ProgramKind {
         if cg_view.starts_with("cgroup/sock") || cg_view.starts_with("cgroup/post_bind") {
             return ProgramKind::CgroupSock;
         }
-        if s.starts_with("kprobe") || s.starts_with("kretprobe") {
+        if tr_view.starts_with("kprobe") || tr_view.starts_with("kretprobe") {
             return ProgramKind::Kprobe;
         }
-        if s.starts_with("tracepoint") {
+        if tr_view.starts_with("tracepoint") {
             return ProgramKind::Tracepoint;
         }
-        if s.starts_with("raw_tracepoint") {
+        if tr_view.starts_with("raw_tracepoint") {
             return ProgramKind::RawTracepoint;
         }
-        if s.starts_with("perf_event") {
+        if tr_view.starts_with("perf_event") {
             return ProgramKind::PerfEvent;
         }
         if s == "sk_lookup" || s.starts_with("sk_lookup/") {
