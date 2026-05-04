@@ -68,6 +68,12 @@ fn is_struct_ops_arg_refcounted(ops_struct: &str, member: &str, arg_idx: u8) -> 
 /// "attach to unsupported member <member> of struct <ops_struct>" rejection.
 const UNSUPPORTED_STRUCT_OPS_MEMBERS: &[(&str, &str)] = &[
     ("bpf_testmod_ops", "unsupported_ops"),
+    // tcp_congestion_ops: kernel `bpf_tcp_ca_check_member` only permits
+    // a fixed allowlist of overridable members (init, release, ssthresh,
+    // cong_avoid, set_state, cwnd_event, undo_cwnd, sndbuf_expand,
+    // cong_control, name). `get_info` is intentionally not in that set
+    // (the kernel reads it via tcp_get_info, not via the ops vtable).
+    ("tcp_congestion_ops", "get_info"),
 ];
 
 fn is_unsupported_struct_ops_member(ops_struct: &str, member: &str) -> bool {
