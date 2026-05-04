@@ -574,6 +574,7 @@ impl State {
             if let RegType::PtrToOwnedKptr {
                 ref_id: Some(rid),
                 offset,
+                pointee_btf_id,
                 ..
             } = self.types.regs[i]
                 && rid == id
@@ -582,6 +583,7 @@ impl State {
                     ref_id: None,
                     offset,
                     non_owning: true,
+                    pointee_btf_id,
                 };
             }
         }
@@ -1253,6 +1255,19 @@ impl State {
             self.domain.clone(),
             self.tnums.clone(),
         );
+    }
+
+    /// Variant of `push_frame` for global-subprog calls. The kernel
+    /// verifies global subprogs in isolation, so RCU lock-state changes
+    /// inside the body must NOT propagate back to the caller. Stamps
+    /// the caller's `rcu_read_depth` onto the new frame's snapshot
+    /// field; `transfer_exit` restores it on Exit. Closes
+    /// `rcu_read_lock.c::rcu_read_lock_global_subprog_unlock`.
+    pub fn push_global_subprog_frame(&mut self, return_pc: usize) {
+        let snapshot = self.rcu_read_depth;
+        self.push_frame(return_pc);
+        let level = self.frames.current_level();
+        self.frames.get_mut(level).caller_rcu_read_depth_snapshot = Some(snapshot);
     }
 
     /// Push a callback frame entered via a callback-taking helper (W3.4b).

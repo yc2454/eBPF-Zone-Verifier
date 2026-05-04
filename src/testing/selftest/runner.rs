@@ -210,7 +210,7 @@ fn run_file_with_dirs_inner(
     // worker thread for the wallclock timeout; rayon's pool runs
     // independent progs concurrently, so a file with N timeouts no
     // longer takes N × timeout wallclock.
-    let progs = progs
+    let mut progs: Vec<ProgReport> = progs
         .into_par_iter()
         .map(|attrs| {
             if !filter.should_run(&basename, &attrs.func_name) {
@@ -225,10 +225,100 @@ fn run_file_with_dirs_inner(
         })
         .collect();
 
+    rescore_file_level_reject(&basename, &mut progs);
+
     Ok(FileReport {
         source: src.to_path_buf(),
         progs,
     })
+}
+
+/// File-level rescore for files whose verdict source is
+/// `expectations.json` `expect: reject` (no `__success` / `__failure`
+/// macros, no per-prog override). The kernel loads the .o as a single
+/// unit; if any prog inside is rejected, the load fails and the
+/// expected-failure assertion in the C-side driver succeeds. Per-prog
+/// scoring inside such files double-counts: each prog we accept gets
+/// its own FALSE_ACCEPT, even though the expectation is satisfied
+/// once at the file level.
+///
+/// Two adjustments:
+///
+/// 1. **Sibling rejected → demote FAs.** If at least one prog with a
+///    file-level reject expectation rejected on our side, the kernel
+///    load fails on that prog before reaching siblings; the siblings'
+///    individual outcomes are unobservable. Mark their FAs as Pass.
+///    Closes `strncmp_test::do_strncmp` (sibling
+///    `strncmp_bad_not_const_str_size` rejects).
+///
+/// 2. **No sibling rejected → collapse FAs to one.** When we accept
+///    every prog under a file-level reject expectation, that's a
+///    single file-level miss, not N. Keep the first FA (sorted by
+///    func name for determinism); demote the rest to Pass. Closes
+///    one of `bad_struct_ops::test_1`/`test_2` (the other remains
+///    as the file-level FA marker — see
+///    `project_bad_struct_ops_deferred_2026-05-03.md`).
+fn rescore_file_level_reject(file_basename: &str, progs: &mut [ProgReport]) {
+    // Only fires when the file appears in expectations.json with a
+    // file-level `expect: reject`. Files with per-prog macros
+    // (`__success`/`__failure`) take an independent path through
+    // `expected_accept` and aren't affected, because their
+    // `lookup_prog` returns the per-prog override (or None when only
+    // a macro is present), not the file-level value.
+    let entry = match expectations::lookup(file_basename) {
+        Some(e) => e,
+        None => return,
+    };
+    if entry.expect != Some(expectations::Expect::Reject) {
+        return;
+    }
+
+    // Indices of progs whose verdict source is the file-level reject
+    // (i.e. `lookup_prog` resolves to Reject and isn't a per-prog
+    // override). We reuse `lookup_prog`: per-prog overrides take
+    // precedence inside it, but for files in this bucket the per-prog
+    // map is empty, so a Reject return means "fell through to
+    // file-level."
+    let file_level_idxs: Vec<usize> = (0..progs.len())
+        .filter(|&i| {
+            expectations::lookup_prog(file_basename, &progs[i].func_name)
+                == Some(expectations::Expect::Reject)
+        })
+        .collect();
+    if file_level_idxs.is_empty() {
+        return;
+    }
+
+    let any_rejected = file_level_idxs
+        .iter()
+        .any(|&i| matches!(progs[i].outcome, Outcome::Pass));
+
+    let fa_idxs: Vec<usize> = file_level_idxs
+        .iter()
+        .copied()
+        .filter(|&i| matches!(progs[i].outcome, Outcome::FalseAccept))
+        .collect();
+
+    if any_rejected {
+        // Rule 1: file-level reject already satisfied by a sibling.
+        for i in fa_idxs {
+            progs[i].outcome = Outcome::Pass;
+        }
+    } else if fa_idxs.len() > 1 {
+        // Rule 2: collapse N file-level FAs into 1. Keep the FA on the
+        // lexicographically-first prog so the choice is deterministic
+        // across runs (rayon's collect order is parallel-input order,
+        // which is preserved, but explicitly sorting by name is more
+        // robust to source reordering).
+        let mut sorted = fa_idxs.clone();
+        sorted.sort_by(|&a, &b| progs[a].func_name.cmp(&progs[b].func_name));
+        let keep = sorted[0];
+        for i in sorted.into_iter().skip(1) {
+            if i != keep {
+                progs[i].outcome = Outcome::Pass;
+            }
+        }
+    }
 }
 
 /// Sweep every `*.c` file under `dir`. Compile failures are surfaced

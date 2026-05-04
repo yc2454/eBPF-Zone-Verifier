@@ -1213,6 +1213,29 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar),
 
+        // bpf_cgrp_storage_get(map, cgroup, value, flags)
+        // R0 typing handled by `update_call_types` (PtrToMapValueOrNull
+        // keyed off R1's map). Arg-side: R2 must be a `cgroup` PtrToBtfId
+        // — the typical bug (cgrp_ls_negative.c::on_enter) is passing a
+        // task_struct cast as cgroup; PtrToBtfIdNamed catches the type
+        // mismatch.
+        constants::BPF_CGRP_STORAGE_GET => CallProto::with_args([
+            ConstMapPtr,                                  // R1: map
+            PtrToBtfIdNamed { type_name: "cgroup" },      // R2: cgroup
+            PtrToMapValueOrNull,                          // R3: value
+            Anything,                                     // R4: flags
+            DontCare,
+        ]),
+
+        constants::BPF_CGRP_STORAGE_DELETE => CallProto::with_args([
+            ConstMapPtr,                                  // R1: map
+            PtrToBtfIdNamed { type_name: "cgroup" },      // R2: cgroup
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
         // ---- Phase 7 wrap-up: bpf_get_current_task_btf ----
         // Returns the kernel's current-task pointer, typed as PTR_TO_BTF_ID
         // (task_struct *) with PTR_TRUSTED. Modeled here as PtrToTask (no
@@ -1251,13 +1274,15 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         .ret(RetKind::Scalar),
 
         // ---- W7.1: bpf_strncmp ----
-        // (s1: PtrToMem, s1_sz: ConstSize, s2: PtrToMem) -> s32
-        // Kernel additionally requires s2 to be a const string (rodata);
-        // we relax to PtrToMem.
+        // (s1: PtrToMem, s1_sz: ConstSize, s2: PtrToConstStr) -> s32
+        // Kernel rejects writable / non-NUL-terminated comparands via
+        // ARG_PTR_TO_CONST_STR (validate_ptr_to_const_str enforces
+        // BPF_F_RDONLY_PROG + NUL-within-rodata-bounds). Closes
+        // strncmp_bad_writable_target and strncmp_bad_not_null_term_target.
         constants::BPF_STRNCMP => CallProto::with_args([
-            PtrToMem,  // R1: s1
-            ConstSize, // R2: s1_sz
-            PtrToMem,  // R3: s2 (const string in rodata)
+            PtrToMem,       // R1: s1
+            ConstSize,      // R2: s1_sz
+            PtrToConstStr,  // R3: s2 (rodata, NUL-terminated)
             DontCare,
             DontCare,
         ])
@@ -2242,7 +2267,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             Anything, Anything, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::PtrToBtfIdNamed { type_name: "bpf_key" })
-        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL | CallFlags::MIGHT_SLEEP),
 
         "bpf_lookup_system_key" => CallProto::with_args([
             Anything, DontCare, DontCare, DontCare, DontCare,

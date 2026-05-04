@@ -356,13 +356,21 @@ pub(crate) fn apply_call_proto_r0(
             } else {
                 None
             };
+            // pointee_btf_id is left None here; the kfunc dispatcher
+            // (kfunc.rs) special-cases bpf_obj_new_impl /
+            // bpf_refcount_acquire_impl / list+rbtree pop kfuncs to
+            // overwrite R0 with the resolved pointee type id. Other
+            // RetKind::PtrToOwnedKptr producers (currently none) get an
+            // unknown pointee, which makes the __contains validator
+            // fall through to the offset-only check.
             let ty = if proto.flags.contains(CallFlags::RET_NULL) {
-                RegType::PtrToOwnedKptrOrNull { ref_id }
+                RegType::PtrToOwnedKptrOrNull { ref_id, pointee_btf_id: None }
             } else {
                 RegType::PtrToOwnedKptr {
                     ref_id,
                     offset: 0,
                     non_owning: false,
+                    pointee_btf_id: None,
                 }
             };
             state.types.set(Reg::R0, ty);

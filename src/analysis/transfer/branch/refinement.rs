@@ -411,8 +411,8 @@ fn same_acquired_pointer(t1: &RegType, t2: &RegType) -> bool {
             RegType::PtrToCgroupOrNull { ref_id: id2 },
         ) => linked(id1, id2),
         (
-            RegType::PtrToOwnedKptrOrNull { ref_id: id1 },
-            RegType::PtrToOwnedKptrOrNull { ref_id: id2 },
+            RegType::PtrToOwnedKptrOrNull { ref_id: id1, .. },
+            RegType::PtrToOwnedKptrOrNull { ref_id: id2, .. },
         ) => linked(id1, id2),
         (
             RegType::PtrToTaskOrNull { ref_id: id1 },
@@ -437,7 +437,7 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
         | RegType::PtrToCpumaskOrNull { ref_id }
         | RegType::PtrToArenaOrNull { ref_id, .. }
         | RegType::PtrToCgroupOrNull { ref_id }
-        | RegType::PtrToOwnedKptrOrNull { ref_id }
+        | RegType::PtrToOwnedKptrOrNull { ref_id, .. }
         | RegType::PtrToTaskOrNull { ref_id } => ref_id,
         // PtrToBtfIdOrNull only carries a ref_id when minted by an
         // ACQUIRE-flagged kfunc returning `RetKind::PtrToBtfIdNamed`

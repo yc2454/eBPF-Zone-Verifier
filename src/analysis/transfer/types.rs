@@ -114,6 +114,7 @@ fn update_ptr_arithmetic_type(
             ref_id,
             offset,
             non_owning,
+            pointee_btf_id,
         } => {
             // Kernel `verifier.c` v6.15 ~L15170: PTR_TO_BTF_ID|MEM_ALLOC
             // preserves type through pointer arithmetic; `reg->off` is
@@ -134,6 +135,7 @@ fn update_ptr_arithmetic_type(
                     ref_id,
                     offset: new_offset,
                     non_owning,
+                    pointee_btf_id,
                 },
             );
         }
@@ -402,14 +404,21 @@ pub(crate) fn update_load_types(
                     CtxFieldKind::TrustedPtr {
                         type_name,
                         nullable,
+                        tag_flags,
                     } => {
+                        // Compose TRUSTED with attach-target tag flags
+                        // (USER / PERCPU). Direct deref of USER/PERCPU
+                        // pointers is rejected at the load-site check
+                        // in memory/access.rs — programs must go through
+                        // bpf_copy_from_user / bpf_per_cpu_ptr first.
+                        let flags = PtrFlags::TRUSTED.union(tag_flags);
                         if nullable {
                             state.types.set(
                                 dst,
                                 RegType::PtrToBtfIdOrNull {
                                     id: new_ptr_id(),
                                     type_name,
-                                    flags: PtrFlags::TRUSTED,
+                                    flags,
                                     ref_id: None,
                                 },
                             );
@@ -418,7 +427,7 @@ pub(crate) fn update_load_types(
                                 dst,
                                 RegType::PtrToBtfId {
                                     type_name,
-                                    flags: PtrFlags::TRUSTED,
+                                    flags,
                                     ref_id: None,
                                 },
                             );
@@ -862,7 +871,8 @@ pub(crate) fn update_call_types(
         // this arm fell through to Scalar in that case. W7.1 fix.
         constants::BPF_SK_STORAGE_GET
         | constants::BPF_TASK_STORAGE_GET
-        | constants::BPF_INODE_STORAGE_GET => {
+        | constants::BPF_INODE_STORAGE_GET
+        | constants::BPF_CGRP_STORAGE_GET => {
             let map_idx = match in_types.get(Reg::R1) {
                 RegType::PtrToMapObject { map_idx } => map_idx,
                 RegType::PtrToMapValue { map_idx, .. } => map_idx,

@@ -109,13 +109,35 @@ pub fn analyze_program_full(
     }
 
     if let Err(e) =
-        subprog::check_stack_overflow(prog, env.ctx.prog_kind, config.enable_private_stack)
+        subprog::check_stack_overflow(
+            prog,
+            env.ctx.prog_kind,
+            config.enable_private_stack
+                && match env.ctx.prog_kind {
+                    crate::ast::ProgramKind::StructOps => env.ctx.priv_stack_requested,
+                    _ => true,
+                },
+        )
     {
         error!(target: "app", "[Analysis] Stack Error: {}", e);
         return AnalysisResult {
             dbms: vec![],
             explored_states: env.explored_states,
             error: Some(VerificationError::SubprogError { e }),
+        };
+    }
+
+    // Kernel `check_map_prog_compatibility` (verifier.c L19910): tracing
+    // prog kinds (kprobe, tracepoint, raw_tp[_writable], perf_event)
+    // cannot use maps whose value record carries bpf_spin_lock,
+    // bpf_timer, bpf_list_head, or bpf_rb_root. Socket filter cannot
+    // use bpf_spin_lock. Closes the test_helper_restricted FA cluster.
+    if let Some(err) = check_map_prog_compatibility(&env) {
+        error!(target: "app", "[Analysis] Map/prog incompatibility: {}", err.description());
+        return AnalysisResult {
+            dbms: vec![],
+            explored_states: env.explored_states,
+            error: Some(err),
         };
     }
 
@@ -299,7 +321,15 @@ pub fn analyze_exception_cb(
         return Some(VerificationError::SubprogError { e });
     }
     if let Err(e) =
-        subprog::check_stack_overflow(prog, env.ctx.prog_kind, config.enable_private_stack)
+        subprog::check_stack_overflow(
+            prog,
+            env.ctx.prog_kind,
+            config.enable_private_stack
+                && match env.ctx.prog_kind {
+                    crate::ast::ProgramKind::StructOps => env.ctx.priv_stack_requested,
+                    _ => true,
+                },
+        )
     {
         return Some(VerificationError::SubprogError { e });
     }
@@ -328,6 +358,84 @@ pub fn analyze_exception_cb(
     let _ = run_worklist(&mut env, prog, config, initial_state);
 
     env.error
+}
+
+/// Kernel `check_map_prog_compatibility` (verifier.c L19910–L19950):
+/// reject the program at load time if any map it references has a
+/// record-field that is incompatible with the program type.
+///
+/// - Tracing prog kinds (kprobe, tracepoint, raw_tp, raw_tp_writable,
+///   perf_event) cannot use maps with `bpf_spin_lock`,
+///   `bpf_res_spin_lock`, `bpf_timer`, `bpf_list_head`, or `bpf_rb_root`
+///   special fields in their value record.
+/// - Socket filter cannot use `bpf_spin_lock` / `bpf_res_spin_lock`.
+///
+/// Maps actually used by this program are derived from `pc_to_reloc`
+/// (RelocKind::MapPtr / MapValue), so other progs in the same ELF that
+/// reference different maps are unaffected.
+fn check_map_prog_compatibility(env: &VerifierEnv) -> Option<VerificationError> {
+    use crate::ast::ProgramKind;
+    use crate::parsing::btf::SpecialFieldKind;
+    use crate::parsing::elf::RelocKind;
+    use std::collections::HashSet;
+
+    let kind = env.ctx.prog_kind;
+    // `?raw_tp/`, `?tp/`, `?kprobe`, `?perf_event` SECs are intentionally
+    // parsed as ProgramKind::Unknown by `from_section` (preserves the
+    // current-Unknown kfunc-rejection contract for `?fentry/` / `?fexit/`
+    // siblings). The runner stashes the leading SEC token in
+    // `attach_flavor` regardless, so we can recover the tracing nature
+    // here without altering the global SEC parser.
+    let flavor = env.ctx.attach_flavor.as_deref().unwrap_or("");
+    let flavor_is_tracing = matches!(
+        flavor,
+        "kprobe" | "kretprobe" | "tracepoint" | "tp" | "raw_tracepoint"
+            | "raw_tp" | "raw_tp.w" | "perf_event"
+    );
+    let is_tracing = flavor_is_tracing
+        || matches!(
+            kind,
+            ProgramKind::Kprobe
+                | ProgramKind::Tracepoint
+                | ProgramKind::RawTracepoint
+                | ProgramKind::RawTracepointWritable
+                | ProgramKind::PerfEvent
+        );
+    let is_socket_filter = matches!(kind, ProgramKind::SocketFilter) || flavor == "socket";
+    if !is_tracing && !is_socket_filter {
+        return None;
+    }
+
+    let mut used: HashSet<usize> = HashSet::new();
+    for reloc in env.ctx.pc_to_reloc.values() {
+        if matches!(reloc.kind, RelocKind::MapPtr | RelocKind::MapValue) {
+            used.insert(reloc.map_idx);
+        }
+    }
+
+    for map_idx in used {
+        let Some(map_def) = env.ctx.map_defs.get(map_idx) else { continue };
+        let Some(btf_id) = map_def.btf_val_type_id else { continue };
+        for field in env.ctx.btf.find_special_fields(btf_id) {
+            let (rejects_tracing, rejects_socket_filter, name): (bool, bool, &'static str) =
+                match field.kind {
+                    SpecialFieldKind::SpinLock => (true, true, "bpf_spin_lock"),
+                    SpecialFieldKind::ResSpinLock => (true, true, "bpf_res_spin_lock"),
+                    SpecialFieldKind::Timer => (true, false, "bpf_timer"),
+                    SpecialFieldKind::ListHead => (true, false, "bpf_list_head"),
+                    SpecialFieldKind::RbRoot => (true, false, "bpf_rb_root"),
+                    _ => continue,
+                };
+            if (is_tracing && rejects_tracing) || (is_socket_filter && rejects_socket_filter) {
+                return Some(VerificationError::MapProgIncompat {
+                    map_name: map_def.name.clone(),
+                    field: name,
+                    kind,
+                });
+            }
+        }
+    }
+    None
 }
 
 /// Worklist abstract-interpretation loop. Shared between the main-program

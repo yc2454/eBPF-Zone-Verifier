@@ -1086,17 +1086,12 @@ fn validate_ptr_to_callback(ctx: &mut ValidationContext) -> bool {
 /// `selftests/expectations.json` note on `test_snprintf_single`.
 fn validate_ptr_to_const_str(ctx: &mut ValidationContext) -> bool {
     match ctx.actual {
-        RegType::PtrToMapValue { map_idx, .. } => {
-            let rdonly = ctx
-                .env
-                .ctx
-                .map_defs
-                .get(map_idx)
+        RegType::PtrToMapValue { map_idx, offset, .. } => {
+            let map_def = ctx.env.ctx.map_defs.get(map_idx);
+            let rdonly = map_def
                 .map(|md| md.map_flags & constants::BPF_F_RDONLY_PROG != 0)
                 .unwrap_or(false);
-            if rdonly {
-                true
-            } else {
+            if !rdonly {
                 ctx.fail_with_log(
                     VerificationError::InvalidArgType {
                         pc: ctx.pc,
@@ -1108,8 +1103,42 @@ fn validate_ptr_to_const_str(ctx: &mut ValidationContext) -> bool {
                         ctx.arg_index + 1
                     ),
                 );
-                false
+                return false;
             }
+            // Kernel ARG_PTR_TO_CONST_STR also requires NUL-termination
+            // within the rodata map's bounds (check_mem_size_reg →
+            // bpf_check_str_arg_size). Scan the rodata `initial_data`
+            // from `offset` forward for a NUL byte. Closes
+            // strncmp_test.c::strncmp_bad_not_null_term_target where
+            // s2 = "12345678" (no NUL in 8 bytes of .rodata).
+            //
+            // We only enforce when we have a constant offset and the
+            // map's `initial_data` is populated; otherwise (variable
+            // offset, no data captured) fall back to the kernel-rdonly
+            // check and accept — same shape as our existing leniency
+            // around `MapValue` reads with variable offsets.
+            if let (Some(off), Some(md)) = (offset, map_def)
+                && let Some(data) = md.initial_data.as_ref()
+                && off >= 0
+            {
+                let off = off as usize;
+                if off >= data.len() || !data[off..].iter().any(|&b| b == 0) {
+                    ctx.fail_with_log(
+                        VerificationError::InvalidArgType {
+                            pc: ctx.pc,
+                            reg: ctx.reg,
+                        },
+                        &format!(
+                            "[Verifier] pc {}: R{} const-string arg is not NUL-terminated within rodata bounds (offset {})",
+                            ctx.pc,
+                            ctx.arg_index + 1,
+                            off
+                        ),
+                    );
+                    return false;
+                }
+            }
+            true
         }
         _ => {
             ctx.fail_with_log(

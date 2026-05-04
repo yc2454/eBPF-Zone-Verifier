@@ -248,6 +248,15 @@ pub enum VerificationError {
         pc: usize,
         helper: u32,
     },
+    /// Helper / kfunc marked `CallFlags::MIGHT_SLEEP` invoked inside
+    /// an explicit `bpf_rcu_read_lock` critical section. Mirrors kernel
+    /// verifier.c v6.15 L13549 ("kernel func is sleepable within
+    /// rcu_read_lock region"). Implicit-RCU-at-entry for kprobe/tp/
+    /// raw_tp/perf_event is excluded — those go through other gates.
+    SleepableInRcuReadSection {
+        pc: usize,
+        helper: u32,
+    },
     /// `bpf_preempt_enable` invoked with no matching disable.
     PreemptNotDisabled {
         pc: usize,
@@ -288,10 +297,29 @@ pub enum VerificationError {
         helper: u32,
         kind: ProgramKind,
     },
+    /// Kernel `check_map_prog_compatibility` (verifier.c L19910): a map
+    /// referenced by the prog has a record-field (BPF_SPIN_LOCK,
+    /// BPF_TIMER, BPF_LIST_HEAD, BPF_RB_ROOT) that's incompatible with
+    /// the program kind. Tracing prog types (kprobe, tracepoint,
+    /// raw_tp[_writable], perf_event) cannot use any of these; socket
+    /// filter cannot use spin_lock. Reported at program load — no PC.
+    MapProgIncompat {
+        map_name: String,
+        field: &'static str,
+        kind: ProgramKind,
+    },
     /// Cluster E: LSM attach hook is on the kernel's disabled list
     /// (`getprocattr`, `setprocattr`, `ismaclabel`, `module_request`, ...).
     /// Reported at program load — there is no instruction PC.
     NoreturnAttachTarget {
+        target: String,
+    },
+    /// Tracing prog (fentry/fexit/fmod_ret/raw_tp) attaches to a kernel
+    /// function on the BPF helper attach-deny list (e.g. bpf_spin_lock,
+    /// bpf_spin_unlock). Kernel rejects at attach, not load — but our
+    /// verifier collapses both into the per-prog outcome so this fires
+    /// at static SEC validation. Mirrors `tracing_failure.c`.
+    TracingAttachDenied {
         target: String,
     },
     /// struct_ops program SEC names a member that the registering kernel
@@ -301,6 +329,15 @@ pub enum VerificationError {
     UnsupportedStructOpsMember {
         ops_struct: String,
         member: String,
+    },
+    /// Non-GPL-compatible BPF program attaching to a GPL-only struct_ops
+    /// (e.g. `tcp_congestion_ops`). Mirrors the kernel's struct_ops
+    /// registration which sets `BPF_PROG_GPL_ONLY` for these ops_structs;
+    /// the loader rejects with EINVAL when the program license isn't
+    /// GPL-compatible per `license_is_gpl_compatible`.
+    StructOpsRequiresGpl {
+        ops_struct: String,
+        license: String,
     },
     GlobalFuncMalformed {
         pc: usize,
@@ -316,6 +353,15 @@ pub enum VerificationError {
     /// MIGHT_SLEEP helper/kfunc, from inside an irq- or preempt-disabled
     /// region. Kernel: "global functions that may sleep are not allowed
     /// in non-sleepable context".
+    /// Kernel verifier.c L10538: a global subprog call site is inside a
+    /// held bpf_spin_lock region. The kernel rejects unconditionally
+    /// (path-independent) because global subprogs are verified separately
+    /// and may execute arbitrary helpers / kfuncs that are illegal under
+    /// lock. Static subprogs are inlined and exempt.
+    GlobalFuncCallUnderLock {
+        pc: usize,
+        func: String,
+    },
     GlobalFuncMaySleepInNonSleepable {
         pc: usize,
         func: String,
@@ -611,6 +657,12 @@ impl VerificationError {
             VerificationError::UnreleasedRcuRead => {
                 "Unreleased RCU read-side section in program".to_string()
             }
+            VerificationError::SleepableInRcuReadSection { pc, helper } => {
+                format!(
+                    "Sleepable helper/kfunc {} invoked inside bpf_rcu_read_lock region at pc {}",
+                    helper, pc
+                )
+            }
             VerificationError::SleepableInPreemptDisabled { pc, helper } => {
                 format!(
                     "Sleepable helper/kfunc {} in preempt-disabled region at pc {}",
@@ -656,6 +708,12 @@ impl VerificationError {
                     helper, kind, pc
                 )
             }
+            VerificationError::MapProgIncompat { map_name, field, kind } => {
+                format!(
+                    "tracing/socket-filter prog {:?} cannot use map '{}' with {} field",
+                    kind, map_name, field
+                )
+            }
             VerificationError::LsmHookDisabled { hook } => {
                 format!("LSM attach target points to disabled hook '{}'", hook)
             }
@@ -665,10 +723,22 @@ impl VerificationError {
                     target
                 )
             }
+            VerificationError::TracingAttachDenied { target } => {
+                format!(
+                    "Tracing program cannot attach to denied kernel function '{}'",
+                    target
+                )
+            }
             VerificationError::UnsupportedStructOpsMember { ops_struct, member } => {
                 format!(
                     "attach to unsupported member {} of struct {}",
                     member, ops_struct
+                )
+            }
+            VerificationError::StructOpsRequiresGpl { ops_struct, license } => {
+                format!(
+                    "struct_ops {} requires GPL-compatible license, got '{}'",
+                    ops_struct, license
                 )
             }
             VerificationError::GlobalFuncMalformed { pc, func, reason } => {
@@ -680,6 +750,12 @@ impl VerificationError {
                     func,
                     arg_index + 1,
                     pc
+                )
+            }
+            VerificationError::GlobalFuncCallUnderLock { pc, func } => {
+                format!(
+                    "global function calls are not allowed while holding a lock: call to '{}' at pc {}",
+                    func, pc
                 )
             }
             VerificationError::GlobalFuncMaySleepInNonSleepable { pc, func } => {

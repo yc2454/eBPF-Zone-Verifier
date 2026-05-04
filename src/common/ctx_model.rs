@@ -36,6 +36,13 @@ pub enum CtxFieldKind {
     TrustedPtr {
         type_name: &'static str,
         nullable: bool,
+        /// BTF TYPE_TAG flags from the attach-target arg (USER /
+        /// PERCPU). Default empty for static ctx-field tables; the
+        /// fentry/LSM/tp_btf lax fallback populates this from
+        /// `runner::tracing_attach_arg_tag_flags(attach_subtype, arg_idx)`.
+        /// Propagated to `RegType::PtrToBtfId.flags` by transfer/types.rs;
+        /// rejected at deref by access.rs.
+        tag_flags: crate::analysis::machine::reg_types::PtrFlags,
     },
 }
 
@@ -513,6 +520,14 @@ const XDP_MD_FIELDS: &[CtxField] = &[
         readable: true,
         narrow_access: false,
     },
+];
+
+/// XDP devmap-only ctx fields. Per kernel verifier (xdp_func_proto +
+/// bpf_xdp_dev_md_is_valid_access), `egress_ifindex` is rejected unless
+/// the program's `expected_attach_type == BPF_XDP_DEVMAP`. libbpf
+/// derives that from `SEC("xdp/devmap")` / `SEC("xdp.frags/devmap")`,
+/// which the runner reflects as `attach_subtype == Some("devmap")`.
+const XDP_MD_DEVMAP_FIELDS: &[CtxField] = &[
     // __u32 egress_ifindex
     CtxField {
         offset: 20,
@@ -1314,6 +1329,7 @@ const TRACE_ITER_TASK_FIELDS: &[CtxField] = &[
         kind: CtxFieldKind::TrustedPtr {
             type_name: "bpf_iter_meta",
             nullable: false,
+            tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
         },
         writable: false,
         readable: true,
@@ -1326,6 +1342,7 @@ const TRACE_ITER_TASK_FIELDS: &[CtxField] = &[
         kind: CtxFieldKind::TrustedPtr {
             type_name: "task_struct",
             nullable: true,
+            tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
         },
         writable: false,
         readable: true,
@@ -1394,6 +1411,7 @@ fn lookup_region(ctx_kind: ContextKind, off: i16, size: i64) -> Option<CtxAccess
 fn get_field_tables(
     ctx_kind: ContextKind,
     prog_kind: ProgramKind,
+    attach_subtype: Option<&str>,
 ) -> Option<(&'static [CtxField], &'static [CtxField])> {
     match ctx_kind {
         ContextKind::SkBuff => {
@@ -1405,7 +1423,16 @@ fn get_field_tables(
             };
             Some((SK_BUFF_FIELDS, extended))
         }
-        ContextKind::XdpMd => Some((XDP_MD_FIELDS, &[])),
+        ContextKind::XdpMd => {
+            // egress_ifindex is gated on BPF_XDP_DEVMAP attach type
+            // (SEC("xdp/devmap") / SEC("xdp.frags/devmap")).
+            let extended: &[CtxField] = if attach_subtype == Some("devmap") {
+                XDP_MD_DEVMAP_FIELDS
+            } else {
+                &[]
+            };
+            Some((XDP_MD_FIELDS, extended))
+        }
         ContextKind::BpfSockAddr => Some((SOCK_ADDR_FIELDS, &[])),
         ContextKind::SkLookup => Some((SK_LOOKUP_FIELDS, &[])),
         ContextKind::SockOps => Some((SOCK_OPS_FIELDS, &[])),
@@ -1629,6 +1656,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                             kind: CtxFieldKind::TrustedPtr {
                                 type_name: pointee_static,
                                 nullable: false,
+                                tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
                             },
                             readable: true,
                             writable: false,
@@ -1688,6 +1716,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                         CtxFieldKind::TrustedPtr {
                             type_name,
                             nullable: *nullable || nullable_from_table,
+                            tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
                         }
                     }
                 };
@@ -1723,10 +1752,20 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                 .as_deref()
                 .map(|tp| tp_btf_arg_is_maybe_null(tp, (off / 8) as u8))
                 .unwrap_or(false);
+            // BTF TYPE_TAG flags from the attach-target's kernel BTF
+            // (USER / PERCPU). We don't ship vmlinux/module BTF, so the
+            // table in runner.rs mirrors the small set of attach targets
+            // the test corpus exercises. arg_idx is kernel-side
+            // (0 = first user-declared arg), matching `off / 8`.
+            let tag_flags = crate::testing::runner::tracing_attach_arg_tag_flags(
+                env.ctx.attach_subtype.as_deref(),
+                (off / 8) as u8,
+            );
             return Some(CtxAccessInfo {
                 kind: CtxFieldKind::TrustedPtr {
                     type_name: "unknown",
                     nullable,
+                    tag_flags,
                 },
                 readable: true,
                 writable: false,
@@ -1770,6 +1809,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                 kind: CtxFieldKind::TrustedPtr {
                     type_name,
                     nullable: false,
+                    tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
                 },
                 readable: true,
                 writable: false,
@@ -1811,7 +1851,11 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
         return Some(info);
     }
 
-    let (base, extended) = match get_field_tables(ctx_kind, prog_kind) {
+    let (base, extended) = match get_field_tables(
+        ctx_kind,
+        prog_kind,
+        env.ctx.attach_subtype.as_deref(),
+    ) {
         Some(tables) => tables,
         None => {
             return Some(CtxAccessInfo {

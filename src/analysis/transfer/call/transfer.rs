@@ -971,6 +971,17 @@ pub(crate) fn transfer_call_rel(
         .cloned()
         .filter(|n| env.ctx.btf.is_global_func(n));
     if let Some(name) = callee_global.as_ref() {
+        // Kernel verifier.c L10538: global subprog calls are unconditionally
+        // rejected while a bpf_spin_lock is held. Global subprogs are
+        // verified separately and may execute helpers/kfuncs that are
+        // disallowed under lock; static subprogs are inlined and exempt.
+        if state.has_active_lock() {
+            env.fail(VerificationError::GlobalFuncCallUnderLock {
+                pc,
+                func: name.clone(),
+            });
+            return vec![];
+        }
         // Static call-graph gate: kernel rejects a global subprog whose
         // body transitively reaches a MIGHT_SLEEP helper/kfunc when the
         // call site is inside an irq- or preempt-disabled region. Path-
@@ -1101,7 +1112,17 @@ pub(crate) fn transfer_call_rel(
         }
     }
 
-    state.push_frame(pc + 1);
+    // Global-subprog calls get an isolated frame: kernel verifies them
+    // separately, so RCU lock-state changes inside the body must NOT
+    // propagate back to the caller. `push_global_subprog_frame` stamps
+    // a snapshot of `rcu_read_depth` that `transfer_exit` restores on
+    // Exit. Static (non-global) subprogs use the regular `push_frame`
+    // since the kernel walks them inline (state changes propagate).
+    if callee_global.is_some() {
+        state.push_global_subprog_frame(pc + 1);
+    } else {
+        state.push_frame(pc + 1);
+    }
     update_call_rel_types(&mut state);
 
     // Override callee R1..R5 with declared types for global subprogs.
@@ -1394,6 +1415,21 @@ pub(crate) fn apply_pre_call_lock_flags(
             pc,
             reason: "sleepable call inside bpf_local_irq_save-ed region".into(),
         });
+        return false;
+    }
+    // Explicit-RCU-CS region rejects sleepable calls (kernel verifier.c
+    // v6.15 L13549: "kernel func %s is sleepable within rcu_read_lock
+    // region"). Gated on explicit `bpf_rcu_read_lock` only — the
+    // implicit-RCU-at-entry baseline for non-sleepable tracing progs
+    // (kprobe/tp/raw_tp/perf_event) is excluded so MIGHT_SLEEP calls
+    // from those programs hit the (separate) "non-sleepable context"
+    // gates instead.
+    let explicit_rcu_baseline =
+        if state.implicit_rcu_at_entry { 1 } else { 0 };
+    if proto.flags.contains(CallFlags::MIGHT_SLEEP)
+        && state.rcu_read_depth > explicit_rcu_baseline
+    {
+        env.fail(VerificationError::SleepableInRcuReadSection { pc, helper });
         return false;
     }
 

@@ -29,6 +29,10 @@ use std::path::Path;
 const STRUCT_OPS_MAYBE_NULL_ARGS: &[(&str, &str, u8)] = &[
     ("sched_ext_ops", "dispatch", 1), // prev
     ("sched_ext_ops", "yield", 1),    // to
+    // bpf_testmod_ops.test_maybe_null(int dummy, struct task_struct *task):
+    // arg 1 (`task`) is registered PTR_MAYBE_NULL by the testmod's
+    // bpf_testmod_ops_funcs struct (kernel test_kmods/bpf_testmod.c).
+    ("bpf_testmod_ops", "test_maybe_null", 1),
 ];
 
 fn is_struct_ops_arg_maybe_null(ops_struct: &str, member: &str, arg_idx: u8) -> bool {
@@ -49,6 +53,24 @@ fn is_struct_ops_arg_maybe_null(ops_struct: &str, member: &str, arg_idx: u8) -> 
 /// failure to release it before exit fires UnreleasedReference, matching
 /// the kernel's "Unreleased reference id=N alloc_insn=0" rejection on
 /// programs like struct_ops_refcounted_fail__ref_leak.
+/// Per-(ops_struct, member) `priv_stack_requested` table. The kernel
+/// kmod's `check_member` callback sets `prog->aux->priv_stack_requested`
+/// for specific members; only those members get PRIV_STACK_ADAPTIVE in
+/// `bpf_enable_priv_stack`. Without it, the verifier accumulates depth
+/// across the bpf2bpf call chain (`check_max_stack_depth_subprog`).
+///
+/// Source: vendor/linux/tools/testing/selftests/bpf/test_kmods/bpf_testmod.c
+/// `st_ops3_check_member`.
+const STRUCT_OPS_PRIV_STACK_REQUESTED: &[(&str, &str)] = &[
+    ("bpf_testmod_ops3", "test_1"),
+];
+
+fn struct_ops_member_priv_stack_requested(ops_struct: &str, member: &str) -> bool {
+    STRUCT_OPS_PRIV_STACK_REQUESTED
+        .iter()
+        .any(|(s, m)| *s == ops_struct && *m == member)
+}
+
 const STRUCT_OPS_REFCOUNTED_ARGS: &[(&str, &str, u8)] = &[
     ("bpf_testmod_ops", "test_refcounted", 1),     // task__ref
     ("bpf_testmod_ops", "test_return_ref_kptr", 1), // task__ref
@@ -68,6 +90,12 @@ fn is_struct_ops_arg_refcounted(ops_struct: &str, member: &str, arg_idx: u8) -> 
 /// "attach to unsupported member <member> of struct <ops_struct>" rejection.
 const UNSUPPORTED_STRUCT_OPS_MEMBERS: &[(&str, &str)] = &[
     ("bpf_testmod_ops", "unsupported_ops"),
+    // tcp_congestion_ops: kernel `bpf_tcp_ca_check_member` only permits
+    // a fixed allowlist of overridable members (init, release, ssthresh,
+    // cong_avoid, set_state, cwnd_event, undo_cwnd, sndbuf_expand,
+    // cong_control, name). `get_info` is intentionally not in that set
+    // (the kernel reads it via tcp_get_info, not via the ops vtable).
+    ("tcp_congestion_ops", "get_info"),
 ];
 
 fn is_unsupported_struct_ops_member(ops_struct: &str, member: &str) -> bool {
@@ -178,6 +206,72 @@ fn lsm_hook_is_disabled(hook: &str) -> bool {
 /// `check_attach_btf_id` — fexit fires on return, so attaching it to a
 /// function that never returns is a guaranteed loss-of-control. fentry
 /// is allowed; only the post-return tracers are rejected.
+/// Kernel functions tracing programs (fentry/fexit/fmod_ret/raw_tp)
+/// cannot attach to. The kernel rejects at attach time (not load) via
+/// `check_attach_btf_id`'s BPF helper allowlist — these are core
+/// locking/CS primitives whose recursion or pre/post observation by
+/// BPF would race with the verifier's locking model.
+///
+/// Test coverage: `tracing_failure.c::test_spin_lock` and
+/// `test_spin_unlock` declare `?fentry/bpf_spin_{lock,unlock}` and
+/// expect attach failure (note in expectations.json:
+/// "kernel prog_tests/tracing_failure.c asserts attach fails").
+/// Per-(attach_target, kernel_arg_idx) BTF TYPE_TAG flags carried by the
+/// kernel function's arg in vmlinux/module BTF. The kernel verifier's
+/// attach-time entry-arg seeder propagates these tags onto the BPF
+/// program's R1..Rn (e.g. `__user` → reject direct deref). We don't
+/// load module/vmlinux BTF, so mirror just the targets the test corpus
+/// exercises.
+///
+/// `arg_idx` is **kernel-side**: 0 = first user-declared arg of the
+/// attach target. Matches `(off / 8)` at the BPF_PROG ctx-array load
+/// site, since clang emits one slot per user-declared kernel arg.
+const ATTACH_TARGET_ARG_TAGS: &[(&str, u8, crate::analysis::machine::reg_types::PtrFlags)] = &[
+    // bpf_testmod_test_btf_type_tag_user_N(struct ... __user *arg)
+    ("bpf_testmod_test_btf_type_tag_user_1", 0,
+        crate::analysis::machine::reg_types::PtrFlags::USER),
+    ("bpf_testmod_test_btf_type_tag_user_2", 0,
+        crate::analysis::machine::reg_types::PtrFlags::USER),
+    // bpf_testmod_test_btf_type_tag_percpu_N(struct ... __percpu *arg)
+    ("bpf_testmod_test_btf_type_tag_percpu_1", 0,
+        crate::analysis::machine::reg_types::PtrFlags::PERCPU),
+    ("bpf_testmod_test_btf_type_tag_percpu_2", 0,
+        crate::analysis::machine::reg_types::PtrFlags::PERCPU),
+    // __sys_getsockname(int fd, struct sockaddr __user *usockaddr,
+    //                   int __user *usockaddr_len)
+    ("__sys_getsockname", 1, crate::analysis::machine::reg_types::PtrFlags::USER),
+    ("__sys_getsockname", 2, crate::analysis::machine::reg_types::PtrFlags::USER),
+];
+
+pub fn tracing_attach_arg_tag_flags(
+    target: Option<&str>,
+    arg_idx: u8,
+) -> crate::analysis::machine::reg_types::PtrFlags {
+    let Some(target) = target else {
+        return crate::analysis::machine::reg_types::PtrFlags::empty();
+    };
+    ATTACH_TARGET_ARG_TAGS
+        .iter()
+        .filter(|(t, i, _)| *t == target && *i == arg_idx)
+        .fold(
+            crate::analysis::machine::reg_types::PtrFlags::empty(),
+            |acc, (_, _, f)| acc.union(*f),
+        )
+}
+
+fn is_tracing_attach_denied(target: &str) -> bool {
+    matches!(
+        target,
+        // Locked-helper family: see tracing_failure.c.
+        "bpf_spin_lock" | "bpf_spin_unlock"
+        // sk_storage subsystem: tracing self-recursion. Kernel
+        // `bpf_sk_storage_tracing_allowed` rejects fentry attach to
+        // bpf_sk_storage_free (the helper would re-enter the storage
+        // subsystem). See test_sk_storage_trace_itself.c.
+        | "bpf_sk_storage_free"
+    )
+}
+
 fn is_noreturn_kernel_fn(name: &str) -> bool {
     matches!(
         name,
@@ -231,7 +325,29 @@ pub struct Analyzer {
     /// without struct_ops content. Used to seed entry-state arg types
     /// for SEC("struct_ops*") subprograms.
     pub struct_ops_bindings: Vec<StructOpsBinding>,
+    /// Contents of the SEC("license") string (NUL-trimmed). `"GPL"` /
+    /// `"Dual BSD/GPL"` / `"Dual MIT/GPL"` count as GPL-compatible per
+    /// `license_is_gpl_compatible` in the kernel; everything else (e.g.
+    /// `"X"` in bpf_tcp_nogpl.c) is treated as proprietary and rejected
+    /// at struct_ops attach for GPL-only ops_structs (tcp_congestion_ops).
+    pub license: String,
 }
+
+/// Mirror of kernel `license_is_gpl_compatible` (include/linux/license.h).
+fn license_is_gpl_compatible(s: &str) -> bool {
+    matches!(
+        s,
+        "GPL" | "GPL v2" | "GPL and additional rights" | "Dual BSD/GPL"
+            | "Dual MIT/GPL" | "Dual MPL/GPL"
+    )
+}
+
+/// struct_ops types the kernel registers as `BPF_PROG_GPL_ONLY`. Loading
+/// a non-GPL-compatible BPF program against any of these is rejected by
+/// the struct_ops registration path at attach time.
+const GPL_ONLY_STRUCT_OPS: &[&str] = &[
+    "tcp_congestion_ops",
+];
 
 impl Analyzer {
     fn derive_program_kind(&self, section: &str) -> ProgramKind {
@@ -336,12 +452,20 @@ impl Analyzer {
             None => Vec::new(),
         };
 
+        let license = elf::prog::load_section_bytes(path, "license", false)
+            .map(|bytes| {
+                let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+                String::from_utf8_lossy(&bytes[..end]).into_owned()
+            })
+            .unwrap_or_default();
+
         Analyzer {
             path: path.to_string(),
             config,
             maps: all_maps,
             btf,
             struct_ops_bindings,
+            license,
         }
     }
 
@@ -659,12 +783,19 @@ impl Analyzer {
         // Companion to `attach_subtype`: capture the SEC's flavor
         // prefix (`fentry`, `fexit`, `fmod_ret`, ...) so transfer
         // checks can dispatch on tracing flavor without re-parsing.
-        ctx.attach_flavor = section
-            .to_lowercase()
-            .strip_prefix('?')
-            .unwrap_or(&section.to_lowercase())
-            .split_once('/')
-            .map(|(prefix, _)| prefix.trim_end_matches(".s").to_string());
+        // For SECs with no `/` (bare attach types like `?kprobe`,
+        // `?perf_event`, `raw_tp`), fall back to the whole stripped SEC
+        // so consumers can still classify the flavor. Existing consumers
+        // ("fentry", "fexit", "iter") are unaffected.
+        ctx.attach_flavor = {
+            let lower = section.to_lowercase();
+            let stripped = lower.strip_prefix('?').unwrap_or(&lower);
+            let raw = match stripped.split_once('/') {
+                Some((prefix, _)) => prefix,
+                None => stripped,
+            };
+            Some(raw.trim_end_matches(".s").to_string())
+        };
 
         // Cluster E: reject SEC("lsm/<hook>") for hooks the kernel's
         // BPF_LSM_DISABLED_HOOKS list excludes from BPF attach.
@@ -695,6 +826,28 @@ impl Analyzer {
             });
         }
 
+        // Tracing-attach denylist (fentry/fexit/fmod_ret to bpf_spin_lock,
+        // bpf_spin_unlock, ...). Leading `?` in optional-load SECs is
+        // already stripped from `attach_subtype`.
+        let is_tracing_attach_sec = sec_lower.starts_with("fentry/")
+            || sec_lower.starts_with("fentry.s/")
+            || sec_lower.starts_with("fexit/")
+            || sec_lower.starts_with("fexit.s/")
+            || sec_lower.starts_with("fmod_ret/")
+            || sec_lower.starts_with("fmod_ret.s/")
+            || sec_lower.starts_with("?fentry/")
+            || sec_lower.starts_with("?fentry.s/")
+            || sec_lower.starts_with("?fexit/")
+            || sec_lower.starts_with("?fexit.s/");
+        if is_tracing_attach_sec
+            && let Some(target) = ctx.attach_subtype.as_deref()
+            && is_tracing_attach_denied(target)
+        {
+            return AnalysisResult::Fail(VerificationError::TracingAttachDenied {
+                target: target.to_string(),
+            });
+        }
+
         // W6.4a: for struct_ops subprogs, seed R1..Rn from the resolved
         // ops-struct member signature. derive_program_kind already
         // matched SEC("struct_ops*") to ProgramKind::StructOps; the
@@ -713,6 +866,22 @@ impl Analyzer {
                 return AnalysisResult::Fail(VerificationError::UnsupportedStructOpsMember {
                     ops_struct: binding.ops_struct.clone(),
                     member: binding.member.clone(),
+                });
+            }
+            // GPL-only struct_ops (tcp_congestion_ops): kernel registers
+            // these with BPF_PROG_GPL_ONLY, so loading a non-GPL program
+            // is rejected at attach. Mirrors `bpf_tcp_nogpl.c` which
+            // declares `license = "X"`.
+            if let Some(binding) = self
+                .struct_ops_bindings
+                .iter()
+                .find(|b| b.subprog == func.name)
+                && GPL_ONLY_STRUCT_OPS.contains(&binding.ops_struct.as_str())
+                && !license_is_gpl_compatible(&self.license)
+            {
+                return AnalysisResult::Fail(VerificationError::StructOpsRequiresGpl {
+                    ops_struct: binding.ops_struct.clone(),
+                    license: self.license.clone(),
                 });
             }
             // Per-member sleepable gate: SEC("struct_ops.s/<member>") is
@@ -753,6 +922,9 @@ impl Analyzer {
             ctx.struct_ops_member = binding.map(|b| (b.ops_struct.clone(), b.member.clone()));
             ctx.struct_ops_refcounted_args =
                 struct_ops_refcounted_arg_count(&self.struct_ops_bindings, &func.name);
+            ctx.priv_stack_requested = binding
+                .map(|b| struct_ops_member_priv_stack_requested(&b.ops_struct, &b.member))
+                .unwrap_or(false);
         } else if matches!(
             ctx.prog_kind,
             ProgramKind::Lsm
@@ -1008,12 +1180,19 @@ impl Analyzer {
         // Companion to `attach_subtype`: capture the SEC's flavor
         // prefix (`fentry`, `fexit`, `fmod_ret`, ...) so transfer
         // checks can dispatch on tracing flavor without re-parsing.
-        ctx.attach_flavor = section
-            .to_lowercase()
-            .strip_prefix('?')
-            .unwrap_or(&section.to_lowercase())
-            .split_once('/')
-            .map(|(prefix, _)| prefix.trim_end_matches(".s").to_string());
+        // For SECs with no `/` (bare attach types like `?kprobe`,
+        // `?perf_event`, `raw_tp`), fall back to the whole stripped SEC
+        // so consumers can still classify the flavor. Existing consumers
+        // ("fentry", "fexit", "iter") are unaffected.
+        ctx.attach_flavor = {
+            let lower = section.to_lowercase();
+            let stripped = lower.strip_prefix('?').unwrap_or(&lower);
+            let raw = match stripped.split_once('/') {
+                Some((prefix, _)) => prefix,
+                None => stripped,
+            };
+            Some(raw.trim_end_matches(".s").to_string())
+        };
 
         // Cluster E: reject SEC("lsm/<hook>") for hooks the kernel's
         // BPF_LSM_DISABLED_HOOKS list excludes from BPF attach.
@@ -1040,6 +1219,28 @@ impl Analyzer {
             && is_noreturn_kernel_fn(target)
         {
             return AnalysisResult::Fail(VerificationError::NoreturnAttachTarget {
+                target: target.to_string(),
+            });
+        }
+
+        // Tracing-attach denylist (fentry/fexit/fmod_ret to bpf_spin_lock,
+        // bpf_spin_unlock, ...). Leading `?` in optional-load SECs is
+        // already stripped from `attach_subtype`.
+        let is_tracing_attach_sec = sec_lower.starts_with("fentry/")
+            || sec_lower.starts_with("fentry.s/")
+            || sec_lower.starts_with("fexit/")
+            || sec_lower.starts_with("fexit.s/")
+            || sec_lower.starts_with("fmod_ret/")
+            || sec_lower.starts_with("fmod_ret.s/")
+            || sec_lower.starts_with("?fentry/")
+            || sec_lower.starts_with("?fentry.s/")
+            || sec_lower.starts_with("?fexit/")
+            || sec_lower.starts_with("?fexit.s/");
+        if is_tracing_attach_sec
+            && let Some(target) = ctx.attach_subtype.as_deref()
+            && is_tracing_attach_denied(target)
+        {
+            return AnalysisResult::Fail(VerificationError::TracingAttachDenied {
                 target: target.to_string(),
             });
         }
