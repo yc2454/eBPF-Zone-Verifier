@@ -3055,18 +3055,6 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Void),
 
-        // ---- bpf_get_kmem_cache (slab introspection) ----
-        // `struct kmem_cache *bpf_get_kmem_cache(u64 addr)` — returns the
-        // kmem_cache that owns the kernel address (or NULL). Used by
-        // kmem_cache_iter.c::check_task_struct: the caller only does a
-        // null check and uses `&s` as a hash-map key; no deref of the
-        // returned pointer here. Scalar return models the null-check shape
-        // without committing to a kmem_cache field-access table.
-        "bpf_get_kmem_cache" => CallProto::with_args([
-            Anything, DontCare, DontCare, DontCare, DontCare,
-        ])
-        .ret(RetKind::Scalar),
-
         // ---- bpf_xdp_flow_lookup (nf_flow_table xdp helper) ----
         // `struct flow_offload_tuple_rhash *bpf_xdp_flow_lookup(
         //      struct xdp_md *, struct bpf_fib_lookup *,
