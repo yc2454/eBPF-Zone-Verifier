@@ -965,6 +965,16 @@ const SK_LOOKUP_FIELDS: &[CtxField] = &[
         readable: true,
         narrow_access: true,
     },
+    // __u32 ingress_ifindex (offset 64). Added in v5.x — the
+    // arriving interface, determined by inet_iif. Read-only.
+    CtxField {
+        offset: 64,
+        size: MemSize::U32,
+        kind: CtxFieldKind::Scalar,
+        writable: false,
+        readable: true,
+        narrow_access: true,
+    },
 ];
 
 /// struct bpf_sock_ops (SOCK_OPS context)

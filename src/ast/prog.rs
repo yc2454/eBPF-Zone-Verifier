@@ -142,7 +142,21 @@ impl ProgramKind {
                     || rest == "tracepoint"
                     || rest.starts_with("perf_event")
                     || rest == "syscall"
-                    || rest.starts_with("freplace/") =>
+                    || rest.starts_with("freplace/")
+                    // libbpf-managed optional SECs: `?tc`, `?xdp`,
+                    // `?cgroup_*`, etc. produce the same prog_type as
+                    // their non-`?` counterparts; the `?` is purely
+                    // libbpf-internal optionality (skel-load doesn't
+                    // require these to verify). Without stripping,
+                    // they fall through to ProgramKind::Unknown and
+                    // their ctx loads/helpers don't get the right
+                    // model.
+                    || rest == "tc"
+                    || rest.starts_with("tc/")
+                    || rest == "xdp"
+                    || rest.starts_with("xdp/")
+                    || rest.starts_with("cgroup_skb/")
+                    || rest.starts_with("cgroup/") =>
             {
                 rest
             }
@@ -239,15 +253,15 @@ impl ProgramKind {
         // Since caller and callee must have the same program type, these target
         // sections execute under the SchedCls context (SkBuff). This is a fast-path
         // assumption and not a general mechanism for sound program kind inference.
-        if s.starts_with("classifier")
-            || s.starts_with("tc")
-            || s.starts_with("sched_cls")
-            || s.starts_with("action")
-            || s.starts_with("ingress")
-            || s.starts_with("egress")
-            || s.starts_with("l2_")
-            || s.starts_with("drop_")
-            || s.starts_with("tail")
+        if tr_view.starts_with("classifier")
+            || tr_view.starts_with("tc")
+            || tr_view.starts_with("sched_cls")
+            || tr_view.starts_with("action")
+            || tr_view.starts_with("ingress")
+            || tr_view.starts_with("egress")
+            || tr_view.starts_with("l2_")
+            || tr_view.starts_with("drop_")
+            || tr_view.starts_with("tail")
             || s.starts_with("downcall")
         {
             return ProgramKind::SchedCls;
