@@ -29,6 +29,10 @@ use std::path::Path;
 const STRUCT_OPS_MAYBE_NULL_ARGS: &[(&str, &str, u8)] = &[
     ("sched_ext_ops", "dispatch", 1), // prev
     ("sched_ext_ops", "yield", 1),    // to
+    // bpf_testmod_ops.test_maybe_null(int dummy, struct task_struct *task):
+    // arg 1 (`task`) is registered PTR_MAYBE_NULL by the testmod's
+    // bpf_testmod_ops_funcs struct (kernel test_kmods/bpf_testmod.c).
+    ("bpf_testmod_ops", "test_maybe_null", 1),
 ];
 
 fn is_struct_ops_arg_maybe_null(ops_struct: &str, member: &str, arg_idx: u8) -> bool {
