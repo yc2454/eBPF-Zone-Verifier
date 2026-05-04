@@ -2943,6 +2943,73 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar),
 
+        // ---- testmod basic test kfuncs (kfunc_call_test.c) ----
+        //
+        // The test kfuncs registered by bpf_testmod for the
+        // kfunc_call integration coverage. Scalar-only and pointer
+        // helpers; acquire/release-tracked variants
+        // (bpf_kfunc_call_test_acquire / _release / _get_*_mem,
+        // bpf_testmod_ctx_*) intentionally NOT registered here —
+        // they need ref-tracking + bounded-mem return shapes that
+        // the corresponding `__failure` siblings (kfunc_call_fail.c)
+        // would unmask without the matching primitives. This commit
+        // limits itself to the trivially-additive scalar/pointer
+        // family.
+        //
+        // bpf_kfunc_call_test_pass_ctx takes `struct __sk_buff *skb`
+        // — modeled as PtrToCtx so the matching __failure sibling
+        // `kfunc_call_test_pointer_arg_type_mismatch` (passes literal
+        // `(void *)10`) keeps rejecting. The mem_len_* kfuncs take a
+        // (mem, len) pair — wired up via MemSizePair so the
+        // out-of-bounds `kfunc_syscall_test_fail` sibling rejects on
+        // size validation.
+        //
+        //   __u64 bpf_kfunc_call_test1(struct sock *sk, u32, u64, u32, u64)
+        //   int   bpf_kfunc_call_test2(struct sock *sk, u32, u32)
+        //   long  bpf_kfunc_call_test4(s8, s16, int, long)
+        //   void  bpf_kfunc_call_test_pass_ctx(struct __sk_buff *skb)
+        //   void  bpf_kfunc_call_test_pass1(struct prog_test_pass1 *p)
+        //   void  bpf_kfunc_call_test_pass2(struct prog_test_pass2 *p)
+        //   void  bpf_kfunc_call_test_mem_len_pass1(void *mem, int len)
+        //   void  bpf_kfunc_call_test_mem_len_fail2(__u64 *mem, int len)
+        //   u32   bpf_kfunc_call_test_static_unused_arg(u32 arg, u32 unused)
+        "bpf_kfunc_call_test1" => CallProto::with_args([
+            Anything, Anything, Anything, Anything, Anything,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_call_test2" => CallProto::with_args([
+            Anything, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_call_test4" => CallProto::with_args([
+            Anything, Anything, Anything, Anything, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_call_test_pass_ctx" => CallProto::with_args([
+            PtrToCtx, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "bpf_kfunc_call_test_pass1" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "bpf_kfunc_call_test_pass2" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "bpf_kfunc_call_test_mem_len_pass1" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "bpf_kfunc_call_test_mem_len_fail2" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "bpf_kfunc_call_test_static_unused_arg" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
         // ---- Sched_ext kfuncs (W6.4b) ----
         //
         // All gated to `ProgramKind::StructOps` — the kernel registers
