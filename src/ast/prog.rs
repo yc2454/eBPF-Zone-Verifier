@@ -327,6 +327,18 @@ impl ProgramKind {
         if s == "lwt_xmit" || s == "lwt_seg6local" {
             return ProgramKind::LwtXmit;
         }
+        // Custom SEC names used by test_lwt_redirect.c — the userspace
+        // driver (prog_tests/lwt_redirect.c) calls
+        // bpf_program__set_type(BPF_PROG_TYPE_LWT_{IN,OUT}) keyed on these
+        // SEC names. The `_nomac` suffix only changes attach configuration
+        // on the user side; both share the same kernel prog_type and
+        // therefore the same __sk_buff ctx layout.
+        if s == "redir_ingress" || s == "redir_ingress_nomac" {
+            return ProgramKind::LwtIn;
+        }
+        if s == "redir_egress" || s == "redir_egress_nomac" {
+            return ProgramKind::LwtOut;
+        }
         ProgramKind::Unknown
     }
 

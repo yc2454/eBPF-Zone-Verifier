@@ -41,6 +41,14 @@ pub fn lookup(sec: &str) -> Option<SecMatch> {
         "cgroup_sock" => constants::BPF_PROG_TYPE_CGROUP_SOCK,
         "lwt_in" => constants::BPF_PROG_TYPE_LWT_IN,
         "lwt_out" => constants::BPF_PROG_TYPE_LWT_OUT,
+        // Custom SEC names used by test_lwt_redirect.c. The C test
+        // driver (prog_tests/lwt_redirect.c) calls
+        // bpf_program__set_type(BPF_PROG_TYPE_LWT_{IN,OUT}) by SEC name
+        // — see INGRESS_SEC / EGRESS_SEC #defines. The `_nomac` variants
+        // map to the same prog types; the suffix distinguishes attach
+        // configuration in the userspace side of the test.
+        "redir_ingress" | "redir_ingress_nomac" => constants::BPF_PROG_TYPE_LWT_IN,
+        "redir_egress" | "redir_egress_nomac" => constants::BPF_PROG_TYPE_LWT_OUT,
         "lwt_xmit" => constants::BPF_PROG_TYPE_LWT_XMIT,
         "lwt_seg6local" => constants::BPF_PROG_TYPE_LWT_SEG6LOCAL,
         "sockops" => constants::BPF_PROG_TYPE_SOCK_OPS,
