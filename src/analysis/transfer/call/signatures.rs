@@ -3031,6 +3031,43 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Void),
 
+        // ---- bpf_kfunc_call_test_destructive (testmod) ----
+        // `void bpf_kfunc_call_test_destructive(void)` — KF_DESTRUCTIVE
+        // (CAP_SYS_BOOT-gated runtime check; verifier just needs the
+        // proto). Used by kfunc_call_destructive.c.
+        "bpf_kfunc_call_test_destructive" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        // ---- bpf_testmod_ops3_call_test_{1,2} (testmod struct_ops3) ----
+        // `void bpf_testmod_ops3_call_test_N(void)` — used by struct_ops
+        // private-stack tests (struct_ops_private_stack.c,
+        // struct_ops_private_stack_recur.c) to thunk into ops3 vtable
+        // methods. No args, no side effects.
+        "bpf_testmod_ops3_call_test_1" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        "bpf_testmod_ops3_call_test_2" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        // ---- bpf_map_sum_elem_count (map introspection) ----
+        // `__s64 bpf_map_sum_elem_count(const struct bpf_map *map)` —
+        // sums per-cpu counters; runtime helper used by
+        // map_percpu_stats.c (iter/bpf_map: ctx->map yields
+        // PtrToBtfId{bpf_map}, not ConstMapPtr) and map_ptr_kern.c
+        // (subprog arg). Anything matches the kernel acceptance of
+        // either &literal_map or a typed bpf_map* from iter ctx; the
+        // kernel runtime gates the call by BTF type-id check.
+        "bpf_map_sum_elem_count" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
         // ---- testmod struct_ops prologue/epilogue test kfuncs ----
         // Used by pro_epilogue.c, pro_epilogue_goto_start.c,
         // epilogue_exit.c (`syscall_*` SEC programs that thunk into
