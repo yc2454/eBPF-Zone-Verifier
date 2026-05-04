@@ -237,7 +237,29 @@ pub struct Analyzer {
     /// without struct_ops content. Used to seed entry-state arg types
     /// for SEC("struct_ops*") subprograms.
     pub struct_ops_bindings: Vec<StructOpsBinding>,
+    /// Contents of the SEC("license") string (NUL-trimmed). `"GPL"` /
+    /// `"Dual BSD/GPL"` / `"Dual MIT/GPL"` count as GPL-compatible per
+    /// `license_is_gpl_compatible` in the kernel; everything else (e.g.
+    /// `"X"` in bpf_tcp_nogpl.c) is treated as proprietary and rejected
+    /// at struct_ops attach for GPL-only ops_structs (tcp_congestion_ops).
+    pub license: String,
 }
+
+/// Mirror of kernel `license_is_gpl_compatible` (include/linux/license.h).
+fn license_is_gpl_compatible(s: &str) -> bool {
+    matches!(
+        s,
+        "GPL" | "GPL v2" | "GPL and additional rights" | "Dual BSD/GPL"
+            | "Dual MIT/GPL" | "Dual MPL/GPL"
+    )
+}
+
+/// struct_ops types the kernel registers as `BPF_PROG_GPL_ONLY`. Loading
+/// a non-GPL-compatible BPF program against any of these is rejected by
+/// the struct_ops registration path at attach time.
+const GPL_ONLY_STRUCT_OPS: &[&str] = &[
+    "tcp_congestion_ops",
+];
 
 impl Analyzer {
     fn derive_program_kind(&self, section: &str) -> ProgramKind {
@@ -342,12 +364,20 @@ impl Analyzer {
             None => Vec::new(),
         };
 
+        let license = elf::prog::load_section_bytes(path, "license", false)
+            .map(|bytes| {
+                let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+                String::from_utf8_lossy(&bytes[..end]).into_owned()
+            })
+            .unwrap_or_default();
+
         Analyzer {
             path: path.to_string(),
             config,
             maps: all_maps,
             btf,
             struct_ops_bindings,
+            license,
         }
     }
 
@@ -726,6 +756,22 @@ impl Analyzer {
                 return AnalysisResult::Fail(VerificationError::UnsupportedStructOpsMember {
                     ops_struct: binding.ops_struct.clone(),
                     member: binding.member.clone(),
+                });
+            }
+            // GPL-only struct_ops (tcp_congestion_ops): kernel registers
+            // these with BPF_PROG_GPL_ONLY, so loading a non-GPL program
+            // is rejected at attach. Mirrors `bpf_tcp_nogpl.c` which
+            // declares `license = "X"`.
+            if let Some(binding) = self
+                .struct_ops_bindings
+                .iter()
+                .find(|b| b.subprog == func.name)
+                && GPL_ONLY_STRUCT_OPS.contains(&binding.ops_struct.as_str())
+                && !license_is_gpl_compatible(&self.license)
+            {
+                return AnalysisResult::Fail(VerificationError::StructOpsRequiresGpl {
+                    ops_struct: binding.ops_struct.clone(),
+                    license: self.license.clone(),
                 });
             }
             // Per-member sleepable gate: SEC("struct_ops.s/<member>") is

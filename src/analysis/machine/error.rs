@@ -322,6 +322,15 @@ pub enum VerificationError {
         ops_struct: String,
         member: String,
     },
+    /// Non-GPL-compatible BPF program attaching to a GPL-only struct_ops
+    /// (e.g. `tcp_congestion_ops`). Mirrors the kernel's struct_ops
+    /// registration which sets `BPF_PROG_GPL_ONLY` for these ops_structs;
+    /// the loader rejects with EINVAL when the program license isn't
+    /// GPL-compatible per `license_is_gpl_compatible`.
+    StructOpsRequiresGpl {
+        ops_struct: String,
+        license: String,
+    },
     GlobalFuncMalformed {
         pc: usize,
         func: String,
@@ -710,6 +719,12 @@ impl VerificationError {
                 format!(
                     "attach to unsupported member {} of struct {}",
                     member, ops_struct
+                )
+            }
+            VerificationError::StructOpsRequiresGpl { ops_struct, license } => {
+                format!(
+                    "struct_ops {} requires GPL-compatible license, got '{}'",
+                    ops_struct, license
                 )
             }
             VerificationError::GlobalFuncMalformed { pc, func, reason } => {
