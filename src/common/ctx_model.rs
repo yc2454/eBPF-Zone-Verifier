@@ -23,6 +23,15 @@ pub enum CtxFieldKind {
     /// A pointer into some memory region.
     SockCommon,
 
+    /// Trusted, non-null `struct bpf_sock *` ctx field. Maps to
+    /// `RegType::PtrToSocket { ref_id: None }`. Used for ctx fields the
+    /// kernel guarantees non-null at program entry (e.g. `bpf_sockopt.sk`,
+    /// where `cgroup_sockopt_is_valid_access` returns `PTR_TO_SOCKET`).
+    /// Distinct from `SockCommon`, which yields the nullable `*OrNull`
+    /// form because most other contexts (sk_buff, sk_lookup, …) deliver
+    /// the sk pointer in a state that still requires a null-check.
+    Socket,
+
     /// Pointer to the start of the packet data.
     PacketStart,
 
@@ -705,11 +714,15 @@ const SOCK_ADDR_FIELDS: &[CtxField] = &[
 /// PASS-row in the corpus depends on a stricter rule, and the FRs we are
 /// closing only exercise reads + retval writes.
 const BPF_SOCKOPT_FIELDS: &[CtxField] = &[
-    // struct bpf_sock *sk (offset 0)
+    // struct bpf_sock *sk (offset 0) — kernel hands a non-null
+    // PTR_TO_SOCKET; emitting the non-null Socket form lets
+    // `bpf_sk_storage_get(ctx->sk, ...)` (which requires
+    // PTR_TO_BTF_ID_SOCK_COMMON, accepting PTR_TO_SOCKET) pass without
+    // a synthetic null-check round-trip.
     CtxField {
         offset: 0,
         size: MemSize::U64,
-        kind: CtxFieldKind::SockCommon,
+        kind: CtxFieldKind::Socket,
         writable: false,
         readable: true,
         narrow_access: false,

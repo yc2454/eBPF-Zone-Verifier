@@ -401,6 +401,11 @@ pub(crate) fn update_load_types(
                             .types
                             .set(dst, RegType::PtrToSockCommonOrNull { ref_id: None });
                     }
+                    CtxFieldKind::Socket => {
+                        state
+                            .types
+                            .set(dst, RegType::PtrToSocket { ref_id: None });
+                    }
                     CtxFieldKind::TrustedPtr {
                         type_name,
                         nullable,
