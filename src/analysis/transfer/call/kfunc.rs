@@ -557,6 +557,63 @@ fn transfer_kfunc_proto(
         }
     }
 
+    // bpf_cast_to_kern_ctx(ctx): R0 = PtrToBtfId{kern_ctx_type_name,
+    // TRUSTED}. The kernel-side struct depends on the calling
+    // program's prog_kind (mirrors `find_kern_ctx_type_id` /
+    // BPF_PROG_TYPE table in kernel/bpf/btf.c). Without this, programs
+    // that cast then deref kern-struct fields (e.g. sa_kern->uaddrlen
+    // on bpf_sock_addr_kern, kskb->len on sk_buff,
+    // kctx->rxq->dev->ifindex on xdp_buff) FR on the field access.
+    if let Some(kfunc_name) = env.ctx.btf.kfunc_name(btf_id)
+        && kfunc_name == "bpf_cast_to_kern_ctx"
+    {
+        use crate::ast::ProgramKind;
+        let kern_name: Option<&'static str> = match env.ctx.prog_kind {
+            ProgramKind::Xdp => Some("xdp_buff"),
+            ProgramKind::SchedCls
+            | ProgramKind::SchedAct
+            | ProgramKind::SocketFilter
+            | ProgramKind::CgroupSkb
+            | ProgramKind::SkSkb
+            | ProgramKind::LwtIn
+            | ProgramKind::LwtOut
+            | ProgramKind::LwtXmit
+            | ProgramKind::FlowDissector => Some("sk_buff"),
+            ProgramKind::CgroupSockAddr => Some("bpf_sock_addr_kern"),
+            ProgramKind::CgroupSock => Some("sock"),
+            ProgramKind::CgroupSockopt => Some("bpf_sockopt_kern"),
+            ProgramKind::SockOps => Some("bpf_sock_ops_kern"),
+            ProgramKind::SkLookup => Some("bpf_sk_lookup_kern"),
+            ProgramKind::SkMsg => Some("sk_msg"),
+            ProgramKind::SkReuseport => Some("sk_reuseport_kern"),
+            ProgramKind::PerfEvent => Some("bpf_perf_event_data_kern"),
+            _ => None,
+        };
+        match kern_name {
+            Some(name) => {
+                let interned =
+                    crate::analysis::machine::context::intern_btf_type_name_strict(name);
+                let flags = crate::analysis::machine::reg_types::PtrFlags::empty()
+                    | crate::analysis::machine::reg_types::PtrFlags::TRUSTED;
+                state.types.set(
+                    Reg::R0,
+                    RegType::PtrToBtfId {
+                        type_name: interned,
+                        flags,
+                        ref_id: None,
+                    },
+                );
+            }
+            // Unknown / unmapped prog_kind (e.g. `?tc` → Unknown, raw
+            // tracepoint, …): preserve the prior RetKind::Scalar
+            // behavior so we don't regress files that hit
+            // bpf_cast_to_kern_ctx but never deref the result.
+            None => {
+                state.types.set(Reg::R0, RegType::ScalarValue);
+            }
+        }
+    }
+
     // bpf_rdonly_cast(obj, btf_id): R0 = PtrToBtfId{name(btf_id),
     // TRUSTED|MEM_RDONLY}. R2 holds the BTF id as a const scalar.
     // Used by `bpf_core_cast(obj, type)` macro across sock_iter_batch,

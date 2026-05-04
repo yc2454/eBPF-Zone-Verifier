@@ -3507,10 +3507,16 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // either ignore the return or store/load through the same alias;
         // returning Scalar (no precise pointer typing yet) is sufficient
         // to clear the dispatch-time rejection.
+        // R0 typed in kfunc.rs by per-ProgramKind kernel-ctx mapping
+        // (kernel verifier `find_kern_ctx_type_id` /
+        // `BPF_PROG_TYPE_*` table). Without that, programs that cast
+        // via `bpf_cast_to_kern_ctx` then deref the kern struct's
+        // fields (sa_kern->uaddrlen on bpf_sock_addr_kern, etc.) FR
+        // on the deref. RetKind::Unknown defers R0 typing to the
+        // post-call hook.
         "bpf_cast_to_kern_ctx" => CallProto::with_args([
             Anything, DontCare, DontCare, DontCare, DontCare,
-        ])
-        .ret(RetKind::Scalar),
+        ]),
 
         _ => return None,
     })
