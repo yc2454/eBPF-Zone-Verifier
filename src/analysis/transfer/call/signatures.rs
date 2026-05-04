@@ -3060,6 +3060,91 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar),
 
+        // ---- kprobe/uprobe session kfuncs ----
+        // bpf_session_cookie() returns `__u64 *` — a pointer to an
+        // 8-byte per-call stash slot the program reads/writes via
+        // *cookie. Modeled with PtrToAllocMem{mem_size=8} so the
+        // verifier accepts the 8-byte deref pattern. (Programs may
+        // load OR store through the returned pointer.)
+        // bpf_session_is_return() returns a 0/1 flag for return-probe
+        // disambiguation. Used in kprobe_multi_session_cookie.c,
+        // uprobe_multi_session_cookie.c, uprobe_multi_session.c.
+        "bpf_session_cookie" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToAllocMem { mem_size: 8 }),
+        "bpf_session_is_return" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- testmod nullable-dynptr arg test ----
+        // bpf_kfunc_dynptr_test(struct bpf_dynptr *, struct bpf_dynptr *__nullable)
+        // Used by test_kfunc_param_nullable.c. Both args are dynptrs;
+        // the second is nullable. Modeled with DynptrArg consumers
+        // (initialized, rdwr or rdonly) so the existing dynptr arg
+        // validator handles slot-state checks. The nullable second
+        // arg uses Anything to accept literal NULL plus init dynptrs.
+        "bpf_kfunc_dynptr_test" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false },
+            Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        // ---- LSM xattr kfuncs ----
+        // Used by test_get_xattr.c, test_set_remove_xattr.c (lsm.s/*
+        // SEC). Each takes a kernel object pointer + name string +
+        // optional value dynptr and returns int. Args are Anything
+        // since the file/dentry pointers come from BPF_PROG entry
+        // typing as PtrToBtfId{file/dentry} which we don't strictly
+        // gate.
+        //
+        //   int bpf_get_file_xattr(struct file *, const char *,
+        //                          struct bpf_dynptr *value)
+        //   int bpf_get_dentry_xattr(struct dentry *, const char *,
+        //                            struct bpf_dynptr *value)
+        //   int bpf_set_dentry_xattr(struct dentry *, const char *,
+        //                            struct bpf_dynptr *value, int flags)
+        //   int bpf_remove_dentry_xattr(struct dentry *, const char *)
+        "bpf_get_file_xattr" => CallProto::with_args([
+            Anything, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_get_dentry_xattr" => CallProto::with_args([
+            Anything, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_set_dentry_xattr" => CallProto::with_args([
+            Anything, Anything, Anything, Anything, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_remove_dentry_xattr" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        // Locked variants (test_set_remove_xattr.c additionally
+        // exercises these; kernel registers them separately).
+        "bpf_set_dentry_xattr_locked" => CallProto::with_args([
+            Anything, Anything, Anything, Anything, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_remove_dentry_xattr_locked" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- FOU/GUE tunnel encap kfuncs (test_tunnel_kern.c) ----
+        //   int bpf_skb_set_fou_encap(struct __sk_buff *, struct bpf_fou_encap *, int)
+        //   int bpf_skb_get_fou_encap(struct __sk_buff *, struct bpf_fou_encap *)
+        "bpf_skb_set_fou_encap" => CallProto::with_args([
+            PtrToCtx, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_skb_get_fou_encap" => CallProto::with_args([
+            PtrToCtx, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
         // ---- Sched_ext kfuncs (W6.4b) ----
         //
         // All gated to `ProgramKind::StructOps` — the kernel registers
