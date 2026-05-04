@@ -1921,6 +1921,26 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                 env.ctx.attach_subtype.as_deref(),
                 (off / 8) as u8,
             );
+            // A6: per-attach-target arg-kind override. The lax
+            // TrustedPtr default over-types scalar slots (int / short /
+            // char / __u64) as pointers, so downstream comparisons
+            // like `c == 18` look like pointer arithmetic. The
+            // ATTACH_TARGET_ARG_KINDS table flips known-scalar slots
+            // to CtxFieldKind::Scalar; unmapped slots keep the lax
+            // pointer fallback.
+            if matches!(
+                crate::testing::runner::tracing_attach_arg_kind(
+                    env.ctx.attach_subtype.as_deref(),
+                    (off / 8) as u8,
+                ),
+                Some(crate::testing::runner::TracingArgKind::Scalar)
+            ) {
+                return Some(CtxAccessInfo {
+                    kind: CtxFieldKind::Scalar,
+                    readable: true,
+                    writable: false,
+                });
+            }
             return Some(CtxAccessInfo {
                 kind: CtxFieldKind::TrustedPtr {
                     type_name: "unknown",

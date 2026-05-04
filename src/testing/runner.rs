@@ -259,6 +259,106 @@ pub fn tracing_attach_arg_tag_flags(
         )
 }
 
+/// Tracing-attach arg kind: scalar vs pointer. `Pointer` is the safe
+/// default (matches the lax `TrustedPtr{type_name: "unknown"}`
+/// fallback for unmodeled attach targets); `Scalar` is the per-target
+/// override used when we know from the kernel function's signature
+/// that the slot is an integer/char/short rather than a pointer.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TracingArgKind {
+    Scalar,
+    Pointer,
+}
+
+/// Per-attach-target arg-kind table. The kernel resolves args from the
+/// attach target's vmlinux/module BTF (which knows e.g. that
+/// `bpf_fentry_test6`'s arg 3 is `int`, a scalar, not a pointer); we
+/// don't ship that BTF, so the lax `is_valid_ctx_read` fallback types
+/// every BPF_PROG ctx-array slot as a trusted unknown pointer. That
+/// over-types scalar slots and makes downstream comparisons
+/// (`c == 18`) look like pointer arithmetic, rejected as "Invalid
+/// pointer arithmetic".
+///
+/// Each entry overrides one slot for one target to `Scalar`. Unmapped
+/// slots keep the lax pointer typing.
+///
+/// `arg_idx` is **kernel-side** (0 = first user-declared arg of the
+/// attach target). For fexit programs the trailing `int ret` parameter
+/// is appended at slot N (where N = number of kernel args); we don't
+/// emit a `Scalar` mapping for it because the BPF_PROG thunk binds the
+/// final arg to ctx[N] separately and the existing model already
+/// handles it.
+const ATTACH_TARGET_ARG_KINDS: &[(&str, u8, TracingArgKind)] = &[
+    // bpf_fentry_test1(int a)
+    ("bpf_fentry_test1", 0, TracingArgKind::Scalar),
+    // bpf_fentry_test2(int a, __u64 b)
+    ("bpf_fentry_test2", 0, TracingArgKind::Scalar),
+    ("bpf_fentry_test2", 1, TracingArgKind::Scalar),
+    // bpf_fentry_test3(char a, int b, __u64 c)
+    ("bpf_fentry_test3", 0, TracingArgKind::Scalar),
+    ("bpf_fentry_test3", 1, TracingArgKind::Scalar),
+    ("bpf_fentry_test3", 2, TracingArgKind::Scalar),
+    // bpf_fentry_test4(void *a, char b, int c, __u64 d)
+    ("bpf_fentry_test4", 1, TracingArgKind::Scalar),
+    ("bpf_fentry_test4", 2, TracingArgKind::Scalar),
+    ("bpf_fentry_test4", 3, TracingArgKind::Scalar),
+    // bpf_fentry_test5(__u64 a, void *b, short c, int d, __u64 e)
+    ("bpf_fentry_test5", 0, TracingArgKind::Scalar),
+    ("bpf_fentry_test5", 2, TracingArgKind::Scalar),
+    ("bpf_fentry_test5", 3, TracingArgKind::Scalar),
+    ("bpf_fentry_test5", 4, TracingArgKind::Scalar),
+    // bpf_fentry_test6(__u64 a, void *b, short c, int d, void *e, __u64 f)
+    ("bpf_fentry_test6", 0, TracingArgKind::Scalar),
+    ("bpf_fentry_test6", 2, TracingArgKind::Scalar),
+    ("bpf_fentry_test6", 3, TracingArgKind::Scalar),
+    ("bpf_fentry_test6", 5, TracingArgKind::Scalar),
+    // bpf_fentry_test7 / 8: single struct ptr arg — already pointer-typed.
+
+    // fexit ret-slot overrides: clang's BPF_PROG-fexit thunk binds the
+    // return value to ctx[N] where N is the kernel-side arg count.
+    // All bpf_fentry_test* and bpf_testmod_fentry_test* return `int`
+    // (a scalar), so the same lax pointer fallback over-types the ret
+    // slot. Mark each. These entries only fire for fexit programs;
+    // fentry programs never load slot N.
+    ("bpf_fentry_test1", 1, TracingArgKind::Scalar),
+    ("bpf_fentry_test2", 2, TracingArgKind::Scalar),
+    ("bpf_fentry_test3", 3, TracingArgKind::Scalar),
+    ("bpf_fentry_test4", 4, TracingArgKind::Scalar),
+    ("bpf_fentry_test5", 5, TracingArgKind::Scalar),
+    ("bpf_fentry_test6", 6, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test7", 7, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test11", 11, TracingArgKind::Scalar),
+
+    // testmod many-args targets:
+    // bpf_testmod_fentry_test7(__u64 a, void *b, short c, int d, void *e, char f, int g)
+    ("bpf_testmod_fentry_test7", 0, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test7", 2, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test7", 3, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test7", 5, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test7", 6, TracingArgKind::Scalar),
+    // bpf_testmod_fentry_test11(__u64 a, void *b, short c, int d, void *e,
+    //                           char f, int g, __u64 h, __u64 i, __u64 j,
+    //                           void *k)
+    ("bpf_testmod_fentry_test11", 0, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test11", 2, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test11", 3, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test11", 5, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test11", 6, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test11", 7, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test11", 8, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test11", 9, TracingArgKind::Scalar),
+];
+
+/// Look up the per-target arg kind. Returns `None` for unmapped slots
+/// (callers should keep the lax pointer fallback).
+pub fn tracing_attach_arg_kind(target: Option<&str>, arg_idx: u8) -> Option<TracingArgKind> {
+    let target = target?;
+    ATTACH_TARGET_ARG_KINDS
+        .iter()
+        .find(|(t, i, _)| *t == target && *i == arg_idx)
+        .map(|(_, _, k)| *k)
+}
+
 fn is_tracing_attach_denied(target: &str) -> bool {
     matches!(
         target,
