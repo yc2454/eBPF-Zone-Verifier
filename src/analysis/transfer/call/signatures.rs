@@ -3020,6 +3020,17 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar),
 
+        // ---- bpf_kfunc_common_test (testmod, no-op trace anchor) ----
+        // `void bpf_kfunc_common_test(void)`. Registered from
+        // bpf_testmod_kfunc.h; used by missed_kprobe.c, missed_kprobe_recursion.c,
+        // and the wq.c sleepable callback variants as a trace-anchor target
+        // (test driver puts a kprobe on this function to count invocations).
+        // Trivially additive: no args, no side effects.
+        "bpf_kfunc_common_test" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
         // ---- testmod struct_ops prologue/epilogue test kfuncs ----
         // Used by pro_epilogue.c, pro_epilogue_goto_start.c,
         // epilogue_exit.c (`syscall_*` SEC programs that thunk into
