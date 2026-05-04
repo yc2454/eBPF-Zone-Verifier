@@ -3244,6 +3244,23 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar),
 
+        // ---- bpf_verify_pkcs7_signature ----
+        // int bpf_verify_pkcs7_signature(struct bpf_dynptr *data,
+        //                                struct bpf_dynptr *sig,
+        //                                struct bpf_key *trusted_keyring)
+        // Used by test_verify_pkcs7_sig.c, test_kfunc_dynptr_param.c,
+        // test_sig_in_xattr.c. KF_SLEEPABLE per kernel registration.
+        // First two args are dynptrs (consumer shape — slot must be
+        // initialized); third is a refcounted bpf_key from
+        // bpf_lookup_user_key / bpf_lookup_system_key.
+        "bpf_verify_pkcs7_signature" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false },
+            DynptrArg { uninit: false, rdwr_only: false },
+            Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::MIGHT_SLEEP),
+
         // ---- Sched_ext kfuncs (W6.4b) ----
         //
         // All gated to `ProgramKind::StructOps` — the kernel registers
