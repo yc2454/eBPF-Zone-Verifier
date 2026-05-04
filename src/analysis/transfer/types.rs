@@ -862,7 +862,8 @@ pub(crate) fn update_call_types(
         // this arm fell through to Scalar in that case. W7.1 fix.
         constants::BPF_SK_STORAGE_GET
         | constants::BPF_TASK_STORAGE_GET
-        | constants::BPF_INODE_STORAGE_GET => {
+        | constants::BPF_INODE_STORAGE_GET
+        | constants::BPF_CGRP_STORAGE_GET => {
             let map_idx = match in_types.get(Reg::R1) {
                 RegType::PtrToMapObject { map_idx } => map_idx,
                 RegType::PtrToMapValue { map_idx, .. } => map_idx,

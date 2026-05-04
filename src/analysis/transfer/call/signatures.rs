@@ -1213,6 +1213,29 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar),
 
+        // bpf_cgrp_storage_get(map, cgroup, value, flags)
+        // R0 typing handled by `update_call_types` (PtrToMapValueOrNull
+        // keyed off R1's map). Arg-side: R2 must be a `cgroup` PtrToBtfId
+        // — the typical bug (cgrp_ls_negative.c::on_enter) is passing a
+        // task_struct cast as cgroup; PtrToBtfIdNamed catches the type
+        // mismatch.
+        constants::BPF_CGRP_STORAGE_GET => CallProto::with_args([
+            ConstMapPtr,                                  // R1: map
+            PtrToBtfIdNamed { type_name: "cgroup" },      // R2: cgroup
+            PtrToMapValueOrNull,                          // R3: value
+            Anything,                                     // R4: flags
+            DontCare,
+        ]),
+
+        constants::BPF_CGRP_STORAGE_DELETE => CallProto::with_args([
+            ConstMapPtr,                                  // R1: map
+            PtrToBtfIdNamed { type_name: "cgroup" },      // R2: cgroup
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
         // ---- Phase 7 wrap-up: bpf_get_current_task_btf ----
         // Returns the kernel's current-task pointer, typed as PTR_TO_BTF_ID
         // (task_struct *) with PTR_TRUSTED. Modeled here as PtrToTask (no
