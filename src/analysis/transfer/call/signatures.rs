@@ -3261,6 +3261,20 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Scalar)
         .flags(CallFlags::MIGHT_SLEEP),
 
+        // ---- bpf_rdonly_cast / bpf_core_cast ----
+        // void *bpf_rdonly_cast(const void *obj, __u32 btf_id)
+        // The kernel returns a pointer with the BTF type identified
+        // by R2, with PTR_TRUSTED|MEM_RDONLY flags. R0 typing is
+        // post-call: kfunc.rs reads R2's fixed value, looks up the
+        // struct name in BTF, and stamps R0 as PtrToBtfId{name,
+        // TRUSTED}. Used by sock_iter_batch.c, type_cast.c, and
+        // the *_unix_prog family (via bpf_core_cast macro).
+        // Registered as RetKind::Unknown so apply_call_proto_r0
+        // doesn't clobber R0; the post-call hook sets it.
+        "bpf_rdonly_cast" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ]),
+
         // ---- Sched_ext kfuncs (W6.4b) ----
         //
         // All gated to `ProgramKind::StructOps` — the kernel registers

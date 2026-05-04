@@ -557,6 +557,42 @@ fn transfer_kfunc_proto(
         }
     }
 
+    // bpf_rdonly_cast(obj, btf_id): R0 = PtrToBtfId{name(btf_id),
+    // TRUSTED|MEM_RDONLY}. R2 holds the BTF id as a const scalar.
+    // Used by `bpf_core_cast(obj, type)` macro across sock_iter_batch,
+    // type_cast, the *_unix_prog family. Without this, programs that
+    // do `sk = bpf_core_cast(sk, struct sock); sk->field` would FR
+    // on the field access (R0 stays whatever apply_call_proto_r0
+    // produced, typically clobbered to NotInit). Sourcing the type
+    // name via `intern_btf_type_name_strict` so a single `&'static
+    // str` round-trips through callers that compare with `==`.
+    if let Some(kfunc_name) = env.ctx.btf.kfunc_name(btf_id)
+        && kfunc_name == "bpf_rdonly_cast"
+    {
+        let r2_id = state
+            .domain
+            .get_fixed_value(Reg::R2)
+            .and_then(|v| u32::try_from(v).ok());
+        if let Some(target_id) = r2_id
+            && let Some(name) = env.ctx.btf.struct_name(target_id)
+        {
+            let interned =
+                crate::analysis::machine::context::intern_btf_type_name_strict(name);
+            let mut flags = crate::analysis::machine::reg_types::PtrFlags::empty();
+            flags = flags
+                | crate::analysis::machine::reg_types::PtrFlags::TRUSTED
+                | crate::analysis::machine::reg_types::PtrFlags::RDONLY;
+            state.types.set(
+                Reg::R0,
+                RegType::PtrToBtfId {
+                    type_name: interned,
+                    flags,
+                    ref_id: None,
+                },
+            );
+        }
+    }
+
     // W7.2: kfuncs marked `bpf_fastcall` (v6.13) preserve R1..R5 — skip
     // the caller-saved clobber so clang-emitted no-spill sequences
     // type-check. Iter-next forks intentionally always clobber (no
