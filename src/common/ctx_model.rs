@@ -478,6 +478,18 @@ const SK_BUFF_EXTENDED_FIELDS: &[CtxField] = &[
         readable: true,
         narrow_access: false,
     },
+    // __u8 tstamp_type (offset 180). Kernel `bpf_skb_is_valid_access`
+    // permits read of `tstamp_type` for tc/cgroup_skb. test_tc_dtime
+    // reads via `Load U8 base+180`. The follow-up 24 bits are explicit
+    // padding; we don't model them.
+    CtxField {
+        offset: 180,
+        size: MemSize::U8,
+        kind: CtxFieldKind::Scalar,
+        writable: false,
+        readable: true,
+        narrow_access: false,
+    },
 ];
 
 /// struct xdp_md (XDP context)
