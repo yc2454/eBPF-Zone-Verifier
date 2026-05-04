@@ -152,9 +152,6 @@ impl ProgramKind {
         {
             return ProgramKind::Kprobe;
         }
-        if s.starts_with("cgroup_skb/") {
-            return ProgramKind::CgroupSkb;
-        }
         if s == "syscall" {
             return ProgramKind::Syscall;
         }
@@ -234,25 +231,41 @@ impl ProgramKind {
         if s.starts_with("sk_msg") {
             return ProgramKind::SkMsg;
         }
-        if s.starts_with("cgroup/bind")
-            || s.starts_with("cgroup/connect")
-            || s.starts_with("cgroup/sendmsg")
-            || s.starts_with("cgroup/recvmsg")
-            || s.starts_with("cgroup/getpeername")
-            || s.starts_with("cgroup/getsockname")
+        // Recognize libbpf optional-load `?cgroup[_skb]/...` form alongside
+        // bare `cgroup[_skb]/...` for the sock_addr / sockopt / sock-create
+        // and skb hook families. Files using these include dynptr_success
+        // (`?cgroup_skb/egress`), test_ldsx_insn (`?cgroup/getsockopt`),
+        // and test_ns_current_pid_tgid (`?cgroup/bind4`). We intentionally
+        // do NOT strip `?` globally — see
+        // `feedback_fix_unmasks_kernel_rejection` (a global strip in past
+        // sessions unmasked kfunc-allowlist rejections in dynptr_fail
+        // siblings, producing 4 FAs).
+        let cg_view: &str = match s.strip_prefix('?') {
+            Some(rest) if rest.starts_with("cgroup/") || rest.starts_with("cgroup_skb/") => rest,
+            _ => &s,
+        };
+        if cg_view.starts_with("cgroup/bind")
+            || cg_view.starts_with("cgroup/connect")
+            || cg_view.starts_with("cgroup/sendmsg")
+            || cg_view.starts_with("cgroup/recvmsg")
+            || cg_view.starts_with("cgroup/getpeername")
+            || cg_view.starts_with("cgroup/getsockname")
         {
             return ProgramKind::CgroupSockAddr;
         }
-        if s.starts_with("cgroup/skb") {
+        if cg_view.starts_with("cgroup_skb/") {
+            return ProgramKind::CgroupSkb;
+        }
+        if cg_view.starts_with("cgroup/skb") {
             return ProgramKind::CgroupSkb;
         }
         // cgroup/getsockopt and cgroup/setsockopt must be matched before the
         // generic "cgroup/sock*" arm below, otherwise they collapse into
         // CgroupSock and pick up the wrong (bpf_sock) context layout.
-        if s.starts_with("cgroup/getsockopt") || s.starts_with("cgroup/setsockopt") {
+        if cg_view.starts_with("cgroup/getsockopt") || cg_view.starts_with("cgroup/setsockopt") {
             return ProgramKind::CgroupSockopt;
         }
-        if s.starts_with("cgroup/sock") || s.starts_with("cgroup/post_bind") {
+        if cg_view.starts_with("cgroup/sock") || cg_view.starts_with("cgroup/post_bind") {
             return ProgramKind::CgroupSock;
         }
         if s.starts_with("kprobe") || s.starts_with("kretprobe") {
