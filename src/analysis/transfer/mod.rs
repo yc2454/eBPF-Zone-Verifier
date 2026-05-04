@@ -549,6 +549,17 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         state.domain = frame.caller_domain;
         state.tnums = frame.caller_tnums;
 
+        // Global-subprog isolation: restore the caller's rcu_read_depth
+        // snapshot taken at push time. The body's bpf_rcu_read_lock /
+        // _unlock calls are local to the global subprog's analysis and
+        // must not leak into the caller's view (kernel verifies global
+        // subprogs separately and treats their lock-state effects as
+        // opaque). Closes
+        // `rcu_read_lock.c::rcu_read_lock_global_subprog_unlock`.
+        if let Some(snapshot) = frame.caller_rcu_read_depth_snapshot {
+            state.rcu_read_depth = snapshot;
+        }
+
         // Preserve anchor-to-anchor constraints from the callee.
         // These represent packet bounds (data/data_end/data_meta)
         // that were verified in the callee and remain valid.

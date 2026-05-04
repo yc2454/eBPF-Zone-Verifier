@@ -99,6 +99,16 @@ pub struct CallFrame {
     /// iterations (e.g. `iter_limit_bug` where 2 iterations of a 3-
     /// branch cb can land on `{ctx.a=42, ctx.b=42, ctx.c=7}`).
     cb_writeable_caller_offsets: Vec<i16>,
+
+    /// For global-subprog frames only: the caller's `rcu_read_depth` at
+    /// call time. The kernel verifies global subprogs in isolation and
+    /// treats their RCU lock-state changes as opaque to the caller —
+    /// `bpf_rcu_read_unlock` inside a global subprog body must NOT
+    /// decrement the caller's view of the depth. Restored on Exit by
+    /// `transfer_exit` to mirror that opacity. `None` for static-subprog
+    /// frames (which the kernel does inline so state changes propagate).
+    /// Closes `rcu_read_lock.c::rcu_read_lock_global_subprog_unlock`.
+    pub caller_rcu_read_depth_snapshot: Option<u32>,
 }
 
 impl Default for CallFrame {
@@ -117,6 +127,7 @@ impl Default for CallFrame {
             caller_frame_level: None,
             cb_should_widen: false,
             cb_writeable_caller_offsets: Vec::new(),
+            caller_rcu_read_depth_snapshot: None,
         }
     }
 }
@@ -310,6 +321,7 @@ impl FrameStack {
             caller_frame_level: None,
             cb_should_widen: false,
             cb_writeable_caller_offsets: Vec::new(),
+            caller_rcu_read_depth_snapshot: None,
         };
         self.frames.push(frame);
         self.current_level()

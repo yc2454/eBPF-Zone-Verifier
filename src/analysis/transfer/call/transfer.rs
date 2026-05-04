@@ -1112,7 +1112,17 @@ pub(crate) fn transfer_call_rel(
         }
     }
 
-    state.push_frame(pc + 1);
+    // Global-subprog calls get an isolated frame: kernel verifies them
+    // separately, so RCU lock-state changes inside the body must NOT
+    // propagate back to the caller. `push_global_subprog_frame` stamps
+    // a snapshot of `rcu_read_depth` that `transfer_exit` restores on
+    // Exit. Static (non-global) subprogs use the regular `push_frame`
+    // since the kernel walks them inline (state changes propagate).
+    if callee_global.is_some() {
+        state.push_global_subprog_frame(pc + 1);
+    } else {
+        state.push_frame(pc + 1);
+    }
     update_call_rel_types(&mut state);
 
     // Override callee R1..R5 with declared types for global subprogs.
