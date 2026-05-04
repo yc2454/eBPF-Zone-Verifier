@@ -634,6 +634,16 @@ pub fn trusted_field_load(struct_name: &str, field_name: &str) -> bool {
         // task pointer); KF_RCU consumers like
         // `bpf_cpumask_test_cpu` accept.
         ("task_struct", "cpus_ptr")
+        // task_struct: kernel-trusted-on-walk pointer fields. The
+        // kernel marks each via `__rcu` / `__rcu_or_trusted` so the
+        // BTF type tag carries PTR_TRUSTED through the field load.
+        // Used by rcu_read_lock.c (real_parent / parent /
+        // group_leader chains under bpf_rcu_read_lock) and
+        // task_kfunc_success.c::task_kfunc_acquire_trusted_walked
+        // (`bpf_task_acquire(task->group_leader)`).
+        | ("task_struct", "real_parent")
+        | ("task_struct", "parent")
+        | ("task_struct", "group_leader")
         // sk_buff.sk — `struct sock *`. Trusted while the skb is
         // trusted. Drives `nested_trust_success::test_skb_field`'s
         // `bpf_sk_storage_get(&map, skb->sk, …)` accepting path.
