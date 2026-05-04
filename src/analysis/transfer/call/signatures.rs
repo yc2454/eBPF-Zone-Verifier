@@ -2727,6 +2727,27 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::PtrToOwnedKptr)
         .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL | CallFlags::SPIN_LOCK_HELD),
 
+        // bpf_list_push_back_impl / bpf_list_pop_back — symmetric
+        // back-of-list variants. Same ownership / lock contracts as
+        // their _front counterparts above.
+        "bpf_list_push_back_impl" => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::ListHead },
+            PtrToOwnedKptr,
+            Anything,
+            Anything,
+            DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE | CallFlags::RELEASE_NON_OWN | CallFlags::SPIN_LOCK_HELD)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 1 }]),
+
+        "bpf_list_pop_back" => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::ListHead },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToOwnedKptr)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL | CallFlags::SPIN_LOCK_HELD),
+
         // int bpf_rbtree_add_impl(struct bpf_rb_root *root,
         //                         struct bpf_rb_node *node,
         //                         bool (*less)(struct bpf_rb_node *,
