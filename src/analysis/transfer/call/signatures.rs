@@ -2461,6 +2461,16 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL)
         .prog_type_allowlist(&TASK_KFUNC_PROG_TYPES),
 
+        // bpf_task_from_vpid: namespace-aware variant of from_pid. Same
+        // signature shape (s32 vpid → struct task_struct *, ACQUIRE +
+        // RET_NULL). Used by task_kfunc_success.c.
+        "bpf_task_from_vpid" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToTask)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL)
+        .prog_type_allowlist(&TASK_KFUNC_PROG_TYPES),
+
         // void bpf_task_release(struct task_struct *p)
         // KF_RELEASE — drops the refcount.
         "bpf_task_release" => CallProto::with_args([
