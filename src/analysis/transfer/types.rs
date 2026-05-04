@@ -779,7 +779,9 @@ pub(crate) fn update_call_types(
     // Set R0 based on helper return type (legacy path for non-migrated helpers)
     if !routed {
     match helper {
-        constants::BPF_MAP_LOOKUP_ELEM | constants::BPF_GET_LOCAL_STORAGE => {
+        constants::BPF_MAP_LOOKUP_ELEM
+        | constants::BPF_MAP_LOOKUP_PERCPU_ELEM
+        | constants::BPF_GET_LOCAL_STORAGE => {
             let map_idx = match in_types.get(Reg::R1) {
                 RegType::PtrToMapObject { map_idx } => map_idx,
                 RegType::PtrToMapValue { map_idx, .. } => map_idx, // Handles map-in-map lookups

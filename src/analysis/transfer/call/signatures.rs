@@ -644,6 +644,19 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             DontCare,
         ]),
 
+        // bpf_map_lookup_percpu_elem(map, key, cpu) — same shape as
+        // map_lookup_elem with an extra cpu scalar arg. Returns a
+        // pointer to the per-cpu copy of the value, or NULL.
+        // R0 typing handled by `update_call_types` (PtrToMapValueOrNull
+        // keyed off R1's map).
+        constants::BPF_MAP_LOOKUP_PERCPU_ELEM => CallProto::with_args([
+            ConstMapPtr, // R1: map
+            PtrToMapKey, // R2: key
+            Anything,    // R3: cpu
+            DontCare,
+            DontCare,
+        ]),
+
         constants::BPF_MAP_UPDATE_ELEM => CallProto::with_args([
             ConstMapPtr,   // R1: map
             PtrToMapKey,   // R2: key
@@ -2409,6 +2422,24 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::PtrToCgroup)
         .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL)
+        .prog_type_allowlist(&CGROUP_KFUNC_PROG_TYPES),
+
+        // void cgroup_rstat_updated(struct cgroup *cgrp, int cpu)
+        // void cgroup_rstat_flush(struct cgroup *cgrp)
+        // Plain cgroup-arg kfuncs registered as kernel symbols
+        // (declared `__ksym` in selftests/cgroup_hierarchical_stats.c).
+        // No flags — they neither acquire nor release; just take a
+        // trusted cgroup pointer and either schedule a flush or run one.
+        "cgroup_rstat_updated" => CallProto::with_args([
+            PtrToCgroup, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .prog_type_allowlist(&CGROUP_KFUNC_PROG_TYPES),
+
+        "cgroup_rstat_flush" => CallProto::with_args([
+            PtrToCgroup, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
         .prog_type_allowlist(&CGROUP_KFUNC_PROG_TYPES),
 
         // struct cgroup *bpf_task_get_cgroup1(struct task_struct *task,
