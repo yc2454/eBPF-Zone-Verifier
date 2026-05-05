@@ -600,12 +600,27 @@ fn validate_ptr_to_task(ctx: &mut ValidationContext) -> bool {
     // exposes via name use the generic `ArgKind::PtrToBtfId` validator;
     // task is the special case because we have a dedicated reg-type
     // specialization for it.
+    // Also accept a PtrToMapKptr pointing at task_struct (kernel models
+    // both raw kptr-field loads and xchg-results as PTR_TO_BTF_ID|MEM_ALLOC
+    // with task BTF id). Refcount-aware gating still happens downstream:
+    // the KF_RELEASE precondition (kfunc.rs `proto.flags.contains(RELEASE)`)
+    // rejects when the arg lacks a ref_id, so a raw kptr-field load
+    // passed to bpf_task_release is still rejected — but the same shape
+    // passed to KF_ACQUIRE | KF_RCU `bpf_task_acquire` is admitted.
+    // Closes test_task_acquire_leave_in_map / test_task_xchg_release /
+    // test_task_map_acquire_release.
+    let map_kptr_task = matches!(
+        ctx.actual,
+        RegType::PtrToMapKptr { pointee_btf_id, .. }
+            if ctx.env.ctx.btf.struct_name(pointee_btf_id) == Some("task_struct")
+    );
     if !matches!(ctx.actual, RegType::PtrToTask { .. })
         && !matches!(
             ctx.actual,
             RegType::PtrToBtfId { type_name: "task_struct", flags, .. }
                 if flags.contains(crate::analysis::machine::reg_types::PtrFlags::TRUSTED)
         )
+        && !map_kptr_task
     {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
@@ -1459,6 +1474,38 @@ pub(crate) fn validate_readable_mem(
             }
             true
         }
+        // Kernel `check_mem_access` admits PTR_TO_BTF_ID for ARG_PTR_TO_MEM
+        // via PROBE_MEM (verifier.c v6.15 ~L7521): the helper reads bytes
+        // from a kernel-struct pointer with fault-tolerant probing
+        // (returns zero on page-fault). Permitted in tracing-class
+        // contexts where probe_read semantics apply (tp_btf, fentry,
+        // fexit, kprobe, raw_tp, lsm, perf_event, iter). Closes
+        // task_kfunc_success::test_task_from_pid_invalid where
+        // bpf_strncmp(task->comm, ...) hands a `task_struct + 1912`
+        // pointer into ARG_PTR_TO_MEM.
+        RegType::PtrToBtfId { .. } => {
+            use crate::ast::ProgramKind;
+            let probe_ok = matches!(
+                env.ctx.prog_kind,
+                ProgramKind::Tracing
+                    | ProgramKind::Lsm
+                    | ProgramKind::Kprobe
+                    | ProgramKind::Tracepoint
+                    | ProgramKind::RawTracepoint
+                    | ProgramKind::RawTracepointWritable
+                    | ProgramKind::PerfEvent
+                    | ProgramKind::StructOps
+            );
+            if !probe_ok {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!(
+                    "[Verifier] pc {}: PtrToBtfId arg requires tracing-class context for PROBE_MEM",
+                    pc
+                );
+                return false;
+            }
+            true
+        }
         _ => {
             env.fail(VerificationError::InvalidArgType { pc, reg });
             error!("[Verifier] pc {}: {:?} not a valid memory pointer", pc, reg);
@@ -1853,6 +1900,35 @@ pub(crate) fn check_ptr_access_size(
                 AccessKind::HelperBuffer,
             );
             !env.failed()
+        }
+
+        // Kernel admits PTR_TO_BTF_ID for ARG_PTR_TO_MEM via PROBE_MEM
+        // (see validate_readable_mem PtrToBtfId arm). Same gating: only
+        // tracing-class contexts where probe_read semantics apply.
+        // Closes task_kfunc_success::test_task_from_pid_invalid where
+        // bpf_strncmp(task->comm, ...) routes through MemSizePair.
+        RegType::PtrToBtfId { .. } => {
+            use crate::ast::ProgramKind;
+            let probe_ok = matches!(
+                env.ctx.prog_kind,
+                ProgramKind::Tracing
+                    | ProgramKind::Lsm
+                    | ProgramKind::Kprobe
+                    | ProgramKind::Tracepoint
+                    | ProgramKind::RawTracepoint
+                    | ProgramKind::RawTracepointWritable
+                    | ProgramKind::PerfEvent
+                    | ProgramKind::StructOps
+            );
+            if !probe_ok {
+                env.fail(VerificationError::InvalidArgType { pc, reg: ptr_reg });
+                error!(
+                    "[Verifier] pc {}: PtrToBtfId arg requires tracing-class context for PROBE_MEM",
+                    pc
+                );
+                return false;
+            }
+            true
         }
 
         _ => {
