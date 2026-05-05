@@ -1710,6 +1710,23 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             rdonly: false,
         }]),
 
+        // int bpf_dynptr_copy(struct bpf_dynptr *dst, u32 dst_off,
+        //                     const struct bpf_dynptr *src, u32 src_off,
+        //                     u32 len)
+        //
+        // Copies `len` bytes from src+src_off to dst+dst_off. Both dynptrs
+        // must be initialized; dst must be writable (rdwr_only). Returns
+        // 0 on success, negative errno on bounds/dst-rdonly. Used in
+        // dynptr_success.c::test_dynptr_copy.
+        "bpf_dynptr_copy" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: true },  // R1: dst (RW)
+            Anything,                                       // R2: dst_off
+            DynptrArg { uninit: false, rdwr_only: false }, // R3: src (any)
+            Anything,                                       // R4: src_off
+            Anything,                                       // R5: len
+        ])
+        .ret(RetKind::Scalar),
+
         // int bpf_dynptr_adjust(const struct bpf_dynptr *ptr,
         //                        u32 start, u32 end)
         //
@@ -3319,6 +3336,35 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // IRQ-disabled regions. Kernel `fn->might_sleep`. Without
         // this flag, irq.c::irq_sleepable_kfunc and
         // preempt_lock.c::preempt_sleepable_kfunc would PASS→FA.
+        .flags(CallFlags::MIGHT_SLEEP),
+
+        // int bpf_copy_from_user_task(void *dst, u32 size,
+        //                              const void __user *src,
+        //                              struct task_struct *task,
+        //                              u64 flags)
+        // Same as bpf_copy_from_user but reads from another task's
+        // address space. KF_SLEEPABLE.
+        "bpf_copy_from_user_task" => CallProto::with_args([
+            PtrToUninitMem, ConstSize, Anything,
+            PtrToBtfIdNamed { type_name: "task_struct" },
+            Anything,
+        ])
+        .ret(RetKind::Scalar)
+        .mem_size_pairs(&pairs::COPY_FROM_USER_STR)
+        .flags(CallFlags::MIGHT_SLEEP),
+
+        // int bpf_copy_from_user_task_str(void *dst, u32 size,
+        //                                  const void __user *src,
+        //                                  struct task_struct *task,
+        //                                  u64 flags)
+        // String variant — null-terminates and bounds the read.
+        "bpf_copy_from_user_task_str" => CallProto::with_args([
+            PtrToUninitMem, ConstSize, Anything,
+            PtrToBtfIdNamed { type_name: "task_struct" },
+            Anything,
+        ])
+        .ret(RetKind::Scalar)
+        .mem_size_pairs(&pairs::COPY_FROM_USER_STR)
         .flags(CallFlags::MIGHT_SLEEP),
 
         // ---- bpf_get_kmem_cache (kmem_cache_iter.c) ----
