@@ -210,6 +210,13 @@ pub struct ExecContext {
     /// rejects regardless of whether any specific path through the
     /// callee body actually reaches the sleepable call.
     pub may_sleep_subprogs: HashSet<usize>,
+    /// True when the program's SEC carries the `.s/` (or `.s` bare)
+    /// sleepable suffix (`fentry.s/`, `fexit.s/`, `iter.s/`, `lsm.s/`,
+    /// `uprobe.s/`, `struct_ops.s/`, etc). Mirrors the kernel's
+    /// `prog->aux->sleepable` flag. Drives kfunc-allowlist checks that
+    /// distinguish sleepable from non-sleepable contexts (e.g.
+    /// `check_css_task_iter_allowlist`).
+    pub is_sleepable: bool,
 }
 
 pub fn default_exec_ctx() -> ExecContext {
@@ -232,6 +239,7 @@ pub fn default_exec_ctx() -> ExecContext {
         struct_ops_refcounted_args: 0,
         priv_stack_requested: false,
         may_sleep_subprogs: HashSet::new(),
+        is_sleepable: false,
     }
 }
 

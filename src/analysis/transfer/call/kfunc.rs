@@ -37,6 +37,27 @@ pub(crate) fn transfer_kfunc(env: &mut VerifierEnv, state: State, btf_id: u32) -
     if let Some(n) = name.as_deref()
         && let Some(proto) = get_kfunc_proto(n)
     {
+        // Kernel `check_css_task_iter_allowlist` (verifier.c v6.15
+        // ~L13151): bpf_iter_css_task_new is only allowed in BPF_LSM,
+        // BPF_TRACE_ITER, and sleepable programs — rejected with
+        // "css_task_iter is only allowed in bpf_lsm, bpf_iter and
+        // sleepable progs" otherwise. Closes
+        // iters_task_failure.c::iter_css_task_for_each (the
+        // SEC("?fentry/...") non-sleepable variant).
+        if n == "bpf_iter_css_task_new" {
+            use crate::ast::ProgramKind;
+            let allowed = env.ctx.prog_kind == ProgramKind::Lsm
+                || matches!(env.ctx.attach_flavor.as_deref(), Some("iter"))
+                || env.ctx.is_sleepable;
+            if !allowed {
+                env.fail(VerificationError::KfuncNotAllowedForProgram {
+                    pc,
+                    btf_id,
+                    kind: env.ctx.prog_kind,
+                });
+                return vec![];
+            }
+        }
         return transfer_kfunc_proto(env, state, btf_id, &proto);
     }
 

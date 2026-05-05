@@ -903,6 +903,19 @@ impl Analyzer {
             };
             Some(raw.trim_end_matches(".s").to_string())
         };
+        // Detect sleepable from the SEC: the `.s` suffix on the flavor
+        // prefix (`fentry.s/`, `iter.s/`, `lsm.s/`, `struct_ops.s/`,
+        // `uprobe.s/`, …). Drives kfunc allowlists like
+        // `check_css_task_iter_allowlist`.
+        ctx.is_sleepable = {
+            let lower = section.to_lowercase();
+            let stripped = lower.strip_prefix('?').unwrap_or(&lower);
+            let raw = match stripped.split_once('/') {
+                Some((prefix, _)) => prefix,
+                None => stripped,
+            };
+            raw.ends_with(".s")
+        };
 
         // Cluster E: reject SEC("lsm/<hook>") for hooks the kernel's
         // BPF_LSM_DISABLED_HOOKS list excludes from BPF attach.
@@ -1333,6 +1346,19 @@ impl Analyzer {
                 None => stripped,
             };
             Some(raw.trim_end_matches(".s").to_string())
+        };
+        // Detect sleepable from the SEC: the `.s` suffix on the flavor
+        // prefix (`fentry.s/`, `iter.s/`, `lsm.s/`, `struct_ops.s/`,
+        // `uprobe.s/`, …). Drives kfunc allowlists like
+        // `check_css_task_iter_allowlist`.
+        ctx.is_sleepable = {
+            let lower = section.to_lowercase();
+            let stripped = lower.strip_prefix('?').unwrap_or(&lower);
+            let raw = match stripped.split_once('/') {
+                Some((prefix, _)) => prefix,
+                None => stripped,
+            };
+            raw.ends_with(".s")
         };
 
         // Cluster E: reject SEC("lsm/<hook>") for hooks the kernel's
