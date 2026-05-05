@@ -288,6 +288,22 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             // Mirrors PtrToBtfId's lax admit for layout-known names
             // not in `mem_region_model`.
         }
+        PtrToMapKptr { .. } => {
+            // Field deref through a kptr loaded from a map's `__kptr*`
+            // field. Kernel admits these via `btf_struct_access` using
+            // the kptr's pointee BTF (mark_btf_ld_reg attenuates the
+            // result's flags to UNTRUSTED on Unref / RCU on Ref under
+            // implicit RCU CS / TRUSTED on post-xchg). The downstream
+            // `bpf_per_cpu_ptr` / `bpf_this_cpu_ptr` arg validator
+            // (transfer.rs:190) still gates the PERCPU-only fail tests
+            // (`marked_as_untrusted_or_null`,
+            // `inherit_untrusted_on_walk`,
+            // `mark_ref_as_untrusted_or_null`), so widening the deref
+            // here doesn't unmask those rejections — they fire one
+            // call later. Without this, every `p = v->ref_ptr;
+            // p->a + p->b` idiom in map_kptr.c reaches "Unsafe generic
+            // load". Loaded value left as `ScalarValue`.
+        }
         ScalarValue | NotInit => {
             error!(
                 "Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})",
