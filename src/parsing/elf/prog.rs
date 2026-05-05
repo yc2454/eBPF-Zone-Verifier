@@ -107,6 +107,41 @@ pub fn load_raw_programs<P: AsRef<Path>>(path: P) -> Result<Vec<RawBpfProgram>> 
     Ok(programs)
 }
 
+/// Names of all STT_FUNC symbols whose ELF binding is global/weak AND
+/// whose visibility is STV_HIDDEN or STV_INTERNAL. These are the subprogs
+/// that libbpf demotes from BTF_FUNC_GLOBAL to BTF_FUNC_STATIC at load
+/// (libbpf.c:3552), so the kernel verifies them inline with caller types
+/// instead of the global-subprog "PTR_MAYBE_NULL on every pointer arg"
+/// regime.
+pub fn collect_hidden_subprog_names<P: AsRef<Path>>(path: P) -> Result<Vec<String>> {
+    use goblin::elf::sym::{STB_GLOBAL, STB_WEAK};
+    const STV_INTERNAL: u8 = 1;
+    const STV_HIDDEN: u8 = 2;
+
+    let buf = fs::read(path)?;
+    let elf = Elf::parse(&buf)?;
+    let mut out = Vec::new();
+    for s in elf.syms.iter() {
+        if s.st_type() != sym::STT_FUNC {
+            continue;
+        }
+        let bind = s.st_bind();
+        if bind != STB_GLOBAL && bind != STB_WEAK {
+            continue;
+        }
+        let vis = s.st_other & 0x3;
+        if vis != STV_HIDDEN && vis != STV_INTERNAL {
+            continue;
+        }
+        if let Some(name) = elf.strtab.get_at(s.st_name) {
+            if !name.is_empty() {
+                out.push(name.to_string());
+            }
+        }
+    }
+    Ok(out)
+}
+
 pub fn list_section_names<P: AsRef<Path>>(path: P) -> Result<Vec<String>> {
     let buf = fs::read(path)?;
     let elf = Elf::parse(&buf)?;

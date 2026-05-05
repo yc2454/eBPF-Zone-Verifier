@@ -521,6 +521,13 @@ impl Analyzer {
             btf::BtfContext::new()
         };
 
+        // Mirror libbpf's STV_HIDDEN → BTF_FUNC_STATIC demotion (libbpf.c:3552):
+        // global/weak subprogs with hidden visibility are verified inline
+        // by the kernel, not as standalone global subprogs.
+        if let Ok(names) = elf::prog::collect_hidden_subprog_names(path) {
+            btf.hidden_subprogs.extend(names);
+        }
+
         // Patch BTF DATASEC member offsets from the ELF symbol table.
         // clang emits all DATASEC entries with offset=0; libbpf rewrites
         // them post-link from the symbol table. Without this, the

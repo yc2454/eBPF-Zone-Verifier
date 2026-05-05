@@ -3,7 +3,7 @@
 // src/btf.rs
 use crate::parsing::elf::{BpfMapDef, KptrField, KptrFieldKind};
 use log::info;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 
 const BTF_MAGIC: u16 = 0xEB9F;
@@ -181,6 +181,14 @@ pub struct BtfContext {
     /// considered a kfunc when it carries a DECL_TAG whose name is "kfunc"
     /// or "bpf_kfunc".
     kfuncs: HashMap<String, u32>,
+    /// Names of subprograms whose ELF symbol carries STV_HIDDEN/STV_INTERNAL
+    /// visibility. libbpf rewrites their BTF FUNC linkage from GLOBAL to
+    /// STATIC at load (libbpf.c:3552), so the kernel verifies them inline
+    /// with the caller's concrete reg types instead of independently with
+    /// PTR_MAYBE_NULL-tagged signature args. Mirror that here so callers of
+    /// `__weak __hidden` helpers (e.g. libbpf's `bpf_usdt_arg`) skip the
+    /// global-subprog override path.
+    pub hidden_subprogs: HashSet<String>,
 }
 
 impl BtfContext {
@@ -196,6 +204,7 @@ impl BtfContext {
             strings,
             decl_tags: Vec::new(),
             kfuncs: HashMap::new(),
+            hidden_subprogs: HashSet::new(),
         }
     }
 
@@ -1076,6 +1085,12 @@ impl BtfContext {
     /// independently against their declared signature; static subprogs
     /// inherit the caller's concrete types.
     pub fn is_global_func(&self, func_name: &str) -> bool {
+        // libbpf demotes hidden-visibility weak/global subprogs to STATIC
+        // before kernel load (libbpf.c:3552) so the kernel verifies them
+        // inline. Treat them as static here too.
+        if self.hidden_subprogs.contains(func_name) {
+            return false;
+        }
         let Some(func_ty) = self.types.values().find(|ty| {
             ty.kind() == BTF_KIND_FUNC && self.get_string(ty.name_off) == Some(func_name)
         }) else {
@@ -1707,6 +1722,7 @@ pub fn parse_btf(bytes: &[u8]) -> Result<BtfContext, String> {
         strings,
         decl_tags,
         kfuncs,
+        hidden_subprogs: HashSet::new(),
     })
 }
 
