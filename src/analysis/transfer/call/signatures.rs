@@ -2052,6 +2052,40 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Void)
         .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
 
+        // ---- bpf_iter_css_task_* (iters_css_task.c) ----
+        // int bpf_iter_css_task_new(struct bpf_iter_css_task *it,
+        //                           struct cgroup_subsys_state *css,
+        //                           unsigned int flags)
+        // KF_ITER_NEW | KF_TRUSTED_ARGS in the kernel (NOT KF_RCU_PROTECTED).
+        // Allowlist-restricted to LSM / iter / sleepable programs
+        // (`check_css_task_iter_allowlist`); the iter holds its own
+        // `css_task_iter` lock so its slot trust does not depend on
+        // in_rcu_cs at init time. `_next` returns `struct task_struct *`
+        // (RCU-flagged); KF_RCU consumers accept, KF_TRUSTED_ARGS reject.
+        "bpf_iter_css_task_new" => CallProto::with_args([
+            IterArg { kind: IterKind::CssTask, expected: IterArgExpect::Uninit },
+            Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::IterInitOnArg { arg: 0, kind: IterKind::CssTask }]),
+
+        "bpf_iter_css_task_next" => CallProto::with_args([
+            IterArg { kind: IterKind::CssTask, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::IterNextBtfId {
+            iter_arg: 0,
+            type_name: "task_struct",
+            flags: crate::analysis::machine::reg_types::PtrFlags::RCU,
+        }),
+
+        "bpf_iter_css_task_destroy" => CallProto::with_args([
+            IterArg { kind: IterKind::CssTask, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
+
         "bpf_iter_bits_destroy" => CallProto::with_args([
             IterArg { kind: IterKind::Bits, expected: IterArgExpect::ActiveOrDrained },
             DontCare, DontCare, DontCare, DontCare,
