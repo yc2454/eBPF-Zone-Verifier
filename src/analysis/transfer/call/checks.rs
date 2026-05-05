@@ -619,6 +619,7 @@ fn validate_ptr_to_task(ctx: &mut ValidationContext) -> bool {
             ctx.actual,
             RegType::PtrToBtfId { type_name: "task_struct", flags, .. }
                 if flags.contains(crate::analysis::machine::reg_types::PtrFlags::TRUSTED)
+                    || flags.contains(crate::analysis::machine::reg_types::PtrFlags::RCU)
         )
         && !map_kptr_task
     {
