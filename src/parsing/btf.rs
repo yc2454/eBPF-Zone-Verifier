@@ -189,6 +189,15 @@ pub struct BtfContext {
     /// `__weak __hidden` helpers (e.g. libbpf's `bpf_usdt_arg`) skip the
     /// global-subprog override path.
     pub hidden_subprogs: HashSet<String>,
+    /// Memoization for `find_special_fields` keyed by type_id. The
+    /// recursive DATASEC walk (5f0362e) blew up the per-load cost when
+    /// invoked on every map-value access via
+    /// `check_btf_fields_access`. BTF is immutable per program, so the
+    /// per-type result is safe to cache. `Arc<Mutex>` rather than
+    /// `RefCell` because BtfContext must be `Send + Sync + Clone` for
+    /// the rayon-parallel sweep dispatcher; the `Arc` makes the cache
+    /// shared across clones (which represent the same BTF anyway).
+    special_fields_cache: std::sync::Arc<std::sync::Mutex<HashMap<u32, Vec<SpecialField>>>>,
 }
 
 impl BtfContext {
@@ -205,6 +214,7 @@ impl BtfContext {
             decl_tags: Vec::new(),
             kfuncs: HashMap::new(),
             hidden_subprogs: HashSet::new(),
+            special_fields_cache: Default::default(),
         }
     }
 
@@ -505,6 +515,23 @@ impl BtfContext {
     /// [`SpecialFieldKind::from_type_name`], with the offset taken from
     /// the DATASEC entry (already in bytes).
     pub fn find_special_fields(&self, type_id: u32) -> Vec<SpecialField> {
+        if let Some(cached) = self
+            .special_fields_cache
+            .lock()
+            .unwrap()
+            .get(&type_id)
+        {
+            return cached.clone();
+        }
+        let fields = self.find_special_fields_uncached(type_id);
+        self.special_fields_cache
+            .lock()
+            .unwrap()
+            .insert(type_id, fields.clone());
+        fields
+    }
+
+    fn find_special_fields_uncached(&self, type_id: u32) -> Vec<SpecialField> {
         let mut fields = Vec::new();
 
         let Some(ty) = self.types.get(&type_id) else {
@@ -1804,6 +1831,7 @@ pub fn parse_btf(bytes: &[u8]) -> Result<BtfContext, String> {
         decl_tags,
         kfuncs,
         hidden_subprogs: HashSet::new(),
+        special_fields_cache: Default::default(),
     })
 }
 
