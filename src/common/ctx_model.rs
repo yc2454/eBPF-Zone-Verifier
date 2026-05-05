@@ -137,7 +137,7 @@ const SK_BUFF_FIELDS: &[CtxField] = &[
         kind: CtxFieldKind::Scalar,
         writable: true,
         readable: true,
-        narrow_access: false,
+        narrow_access: true,
     },
     // __u32 queue_mapping
     CtxField {
@@ -155,7 +155,7 @@ const SK_BUFF_FIELDS: &[CtxField] = &[
         kind: CtxFieldKind::Scalar,
         writable: false,
         readable: true,
-        narrow_access: false,
+        narrow_access: true,
     },
     // __u32 vlan_present
     CtxField {
@@ -446,6 +446,25 @@ const SK_BUFF_FIELDS: &[CtxField] = &[
 
 pub const SK_BUFF_CB_START: i16 = 48;
 pub const SK_BUFF_CB_END: i16 = 68; // 48 + 5*4 = 68
+
+/// FlowDissector-only addition to the SkBuff field table.
+/// `flow_keys` (offset 144, size 8) is a `struct bpf_flow_keys *` —
+/// kernel `flow_dissector_is_valid_access` permits it for
+/// BPF_PROG_TYPE_FLOW_DISSECTOR (and only there). Returns a
+/// non-nullable trusted pointer; the kernel guarantees flow_keys is
+/// set for the dissector entry.
+const FLOW_DISSECTOR_EXTENDED_FIELDS: &[CtxField] = &[CtxField {
+    offset: 144,
+    size: MemSize::U64,
+    kind: CtxFieldKind::TrustedPtr {
+        type_name: "bpf_flow_keys",
+        nullable: false,
+        tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
+    },
+    writable: false,
+    readable: true,
+    narrow_access: false,
+}];
 
 // Only available for CGROUP_SKB and CLS
 const SK_BUFF_EXTENDED_FIELDS: &[CtxField] = &[
@@ -1585,10 +1604,11 @@ fn get_field_tables(
 ) -> Option<(&'static [CtxField], &'static [CtxField])> {
     match ctx_kind {
         ContextKind::SkBuff => {
-            let extended = match prog_kind {
+            let extended: &[CtxField] = match prog_kind {
                 ProgramKind::CgroupSkb | ProgramKind::SchedCls | ProgramKind::SchedAct => {
                     SK_BUFF_EXTENDED_FIELDS
                 }
+                ProgramKind::FlowDissector => FLOW_DISSECTOR_EXTENDED_FIELDS,
                 _ => &[],
             };
             Some((SK_BUFF_FIELDS, extended))
@@ -1699,6 +1719,7 @@ fn apply_prog_type_overrides(prog_kind: ProgramKind, off: i16, info: &mut CtxAcc
                         | ProgramKind::LwtOut
                         | ProgramKind::LwtXmit
                         | ProgramKind::CgroupSkb
+                        | ProgramKind::FlowDissector
                 ) {
                     info.readable = false;
                 }
