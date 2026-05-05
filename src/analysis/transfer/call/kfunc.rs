@@ -58,6 +58,24 @@ pub(crate) fn transfer_kfunc(env: &mut VerifierEnv, state: State, btf_id: u32) -
                 return vec![];
             }
         }
+
+        // Kernel registers bpf_sock_destroy via bpf_sk_iter_kfunc_set
+        // against BPF_PROG_TYPE_TRACING with KF_PROG_TYPE_BPF_TRACE_ITER —
+        // only iter/{tcp,udp} attach types may call it. Tracing programs
+        // attached at tp_btf etc. are rejected with the kernel's
+        // "calling kernel function bpf_sock_destroy is not allowed".
+        // Closes sock_destroy_prog_fail.c::trace_tcp_destroy_sock surfaced
+        // by the new bpf_sock_destroy proto registration.
+        if n == "bpf_sock_destroy"
+            && !matches!(env.ctx.attach_flavor.as_deref(), Some("iter"))
+        {
+            env.fail(VerificationError::KfuncNotAllowedForProgram {
+                pc,
+                btf_id,
+                kind: env.ctx.prog_kind,
+            });
+            return vec![];
+        }
         return transfer_kfunc_proto(env, state, btf_id, &proto);
     }
 

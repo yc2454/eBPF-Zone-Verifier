@@ -3401,6 +3401,21 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .mem_size_pairs(&pairs::COPY_FROM_USER_STR)
         .flags(CallFlags::MIGHT_SLEEP),
 
+        // ---- bpf_sock_destroy (sock_destroy_prog.c) ----
+        // int bpf_sock_destroy(struct sock_common *sk)
+        // KF_TRUSTED_ARGS — invokes the kernel's sock-destroy path on
+        // a trusted sock_common pointer (typically obtained from a
+        // bpf_iter/tcp or bpf_iter/udp ctx). Returns negative errno or 0.
+        // Kernel registers it for BPF_PROG_TYPE_TRACING/BPF_TRACE_ITER
+        // only — programs in sock_destroy_prog.c use SEC("iter/{tcp,udp}")
+        // which we type as Tracing kind. Anything-arg accepts both
+        // PtrToBtfId{sock_common} (from iter ctx) and (struct sock_common
+        // *) casts of typed sock pointers.
+        "bpf_sock_destroy" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
         // ---- bpf_get_kmem_cache (kmem_cache_iter.c) ----
         // struct kmem_cache *bpf_get_kmem_cache(u64 addr)
         // Returns a kernel slab cache pointer. Programs only use it
