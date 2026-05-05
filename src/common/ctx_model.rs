@@ -583,67 +583,24 @@ const XDP_MD_DEVMAP_FIELDS: &[CtxField] = &[
 /// struct bpf_sock_addr (cgroup sock_addr context)
 ///
 /// Reference: linux/include/uapi/linux/bpf.h
+///
+/// Kernel `bpf_sock_addr_is_valid_access` admits 1-, 2-, and 4-byte
+/// loads on the user_*/msg_src_* fields (programs use byte-level
+/// inspection like `ctx->user_ip4 & 0xff`). Set `narrow_access: true`
+/// on the addr/port fields to mirror this; tests like bind4_prog.c
+/// (offset 4 size 1) and bind6_prog.c (offset 24 size 1) need it.
 const SOCK_ADDR_FIELDS: &[CtxField] = &[
     // __u32 user_family
-    CtxField {
-        offset: 0,
-        size: MemSize::U32,
-        kind: CtxFieldKind::Scalar,
-        writable: true,
-        readable: true,
-        narrow_access: false,
-    },
+    CtxField { offset: 0,  size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true,  readable: true, narrow_access: true },
     // __u32 user_ip4
-    CtxField {
-        offset: 4,
-        size: MemSize::U32,
-        kind: CtxFieldKind::Scalar,
-        writable: true,
-        readable: true,
-        narrow_access: false,
-    },
+    CtxField { offset: 4,  size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true,  readable: true, narrow_access: true },
     // __u32 user_ip6[4] (offsets 8-23)
-    CtxField {
-        offset: 8,
-        size: MemSize::U32,
-        kind: CtxFieldKind::Scalar,
-        writable: true,
-        readable: true,
-        narrow_access: false,
-    },
-    CtxField {
-        offset: 12,
-        size: MemSize::U32,
-        kind: CtxFieldKind::Scalar,
-        writable: true,
-        readable: true,
-        narrow_access: false,
-    },
-    CtxField {
-        offset: 16,
-        size: MemSize::U32,
-        kind: CtxFieldKind::Scalar,
-        writable: true,
-        readable: true,
-        narrow_access: false,
-    },
-    CtxField {
-        offset: 20,
-        size: MemSize::U32,
-        kind: CtxFieldKind::Scalar,
-        writable: true,
-        readable: true,
-        narrow_access: false,
-    },
+    CtxField { offset: 8,  size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true,  readable: true, narrow_access: true },
+    CtxField { offset: 12, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true,  readable: true, narrow_access: true },
+    CtxField { offset: 16, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true,  readable: true, narrow_access: true },
+    CtxField { offset: 20, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true,  readable: true, narrow_access: true },
     // __u32 user_port
-    CtxField {
-        offset: 24,
-        size: MemSize::U32,
-        kind: CtxFieldKind::Scalar,
-        writable: true,
-        readable: true,
-        narrow_access: false,
-    },
+    CtxField { offset: 24, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true,  readable: true, narrow_access: true },
     // __u32 family
     CtxField {
         offset: 28,
