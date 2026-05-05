@@ -275,6 +275,19 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             // type-update path (or PtrToBtfId for allowlisted
             // pointer fields via trusted_field_load).
         }
+        PtrToOwnedKptr { .. } => {
+            // Field deref through a graph-kptr (bpf_obj_new'd struct,
+            // or pop result from bpf_list/rbtree). The kernel admits
+            // these via `mark_btf_ld_reg` / `btf_struct_access` using
+            // the kptr's `pointee_btf_id`; container_of patterns
+            // (`f = container_of(node, struct foo, node); v = f->data`)
+            // surface as negative-offset loads relative to the kptr
+            // base — kernel admits because the kptr's allocated region
+            // is the parent struct. Accept any aligned read; loaded
+            // value left as `ScalarValue` by the type-update path.
+            // Mirrors PtrToBtfId's lax admit for layout-known names
+            // not in `mem_region_model`.
+        }
         ScalarValue | NotInit => {
             error!(
                 "Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})",
