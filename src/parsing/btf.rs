@@ -526,23 +526,60 @@ impl BtfContext {
                 let Some(resolved_ty) = self.types.get(&resolved_id) else {
                     continue;
                 };
-                let Some(type_name) = self.get_string(resolved_ty.name_off) else {
-                    continue;
-                };
-                if let Some(kind) = SpecialFieldKind::from_type_name(type_name) {
-                    // `__contains` decl_tags on a `private(name)` global
-                    // (e.g. `ghead __contains(foo, node2)`) attach to the
-                    // VAR's btf_id — clang routes the variable-decl
-                    // attribute to the VAR, not the DATASEC.
-                    let contains = self
-                        .decl_tags_for(entry.var_id)
-                        .find_map(|t| self.parse_contains_tag(&t.name));
+
+                // `__contains` decl_tag is attached to the VAR (clang
+                // routes the variable-decl attribute there); reused for
+                // every array element below.
+                let contains = self
+                    .decl_tags_for(entry.var_id)
+                    .find_map(|t| self.parse_contains_tag(&t.name));
+
+                // Direct recognized struct (single `bpf_list_head ghead`).
+                if let Some(type_name) = self.get_string(resolved_ty.name_off)
+                    && let Some(kind) = SpecialFieldKind::from_type_name(type_name)
+                {
                     fields.push(SpecialField {
                         kind,
                         offset: entry.offset,
                         size: resolved_ty.size_or_type,
-                        contains,
+                        contains: contains.clone(),
                     });
+                    continue;
+                }
+
+                // Array of recognized struct (e.g. `bpf_list_head
+                // ghead_array[2] __contains(foo, node2)`). Emit one
+                // SpecialField per element so per-index pushes/pops
+                // (`&ghead_array[i]`) reach the kfunc cross-arg
+                // validator with a matching offset entry. Mirrors the
+                // recursive shape `collect_kptr_fields_at` uses for
+                // kptr arrays.
+                if resolved_ty.kind() == BTF_KIND_ARRAY
+                    && let Some(arr) = resolved_ty.members.first()
+                {
+                    let elem_id = self.peel_modifiers(arr.type_id);
+                    let nelems = arr.offset;
+                    let Some(elem_ty) = self.types.get(&elem_id) else {
+                        continue;
+                    };
+                    let Some(elem_name) = self.get_string(elem_ty.name_off) else {
+                        continue;
+                    };
+                    let Some(kind) = SpecialFieldKind::from_type_name(elem_name) else {
+                        continue;
+                    };
+                    let elem_size = elem_ty.size_or_type;
+                    if elem_size == 0 || nelems == 0 {
+                        continue;
+                    }
+                    for i in 0..nelems {
+                        fields.push(SpecialField {
+                            kind,
+                            offset: entry.offset + i * elem_size,
+                            size: elem_size,
+                            contains: contains.clone(),
+                        });
+                    }
                 }
             }
             return fields;
