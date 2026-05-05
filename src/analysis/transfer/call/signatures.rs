@@ -1966,6 +1966,35 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Void)
         .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
 
+        // ---- bpf_iter_kmem_cache_* (kmem_cache_iter.c) ----
+        // 8-byte opaque iter struct. `_next` returns `struct kmem_cache *`
+        // marked TRUSTED — the kernel iter holds the slab_mutex while
+        // walking the slab cache list, so the returned cache is
+        // safe-to-deref via BTF field loads (s->name, s->size).
+        "bpf_iter_kmem_cache_new" => CallProto::with_args([
+            IterArg { kind: IterKind::KmemCache, expected: IterArgExpect::Uninit },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::IterInitOnArg { arg: 0, kind: IterKind::KmemCache }]),
+
+        "bpf_iter_kmem_cache_next" => CallProto::with_args([
+            IterArg { kind: IterKind::KmemCache, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::IterNextBtfId {
+            iter_arg: 0,
+            type_name: "kmem_cache",
+            flags: crate::analysis::machine::reg_types::PtrFlags::TRUSTED,
+        }),
+
+        "bpf_iter_kmem_cache_destroy" => CallProto::with_args([
+            IterArg { kind: IterKind::KmemCache, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
+
         // ---- testmod consumer kfuncs (Phase C iters_testmod.c) ----
         //
         // The kernel registers these in `bpf_testmod_kfunc_set` to

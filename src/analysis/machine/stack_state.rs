@@ -29,6 +29,10 @@ pub enum IterKind {
     /// `struct task_struct *` (RCU). Allowed only in LSM, iter, and
     /// sleepable program contexts (kernel `check_css_task_iter_allowlist`).
     CssTask,
+    /// `struct bpf_iter_kmem_cache` from mm/slab_common.c. Iterates over
+    /// all kernel slab caches. `_next` returns `struct kmem_cache *`
+    /// (TRUSTED). Program-visible struct is 8 bytes (opaque __u64[1]).
+    KmemCache,
 }
 
 impl IterKind {

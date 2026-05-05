@@ -38,6 +38,9 @@ pub const BPF_ITER_TESTMOD_SEQ_SIZE: usize = 16;
 /// `struct bpf_iter_css_task` from kernel/bpf/task_iter.c
 /// (`__u64 __opaque[1]` aligned 8 — program-visible footprint).
 pub const BPF_ITER_CSS_TASK_SIZE: usize = 8;
+/// `struct bpf_iter_kmem_cache` from mm/slab_common.c
+/// (`__u64 __opaque[1]` aligned 8).
+pub const BPF_ITER_KMEM_CACHE_SIZE: usize = 8;
 
 /// Stack footprint of an open-coded iterator struct, in bytes.
 pub fn bpf_iter_size(kind: IterKind) -> usize {
@@ -49,6 +52,7 @@ pub fn bpf_iter_size(kind: IterKind) -> usize {
         IterKind::TaskVma => BPF_ITER_TASK_VMA_SIZE,
         IterKind::TestmodSeq => BPF_ITER_TESTMOD_SEQ_SIZE,
         IterKind::CssTask => BPF_ITER_CSS_TASK_SIZE,
+        IterKind::KmemCache => BPF_ITER_KMEM_CACHE_SIZE,
     }
 }
 
