@@ -891,41 +891,56 @@ pub(crate) fn update_call_types(
             }
         }
 
-        // SKC to TCP sock conversion - returns PTR_TO_TCP_SOCK_OR_NULL.
+        // SKC to kernel-struct sock conversion. The kernel's
+        // `bpf_skc_to_*` helpers return `PTR_TO_BTF_ID | PTR_MAYBE_NULL`
+        // typed as the kernel `struct tcp_sock` / `tcp6_sock` /
+        // `tcp_timewait_sock` / `tcp_request_sock` / `udp6_sock` /
+        // `unix_sock` — distinct from the UAPI `struct bpf_tcp_sock`
+        // returned by the `bpf_tcp_sock()` helper. Programs deref
+        // kernel-struct fields at offsets that exceed the UAPI snapshot
+        // (e.g. `tcp_sock` offset 798 in bpf_iter_tcp6, offset 524 in
+        // mptcp_subflow). Returning PtrToBtfIdOrNull{<kernel-struct>,
+        // TRUSTED} routes through the existing PtrToBtfId machinery
+        // (ALU preservation + lax field-load admit), unblocking the
+        // bpf_iter_tcp/udp/unix family.
+        //
         // Two acceptance shapes for R1:
         //   (a) acquire-tracked (ref_id Some) — refcounted sock pointer
-        //       from bpf_sk_lookup_*; R0 inherits the same ref_id.
+        //       from bpf_sk_lookup_*; R0 inherits the same ref_id so
+        //       `bpf_sk_release(R0)` finds it.
         //   (b) ctx-derived (trusted, no ref_id) — e.g. bpf_iter__tcp's
-        //       `sk_common` field is typed PtrToBtfId{sock_common,
-        //       TRUSTED} with ref_id: None via the universal
-        //       bpf_iter__* allowlist. The kernel's KF_RCU treatment
-        //       admits these without acquire-tracking; we mirror by
-        //       producing PtrToTcpSockOrNull{id: None} so downstream
-        //       deref typing flows.
+        //       `sk_common` field via the universal bpf_iter__*
+        //       allowlist; KF_RCU treatment admits without acquire.
         constants::BPF_SKC_TO_TCP_SOCK
         | constants::BPF_SKC_TO_TCP6_SOCK
         | constants::BPF_SKC_TO_TCP_TIMEWAIT_SOCK
-        | constants::BPF_SKC_TO_TCP_REQUEST_SOCK => {
+        | constants::BPF_SKC_TO_TCP_REQUEST_SOCK
+        | constants::BPF_SKC_TO_UDP6_SOCK
+        | constants::BPF_SKC_TO_UNIX_SOCK => {
             let r1 = state.types.get(Reg::R1);
             let ref_id = r1.get_ref_id();
             let trusted = r1.is_trusted();
             if ref_id.is_some() || trusted {
-                state
-                    .types
-                    .set(Reg::R0, RegType::PtrToTcpSockOrNull { id: ref_id });
-            }
-        }
-
-        // SKC to UDP/Unix - return SOCK_COMMON. Same two-shape
-        // acceptance as the TCP variants (see comment above).
-        constants::BPF_SKC_TO_UDP6_SOCK | constants::BPF_SKC_TO_UNIX_SOCK => {
-            let r1 = state.types.get(Reg::R1);
-            let ref_id = r1.get_ref_id();
-            let trusted = r1.is_trusted();
-            if ref_id.is_some() || trusted {
+                let type_name = match helper {
+                    constants::BPF_SKC_TO_TCP_SOCK => "tcp_sock",
+                    constants::BPF_SKC_TO_TCP6_SOCK => "tcp6_sock",
+                    constants::BPF_SKC_TO_TCP_TIMEWAIT_SOCK => "tcp_timewait_sock",
+                    constants::BPF_SKC_TO_TCP_REQUEST_SOCK => "tcp_request_sock",
+                    constants::BPF_SKC_TO_UDP6_SOCK => "udp6_sock",
+                    constants::BPF_SKC_TO_UNIX_SOCK => "unix_sock",
+                    _ => unreachable!(),
+                };
+                let id = new_ptr_id();
                 state.types.set(
                     Reg::R0,
-                    RegType::PtrToSockCommonOrNull { ref_id },
+                    RegType::PtrToBtfIdOrNull {
+                        id,
+                        type_name: crate::analysis::machine::context::intern_btf_type_name_strict(
+                            type_name,
+                        ),
+                        flags: PtrFlags::TRUSTED,
+                        ref_id,
+                    },
                 );
             }
         }
