@@ -3392,6 +3392,43 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar),
 
+        // ---- TCP raw syncookie kfuncs (xdp_synproxy_kern.c,
+        //      test_tcp_custom_syncookie.c) ----
+        //
+        // u64 bpf_tcp_raw_gen_syncookie_ipv4(struct iphdr *, struct tcphdr *, u32)
+        // u64 bpf_tcp_raw_gen_syncookie_ipv6(struct ipv6hdr *, struct tcphdr *, u32)
+        // int bpf_tcp_raw_check_syncookie_ipv4(struct iphdr *, struct tcphdr *)
+        // int bpf_tcp_raw_check_syncookie_ipv6(struct ipv6hdr *, struct tcphdr *)
+        //   No flags. Operate on packet-derived header pointers.
+        // int bpf_sk_assign_tcp_reqsk(struct __sk_buff *, struct sock *,
+        //                              struct bpf_tcp_req_attrs *, u32)
+        //   No flags. Used by test_tcp_custom_syncookie to install the
+        //   custom syncookie's request_sock onto the skb.
+        "bpf_tcp_raw_gen_syncookie_ipv4" => CallProto::with_args([
+            Anything, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        "bpf_tcp_raw_gen_syncookie_ipv6" => CallProto::with_args([
+            Anything, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        "bpf_tcp_raw_check_syncookie_ipv4" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        "bpf_tcp_raw_check_syncookie_ipv6" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        "bpf_sk_assign_tcp_reqsk" => CallProto::with_args([
+            PtrToCtx, Anything, Anything, Anything, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
         // ---- Conntrack kfuncs (test_bpf_nf.c, xdp_synproxy_kern.c) ----
         //
         // bpf_xdp_ct_lookup / bpf_xdp_ct_alloc / bpf_skb_ct_lookup / bpf_skb_ct_alloc:
