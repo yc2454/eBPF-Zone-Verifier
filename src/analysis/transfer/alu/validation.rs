@@ -82,6 +82,24 @@ pub(crate) fn check_ptr_arithmetic(
     else if dst_is_ptr {
         match op {
             AluOp::Add | AluOp::Sub => {
+                // Kernel `adjust_ptr_min_max_vals` (verifier.c v6.15):
+                // PTR_TO_FLOW_KEYS arithmetic is allowed only with a
+                // known constant offset (`if (known) break;`); a
+                // variable offset falls through to "pointer arithmetic
+                // on flow_keys prohibited". Closes
+                // verifier_value_illegal_alu::flow_keys_illegal_variable_offset_alu.
+                if matches!(
+                    dst_type,
+                    RegType::PtrToBtfId { type_name, .. } if *type_name == "bpf_flow_keys"
+                ) && src_min != src_max
+                {
+                    error!(
+                        "[Verifier] pc {}: {} pointer arithmetic on flow_keys with variable offset prohibited",
+                        state.pc,
+                        dst.name()
+                    );
+                    return false;
+                }
                 if width == Width::W32 {
                     return true;
                 }

@@ -218,13 +218,17 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
 /// be rejected — caller then bails out without running the transfer.
 fn reject_atomic_on_typed_ptr(env: &mut VerifierEnv, state: &State, base: Reg) -> bool {
     let base_ty = state.types.get(base);
+    let is_flow_keys = matches!(
+        &base_ty,
+        RegType::PtrToBtfId { type_name, .. } if *type_name == "bpf_flow_keys"
+    );
     let rejected = matches!(
         base_ty,
         RegType::PtrToCtx
             | RegType::PtrToPacket
             | RegType::PtrToPacketMeta
             | RegType::PtrToPacketEnd
-    );
+    ) || is_flow_keys;
     if rejected {
         env.fail(VerificationError::UnsupportedModernFeature {
             pc: state.pc,
