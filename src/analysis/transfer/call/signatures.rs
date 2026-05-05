@@ -3392,6 +3392,87 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar),
 
+        // ---- Conntrack kfuncs (test_bpf_nf.c, xdp_synproxy_kern.c) ----
+        //
+        // bpf_xdp_ct_lookup / bpf_xdp_ct_alloc / bpf_skb_ct_lookup / bpf_skb_ct_alloc:
+        //   KF_ACQUIRE | KF_RET_NULL — return a refcounted nf_conn pointer.
+        //   Args: ctx, sock_tuple, len, opts, opts_len.
+        // bpf_ct_insert_entry:
+        //   KF_ACQUIRE | KF_RET_NULL | KF_RELEASE on the input — confirms an
+        //   allocated entry; consumes the alloc-time ref and returns a fresh
+        //   inserted ref.
+        // bpf_ct_release:
+        //   KF_RELEASE — drops the refcount.
+        // bpf_ct_set_timeout / bpf_ct_change_timeout / bpf_ct_set_status /
+        // bpf_ct_change_status / bpf_ct_set_nat_info:
+        //   No flags — non-acquire/release setters on a trusted nf_conn.
+        "bpf_xdp_ct_lookup" => CallProto::with_args([
+            PtrToCtx, Anything, Anything, Anything, Anything,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "nf_conn" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        "bpf_xdp_ct_alloc" => CallProto::with_args([
+            PtrToCtx, Anything, Anything, Anything, Anything,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "nf_conn___init" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        "bpf_skb_ct_lookup" => CallProto::with_args([
+            PtrToCtx, Anything, Anything, Anything, Anything,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "nf_conn" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        "bpf_skb_ct_alloc" => CallProto::with_args([
+            PtrToCtx, Anything, Anything, Anything, Anything,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "nf_conn___init" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        // bpf_ct_insert_entry releases the input nf_conn___init ref and
+        // returns a fresh nf_conn ref (transition from "uninitialized"
+        // construction state to "live in conntrack table"). Modeled as
+        // RELEASE+ACQUIRE+RET_NULL with ReleaseRefFromArg on R1.
+        "bpf_ct_insert_entry" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "nf_conn" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL | CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+
+        "bpf_ct_release" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+
+        "bpf_ct_set_timeout" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        "bpf_ct_change_timeout" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        "bpf_ct_set_status" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        "bpf_ct_change_status" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        "bpf_ct_set_nat_info" => CallProto::with_args([
+            PtrToBtfId, Anything, Anything, Anything, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
         // ---- xfrm state kfuncs (test_tunnel_kern.c xfrm_get_state_xdp) ----
         // struct xfrm_state *bpf_xdp_get_xfrm_state(struct xdp_md *ctx,
         //                                           struct bpf_xfrm_state_opts *opts,
