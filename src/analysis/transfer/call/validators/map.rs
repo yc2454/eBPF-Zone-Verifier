@@ -236,13 +236,17 @@ pub fn validate_ptr_to_map_value(ctx: &mut ValidationContext) -> bool {
         // fall through to default error reporting below
     }
 
-    // Check compatible types
+    // Check compatible types. PtrToAllocMem covers PTR_TO_BUF (kernel
+    // accepts via ARG_PTR_TO_MAP_VALUE compat — see kernel verifier
+    // bpf_reg_types compat table); used by bpf_iter ctx void* fields
+    // (key/value) routed through bpf_map_update_elem.
     if !matches!(
         actual,
         RegType::PtrToMapValue { .. }
             | RegType::PtrToStack { .. }
             | RegType::PtrToPacket
             | RegType::PtrToPacketMeta
+            | RegType::PtrToAllocMem { .. }
     ) {
         ctx.fail_with_log(
             VerificationError::InvalidArgType {
