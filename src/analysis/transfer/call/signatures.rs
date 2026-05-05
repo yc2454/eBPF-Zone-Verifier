@@ -3318,6 +3318,26 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar),
 
+        // ---- xfrm state kfuncs (test_tunnel_kern.c xfrm_get_state_xdp) ----
+        // struct xfrm_state *bpf_xdp_get_xfrm_state(struct xdp_md *ctx,
+        //                                           struct bpf_xfrm_state_opts *opts,
+        //                                           u32 opts__sz)
+        //   KF_ACQUIRE | KF_RET_NULL — looks up an xfrm state by SPI/daddr.
+        // void bpf_xdp_xfrm_state_release(struct xfrm_state *x)
+        //   KF_RELEASE — drops the ref minted by bpf_xdp_get_xfrm_state.
+        "bpf_xdp_get_xfrm_state" => CallProto::with_args([
+            PtrToCtx, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "xfrm_state" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        "bpf_xdp_xfrm_state_release" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+
         // ---- xfrm info kfuncs (xfrm_info.c) ----
         //   int bpf_skb_set_xfrm_info(struct __sk_buff *, const struct bpf_xfrm_info *)
         //   int bpf_skb_get_xfrm_info(struct __sk_buff *, struct bpf_xfrm_info *)
