@@ -1344,22 +1344,37 @@ pub(crate) fn apply_pre_call_lock_flags(
             env.fail(VerificationError::LockAlreadyHeld { pc });
             return false;
         }
-        // R1 was validated as PtrToMapValue aimed at a SpinLock field.
-        let RegType::PtrToMapValue { offset, id, .. } = state.types.get(Reg::R1) else {
-            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
-            return false;
+        // R1 was validated by `validate_map_value_special` as either a
+        // PtrToMapValue or a PtrToOwnedKptr aimed at a SpinLock field.
+        // The kernel `process_spin_lock` (verifier.c v6.15 L8271+)
+        // accepts both shapes; the lock-state-machine identity is
+        // (id, offset) for map values and (ref_id, foo_offset) for
+        // freshly-allocated objects (`bpf_obj_new`'d struct foo with
+        // a `bpf_spin_lock` member). Without this arm, every linked
+        // / rbtree test that takes `bpf_spin_lock(&f->lock)` rejects
+        // the *_in_list family in linked_list.c).
+        let (id, off) = match state.types.get(Reg::R1) {
+            RegType::PtrToMapValue { offset: Some(o), id, .. } => (id, o as u32),
+            RegType::PtrToOwnedKptr { ref_id, offset, .. } => (
+                ref_id.unwrap_or(0),
+                offset as u32,
+            ),
+            _ => {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+                return false;
+            }
         };
-        let Some(off) = offset else {
-            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
-            return false;
-        };
-        state.acquire_lock(id, off as u32);
+        state.acquire_lock(id, off);
     }
 
     if proto.flags.contains(CallFlags::SPIN_LOCK_RELEASE) {
-        let RegType::PtrToMapValue { id, .. } = state.types.get(Reg::R1) else {
-            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
-            return false;
+        let id = match state.types.get(Reg::R1) {
+            RegType::PtrToMapValue { id, .. } => id,
+            RegType::PtrToOwnedKptr { ref_id, .. } => ref_id.unwrap_or(0),
+            _ => {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+                return false;
+            }
         };
         let Some(lock) = state.get_active_lock() else {
             env.fail(VerificationError::LockNotHeld { pc });
