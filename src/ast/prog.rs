@@ -275,6 +275,17 @@ impl ProgramKind {
         if s.starts_with("sk_msg") {
             return ProgramKind::SkMsg;
         }
+        // SK_SKB / sockmap programs: stream parser/verdict callbacks on
+        // a sockmap-attached socket. Section names include `sk_skb`,
+        // `sk_skb1`, `sk_skb2`, `sk_skb/stream_parser`,
+        // `sk_skb/stream_verdict`. Ctx is __sk_buff, so the SK_BUFF_FIELDS
+        // table (with `data` @ 76 → PacketStart, `data_end` @ 80 →
+        // PacketEnd) types loads correctly. Without this mapping the
+        // program kind falls through to Unknown and ctx field loads
+        // return Scalar.
+        if s.starts_with("sk_skb") {
+            return ProgramKind::SkSkb;
+        }
         // Recognize libbpf optional-load `?cgroup[_skb]/...` form alongside
         // bare `cgroup[_skb]/...` for the sock_addr / sockopt / sock-create
         // and skb hook families. Files using these include dynptr_success
