@@ -1798,6 +1798,29 @@ fn tp_btf_arg_is_maybe_null(tp_target: &str, arg_idx: u8) -> bool {
 pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<CtxAccessInfo> {
     let prog_kind = env.ctx.prog_kind;
 
+    // SEC("syscall") — BPF_PROG_TYPE_SYSCALL accepts a user-defined ctx
+    // struct via BPF_PROG_TEST_RUN's `ctx_in` (size = `ctx_size_in`).
+    // Kernel `bpf_syscall_prog_is_valid_access` admits any aligned r/w
+    // within the user-supplied bound; the layout isn't statically
+    // known. Admit any non-negative aligned access up to a generous
+    // bound; result is Scalar. R1 stays as PtrToCtx so global subprog
+    // `__arg_ctx` validation (verifier_global_subprogs::arg_tag_ctx_syscall)
+    // still works — the type identity is preserved.
+    if prog_kind == ProgramKind::Syscall
+        && off >= 0
+        && size > 0
+        && size <= 8
+        && (size & (size - 1)) == 0
+        && off % size as i16 == 0
+        && (off as i64 + size) <= 4096
+    {
+        return Some(CtxAccessInfo {
+            kind: CtxFieldKind::Scalar,
+            readable: true,
+            writable: true,
+        });
+    }
+
     // W6.4a: struct_ops subprogs receive their args via the BPF_PROG
     // wrapper's ctx-array idiom — clang emits each arg access as
     // `r_n = *(u64 *)(r1 + 8*i)` followed by an explicit cast to the
