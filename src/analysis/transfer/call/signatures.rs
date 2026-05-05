@@ -3085,18 +3085,63 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar),
 
+        // ---- testmod ref-tracked kfuncs (kfunc_call_test.c, map_kptr.c,
+        //      jit_probe_mem.c, local_kptr_stash.c) ----
+        //
+        // struct prog_test_ref_kfunc *bpf_kfunc_call_test_acquire(unsigned long *)
+        //   KF_ACQUIRE | KF_RET_NULL — mints a fresh refcounted pointer.
+        // void bpf_kfunc_call_test_release(struct prog_test_ref_kfunc *p)
+        //   KF_RELEASE — drops the ref minted by _acquire.
+        // void bpf_kfunc_call_test_ref(struct prog_test_ref_kfunc *p)
+        //   No flags — non-acquire/release passthrough; just validates a
+        //   trusted ref arg.
+        //
+        // Returning PtrToBtfIdNamed{prog_test_ref_kfunc} keeps the matching
+        // __failure siblings rejecting via the existing trusted-arg /
+        // ref-id machinery. The bounded-mem-returning siblings
+        // (bpf_kfunc_call_test_get_rdonly_mem / _get_rdwr_mem) are NOT
+        // registered: they would need PtrToAllocMemFromArg + rdonly
+        // tracking + ref-id propagation onto the returned mem to keep
+        // the matching __failure tests in kfunc_call_fail.c rejecting.
+        "bpf_kfunc_call_test_acquire" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "prog_test_ref_kfunc" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        "bpf_kfunc_call_test_release" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+
+        "bpf_kfunc_call_test_ref" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        // struct bpf_testmod_ctx *bpf_testmod_ctx_create(int *err)
+        //   KF_ACQUIRE | KF_RET_NULL.
+        // void bpf_testmod_ctx_release(struct bpf_testmod_ctx *ctx)
+        //   KF_RELEASE.
+        "bpf_testmod_ctx_create" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "bpf_testmod_ctx" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        "bpf_testmod_ctx_release" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+
         // ---- testmod basic test kfuncs (kfunc_call_test.c) ----
         //
-        // The test kfuncs registered by bpf_testmod for the
-        // kfunc_call integration coverage. Scalar-only and pointer
-        // helpers; acquire/release-tracked variants
-        // (bpf_kfunc_call_test_acquire / _release / _get_*_mem,
-        // bpf_testmod_ctx_*) intentionally NOT registered here —
-        // they need ref-tracking + bounded-mem return shapes that
-        // the corresponding `__failure` siblings (kfunc_call_fail.c)
-        // would unmask without the matching primitives. This commit
-        // limits itself to the trivially-additive scalar/pointer
-        // family.
+        // Scalar-only and pointer helpers (companion to the ref-tracked
+        // family above).
         //
         // bpf_kfunc_call_test_pass_ctx takes `struct __sk_buff *skb`
         // — modeled as PtrToCtx so the matching __failure sibling
