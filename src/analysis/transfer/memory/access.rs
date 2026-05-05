@@ -288,7 +288,7 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             // Mirrors PtrToBtfId's lax admit for layout-known names
             // not in `mem_region_model`.
         }
-        PtrToMapKptr { .. } => {
+        PtrToMapKptr { pointee_btf_id, .. } => {
             // Field deref through a kptr loaded from a map's `__kptr*`
             // field. Kernel admits these via `btf_struct_access` using
             // the kptr's pointee BTF (mark_btf_ld_reg attenuates the
@@ -300,9 +300,37 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             // `inherit_untrusted_on_walk`,
             // `mark_ref_as_untrusted_or_null`), so widening the deref
             // here doesn't unmask those rejections — they fire one
-            // call later. Without this, every `p = v->ref_ptr;
-            // p->a + p->b` idiom in map_kptr.c reaches "Unsafe generic
-            // load". Loaded value left as `ScalarValue`.
+            // call later. Loaded value left as `ScalarValue`.
+            //
+            // Bounds check via the pointee struct's BTF size: kernel
+            // `btf_struct_access` rejects "access beyond struct <name>
+            // at off N size M" for off+size > sizeof(struct). Closes
+            // map_kptr_fail::correct_btf_id_check_size where the
+            // program reads `*(int *)((void *)p + sizeof(*p))` —
+            // exactly one int past the struct end. Off and size from
+            // caller are i16/i64 of the load instruction; we only
+            // enforce when the pointee BTF id resolves to a known
+            // size (>0).
+            let pointee_size = ctx.btf.type_size_bytes(pointee_btf_id);
+            if pointee_size > 0
+                && (off < 0 || (off as i64).saturating_add(size) > pointee_size as i64)
+            {
+                let name = ctx
+                    .btf
+                    .struct_name(pointee_btf_id)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("btf_id_{pointee_btf_id}"));
+                error!(
+                    "[Verifier] pc {}: access beyond struct {} at off {} size {}",
+                    pc, name, off, size
+                );
+                env.fail(VerificationError::UnsafeGenericLoad {
+                    pc,
+                    base,
+                    off,
+                    base_type,
+                });
+            }
         }
         ScalarValue | NotInit => {
             error!(

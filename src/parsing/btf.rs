@@ -807,7 +807,7 @@ impl BtfContext {
     /// Returns 0 for types we don't understand (FUNC_PROTO, FWD, …)
     /// or on cyclic chains. Mirrors `get_resolved_size` in the raw-Vec
     /// path but operates on `self.types`.
-    fn type_size_bytes(&self, type_id: u32) -> u32 {
+    pub fn type_size_bytes(&self, type_id: u32) -> u32 {
         self.type_size_bytes_depth(type_id, 0)
     }
 
