@@ -522,65 +522,19 @@ impl BtfContext {
                 let Some((_var_name, target_id)) = self.var_info(entry.var_id) else {
                     continue;
                 };
-                let resolved_id = self.peel_modifiers(target_id);
-                let Some(resolved_ty) = self.types.get(&resolved_id) else {
-                    continue;
-                };
-
                 // `__contains` decl_tag is attached to the VAR (clang
-                // routes the variable-decl attribute there); reused for
-                // every array element below.
+                // routes the variable-decl attribute there); inherited
+                // by every array element / nested-struct walk below.
                 let contains = self
                     .decl_tags_for(entry.var_id)
                     .find_map(|t| self.parse_contains_tag(&t.name));
-
-                // Direct recognized struct (single `bpf_list_head ghead`).
-                if let Some(type_name) = self.get_string(resolved_ty.name_off)
-                    && let Some(kind) = SpecialFieldKind::from_type_name(type_name)
-                {
-                    fields.push(SpecialField {
-                        kind,
-                        offset: entry.offset,
-                        size: resolved_ty.size_or_type,
-                        contains: contains.clone(),
-                    });
-                    continue;
-                }
-
-                // Array of recognized struct (e.g. `bpf_list_head
-                // ghead_array[2] __contains(foo, node2)`). Emit one
-                // SpecialField per element so per-index pushes/pops
-                // (`&ghead_array[i]`) reach the kfunc cross-arg
-                // validator with a matching offset entry. Mirrors the
-                // recursive shape `collect_kptr_fields_at` uses for
-                // kptr arrays.
-                if resolved_ty.kind() == BTF_KIND_ARRAY
-                    && let Some(arr) = resolved_ty.members.first()
-                {
-                    let elem_id = self.peel_modifiers(arr.type_id);
-                    let nelems = arr.offset;
-                    let Some(elem_ty) = self.types.get(&elem_id) else {
-                        continue;
-                    };
-                    let Some(elem_name) = self.get_string(elem_ty.name_off) else {
-                        continue;
-                    };
-                    let Some(kind) = SpecialFieldKind::from_type_name(elem_name) else {
-                        continue;
-                    };
-                    let elem_size = elem_ty.size_or_type;
-                    if elem_size == 0 || nelems == 0 {
-                        continue;
-                    }
-                    for i in 0..nelems {
-                        fields.push(SpecialField {
-                            kind,
-                            offset: entry.offset + i * elem_size,
-                            size: elem_size,
-                            contains: contains.clone(),
-                        });
-                    }
-                }
+                self.collect_special_fields_at(
+                    target_id,
+                    entry.offset,
+                    contains.as_ref(),
+                    &mut fields,
+                    0,
+                );
             }
             return fields;
         }
@@ -612,6 +566,96 @@ impl BtfContext {
         }
 
         fields
+    }
+
+    /// Recursively walk a BTF type at `base_offset`, emitting one
+    /// `SpecialField` per recognized special-field struct
+    /// (`bpf_spin_lock`, `bpf_list_head`, `bpf_rb_root`, ...) reached
+    /// at any depth.
+    ///
+    /// Drives the DATASEC scan in `find_special_fields`: tolerates
+    /// nested struct (`private(D) struct head_nested ghead_nested;`
+    /// where `head_nested.inner.{lock,head}` carry the special
+    /// fields) and array layouts (`bpf_list_head ghead_array[N]`).
+    /// `inherited_contains` carries the VAR's `__contains` decl_tag
+    /// down through array elements; for nested STRUCT members the
+    /// per-member decl_tag wins (matches the kernel's
+    /// component_idx-keyed attachment).
+    fn collect_special_fields_at(
+        &self,
+        type_id: u32,
+        base_offset: u32,
+        inherited_contains: Option<&ContainsInfo>,
+        out: &mut Vec<SpecialField>,
+        depth: u32,
+    ) {
+        // Cap recursion as a defensive bound — graph nodes never need
+        // more than 2-3 levels (DATASEC → struct → inner struct).
+        if depth > 8 {
+            return;
+        }
+        let resolved_id = self.peel_modifiers(type_id);
+        let Some(ty) = self.types.get(&resolved_id) else {
+            return;
+        };
+
+        // Recognized special-field struct (terminal).
+        if let Some(name) = self.get_string(ty.name_off)
+            && let Some(kind) = SpecialFieldKind::from_type_name(name)
+        {
+            out.push(SpecialField {
+                kind,
+                offset: base_offset,
+                size: ty.size_or_type,
+                contains: inherited_contains.cloned(),
+            });
+            return;
+        }
+
+        match ty.kind() {
+            BTF_KIND_ARRAY => {
+                let Some(arr) = ty.members.first() else { return };
+                let elem_id = self.peel_modifiers(arr.type_id);
+                let nelems = arr.offset;
+                let Some(elem_ty) = self.types.get(&elem_id) else { return };
+                let elem_size = elem_ty.size_or_type;
+                if elem_size == 0 || nelems == 0 {
+                    return;
+                }
+                for i in 0..nelems {
+                    self.collect_special_fields_at(
+                        elem_id,
+                        base_offset + i * elem_size,
+                        inherited_contains,
+                        out,
+                        depth + 1,
+                    );
+                }
+            }
+            BTF_KIND_STRUCT | BTF_KIND_UNION => {
+                for (member_idx, member) in ty.members.iter().enumerate() {
+                    let member_byte_off = base_offset + member.offset / 8;
+                    // Per-member decl_tag overrides the VAR-inherited
+                    // one when present (struct member's __contains).
+                    let member_contains = self
+                        .decl_tags_for(resolved_id)
+                        .filter(|t| t.component_idx == member_idx as i32)
+                        .find_map(|t| self.parse_contains_tag(&t.name));
+                    let next_contains = member_contains
+                        .as_ref()
+                        .or(inherited_contains);
+                    let next_contains_clone = next_contains.cloned();
+                    self.collect_special_fields_at(
+                        member.type_id,
+                        member_byte_off,
+                        next_contains_clone.as_ref(),
+                        out,
+                        depth + 1,
+                    );
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Public read of an interned BTF string by its byte offset into the
