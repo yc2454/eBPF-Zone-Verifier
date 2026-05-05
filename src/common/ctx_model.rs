@@ -1073,6 +1073,51 @@ const SOCK_OPS_FIELDS: &[CtxField] = &[
         readable: true,
         narrow_access: true,
     },
+    // ── union slots @ 8/12/16 (args[1..3] / replylong[1..3]). Kernel
+    // permits scalar reads across the whole 16-byte union; tcp_rtt.c
+    // reads `args[1]` from a CB callback (offset 8). ────────────────
+    CtxField { offset: 8,  size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },
+    CtxField { offset: 12, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },
+    CtxField { offset: 16, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },
+    // ── bpf_sock_ops tcp scalar fields at 72-167. Each is a u32 the
+    // kernel exposes via `bpf_sock_ops_is_valid_access`. Adding the
+    // full set closes test_tcp{,notify,bpf}_kern, test_{misc_,}tcp_
+    // hdr_options, and tcp_rtt sockops field reads. ────────────────
+    CtxField { offset: 72,  size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // is_fullsock
+    CtxField { offset: 76,  size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // snd_cwnd
+    CtxField { offset: 80,  size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // srtt_us
+    CtxField { offset: 84,  size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true,  readable: true, narrow_access: true }, // bpf_sock_ops_cb_flags (writable)
+    CtxField { offset: 88,  size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // state
+    CtxField { offset: 92,  size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // rtt_min
+    CtxField { offset: 96,  size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // snd_ssthresh
+    CtxField { offset: 100, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // rcv_nxt
+    CtxField { offset: 104, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // snd_nxt
+    CtxField { offset: 108, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // snd_una
+    CtxField { offset: 112, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // mss_cache
+    CtxField { offset: 116, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // ecn_flags
+    CtxField { offset: 120, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // rate_delivered
+    CtxField { offset: 124, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // rate_interval_us
+    CtxField { offset: 128, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // packets_out
+    CtxField { offset: 132, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // retrans_out
+    CtxField { offset: 136, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // total_retrans
+    CtxField { offset: 140, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // segs_in
+    CtxField { offset: 144, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // data_segs_in
+    CtxField { offset: 148, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // segs_out
+    CtxField { offset: 152, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // data_segs_out
+    CtxField { offset: 156, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // lost_out
+    CtxField { offset: 160, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true }, // sacked_out
+    CtxField { offset: 164, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: true,  readable: true, narrow_access: true }, // sk_txhash (writable)
+    // bytes_received (u64) @ 168, bytes_acked (u64) @ 176
+    CtxField { offset: 168, size: MemSize::U64, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
+    CtxField { offset: 176, size: MemSize::U64, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
+    // skb_data / skb_data_end @ 192/200 — packet pointers exposed
+    // during HDR_OPT_LEN/PARSE_HDR_OPT/WRITE_HDR_OPT callbacks.
+    CtxField { offset: 192, size: MemSize::U64, kind: CtxFieldKind::PacketStart, writable: false, readable: true, narrow_access: false },
+    CtxField { offset: 200, size: MemSize::U64, kind: CtxFieldKind::PacketEnd,   writable: false, readable: true, narrow_access: false },
+    // skb_len, skb_tcp_flags, skb_hwtstamp
+    CtxField { offset: 208, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },
+    CtxField { offset: 212, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },
+    CtxField { offset: 216, size: MemSize::U64, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
     // __bpf_md_ptr(struct bpf_sock *, sk) at offset 184. The kernel
     // bpf_sock_ops struct has many u32/u64 tcp fields before this
     // (snd_cwnd, srtt_us, rcv_nxt, …, bytes_received, bytes_acked);
