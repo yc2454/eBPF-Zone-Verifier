@@ -806,26 +806,41 @@ fn transfer_callback_helper(
     // caller's ctx pointer to a specific cb arg register
     // (`set_loop_callback_state` etc., verifier.c v6.15 ~L10685+).
     // Without this, the cb body's first read of ctx hits "R2 !read_ok".
-    let ctx_propagation: Option<(Reg, RegType, Tnum, (i64, i64))> = match helper {
-        // bpf_loop(nr_loops, cb, ctx, flags) → cb(idx, ctx); ctx → R2.
+    // Build the full caller→cb propagation list. Each entry is
+    // `(cb_dst, caller_src_type, caller_src_tnum, caller_src_bounds)`.
+    // Mirrors kernel `set_*_callback_state` (verifier.c v6.15 ~L10685+).
+    // Without typed propagation the cb body's first read of the arg
+    // hits "R2/R3 !read_ok".
+    let mut ctx_propagations: Vec<(Reg, RegType, Tnum, (i64, i64))> = Vec::new();
+    let snap = |st: &State, r: Reg| (st.types.get(r), st.get_tnum(r), st.domain.get_interval(r));
+    match helper {
+        // bpf_loop(nr_loops, cb, ctx, flags) → cb(idx, ctx); R1=idx (scalar, set later), ctx → R2.
         constants::BPF_LOOP
-        // bpf_user_ringbuf_drain(map, cb, ctx, flags) → cb(dynptr, ctx); ctx → R2.
+        // bpf_user_ringbuf_drain(map, cb, ctx, flags) → cb(dynptr, ctx); R1=dynptr (left NotInit; few tests deref), ctx → R2.
         | constants::BPF_USER_RINGBUF_DRAIN => {
-            let bounds = state.domain.get_interval(Reg::R3);
-            Some((Reg::R2, state.types.get(Reg::R3), state.get_tnum(Reg::R3), bounds))
+            let (ty, tn, b) = snap(&state, Reg::R3);
+            ctx_propagations.push((Reg::R2, ty, tn, b));
         }
-        // bpf_for_each_map_elem(map, cb, ctx, flags) → cb(map, key, val, ctx); ctx → R4.
+        // bpf_for_each_map_elem(map, cb, ctx, flags) → cb(map, key, val, ctx);
+        // R1=caller's R1 (the map ptr); R2=PTR_TO_MAP_KEY, R3=PTR_TO_MAP_VALUE
+        // (we don't track those distinctly — use a lax BTF-typed pointer that
+        // permits generic loads, mirroring the timer-cb fallback); R4=ctx.
         constants::BPF_FOR_EACH_MAP_ELEM => {
-            let bounds = state.domain.get_interval(Reg::R3);
-            Some((Reg::R4, state.types.get(Reg::R3), state.get_tnum(Reg::R3), bounds))
+            let (ty1, tn1, b1) = snap(&state, Reg::R1);
+            ctx_propagations.push((Reg::R1, ty1, tn1, b1));
+            let (ty3, tn3, b3) = snap(&state, Reg::R3);
+            ctx_propagations.push((Reg::R4, ty3, tn3, b3));
         }
-        // bpf_find_vma(task, addr, cb, ctx, flags) → cb(task, vma, ctx); caller's R4 → cb's R3.
+        // bpf_find_vma(task, addr, cb, ctx, flags) → cb(task, vma, ctx);
+        // R1=caller's R1 (task), R2=PTR_TO_BTF_ID{vm_area_struct}, R3=ctx.
         constants::BPF_FIND_VMA => {
-            let bounds = state.domain.get_interval(Reg::R4);
-            Some((Reg::R3, state.types.get(Reg::R4), state.get_tnum(Reg::R4), bounds))
+            let (ty1, tn1, b1) = snap(&state, Reg::R1);
+            ctx_propagations.push((Reg::R1, ty1, tn1, b1));
+            let (ty4, tn4, b4) = snap(&state, Reg::R4);
+            ctx_propagations.push((Reg::R3, ty4, tn4, b4));
         }
-        _ => None,
-    };
+        _ => {}
+    }
 
     // Caller's ctx-arg base offset (relative to caller's R10). Captured
     // before the move into cb_state below; needed to translate cb-body
@@ -876,29 +891,73 @@ fn transfer_callback_helper(
     update_call_rel_types(&mut cb_state);
     cb_state.domain.clear_packet_size_bounds();
 
-    // Minimal arg typing: R1 is always a scalar (iteration index / map
-    // pointer / map-elem pointer depending on helper); R2+ are left
-    // unsupported for most helpers so callbacks that dereference them
-    // REJECT. Full per-helper arg typing lands alongside richer
-    // signature validation in a follow-up.
+    // Minimal arg typing: clear R1..R5, then re-install per-helper. R1
+    // for bpf_loop is the iteration index (scalar). Other helpers' R1
+    // and additional pointer args are installed via `ctx_propagations`
+    // and the static-typed table below; remaining regs stay NotInit so
+    // callbacks that dereference them REJECT.
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
         cb_state.types.set(r, RegType::NotInit);
         cb_state.domain.forget(r);
         cb_state.set_tnum(r, Tnum::unknown());
         cb_state.clear_scalar_id(r);
     }
-    cb_state.types.set(Reg::R1, RegType::ScalarValue);
-    cb_state.domain.forget(Reg::R1);
-    cb_state.set_tnum(Reg::R1, Tnum::unknown());
-    cb_state.alloc_scalar_id(Reg::R1);
+    // bpf_loop only: R1 = iteration index (scalar). Other helpers
+    // install R1 via ctx_propagations.
+    if helper == constants::BPF_LOOP {
+        cb_state.types.set(Reg::R1, RegType::ScalarValue);
+        cb_state.domain.forget(Reg::R1);
+        cb_state.set_tnum(Reg::R1, Tnum::unknown());
+        cb_state.alloc_scalar_id(Reg::R1);
+    }
 
-    // Install propagated ctx after the generic clear above.
-    if let Some((dst, ty, tnum, (lo, hi))) = ctx_propagation {
+    // Install propagated args after the generic clear.
+    for (dst, ty, tnum, (lo, hi)) in ctx_propagations.drain(..) {
         cb_state.types.set(dst, ty);
         cb_state.set_tnum(dst, tnum);
         cb_state.domain.forget(dst);
         cb_state.domain.assign_interval(dst, lo, hi);
         cb_state.clear_scalar_id(dst);
+    }
+
+    // Static-typed cb args (kernel `set_*_callback_state` PTR_TO_BTF_ID /
+    // PTR_TO_MAP_KEY / PTR_TO_MAP_VALUE entries). We don't track
+    // PTR_TO_MAP_KEY / VALUE distinctly — approximate with a lax
+    // BTF-typed pointer that admits generic loads (existing timer-cb
+    // pattern). Tighter typing is future work.
+    {
+        use crate::analysis::machine::reg_types::PtrFlags;
+        let unknown_btf = || RegType::PtrToBtfId {
+            type_name: "unknown",
+            flags: PtrFlags::TRUSTED,
+            ref_id: None,
+        };
+        match helper {
+            // cb(map, key, val, ctx) — R2=key, R3=val (lax pointers).
+            constants::BPF_FOR_EACH_MAP_ELEM => {
+                for r in [Reg::R2, Reg::R3] {
+                    cb_state.types.set(r, unknown_btf());
+                    cb_state.domain.forget(r);
+                    cb_state.set_tnum(r, Tnum::unknown());
+                    cb_state.clear_scalar_id(r);
+                }
+            }
+            // cb(task, vma, ctx) — R2 = PTR_TO_BTF_ID{vm_area_struct, TRUSTED}.
+            constants::BPF_FIND_VMA => {
+                cb_state.types.set(
+                    Reg::R2,
+                    RegType::PtrToBtfId {
+                        type_name: "vm_area_struct",
+                        flags: PtrFlags::TRUSTED,
+                        ref_id: None,
+                    },
+                );
+                cb_state.domain.forget(Reg::R2);
+                cb_state.set_tnum(Reg::R2, Tnum::unknown());
+                cb_state.clear_scalar_id(Reg::R2);
+            }
+            _ => {}
+        }
     }
 
     // Timer cb signature is `(struct bpf_map *, void *key, void *value)`
