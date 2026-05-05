@@ -235,6 +235,15 @@ pub enum RegType {
     PtrToOwnedKptrOrNull {
         ref_id: Option<u32>,
         pointee_btf_id: Option<u32>,
+        /// Mirrors `PtrToOwnedKptr.offset` so the offset survives across
+        /// the null-check refinement. Graph-pop kfuncs
+        /// (`bpf_list_pop_*`/`bpf_rbtree_first`/`bpf_rbtree_remove`)
+        /// initialize this to the parent struct's `node_offset` so the
+        /// post-null-check `PtrToOwnedKptr` matches the kernel's
+        /// `reg->btf_id = parent_struct + reg->off = node_offset`
+        /// model — the `__contains` cross-arg check at the next push/add
+        /// then sees the correct offset.
+        offset: i32,
     },
     /// Pointer loaded from a kptr field of a map value. The four kptr
     /// flavors (`__kptr_untrusted`, `__kptr`, `__rcu`, `__percpu_kptr`)
@@ -327,10 +336,10 @@ impl RegType {
             }
             RegType::PtrToCgroupOrNull { ref_id } => Some(RegType::PtrToCgroup { ref_id }),
             RegType::PtrToTaskOrNull { ref_id } => Some(RegType::PtrToTask { ref_id }),
-            RegType::PtrToOwnedKptrOrNull { ref_id, pointee_btf_id } => {
+            RegType::PtrToOwnedKptrOrNull { ref_id, pointee_btf_id, offset } => {
                 Some(RegType::PtrToOwnedKptr {
                     ref_id,
-                    offset: 0,
+                    offset,
                     non_owning: false,
                     pointee_btf_id,
                 })

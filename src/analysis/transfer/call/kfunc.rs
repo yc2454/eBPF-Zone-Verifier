@@ -490,16 +490,28 @@ fn transfer_kfunc_proto(
     // wrong type but its node-member offset coincidentally matches the
     // declared __contains offset).
     if let Some(kfunc_name) = env.ctx.btf.kfunc_name(btf_id) {
-        let pointee = match kfunc_name {
-            "bpf_obj_new_impl" => state
-                .domain
-                .get_fixed_value(Reg::R1)
-                .and_then(|v| u32::try_from(v).ok()),
+        // Resolves (pointee_btf_id, node_offset_override). For graph-pop
+        // kfuncs (bpf_list_pop_*/bpf_rbtree_first/remove), the kernel
+        // models the returned pointer as offset = `node_offset` of the
+        // corresponding bpf_{list,rb}_node field within the parent
+        // struct (kernel verifier.c v6.15: returned reg carries
+        // reg->btf_id = parent struct + reg->off = node_offset). Without
+        // overriding offset, the next graph-add cross-arg check sees
+        // offset=0 and rejects against contains.node_offset (e.g.
+        // linked_list.c::global_list_push_pop pc 92: 0 != 48).
+        let (pointee, node_offset_override): (Option<u32>, Option<i32>) = match kfunc_name {
+            "bpf_obj_new_impl" => (
+                state
+                    .domain
+                    .get_fixed_value(Reg::R1)
+                    .and_then(|v| u32::try_from(v).ok()),
+                None,
+            ),
             "bpf_refcount_acquire_impl" => match in_types.get(Reg::R1) {
                 RegType::PtrToOwnedKptr {
                     pointee_btf_id, ..
-                } => pointee_btf_id,
-                _ => None,
+                } => (pointee_btf_id, None),
+                _ => (None, None),
             },
             "bpf_list_pop_front"
             | "bpf_list_pop_back"
@@ -514,16 +526,21 @@ fn transfer_kfunc_proto(
                     && let Some(val_type_id) = map_def.btf_val_type_id
                 {
                     let fields = env.ctx.btf.find_special_fields(val_type_id);
-                    fields
+                    let contains = fields
                         .iter()
                         .find(|f| f.offset as i64 == head_off)
-                        .and_then(|f| f.contains.as_ref())
-                        .and_then(|c| env.ctx.btf.find_struct_by_name(&c.struct_name))
+                        .and_then(|f| f.contains.as_ref());
+                    let pointee = contains
+                        .and_then(|c| env.ctx.btf.find_struct_by_name(&c.struct_name));
+                    let node_off = contains
+                        .and_then(|c| c.node_offset)
+                        .and_then(|n| i32::try_from(n).ok());
+                    (pointee, node_off)
                 } else {
-                    None
+                    (None, None)
                 }
             }
-            _ => None,
+            _ => (None, None),
         };
         if let Some(btf_id) = pointee {
             match state.types.get(Reg::R0) {
@@ -537,18 +554,19 @@ fn transfer_kfunc_proto(
                         Reg::R0,
                         RegType::PtrToOwnedKptr {
                             ref_id,
-                            offset,
+                            offset: node_offset_override.unwrap_or(offset),
                             non_owning,
                             pointee_btf_id: Some(btf_id),
                         },
                     );
                 }
-                RegType::PtrToOwnedKptrOrNull { ref_id, .. } => {
+                RegType::PtrToOwnedKptrOrNull { ref_id, offset, .. } => {
                     state.types.set(
                         Reg::R0,
                         RegType::PtrToOwnedKptrOrNull {
                             ref_id,
                             pointee_btf_id: Some(btf_id),
+                            offset: node_offset_override.unwrap_or(offset),
                         },
                     );
                 }
