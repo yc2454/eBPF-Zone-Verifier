@@ -655,11 +655,36 @@ fn validate_ptr_to_arena(ctx: &mut ValidationContext) -> bool {
 
 /// Validate `ArgKind::PtrToOwnedKptr` (W5.4).
 ///
-/// Only the non-null `RegType::PtrToOwnedKptr` is accepted: drop /
-/// refcount_acquire / list-push / rbtree-add all require the program
-/// to have null-checked the freshly-allocated kptr first.
+/// Accepts either:
+///   - `PtrToOwnedKptr` (from `bpf_obj_new` + null-check), or
+///   - `PtrToMapKptr { flags: MEM_ALLOC, ref_id: Some(_) }` from
+///     `bpf_kptr_xchg` of a `__kptr` (Ref) slot + null-check. Kernel
+///     models the xchg-returned pointer as `PTR_TO_BTF_ID | MEM_ALLOC`
+///     with refcount-tracking — semantically equivalent to a freshly
+///     `bpf_obj_new`'d kptr (drop / list-push / rbtree-add accept it).
+///     `__kptr_rcu` / `__kptr_percpu` slots produce other flag bands
+///     and are still rejected here (kernel admits drop only on
+///     MEM_ALLOC).
 fn validate_ptr_to_owned_kptr(ctx: &mut ValidationContext) -> bool {
-    if !matches!(ctx.actual, RegType::PtrToOwnedKptr { .. }) {
+    use crate::analysis::machine::reg_types::PtrFlags;
+    // PtrToMapKptr w/ MEM_ALLOC covers two flows:
+    //   - `bpf_kptr_xchg` of a `__kptr` (Ref) slot — sets ref_id to the
+    //     new acquire id, ownership transfers out of the map. Drop /
+    //     graph-add accept it.
+    //   - Plain LOAD of a `__kptr` field (`s->stashed`) — ref_id stays
+    //     None, no ownership transfer. Kernel admits this for
+    //     `bpf_refcount_acquire` (which bumps refcount and returns a
+    //     fresh owned ref); `bpf_obj_drop` and graph-add reject via
+    //     the downstream KF_RELEASE precondition (kfunc.rs:287
+    //     `actual.get_ref_id().is_none()`), so accepting both shapes
+    //     here is safe — the per-kfunc gate catches the wrong-shape
+    //     case after the type check.
+    let ok = match ctx.actual {
+        RegType::PtrToOwnedKptr { .. } => true,
+        RegType::PtrToMapKptr { flags, .. } => flags.contains(PtrFlags::MEM_ALLOC),
+        _ => false,
+    };
+    if !ok {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,
