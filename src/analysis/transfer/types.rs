@@ -406,6 +406,17 @@ pub(crate) fn update_load_types(
                             .types
                             .set(dst, RegType::PtrToSocket { ref_id: None });
                     }
+                    CtxFieldKind::AllocMem { mem_size } => {
+                        state.types.set(
+                            dst,
+                            RegType::PtrToAllocMem {
+                                id: new_ptr_id(),
+                                mem_size,
+                                ref_id: None,
+                                dynptr_id: None,
+                            },
+                        );
+                    }
                     CtxFieldKind::TrustedPtr {
                         type_name,
                         nullable,

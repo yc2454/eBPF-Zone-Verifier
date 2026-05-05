@@ -41,6 +41,15 @@ pub enum CtxFieldKind {
     /// Pointer to packet metadata
     PacketMeta,
 
+    /// Bounded data buffer (PTR_TO_BUF equivalent). Used for iter ctx
+    /// `void *` fields like `bpf_iter__bpf_map_elem.{key,value}` —
+    /// kernel exposes them as PTR_TO_BUF with size from the iter's
+    /// target map. We don't have map context generically, so use a
+    /// generous fixed bound.
+    AllocMem {
+        mem_size: u64,
+    },
+
     /// Trusted pointer to a kernel struct (PTR_TO_BTF_ID equivalent)
     TrustedPtr {
         type_name: &'static str,
@@ -1815,21 +1824,33 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                         env.ctx.btf.field_at_offset(struct_id, off as u32)
                 {
                     if let BtfFieldKind::Pointer {
-                        pointee_name: Some(pointee),
+                        pointee_name,
                         ..
                     } = &info.kind
                         && trusted_field_load(type_name, info.name)
                     {
-                        let pointee_static = intern_btf_type_name_strict(pointee);
-                        return Some(CtxAccessInfo {
-                            kind: CtxFieldKind::TrustedPtr {
-                                type_name: pointee_static,
-                                nullable: false,
-                                tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
-                            },
-                            readable: true,
-                            writable: false,
-                        });
+                        if let Some(pointee) = pointee_name {
+                            let pointee_static = intern_btf_type_name_strict(pointee);
+                            return Some(CtxAccessInfo {
+                                kind: CtxFieldKind::TrustedPtr {
+                                    type_name: pointee_static,
+                                    nullable: false,
+                                    tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
+                                },
+                                readable: true,
+                                writable: false,
+                            });
+                        } else {
+                            // void * iter ctx field (e.g. bpf_iter__bpf_map_elem.
+                            // {key,value}). Kernel exposes as PTR_TO_BUF sized to
+                            // the iter's target map; we use a generous fixed
+                            // bound since map context isn't tracked here.
+                            return Some(CtxAccessInfo {
+                                kind: CtxFieldKind::AllocMem { mem_size: 4096 },
+                                readable: true,
+                                writable: false,
+                            });
+                        }
                     }
                 }
                 // Fallback for non-allowlisted iter / sk_reuseport ctx
