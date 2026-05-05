@@ -273,6 +273,34 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             return vec![];
         }
 
+        // R2 pointee-type compat (kernel `map_kptr_match_type`,
+        // verifier.c v6.15 L5780 `btf_struct_ids_match`). For Ref slots
+        // the kernel demands a strict struct-name match between R2's
+        // pointee BTF and the kptr field's pointee BTF — different
+        // BTFs (vmlinux / module / prog) are normalized via the type
+        // name. Without this, `bpf_obj_new(struct node_data2)` followed
+        // by `bpf_kptr_xchg(&mapval->node /* expects node_data */, ...)`
+        // is accepted as the FA on local_kptr_stash_fail::stash_rb_nodes
+        // showed. Skip the check when R2 is null (no pointee) or its
+        // pointee BTF id is unknown (lite-scope producers).
+        if !r2_is_null {
+            let r2_pointee = match r2 {
+                RegType::PtrToOwnedKptr { pointee_btf_id, .. } => pointee_btf_id,
+                RegType::PtrToMapKptr { pointee_btf_id, .. } => Some(pointee_btf_id),
+                _ => None,
+            };
+            if let Some(r2_id) = r2_pointee {
+                let kptr_name = env.ctx.btf.struct_name(pointee_btf_id);
+                let r2_name = env.ctx.btf.struct_name(r2_id);
+                if let (Some(a), Some(b)) = (kptr_name, r2_name)
+                    && a != b
+                {
+                    env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
+                    return vec![];
+                }
+            }
+        }
+
         // Consume R2's ref (transfer ownership into the map).
         if let Some(id) = r2_ref {
             state.release_ref(id);
