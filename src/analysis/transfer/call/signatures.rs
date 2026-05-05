@@ -3110,14 +3110,16 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
 
         "bpf_kfunc_call_test_release" => CallProto::with_args([
-            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+            PtrToBtfIdNamed { type_name: "prog_test_ref_kfunc" },
+            DontCare, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::Void)
         .flags(CallFlags::RELEASE)
         .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
 
         "bpf_kfunc_call_test_ref" => CallProto::with_args([
-            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+            PtrToBtfIdNamed { type_name: "prog_test_ref_kfunc" },
+            DontCare, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::Void),
 
@@ -3132,7 +3134,8 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
 
         "bpf_testmod_ctx_release" => CallProto::with_args([
-            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+            PtrToBtfIdNamed { type_name: "bpf_testmod_ctx" },
+            DontCare, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::Void)
         .flags(CallFlags::RELEASE)

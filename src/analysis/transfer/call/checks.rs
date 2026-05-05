@@ -411,10 +411,13 @@ fn validate_ptr_to_btf_id_named(
         (e, RegType::PtrToBtfId { type_name, .. }) if type_name == e => true,
         ("cgroup", RegType::PtrToCgroup { .. }) => true,
         ("task_struct", RegType::PtrToTask { .. }) => true,
-        // Acquire-tracked PtrToMapKptr from bpf_kptr_xchg, where the
-        // pointee btf-id resolves to the requested struct name.
-        // Mirrors the cpumask + cgroup validate_ptr_to_* extensions.
-        (e, RegType::PtrToMapKptr { ref_id: Some(_), pointee_btf_id, .. })
+        // PtrToMapKptr from a kptr-field load or bpf_kptr_xchg. Accept
+        // when the pointee btf-id resolves to the requested struct name.
+        // The ref_id is irrelevant for type-name matching; KF_RELEASE
+        // kfuncs separately verify ref_id via the RELEASE precondition
+        // gate in transfer_kfunc_proto. Mirrors the cpumask + cgroup
+        // validate_ptr_to_* extensions.
+        (e, RegType::PtrToMapKptr { pointee_btf_id, .. })
             if ctx.env.ctx.btf.struct_or_fwd_name(pointee_btf_id) == Some(e) =>
         {
             true

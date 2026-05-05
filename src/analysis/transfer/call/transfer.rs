@@ -273,6 +273,28 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             return vec![];
         }
 
+        // Kernel: PTR_MAYBE_NULL on R2 rejects with "Possibly NULL
+        // pointer passed to helper arg2". Programs must null-check
+        // a fresh acquire-result before bpf_kptr_xchg consumes it
+        // (map_kptr_fail::kptr_xchg_possibly_null). Match any
+        // *OrNull pointer-or-null reg-type — the ref_id check above
+        // accepts these because the ref-tracking carries through the
+        // null branch.
+        if matches!(
+            r2,
+            RegType::PtrToBtfIdOrNull { .. }
+                | RegType::PtrToMapKptrOrNull { .. }
+                | RegType::PtrToOwnedKptrOrNull { .. }
+                | RegType::PtrToSocketOrNull { .. }
+                | RegType::PtrToSockCommonOrNull { .. }
+                | RegType::PtrToCgroupOrNull { .. }
+                | RegType::PtrToTaskOrNull { .. }
+                | RegType::PtrToCpumaskOrNull { .. }
+        ) {
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
+            return vec![];
+        }
+
         // R2 pointee-type compat (kernel `map_kptr_match_type`,
         // verifier.c v6.15 L5780 `btf_struct_ids_match`). For Ref slots
         // the kernel demands a strict struct-name match between R2's
