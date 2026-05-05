@@ -793,9 +793,35 @@ pub(crate) fn update_call_types(
         constants::BPF_MAP_LOOKUP_ELEM
         | constants::BPF_MAP_LOOKUP_PERCPU_ELEM
         | constants::BPF_GET_LOCAL_STORAGE => {
+            // Redirect through `inner_map_idx` only when R1 is itself
+            // the result of an outer ARRAY_OF_MAPS / HASH_OF_MAPS
+            // lookup (i.e. `PtrToMapValue`, not `PtrToMapObject`).
+            // Without this, the inner-map lookup's R0 keeps the
+            // outer's map_idx and subsequent helpers (`bpf_spin_lock`,
+            // graph kfuncs) see the outer DATASEC's BTF instead of the
+            // inner map's value type — they fail to find the
+            // SpecialField at the offset (e.g.
+            // linked_list.c::inner_map_list_push_pop pc 26 r1). The
+            // outer lookup keeps its own map_idx so the next
+            // `bpf_map_lookup_elem` validator's `is_inner_map_ptr`
+            // check (which inspects R1's pointee map type) still
+            // recognizes the chain.
             let map_idx = match in_types.get(Reg::R1) {
                 RegType::PtrToMapObject { map_idx } => map_idx,
-                RegType::PtrToMapValue { map_idx, .. } => map_idx, // Handles map-in-map lookups
+                RegType::PtrToMapValue { map_idx: outer_idx, .. } => env
+                    .ctx
+                    .map_defs
+                    .get(outer_idx)
+                    .and_then(|md| {
+                        matches!(
+                            md.type_,
+                            constants::BPF_MAP_TYPE_ARRAY_OF_MAPS
+                                | constants::BPF_MAP_TYPE_HASH_OF_MAPS
+                        )
+                        .then_some(md.inner_map_idx)
+                        .flatten()
+                    })
+                    .unwrap_or(outer_idx),
                 _ => 0,
             };
             let map_def_opt = env.ctx.map_defs.get(map_idx);
