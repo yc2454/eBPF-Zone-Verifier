@@ -106,7 +106,16 @@ pub(crate) fn check_ptr_arithmetic(
                 // at access either (sparse pages just zero-fault), so skip
                 // both the MAX_VAR_OFF and the i32::MAX MapValue clamp here.
                 let is_arena = matches!(dst_type, RegType::PtrToArena { .. });
+                // Kernel verifier.c L14330: PTR_TO_CTX falls through the
+                // base_type switch without bounds enforcement at arith time.
+                // Wide / unbounded scalars are tolerated; the actual access
+                // path (ctx field load/store, or helper arg validation) is
+                // what catches misuse. Mirroring this admits libbpf's
+                // `(void *)ctx + arg_spec->reg_off` idiom (usdt.bpf.h:185)
+                // where reg_off is sign-extended u16 with full s64 bounds.
+                let is_ctx = matches!(dst_type, RegType::PtrToCtx);
                 if !is_arena
+                    && !is_ctx
                     && (src_min < -constants::MAX_VAR_OFF || src_max > constants::MAX_VAR_OFF)
                 {
                     return false;
