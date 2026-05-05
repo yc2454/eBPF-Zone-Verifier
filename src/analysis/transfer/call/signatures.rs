@@ -3392,6 +3392,57 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar),
 
+        // ---- Crypto kfuncs (crypto_basic.c, crypto_bench.c, crypto_sanity.c) ----
+        //
+        // struct bpf_crypto_ctx *bpf_crypto_ctx_create(const struct bpf_crypto_params *,
+        //                                              u32 params__sz, int *err)
+        //   KF_ACQUIRE | KF_RET_NULL | KF_SLEEPABLE.
+        // struct bpf_crypto_ctx *bpf_crypto_ctx_acquire(struct bpf_crypto_ctx *ctx)
+        //   KF_ACQUIRE | KF_RET_NULL.
+        // void bpf_crypto_ctx_release(struct bpf_crypto_ctx *ctx)
+        //   KF_RELEASE.
+        // int bpf_crypto_encrypt/_decrypt(struct bpf_crypto_ctx *ctx,
+        //                                  const struct bpf_dynptr *src,
+        //                                  const struct bpf_dynptr *dst,
+        //                                  const struct bpf_dynptr *iv)
+        //   No flags; the iv arg is __nullable.
+        "bpf_crypto_ctx_create" => CallProto::with_args([
+            Anything, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "bpf_crypto_ctx" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL | CallFlags::MIGHT_SLEEP),
+
+        "bpf_crypto_ctx_acquire" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "bpf_crypto_ctx" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        "bpf_crypto_ctx_release" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+
+        "bpf_crypto_encrypt" => CallProto::with_args([
+            PtrToBtfId,
+            DynptrArg { uninit: false, rdwr_only: false },
+            DynptrArg { uninit: false, rdwr_only: false },
+            Anything,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        "bpf_crypto_decrypt" => CallProto::with_args([
+            PtrToBtfId,
+            DynptrArg { uninit: false, rdwr_only: false },
+            DynptrArg { uninit: false, rdwr_only: false },
+            Anything,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
         // ---- TCP raw syncookie kfuncs (xdp_synproxy_kern.c,
         //      test_tcp_custom_syncookie.c) ----
         //
