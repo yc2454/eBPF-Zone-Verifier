@@ -1750,7 +1750,37 @@
     },
     "test_sk_lookup_kern.c": {
       "expect": "accept",
-      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+      "note": "Positive progs (lookup_pass / lookup_drop / sk_lookup_success / check_ifindex) loaded by prog_tests/sk_lookup.c. The err_* progs use SEC(\"?tc\") (no auto-load) and are anti-patterns the kernel verifier rejects (use-after-free, missing-release, double-release, modifying refcounted sk pointer); per-prog overrides below.",
+      "progs": {
+        "err_use_after_free": {
+          "expect": "reject",
+          "note": "Loads sk_buff* sk via bpf_sk_lookup_tcp, releases it, then reads sk->family. Kernel rejects 'invalid mem access' / use-after-release."
+        },
+        "err_modify_sk_pointer": {
+          "expect": "reject",
+          "note": "Adds a constant to a refcounted PTR_TO_SOCKET. Kernel rejects 'R1 pointer arithmetic on PTR_TO_SOCKET prohibited'."
+        },
+        "err_modify_sk_or_null_pointer": {
+          "expect": "reject",
+          "note": "Adds a constant to PTR_TO_SOCKET_OR_NULL before null-check. Kernel rejects pointer-arith on _OR_NULL."
+        },
+        "err_no_release": {
+          "expect": "reject",
+          "note": "Acquires bpf_sk_lookup_tcp ref and never calls bpf_sk_release. Kernel rejects 'Unreleased reference'."
+        },
+        "err_no_release_subcall": {
+          "expect": "reject",
+          "note": "Acquire happens in a static subprog that returns without releasing. Kernel rejects 'Unreleased reference'."
+        },
+        "err_release_twice": {
+          "expect": "reject",
+          "note": "Calls bpf_sk_release on the same refcounted pointer twice. Kernel rejects double-release / R1 type=invalid."
+        },
+        "err_release_unchecked": {
+          "expect": "reject",
+          "note": "Calls bpf_sk_release on PTR_TO_SOCKET_OR_NULL without null-checking. Kernel rejects on the unchecked release."
+        }
+      }
     },
     "test_skmsg_load_helpers.c": {
       "expect": "accept",
