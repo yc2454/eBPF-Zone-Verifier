@@ -1231,6 +1231,20 @@ impl Analyzer {
                         (ProgramKind::Tracing, Some("tp_btf"), "sched_switch") => {
                             Some(vec![("task_struct", false), ("task_struct", false)])
                         }
+                        // sched_process_fork: TRACE_EVENT(sched_process_fork,
+                        //   TP_PROTO(struct task_struct *parent,
+                        //            struct task_struct *child))
+                        (ProgramKind::Tracing, Some("tp_btf"), "sched_process_fork") => {
+                            Some(vec![("task_struct", false), ("task_struct", false)])
+                        }
+                        // exit_creds(struct task_struct *tsk) — fentry hook
+                        // closes task_local_storage_exit_creds::trace_exit_creds
+                        // (lax-fallback typed task arg as PtrToBtfId{unknown},
+                        // bpf_task_storage_get rejected as not-PTR_TO_TASK).
+                        (ProgramKind::Tracing, Some("fentry"), "exit_creds")
+                        | (ProgramKind::Tracing, Some("fexit"), "exit_creds") => {
+                            Some(vec![("task_struct", false)])
+                        }
                         // ── A3 cgroup-related fentry/fexit targets ──────
                         // cgroup_attach_task(struct cgroup *dst_cgrp,
                         //                    struct task_struct *leader,
