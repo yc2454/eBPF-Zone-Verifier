@@ -56,7 +56,7 @@ pub fn lookup(sec: &str) -> Option<SecMatch> {
         "sk_msg" => constants::BPF_PROG_TYPE_SK_MSG,
         "sk_reuseport" => constants::BPF_PROG_TYPE_SK_REUSEPORT,
         "flow_dissector" => constants::BPF_PROG_TYPE_FLOW_DISSECTOR,
-        "lsm" | "lsm.s" => constants::BPF_PROG_TYPE_LSM,
+        "lsm" | "lsm.s" | "lsm_cgroup" | "lsm_cgroup.s" => constants::BPF_PROG_TYPE_LSM,
         // BPF_PROG_TYPE_SYSCALL (= 32) and iter prog types aren't in
         // common/constants.rs yet — Phase 6 territory. Add when needed.
         "iter" | "iter.s" => constants::BPF_PROG_TYPE_TRACING,

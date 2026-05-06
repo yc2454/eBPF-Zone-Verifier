@@ -128,6 +128,8 @@ impl ProgramKind {
                     || rest.starts_with("iter.s/")
                     || rest.starts_with("lsm/")
                     || rest.starts_with("lsm.s/")
+                    || rest.starts_with("lsm_cgroup/")
+                    || rest.starts_with("lsm_cgroup.s/")
                     || rest.starts_with("raw_tp/")
                     || rest.starts_with("raw_tp.w/")
                     || rest == "raw_tp"
@@ -182,7 +184,11 @@ impl ProgramKind {
         {
             return ProgramKind::RawTracepoint;
         }
-        if tr_view.starts_with("lsm/") || tr_view.starts_with("lsm.s/") {
+        if tr_view.starts_with("lsm/")
+            || tr_view.starts_with("lsm.s/")
+            || tr_view.starts_with("lsm_cgroup/")
+            || tr_view.starts_with("lsm_cgroup.s/")
+        {
             return ProgramKind::Lsm;
         }
         if tr_view.starts_with("uprobe/")

@@ -347,6 +347,27 @@ const ATTACH_TARGET_ARG_KINDS: &[(&str, u8, TracingArgKind)] = &[
     ("bpf_testmod_fentry_test11", 7, TracingArgKind::Scalar),
     ("bpf_testmod_fentry_test11", 8, TracingArgKind::Scalar),
     ("bpf_testmod_fentry_test11", 9, TracingArgKind::Scalar),
+
+    // LSM hook attach targets — trailing scalar args. The `entry_args`
+    // table in `derive_program_kind`'s LSM dispatch only declares the
+    // BTF-typed pointer prefix; trailing slots fall through to the lax
+    // `TrustedPtr{type_name: "unknown"}` fallback and over-type as
+    // pointers. These overrides flip the int/gfp_t/addrlen slots back
+    // to Scalar for hooks the lsm_cgroup corpus exercises.
+    //
+    // socket_post_create(struct socket *sock, int family, int type,
+    //                    int protocol, int kern)
+    ("socket_post_create", 1, TracingArgKind::Scalar),
+    ("socket_post_create", 2, TracingArgKind::Scalar),
+    ("socket_post_create", 3, TracingArgKind::Scalar),
+    ("socket_post_create", 4, TracingArgKind::Scalar),
+    // socket_bind(struct socket *sock, struct sockaddr *address, int addrlen)
+    ("socket_bind", 2, TracingArgKind::Scalar),
+    // sk_alloc_security(struct sock *sk, int family, gfp_t priority)
+    ("sk_alloc_security", 1, TracingArgKind::Scalar),
+    ("sk_alloc_security", 2, TracingArgKind::Scalar),
+    // inet_csk_clone(struct sock *newsk, const struct request_sock *req)
+    // — both pointers, no scalar slots.
 ];
 
 /// Look up the per-target arg kind. Returns `None` for unmapped slots
