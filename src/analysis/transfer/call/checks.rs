@@ -343,7 +343,7 @@ pub(crate) fn validate_single_arg_inner(
 
 fn validate_ptr_to_ctx(ctx: &mut ValidationContext) -> bool {
     use crate::analysis::machine::reg_types::PtrFlags;
-    let ok = matches!(ctx.actual, RegType::PtrToCtx)
+    let mut ok = matches!(ctx.actual, RegType::PtrToCtx)
         // Kernel `check_kfunc_call` accepts both PTR_TO_CTX and a
         // trusted `PTR_TO_BTF_ID + sk_buff` for kfuncs like
         // `bpf_dynptr_from_skb`. The latter arises from `ctx->skb`
@@ -354,6 +354,27 @@ fn validate_ptr_to_ctx(ctx: &mut ValidationContext) -> bool {
             RegType::PtrToBtfId { type_name: "sk_buff", flags, .. }
                 if flags.contains(PtrFlags::TRUSTED)
         );
+    // bpf_get_socket_cookie has 4 per-prog-type kernel protos:
+    // skb-ctx / sock_addr-ctx (covered above by PtrToCtx) plus
+    // PTR_TO_SOCKET (sock-class progs) and PTR_TO_BTF_ID rooted at
+    // sock_common (iter/tracing). Admit those shapes for this helper
+    // only, so ctx-offset validation stays strict for skb-class users.
+    if !ok && ctx.helper == crate::common::constants::BPF_GET_SOCKET_COOKIE {
+        ok = matches!(
+            ctx.actual,
+            RegType::PtrToSocket { .. }
+                | RegType::PtrToSockCommon { .. }
+                | RegType::PtrToTcpSock { .. }
+        ) || matches!(
+            ctx.actual,
+            RegType::PtrToBtfId { type_name, flags, .. }
+                if flags.contains(PtrFlags::TRUSTED)
+                    && matches!(type_name,
+                        "sock_common" | "sock" | "tcp_sock" | "tcp6_sock"
+                            | "udp_sock" | "udp6_sock" | "unix_sock"
+                            | "tcp_request_sock" | "tcp_timewait_sock")
+        );
+    }
     if !ok {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {

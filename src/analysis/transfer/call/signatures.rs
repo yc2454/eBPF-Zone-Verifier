@@ -719,7 +719,14 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
 
         // ---- Socket/context helpers ----
         constants::BPF_GET_SOCKET_COOKIE => CallProto::with_args([
-            PtrToCtx, // R1: ctx
+            // Kernel registers 4 per-prog-type protos for this helper
+            // (skb-ctx / sock / sock_addr-ctx / sock_common-btf-id).
+            // We use PtrToCtx for the validator entry point; the
+            // sock-shaped variants are admitted via a per-helper
+            // relaxation in `validate_ptr_to_ctx` (keyed on
+            // `ctx.helper == BPF_GET_SOCKET_COOKIE`) so that ctx-offset
+            // validation still fires for skb-ctx programs.
+            PtrToCtx, // R1: ctx / sock / btf_id sock_common
             DontCare, DontCare, DontCare, DontCare,
         ]),
 
