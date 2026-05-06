@@ -432,8 +432,16 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     // tolerate it. Anything above 1 in that case, or anything > 0 in
     // sleepable / non-tracing programs, is an unreleased explicit
     // bpf_rcu_read_lock.
+    //
+    // Only enforce at main-frame exit. Subprog exits with an open RCU
+    // CS are valid: the caller may have called bpf_rcu_read_lock and
+    // expects the unlock either inside the subprog (e.g. rcu_read_lock_
+    // subprog_unlock) or after the return (rcu_read_lock_subprog).
+    // Kernel checks at the root frame's BPF_EXIT, mirroring
+    // `check_lock` callers — same shape as the preempt/irq/lock
+    // checks below this one.
     let baseline = if state.implicit_rcu_at_entry { 1 } else { 0 };
-    if state.rcu_read_depth > baseline {
+    if state.at_main_frame() && state.rcu_read_depth > baseline {
         env.fail(VerificationError::UnreleasedRcuRead);
         return vec![];
     }
