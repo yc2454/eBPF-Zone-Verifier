@@ -1162,6 +1162,27 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         ])
         .flags(CallFlags::MIGHT_SLEEP),
 
+        // bpf_copy_from_user_task(void *dst, u32 size, const void __user
+        // *src, struct task_struct *task, u64 flags) — sleepable variant
+        // that reads from another task's address space. Required as a
+        // *helper* proto (helper id 191) so the MIGHT_SLEEP gate fires
+        // when called inside an RCU read region — closes
+        // rcu_read_lock::inproper_sleepable_helper. R4 uses bare
+        // `PtrToBtfId` (any BTF id) rather than `PtrToBtfIdNamed{"task_struct"}`
+        // because kernel selftests pass `task_struct___local`-typed
+        // subprog args via `__arg_trusted` (libbpf rewrites the FUNC
+        // proto to a local struct alias for CO-RE compatibility);
+        // strict-name matching breaks `verifier_global_ptr_args::flavor_ptr_*`.
+        constants::BPF_COPY_FROM_USER_TASK => CallProto::with_args([
+            PtrToUninitMem, // R1: dst
+            ConstSize,      // R2: size
+            Anything,       // R3: user_ptr
+            PtrToBtfId,     // R4: task (any BTF id; libbpf alias-tolerant)
+            Anything,       // R5: flags
+        ])
+        .mem_size_pairs(&pairs::COPY_FROM_USER_STR)
+        .flags(CallFlags::MIGHT_SLEEP),
+
         constants::BPF_GET_CGROUP_CLASS_ID => {
             CallProto::with_args([PtrToCtx, DontCare, DontCare, DontCare, DontCare])
         }

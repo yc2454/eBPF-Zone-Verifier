@@ -183,6 +183,9 @@ pub fn helper_id_by_name(name: &str) -> Option<u32> {
         "bpf_dynptr_read" => Some(constants::BPF_DYNPTR_READ),
         "bpf_dynptr_write" => Some(constants::BPF_DYNPTR_WRITE),
         "bpf_dynptr_data" => Some(constants::BPF_DYNPTR_DATA),
+        "bpf_sock_from_file" => Some(constants::BPF_SOCK_FROM_FILE),
+        "bpf_task_pt_regs" => Some(constants::BPF_TASK_PT_REGS),
+        "bpf_copy_from_user_task" => Some(constants::BPF_COPY_FROM_USER_TASK),
         _ => None,
     }
 }

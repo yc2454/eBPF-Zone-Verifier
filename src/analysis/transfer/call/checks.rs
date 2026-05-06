@@ -393,7 +393,21 @@ fn validate_ptr_to_ctx(ctx: &mut ValidationContext) -> bool {
 }
 
 fn validate_ptr_to_btf_id(ctx: &mut ValidationContext) -> bool {
-    if !matches!(ctx.actual, RegType::PtrToBtfId { .. }) {
+    // The specialized kernel-struct reg-types (PtrToTask, PtrToCgroup,
+    // PtrToCpumask, …) are the same kernel object as the generic
+    // `PtrToBtfId{type_name=<X>, ...}`; helpers/kfuncs that demand "any
+    // PTR_TO_BTF_ID" (no specific struct match) should accept the
+    // specialized form too. Without this, e.g.
+    // `bpf_copy_from_user_task(..., bpf_get_current_task_btf(), ...)`
+    // rejects R4=PtrToTask under the loose proto. Mirrors the
+    // equivalence already wired in `validate_ptr_to_btf_id_named`.
+    let is_specialized_btf = matches!(
+        ctx.actual,
+        RegType::PtrToTask { .. }
+            | RegType::PtrToCgroup { .. }
+            | RegType::PtrToCpumask { .. }
+    );
+    if !matches!(ctx.actual, RegType::PtrToBtfId { .. }) && !is_specialized_btf {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,

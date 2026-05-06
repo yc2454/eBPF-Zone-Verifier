@@ -1093,6 +1093,45 @@ pub(crate) fn update_call_types(
             state.types.set(Reg::R0, RegType::PtrToTcpSockOrNull { id });
         }
 
+        // bpf_sock_from_file(struct file *file): kernel returns
+        // `struct socket *` or NULL. R0 = PtrToBtfIdOrNull{socket, TRUSTED}
+        // so `sock->sk` field-load downstream resolves via the
+        // `("socket", "sk")` trusted_field_load entry. Closes
+        // bpf_iter_bpf_sk_storage_helpers::fill_socket_owner.
+        constants::BPF_SOCK_FROM_FILE => {
+            let id = new_ptr_id();
+            state.types.set(
+                Reg::R0,
+                RegType::PtrToBtfIdOrNull {
+                    id,
+                    type_name: crate::analysis::machine::context::intern_btf_type_name_strict(
+                        "socket",
+                    ),
+                    flags: PtrFlags::TRUSTED,
+                    ref_id: None,
+                },
+            );
+        }
+
+        // bpf_task_pt_regs(struct task_struct *task): kernel returns
+        // `struct pt_regs *` (NULL only if `task` is invalid; treated as
+        // PtrToBtfIdOrNull). Closes bpf_iter_tasks::dump_task_sleepable
+        // (PT_REGS_IP(regs) reads regs->ip at offset 128 on x86_64).
+        constants::BPF_TASK_PT_REGS => {
+            let id = new_ptr_id();
+            state.types.set(
+                Reg::R0,
+                RegType::PtrToBtfIdOrNull {
+                    id,
+                    type_name: crate::analysis::machine::context::intern_btf_type_name_strict(
+                        "pt_regs",
+                    ),
+                    flags: PtrFlags::TRUSTED,
+                    ref_id: None,
+                },
+            );
+        }
+
         // SKC lookup - returns PTR_TO_SOCK_COMMON_OR_NULL
         constants::BPF_SKC_LOOKUP_TCP => {
             let id = state.acquire_ref();

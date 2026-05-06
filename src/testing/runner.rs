@@ -1292,6 +1292,13 @@ impl Analyzer {
                         | (ProgramKind::Tracing, Some("fexit"), "inet_stream_connect") => {
                             Some(vec![("socket", false), ("sockaddr", false)])
                         }
+                        // unix_listen(struct socket *sock, int backlog) —
+                        // closes test_skc_to_unix_sock::unix_listen
+                        // (sock arg needed for `sock->sk` field load).
+                        (ProgramKind::Tracing, Some("fentry"), "unix_listen")
+                        | (ProgramKind::Tracing, Some("fexit"), "unix_listen") => {
+                            Some(vec![("socket", false)])
+                        }
                         _ => None,
                     };
                     if let Some(arg_specs) = table_args {
