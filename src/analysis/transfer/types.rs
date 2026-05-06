@@ -735,6 +735,11 @@ pub fn trusted_field_load(struct_name: &str, field_name: &str) -> bool {
         // PtrToBtfId{file} are admitted via the lax PtrToBtfId access
         // policy. Closes find_vma::handle_{getpid,pe}.
         | ("vm_area_struct", "vm_file")
+        // vm_area_struct.vm_mm → `struct mm_struct *`. Trusted while
+        // the vma is trusted; programs commonly chain to
+        // `vma->vm_mm->start_stack` etc. Drives lsm::test_int_hook's
+        // file_mprotect handler.
+        | ("vm_area_struct", "vm_mm")
     )
 }
 
@@ -998,7 +1003,8 @@ pub(crate) fn update_call_types(
         | constants::BPF_SKC_TO_TCP_TIMEWAIT_SOCK
         | constants::BPF_SKC_TO_TCP_REQUEST_SOCK
         | constants::BPF_SKC_TO_UDP6_SOCK
-        | constants::BPF_SKC_TO_UNIX_SOCK => {
+        | constants::BPF_SKC_TO_UNIX_SOCK
+        | constants::BPF_SKC_TO_MPTCP_SOCK => {
             let r1 = state.types.get(Reg::R1);
             let ref_id = r1.get_ref_id();
             let trusted = r1.is_trusted();
@@ -1023,6 +1029,7 @@ pub(crate) fn update_call_types(
                     constants::BPF_SKC_TO_TCP_REQUEST_SOCK => "tcp_request_sock",
                     constants::BPF_SKC_TO_UDP6_SOCK => "udp6_sock",
                     constants::BPF_SKC_TO_UNIX_SOCK => "unix_sock",
+                    constants::BPF_SKC_TO_MPTCP_SOCK => "mptcp_sock",
                     _ => unreachable!(),
                 };
                 let id = new_ptr_id();
