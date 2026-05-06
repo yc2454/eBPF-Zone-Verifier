@@ -158,21 +158,12 @@ pub struct BtfFieldInfo<'a> {
 pub enum BtfFieldKind {
     /// Pointer field: `pointee_name` is the named struct it points to
     /// (or None if the pointee isn't a named struct — function ptr,
-    /// pointer-to-primitive, …). `tags` collects all `TYPE_TAG`
-    /// modifiers seen along the way (kernel `__rcu`, `__percpu`,
-    /// `__user`, …) so the load site can lift them into the
-    /// resulting `RegType::PtrToBtfId.flags`.
-    Pointer {
-        pointee_name: Option<String>,
-        tags: Vec<&'static str>,
-    },
+    /// pointer-to-primitive, …).
+    Pointer { pointee_name: Option<String> },
     /// Embedded struct/union member (no PTR layer). `type_name` is the
     /// BTF struct name. Used for `&base->field` interior-pointer
     /// arithmetic to produce a typed pointer to the member.
-    Embedded {
-        type_name: Option<String>,
-        tags: Vec<&'static str>,
-    },
+    Embedded { type_name: Option<String> },
     /// Primitive (int, enum, float).
     Scalar,
     /// Anything else — array, function-proto, void, … — caller decides.

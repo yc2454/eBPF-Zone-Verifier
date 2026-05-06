@@ -108,83 +108,41 @@ impl BtfContext {
             }
         }
 
-        // Walk the member's type chain, recording any BTF_KIND_TYPE_TAG
-        // along the way (the kernel's `__rcu`, `__percpu`, `__user`
-        // attributes lower to TYPE_TAG entries the BPF backend
-        // preserves). The chain's terminal kind tells us whether this
-        // is a pointer field, an embedded struct, or a scalar.
+        // Walk the member's type chain past TYPEDEF / CONST / VOLATILE /
+        // RESTRICT / TYPE_TAG modifiers; the terminal kind tells us
+        // whether this is a pointer field, an embedded struct, or a
+        // scalar. (TYPE_TAGs encode kernel `__rcu` / `__percpu` /
+        // `__user` annotations; not surfaced here — kptr classification
+        // and the (struct, field) trust allowlists do that work.)
         let mut cur = member.type_id;
-        let mut tags: Vec<&'static str> = Vec::new();
         for _ in 0..16 {
             let Some(t) = self.types.get(&cur) else { break };
             match t.kind() {
-                BTF_KIND_TYPE_TAG => {
-                    if let Some(n) = self.get_string(t.name_off) {
-                        // Tag names are short, well-known kernel
-                        // strings (`rcu`, `percpu`, `user`, …); leak
-                        // once so the consumer can compare with `==`.
-                        tags.push(Box::leak(n.to_string().into_boxed_str()));
-                    }
-                    cur = t.size_or_type;
-                }
                 BTF_KIND_TYPEDEF
                 | BTF_KIND_CONST
                 | BTF_KIND_VOLATILE
-                | BTF_KIND_RESTRICT => {
+                | BTF_KIND_RESTRICT
+                | BTF_KIND_TYPE_TAG => {
                     cur = t.size_or_type;
                 }
                 BTF_KIND_PTR => {
-                    // Walk through any TYPE_TAG / TYPEDEF / CONST /
-                    // VOLATILE / RESTRICT on the pointee so we recover
-                    // a STRUCT/UNION's name when the BTF chain is e.g.
-                    // `PTR -> TYPE_TAG("rcu") -> STRUCT sock` (kernel
-                    // emits `__rcu`-tagged pointer fields this way).
-                    // Tags collected here also propagate up to `tags`
-                    // so the load site can lift them into PtrFlags.
-                    let mut p = t.size_or_type;
-                    let mut pointee_name: Option<String> = None;
-                    for _ in 0..16 {
-                        let Some(pt) = self.types.get(&p) else { break };
-                        match pt.kind() {
-                            BTF_KIND_TYPE_TAG => {
-                                if let Some(n) = self.get_string(pt.name_off) {
-                                    tags.push(Box::leak(n.to_string().into_boxed_str()));
-                                }
-                                p = pt.size_or_type;
-                            }
-                            BTF_KIND_TYPEDEF
-                            | BTF_KIND_CONST
-                            | BTF_KIND_VOLATILE
-                            | BTF_KIND_RESTRICT => {
-                                p = pt.size_or_type;
-                            }
-                            // STRUCT/UNION definitions and FWD
-                            // declarations both name the pointee. FWD
-                            // is what vmlinux BTF emits for kernel
-                            // structs whose layout the BPF prog
-                            // doesn't reference (e.g. `struct sock`
-                            // is FWD-only when the program just
-                            // passes the pointer through). We still
-                            // get a usable type_name for kfunc
-                            // matching.
-                            BTF_KIND_STRUCT | BTF_KIND_UNION | BTF_KIND_FWD => {
-                                pointee_name =
-                                    self.get_string(pt.name_off).map(|s| s.to_string());
-                                break;
-                            }
-                            _ => break,
-                        }
-                    }
+                    // Peel modifiers + TYPE_TAGs on the pointee to
+                    // recover a STRUCT/UNION/FWD name. FWD is what
+                    // vmlinux BTF emits for kernel structs the program
+                    // never dereferences (e.g. `struct sock` passed
+                    // through unread); we still want the name for
+                    // kfunc matching.
+                    let pointee_name = self.peel_to_named_struct(t.size_or_type);
                     return Some(BtfFieldInfo {
                         name: field_name,
-                        kind: BtfFieldKind::Pointer { pointee_name, tags },
+                        kind: BtfFieldKind::Pointer { pointee_name },
                     });
                 }
                 BTF_KIND_STRUCT | BTF_KIND_UNION => {
                     let name = self.get_string(t.name_off).map(|s| s.to_string());
                     return Some(BtfFieldInfo {
                         name: field_name,
-                        kind: BtfFieldKind::Embedded { type_name: name, tags },
+                        kind: BtfFieldKind::Embedded { type_name: name },
                     });
                 }
                 BTF_KIND_INT | BTF_KIND_ENUM | BTF_KIND_ENUM64 | BTF_KIND_FLOAT => {
@@ -206,6 +164,29 @@ impl BtfContext {
             name: field_name,
             kind: BtfFieldKind::Other,
         })
+    }
+
+    /// Peel TYPEDEF/CONST/VOLATILE/RESTRICT/TYPE_TAG wrappers around
+    /// `start_id` and return the name of the underlying STRUCT / UNION /
+    /// FWD, or None if the chain doesn't terminate in a named aggregate.
+    fn peel_to_named_struct(&self, mut id: u32) -> Option<String> {
+        for _ in 0..16 {
+            let t = self.types.get(&id)?;
+            match t.kind() {
+                BTF_KIND_TYPEDEF
+                | BTF_KIND_CONST
+                | BTF_KIND_VOLATILE
+                | BTF_KIND_RESTRICT
+                | BTF_KIND_TYPE_TAG => {
+                    id = t.size_or_type;
+                }
+                BTF_KIND_STRUCT | BTF_KIND_UNION | BTF_KIND_FWD => {
+                    return self.get_string(t.name_off).map(|s| s.to_string());
+                }
+                _ => return None,
+            }
+        }
+        None
     }
 
     /// Find the struct/union member that begins exactly at `byte_offset`.
