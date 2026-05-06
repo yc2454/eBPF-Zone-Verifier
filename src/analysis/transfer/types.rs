@@ -404,7 +404,12 @@ pub(crate) fn update_alu_types(
     }
 }
 
-/// Updates register types after a Load operation.
+/// Updates register types after a Load operation. Returns `true` when
+/// the function has explicitly set numeric domain bounds on `dst`
+/// (e.g. via `CtxFieldKind::BoundedScalar`), in which case the caller
+/// must skip its default post-load `forget(dst)` + width-based clamp —
+/// otherwise the explicit bounds get wiped before they're observed by
+/// downstream transfer steps.
 pub(crate) fn update_load_types(
     env: &VerifierEnv,
     state: &mut State,
@@ -412,7 +417,7 @@ pub(crate) fn update_load_types(
     dst: Reg,
     base: Reg,
     off: i16,
-) {
+) -> bool {
     let base_ty = state.types.get(base);
     match base_ty {
         RegType::PtrToCtx => {
@@ -493,6 +498,12 @@ pub(crate) fn update_load_types(
                         // `retval_range_s32`). Without the s32 bound
                         // propagating through the W32 mov, R0's s32
                         // view widens to full range.
+                        //
+                        // Return `true` so `transfer_load_ext` skips its
+                        // post-load `forget(dst)` + access-size clamp;
+                        // those would wipe the explicit bound we just
+                        // set and cap u32 at u32::MAX, defeating the
+                        // s32 carry-through.
                         state.types.set(dst, RegType::ScalarValue);
                         state.domain.forget(dst);
                         state.domain.assume_ge_imm(dst, lo);
@@ -502,7 +513,7 @@ pub(crate) fn update_load_types(
                                 .domain
                                 .set_s32_bounds(dst, lo as i32, hi as i32);
                         }
-                        return;
+                        return true;
                     }
                     _ => state.types.set(dst, RegType::ScalarValue),
                 }
@@ -569,7 +580,7 @@ pub(crate) fn update_load_types(
                         // path. Load-side tests (uptr_no_null_check) stay
                         // FA for now and fall to a follow-up.
                         state.types.set(dst, RegType::ScalarValue);
-                        return;
+                        return false;
                     }
                 };
                 state.types.set(
@@ -690,6 +701,7 @@ pub(crate) fn update_load_types(
         }
         _ => state.types.set(dst, RegType::ScalarValue),
     }
+    false
 }
 
 /// Allowlist of `(struct_name, field_name)` pairs whose loaded pointer

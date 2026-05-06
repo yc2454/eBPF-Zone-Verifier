@@ -45,23 +45,33 @@ pub(crate) fn transfer_load(
         return vec![state];
     }
 
-    update_load_types(env, &mut state, access_size as usize, dst, base, off);
-    state.domain.forget(dst);
+    let bounds_set =
+        update_load_types(env, &mut state, access_size as usize, dst, base, off);
+    if !bounds_set {
+        // Default post-load: forget any prior dst bounds and re-clamp to
+        // the access width's zero-extended range. Skipped when
+        // `update_load_types` returned `true`, signaling it already
+        // installed an explicit numeric bound (e.g. LSM int-hook
+        // `BoundedScalar` ctx-arg load — the bound there is tighter than
+        // the access width's clamp would be, and the s32 shadow we set
+        // would be lost).
+        state.domain.forget(dst);
 
-    match size {
-        MemSize::U8 => {
-            state.domain.assume_ge_imm(dst, 0);
-            state.domain.assume_le_imm(dst, 0xFF);
+        match size {
+            MemSize::U8 => {
+                state.domain.assume_ge_imm(dst, 0);
+                state.domain.assume_le_imm(dst, 0xFF);
+            }
+            MemSize::U16 => {
+                state.domain.assume_ge_imm(dst, 0);
+                state.domain.assume_le_imm(dst, 0xFFFF);
+            }
+            MemSize::U32 => {
+                state.domain.assume_ge_imm(dst, 0);
+                state.domain.assume_le_imm(dst, 0xFFFFFFFF);
+            }
+            MemSize::U64 => {}
         }
-        MemSize::U16 => {
-            state.domain.assume_ge_imm(dst, 0);
-            state.domain.assume_le_imm(dst, 0xFFFF);
-        }
-        MemSize::U32 => {
-            state.domain.assume_ge_imm(dst, 0);
-            state.domain.assume_le_imm(dst, 0xFFFFFFFF);
-        }
-        MemSize::U64 => {}
     }
 
     match state.types.get(dst) {
