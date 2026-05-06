@@ -149,6 +149,12 @@ pub static BTF_SOCK_COMMON_COMPAT: &[fn(&RegType) -> bool] = &[
     is_ptr_to_socket_or_null,
     is_ptr_to_tcp_sock,
     is_ptr_to_btf_id,
+    // cgroup/sock_create / cgroup/sock_release / cgroup/sockopt
+    // contexts ARE a `struct bpf_sock *` — programs pass ctx directly
+    // as the sk arg of bpf_sk_storage_{get,delete}. Kernel admits
+    // PTR_TO_CTX for these per-prog-type registrations. udp_limit.c::
+    // {sock,sock_release} drives this.
+    is_ptr_to_ctx,
 ];
 
 /// Types compatible with generic memory pointers (PtrToMem)
