@@ -994,7 +994,20 @@ pub(crate) fn update_call_types(
             let r1 = state.types.get(Reg::R1);
             let ref_id = r1.get_ref_id();
             let trusted = r1.is_trusted();
-            if ref_id.is_some() || trusted {
+            // PtrToSockCommon / PtrToSocket from ctx-field reads
+            // (sock_addr.sk, sock_ops.sk, …) carry neither ref_id nor
+            // an explicit TRUSTED flag, but the kernel treats them as
+            // valid input to skc_to_* — they originate from kernel-
+            // managed ctx state. Without this acceptance, R0 falls
+            // through to ScalarValue and downstream field reads
+            // reject as "Unsafe generic load … type ScalarValue".
+            let ctx_sock_ok = matches!(
+                r1,
+                RegType::PtrToSockCommon { .. }
+                    | RegType::PtrToSocket { .. }
+                    | RegType::PtrToTcpSock { .. }
+            );
+            if ref_id.is_some() || trusted || ctx_sock_ok {
                 let type_name = match helper {
                     constants::BPF_SKC_TO_TCP_SOCK => "tcp_sock",
                     constants::BPF_SKC_TO_TCP6_SOCK => "tcp6_sock",
