@@ -90,6 +90,20 @@ pub enum RelocKind {
     /// fixes the LD_IMM64 imm pair to a PC-relative offset to the combined
     /// target subprog and sets `src = 4`.
     PseudoFunc,
+    /// `__ksym` extern variable resolved via `BPF_PSEUDO_BTF_ID` (LDIMM64
+    /// src=3). The kernel resolves the symbol to its address; with a typed
+    /// declaration (`extern const struct rq runqueues __ksym;`) the verifier
+    /// types the loaded register as `PTR_TO_BTF_ID` (carrying `MEM_PERCPU`
+    /// for percpu ksyms). `apply_relocs` sets `src = 3`; the transfer
+    /// consumes `ksym_struct_name` + `ksym_is_percpu` in the
+    /// `MapLoadKind::PseudoBtfId` branch to materialize the right reg type.
+    Ksym,
+}
+
+impl Default for RelocKind {
+    fn default() -> Self {
+        RelocKind::HelperCall
+    }
 }
 
 /// Target information for a BPF-to-BPF function call
@@ -105,7 +119,7 @@ pub struct BpfCallTarget {
     pub size: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct RelocInfo {
     /// Map index (for MapPtr/MapValue)
     pub map_idx: usize,
@@ -119,4 +133,13 @@ pub struct RelocInfo {
     /// Kfunc symbol name (for KfuncCall). Used by the runner to register
     /// the synth `helper_id` into the analysis-context BTF before analysis.
     pub kfunc_name: Option<String>,
+    /// Ksym struct name (for `RelocKind::Ksym`). `Some` iff the extern was
+    /// declared with a struct type (`extern const struct rq runqueues __ksym;`);
+    /// `None` for typeless / primitive ksyms (`extern const int X __ksym;`,
+    /// `extern const void X __ksym;`) — those become a scalar address.
+    pub ksym_struct_name: Option<String>,
+    /// True if the ksym is `__percpu`-tagged (kernel `DECLARE_PER_CPU(...)`).
+    /// The materialized `PtrToBtfId` carries `PtrFlags::PERCPU` so
+    /// `bpf_per_cpu_ptr` / `bpf_this_cpu_ptr` accept it as arg 1.
+    pub ksym_is_percpu: bool,
 }

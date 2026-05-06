@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+use super::map::load_ksyms;
 use super::types::{BpfCallTarget, BpfMapDef, RelocInfo, RelocKind};
 use crate::common::constants::{self, R_BPF_64_32, R_BPF_64_64};
 use crate::parsing::bpf_insn::RawBpfInsn;
@@ -191,7 +192,13 @@ pub fn load_relocations<P: AsRef<Path>>(
     maps: &[BpfMapDef],
     target_section_name: &str,
 ) -> Result<HashMap<usize, RelocInfo>> {
-    let buf = fs::read(path)?;
+    let path_ref = path.as_ref();
+    let ksyms = load_ksyms(path_ref).unwrap_or_default();
+    let ksym_to_info: HashMap<&str, (Option<String>, bool)> = ksyms
+        .iter()
+        .map(|k| (k.name.as_str(), (k.struct_name.clone(), k.is_percpu)))
+        .collect();
+    let buf = fs::read(path_ref)?;
     let elf = Elf::parse(&buf)?;
     let mut pc_to_reloc = HashMap::new();
 
@@ -271,6 +278,7 @@ pub fn load_relocations<P: AsRef<Path>>(
                             kind: RelocKind::HelperCall,
                             bpf_call_target: None,
                             kfunc_name: None,
+..Default::default()
                         },
                     );
                 } else if let Some((sec_name, offset, size)) =
@@ -291,6 +299,7 @@ pub fn load_relocations<P: AsRef<Path>>(
                                 size,
                             }),
                             kfunc_name: None,
+..Default::default()
                         },
                     );
                 } else if !name.is_empty() {
@@ -306,6 +315,7 @@ pub fn load_relocations<P: AsRef<Path>>(
                             kind: RelocKind::KfuncCall,
                             bpf_call_target: None,
                             kfunc_name: Some(name.to_string()),
+..Default::default()
                         },
                     );
                 } else {
@@ -320,6 +330,7 @@ pub fn load_relocations<P: AsRef<Path>>(
                             kind: RelocKind::HelperCall,
                             bpf_call_target: None,
                             kfunc_name: None,
+..Default::default()
                         },
                     );
                 }
@@ -335,6 +346,7 @@ pub fn load_relocations<P: AsRef<Path>>(
                             kind: RelocKind::MapPtr,
                             bpf_call_target: None,
                             kfunc_name: None,
+..Default::default()
                         },
                     );
                 } else if let Some(&map_idx) = section_idx_to_map_idx.get(&sym.st_shndx) {
@@ -347,6 +359,7 @@ pub fn load_relocations<P: AsRef<Path>>(
                             kind: RelocKind::MapValue,
                             bpf_call_target: None,
                             kfunc_name: None,
+..Default::default()
                         },
                     );
                 } else if let Some(&(map_idx, offset)) = extern_var_to_loc.get(name) {
@@ -362,6 +375,24 @@ pub fn load_relocations<P: AsRef<Path>>(
                             kind: RelocKind::MapValue,
                             bpf_call_target: None,
                             kfunc_name: None,
+                            ..Default::default()
+                        },
+                    );
+                } else if let Some((struct_name, is_percpu)) =
+                    ksym_to_info.get(name).cloned()
+                {
+                    // `__ksym` extern: kernel resolves at load time via
+                    // `BPF_PSEUDO_BTF_ID`. Lowerer + transfer consume
+                    // `ksym_struct_name`/`ksym_is_percpu` to materialize a
+                    // typed `PtrToBtfId{flags: TRUSTED|MEM_RDONLY[|PERCPU]}`
+                    // (struct ksyms) or scalar address (typeless).
+                    pc_to_reloc.insert(
+                        pc,
+                        RelocInfo {
+                            kind: RelocKind::Ksym,
+                            ksym_struct_name: struct_name,
+                            ksym_is_percpu: is_percpu,
+                            ..Default::default()
                         },
                     );
                 } else {
@@ -389,6 +420,7 @@ pub fn load_relocations<P: AsRef<Path>>(
                                     size,
                                 }),
                                 kfunc_name: None,
+                                ..Default::default()
                             },
                         );
                     }
@@ -534,7 +566,13 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
     func_byte_offset: usize,
     func_byte_size: usize,
 ) -> Result<HashMap<usize, RelocInfo>> {
-    let buf = fs::read(path)?;
+    let path_ref = path.as_ref();
+    let ksyms = load_ksyms(path_ref).unwrap_or_default();
+    let ksym_to_info: HashMap<&str, (Option<String>, bool)> = ksyms
+        .iter()
+        .map(|k| (k.name.as_str(), (k.struct_name.clone(), k.is_percpu)))
+        .collect();
+    let buf = fs::read(path_ref)?;
     let elf = Elf::parse(&buf)?;
     let mut pc_to_reloc = HashMap::new();
 
@@ -702,6 +740,7 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                             kind: RelocKind::HelperCall,
                             bpf_call_target: None,
                             kfunc_name: None,
+..Default::default()
                         },
                     );
                 } else if let Some((sec_name, offset, size)) =
@@ -722,6 +761,7 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                                 size,
                             }),
                             kfunc_name: None,
+..Default::default()
                         },
                     );
                 } else if !name.is_empty() {
@@ -734,6 +774,7 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                             kind: RelocKind::KfuncCall,
                             bpf_call_target: None,
                             kfunc_name: Some(name.to_string()),
+..Default::default()
                         },
                     );
                 } else {
@@ -748,6 +789,7 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                             kind: RelocKind::HelperCall,
                             bpf_call_target: None,
                             kfunc_name: None,
+..Default::default()
                         },
                     );
                 }
@@ -763,6 +805,7 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                             kind: RelocKind::MapPtr,
                             bpf_call_target: None,
                             kfunc_name: None,
+..Default::default()
                         },
                     );
                 } else if let Some(&map_idx) = section_idx_to_map_idx.get(&sym.st_shndx) {
@@ -775,6 +818,7 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                             kind: RelocKind::MapValue,
                             bpf_call_target: None,
                             kfunc_name: None,
+..Default::default()
                         },
                     );
                 } else if let Some(&(map_idx, offset)) = extern_var_to_loc.get(name) {
@@ -788,6 +832,21 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                             kind: RelocKind::MapValue,
                             bpf_call_target: None,
                             kfunc_name: None,
+                            ..Default::default()
+                        },
+                    );
+                } else if let Some((struct_name, is_percpu)) =
+                    ksym_to_info.get(name).cloned()
+                {
+                    // `__ksym` extern: BPF_PSEUDO_BTF_ID resolution. See
+                    // `load_relocations` for full description.
+                    pc_to_reloc.insert(
+                        func_pc,
+                        RelocInfo {
+                            kind: RelocKind::Ksym,
+                            ksym_struct_name: struct_name,
+                            ksym_is_percpu: is_percpu,
+                            ..Default::default()
                         },
                     );
                 } else {
@@ -811,6 +870,7 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                                     size,
                                 }),
                                 kfunc_name: None,
+                                ..Default::default()
                             },
                         );
                     }
@@ -909,6 +969,18 @@ pub fn apply_relocs(insns: &mut [RawBpfInsn], pc_to_reloc: &HashMap<usize, Reloc
                 RelocKind::PseudoFunc => {
                     // src/imm pair are written by `fix_pseudo_func_imms`
                     // once the callee's combined PC is known.
+                }
+                RelocKind::Ksym => {
+                    // `__ksym` extern: encode as `BPF_PSEUDO_BTF_ID`
+                    // (LDIMM64 src=3). The kernel's `imm` would be the
+                    // kernel BTF id of the symbol; we don't have one
+                    // (we don't ship vmlinux BTF), but the lowerer +
+                    // transfer routes via the `pc_to_reloc` lookup at
+                    // analysis time and reads the resolved struct/percpu
+                    // metadata from the reloc info, not from `imm`.
+                    if insn.code == 0x18 {
+                        insn.src = 3;
+                    }
                 }
             }
         }
@@ -1209,6 +1281,7 @@ pub fn combine_function_with_subprogs<P: AsRef<Path> + Clone>(
                             size: 0,
                         }),
                         kfunc_name: None,
+..Default::default()
                     },
                 );
             }

@@ -917,6 +917,56 @@ pub(crate) fn update_call_types(
         false
     };
 
+    // bpf_per_cpu_ptr / bpf_this_cpu_ptr R0 typing. Kernel
+    // `check_helper_call` dispatches `RET_PTR_TO_MEM_OR_BTF_ID`:
+    //   - typed ksyms (struct R1): R0 = PTR_TO_BTF_ID | MEM_RCU [| MAYBE_NULL]
+    //     preserving the struct name, dropping PERCPU.
+    //   - typeless ksyms (`extern const void X __ksym;`): would produce
+    //     PTR_TO_MEM, but we never see those reach the helper today (they
+    //     materialize as ScalarValue and the per_cpu_ptr arg gate rejects).
+    // bpf_per_cpu_ptr returns NULL on invalid CPU; bpf_this_cpu_ptr never
+    // returns NULL (always callable on the current CPU).
+    if !routed
+        && (helper == constants::BPF_PER_CPU_PTR || helper == constants::BPF_THIS_CPU_PTR)
+    {
+        if let RegType::PtrToBtfId { type_name, flags, .. } = in_types.get(Reg::R1) {
+            // Drop PERCPU + RDONLY on the result; kernel marks the
+            // post-call ptr as RCU-protected (typed ksym deref needs to
+            // be inside an RCU read region, but our existing trust-band
+            // model accepts TRUSTED-flagged BTF id pointers without
+            // modeling RCU here). RDONLY is dropped because we don't
+            // enforce ksym-derived per-cpu store rejection at the
+            // field-store level today.
+            let drop = crate::analysis::machine::reg_types::PtrFlags::PERCPU
+                | crate::analysis::machine::reg_types::PtrFlags::RDONLY;
+            let out_flags = flags.difference(drop)
+                | crate::analysis::machine::reg_types::PtrFlags::TRUSTED;
+            if helper == constants::BPF_PER_CPU_PTR {
+                let id = new_ptr_id();
+                state.types.set(
+                    Reg::R0,
+                    RegType::PtrToBtfIdOrNull {
+                        id,
+                        type_name,
+                        flags: out_flags,
+                        ref_id: None,
+                    },
+                );
+            } else {
+                state.types.set(
+                    Reg::R0,
+                    RegType::PtrToBtfId {
+                        type_name,
+                        flags: out_flags,
+                        ref_id: None,
+                    },
+                );
+            }
+            return;
+        }
+        // Fall through to default (Scalar) for typeless / non-BTF inputs.
+    }
+
     // Set R0 based on helper return type (legacy path for non-migrated helpers)
     if !routed {
     match helper {
