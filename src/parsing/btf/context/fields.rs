@@ -115,14 +115,24 @@ impl BtfContext {
         // `__user` annotations; not surfaced here — kptr classification
         // and the (struct, field) trust allowlists do that work.)
         let mut cur = member.type_id;
+        // Capture the last TYPE_TAG name seen before reaching a PTR.
+        // Kernel encodes `struct foo __percpu *bar` as TYPE_TAG("percpu")
+        // → PTR → struct foo. We expose the tag so the verifier can
+        // route the loaded reg to PtrFlags::PERCPU / USER / RCU.
+        let mut type_tag: Option<String> = None;
         for _ in 0..16 {
             let Some(t) = self.types.get(&cur) else { break };
             match t.kind() {
                 BTF_KIND_TYPEDEF
                 | BTF_KIND_CONST
                 | BTF_KIND_VOLATILE
-                | BTF_KIND_RESTRICT
-                | BTF_KIND_TYPE_TAG => {
+                | BTF_KIND_RESTRICT => {
+                    cur = t.size_or_type;
+                }
+                BTF_KIND_TYPE_TAG => {
+                    if type_tag.is_none() {
+                        type_tag = self.get_string(t.name_off).map(|s| s.to_string());
+                    }
                     cur = t.size_or_type;
                 }
                 BTF_KIND_PTR => {
@@ -132,10 +142,21 @@ impl BtfContext {
                     // never dereferences (e.g. `struct sock` passed
                     // through unread); we still want the name for
                     // kfunc matching.
+                    //
+                    // pahole emits `__percpu` / `__user` / `__rcu` tags
+                    // on the pointee (PTR → TYPE_TAG → STRUCT), not on
+                    // the field-side chain. If we didn't find a tag
+                    // before the PTR, also scan the pointee chain.
                     let pointee_name = self.peel_to_named_struct(t.size_or_type);
+                    if type_tag.is_none() {
+                        type_tag = self.peel_to_type_tag(t.size_or_type);
+                    }
                     return Some(BtfFieldInfo {
                         name: field_name,
-                        kind: BtfFieldKind::Pointer { pointee_name },
+                        kind: BtfFieldKind::Pointer {
+                            pointee_name,
+                            type_tag,
+                        },
                     });
                 }
                 BTF_KIND_STRUCT | BTF_KIND_UNION => {
@@ -164,6 +185,29 @@ impl BtfContext {
             name: field_name,
             kind: BtfFieldKind::Other,
         })
+    }
+
+    /// Walk modifier wrappers from `start_id` and return the first
+    /// TYPE_TAG name encountered (kernel `__percpu` / `__user` / `__rcu`
+    /// annotations live on the pointee in pahole-emitted BTF). Returns
+    /// None when the chain has no TYPE_TAG before the named aggregate.
+    fn peel_to_type_tag(&self, mut id: u32) -> Option<String> {
+        for _ in 0..16 {
+            let t = self.types.get(&id)?;
+            match t.kind() {
+                BTF_KIND_TYPE_TAG => {
+                    return self.get_string(t.name_off).map(|s| s.to_string());
+                }
+                BTF_KIND_TYPEDEF
+                | BTF_KIND_CONST
+                | BTF_KIND_VOLATILE
+                | BTF_KIND_RESTRICT => {
+                    id = t.size_or_type;
+                }
+                _ => return None,
+            }
+        }
+        None
     }
 
     /// Peel TYPEDEF/CONST/VOLATILE/RESTRICT/TYPE_TAG wrappers around

@@ -379,9 +379,47 @@ fn transfer_kfunc_proto(
         None
     };
     if let Some(band) = trust_band {
+        use super::signatures::ArgKind;
         for (i, (&arg_kind, &reg)) in proto.args.iter().zip(arg_regs.iter()).enumerate() {
-            if matches!(arg_kind, super::signatures::ArgKind::DontCare) {
+            if matches!(arg_kind, ArgKind::DontCare) {
                 break;
+            }
+            // KF_TRUSTED_ARGS only constrains BTF-typed pointer args
+            // (kernel `check_kfunc_arg_btf_id` path). Plain memory
+            // buffers (PtrToUninitMem / PtrToMem / PtrToStack), size
+            // scalars, dynptrs, iter handles etc. take the
+            // non-PTR_TO_BTF_ID code path which doesn't apply the trust
+            // check. Without this gate, a kfunc like bpf_path_d_path
+            // (path, buf, sz) would reject the non-trusted buf arg —
+            // verifier_vfs_accept::path_d_path_from_file_argument
+            // passes a map_value buf (no TRUSTED flag).
+            //
+            // Denylist (rather than allowlist) so that ArgKind::Anything
+            // — used for `int *ptr` style args where we don't have a
+            // dedicated typed-int-pointer ArgKind (bpf_kfunc_trusted_num_test)
+            // — still goes through the trust gate. The gate then
+            // rejects untrusted PtrToAllocMem from bpf_iter_num_next.
+            let trust_irrelevant = matches!(
+                arg_kind,
+                ArgKind::PtrToUninitMem
+                    | ArgKind::PtrToUninitMemOrNull
+                    | ArgKind::PtrToMem
+                    | ArgKind::PtrToMemOrNull
+                    | ArgKind::PtrToStack
+                    | ArgKind::PtrToStackOrNull
+                    | ArgKind::ConstSize
+                    | ArgKind::ConstSizeOrZero
+                    | ArgKind::ConstAllocSizeOrZero
+                    | ArgKind::PtrToConstStr
+                    | ArgKind::PtrToLong
+                    | ArgKind::DynptrArg { .. }
+                    | ArgKind::IterArg { .. }
+                    | ArgKind::IrqFlagArg { .. }
+                    | ArgKind::ResSpinLockArg { .. }
+                    | ArgKind::MapValueSpecial { .. }
+            );
+            if trust_irrelevant {
+                continue;
             }
             let actual = in_types.get(reg);
             if actual.is_pointer() && !pointer_arg_meets_trust(&actual, band) {

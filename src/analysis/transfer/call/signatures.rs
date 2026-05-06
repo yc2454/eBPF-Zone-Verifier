@@ -2671,6 +2671,10 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .mem_size_pairs(&pairs::D_PATH)
         .ret(RetKind::Scalar)
+        // KF_TRUSTED_ARGS — kernel rejects an untrusted `struct path *`
+        // (e.g. one walked from `task->fs->root` outside an RCU CS).
+        // Closes verifier_vfs_reject::path_d_path_kfunc_untrusted_*.
+        .flags(CallFlags::TRUSTED_ARGS)
         .prog_type_allowlist(&LSM_ONLY_KFUNC_PROG_TYPES),
 
         // ---- nested-acquire test kfuncs (testmod) ----

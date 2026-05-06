@@ -158,8 +158,16 @@ pub struct BtfFieldInfo<'a> {
 pub enum BtfFieldKind {
     /// Pointer field: `pointee_name` is the named struct it points to
     /// (or None if the pointee isn't a named struct — function ptr,
-    /// pointer-to-primitive, …).
-    Pointer { pointee_name: Option<String> },
+    /// pointer-to-primitive, …). `type_tag` is the kernel TYPE_TAG
+    /// annotation seen between the field and the PTR layer
+    /// (`"percpu"` / `"user"` / `"rcu"`), or None for plain pointers.
+    /// The verifier propagates this onto the loaded reg's PtrFlags so
+    /// access-time deref rejection (memory/access.rs) and trust-band
+    /// kfunc gating fire correctly.
+    Pointer {
+        pointee_name: Option<String>,
+        type_tag: Option<String>,
+    },
     /// Embedded struct/union member (no PTR layer). `type_name` is the
     /// BTF struct name. Used for `&base->field` interior-pointer
     /// arithmetic to produce a typed pointer to the member.

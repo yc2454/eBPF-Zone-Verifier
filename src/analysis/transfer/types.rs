@@ -600,40 +600,66 @@ pub(crate) fn update_load_types(
                 && let Some(info) = env.ctx.btf.field_at_offset_descend(struct_id, off as u32)
                 && let BtfFieldKind::Pointer {
                     pointee_name: Some(pointee),
-                    ..
-                } = info.kind
+                    type_tag,
+                } = &info.kind
             {
                 let trusted = trusted_field_load(type_name, info.name);
                 let rcu = rcu_field_load(type_name, info.name);
-                // RCU-tagged fields (kernel `__rcu` annotation): inside an
-                // RCU CS the load yields PTR_TO_BTF_ID|MEM_RCU; outside,
-                // the kernel calls it "old style ptr_to_btf_id" and the
-                // pointer carries no trust flag — downstream kfunc/helper
-                // arg validators that require TRUSTED/RCU reject. We
-                // model "no trust outside CS" by leaving dst as
-                // ScalarValue (the typed-pointer fallthrough).
-                let flags = if trusted {
-                    Some(PtrFlags::TRUSTED)
-                } else if rcu && state.in_rcu_read_section() {
-                    Some(PtrFlags::RCU)
-                } else {
-                    None
+                // BTF TYPE_TAG-driven flags: kernel `__percpu` / `__user`
+                // pointers are non-derefable directly. memory/access.rs
+                // rejects deref of PtrToBtfId carrying USER or PERCPU;
+                // bpf_per_cpu_ptr / bpf_copy_from_user are the kernel
+                // path through. Closes btf_type_tag_percpu::test_percpu_load
+                // — `cgrp->rstat_cpu` is `__percpu *` and the test expects
+                // direct deref to be rejected.
+                // BTF TYPE_TAG-driven flags from the program's BTF.
+                // Falls back to a static (struct, field) allowlist for
+                // kernel-defined fields whose `__percpu` / `__user`
+                // annotation lives in vmlinux BTF (which we don't ship).
+                let tag_str = type_tag
+                    .as_deref()
+                    .or_else(|| percpu_or_user_field(type_name, info.name));
+                let tag_flags = match tag_str {
+                    Some("percpu") => PtrFlags::PERCPU,
+                    Some("user") => PtrFlags::USER,
+                    _ => PtrFlags::empty(),
                 };
-                if let Some(flags) = flags {
-                    let pointee_static =
-                        crate::analysis::machine::context::intern_btf_type_name_strict(
-                            &pointee,
-                        );
-                    state.types.set(
-                        dst,
-                        RegType::PtrToBtfId {
-                            type_name: pointee_static,
-                            flags,
-                            ref_id: None,
-                        },
+                // Three trust bands mirror kernel `btf_struct_walk`:
+                //  - TRUSTED: explicit `__safe_trusted` allowlist
+                //  - RCU: explicit `__safe_rcu` allowlist, gated on CS
+                //  - UNTRUSTED (default): kernel "old-style ptr_to_btf_id"
+                //    (verifier.c v6.15 ~L7140). Load is admitted, downstream
+                //    chained derefs work, but consumer validators that
+                //    require KF_TRUSTED_ARGS / KF_RCU reject.
+                //
+                // Previously the default arm collapsed to ScalarValue,
+                // which broke chained pointer field walks (e.g.
+                // `skb->dev->ifalias->...` in tracing programs). The
+                // UNTRUSTED variant matches kernel exactly and preserves
+                // the type chain; the FA risk is bounded to consumer
+                // validators that don't enforce TRUSTED — those should
+                // be tightened independently.
+                let trust_flag = if trusted {
+                    PtrFlags::TRUSTED
+                } else if rcu && state.in_rcu_read_section() {
+                    PtrFlags::RCU
+                } else {
+                    PtrFlags::UNTRUSTED
+                };
+                let flags = trust_flag.union(tag_flags);
+                let pointee_static =
+                    crate::analysis::machine::context::intern_btf_type_name_strict(
+                        pointee,
                     );
-                    typed = true;
-                }
+                state.types.set(
+                    dst,
+                    RegType::PtrToBtfId {
+                        type_name: pointee_static,
+                        flags,
+                        ref_id: None,
+                    },
+                );
+                typed = true;
             }
             if !typed {
                 state.types.set(dst, RegType::ScalarValue);
@@ -798,6 +824,24 @@ pub fn rcu_field_load(struct_name: &str, field_name: &str) -> bool {
         ("task_struct", "real_parent")
         | ("task_struct", "parent")
     )
+}
+
+/// Static allowlist of `(struct, field) → "percpu" | "user"` for kernel
+/// fields whose BTF TYPE_TAG annotation lives in vmlinux BTF (which we
+/// don't ship). Direct deref of these is rejected by `memory/access.rs`'s
+/// PERCPU/USER check; programs must go through `bpf_per_cpu_ptr` /
+/// `bpf_copy_from_user`. Without this, the BTF field-walk produces an
+/// untagged pointer and the kernel-rejection mechanism doesn't fire.
+///
+/// Mirror kernel sources only — adding speculative entries would FA
+/// `__failure` tests that exercise the matching deref path.
+fn percpu_or_user_field(struct_name: &str, field_name: &str) -> Option<&'static str> {
+    match (struct_name, field_name) {
+        // struct cgroup { ... struct cgroup_rstat_cpu __percpu *rstat_cpu; }
+        // — drives btf_type_tag_percpu::test_percpu_load (`__failure`).
+        ("cgroup", "rstat_cpu") => Some("percpu"),
+        _ => None,
+    }
 }
 
 /// Updates stack types after a Store operation.
