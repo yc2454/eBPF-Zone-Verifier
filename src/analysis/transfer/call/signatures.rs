@@ -1840,9 +1840,9 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // int bpf_dynptr_from_xdp(struct xdp_md *xdp, u64 flags,
         //                         struct bpf_dynptr *ptr)
         //
-        // Wraps xdp frame data as a dynptr. Same conservative
-        // rdonly=true posture as from_skb pending program-type
-        // refinement.
+        // Wraps xdp frame data as a dynptr. XDP programs CAN mutate
+        // packet data, so the dynptr is read-write — matches kernel
+        // (no DYNPTR_RDONLY_BIT set in `bpf_dynptr_init` for XDP type).
         "bpf_dynptr_from_xdp" => CallProto::with_args([
             PtrToCtx,    // R1: xdp context
             Anything,    // R2: flags
@@ -1854,7 +1854,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .side_effects(&[SideEffect::DynptrInitOnArg {
             arg: 2,
             kind: DynptrKind::Xdp,
-            rdonly: true,
+            rdonly: false,
         }])
         .prog_type_allowlist(&XDP_DYNPTR_KFUNC_PROG_TYPES),
 
