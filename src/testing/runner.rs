@@ -1208,6 +1208,16 @@ impl Analyzer {
                         (ProgramKind::Tracing, Some("tp_btf"), "kfree_skb") => {
                             Some(vec![("sk_buff", false)])
                         }
+                        // tcp_retransmit_synack: TRACE_EVENT(tcp_retransmit_synack,
+                        //   TP_PROTO(const struct sock *sk, const struct request_sock *req))
+                        (ProgramKind::Tracing, Some("tp_btf"), "tcp_retransmit_synack") => {
+                            Some(vec![("sock", false), ("request_sock", false)])
+                        }
+                        // tcp_bad_csum: TRACE_EVENT(tcp_bad_csum,
+                        //   TP_PROTO(const struct sk_buff *skb))
+                        (ProgramKind::Tracing, Some("tp_btf"), "tcp_bad_csum") => {
+                            Some(vec![("sk_buff", false)])
+                        }
                         // cgroup_mkdir: TRACE_EVENT(cgroup_mkdir,
                         //   TP_PROTO(struct cgroup *cgrp, const char *path))
                         // const char* trailing scalar is dropped.

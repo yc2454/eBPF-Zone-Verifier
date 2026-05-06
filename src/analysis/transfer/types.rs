@@ -740,6 +740,10 @@ pub fn trusted_field_load(struct_name: &str, field_name: &str) -> bool {
         // `vma->vm_mm->start_stack` etc. Drives lsm::test_int_hook's
         // file_mprotect handler.
         | ("vm_area_struct", "vm_mm")
+        // request_sock.sk → struct sock *. Trusted while the request_sock
+        // is trusted; tp_btf hooks like tcp_retransmit_synack pass req
+        // and chain `req->sk` into bpf_sk_storage_get.
+        | ("request_sock", "sk")
     )
 }
 
