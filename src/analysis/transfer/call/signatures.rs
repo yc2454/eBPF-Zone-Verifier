@@ -3662,7 +3662,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // a writable pointer + size pair so the bounds check matches
         // the kernel's KF_ARG_PTR_TO_UNINIT_MEM rules.
         "bpf_copy_from_user_str" => CallProto::with_args([
-            PtrToUninitMem, ConstSize, Anything, Anything, DontCare,
+            PtrToUninitMem, ConstSizeOrZero, Anything, Anything, DontCare,
         ])
         .ret(RetKind::Scalar)
         .mem_size_pairs(&pairs::COPY_FROM_USER_STR)
@@ -4080,7 +4080,8 @@ pub(super) mod pairs {
     pub static CPUMASK_POPULATE: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
 
     // ---- bpf_copy_from_user_str(R1=dst, R2=size, R3=unsafe_ptr, R4=flags) ----
-    pub static COPY_FROM_USER_STR: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
+    // size=0 accepted (kernel returns 0 / no-op).
+    pub static COPY_FROM_USER_STR: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R1, Reg::R2)];
 }
 
 /// W7.2: returns true if the helper is in the kernel's `is_fastcall_helper_call`
