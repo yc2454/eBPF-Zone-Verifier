@@ -73,11 +73,21 @@ impl BtfContext {
         kind.map(|k| (k, pointee))
     }
 
+    /// Walk every kptr-tagged pointer reachable through a map's value
+    /// type and return one `KptrField` per hit, with offsets relative
+    /// to the value's start. Used by the BTF-driven map_def loader so
+    /// `.maps`-section maps carry the same kptr metadata as DATASEC
+    /// maps (see [`Self::extract_datasec_kptr_fields`]).
+    pub fn extract_value_kptr_fields(&self, value_type_id: u32) -> Vec<KptrField> {
+        let mut out = Vec::new();
+        self.collect_kptr_fields_at(value_type_id, 0, &mut out, 0);
+        out
+    }
+
     /// Walk every kptr-tagged pointer reachable through `type_id` and
     /// emit a `KptrField` at `base_offset + relative_offset` for each.
     /// Recurses into structs/unions (member offsets) and arrays
-    /// (per-element stride). Mirrors `extract_kptr_fields_recurse` but
-    /// HashMap-based.
+    /// (per-element stride).
     fn collect_kptr_fields_at(
         &self,
         type_id: u32,
