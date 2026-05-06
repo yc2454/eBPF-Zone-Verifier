@@ -139,6 +139,38 @@ fn update_ptr_arithmetic_type(
                 },
             );
         }
+        RegType::PtrToAllocMem {
+            id,
+            mem_size,
+            ref_id,
+            dynptr_id,
+        } => {
+            // Kernel `verifier.c` ~L15170 (v6.15): pointer arithmetic on
+            // PTR_TO_MEM (alloc) preserves the type and bumps `reg->off`
+            // by the constant delta. We don't carry an offset field on
+            // PtrToAllocMem, so model the offset by shrinking mem_size
+            // (the remaining-bytes-from-here invariant). Forward-only
+            // adds within bounds preserve the type; anything else (sub,
+            // unknown delta, out-of-range delta) demotes to scalar so
+            // the access check rejects rather than silently allowing.
+            // Drop ref_id — an interior pointer is no longer the
+            // acquire-tracked owner and can't be released through.
+            let _ = ref_id;
+            match signed_delta {
+                Some(d) if d >= 0 && (d as u64) <= mem_size => {
+                    types.set(
+                        dst,
+                        RegType::PtrToAllocMem {
+                            id,
+                            mem_size: mem_size - d as u64,
+                            ref_id: None,
+                            dynptr_id,
+                        },
+                    );
+                }
+                _ => types.set(dst, RegType::ScalarValue),
+            }
+        }
         RegType::PtrToArena { ref_id, mem_size } => {
             // Kernel `verifier.c` ~L15191 (v6.15): when dst is
             // PTR_TO_ARENA, "Any arithmetic operations are allowed on

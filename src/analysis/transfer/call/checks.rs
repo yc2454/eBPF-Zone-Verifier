@@ -1618,6 +1618,24 @@ pub(crate) fn validate_writable_mem(
             );
             false
         }
+        RegType::PtrToAllocMem { mem_size, .. } => {
+            // Ringbuf-reserved (or kfunc bpf_obj_new) memory is writable.
+            // Bound check: helper write-size must fit within remaining
+            // bytes from this pointer's offset (mem_size already encodes
+            // the post-offset remaining size after pointer arithmetic
+            // through `update_ptr_arithmetic_type`).
+            if let Some(sz) = size {
+                if (sz as u64) > mem_size {
+                    env.fail(VerificationError::InvalidArgType { pc, reg });
+                    error!(
+                        "[Verifier] pc {}: write size {} exceeds remaining alloc-mem size {}",
+                        pc, sz, mem_size
+                    );
+                    return false;
+                }
+            }
+            true
+        }
         _ => {
             env.fail(VerificationError::InvalidArgType { pc, reg });
             error!(
