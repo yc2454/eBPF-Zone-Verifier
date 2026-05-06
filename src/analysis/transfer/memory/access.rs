@@ -529,7 +529,21 @@ pub fn check_store(
                     ..
                 }
             );
+            // Conntrack types: `nf_conn___init` is the transient
+            // init-state from `bpf_skb_ct_alloc` / `bpf_xdp_ct_alloc`
+            // (pre-insert), `nf_conn` is the post-insert form. Kernel
+            // admits store of the writable fields (status, mark,
+            // timeout) on both. Without mem_region_model entries,
+            // treat them like "unknown" for store purposes.
+            let store_skip = matches!(
+                base_ty,
+                PtrToBtfId {
+                    type_name: "nf_conn___init" | "nf_conn",
+                    ..
+                }
+            );
             if !is_unknown
+                && !store_skip
                 && !mem_region_model::is_valid_mem_region_read(state.types.get(base), off, size)
             {
                 error!(
