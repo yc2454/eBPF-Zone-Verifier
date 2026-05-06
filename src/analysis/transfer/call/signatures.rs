@@ -3416,20 +3416,22 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL | CallFlags::MIGHT_SLEEP),
 
         "bpf_crypto_ctx_acquire" => CallProto::with_args([
-            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+            PtrToBtfIdNamed { type_name: "bpf_crypto_ctx" },
+            DontCare, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::PtrToBtfIdNamed { type_name: "bpf_crypto_ctx" })
         .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
 
         "bpf_crypto_ctx_release" => CallProto::with_args([
-            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+            PtrToBtfIdNamed { type_name: "bpf_crypto_ctx" },
+            DontCare, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::Void)
         .flags(CallFlags::RELEASE)
         .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
 
         "bpf_crypto_encrypt" => CallProto::with_args([
-            PtrToBtfId,
+            PtrToBtfIdNamed { type_name: "bpf_crypto_ctx" },
             DynptrArg { uninit: false, rdwr_only: false },
             DynptrArg { uninit: false, rdwr_only: false },
             Anything,
@@ -3438,7 +3440,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Scalar),
 
         "bpf_crypto_decrypt" => CallProto::with_args([
-            PtrToBtfId,
+            PtrToBtfIdNamed { type_name: "bpf_crypto_ctx" },
             DynptrArg { uninit: false, rdwr_only: false },
             DynptrArg { uninit: false, rdwr_only: false },
             Anything,
