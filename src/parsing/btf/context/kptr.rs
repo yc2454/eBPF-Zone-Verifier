@@ -8,69 +8,63 @@ use crate::parsing::elf::{KptrField, KptrFieldKind};
 
 use super::super::types::*;
 
+fn kptr_kind_from_tag(name: &str) -> Option<KptrFieldKind> {
+    match name {
+        "kptr" => Some(KptrFieldKind::Ref),
+        "kptr_untrusted" => Some(KptrFieldKind::Unref),
+        "rcu" => Some(KptrFieldKind::Rcu),
+        "percpu_kptr" => Some(KptrFieldKind::Percpu),
+        "uptr" => Some(KptrFieldKind::Uptr),
+        _ => None,
+    }
+}
+
 impl BtfContext {
-    /// HashMap-based reimpl of `classify_kptr_field`. Walks a type chain
-    /// of modifiers + TYPE_TAGs around an outer `BTF_KIND_PTR`, picking
-    /// up the most-recently-seen kptr tag (kptr / kptr_untrusted / rcu /
-    /// percpu_kptr / uptr) on either side of the PTR. Returns
-    /// `(kptr-field-kind, pointee-btf-id)` if the chain ends in a typed
-    /// pointer carrying a kptr-style tag, else None.
+    /// Walks a type chain of modifiers + TYPE_TAGs around an outer
+    /// `BTF_KIND_PTR`, picking up the most-recently-seen kptr tag
+    /// (kptr / kptr_untrusted / rcu / percpu_kptr / uptr) on either
+    /// side of the PTR. Returns `(kptr-field-kind, pointee-btf-id)`
+    /// if the chain ends in a typed pointer carrying a kptr-style
+    /// tag, else None.
     fn classify_kptr_pointer(&self, field_type_id: u32) -> Option<(KptrFieldKind, u32)> {
-        let kind_from_tag = |name: &str| -> Option<KptrFieldKind> {
-            match name {
-                "kptr" => Some(KptrFieldKind::Ref),
-                "kptr_untrusted" => Some(KptrFieldKind::Unref),
-                "rcu" => Some(KptrFieldKind::Rcu),
-                "percpu_kptr" => Some(KptrFieldKind::Percpu),
-                "uptr" => Some(KptrFieldKind::Uptr),
-                _ => None,
-            }
-        };
-        let mut kind: Option<KptrFieldKind> = None;
-        let mut curr = field_type_id;
-        for _ in 0..16 {
-            let t = self.types.get(&curr)?;
-            match t.kind() {
-                BTF_KIND_TYPEDEF | BTF_KIND_CONST | BTF_KIND_VOLATILE | BTF_KIND_RESTRICT => {
-                    curr = t.size_or_type;
-                }
-                BTF_KIND_TYPE_TAG => {
-                    if let Some(name) = self.get_string(t.name_off)
-                        && let Some(k) = kind_from_tag(name)
-                    {
-                        kind = Some(k);
-                    }
-                    curr = t.size_or_type;
-                }
-                BTF_KIND_PTR => break,
-                _ => return None,
-            }
-        }
+        let (curr, kind) = self.peel_modifiers_collecting_kptr(field_type_id, None);
         let ptr_t = self.types.get(&curr)?;
         if ptr_t.kind() != BTF_KIND_PTR {
             return None;
         }
-        let mut pointee = ptr_t.size_or_type;
+        let (pointee, kind) = self.peel_modifiers_collecting_kptr(ptr_t.size_or_type, kind);
+        kind.map(|k| (k, pointee))
+    }
+
+    /// Peel TYPEDEF/CONST/VOLATILE/RESTRICT modifiers and TYPE_TAGs,
+    /// updating `kind` whenever a TYPE_TAG names a kptr flavor. Stops
+    /// at the first non-modifier, non-TYPE_TAG kind (or on cycle / dead
+    /// end). Used by `classify_kptr_pointer` for both halves of the
+    /// outer-PTR / pointee walk so the kptr-tag pickup logic lives in
+    /// one place.
+    fn peel_modifiers_collecting_kptr(
+        &self,
+        mut id: u32,
+        mut kind: Option<KptrFieldKind>,
+    ) -> (u32, Option<KptrFieldKind>) {
         for _ in 0..16 {
-            let Some(t) = self.types.get(&pointee) else {
-                break;
-            };
+            let Some(t) = self.types.get(&id) else { break };
             match t.kind() {
                 BTF_KIND_TYPEDEF | BTF_KIND_CONST | BTF_KIND_VOLATILE | BTF_KIND_RESTRICT => {
-                    pointee = t.size_or_type;
+                    id = t.size_or_type;
                 }
                 BTF_KIND_TYPE_TAG => {
                     if let Some(name) = self.get_string(t.name_off)
-                        && let Some(k) = kind_from_tag(name)
+                        && let Some(k) = kptr_kind_from_tag(name)
                     {
                         kind = Some(k);
                     }
-                    pointee = t.size_or_type;
+                    id = t.size_or_type;
                 }
                 _ => break,
             }
         }
-        kind.map(|k| (k, pointee))
+        (id, kind)
     }
 
     /// Walk every kptr-tagged pointer reachable through a map's value
