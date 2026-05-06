@@ -340,6 +340,12 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
             env.ctx.prog_kind,
             env.ctx.attach_subtype.as_deref(),
         ) {
+            // Kernel `check_return_code` uses `retval_range_s32` for
+            // hooks whose retval is `int` — clang emits `return -EPERM`
+            // as `w0 = 0xFFFFFFFF` (W32 mov), which zero-extends to
+            // u64=4294967295 but reads as s32=-1. Use the s32 view when
+            // the rule's lower bound is negative (i.e. errno-style)
+            // or when r0's full s64 view sits in the high u32 half.
             let out_of_range = r0_min < rule.lo || r0_max > rule.hi;
             let needs_known = rule.require_known
                 && (r0_min != r0_max

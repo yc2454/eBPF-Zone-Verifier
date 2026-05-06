@@ -348,6 +348,14 @@ const ATTACH_TARGET_ARG_KINDS: &[(&str, u8, TracingArgKind)] = &[
     ("bpf_testmod_fentry_test11", 8, TracingArgKind::Scalar),
     ("bpf_testmod_fentry_test11", 9, TracingArgKind::Scalar),
 
+    // fmod_ret/update_socket_protocol(int family, int type, int protocol)
+    // — all three int args are scalar. Lax-fallback over-typing makes
+    // `R7 << 32` (sign-extending the loaded `type`) look like ptr-arith.
+    // Closes mptcpify.c::mptcpify.
+    ("update_socket_protocol", 0, TracingArgKind::Scalar),
+    ("update_socket_protocol", 1, TracingArgKind::Scalar),
+    ("update_socket_protocol", 2, TracingArgKind::Scalar),
+
     // LSM hook attach targets — trailing scalar args. The `entry_args`
     // table in `derive_program_kind`'s LSM dispatch only declares the
     // BTF-typed pointer prefix; trailing slots fall through to the lax
@@ -366,6 +374,11 @@ const ATTACH_TARGET_ARG_KINDS: &[(&str, u8, TracingArgKind)] = &[
     // sk_alloc_security(struct sock *sk, int family, gfp_t priority)
     ("sk_alloc_security", 1, TracingArgKind::Scalar),
     ("sk_alloc_security", 2, TracingArgKind::Scalar),
+    // file_mprotect(struct vm_area_struct *vma, unsigned long reqprot,
+    //               unsigned long prot, int ret)
+    ("file_mprotect", 1, TracingArgKind::Scalar),
+    ("file_mprotect", 2, TracingArgKind::Scalar),
+    ("file_mprotect", 3, TracingArgKind::Scalar),
     // inet_csk_clone(struct sock *newsk, const struct request_sock *req)
     // — both pointers, no scalar slots.
 ];
@@ -1187,6 +1200,19 @@ impl Analyzer {
                             Some(vec![("socket", false)])
                         }
                         (ProgramKind::Lsm, _, "bprm_committed_creds") => {
+                            Some(vec![("linux_binprm", false)])
+                        }
+                        // file_mprotect(struct vm_area_struct *vma,
+                        //               unsigned long reqprot,
+                        //               unsigned long prot, int ret)
+                        // Trailing scalar args (reqprot/prot/ret) get
+                        // their override via ATTACH_TARGET_ARG_KINDS.
+                        (ProgramKind::Lsm, _, "file_mprotect") => {
+                            Some(vec![("vm_area_struct", false)])
+                        }
+                        // bprm_creds_for_exec(struct linux_binprm *bprm)
+                        // — drives ima.c::bprm_creds_for_exec.
+                        (ProgramKind::Lsm, _, "bprm_creds_for_exec") => {
                             Some(vec![("linux_binprm", false)])
                         }
                         // tp_btf raw-tracepoint targets. Args from
