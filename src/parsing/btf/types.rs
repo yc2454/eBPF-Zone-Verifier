@@ -12,6 +12,49 @@ use std::collections::{HashMap, HashSet};
 
 pub const BTF_MAGIC: u16 = 0xEB9F;
 
+/// Decoded view of the 24-byte BTF section header. Both `parse_btf` and
+/// `parse_btf_map_defs` start by reading the same fields; this struct
+/// shares the decode and the bounds check.
+pub(super) struct BtfHeader {
+    /// Absolute byte offset where the type entries begin.
+    pub type_start: usize,
+    /// One-past-the-last byte of the type-entries region.
+    pub type_end: usize,
+    /// Absolute byte offset where the strings blob begins.
+    pub str_start: usize,
+    /// One-past-the-last byte of the strings blob.
+    pub str_end: usize,
+}
+
+impl BtfHeader {
+    pub(super) fn parse(bytes: &[u8]) -> Result<Self, String> {
+        use std::convert::TryInto;
+        if bytes.len() < 24 {
+            return Err("BTF too short".into());
+        }
+        let hdr_len = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+        let type_off = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+        let type_len = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
+        let str_off = u32::from_le_bytes(bytes[16..20].try_into().unwrap());
+        let str_len = u32::from_le_bytes(bytes[20..24].try_into().unwrap());
+
+        let type_start = (hdr_len + type_off) as usize;
+        let type_end = type_start + type_len as usize;
+        let str_start = (hdr_len + str_off) as usize;
+        let str_end = str_start + str_len as usize;
+
+        if type_end > bytes.len() || str_end > bytes.len() {
+            return Err("BTF sections out of bounds".into());
+        }
+        Ok(BtfHeader {
+            type_start,
+            type_end,
+            str_start,
+            str_end,
+        })
+    }
+}
+
 // Kinds
 pub const BTF_KIND_INT: u8 = 1;
 pub const BTF_KIND_PTR: u8 = 2;

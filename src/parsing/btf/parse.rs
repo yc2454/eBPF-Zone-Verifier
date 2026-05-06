@@ -8,26 +8,11 @@ use super::types::*;
 
 /// Parses the .BTF section into a structured Context for analysis
 pub fn parse_btf(bytes: &[u8]) -> Result<BtfContext, String> {
-    if bytes.len() < 24 {
-        return Err("BTF too short".into());
-    }
+    let hdr = BtfHeader::parse(bytes)?;
+    let type_start = hdr.type_start;
+    let type_end = hdr.type_end;
 
-    let hdr_len = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-    let type_off = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
-    let type_len = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
-    let str_off = u32::from_le_bytes(bytes[16..20].try_into().unwrap());
-    let str_len = u32::from_le_bytes(bytes[20..24].try_into().unwrap());
-
-    let type_start = (hdr_len + type_off) as usize;
-    let type_end = type_start + type_len as usize;
-    let str_start = (hdr_len + str_off) as usize;
-    let str_end = str_start + str_len as usize;
-
-    if type_end > bytes.len() || str_end > bytes.len() {
-        return Err("BTF sections out of bounds".into());
-    }
-
-    let strings = bytes[str_start..str_end].to_vec();
+    let strings = bytes[hdr.str_start..hdr.str_end].to_vec();
     let mut types = HashMap::new();
     let mut decl_tags = Vec::new();
     let mut cursor = type_start;
