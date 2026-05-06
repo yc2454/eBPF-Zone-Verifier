@@ -727,6 +727,14 @@ pub fn trusted_field_load(struct_name: &str, field_name: &str) -> bool {
         // `cgroup` (offset 664 in tcp_sock via the inet_conn chain).
         // Closes the cgrp_ls_attach_cgroup helper-arg path.
         | ("sock", "cgroup")
+        // vm_area_struct.vm_file → `struct file *`. Trusted while the
+        // vma is trusted (bpf_find_vma's callback receives a TRUSTED
+        // vm_area_struct *). Programs typically chain to
+        // `vma->vm_file->f_path.dentry->d_shortname.string` for
+        // probe_read_kernel_str; downstream loads on the resulting
+        // PtrToBtfId{file} are admitted via the lax PtrToBtfId access
+        // policy. Closes find_vma::handle_{getpid,pe}.
+        | ("vm_area_struct", "vm_file")
     )
 }
 
