@@ -670,6 +670,25 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
             state.domain.assume_le_imm(Reg::R0, hi);
             state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
         }
+        // Mirrors kernel's `do_refine_retval_range()` for the str-family
+        // probe-read helpers: R0 is bounded by [-MAX_ERRNO, R2_max].
+        // Without this refinement, `if (len >= 0) ptr += len;` (a common
+        // varlen idiom) rejects as `Add ptr, unbounded-scalar` at the
+        // pointer-arithmetic check. Bound R0 by R2 directly (the size
+        // arg) rather than via the proto's mem_size_pairs, so this fires
+        // for helpers without a registered proto (PROBE_READ_KERNEL_STR /
+        // PROBE_READ_USER_STR are intentionally unmodeled at the proto
+        // level — adding them surfaces a stale-zone-offset issue in
+        // mem_size_pair validation that would regress unrelated tests).
+        constants::BPF_PROBE_READ_STR
+        | constants::BPF_PROBE_READ_USER_STR
+        | constants::BPF_PROBE_READ_KERNEL_STR => {
+            let (_, hi) = state.domain.get_interval(Reg::R2);
+            if hi != i64::MAX {
+                state.domain.assume_le_imm(Reg::R0, hi);
+            }
+            state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
+        }
         constants::BPF_KFUNC_CALL_DUMMY => {
             // Assume unsupported external kfuncs return an unknown opaque pointer that can be dereferenced
             state.types.set(
