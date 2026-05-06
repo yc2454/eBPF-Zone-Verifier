@@ -30,12 +30,24 @@ pub(crate) fn handle_mov(state: &mut State, width: Width, dst: Reg, src: &Operan
     match src {
         Operand::Reg(r) => {
             if width == Width::W32 {
+                // Snapshot u32-range proof + u32 shadow bounds on `*r`
+                // before forgetting `dst`, because (a) for self-mov
+                // (dst == *r) forget() wipes the very bounds we need;
+                // (b) when full bounds are unbounded but the W32 shadow
+                // is tight (e.g. after a `if w1 > 10` jmp32 that only
+                // narrowed the shadow), zero-extension `w_d = w_s`
+                // makes upper 32 bits zero, so dst's full bound = the
+                // source's u32 shadow. Without this, `if w1 > 10; w1
+                // = w1; r1 *= 24; ptr += r1` rejects: the self-mov
+                // would widen to [0, u32::MAX], blowing the Mul bound.
+                let preserved = state.domain.proven_u32_range(*r, Reg::Zero);
+                let (u32_min, u32_max) = state.domain.get_u32_bounds(*r);
                 state.domain.forget(dst);
-                if state.domain.proven_u32_range(*r, Reg::Zero) {
+                if preserved {
                     state.domain.assign_reg(dst, *r);
                 } else {
-                    state.domain.assume_ge_imm(dst, 0);
-                    state.domain.assume_le_imm(dst, 0xFFFFFFFF);
+                    state.domain.assume_ge_imm(dst, u32_min as i64);
+                    state.domain.assume_le_imm(dst, u32_max as i64);
                 }
             } else {
                 if dst == *r {
