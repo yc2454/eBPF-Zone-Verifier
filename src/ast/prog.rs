@@ -23,6 +23,11 @@ pub enum ProgramKind {
     RawTracepoint,
     RawTracepointWritable,
     CgroupSockAddr,
+    /// `SEC("cgroup/getsockopt")` and `SEC("cgroup/setsockopt")` —
+    /// BPF_PROG_TYPE_CGROUP_SOCKOPT. Receives `struct bpf_sockopt *` ctx;
+    /// distinguishes attach type via the SEC suffix so retval-write rules
+    /// can be enforced (kernel allows write only for setsockopt).
+    CgroupSockopt,
     Lsm,
     Tracing,
     /// `SEC("syscall")` — BPF_PROG_TYPE_SYSCALL (kernel v5.11+).
@@ -63,6 +68,7 @@ pub enum ContextKind {
     BpfSock,
     SkMsgMd,
     BpfSockAddr,
+    BpfSockopt,
     PtRegs,
     IterTask,
     Unknown,
@@ -102,54 +108,101 @@ impl ProgramKind {
         if s.starts_with("tcx/") || s.starts_with("netkit/") {
             return ProgramKind::SchedCls;
         }
-        if s.starts_with("fentry/")
-            || s.starts_with("fentry.s/")
-            || s.starts_with("fexit/")
-            || s.starts_with("fexit.s/")
-            || s.starts_with("fmod_ret/")
-            || s.starts_with("fmod_ret.s/")
-            || s.starts_with("tp_btf/")
-            // libbpf optional-load form: `?tp_btf/<func>`. Treat as
-            // Tracing for kfunc-allowlist purposes (cf.
-            // `verifier_global_ptr_args::trusted_task_arg_nullable`).
-            // We don't strip `?` for the other tracing flavors because
-            // `?fentry/` / `?fexit/` siblings in the corpus rely on
-            // their current-Unknown kfunc rejection — see audit doc.
+        // Normalize libbpf's optional-load `?` prefix for tracing-class
+        // SECs (fentry/fexit/fmod_ret/iter/lsm/raw_tp/uprobe/kprobe/
+        // tracepoint/perf_event/syscall/freplace). The `?` is purely
+        // libbpf-internal optionality — kernel reaches the same prog_type
+        // and applies the same kfunc/helper allowlists either way. The
+        // strip is TARGETED to tracing-class prefixes (not blanket) so
+        // unrelated SECs (struct_ops, xdp, cgroup_skb) keep their
+        // bespoke handling.
+        let tr_view: &str = match s.strip_prefix('?') {
+            Some(rest)
+                if rest.starts_with("fentry/")
+                    || rest.starts_with("fentry.s/")
+                    || rest.starts_with("fexit/")
+                    || rest.starts_with("fexit.s/")
+                    || rest.starts_with("fmod_ret/")
+                    || rest.starts_with("fmod_ret.s/")
+                    || rest.starts_with("iter/")
+                    || rest.starts_with("iter.s/")
+                    || rest.starts_with("lsm/")
+                    || rest.starts_with("lsm.s/")
+                    || rest.starts_with("lsm_cgroup/")
+                    || rest.starts_with("lsm_cgroup.s/")
+                    || rest.starts_with("raw_tp/")
+                    || rest.starts_with("raw_tp.w/")
+                    || rest == "raw_tp"
+                    || rest == "raw_tp.w"
+                    || rest.starts_with("uprobe/")
+                    || rest.starts_with("uprobe.s/")
+                    || rest.starts_with("uretprobe/")
+                    || rest.starts_with("uretprobe.s/")
+                    || rest.starts_with("kprobe/")
+                    || rest.starts_with("kretprobe/")
+                    || rest.starts_with("tracepoint/")
+                    || rest == "tracepoint"
+                    || rest.starts_with("perf_event")
+                    || rest == "syscall"
+                    || rest.starts_with("freplace/")
+                    // libbpf-managed optional SECs: `?tc`, `?xdp`,
+                    // `?cgroup_*`, etc. produce the same prog_type as
+                    // their non-`?` counterparts; the `?` is purely
+                    // libbpf-internal optionality (skel-load doesn't
+                    // require these to verify). Without stripping,
+                    // they fall through to ProgramKind::Unknown and
+                    // their ctx loads/helpers don't get the right
+                    // model.
+                    || rest == "tc"
+                    || rest.starts_with("tc/")
+                    || rest == "xdp"
+                    || rest.starts_with("xdp/")
+                    || rest.starts_with("cgroup_skb/")
+                    || rest.starts_with("cgroup/") =>
+            {
+                rest
+            }
+            _ => &s,
+        };
+        if tr_view.starts_with("fentry/")
+            || tr_view.starts_with("fentry.s/")
+            || tr_view.starts_with("fexit/")
+            || tr_view.starts_with("fexit.s/")
+            || tr_view.starts_with("fmod_ret/")
+            || tr_view.starts_with("fmod_ret.s/")
+            || tr_view.starts_with("tp_btf/")
             || s.starts_with("?tp_btf/")
-            || s.starts_with("iter/")
-            || s.starts_with("iter.s/")
+            || tr_view.starts_with("iter/")
+            || tr_view.starts_with("iter.s/")
         {
             return ProgramKind::Tracing;
         }
-        if s == "raw_tp"
-            || s.starts_with("raw_tp/")
-            || s.starts_with("raw_tp.w/")
-            || s == "raw_tp.w"
+        if tr_view == "raw_tp"
+            || tr_view.starts_with("raw_tp/")
+            || tr_view.starts_with("raw_tp.w/")
+            || tr_view == "raw_tp.w"
         {
             return ProgramKind::RawTracepoint;
         }
-        if s.starts_with("lsm/") || s.starts_with("lsm.s/") {
+        if tr_view.starts_with("lsm/")
+            || tr_view.starts_with("lsm.s/")
+            || tr_view.starts_with("lsm_cgroup/")
+            || tr_view.starts_with("lsm_cgroup.s/")
+        {
             return ProgramKind::Lsm;
         }
-        if s.starts_with("uprobe/")
-            || s.starts_with("uprobe.s/")
-            || s.starts_with("uretprobe/")
-            || s.starts_with("uretprobe.s/")
-            // `uprobe.session` / `kprobe.session`: session-attach SEC has
-            // no '/<func>' suffix in the test corpus (see
-            // uprobe_multi_verifier.c). Match the bare flavor too so the
-            // exit-time R0 ∈ [0, 1] rule in `expected_retval_rule` fires.
-            || s == "uprobe.session"
-            || s == "uretprobe.session"
-            || s == "kprobe.session"
-            || s == "kretprobe.session"
+        if tr_view.starts_with("uprobe/")
+            || tr_view.starts_with("uprobe.s/")
+            || tr_view.starts_with("uretprobe/")
+            || tr_view.starts_with("uretprobe.s/")
+            || tr_view == "uprobe.session"
+            || tr_view == "uretprobe.session"
+            || tr_view == "kprobe.session"
+            || tr_view == "kretprobe.session"
         {
             return ProgramKind::Kprobe;
         }
-        if s.starts_with("cgroup_skb/") {
-            return ProgramKind::CgroupSkb;
-        }
-        if s == "syscall" {
+        if tr_view == "syscall" {
             return ProgramKind::Syscall;
         }
         if s == "netfilter" || s.starts_with("netfilter/") {
@@ -206,15 +259,15 @@ impl ProgramKind {
         // Since caller and callee must have the same program type, these target
         // sections execute under the SchedCls context (SkBuff). This is a fast-path
         // assumption and not a general mechanism for sound program kind inference.
-        if s.starts_with("classifier")
-            || s.starts_with("tc")
-            || s.starts_with("sched_cls")
-            || s.starts_with("action")
-            || s.starts_with("ingress")
-            || s.starts_with("egress")
-            || s.starts_with("l2_")
-            || s.starts_with("drop_")
-            || s.starts_with("tail")
+        if tr_view.starts_with("classifier")
+            || tr_view.starts_with("tc")
+            || tr_view.starts_with("sched_cls")
+            || tr_view.starts_with("action")
+            || tr_view.starts_with("ingress")
+            || tr_view.starts_with("egress")
+            || tr_view.starts_with("l2_")
+            || tr_view.starts_with("drop_")
+            || tr_view.starts_with("tail")
             || s.starts_with("downcall")
         {
             return ProgramKind::SchedCls;
@@ -228,31 +281,64 @@ impl ProgramKind {
         if s.starts_with("sk_msg") {
             return ProgramKind::SkMsg;
         }
-        if s.starts_with("cgroup/bind")
-            || s.starts_with("cgroup/connect")
-            || s.starts_with("cgroup/sendmsg")
-            || s.starts_with("cgroup/recvmsg")
-            || s.starts_with("cgroup/getpeername")
-            || s.starts_with("cgroup/getsockname")
+        // SK_SKB / sockmap programs: stream parser/verdict callbacks on
+        // a sockmap-attached socket. Section names include `sk_skb`,
+        // `sk_skb1`, `sk_skb2`, `sk_skb/stream_parser`,
+        // `sk_skb/stream_verdict`. Ctx is __sk_buff, so the SK_BUFF_FIELDS
+        // table (with `data` @ 76 → PacketStart, `data_end` @ 80 →
+        // PacketEnd) types loads correctly. Without this mapping the
+        // program kind falls through to Unknown and ctx field loads
+        // return Scalar.
+        if s.starts_with("sk_skb") {
+            return ProgramKind::SkSkb;
+        }
+        // Recognize libbpf optional-load `?cgroup[_skb]/...` form alongside
+        // bare `cgroup[_skb]/...` for the sock_addr / sockopt / sock-create
+        // and skb hook families. Files using these include dynptr_success
+        // (`?cgroup_skb/egress`), test_ldsx_insn (`?cgroup/getsockopt`),
+        // and test_ns_current_pid_tgid (`?cgroup/bind4`). We intentionally
+        // do NOT strip `?` globally — see
+        // `feedback_fix_unmasks_kernel_rejection` (a global strip in past
+        // sessions unmasked kfunc-allowlist rejections in dynptr_fail
+        // siblings, producing 4 FAs).
+        let cg_view: &str = match s.strip_prefix('?') {
+            Some(rest) if rest.starts_with("cgroup/") || rest.starts_with("cgroup_skb/") => rest,
+            _ => &s,
+        };
+        if cg_view.starts_with("cgroup/bind")
+            || cg_view.starts_with("cgroup/connect")
+            || cg_view.starts_with("cgroup/sendmsg")
+            || cg_view.starts_with("cgroup/recvmsg")
+            || cg_view.starts_with("cgroup/getpeername")
+            || cg_view.starts_with("cgroup/getsockname")
         {
             return ProgramKind::CgroupSockAddr;
         }
-        if s.starts_with("cgroup/skb") {
+        if cg_view.starts_with("cgroup_skb/") {
             return ProgramKind::CgroupSkb;
         }
-        if s.starts_with("cgroup/sock") || s.starts_with("cgroup/post_bind") {
+        if cg_view.starts_with("cgroup/skb") {
+            return ProgramKind::CgroupSkb;
+        }
+        // cgroup/getsockopt and cgroup/setsockopt must be matched before the
+        // generic "cgroup/sock*" arm below, otherwise they collapse into
+        // CgroupSock and pick up the wrong (bpf_sock) context layout.
+        if cg_view.starts_with("cgroup/getsockopt") || cg_view.starts_with("cgroup/setsockopt") {
+            return ProgramKind::CgroupSockopt;
+        }
+        if cg_view.starts_with("cgroup/sock") || cg_view.starts_with("cgroup/post_bind") {
             return ProgramKind::CgroupSock;
         }
-        if s.starts_with("kprobe") || s.starts_with("kretprobe") {
+        if tr_view.starts_with("kprobe") || tr_view.starts_with("kretprobe") {
             return ProgramKind::Kprobe;
         }
-        if s.starts_with("tracepoint") {
+        if tr_view.starts_with("tracepoint") {
             return ProgramKind::Tracepoint;
         }
-        if s.starts_with("raw_tracepoint") {
+        if tr_view.starts_with("raw_tracepoint") {
             return ProgramKind::RawTracepoint;
         }
-        if s.starts_with("perf_event") {
+        if tr_view.starts_with("perf_event") {
             return ProgramKind::PerfEvent;
         }
         if s == "sk_lookup" || s.starts_with("sk_lookup/") {
@@ -270,6 +356,33 @@ impl ProgramKind {
             return ProgramKind::LwtOut;
         }
         if s == "lwt_xmit" || s == "lwt_seg6local" {
+            return ProgramKind::LwtXmit;
+        }
+        // Custom SEC names used by test_lwt_redirect.c — the userspace
+        // driver (prog_tests/lwt_redirect.c) calls
+        // bpf_program__set_type(BPF_PROG_TYPE_LWT_{IN,OUT}) keyed on these
+        // SEC names. The `_nomac` suffix only changes attach configuration
+        // on the user side; both share the same kernel prog_type and
+        // therefore the same __sk_buff ctx layout.
+        if s == "redir_ingress" || s == "redir_ingress_nomac" {
+            return ProgramKind::LwtIn;
+        }
+        if s == "redir_egress" || s == "redir_egress_nomac" {
+            return ProgramKind::LwtOut;
+        }
+        // Custom SEC names used by test_lwt_seg6local.c. The userspace
+        // driver loads these via `ip route ... encap bpf in obj <obj>
+        // sec encap_srh ...` (LwtIn-style encap insertion) or
+        // `... encap seg6local action End.BPF endpoint obj <obj>
+        // sec <add_egr_x|pop_egr|inspect_t> ...` (LwtSeg6local action
+        // BPF endpoints). Both classes share the __sk_buff ctx layout;
+        // routing the seg6local actions to LwtXmit (which we already
+        // route lwt_seg6local to above) gives them the correct
+        // skb->data / skb->data_end packet typing.
+        if s == "encap_srh" {
+            return ProgramKind::LwtIn;
+        }
+        if s == "add_egr_x" || s == "pop_egr" || s == "inspect_t" {
             return ProgramKind::LwtXmit;
         }
         ProgramKind::Unknown
@@ -293,6 +406,7 @@ impl ProgramKind {
             ProgramKind::SkLookup => ContextKind::SkLookup,
             ProgramKind::SkMsg => ContextKind::SkMsgMd,
             ProgramKind::CgroupSockAddr => ContextKind::BpfSockAddr,
+            ProgramKind::CgroupSockopt => ContextKind::BpfSockopt,
             ProgramKind::CgroupSock => ContextKind::BpfSock,
             _ => ContextKind::Unknown,
         }

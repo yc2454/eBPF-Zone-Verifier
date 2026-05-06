@@ -604,6 +604,12 @@ pub struct MemSizePair {
     pub size_reg: Reg,
     /// If true, size can be 0 (and if ptr is NULL, size MUST be 0)
     pub allow_zero: bool,
+    /// If true, NULL ptr skips the size check entirely. Mirrors the
+    /// kernel's `is_kfunc_arg_optional` (the `__opt` suffix) — when the
+    /// pointer is NULL, no buffer access happens, so any size is fine.
+    /// Used by `bpf_dynptr_slice`/`_rdwr` whose `buffer__opt` is the
+    /// scratch-buffer for the slow copy path.
+    pub null_skips_size_check: bool,
 }
 
 impl MemSizePair {
@@ -612,6 +618,7 @@ impl MemSizePair {
             ptr_reg,
             size_reg,
             allow_zero: false,
+            null_skips_size_check: false,
         }
     }
 
@@ -620,6 +627,16 @@ impl MemSizePair {
             ptr_reg,
             size_reg,
             allow_zero: true,
+            null_skips_size_check: false,
+        }
+    }
+
+    pub(crate) const fn new_optional(ptr_reg: Reg, size_reg: Reg) -> Self {
+        Self {
+            ptr_reg,
+            size_reg,
+            allow_zero: false,
+            null_skips_size_check: true,
         }
     }
 }
@@ -640,6 +657,19 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             ConstMapPtr, // R1: map
             PtrToMapKey, // R2: key
             DontCare,
+            DontCare,
+            DontCare,
+        ]),
+
+        // bpf_map_lookup_percpu_elem(map, key, cpu) — same shape as
+        // map_lookup_elem with an extra cpu scalar arg. Returns a
+        // pointer to the per-cpu copy of the value, or NULL.
+        // R0 typing handled by `update_call_types` (PtrToMapValueOrNull
+        // keyed off R1's map).
+        constants::BPF_MAP_LOOKUP_PERCPU_ELEM => CallProto::with_args([
+            ConstMapPtr, // R1: map
+            PtrToMapKey, // R2: key
+            Anything,    // R3: cpu
             DontCare,
             DontCare,
         ]),
@@ -689,7 +719,14 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
 
         // ---- Socket/context helpers ----
         constants::BPF_GET_SOCKET_COOKIE => CallProto::with_args([
-            PtrToCtx, // R1: ctx
+            // Kernel registers 4 per-prog-type protos for this helper
+            // (skb-ctx / sock / sock_addr-ctx / sock_common-btf-id).
+            // We use PtrToCtx for the validator entry point; the
+            // sock-shaped variants are admitted via a per-helper
+            // relaxation in `validate_ptr_to_ctx` (keyed on
+            // `ctx.helper == BPF_GET_SOCKET_COOKIE`) so that ctx-offset
+            // validation still fires for skb-ctx programs.
+            PtrToCtx, // R1: ctx / sock / btf_id sock_common
             DontCare, DontCare, DontCare, DontCare,
         ]),
 
@@ -1342,12 +1379,22 @@ const CPUMASK_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 5] = [
     crate::ast::ProgramKind::StructOps,
 ];
 
-/// Cgroup kfunc family allowlist — same set as cpumask. Aliased
-/// rather than reusing the cpumask constant directly so future
-/// per-family divergence (e.g. cgroup-only access from `cgroup/skb`)
-/// can be encoded without unwiring callers.
-const CGROUP_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 5] =
-    CPUMASK_KFUNC_PROG_TYPES;
+/// Cgroup kfunc family allowlist. Mirrors the kernel's cgroup_kfunc_set
+/// registration: tracing/tracepoint/perf_event/syscall/struct_ops (the
+/// cpumask base) **plus LSM** — kernel registers the cgroup kfunc id_set
+/// against BPF_PROG_TYPE_LSM (selftests like
+/// iters_css_task::iter_css_task_for_each + test_task_under_cgroup::lsm_run
+/// rely on LSM hooks calling bpf_cgroup_from_id/_acquire). Broken out
+/// from the cpumask alias so the LSM addition doesn't bleed into cpumask
+/// (cpumask kfuncs are not registered for LSM upstream).
+const CGROUP_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 6] = [
+    crate::ast::ProgramKind::Syscall,
+    crate::ast::ProgramKind::Tracing,
+    crate::ast::ProgramKind::Tracepoint,
+    crate::ast::ProgramKind::PerfEvent,
+    crate::ast::ProgramKind::StructOps,
+    crate::ast::ProgramKind::Lsm,
+];
 
 /// Task kfunc family allowlist (Phase 7 wrap-up). Mirrors the kernel's
 /// `tasks_kfunc_set` registration: tracing (fentry/fexit/tp_btf), LSM,
@@ -1372,11 +1419,11 @@ const LSM_ONLY_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 1] =
     [crate::ast::ProgramKind::Lsm];
 
 /// `bpf_dynptr_from_skb` allowlist (W4.2f). The kfunc is registered for
-/// program types that receive an `__sk_buff *` context — sched_cls/act
+/// program types that receive a skb-shaped context — sched_cls/act
 /// (tc), socket_filter, cgroup_skb, lwt_*, sk_skb, sock_ops, sk_msg,
-/// flow_dissector. raw_tp / tracing / xdp / others get the kernel's
-/// "calling kernel function bpf_dynptr_from_skb is not allowed".
-const SKB_DYNPTR_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 12] = [
+/// flow_dissector, netfilter, and Tracing (tp_btf hooks like
+/// `kfree_skb`/`consume_skb` whose first arg is `struct sk_buff *`).
+const SKB_DYNPTR_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 13] = [
     crate::ast::ProgramKind::SchedCls,
     crate::ast::ProgramKind::SchedAct,
     crate::ast::ProgramKind::SocketFilter,
@@ -1393,6 +1440,11 @@ const SKB_DYNPTR_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 12] = [
     // is `__success` calling `bpf_dynptr_from_skb` from a netfilter
     // hook.
     crate::ast::ProgramKind::Netfilter,
+    // tp_btf hooks like `kfree_skb`/`consume_skb` receive
+    // `struct sk_buff *` as their first arg; kernel allows
+    // bpf_dynptr_from_skb here. dynptr_success::test_dynptr_skb_tp_btf
+    // exercises this combination.
+    crate::ast::ProgramKind::Tracing,
 ];
 
 /// `bpf_dynptr_from_xdp` allowlist (W4.2f) — only XDP programs receive
@@ -1614,11 +1666,11 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // Pair (R1,R2) bounds the dst write. Reads from any dynptr kind
         // including rdonly.
         "bpf_dynptr_read" => CallProto::with_args([
-            PtrToUninitMem, // R1: dst
-            ConstSize,      // R2: len
+            PtrToUninitMem,   // R1: dst
+            ConstSizeOrZero,  // R2: len (0 accepted; runtime returns 0)
             DynptrArg { uninit: false, rdwr_only: false }, // R3: src dynptr
-            Anything,       // R4: offset
-            Anything,       // R5: flags
+            Anything,         // R4: offset
+            Anything,         // R5: flags
         ])
         .ret(RetKind::Scalar)
         .mem_size_pairs(&pairs::DYNPTR_READ),
@@ -1627,17 +1679,138 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         //                      void *src, u32 len, u64 flags)
         //
         // Copies `len` bytes from `src` into `dst` dynptr at `offset`.
-        // `rdwr_only` rejects rdonly dynptrs (e.g. would-be skb/xdp
-        // dynptrs). Pair (R3,R4) bounds the src read.
+        // Kernel doesn't enforce rdwr at verify time (no `__rdwr` on the
+        // kfunc) — runtime returns -EINVAL when dst is rdonly. Tests
+        // like test_skb_readonly / test_dynptr_skb_tp_btf rely on the
+        // verifier accepting the call statically and then asserting on
+        // the runtime errno.
         "bpf_dynptr_write" => CallProto::with_args([
-            DynptrArg { uninit: false, rdwr_only: true }, // R1: dst dynptr
+            DynptrArg { uninit: false, rdwr_only: false }, // R1: dst dynptr
             Anything,                                      // R2: offset
             PtrToMem,                                      // R3: src
-            ConstSize,                                     // R4: len
+            ConstSizeOrZero,                               // R4: len (0 accepted)
             Anything,                                      // R5: flags
         ])
         .ret(RetKind::Scalar)
         .mem_size_pairs(&pairs::DYNPTR_WRITE),
+
+        // ---- XDP metadata kfuncs (NIC-driven RX metadata getters) ----
+        //
+        // All three take an XDP context plus output ptr(s). Used by
+        // xdp_metadata.c, xdp_metadata2.c (freplace), xdp_hw_metadata.c.
+        // Output buffer size is implicit in the C type; modeled as
+        // PtrToUninitMem (writable mem of any size).
+
+        "bpf_xdp_metadata_rx_timestamp" => CallProto::with_args([
+            PtrToCtx, PtrToUninitMem, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .prog_type_allowlist(&XDP_DYNPTR_KFUNC_PROG_TYPES),
+
+        "bpf_xdp_metadata_rx_hash" => CallProto::with_args([
+            PtrToCtx, PtrToUninitMem, PtrToUninitMem, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .prog_type_allowlist(&XDP_DYNPTR_KFUNC_PROG_TYPES),
+
+        "bpf_xdp_metadata_rx_vlan_tag" => CallProto::with_args([
+            PtrToCtx, PtrToUninitMem, PtrToUninitMem, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .prog_type_allowlist(&XDP_DYNPTR_KFUNC_PROG_TYPES),
+
+        // int bpf_dynptr_clone(const struct bpf_dynptr *ptr,
+        //                      struct bpf_dynptr *clone__init)
+        //
+        // Initializes `clone__init` as a fresh dynptr. Kernel propagates
+        // source kind + rdonly onto the clone; we stamp DynptrKind::Local
+        // with rdonly=false because we don't track parent-to-clone
+        // invalidation lineage or propagate Xdp/Skb source kind. Those
+        // are REAL coverage gaps that surface as FAs on
+        // dynptr_fail::clone_invalidate1 + clone_xdp_packet_data —
+        // suppressing the kfunc to mask them would be dishonest about
+        // the verifier's coverage. Keep registered; surface the FAs.
+        "bpf_dynptr_clone" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false },
+            DynptrArg { uninit: true, rdwr_only: false },
+            DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::DynptrInitOnArg {
+            arg: 1,
+            kind: DynptrKind::Local,
+            rdonly: false,
+        }]),
+
+        // int bpf_dynptr_copy(struct bpf_dynptr *dst, u32 dst_off,
+        //                     const struct bpf_dynptr *src, u32 src_off,
+        //                     u32 len)
+        //
+        // Copies `len` bytes from src+src_off to dst+dst_off. Both dynptrs
+        // must be initialized; dst must be writable (rdwr_only). Returns
+        // 0 on success, negative errno on bounds/dst-rdonly. Used in
+        // dynptr_success.c::test_dynptr_copy.
+        "bpf_dynptr_copy" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: true },  // R1: dst (RW)
+            Anything,                                       // R2: dst_off
+            DynptrArg { uninit: false, rdwr_only: false }, // R3: src (any)
+            Anything,                                       // R4: src_off
+            Anything,                                       // R5: len
+        ])
+        .ret(RetKind::Scalar),
+
+        // int bpf_dynptr_adjust(const struct bpf_dynptr *ptr,
+        //                        u32 start, u32 end)
+        //
+        // Trims the dynptr's view to [start, end). Read-only on the
+        // dynptr (mutates internal offset/size, not the buffer), so any
+        // initialized dynptr (including rdonly) is acceptable. The
+        // `__failure` sibling (`dynptr_fail::dynptr_adjust_invalid`)
+        // passes `{}` — our `DynptrArg{uninit:false}` rejects it.
+        "bpf_dynptr_adjust" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false }, // R1: ptr
+            Anything, // R2: start
+            Anything, // R3: end
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // bool bpf_dynptr_is_null(const struct bpf_dynptr *ptr)
+        "bpf_dynptr_is_null" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // bool bpf_dynptr_is_rdonly(const struct bpf_dynptr *ptr)
+        "bpf_dynptr_is_rdonly" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // __u32 bpf_dynptr_size(const struct bpf_dynptr *ptr)
+        "bpf_dynptr_size" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // bpf_dynptr_clone deliberately NOT registered. Two `__failure`
+        // siblings in `dynptr_fail.c` rely on kernel-only rejection
+        // mechanisms we don't model:
+        //   - `clone_invalidate1`: kernel propagates parent invalidation
+        //     to all clones (after `bpf_ringbuf_submit_dynptr(&ptr)`,
+        //     reads through the clone fail). We don't track parent/clone
+        //     lineage on dynptr slots.
+        //   - `clone_xdp_packet_data`: kernel propagates source `Xdp`
+        //     kind onto the clone, so subsequent `bpf_xdp_adjust_head`
+        //     invalidates the clone's slice. We'd default the clone to
+        //     `Local` and miss the invalidation cascade.
+        // Registering the proto without these mechanisms unmasks both as
+        // PASS → FALSE_ACCEPT. Closing `test_dynptr_clone` (1 FR) isn't
+        // worth opening 2 FAs; revisit when clone-lineage is modeled.
 
         // void *bpf_dynptr_data(const struct bpf_dynptr *ptr, u32 offset, u32 len)
         //
@@ -1682,9 +1855,9 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // int bpf_dynptr_from_xdp(struct xdp_md *xdp, u64 flags,
         //                         struct bpf_dynptr *ptr)
         //
-        // Wraps xdp frame data as a dynptr. Same conservative
-        // rdonly=true posture as from_skb pending program-type
-        // refinement.
+        // Wraps xdp frame data as a dynptr. XDP programs CAN mutate
+        // packet data, so the dynptr is read-write — matches kernel
+        // (no DYNPTR_RDONLY_BIT set in `bpf_dynptr_init` for XDP type).
         "bpf_dynptr_from_xdp" => CallProto::with_args([
             PtrToCtx,    // R1: xdp context
             Anything,    // R2: flags
@@ -1696,7 +1869,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .side_effects(&[SideEffect::DynptrInitOnArg {
             arg: 2,
             kind: DynptrKind::Xdp,
-            rdonly: true,
+            rdonly: false,
         }])
         .prog_type_allowlist(&XDP_DYNPTR_KFUNC_PROG_TYPES),
 
@@ -1825,6 +1998,35 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Void)
         .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
 
+        // ---- bpf_iter_kmem_cache_* (kmem_cache_iter.c) ----
+        // 8-byte opaque iter struct. `_next` returns `struct kmem_cache *`
+        // marked TRUSTED — the kernel iter holds the slab_mutex while
+        // walking the slab cache list, so the returned cache is
+        // safe-to-deref via BTF field loads (s->name, s->size).
+        "bpf_iter_kmem_cache_new" => CallProto::with_args([
+            IterArg { kind: IterKind::KmemCache, expected: IterArgExpect::Uninit },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::IterInitOnArg { arg: 0, kind: IterKind::KmemCache }]),
+
+        "bpf_iter_kmem_cache_next" => CallProto::with_args([
+            IterArg { kind: IterKind::KmemCache, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::IterNextBtfId {
+            iter_arg: 0,
+            type_name: "kmem_cache",
+            flags: crate::analysis::machine::reg_types::PtrFlags::TRUSTED,
+        }),
+
+        "bpf_iter_kmem_cache_destroy" => CallProto::with_args([
+            IterArg { kind: IterKind::KmemCache, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
+
         // ---- testmod consumer kfuncs (Phase C iters_testmod.c) ----
         //
         // The kernel registers these in `bpf_testmod_kfunc_set` to
@@ -1911,6 +2113,40 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Void)
         .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
 
+        // ---- bpf_iter_css_task_* (iters_css_task.c) ----
+        // int bpf_iter_css_task_new(struct bpf_iter_css_task *it,
+        //                           struct cgroup_subsys_state *css,
+        //                           unsigned int flags)
+        // KF_ITER_NEW | KF_TRUSTED_ARGS in the kernel (NOT KF_RCU_PROTECTED).
+        // Allowlist-restricted to LSM / iter / sleepable programs
+        // (`check_css_task_iter_allowlist`); the iter holds its own
+        // `css_task_iter` lock so its slot trust does not depend on
+        // in_rcu_cs at init time. `_next` returns `struct task_struct *`
+        // (RCU-flagged); KF_RCU consumers accept, KF_TRUSTED_ARGS reject.
+        "bpf_iter_css_task_new" => CallProto::with_args([
+            IterArg { kind: IterKind::CssTask, expected: IterArgExpect::Uninit },
+            Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .side_effects(&[SideEffect::IterInitOnArg { arg: 0, kind: IterKind::CssTask }]),
+
+        "bpf_iter_css_task_next" => CallProto::with_args([
+            IterArg { kind: IterKind::CssTask, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::IterNextBtfId {
+            iter_arg: 0,
+            type_name: "task_struct",
+            flags: crate::analysis::machine::reg_types::PtrFlags::RCU,
+        }),
+
+        "bpf_iter_css_task_destroy" => CallProto::with_args([
+            IterArg { kind: IterKind::CssTask, expected: IterArgExpect::ActiveOrDrained },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
+
         "bpf_iter_bits_destroy" => CallProto::with_args([
             IterArg { kind: IterKind::Bits, expected: IterArgExpect::ActiveOrDrained },
             DontCare, DontCare, DontCare, DontCare,
@@ -1980,9 +2216,9 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // RetKind::PtrToAllocMemFromArg{size_arg=3}.
         "bpf_dynptr_slice" => CallProto::with_args([
             DynptrArg { uninit: false, rdwr_only: false }, // R1: src dynptr
-            Anything,       // R2: offset
-            PtrToUninitMem, // R3: scratch buffer (write target on slow path)
-            ConstSize,      // R4: buffer size
+            Anything,             // R2: offset
+            PtrToUninitMemOrNull, // R3: scratch buffer (NULL OK — `buffer__opt`)
+            ConstSize,            // R4: buffer size
             DontCare,
         ])
         .ret(RetKind::PtrToAllocMemFromArg { size_arg: 3 })
@@ -1999,9 +2235,9 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // real consumer needs it.
         "bpf_dynptr_slice_rdwr" => CallProto::with_args([
             DynptrArg { uninit: false, rdwr_only: true }, // R1: src dynptr
-            Anything,       // R2: offset
-            PtrToUninitMem, // R3: scratch buffer (write target on slow path)
-            ConstSize,      // R4: buffer size
+            Anything,             // R2: offset
+            PtrToUninitMemOrNull, // R3: scratch buffer (NULL OK — `buffer__opt`)
+            ConstSize,            // R4: buffer size
             DontCare,
         ])
         .ret(RetKind::PtrToAllocMemFromArg { size_arg: 3 })
@@ -2091,6 +2327,166 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .flags(CallFlags::FASTCALL)
         .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
 
+        // u32 bpf_cpumask_first_and(const struct cpumask *src1,
+        //                           const struct cpumask *src2)
+        "bpf_cpumask_first_and" => CallProto::with_args([
+            PtrToCpumaskRead, PtrToCpumaskRead, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // u32 bpf_cpumask_weight(const struct cpumask *cpumask)
+        "bpf_cpumask_weight" => CallProto::with_args([
+            PtrToCpumaskRead, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // u32 bpf_cpumask_any_distribute(const struct cpumask *src)
+        "bpf_cpumask_any_distribute" => CallProto::with_args([
+            PtrToCpumaskRead, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // u32 bpf_cpumask_any_and_distribute(const struct cpumask *src1,
+        //                                    const struct cpumask *src2)
+        "bpf_cpumask_any_and_distribute" => CallProto::with_args([
+            PtrToCpumaskRead, PtrToCpumaskRead, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // ---- Read-only predicates (return bool) ----
+
+        // bool bpf_cpumask_equal(const struct cpumask *src1, const struct cpumask *src2)
+        "bpf_cpumask_equal" => CallProto::with_args([
+            PtrToCpumaskRead, PtrToCpumaskRead, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // bool bpf_cpumask_intersects(const struct cpumask *src1, const struct cpumask *src2)
+        "bpf_cpumask_intersects" => CallProto::with_args([
+            PtrToCpumaskRead, PtrToCpumaskRead, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // bool bpf_cpumask_subset(const struct cpumask *src1, const struct cpumask *src2)
+        "bpf_cpumask_subset" => CallProto::with_args([
+            PtrToCpumaskRead, PtrToCpumaskRead, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // bool bpf_cpumask_empty(const struct cpumask *cpumask)
+        "bpf_cpumask_empty" => CallProto::with_args([
+            PtrToCpumaskRead, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // bool bpf_cpumask_full(const struct cpumask *cpumask)
+        "bpf_cpumask_full" => CallProto::with_args([
+            PtrToCpumaskRead, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::FASTCALL)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // ---- Mutators that modify their first arg (PtrToCpumask) ----
+
+        // void bpf_cpumask_clear_cpu(u32 cpu, struct bpf_cpumask *cpumask)
+        "bpf_cpumask_clear_cpu" => CallProto::with_args([
+            Anything, PtrToCpumask, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // bool bpf_cpumask_test_and_set_cpu(u32 cpu, struct bpf_cpumask *cpumask)
+        "bpf_cpumask_test_and_set_cpu" => CallProto::with_args([
+            Anything, PtrToCpumask, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // bool bpf_cpumask_test_and_clear_cpu(u32 cpu, struct bpf_cpumask *cpumask)
+        "bpf_cpumask_test_and_clear_cpu" => CallProto::with_args([
+            Anything, PtrToCpumask, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // void bpf_cpumask_setall(struct bpf_cpumask *cpumask)
+        "bpf_cpumask_setall" => CallProto::with_args([
+            PtrToCpumask, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // void bpf_cpumask_clear(struct bpf_cpumask *cpumask)
+        "bpf_cpumask_clear" => CallProto::with_args([
+            PtrToCpumask, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // bool bpf_cpumask_and(struct bpf_cpumask *dst,
+        //                      const struct cpumask *src1,
+        //                      const struct cpumask *src2)
+        "bpf_cpumask_and" => CallProto::with_args([
+            PtrToCpumask, PtrToCpumaskRead, PtrToCpumaskRead, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // void bpf_cpumask_or(struct bpf_cpumask *dst,
+        //                     const struct cpumask *src1,
+        //                     const struct cpumask *src2)
+        "bpf_cpumask_or" => CallProto::with_args([
+            PtrToCpumask, PtrToCpumaskRead, PtrToCpumaskRead, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // void bpf_cpumask_xor(struct bpf_cpumask *dst,
+        //                      const struct cpumask *src1,
+        //                      const struct cpumask *src2)
+        "bpf_cpumask_xor" => CallProto::with_args([
+            PtrToCpumask, PtrToCpumaskRead, PtrToCpumaskRead, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // void bpf_cpumask_copy(struct bpf_cpumask *dst, const struct cpumask *src)
+        "bpf_cpumask_copy" => CallProto::with_args([
+            PtrToCpumask, PtrToCpumaskRead, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
+        // int bpf_cpumask_populate(struct cpumask *cpumask,
+        //                          void *src, size_t src__sz)
+        // R2/R3 form a mem+size pair — kernel rejects "leads to invalid
+        // memory access" when sz exceeds the source buffer (matches
+        // cpumask_failure::test_populate_invalid_source's __failure
+        // expectation). Destination expects writable cpumask wrapper.
+        "bpf_cpumask_populate" => CallProto::with_args([
+            PtrToCpumask, PtrToMem, ConstSize, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .mem_size_pairs(&pairs::CPUMASK_POPULATE)
+        .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
+
         // ---- Cgroup kfuncs (W6.3-followon) ----
         //
         // Parallels the cpumask family: `RegType::PtrToCgroup{,OrNull}`,
@@ -2129,6 +2525,48 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }])
         .prog_type_allowlist(&CGROUP_KFUNC_PROG_TYPES),
 
+        // struct cgroup *bpf_cgroup_ancestor(struct cgroup *cgrp, int level)
+        // KF_ACQUIRE | KF_RCU | KF_RET_NULL — returns the ancestor at
+        // the given level (or NULL) with a refcount the caller must
+        // release.
+        "bpf_cgroup_ancestor" => CallProto::with_args([
+            PtrToCgroup, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToCgroup)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL)
+        .prog_type_allowlist(&CGROUP_KFUNC_PROG_TYPES),
+
+        // void cgroup_rstat_updated(struct cgroup *cgrp, int cpu)
+        // void cgroup_rstat_flush(struct cgroup *cgrp)
+        // Plain cgroup-arg kfuncs registered as kernel symbols
+        // (declared `__ksym` in selftests/cgroup_hierarchical_stats.c).
+        // No flags — they neither acquire nor release; just take a
+        // trusted cgroup pointer and either schedule a flush or run one.
+        "cgroup_rstat_updated" => CallProto::with_args([
+            PtrToCgroup, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .prog_type_allowlist(&CGROUP_KFUNC_PROG_TYPES),
+
+        "cgroup_rstat_flush" => CallProto::with_args([
+            PtrToCgroup, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .prog_type_allowlist(&CGROUP_KFUNC_PROG_TYPES),
+
+        // struct cgroup *bpf_task_get_cgroup1(struct task_struct *task,
+        //                                    int hierarchy_id)
+        // KF_ACQUIRE | KF_RCU | KF_RET_NULL — looks up the v1 cgroup
+        // the task is attached to in the named hierarchy. Used by the
+        // bpf_cgrp_storage_* callers in cgrp_ls_*.c (recursion, tp_btf,
+        // sleepable) and by test_cgroup1_hierarchy::lsm_*_run.
+        "bpf_task_get_cgroup1" => CallProto::with_args([
+            PtrToTask, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToCgroup)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL)
+        .prog_type_allowlist(&CGROUP_KFUNC_PROG_TYPES),
+
         // ---- Task kfuncs (Phase 7 wrap-up) ----
         //
         // Mirrors the cgroup family. `RegType::PtrToTask{,OrNull}`
@@ -2160,6 +2598,16 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // KF_ACQUIRE | KF_RET_NULL — looks up a task by pid; returns
         // a fresh refcounted pointer or NULL.
         "bpf_task_from_pid" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToTask)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL)
+        .prog_type_allowlist(&TASK_KFUNC_PROG_TYPES),
+
+        // bpf_task_from_vpid: namespace-aware variant of from_pid. Same
+        // signature shape (s32 vpid → struct task_struct *, ACQUIRE +
+        // RET_NULL). Used by task_kfunc_success.c.
+        "bpf_task_from_vpid" => CallProto::with_args([
             Anything, DontCare, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::PtrToTask)
@@ -2391,6 +2839,27 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::PtrToOwnedKptr)
         .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL | CallFlags::SPIN_LOCK_HELD),
 
+        // bpf_list_push_back_impl / bpf_list_pop_back — symmetric
+        // back-of-list variants. Same ownership / lock contracts as
+        // their _front counterparts above.
+        "bpf_list_push_back_impl" => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::ListHead },
+            PtrToOwnedKptr,
+            Anything,
+            Anything,
+            DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE | CallFlags::RELEASE_NON_OWN | CallFlags::SPIN_LOCK_HELD)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 1 }]),
+
+        "bpf_list_pop_back" => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::ListHead },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToOwnedKptr)
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL | CallFlags::SPIN_LOCK_HELD),
+
         // int bpf_rbtree_add_impl(struct bpf_rb_root *root,
         //                         struct bpf_rb_node *node,
         //                         bool (*less)(struct bpf_rb_node *,
@@ -2479,6 +2948,839 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::Scalar),
+
+        // ---- TCP CC algorithm ksyms (BBR / DCTCP / CUBIC) ----
+        //
+        // tcp_ca_kfunc.c and bpf_cc_cubic.c reach into the kernel's
+        // bbr / dctcp / cubictcp implementations via __ksym externs.
+        // Same shape as the tcp_reno_* family above: each takes a
+        // sock pointer (typed PtrToBtfId by struct_ops entry-state
+        // plumbing) plus scalars; void or u32 return. Pure additive
+        // registration — no acquire/release, no allowlist.
+        //
+        //   void bbr_init(struct sock *sk)
+        //   void bbr_main(struct sock *sk, u32 ack, int flag,
+        //                 const struct rate_sample *rs)
+        //   u32  bbr_sndbuf_expand(struct sock *sk)
+        //   u32  bbr_undo_cwnd(struct sock *sk)
+        //   void bbr_cwnd_event(struct sock *sk, enum tcp_ca_event event)
+        //   u32  bbr_ssthresh(struct sock *sk)
+        //   u32  bbr_min_tso_segs(struct sock *sk)
+        //   void bbr_set_state(struct sock *sk, u8 new_state)
+        "bbr_init" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "bbr_main" => CallProto::with_args([
+            PtrToBtfId, Anything, Anything, Anything, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "bbr_sndbuf_expand" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bbr_undo_cwnd" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bbr_cwnd_event" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "bbr_ssthresh" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bbr_min_tso_segs" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bbr_set_state" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        //   void dctcp_init(struct sock *sk)
+        //   void dctcp_update_alpha(struct sock *sk, u32 flags)
+        //   void dctcp_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
+        //   u32  dctcp_ssthresh(struct sock *sk)
+        //   u32  dctcp_cwnd_undo(struct sock *sk)
+        //   void dctcp_state(struct sock *sk, u8 new_state)
+        "dctcp_init" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "dctcp_update_alpha" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "dctcp_cwnd_event" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "dctcp_ssthresh" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "dctcp_cwnd_undo" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "dctcp_state" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        //   void cubictcp_init(struct sock *sk)
+        //   u32  cubictcp_recalc_ssthresh(struct sock *sk)
+        //   void cubictcp_cong_avoid(struct sock *sk, u32 ack, u32 acked)
+        //   void cubictcp_state(struct sock *sk, u8 new_state)
+        //   void cubictcp_cwnd_event(struct sock *sk, enum tcp_ca_event event)
+        //   void cubictcp_acked(struct sock *sk, const struct ack_sample *sample)
+        "cubictcp_init" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "cubictcp_recalc_ssthresh" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "cubictcp_cong_avoid" => CallProto::with_args([
+            PtrToBtfId, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "cubictcp_state" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "cubictcp_cwnd_event" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "cubictcp_acked" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        // ---- testmod sock-addr-syscall kfuncs (sock_addr_kern.c) ----
+        //
+        // Test kfuncs registered by bpf_testmod for the
+        // sock_addr/syscall integration coverage. All called from
+        // SEC("syscall") programs with a pointer to a per-test args
+        // struct (`init_sock_args` / `addr_args` / `sendmsg_args`)
+        // sitting on the syscall caller's input buffer; void or int
+        // return. Pure additive — no acquire/release.
+        //
+        //   int  bpf_kfunc_init_sock(struct init_sock_args *args)
+        //   void bpf_kfunc_close_sock(void)
+        //   int  bpf_kfunc_call_kernel_connect(struct addr_args *args)
+        //   int  bpf_kfunc_call_kernel_bind(struct addr_args *args)
+        //   int  bpf_kfunc_call_kernel_listen(void)
+        //   int  bpf_kfunc_call_kernel_sendmsg(struct sendmsg_args *args)
+        //   int  bpf_kfunc_call_sock_sendmsg(struct sendmsg_args *args)
+        //   int  bpf_kfunc_call_kernel_getsockname(struct addr_args *args)
+        //   int  bpf_kfunc_call_kernel_getpeername(struct addr_args *args)
+        "bpf_kfunc_init_sock" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_close_sock" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "bpf_kfunc_call_kernel_connect" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_call_kernel_bind" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_call_kernel_listen" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_call_kernel_sendmsg" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_call_sock_sendmsg" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_call_kernel_getsockname" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_call_kernel_getpeername" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- testmod ref-tracked kfuncs (kfunc_call_test.c, map_kptr.c,
+        //      jit_probe_mem.c, local_kptr_stash.c) ----
+        //
+        // struct prog_test_ref_kfunc *bpf_kfunc_call_test_acquire(unsigned long *)
+        //   KF_ACQUIRE | KF_RET_NULL — mints a fresh refcounted pointer.
+        // void bpf_kfunc_call_test_release(struct prog_test_ref_kfunc *p)
+        //   KF_RELEASE — drops the ref minted by _acquire.
+        // void bpf_kfunc_call_test_ref(struct prog_test_ref_kfunc *p)
+        //   No flags — non-acquire/release passthrough; just validates a
+        //   trusted ref arg.
+        //
+        // Returning PtrToBtfIdNamed{prog_test_ref_kfunc} keeps the matching
+        // __failure siblings rejecting via the existing trusted-arg /
+        // ref-id machinery. The bounded-mem-returning siblings
+        // (bpf_kfunc_call_test_get_rdonly_mem / _get_rdwr_mem) are NOT
+        // registered: they would need PtrToAllocMemFromArg + rdonly
+        // tracking + ref-id propagation onto the returned mem to keep
+        // the matching __failure tests in kfunc_call_fail.c rejecting.
+        "bpf_kfunc_call_test_acquire" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "prog_test_ref_kfunc" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        "bpf_kfunc_call_test_release" => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "prog_test_ref_kfunc" },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+
+        "bpf_kfunc_call_test_ref" => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "prog_test_ref_kfunc" },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        // struct bpf_testmod_ctx *bpf_testmod_ctx_create(int *err)
+        //   KF_ACQUIRE | KF_RET_NULL.
+        // void bpf_testmod_ctx_release(struct bpf_testmod_ctx *ctx)
+        //   KF_RELEASE.
+        "bpf_testmod_ctx_create" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "bpf_testmod_ctx" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        "bpf_testmod_ctx_release" => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "bpf_testmod_ctx" },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+
+        // ---- testmod basic test kfuncs (kfunc_call_test.c) ----
+        //
+        // Scalar-only and pointer helpers (companion to the ref-tracked
+        // family above).
+        //
+        // bpf_kfunc_call_test_pass_ctx takes `struct __sk_buff *skb`
+        // — modeled as PtrToCtx so the matching __failure sibling
+        // `kfunc_call_test_pointer_arg_type_mismatch` (passes literal
+        // `(void *)10`) keeps rejecting. The mem_len_* kfuncs take a
+        // (mem, len) pair — wired up via MemSizePair so the
+        // out-of-bounds `kfunc_syscall_test_fail` sibling rejects on
+        // size validation.
+        //
+        //   __u64 bpf_kfunc_call_test1(struct sock *sk, u32, u64, u32, u64)
+        //   int   bpf_kfunc_call_test2(struct sock *sk, u32, u32)
+        //   long  bpf_kfunc_call_test4(s8, s16, int, long)
+        //   void  bpf_kfunc_call_test_pass_ctx(struct __sk_buff *skb)
+        //   void  bpf_kfunc_call_test_pass1(struct prog_test_pass1 *p)
+        //   void  bpf_kfunc_call_test_pass2(struct prog_test_pass2 *p)
+        //   void  bpf_kfunc_call_test_mem_len_pass1(void *mem, int len)
+        //   void  bpf_kfunc_call_test_mem_len_fail2(__u64 *mem, int len)
+        //   u32   bpf_kfunc_call_test_static_unused_arg(u32 arg, u32 unused)
+        "bpf_kfunc_call_test1" => CallProto::with_args([
+            Anything, Anything, Anything, Anything, Anything,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_call_test2" => CallProto::with_args([
+            Anything, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_call_test4" => CallProto::with_args([
+            Anything, Anything, Anything, Anything, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_call_test_pass_ctx" => CallProto::with_args([
+            PtrToCtx, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "bpf_kfunc_call_test_pass1" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "bpf_kfunc_call_test_pass2" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "bpf_kfunc_call_test_mem_len_pass1" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "bpf_kfunc_call_test_mem_len_fail2" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "bpf_kfunc_call_test_static_unused_arg" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- bpf_kfunc_common_test (testmod, no-op trace anchor) ----
+        // `void bpf_kfunc_common_test(void)`. Registered from
+        // bpf_testmod_kfunc.h; used by missed_kprobe.c, missed_kprobe_recursion.c,
+        // and the wq.c sleepable callback variants as a trace-anchor target
+        // (test driver puts a kprobe on this function to count invocations).
+        // Trivially additive: no args, no side effects.
+        "bpf_kfunc_common_test" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        // ---- bpf_kfunc_call_test_destructive (testmod) ----
+        // `void bpf_kfunc_call_test_destructive(void)` — KF_DESTRUCTIVE
+        // (CAP_SYS_BOOT-gated runtime check; verifier just needs the
+        // proto). Used by kfunc_call_destructive.c.
+        "bpf_kfunc_call_test_destructive" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        // ---- bpf_testmod_ops3_call_test_{1,2} (testmod struct_ops3) ----
+        // `void bpf_testmod_ops3_call_test_N(void)` — used by struct_ops
+        // private-stack tests (struct_ops_private_stack.c,
+        // struct_ops_private_stack_recur.c) to thunk into ops3 vtable
+        // methods. No args, no side effects.
+        "bpf_testmod_ops3_call_test_1" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        "bpf_testmod_ops3_call_test_2" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        // ---- bpf_xdp_flow_lookup (nf_flow_table xdp helper) ----
+        // `struct flow_offload_tuple_rhash *bpf_xdp_flow_lookup(
+        //      struct xdp_md *, struct bpf_fib_lookup *,
+        //      struct bpf_flowtable_opts___local *, u32)`
+        // — used by xdp_flowtable.c. Caller only null-checks the
+        // returned pointer; Scalar return matches the same pattern as
+        // bpf_get_kmem_cache.
+        "bpf_xdp_flow_lookup" => CallProto::with_args([
+            PtrToCtx, Anything, Anything, Anything, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- bpf_map_sum_elem_count (map introspection) ----
+        // `__s64 bpf_map_sum_elem_count(const struct bpf_map *map)` —
+        // sums per-cpu counters; runtime helper used by
+        // map_percpu_stats.c (iter/bpf_map: ctx->map yields
+        // PtrToBtfId{bpf_map}, not ConstMapPtr) and map_ptr_kern.c
+        // (subprog arg). Anything matches the kernel acceptance of
+        // either &literal_map or a typed bpf_map* from iter ctx; the
+        // kernel runtime gates the call by BTF type-id check.
+        "bpf_map_sum_elem_count" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- testmod struct_ops prologue/epilogue test kfuncs ----
+        // Used by pro_epilogue.c, pro_epilogue_goto_start.c,
+        // epilogue_exit.c (`syscall_*` SEC programs that thunk into
+        // the struct_ops test infrastructure). Each takes
+        // `struct st_ops_args *args` and returns int.
+        //
+        //   int bpf_kfunc_st_ops_test_prologue(struct st_ops_args *)
+        //   int bpf_kfunc_st_ops_test_epilogue(struct st_ops_args *)
+        //   int bpf_kfunc_st_ops_test_pro_epilogue(struct st_ops_args *)
+        "bpf_kfunc_st_ops_test_prologue" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_st_ops_test_epilogue" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_kfunc_st_ops_test_pro_epilogue" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- testmod cross-module ordering test kfuncs ----
+        // kfunc_module_order.c: two kfuncs registered from different
+        // modules to exercise cross-module dispatch. No args.
+        //
+        //   int bpf_test_modorder_retx(void)  // returns 'x'
+        //   int bpf_test_modorder_rety(void)  // returns 'y'
+        "bpf_test_modorder_retx" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_test_modorder_rety" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- bpf_send_signal_task ----
+        // test_send_signal_kern.c: targeted signal-delivery kfunc.
+        //   int bpf_send_signal_task(struct task_struct *task,
+        //                            int sig, enum pid_type type,
+        //                            u64 value)
+        // task arg is Anything to accept the PtrToTask result of
+        // bpf_task_from_pid (and any other future task-pointer reg
+        // type) without re-implementing per-arg trust gates.
+        "bpf_send_signal_task" => CallProto::with_args([
+            Anything, Anything, Anything, Anything, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- kprobe/uprobe session kfuncs ----
+        // bpf_session_cookie() returns `__u64 *` — a pointer to an
+        // 8-byte per-call stash slot the program reads/writes via
+        // *cookie. Modeled with PtrToAllocMem{mem_size=8} so the
+        // verifier accepts the 8-byte deref pattern. (Programs may
+        // load OR store through the returned pointer.)
+        // bpf_session_is_return() returns a 0/1 flag for return-probe
+        // disambiguation. Used in kprobe_multi_session_cookie.c,
+        // uprobe_multi_session_cookie.c, uprobe_multi_session.c.
+        "bpf_session_cookie" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToAllocMem { mem_size: 8 }),
+        "bpf_session_is_return" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- testmod nullable-dynptr arg test ----
+        // bpf_kfunc_dynptr_test(struct bpf_dynptr *, struct bpf_dynptr *__nullable)
+        // Used by test_kfunc_param_nullable.c. Both args are dynptrs;
+        // the second is nullable. Modeled with DynptrArg consumers
+        // (initialized, rdwr or rdonly) so the existing dynptr arg
+        // validator handles slot-state checks. The nullable second
+        // arg uses Anything to accept literal NULL plus init dynptrs.
+        "bpf_kfunc_dynptr_test" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false },
+            Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        // ---- LSM xattr kfuncs ----
+        // Used by test_get_xattr.c, test_set_remove_xattr.c (lsm.s/*
+        // SEC). Each takes a kernel object pointer + name string +
+        // optional value dynptr and returns int. Args are Anything
+        // since the file/dentry pointers come from BPF_PROG entry
+        // typing as PtrToBtfId{file/dentry} which we don't strictly
+        // gate.
+        //
+        //   int bpf_get_file_xattr(struct file *, const char *,
+        //                          struct bpf_dynptr *value)
+        //   int bpf_get_dentry_xattr(struct dentry *, const char *,
+        //                            struct bpf_dynptr *value)
+        //   int bpf_set_dentry_xattr(struct dentry *, const char *,
+        //                            struct bpf_dynptr *value, int flags)
+        //   int bpf_remove_dentry_xattr(struct dentry *, const char *)
+        "bpf_get_file_xattr" => CallProto::with_args([
+            Anything, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_get_dentry_xattr" => CallProto::with_args([
+            Anything, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_set_dentry_xattr" => CallProto::with_args([
+            Anything, Anything, Anything, Anything, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_remove_dentry_xattr" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        // Locked variants (test_set_remove_xattr.c additionally
+        // exercises these; kernel registers them separately).
+        "bpf_set_dentry_xattr_locked" => CallProto::with_args([
+            Anything, Anything, Anything, Anything, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_remove_dentry_xattr_locked" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- FOU/GUE tunnel encap kfuncs (test_tunnel_kern.c) ----
+        //   int bpf_skb_set_fou_encap(struct __sk_buff *, struct bpf_fou_encap *, int)
+        //   int bpf_skb_get_fou_encap(struct __sk_buff *, struct bpf_fou_encap *)
+        "bpf_skb_set_fou_encap" => CallProto::with_args([
+            PtrToCtx, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_skb_get_fou_encap" => CallProto::with_args([
+            PtrToCtx, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- Crypto kfuncs (crypto_basic.c, crypto_bench.c, crypto_sanity.c) ----
+        //
+        // struct bpf_crypto_ctx *bpf_crypto_ctx_create(const struct bpf_crypto_params *,
+        //                                              u32 params__sz, int *err)
+        //   KF_ACQUIRE | KF_RET_NULL | KF_SLEEPABLE.
+        // struct bpf_crypto_ctx *bpf_crypto_ctx_acquire(struct bpf_crypto_ctx *ctx)
+        //   KF_ACQUIRE | KF_RET_NULL.
+        // void bpf_crypto_ctx_release(struct bpf_crypto_ctx *ctx)
+        //   KF_RELEASE.
+        // int bpf_crypto_encrypt/_decrypt(struct bpf_crypto_ctx *ctx,
+        //                                  const struct bpf_dynptr *src,
+        //                                  const struct bpf_dynptr *dst,
+        //                                  const struct bpf_dynptr *iv)
+        //   No flags; the iv arg is __nullable.
+        "bpf_crypto_ctx_create" => CallProto::with_args([
+            Anything, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "bpf_crypto_ctx" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL | CallFlags::MIGHT_SLEEP),
+
+        "bpf_crypto_ctx_acquire" => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "bpf_crypto_ctx" },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "bpf_crypto_ctx" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        "bpf_crypto_ctx_release" => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "bpf_crypto_ctx" },
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+
+        "bpf_crypto_encrypt" => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "bpf_crypto_ctx" },
+            DynptrArg { uninit: false, rdwr_only: false },
+            DynptrArg { uninit: false, rdwr_only: false },
+            Anything,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        "bpf_crypto_decrypt" => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "bpf_crypto_ctx" },
+            DynptrArg { uninit: false, rdwr_only: false },
+            DynptrArg { uninit: false, rdwr_only: false },
+            Anything,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- TCP raw syncookie kfuncs (xdp_synproxy_kern.c,
+        //      test_tcp_custom_syncookie.c) ----
+        //
+        // u64 bpf_tcp_raw_gen_syncookie_ipv4(struct iphdr *, struct tcphdr *, u32)
+        // u64 bpf_tcp_raw_gen_syncookie_ipv6(struct ipv6hdr *, struct tcphdr *, u32)
+        // int bpf_tcp_raw_check_syncookie_ipv4(struct iphdr *, struct tcphdr *)
+        // int bpf_tcp_raw_check_syncookie_ipv6(struct ipv6hdr *, struct tcphdr *)
+        //   No flags. Operate on packet-derived header pointers.
+        // int bpf_sk_assign_tcp_reqsk(struct __sk_buff *, struct sock *,
+        //                              struct bpf_tcp_req_attrs *, u32)
+        //   No flags. Used by test_tcp_custom_syncookie to install the
+        //   custom syncookie's request_sock onto the skb.
+        "bpf_tcp_raw_gen_syncookie_ipv4" => CallProto::with_args([
+            Anything, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        "bpf_tcp_raw_gen_syncookie_ipv6" => CallProto::with_args([
+            Anything, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        "bpf_tcp_raw_check_syncookie_ipv4" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        "bpf_tcp_raw_check_syncookie_ipv6" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        "bpf_sk_assign_tcp_reqsk" => CallProto::with_args([
+            PtrToCtx, Anything, Anything, Anything, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- Conntrack kfuncs (test_bpf_nf.c, xdp_synproxy_kern.c) ----
+        //
+        // bpf_xdp_ct_lookup / bpf_xdp_ct_alloc / bpf_skb_ct_lookup / bpf_skb_ct_alloc:
+        //   KF_ACQUIRE | KF_RET_NULL — return a refcounted nf_conn pointer.
+        //   Args: ctx, sock_tuple, len, opts, opts_len.
+        // bpf_ct_insert_entry:
+        //   KF_ACQUIRE | KF_RET_NULL | KF_RELEASE on the input — confirms an
+        //   allocated entry; consumes the alloc-time ref and returns a fresh
+        //   inserted ref.
+        // bpf_ct_release:
+        //   KF_RELEASE — drops the refcount.
+        // bpf_ct_set_timeout / bpf_ct_change_timeout / bpf_ct_set_status /
+        // bpf_ct_change_status / bpf_ct_set_nat_info:
+        //   No flags — non-acquire/release setters on a trusted nf_conn.
+        "bpf_xdp_ct_lookup" => CallProto::with_args([
+            PtrToCtx, Anything, Anything, Anything, Anything,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "nf_conn" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        "bpf_xdp_ct_alloc" => CallProto::with_args([
+            PtrToCtx, Anything, Anything, Anything, Anything,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "nf_conn___init" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        "bpf_skb_ct_lookup" => CallProto::with_args([
+            PtrToCtx, Anything, Anything, Anything, Anything,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "nf_conn" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        "bpf_skb_ct_alloc" => CallProto::with_args([
+            PtrToCtx, Anything, Anything, Anything, Anything,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "nf_conn___init" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        // bpf_ct_insert_entry releases the input nf_conn___init ref and
+        // returns a fresh nf_conn ref (transition from "uninitialized"
+        // construction state to "live in conntrack table"). Modeled as
+        // RELEASE+ACQUIRE+RET_NULL with ReleaseRefFromArg on R1.
+        "bpf_ct_insert_entry" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "nf_conn" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL | CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+
+        "bpf_ct_release" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+
+        "bpf_ct_set_timeout" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        "bpf_ct_change_timeout" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        "bpf_ct_set_status" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        "bpf_ct_change_status" => CallProto::with_args([
+            PtrToBtfId, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        "bpf_ct_set_nat_info" => CallProto::with_args([
+            PtrToBtfId, Anything, Anything, Anything, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- xfrm state kfuncs (test_tunnel_kern.c xfrm_get_state_xdp) ----
+        // struct xfrm_state *bpf_xdp_get_xfrm_state(struct xdp_md *ctx,
+        //                                           struct bpf_xfrm_state_opts *opts,
+        //                                           u32 opts__sz)
+        //   KF_ACQUIRE | KF_RET_NULL — looks up an xfrm state by SPI/daddr.
+        // void bpf_xdp_xfrm_state_release(struct xfrm_state *x)
+        //   KF_RELEASE — drops the ref minted by bpf_xdp_get_xfrm_state.
+        "bpf_xdp_get_xfrm_state" => CallProto::with_args([
+            PtrToCtx, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "xfrm_state" })
+        .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL),
+
+        "bpf_xdp_xfrm_state_release" => CallProto::with_args([
+            PtrToBtfId, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+
+        // ---- xfrm info kfuncs (xfrm_info.c) ----
+        //   int bpf_skb_set_xfrm_info(struct __sk_buff *, const struct bpf_xfrm_info *)
+        //   int bpf_skb_get_xfrm_info(struct __sk_buff *, struct bpf_xfrm_info *)
+        "bpf_skb_set_xfrm_info" => CallProto::with_args([
+            PtrToCtx, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        "bpf_skb_get_xfrm_info" => CallProto::with_args([
+            PtrToCtx, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- bpf_task_under_cgroup ----
+        // long bpf_task_under_cgroup(struct task_struct *task,
+        //                            struct cgroup *ancestor)
+        // Used by test_task_under_cgroup.c. task / ancestor are
+        // Anything to accept PtrToTask/PtrToCgroup minted by the
+        // existing acquire kfuncs.
+        "bpf_task_under_cgroup" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- testmod cross-module kfuncs (test_ksyms_module.c) ----
+        //   void bpf_testmod_test_mod_kfunc(int)
+        //   void bpf_testmod_invalid_mod_kfunc(void)  (weak — present
+        //   only when the test module is loaded; programs guard with
+        //   ksym null check)
+        "bpf_testmod_test_mod_kfunc" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+        "bpf_testmod_invalid_mod_kfunc" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        // ---- bpf_copy_from_user_str ----
+        // int bpf_copy_from_user_str(void *dst, u32 size,
+        //                            const void *unsafe_ptr, u64 flags)
+        // Used by test_attach_probe.c sleepable uprobes. Modeled with
+        // a writable pointer + size pair so the bounds check matches
+        // the kernel's KF_ARG_PTR_TO_UNINIT_MEM rules.
+        "bpf_copy_from_user_str" => CallProto::with_args([
+            PtrToUninitMem, ConstSizeOrZero, Anything, Anything, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .mem_size_pairs(&pairs::COPY_FROM_USER_STR)
+        // KF_SLEEPABLE: rejects calls inside preempt-disabled or
+        // IRQ-disabled regions. Kernel `fn->might_sleep`. Without
+        // this flag, irq.c::irq_sleepable_kfunc and
+        // preempt_lock.c::preempt_sleepable_kfunc would PASS→FA.
+        .flags(CallFlags::MIGHT_SLEEP),
+
+        // int bpf_copy_from_user_task(void *dst, u32 size,
+        //                              const void __user *src,
+        //                              struct task_struct *task,
+        //                              u64 flags)
+        // Same as bpf_copy_from_user but reads from another task's
+        // address space. KF_SLEEPABLE.
+        "bpf_copy_from_user_task" => CallProto::with_args([
+            PtrToUninitMem, ConstSize, Anything,
+            PtrToBtfIdNamed { type_name: "task_struct" },
+            Anything,
+        ])
+        .ret(RetKind::Scalar)
+        .mem_size_pairs(&pairs::COPY_FROM_USER_STR)
+        .flags(CallFlags::MIGHT_SLEEP),
+
+        // int bpf_copy_from_user_task_str(void *dst, u32 size,
+        //                                  const void __user *src,
+        //                                  struct task_struct *task,
+        //                                  u64 flags)
+        // String variant — null-terminates and bounds the read.
+        "bpf_copy_from_user_task_str" => CallProto::with_args([
+            PtrToUninitMem, ConstSize, Anything,
+            PtrToBtfIdNamed { type_name: "task_struct" },
+            Anything,
+        ])
+        .ret(RetKind::Scalar)
+        .mem_size_pairs(&pairs::COPY_FROM_USER_STR)
+        .flags(CallFlags::MIGHT_SLEEP),
+
+        // ---- bpf_sock_destroy (sock_destroy_prog.c) ----
+        // int bpf_sock_destroy(struct sock_common *sk)
+        // KF_TRUSTED_ARGS — invokes the kernel's sock-destroy path on
+        // a trusted sock_common pointer (typically obtained from a
+        // bpf_iter/tcp or bpf_iter/udp ctx). Returns negative errno or 0.
+        // Kernel registers it for BPF_PROG_TYPE_TRACING/BPF_TRACE_ITER
+        // only — programs in sock_destroy_prog.c use SEC("iter/{tcp,udp}")
+        // which we type as Tracing kind. Anything-arg accepts both
+        // PtrToBtfId{sock_common} (from iter ctx) and (struct sock_common
+        // *) casts of typed sock pointers.
+        "bpf_sock_destroy" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- bpf_get_kmem_cache (kmem_cache_iter.c) ----
+        // struct kmem_cache *bpf_get_kmem_cache(u64 addr)
+        // Returns a kernel slab cache pointer. Programs only use it
+        // for null-check + map-lookup-by-pointer-value (no field
+        // access on the returned pointer in test corpus), so a
+        // Scalar return is sufficient.
+        "bpf_get_kmem_cache" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- bpf_sock_addr_set_sun_path ----
+        // int bpf_sock_addr_set_sun_path(struct bpf_sock_addr_kern *,
+        //                                const __u8 *sun_path,
+        //                                __u32 sun_path__sz)
+        // Used by connect_unix_prog.c, getsockname_unix_prog.c,
+        // getpeername_unix_prog.c, sendmsg_unix_prog.c,
+        // recvmsg_unix_prog.c. Programs only use the int return for
+        // an early-return; sa_kern field access still depends on
+        // bpf_core_cast typing (separate gap).
+        "bpf_sock_addr_set_sun_path" => CallProto::with_args([
+            Anything, Anything, Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- bpf_get_fsverity_digest ----
+        // int bpf_get_fsverity_digest(struct file *,
+        //                             struct bpf_dynptr *digest_ptr)
+        // Used by test_fsverity.c, test_sig_in_xattr.c. file arg is
+        // Anything to accept the BPF_PROG-entry PtrToBtfId{file}.
+        "bpf_get_fsverity_digest" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- bpf_verify_pkcs7_signature ----
+        // int bpf_verify_pkcs7_signature(struct bpf_dynptr *data,
+        //                                struct bpf_dynptr *sig,
+        //                                struct bpf_key *trusted_keyring)
+        // Used by test_verify_pkcs7_sig.c, test_kfunc_dynptr_param.c,
+        // test_sig_in_xattr.c. KF_SLEEPABLE per kernel registration.
+        // First two args are dynptrs (consumer shape — slot must be
+        // initialized); third is a refcounted bpf_key from
+        // bpf_lookup_user_key / bpf_lookup_system_key.
+        "bpf_verify_pkcs7_signature" => CallProto::with_args([
+            DynptrArg { uninit: false, rdwr_only: false },
+            DynptrArg { uninit: false, rdwr_only: false },
+            Anything, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .flags(CallFlags::MIGHT_SLEEP),
+
+        // ---- bpf_rdonly_cast / bpf_core_cast ----
+        // void *bpf_rdonly_cast(const void *obj, __u32 btf_id)
+        // The kernel returns a pointer with the BTF type identified
+        // by R2, with PTR_TRUSTED|MEM_RDONLY flags. R0 typing is
+        // post-call: kfunc.rs reads R2's fixed value, looks up the
+        // struct name in BTF, and stamps R0 as PtrToBtfId{name,
+        // TRUSTED}. Used by sock_iter_batch.c, type_cast.c, and
+        // the *_unix_prog family (via bpf_core_cast macro).
+        // Registered as RetKind::Unknown so apply_call_proto_r0
+        // doesn't clobber R0; the post-call hook sets it.
+        "bpf_rdonly_cast" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ]),
 
         // ---- Sched_ext kfuncs (W6.4b) ----
         //
@@ -2712,10 +4014,16 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // either ignore the return or store/load through the same alias;
         // returning Scalar (no precise pointer typing yet) is sufficient
         // to clear the dispatch-time rejection.
+        // R0 typed in kfunc.rs by per-ProgramKind kernel-ctx mapping
+        // (kernel verifier `find_kern_ctx_type_id` /
+        // `BPF_PROG_TYPE_*` table). Without that, programs that cast
+        // via `bpf_cast_to_kern_ctx` then deref the kern struct's
+        // fields (sa_kern->uaddrlen on bpf_sock_addr_kern, etc.) FR
+        // on the deref. RetKind::Unknown defers R0 typing to the
+        // post-call hook.
         "bpf_cast_to_kern_ctx" => CallProto::with_args([
             Anything, DontCare, DontCare, DontCare, DontCare,
-        ])
-        .ret(RetKind::Scalar),
+        ]),
 
         _ => return None,
     })
@@ -2758,11 +4066,22 @@ pub(super) mod pairs {
 
     // ---- Local-cluster dynptr kfuncs (W4.2e) ----
     pub static DYNPTR_FROM_MEM: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
-    pub static DYNPTR_READ: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
-    pub static DYNPTR_WRITE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+    // size=0 accepted (kernel runtime no-ops on zero-len read/write).
+    pub static DYNPTR_READ: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R1, Reg::R2)];
+    pub static DYNPTR_WRITE: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R3, Reg::R4)];
 
     // ---- Slice cluster (W4.2g) ----
-    pub static DYNPTR_SLICE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+    // R3 (`buffer__opt`) is the kernel's `__opt` scratch buffer: NULL is
+    // allowed regardless of R4 (the helper just returns NULL when the
+    // slow copy path would have been needed).
+    pub static DYNPTR_SLICE: [MemSizePair; 1] = [MemSizePair::new_optional(Reg::R3, Reg::R4)];
+
+    // ---- bpf_cpumask_populate(R1=dst, R2=src, R3=src__sz) ----
+    pub static CPUMASK_POPULATE: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+
+    // ---- bpf_copy_from_user_str(R1=dst, R2=size, R3=unsafe_ptr, R4=flags) ----
+    // size=0 accepted (kernel returns 0 / no-op).
+    pub static COPY_FROM_USER_STR: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R1, Reg::R2)];
 }
 
 /// W7.2: returns true if the helper is in the kernel's `is_fastcall_helper_call`

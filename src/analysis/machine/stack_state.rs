@@ -24,6 +24,15 @@ pub enum IterKind {
     /// program-visible struct). `_next` returns `s64 *` into the
     /// iterator's own state.
     TestmodSeq,
+    /// `struct bpf_iter_css_task` from kernel/bpf/task_iter.c. Iterates
+    /// tasks attached to a cgroup_subsys_state. `_next` returns
+    /// `struct task_struct *` (RCU). Allowed only in LSM, iter, and
+    /// sleepable program contexts (kernel `check_css_task_iter_allowlist`).
+    CssTask,
+    /// `struct bpf_iter_kmem_cache` from mm/slab_common.c. Iterates over
+    /// all kernel slab caches. `_next` returns `struct kmem_cache *`
+    /// (TRUSTED). Program-visible struct is 8 bytes (opaque __u64[1]).
+    KmemCache,
 }
 
 impl IterKind {
@@ -32,6 +41,9 @@ impl IterKind {
     /// depends on whether we're in an RCU CS, and `bpf_rcu_read_unlock`
     /// invalidates trust on outstanding slots of this kind. Currently
     /// task and css iters; bits/num are pure userspace state.
+    /// css_task is KF_TRUSTED_ARGS (not KF_RCU_PROTECTED) and is gated
+    /// by the LSM/iter/sleepable allowlist instead, so its slot trust
+    /// is independent of in_rcu_cs at init time.
     pub fn is_rcu_protected(self) -> bool {
         matches!(self, IterKind::Task | IterKind::Css)
     }

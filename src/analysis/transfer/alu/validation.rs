@@ -82,6 +82,24 @@ pub(crate) fn check_ptr_arithmetic(
     else if dst_is_ptr {
         match op {
             AluOp::Add | AluOp::Sub => {
+                // Kernel `adjust_ptr_min_max_vals` (verifier.c v6.15):
+                // PTR_TO_FLOW_KEYS arithmetic is allowed only with a
+                // known constant offset (`if (known) break;`); a
+                // variable offset falls through to "pointer arithmetic
+                // on flow_keys prohibited". Closes
+                // verifier_value_illegal_alu::flow_keys_illegal_variable_offset_alu.
+                if matches!(
+                    dst_type,
+                    RegType::PtrToBtfId { type_name, .. } if *type_name == "bpf_flow_keys"
+                ) && src_min != src_max
+                {
+                    error!(
+                        "[Verifier] pc {}: {} pointer arithmetic on flow_keys with variable offset prohibited",
+                        state.pc,
+                        dst.name()
+                    );
+                    return false;
+                }
                 if width == Width::W32 {
                     return true;
                 }
@@ -106,7 +124,16 @@ pub(crate) fn check_ptr_arithmetic(
                 // at access either (sparse pages just zero-fault), so skip
                 // both the MAX_VAR_OFF and the i32::MAX MapValue clamp here.
                 let is_arena = matches!(dst_type, RegType::PtrToArena { .. });
+                // Kernel verifier.c L14330: PTR_TO_CTX falls through the
+                // base_type switch without bounds enforcement at arith time.
+                // Wide / unbounded scalars are tolerated; the actual access
+                // path (ctx field load/store, or helper arg validation) is
+                // what catches misuse. Mirroring this admits libbpf's
+                // `(void *)ctx + arg_spec->reg_off` idiom (usdt.bpf.h:185)
+                // where reg_off is sign-extended u16 with full s64 bounds.
+                let is_ctx = matches!(dst_type, RegType::PtrToCtx);
                 if !is_arena
+                    && !is_ctx
                     && (src_min < -constants::MAX_VAR_OFF || src_max > constants::MAX_VAR_OFF)
                 {
                     return false;

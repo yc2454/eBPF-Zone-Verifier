@@ -273,6 +273,56 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             return vec![];
         }
 
+        // Kernel: PTR_MAYBE_NULL on R2 rejects with "Possibly NULL
+        // pointer passed to helper arg2". Programs must null-check
+        // a fresh acquire-result before bpf_kptr_xchg consumes it
+        // (map_kptr_fail::kptr_xchg_possibly_null). Match any
+        // *OrNull pointer-or-null reg-type — the ref_id check above
+        // accepts these because the ref-tracking carries through the
+        // null branch.
+        if matches!(
+            r2,
+            RegType::PtrToBtfIdOrNull { .. }
+                | RegType::PtrToMapKptrOrNull { .. }
+                | RegType::PtrToOwnedKptrOrNull { .. }
+                | RegType::PtrToSocketOrNull { .. }
+                | RegType::PtrToSockCommonOrNull { .. }
+                | RegType::PtrToCgroupOrNull { .. }
+                | RegType::PtrToTaskOrNull { .. }
+                | RegType::PtrToCpumaskOrNull { .. }
+        ) {
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
+            return vec![];
+        }
+
+        // R2 pointee-type compat (kernel `map_kptr_match_type`,
+        // verifier.c v6.15 L5780 `btf_struct_ids_match`). For Ref slots
+        // the kernel demands a strict struct-name match between R2's
+        // pointee BTF and the kptr field's pointee BTF — different
+        // BTFs (vmlinux / module / prog) are normalized via the type
+        // name. Without this, `bpf_obj_new(struct node_data2)` followed
+        // by `bpf_kptr_xchg(&mapval->node /* expects node_data */, ...)`
+        // is accepted as the FA on local_kptr_stash_fail::stash_rb_nodes
+        // showed. Skip the check when R2 is null (no pointee) or its
+        // pointee BTF id is unknown (lite-scope producers).
+        if !r2_is_null {
+            let r2_pointee = match r2 {
+                RegType::PtrToOwnedKptr { pointee_btf_id, .. } => pointee_btf_id,
+                RegType::PtrToMapKptr { pointee_btf_id, .. } => Some(pointee_btf_id),
+                _ => None,
+            };
+            if let Some(r2_id) = r2_pointee {
+                let kptr_name = env.ctx.btf.struct_name(pointee_btf_id);
+                let r2_name = env.ctx.btf.struct_name(r2_id);
+                if let (Some(a), Some(b)) = (kptr_name, r2_name)
+                    && a != b
+                {
+                    env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
+                    return vec![];
+                }
+            }
+        }
+
         // Consume R2's ref (transfer ownership into the map).
         if let Some(id) = r2_ref {
             state.release_ref(id);
@@ -620,6 +670,25 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
             state.domain.assume_le_imm(Reg::R0, hi);
             state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
         }
+        // Mirrors kernel's `do_refine_retval_range()` for the str-family
+        // probe-read helpers: R0 is bounded by [-MAX_ERRNO, R2_max].
+        // Without this refinement, `if (len >= 0) ptr += len;` (a common
+        // varlen idiom) rejects as `Add ptr, unbounded-scalar` at the
+        // pointer-arithmetic check. Bound R0 by R2 directly (the size
+        // arg) rather than via the proto's mem_size_pairs, so this fires
+        // for helpers without a registered proto (PROBE_READ_KERNEL_STR /
+        // PROBE_READ_USER_STR are intentionally unmodeled at the proto
+        // level — adding them surfaces a stale-zone-offset issue in
+        // mem_size_pair validation that would regress unrelated tests).
+        constants::BPF_PROBE_READ_STR
+        | constants::BPF_PROBE_READ_USER_STR
+        | constants::BPF_PROBE_READ_KERNEL_STR => {
+            let (_, hi) = state.domain.get_interval(Reg::R2);
+            if hi != i64::MAX {
+                state.domain.assume_le_imm(Reg::R0, hi);
+            }
+            state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
+        }
         constants::BPF_KFUNC_CALL_DUMMY => {
             // Assume unsupported external kfuncs return an unknown opaque pointer that can be dereferenced
             state.types.set(
@@ -778,26 +847,41 @@ fn transfer_callback_helper(
     // caller's ctx pointer to a specific cb arg register
     // (`set_loop_callback_state` etc., verifier.c v6.15 ~L10685+).
     // Without this, the cb body's first read of ctx hits "R2 !read_ok".
-    let ctx_propagation: Option<(Reg, RegType, Tnum, (i64, i64))> = match helper {
-        // bpf_loop(nr_loops, cb, ctx, flags) → cb(idx, ctx); ctx → R2.
+    // Build the full caller→cb propagation list. Each entry is
+    // `(cb_dst, caller_src_type, caller_src_tnum, caller_src_bounds)`.
+    // Mirrors kernel `set_*_callback_state` (verifier.c v6.15 ~L10685+).
+    // Without typed propagation the cb body's first read of the arg
+    // hits "R2/R3 !read_ok".
+    let mut ctx_propagations: Vec<(Reg, RegType, Tnum, (i64, i64))> = Vec::new();
+    let snap = |st: &State, r: Reg| (st.types.get(r), st.get_tnum(r), st.domain.get_interval(r));
+    match helper {
+        // bpf_loop(nr_loops, cb, ctx, flags) → cb(idx, ctx); R1=idx (scalar, set later), ctx → R2.
         constants::BPF_LOOP
-        // bpf_user_ringbuf_drain(map, cb, ctx, flags) → cb(dynptr, ctx); ctx → R2.
+        // bpf_user_ringbuf_drain(map, cb, ctx, flags) → cb(dynptr, ctx); R1=dynptr (left NotInit; few tests deref), ctx → R2.
         | constants::BPF_USER_RINGBUF_DRAIN => {
-            let bounds = state.domain.get_interval(Reg::R3);
-            Some((Reg::R2, state.types.get(Reg::R3), state.get_tnum(Reg::R3), bounds))
+            let (ty, tn, b) = snap(&state, Reg::R3);
+            ctx_propagations.push((Reg::R2, ty, tn, b));
         }
-        // bpf_for_each_map_elem(map, cb, ctx, flags) → cb(map, key, val, ctx); ctx → R4.
+        // bpf_for_each_map_elem(map, cb, ctx, flags) → cb(map, key, val, ctx);
+        // R1=caller's R1 (the map ptr); R2=PTR_TO_MAP_KEY, R3=PTR_TO_MAP_VALUE
+        // (we don't track those distinctly — use a lax BTF-typed pointer that
+        // permits generic loads, mirroring the timer-cb fallback); R4=ctx.
         constants::BPF_FOR_EACH_MAP_ELEM => {
-            let bounds = state.domain.get_interval(Reg::R3);
-            Some((Reg::R4, state.types.get(Reg::R3), state.get_tnum(Reg::R3), bounds))
+            let (ty1, tn1, b1) = snap(&state, Reg::R1);
+            ctx_propagations.push((Reg::R1, ty1, tn1, b1));
+            let (ty3, tn3, b3) = snap(&state, Reg::R3);
+            ctx_propagations.push((Reg::R4, ty3, tn3, b3));
         }
-        // bpf_find_vma(task, addr, cb, ctx, flags) → cb(task, vma, ctx); caller's R4 → cb's R3.
+        // bpf_find_vma(task, addr, cb, ctx, flags) → cb(task, vma, ctx);
+        // R1=caller's R1 (task), R2=PTR_TO_BTF_ID{vm_area_struct}, R3=ctx.
         constants::BPF_FIND_VMA => {
-            let bounds = state.domain.get_interval(Reg::R4);
-            Some((Reg::R3, state.types.get(Reg::R4), state.get_tnum(Reg::R4), bounds))
+            let (ty1, tn1, b1) = snap(&state, Reg::R1);
+            ctx_propagations.push((Reg::R1, ty1, tn1, b1));
+            let (ty4, tn4, b4) = snap(&state, Reg::R4);
+            ctx_propagations.push((Reg::R3, ty4, tn4, b4));
         }
-        _ => None,
-    };
+        _ => {}
+    }
 
     // Caller's ctx-arg base offset (relative to caller's R10). Captured
     // before the move into cb_state below; needed to translate cb-body
@@ -848,29 +932,73 @@ fn transfer_callback_helper(
     update_call_rel_types(&mut cb_state);
     cb_state.domain.clear_packet_size_bounds();
 
-    // Minimal arg typing: R1 is always a scalar (iteration index / map
-    // pointer / map-elem pointer depending on helper); R2+ are left
-    // unsupported for most helpers so callbacks that dereference them
-    // REJECT. Full per-helper arg typing lands alongside richer
-    // signature validation in a follow-up.
+    // Minimal arg typing: clear R1..R5, then re-install per-helper. R1
+    // for bpf_loop is the iteration index (scalar). Other helpers' R1
+    // and additional pointer args are installed via `ctx_propagations`
+    // and the static-typed table below; remaining regs stay NotInit so
+    // callbacks that dereference them REJECT.
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
         cb_state.types.set(r, RegType::NotInit);
         cb_state.domain.forget(r);
         cb_state.set_tnum(r, Tnum::unknown());
         cb_state.clear_scalar_id(r);
     }
-    cb_state.types.set(Reg::R1, RegType::ScalarValue);
-    cb_state.domain.forget(Reg::R1);
-    cb_state.set_tnum(Reg::R1, Tnum::unknown());
-    cb_state.alloc_scalar_id(Reg::R1);
+    // bpf_loop only: R1 = iteration index (scalar). Other helpers
+    // install R1 via ctx_propagations.
+    if helper == constants::BPF_LOOP {
+        cb_state.types.set(Reg::R1, RegType::ScalarValue);
+        cb_state.domain.forget(Reg::R1);
+        cb_state.set_tnum(Reg::R1, Tnum::unknown());
+        cb_state.alloc_scalar_id(Reg::R1);
+    }
 
-    // Install propagated ctx after the generic clear above.
-    if let Some((dst, ty, tnum, (lo, hi))) = ctx_propagation {
+    // Install propagated args after the generic clear.
+    for (dst, ty, tnum, (lo, hi)) in ctx_propagations.drain(..) {
         cb_state.types.set(dst, ty);
         cb_state.set_tnum(dst, tnum);
         cb_state.domain.forget(dst);
         cb_state.domain.assign_interval(dst, lo, hi);
         cb_state.clear_scalar_id(dst);
+    }
+
+    // Static-typed cb args (kernel `set_*_callback_state` PTR_TO_BTF_ID /
+    // PTR_TO_MAP_KEY / PTR_TO_MAP_VALUE entries). We don't track
+    // PTR_TO_MAP_KEY / VALUE distinctly — approximate with a lax
+    // BTF-typed pointer that admits generic loads (existing timer-cb
+    // pattern). Tighter typing is future work.
+    {
+        use crate::analysis::machine::reg_types::PtrFlags;
+        let unknown_btf = || RegType::PtrToBtfId {
+            type_name: "unknown",
+            flags: PtrFlags::TRUSTED,
+            ref_id: None,
+        };
+        match helper {
+            // cb(map, key, val, ctx) — R2=key, R3=val (lax pointers).
+            constants::BPF_FOR_EACH_MAP_ELEM => {
+                for r in [Reg::R2, Reg::R3] {
+                    cb_state.types.set(r, unknown_btf());
+                    cb_state.domain.forget(r);
+                    cb_state.set_tnum(r, Tnum::unknown());
+                    cb_state.clear_scalar_id(r);
+                }
+            }
+            // cb(task, vma, ctx) — R2 = PTR_TO_BTF_ID{vm_area_struct, TRUSTED}.
+            constants::BPF_FIND_VMA => {
+                cb_state.types.set(
+                    Reg::R2,
+                    RegType::PtrToBtfId {
+                        type_name: "vm_area_struct",
+                        flags: PtrFlags::TRUSTED,
+                        ref_id: None,
+                    },
+                );
+                cb_state.domain.forget(Reg::R2);
+                cb_state.set_tnum(Reg::R2, Tnum::unknown());
+                cb_state.clear_scalar_id(Reg::R2);
+            }
+            _ => {}
+        }
     }
 
     // Timer cb signature is `(struct bpf_map *, void *key, void *value)`
@@ -1344,22 +1472,37 @@ pub(crate) fn apply_pre_call_lock_flags(
             env.fail(VerificationError::LockAlreadyHeld { pc });
             return false;
         }
-        // R1 was validated as PtrToMapValue aimed at a SpinLock field.
-        let RegType::PtrToMapValue { offset, id, .. } = state.types.get(Reg::R1) else {
-            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
-            return false;
+        // R1 was validated by `validate_map_value_special` as either a
+        // PtrToMapValue or a PtrToOwnedKptr aimed at a SpinLock field.
+        // The kernel `process_spin_lock` (verifier.c v6.15 L8271+)
+        // accepts both shapes; the lock-state-machine identity is
+        // (id, offset) for map values and (ref_id, foo_offset) for
+        // freshly-allocated objects (`bpf_obj_new`'d struct foo with
+        // a `bpf_spin_lock` member). Without this arm, every linked
+        // / rbtree test that takes `bpf_spin_lock(&f->lock)` rejects
+        // the *_in_list family in linked_list.c).
+        let (id, off) = match state.types.get(Reg::R1) {
+            RegType::PtrToMapValue { offset: Some(o), id, .. } => (id, o as u32),
+            RegType::PtrToOwnedKptr { ref_id, offset, .. } => (
+                ref_id.unwrap_or(0),
+                offset as u32,
+            ),
+            _ => {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+                return false;
+            }
         };
-        let Some(off) = offset else {
-            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
-            return false;
-        };
-        state.acquire_lock(id, off as u32);
+        state.acquire_lock(id, off);
     }
 
     if proto.flags.contains(CallFlags::SPIN_LOCK_RELEASE) {
-        let RegType::PtrToMapValue { id, .. } = state.types.get(Reg::R1) else {
-            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
-            return false;
+        let id = match state.types.get(Reg::R1) {
+            RegType::PtrToMapValue { id, .. } => id,
+            RegType::PtrToOwnedKptr { ref_id, .. } => ref_id.unwrap_or(0),
+            _ => {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+                return false;
+            }
         };
         let Some(lock) = state.get_active_lock() else {
             env.fail(VerificationError::LockNotHeld { pc });

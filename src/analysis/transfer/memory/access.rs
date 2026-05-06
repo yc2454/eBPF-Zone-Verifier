@@ -270,9 +270,67 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
         // Mirrors the W6.4a-followon `PtrToBtfId{type_name: "unknown"}`
         // policy — accept any field read; result is `ScalarValue` (or a
         // nested PtrToBtfId if narrower modeling lands later).
-        PtrToTask { .. } => {
+        PtrToTask { .. } | PtrToCgroup { .. } => {
             // accept; loaded value left as `ScalarValue` by the
-            // type-update path
+            // type-update path (or PtrToBtfId for allowlisted
+            // pointer fields via trusted_field_load).
+        }
+        PtrToOwnedKptr { .. } => {
+            // Field deref through a graph-kptr (bpf_obj_new'd struct,
+            // or pop result from bpf_list/rbtree). The kernel admits
+            // these via `mark_btf_ld_reg` / `btf_struct_access` using
+            // the kptr's `pointee_btf_id`; container_of patterns
+            // (`f = container_of(node, struct foo, node); v = f->data`)
+            // surface as negative-offset loads relative to the kptr
+            // base — kernel admits because the kptr's allocated region
+            // is the parent struct. Accept any aligned read; loaded
+            // value left as `ScalarValue` by the type-update path.
+            // Mirrors PtrToBtfId's lax admit for layout-known names
+            // not in `mem_region_model`.
+        }
+        PtrToMapKptr { pointee_btf_id, .. } => {
+            // Field deref through a kptr loaded from a map's `__kptr*`
+            // field. Kernel admits these via `btf_struct_access` using
+            // the kptr's pointee BTF (mark_btf_ld_reg attenuates the
+            // result's flags to UNTRUSTED on Unref / RCU on Ref under
+            // implicit RCU CS / TRUSTED on post-xchg). The downstream
+            // `bpf_per_cpu_ptr` / `bpf_this_cpu_ptr` arg validator
+            // (transfer.rs:190) still gates the PERCPU-only fail tests
+            // (`marked_as_untrusted_or_null`,
+            // `inherit_untrusted_on_walk`,
+            // `mark_ref_as_untrusted_or_null`), so widening the deref
+            // here doesn't unmask those rejections — they fire one
+            // call later. Loaded value left as `ScalarValue`.
+            //
+            // Bounds check via the pointee struct's BTF size: kernel
+            // `btf_struct_access` rejects "access beyond struct <name>
+            // at off N size M" for off+size > sizeof(struct). Closes
+            // map_kptr_fail::correct_btf_id_check_size where the
+            // program reads `*(int *)((void *)p + sizeof(*p))` —
+            // exactly one int past the struct end. Off and size from
+            // caller are i16/i64 of the load instruction; we only
+            // enforce when the pointee BTF id resolves to a known
+            // size (>0).
+            let pointee_size = ctx.btf.type_size_bytes(pointee_btf_id);
+            if pointee_size > 0
+                && (off < 0 || (off as i64).saturating_add(size) > pointee_size as i64)
+            {
+                let name = ctx
+                    .btf
+                    .struct_name(pointee_btf_id)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("btf_id_{pointee_btf_id}"));
+                error!(
+                    "[Verifier] pc {}: access beyond struct {} at off {} size {}",
+                    pc, name, off, size
+                );
+                env.fail(VerificationError::UnsafeGenericLoad {
+                    pc,
+                    base,
+                    off,
+                    base_type,
+                });
+            }
         }
         ScalarValue | NotInit => {
             error!(
@@ -471,7 +529,21 @@ pub fn check_store(
                     ..
                 }
             );
+            // Conntrack types: `nf_conn___init` is the transient
+            // init-state from `bpf_skb_ct_alloc` / `bpf_xdp_ct_alloc`
+            // (pre-insert), `nf_conn` is the post-insert form. Kernel
+            // admits store of the writable fields (status, mark,
+            // timeout) on both. Without mem_region_model entries,
+            // treat them like "unknown" for store purposes.
+            let store_skip = matches!(
+                base_ty,
+                PtrToBtfId {
+                    type_name: "nf_conn___init" | "nf_conn",
+                    ..
+                }
+            );
             if !is_unknown
+                && !store_skip
                 && !mem_region_model::is_valid_mem_region_read(state.types.get(base), off, size)
             {
                 error!(

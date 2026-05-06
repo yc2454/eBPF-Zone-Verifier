@@ -259,6 +259,127 @@ pub fn tracing_attach_arg_tag_flags(
         )
 }
 
+/// Tracing-attach arg kind: scalar vs pointer. `Pointer` is the safe
+/// default (matches the lax `TrustedPtr{type_name: "unknown"}`
+/// fallback for unmodeled attach targets); `Scalar` is the per-target
+/// override used when we know from the kernel function's signature
+/// that the slot is an integer/char/short rather than a pointer.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TracingArgKind {
+    Scalar,
+    Pointer,
+}
+
+/// Per-attach-target arg-kind table. The kernel resolves args from the
+/// attach target's vmlinux/module BTF (which knows e.g. that
+/// `bpf_fentry_test6`'s arg 3 is `int`, a scalar, not a pointer); we
+/// don't ship that BTF, so the lax `is_valid_ctx_read` fallback types
+/// every BPF_PROG ctx-array slot as a trusted unknown pointer. That
+/// over-types scalar slots and makes downstream comparisons
+/// (`c == 18`) look like pointer arithmetic, rejected as "Invalid
+/// pointer arithmetic".
+///
+/// Each entry overrides one slot for one target to `Scalar`. Unmapped
+/// slots keep the lax pointer typing.
+///
+/// `arg_idx` is **kernel-side** (0 = first user-declared arg of the
+/// attach target). For fexit programs the trailing `int ret` parameter
+/// is appended at slot N (where N = number of kernel args); we don't
+/// emit a `Scalar` mapping for it because the BPF_PROG thunk binds the
+/// final arg to ctx[N] separately and the existing model already
+/// handles it.
+const ATTACH_TARGET_ARG_KINDS: &[(&str, u8, TracingArgKind)] = &[
+    // bpf_fentry_test1(int a)
+    ("bpf_fentry_test1", 0, TracingArgKind::Scalar),
+    // bpf_fentry_test2(int a, __u64 b)
+    ("bpf_fentry_test2", 0, TracingArgKind::Scalar),
+    ("bpf_fentry_test2", 1, TracingArgKind::Scalar),
+    // bpf_fentry_test3(char a, int b, __u64 c)
+    ("bpf_fentry_test3", 0, TracingArgKind::Scalar),
+    ("bpf_fentry_test3", 1, TracingArgKind::Scalar),
+    ("bpf_fentry_test3", 2, TracingArgKind::Scalar),
+    // bpf_fentry_test4(void *a, char b, int c, __u64 d)
+    ("bpf_fentry_test4", 1, TracingArgKind::Scalar),
+    ("bpf_fentry_test4", 2, TracingArgKind::Scalar),
+    ("bpf_fentry_test4", 3, TracingArgKind::Scalar),
+    // bpf_fentry_test5(__u64 a, void *b, short c, int d, __u64 e)
+    ("bpf_fentry_test5", 0, TracingArgKind::Scalar),
+    ("bpf_fentry_test5", 2, TracingArgKind::Scalar),
+    ("bpf_fentry_test5", 3, TracingArgKind::Scalar),
+    ("bpf_fentry_test5", 4, TracingArgKind::Scalar),
+    // bpf_fentry_test6(__u64 a, void *b, short c, int d, void *e, __u64 f)
+    ("bpf_fentry_test6", 0, TracingArgKind::Scalar),
+    ("bpf_fentry_test6", 2, TracingArgKind::Scalar),
+    ("bpf_fentry_test6", 3, TracingArgKind::Scalar),
+    ("bpf_fentry_test6", 5, TracingArgKind::Scalar),
+    // bpf_fentry_test7 / 8: single struct ptr arg — already pointer-typed.
+
+    // fexit ret-slot overrides: clang's BPF_PROG-fexit thunk binds the
+    // return value to ctx[N] where N is the kernel-side arg count.
+    // All bpf_fentry_test* and bpf_testmod_fentry_test* return `int`
+    // (a scalar), so the same lax pointer fallback over-types the ret
+    // slot. Mark each. These entries only fire for fexit programs;
+    // fentry programs never load slot N.
+    ("bpf_fentry_test1", 1, TracingArgKind::Scalar),
+    ("bpf_fentry_test2", 2, TracingArgKind::Scalar),
+    ("bpf_fentry_test3", 3, TracingArgKind::Scalar),
+    ("bpf_fentry_test4", 4, TracingArgKind::Scalar),
+    ("bpf_fentry_test5", 5, TracingArgKind::Scalar),
+    ("bpf_fentry_test6", 6, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test7", 7, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test11", 11, TracingArgKind::Scalar),
+
+    // testmod many-args targets:
+    // bpf_testmod_fentry_test7(__u64 a, void *b, short c, int d, void *e, char f, int g)
+    ("bpf_testmod_fentry_test7", 0, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test7", 2, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test7", 3, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test7", 5, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test7", 6, TracingArgKind::Scalar),
+    // bpf_testmod_fentry_test11(__u64 a, void *b, short c, int d, void *e,
+    //                           char f, int g, __u64 h, __u64 i, __u64 j,
+    //                           void *k)
+    ("bpf_testmod_fentry_test11", 0, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test11", 2, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test11", 3, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test11", 5, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test11", 6, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test11", 7, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test11", 8, TracingArgKind::Scalar),
+    ("bpf_testmod_fentry_test11", 9, TracingArgKind::Scalar),
+
+    // LSM hook attach targets — trailing scalar args. The `entry_args`
+    // table in `derive_program_kind`'s LSM dispatch only declares the
+    // BTF-typed pointer prefix; trailing slots fall through to the lax
+    // `TrustedPtr{type_name: "unknown"}` fallback and over-type as
+    // pointers. These overrides flip the int/gfp_t/addrlen slots back
+    // to Scalar for hooks the lsm_cgroup corpus exercises.
+    //
+    // socket_post_create(struct socket *sock, int family, int type,
+    //                    int protocol, int kern)
+    ("socket_post_create", 1, TracingArgKind::Scalar),
+    ("socket_post_create", 2, TracingArgKind::Scalar),
+    ("socket_post_create", 3, TracingArgKind::Scalar),
+    ("socket_post_create", 4, TracingArgKind::Scalar),
+    // socket_bind(struct socket *sock, struct sockaddr *address, int addrlen)
+    ("socket_bind", 2, TracingArgKind::Scalar),
+    // sk_alloc_security(struct sock *sk, int family, gfp_t priority)
+    ("sk_alloc_security", 1, TracingArgKind::Scalar),
+    ("sk_alloc_security", 2, TracingArgKind::Scalar),
+    // inet_csk_clone(struct sock *newsk, const struct request_sock *req)
+    // — both pointers, no scalar slots.
+];
+
+/// Look up the per-target arg kind. Returns `None` for unmapped slots
+/// (callers should keep the lax pointer fallback).
+pub fn tracing_attach_arg_kind(target: Option<&str>, arg_idx: u8) -> Option<TracingArgKind> {
+    let target = target?;
+    ATTACH_TARGET_ARG_KINDS
+        .iter()
+        .find(|(t, i, _)| *t == target && *i == arg_idx)
+        .map(|(_, _, k)| *k)
+}
+
 fn is_tracing_attach_denied(target: &str) -> bool {
     matches!(
         target,
@@ -420,6 +541,13 @@ impl Analyzer {
         } else {
             btf::BtfContext::new()
         };
+
+        // Mirror libbpf's STV_HIDDEN → BTF_FUNC_STATIC demotion (libbpf.c:3552):
+        // global/weak subprogs with hidden visibility are verified inline
+        // by the kernel, not as standalone global subprogs.
+        if let Ok(names) = elf::prog::collect_hidden_subprog_names(path) {
+            btf.hidden_subprogs.extend(names);
+        }
 
         // Patch BTF DATASEC member offsets from the ELF symbol table.
         // clang emits all DATASEC entries with offset=0; libbpf rewrites
@@ -796,6 +924,19 @@ impl Analyzer {
             };
             Some(raw.trim_end_matches(".s").to_string())
         };
+        // Detect sleepable from the SEC: the `.s` suffix on the flavor
+        // prefix (`fentry.s/`, `iter.s/`, `lsm.s/`, `struct_ops.s/`,
+        // `uprobe.s/`, …). Drives kfunc allowlists like
+        // `check_css_task_iter_allowlist`.
+        ctx.is_sleepable = {
+            let lower = section.to_lowercase();
+            let stripped = lower.strip_prefix('?').unwrap_or(&lower);
+            let raw = match stripped.split_once('/') {
+                Some((prefix, _)) => prefix,
+                None => stripped,
+            };
+            raw.ends_with(".s")
+        };
 
         // Cluster E: reject SEC("lsm/<hook>") for hooks the kernel's
         // BPF_LSM_DISABLED_HOOKS list excludes from BPF attach.
@@ -1060,6 +1201,57 @@ impl Analyzer {
                         (ProgramKind::Tracing, Some("tp_btf"), "tcp_probe") => {
                             Some(vec![("sock", false), ("sk_buff", false)])
                         }
+                        // kfree_skb: TRACE_EVENT(kfree_skb,
+                        //   TP_PROTO(struct sk_buff *skb, void *location, ...))
+                        // dynptr_success::test_dynptr_skb_tp_btf calls
+                        // bpf_dynptr_from_skb on the skb arg.
+                        (ProgramKind::Tracing, Some("tp_btf"), "kfree_skb") => {
+                            Some(vec![("sk_buff", false)])
+                        }
+                        // tcp_retransmit_synack: TRACE_EVENT(tcp_retransmit_synack,
+                        //   TP_PROTO(const struct sock *sk, const struct request_sock *req))
+                        (ProgramKind::Tracing, Some("tp_btf"), "tcp_retransmit_synack") => {
+                            Some(vec![("sock", false), ("request_sock", false)])
+                        }
+                        // tcp_bad_csum: TRACE_EVENT(tcp_bad_csum,
+                        //   TP_PROTO(const struct sk_buff *skb))
+                        (ProgramKind::Tracing, Some("tp_btf"), "tcp_bad_csum") => {
+                            Some(vec![("sk_buff", false)])
+                        }
+                        // cgroup_mkdir: TRACE_EVENT(cgroup_mkdir,
+                        //   TP_PROTO(struct cgroup *cgrp, const char *path))
+                        // const char* trailing scalar is dropped.
+                        (ProgramKind::Tracing, Some("tp_btf"), "cgroup_mkdir") => {
+                            Some(vec![("cgroup", false)])
+                        }
+                        // sched_switch: TRACE_EVENT(sched_switch,
+                        //   TP_PROTO(bool preempt, struct task_struct *prev,
+                        //            struct task_struct *next, ...))
+                        // First scalar arg dropped.
+                        (ProgramKind::Tracing, Some("tp_btf"), "sched_switch") => {
+                            Some(vec![("task_struct", false), ("task_struct", false)])
+                        }
+                        // ── A3 cgroup-related fentry/fexit targets ──────
+                        // cgroup_attach_task(struct cgroup *dst_cgrp,
+                        //                    struct task_struct *leader,
+                        //                    bool threadgroup)
+                        (ProgramKind::Tracing, Some("fentry"), "cgroup_attach_task")
+                        | (ProgramKind::Tracing, Some("fexit"), "cgroup_attach_task") => {
+                            Some(vec![("cgroup", false), ("task_struct", false)])
+                        }
+                        // bpf_rstat_flush(struct cgroup *cgrp,
+                        //                 struct cgroup *parent, int cpu)
+                        (ProgramKind::Tracing, Some("fentry"), "bpf_rstat_flush")
+                        | (ProgramKind::Tracing, Some("fexit"), "bpf_rstat_flush") => {
+                            Some(vec![("cgroup", false), ("cgroup", false)])
+                        }
+                        // inet_stream_connect(struct socket *sock,
+                        //                     struct sockaddr *uaddr,
+                        //                     int addr_len, int flags)
+                        (ProgramKind::Tracing, Some("fentry"), "inet_stream_connect")
+                        | (ProgramKind::Tracing, Some("fexit"), "inet_stream_connect") => {
+                            Some(vec![("socket", false), ("sockaddr", false)])
+                        }
                         _ => None,
                     };
                     if let Some(arg_specs) = table_args {
@@ -1192,6 +1384,19 @@ impl Analyzer {
                 None => stripped,
             };
             Some(raw.trim_end_matches(".s").to_string())
+        };
+        // Detect sleepable from the SEC: the `.s` suffix on the flavor
+        // prefix (`fentry.s/`, `iter.s/`, `lsm.s/`, `struct_ops.s/`,
+        // `uprobe.s/`, …). Drives kfunc allowlists like
+        // `check_css_task_iter_allowlist`.
+        ctx.is_sleepable = {
+            let lower = section.to_lowercase();
+            let stripped = lower.strip_prefix('?').unwrap_or(&lower);
+            let raw = match stripped.split_once('/') {
+                Some((prefix, _)) => prefix,
+                None => stripped,
+            };
+            raw.ends_with(".s")
         };
 
         // Cluster E: reject SEC("lsm/<hook>") for hooks the kernel's

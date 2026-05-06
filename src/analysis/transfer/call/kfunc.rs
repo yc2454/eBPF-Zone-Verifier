@@ -37,6 +37,45 @@ pub(crate) fn transfer_kfunc(env: &mut VerifierEnv, state: State, btf_id: u32) -
     if let Some(n) = name.as_deref()
         && let Some(proto) = get_kfunc_proto(n)
     {
+        // Kernel `check_css_task_iter_allowlist` (verifier.c v6.15
+        // ~L13151): bpf_iter_css_task_new is only allowed in BPF_LSM,
+        // BPF_TRACE_ITER, and sleepable programs — rejected with
+        // "css_task_iter is only allowed in bpf_lsm, bpf_iter and
+        // sleepable progs" otherwise. Closes
+        // iters_task_failure.c::iter_css_task_for_each (the
+        // SEC("?fentry/...") non-sleepable variant).
+        if n == "bpf_iter_css_task_new" {
+            use crate::ast::ProgramKind;
+            let allowed = env.ctx.prog_kind == ProgramKind::Lsm
+                || matches!(env.ctx.attach_flavor.as_deref(), Some("iter"))
+                || env.ctx.is_sleepable;
+            if !allowed {
+                env.fail(VerificationError::KfuncNotAllowedForProgram {
+                    pc,
+                    btf_id,
+                    kind: env.ctx.prog_kind,
+                });
+                return vec![];
+            }
+        }
+
+        // Kernel registers bpf_sock_destroy via bpf_sk_iter_kfunc_set
+        // against BPF_PROG_TYPE_TRACING with KF_PROG_TYPE_BPF_TRACE_ITER —
+        // only iter/{tcp,udp} attach types may call it. Tracing programs
+        // attached at tp_btf etc. are rejected with the kernel's
+        // "calling kernel function bpf_sock_destroy is not allowed".
+        // Closes sock_destroy_prog_fail.c::trace_tcp_destroy_sock surfaced
+        // by the new bpf_sock_destroy proto registration.
+        if n == "bpf_sock_destroy"
+            && !matches!(env.ctx.attach_flavor.as_deref(), Some("iter"))
+        {
+            env.fail(VerificationError::KfuncNotAllowedForProgram {
+                pc,
+                btf_id,
+                kind: env.ctx.prog_kind,
+            });
+            return vec![];
+        }
         return transfer_kfunc_proto(env, state, btf_id, &proto);
     }
 
@@ -490,16 +529,28 @@ fn transfer_kfunc_proto(
     // wrong type but its node-member offset coincidentally matches the
     // declared __contains offset).
     if let Some(kfunc_name) = env.ctx.btf.kfunc_name(btf_id) {
-        let pointee = match kfunc_name {
-            "bpf_obj_new_impl" => state
-                .domain
-                .get_fixed_value(Reg::R1)
-                .and_then(|v| u32::try_from(v).ok()),
+        // Resolves (pointee_btf_id, node_offset_override). For graph-pop
+        // kfuncs (bpf_list_pop_*/bpf_rbtree_first/remove), the kernel
+        // models the returned pointer as offset = `node_offset` of the
+        // corresponding bpf_{list,rb}_node field within the parent
+        // struct (kernel verifier.c v6.15: returned reg carries
+        // reg->btf_id = parent struct + reg->off = node_offset). Without
+        // overriding offset, the next graph-add cross-arg check sees
+        // offset=0 and rejects against contains.node_offset (e.g.
+        // linked_list.c::global_list_push_pop pc 92: 0 != 48).
+        let (pointee, node_offset_override): (Option<u32>, Option<i32>) = match kfunc_name {
+            "bpf_obj_new_impl" => (
+                state
+                    .domain
+                    .get_fixed_value(Reg::R1)
+                    .and_then(|v| u32::try_from(v).ok()),
+                None,
+            ),
             "bpf_refcount_acquire_impl" => match in_types.get(Reg::R1) {
                 RegType::PtrToOwnedKptr {
                     pointee_btf_id, ..
-                } => pointee_btf_id,
-                _ => None,
+                } => (pointee_btf_id, None),
+                _ => (None, None),
             },
             "bpf_list_pop_front"
             | "bpf_list_pop_back"
@@ -514,16 +565,21 @@ fn transfer_kfunc_proto(
                     && let Some(val_type_id) = map_def.btf_val_type_id
                 {
                     let fields = env.ctx.btf.find_special_fields(val_type_id);
-                    fields
+                    let contains = fields
                         .iter()
                         .find(|f| f.offset as i64 == head_off)
-                        .and_then(|f| f.contains.as_ref())
-                        .and_then(|c| env.ctx.btf.find_struct_by_name(&c.struct_name))
+                        .and_then(|f| f.contains.as_ref());
+                    let pointee = contains
+                        .and_then(|c| env.ctx.btf.find_struct_by_name(&c.struct_name));
+                    let node_off = contains
+                        .and_then(|c| c.node_offset)
+                        .and_then(|n| i32::try_from(n).ok());
+                    (pointee, node_off)
                 } else {
-                    None
+                    (None, None)
                 }
             }
-            _ => None,
+            _ => (None, None),
         };
         if let Some(btf_id) = pointee {
             match state.types.get(Reg::R0) {
@@ -537,23 +593,117 @@ fn transfer_kfunc_proto(
                         Reg::R0,
                         RegType::PtrToOwnedKptr {
                             ref_id,
-                            offset,
+                            offset: node_offset_override.unwrap_or(offset),
                             non_owning,
                             pointee_btf_id: Some(btf_id),
                         },
                     );
                 }
-                RegType::PtrToOwnedKptrOrNull { ref_id, .. } => {
+                RegType::PtrToOwnedKptrOrNull { ref_id, offset, .. } => {
                     state.types.set(
                         Reg::R0,
                         RegType::PtrToOwnedKptrOrNull {
                             ref_id,
                             pointee_btf_id: Some(btf_id),
+                            offset: node_offset_override.unwrap_or(offset),
                         },
                     );
                 }
                 _ => {}
             }
+        }
+    }
+
+    // bpf_cast_to_kern_ctx(ctx): R0 = PtrToBtfId{kern_ctx_type_name,
+    // TRUSTED}. The kernel-side struct depends on the calling
+    // program's prog_kind (mirrors `find_kern_ctx_type_id` /
+    // BPF_PROG_TYPE table in kernel/bpf/btf.c). Without this, programs
+    // that cast then deref kern-struct fields (e.g. sa_kern->uaddrlen
+    // on bpf_sock_addr_kern, kskb->len on sk_buff,
+    // kctx->rxq->dev->ifindex on xdp_buff) FR on the field access.
+    if let Some(kfunc_name) = env.ctx.btf.kfunc_name(btf_id)
+        && kfunc_name == "bpf_cast_to_kern_ctx"
+    {
+        use crate::ast::ProgramKind;
+        let kern_name: Option<&'static str> = match env.ctx.prog_kind {
+            ProgramKind::Xdp => Some("xdp_buff"),
+            ProgramKind::SchedCls
+            | ProgramKind::SchedAct
+            | ProgramKind::SocketFilter
+            | ProgramKind::CgroupSkb
+            | ProgramKind::SkSkb
+            | ProgramKind::LwtIn
+            | ProgramKind::LwtOut
+            | ProgramKind::LwtXmit
+            | ProgramKind::FlowDissector => Some("sk_buff"),
+            ProgramKind::CgroupSockAddr => Some("bpf_sock_addr_kern"),
+            ProgramKind::CgroupSock => Some("sock"),
+            ProgramKind::CgroupSockopt => Some("bpf_sockopt_kern"),
+            ProgramKind::SockOps => Some("bpf_sock_ops_kern"),
+            ProgramKind::SkLookup => Some("bpf_sk_lookup_kern"),
+            ProgramKind::SkMsg => Some("sk_msg"),
+            ProgramKind::SkReuseport => Some("sk_reuseport_kern"),
+            ProgramKind::PerfEvent => Some("bpf_perf_event_data_kern"),
+            _ => None,
+        };
+        match kern_name {
+            Some(name) => {
+                let interned =
+                    crate::analysis::machine::context::intern_btf_type_name_strict(name);
+                let flags = crate::analysis::machine::reg_types::PtrFlags::empty()
+                    | crate::analysis::machine::reg_types::PtrFlags::TRUSTED;
+                state.types.set(
+                    Reg::R0,
+                    RegType::PtrToBtfId {
+                        type_name: interned,
+                        flags,
+                        ref_id: None,
+                    },
+                );
+            }
+            // Unknown / unmapped prog_kind (e.g. `?tc` → Unknown, raw
+            // tracepoint, …): preserve the prior RetKind::Scalar
+            // behavior so we don't regress files that hit
+            // bpf_cast_to_kern_ctx but never deref the result.
+            None => {
+                state.types.set(Reg::R0, RegType::ScalarValue);
+            }
+        }
+    }
+
+    // bpf_rdonly_cast(obj, btf_id): R0 = PtrToBtfId{name(btf_id),
+    // TRUSTED|MEM_RDONLY}. R2 holds the BTF id as a const scalar.
+    // Used by `bpf_core_cast(obj, type)` macro across sock_iter_batch,
+    // type_cast, the *_unix_prog family. Without this, programs that
+    // do `sk = bpf_core_cast(sk, struct sock); sk->field` would FR
+    // on the field access (R0 stays whatever apply_call_proto_r0
+    // produced, typically clobbered to NotInit). Sourcing the type
+    // name via `intern_btf_type_name_strict` so a single `&'static
+    // str` round-trips through callers that compare with `==`.
+    if let Some(kfunc_name) = env.ctx.btf.kfunc_name(btf_id)
+        && kfunc_name == "bpf_rdonly_cast"
+    {
+        let r2_id = state
+            .domain
+            .get_fixed_value(Reg::R2)
+            .and_then(|v| u32::try_from(v).ok());
+        if let Some(target_id) = r2_id
+            && let Some(name) = env.ctx.btf.struct_name(target_id)
+        {
+            let interned =
+                crate::analysis::machine::context::intern_btf_type_name_strict(name);
+            let mut flags = crate::analysis::machine::reg_types::PtrFlags::empty();
+            flags = flags
+                | crate::analysis::machine::reg_types::PtrFlags::TRUSTED
+                | crate::analysis::machine::reg_types::PtrFlags::RDONLY;
+            state.types.set(
+                Reg::R0,
+                RegType::PtrToBtfId {
+                    type_name: interned,
+                    flags,
+                    ref_id: None,
+                },
+            );
         }
     }
 

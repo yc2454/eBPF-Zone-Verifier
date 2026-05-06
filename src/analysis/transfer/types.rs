@@ -401,6 +401,22 @@ pub(crate) fn update_load_types(
                             .types
                             .set(dst, RegType::PtrToSockCommonOrNull { ref_id: None });
                     }
+                    CtxFieldKind::Socket => {
+                        state
+                            .types
+                            .set(dst, RegType::PtrToSocket { ref_id: None });
+                    }
+                    CtxFieldKind::AllocMem { mem_size } => {
+                        state.types.set(
+                            dst,
+                            RegType::PtrToAllocMem {
+                                id: new_ptr_id(),
+                                mem_size,
+                                ref_id: None,
+                                dynptr_id: None,
+                            },
+                        );
+                    }
                     CtxFieldKind::TrustedPtr {
                         type_name,
                         nullable,
@@ -549,26 +565,43 @@ pub(crate) fn update_load_types(
             let type_name = implied_btf_struct_name(t).unwrap();
             let mut typed = false;
             if let Some(struct_id) = env.ctx.btf.find_struct_by_name(type_name)
-                && let Some(info) = env.ctx.btf.field_at_offset(struct_id, off as u32)
+                && let Some(info) = env.ctx.btf.field_at_offset_descend(struct_id, off as u32)
                 && let BtfFieldKind::Pointer {
                     pointee_name: Some(pointee),
                     ..
                 } = info.kind
-                && trusted_field_load(type_name, info.name)
             {
-                let pointee_static =
-                    crate::analysis::machine::context::intern_btf_type_name_strict(
-                        &pointee,
+                let trusted = trusted_field_load(type_name, info.name);
+                let rcu = rcu_field_load(type_name, info.name);
+                // RCU-tagged fields (kernel `__rcu` annotation): inside an
+                // RCU CS the load yields PTR_TO_BTF_ID|MEM_RCU; outside,
+                // the kernel calls it "old style ptr_to_btf_id" and the
+                // pointer carries no trust flag — downstream kfunc/helper
+                // arg validators that require TRUSTED/RCU reject. We
+                // model "no trust outside CS" by leaving dst as
+                // ScalarValue (the typed-pointer fallthrough).
+                let flags = if trusted {
+                    Some(PtrFlags::TRUSTED)
+                } else if rcu && state.in_rcu_read_section() {
+                    Some(PtrFlags::RCU)
+                } else {
+                    None
+                };
+                if let Some(flags) = flags {
+                    let pointee_static =
+                        crate::analysis::machine::context::intern_btf_type_name_strict(
+                            &pointee,
+                        );
+                    state.types.set(
+                        dst,
+                        RegType::PtrToBtfId {
+                            type_name: pointee_static,
+                            flags,
+                            ref_id: None,
+                        },
                     );
-                state.types.set(
-                    dst,
-                    RegType::PtrToBtfId {
-                        type_name: pointee_static,
-                        flags: PtrFlags::TRUSTED,
-                        ref_id: None,
-                    },
-                );
-                typed = true;
+                    typed = true;
+                }
             }
             if !typed {
                 state.types.set(dst, RegType::ScalarValue);
@@ -609,6 +642,18 @@ fn implied_btf_struct_name(ty: &RegType) -> Option<&'static str> {
 }
 
 pub fn trusted_field_load(struct_name: &str, field_name: &str) -> bool {
+    // Universal `bpf_iter__*` pointer fields. The kernel emits
+    // bpf_iter ctx structs as `struct bpf_iter__X { struct
+    // bpf_iter_meta *meta; <iter-payload-pointers...>; }`. The
+    // payload pointers are marked PTR_TRUSTED while the iter is
+    // alive — same lifetime band as the ctx itself. Programs read
+    // them via `ctx->task`, `ctx->sk_common`, `ctx->file`, etc.,
+    // then deref BTF fields. Allowlisting all iter-prefix structs'
+    // pointer fields covers the per-iter-subtype fan-out without
+    // enumerating each one.
+    if struct_name.starts_with("bpf_iter__") {
+        return true;
+    }
     matches!(
         (struct_name, field_name),
         // task_struct.cpus_ptr — `cpumask_t *` carrying the task's
@@ -617,6 +662,15 @@ pub fn trusted_field_load(struct_name: &str, field_name: &str) -> bool {
         // task pointer); KF_RCU consumers like
         // `bpf_cpumask_test_cpu` accept.
         ("task_struct", "cpus_ptr")
+        // task_struct.group_leader — kernel's
+        // `task_struct_btf_ids_trusted_set` lists this as a
+        // permanently-trusted pointer (the leader of the thread
+        // group; lifetime tied to the task itself). Drives
+        // task_kfunc_success.c::task_kfunc_acquire_trusted_walked.
+        // task_struct.{parent, real_parent} are NOT here — they are
+        // `__rcu` fields gated by `rcu_field_load` below: yield RCU
+        // inside CS, ScalarValue (untrusted) outside.
+        | ("task_struct", "group_leader")
         // sk_buff.sk — `struct sock *`. Trusted while the skb is
         // trusted. Drives `nested_trust_success::test_skb_field`'s
         // `bpf_sk_storage_get(&map, skb->sk, …)` accepting path.
@@ -652,6 +706,65 @@ pub fn trusted_field_load(struct_name: &str, field_name: &str) -> bool {
         // `PtrToBtfId{bpf_map, TRUSTED}` as its `__map`-suffixed arg
         // (kernel `verifier.c` ~L13227 KF_ARG_PTR_TO_MAP).
         | ("bpf_iter__bpf_map", "map")
+        // ── A3 cgroup chain (2026-05-04) ───────────────────────────
+        // cgroup.kn → kernfs_node. Used by cgroup_id() helper
+        // (`cgrp->kn->id`) — appears in cgroup_hierarchical_stats and
+        // cgrp_kfunc_success::test_cgrp_from_id.
+        | ("cgroup", "kn")
+        // task_struct.cgroups → css_set. Trusted while the task is
+        // trusted; the standard idiom for any cgroup-storage helper
+        // call from a tracing program is
+        // `bpf_get_current_task_btf()->cgroups->dfl_cgrp`.
+        | ("task_struct", "cgroups")
+        // css_set.dfl_cgrp → cgroup. Pairs with (task_struct, cgroups)
+        // for the bpf_get_current_task_btf-rooted helper-arg path
+        // (percpu_alloc_cgrp_local_storage, cgrp_ls_*).
+        | ("css_set", "dfl_cgrp")
+        // sock.<descent-to-sk_cgrp_data.cgroup>. The kernel admits
+        // `sk->sk_cgrp_data.cgroup` from any trusted sock pointer.
+        // `field_at_offset` descends through the embedded
+        // `sock_cgroup_data` struct so the leaf field name is
+        // `cgroup` (offset 664 in tcp_sock via the inet_conn chain).
+        // Closes the cgrp_ls_attach_cgroup helper-arg path.
+        | ("sock", "cgroup")
+        // vm_area_struct.vm_file → `struct file *`. Trusted while the
+        // vma is trusted (bpf_find_vma's callback receives a TRUSTED
+        // vm_area_struct *). Programs typically chain to
+        // `vma->vm_file->f_path.dentry->d_shortname.string` for
+        // probe_read_kernel_str; downstream loads on the resulting
+        // PtrToBtfId{file} are admitted via the lax PtrToBtfId access
+        // policy. Closes find_vma::handle_{getpid,pe}.
+        | ("vm_area_struct", "vm_file")
+        // vm_area_struct.vm_mm → `struct mm_struct *`. Trusted while
+        // the vma is trusted; programs commonly chain to
+        // `vma->vm_mm->start_stack` etc. Drives lsm::test_int_hook's
+        // file_mprotect handler.
+        | ("vm_area_struct", "vm_mm")
+        // request_sock.sk → struct sock *. Trusted while the request_sock
+        // is trusted; tp_btf hooks like tcp_retransmit_synack pass req
+        // and chain `req->sk` into bpf_sk_storage_get.
+        | ("request_sock", "sk")
+    )
+}
+
+/// Allowlist of `(struct_name, field_name)` pairs whose loaded pointer
+/// is `__rcu`-tagged in the kernel: the load yields a typed pointer
+/// only inside an RCU CS (PtrToBtfId{..., RCU}); outside the CS, the
+/// kernel calls it "old style ptr_to_btf_id" and the result carries
+/// no trust flag — downstream kfunc/helper arg validators that
+/// require TRUSTED/RCU reject. We model "no trust outside CS" by
+/// leaving dst as ScalarValue (the typed-pointer fallthrough).
+///
+/// Drives the rcu_read_lock.c success cases (real_parent walks under
+/// bpf_rcu_read_lock) and the matching __failure tests
+/// (verifier_vfs_reject::get_task_exe_file_kfunc_untrusted,
+/// rcu_read_lock cluster's no_lock / cross_rcu_region /
+/// nested_rcu_region / task_untrusted_rcuptr).
+pub fn rcu_field_load(struct_name: &str, field_name: &str) -> bool {
+    matches!(
+        (struct_name, field_name),
+        ("task_struct", "real_parent")
+        | ("task_struct", "parent")
     )
 }
 
@@ -731,10 +844,38 @@ pub(crate) fn update_call_types(
     // Set R0 based on helper return type (legacy path for non-migrated helpers)
     if !routed {
     match helper {
-        constants::BPF_MAP_LOOKUP_ELEM | constants::BPF_GET_LOCAL_STORAGE => {
+        constants::BPF_MAP_LOOKUP_ELEM
+        | constants::BPF_MAP_LOOKUP_PERCPU_ELEM
+        | constants::BPF_GET_LOCAL_STORAGE => {
+            // Redirect through `inner_map_idx` only when R1 is itself
+            // the result of an outer ARRAY_OF_MAPS / HASH_OF_MAPS
+            // lookup (i.e. `PtrToMapValue`, not `PtrToMapObject`).
+            // Without this, the inner-map lookup's R0 keeps the
+            // outer's map_idx and subsequent helpers (`bpf_spin_lock`,
+            // graph kfuncs) see the outer DATASEC's BTF instead of the
+            // inner map's value type — they fail to find the
+            // SpecialField at the offset (e.g.
+            // linked_list.c::inner_map_list_push_pop pc 26 r1). The
+            // outer lookup keeps its own map_idx so the next
+            // `bpf_map_lookup_elem` validator's `is_inner_map_ptr`
+            // check (which inspects R1's pointee map type) still
+            // recognizes the chain.
             let map_idx = match in_types.get(Reg::R1) {
                 RegType::PtrToMapObject { map_idx } => map_idx,
-                RegType::PtrToMapValue { map_idx, .. } => map_idx, // Handles map-in-map lookups
+                RegType::PtrToMapValue { map_idx: outer_idx, .. } => env
+                    .ctx
+                    .map_defs
+                    .get(outer_idx)
+                    .and_then(|md| {
+                        matches!(
+                            md.type_,
+                            constants::BPF_MAP_TYPE_ARRAY_OF_MAPS
+                                | constants::BPF_MAP_TYPE_HASH_OF_MAPS
+                        )
+                        .then_some(md.inner_map_idx)
+                        .flatten()
+                    })
+                    .unwrap_or(outer_idx),
                 _ => 0,
             };
             let map_def_opt = env.ctx.map_defs.get(map_idx);
@@ -841,25 +982,70 @@ pub(crate) fn update_call_types(
             }
         }
 
-        // SKC to TCP sock conversion - returns PTR_TO_TCP_SOCK_OR_NULL
+        // SKC to kernel-struct sock conversion. The kernel's
+        // `bpf_skc_to_*` helpers return `PTR_TO_BTF_ID | PTR_MAYBE_NULL`
+        // typed as the kernel `struct tcp_sock` / `tcp6_sock` /
+        // `tcp_timewait_sock` / `tcp_request_sock` / `udp6_sock` /
+        // `unix_sock` — distinct from the UAPI `struct bpf_tcp_sock`
+        // returned by the `bpf_tcp_sock()` helper. Programs deref
+        // kernel-struct fields at offsets that exceed the UAPI snapshot
+        // (e.g. `tcp_sock` offset 798 in bpf_iter_tcp6, offset 524 in
+        // mptcp_subflow). Returning PtrToBtfIdOrNull{<kernel-struct>,
+        // TRUSTED} routes through the existing PtrToBtfId machinery
+        // (ALU preservation + lax field-load admit), unblocking the
+        // bpf_iter_tcp/udp/unix family.
+        //
+        // Two acceptance shapes for R1:
+        //   (a) acquire-tracked (ref_id Some) — refcounted sock pointer
+        //       from bpf_sk_lookup_*; R0 inherits the same ref_id so
+        //       `bpf_sk_release(R0)` finds it.
+        //   (b) ctx-derived (trusted, no ref_id) — e.g. bpf_iter__tcp's
+        //       `sk_common` field via the universal bpf_iter__*
+        //       allowlist; KF_RCU treatment admits without acquire.
         constants::BPF_SKC_TO_TCP_SOCK
         | constants::BPF_SKC_TO_TCP6_SOCK
         | constants::BPF_SKC_TO_TCP_TIMEWAIT_SOCK
-        | constants::BPF_SKC_TO_TCP_REQUEST_SOCK => {
-            if let Some(ref_id) = state.types.get(Reg::R1).get_ref_id() {
-                state
-                    .types
-                    .set(Reg::R0, RegType::PtrToTcpSockOrNull { id: Some(ref_id) });
-            }
-        }
-
-        // SKC to UDP/Unix - return SOCK_COMMON for now (simplified)
-        constants::BPF_SKC_TO_UDP6_SOCK | constants::BPF_SKC_TO_UNIX_SOCK => {
-            if let Some(ref_id) = state.types.get(Reg::R1).get_ref_id() {
+        | constants::BPF_SKC_TO_TCP_REQUEST_SOCK
+        | constants::BPF_SKC_TO_UDP6_SOCK
+        | constants::BPF_SKC_TO_UNIX_SOCK
+        | constants::BPF_SKC_TO_MPTCP_SOCK => {
+            let r1 = state.types.get(Reg::R1);
+            let ref_id = r1.get_ref_id();
+            let trusted = r1.is_trusted();
+            // PtrToSockCommon / PtrToSocket from ctx-field reads
+            // (sock_addr.sk, sock_ops.sk, …) carry neither ref_id nor
+            // an explicit TRUSTED flag, but the kernel treats them as
+            // valid input to skc_to_* — they originate from kernel-
+            // managed ctx state. Without this acceptance, R0 falls
+            // through to ScalarValue and downstream field reads
+            // reject as "Unsafe generic load … type ScalarValue".
+            let ctx_sock_ok = matches!(
+                r1,
+                RegType::PtrToSockCommon { .. }
+                    | RegType::PtrToSocket { .. }
+                    | RegType::PtrToTcpSock { .. }
+            );
+            if ref_id.is_some() || trusted || ctx_sock_ok {
+                let type_name = match helper {
+                    constants::BPF_SKC_TO_TCP_SOCK => "tcp_sock",
+                    constants::BPF_SKC_TO_TCP6_SOCK => "tcp6_sock",
+                    constants::BPF_SKC_TO_TCP_TIMEWAIT_SOCK => "tcp_timewait_sock",
+                    constants::BPF_SKC_TO_TCP_REQUEST_SOCK => "tcp_request_sock",
+                    constants::BPF_SKC_TO_UDP6_SOCK => "udp6_sock",
+                    constants::BPF_SKC_TO_UNIX_SOCK => "unix_sock",
+                    constants::BPF_SKC_TO_MPTCP_SOCK => "mptcp_sock",
+                    _ => unreachable!(),
+                };
+                let id = new_ptr_id();
                 state.types.set(
                     Reg::R0,
-                    RegType::PtrToSockCommonOrNull {
-                        ref_id: Some(ref_id),
+                    RegType::PtrToBtfIdOrNull {
+                        id,
+                        type_name: crate::analysis::machine::context::intern_btf_type_name_strict(
+                            type_name,
+                        ),
+                        flags: PtrFlags::TRUSTED,
+                        ref_id,
                     },
                 );
             }

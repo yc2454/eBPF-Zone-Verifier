@@ -364,7 +364,7 @@ pub(crate) fn apply_call_proto_r0(
             // unknown pointee, which makes the __contains validator
             // fall through to the offset-only check.
             let ty = if proto.flags.contains(CallFlags::RET_NULL) {
-                RegType::PtrToOwnedKptrOrNull { ref_id, pointee_btf_id: None }
+                RegType::PtrToOwnedKptrOrNull { ref_id, pointee_btf_id: None, offset: 0 }
             } else {
                 RegType::PtrToOwnedKptr {
                     ref_id,

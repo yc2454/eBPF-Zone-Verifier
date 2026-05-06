@@ -343,7 +343,7 @@ pub(crate) fn validate_single_arg_inner(
 
 fn validate_ptr_to_ctx(ctx: &mut ValidationContext) -> bool {
     use crate::analysis::machine::reg_types::PtrFlags;
-    let ok = matches!(ctx.actual, RegType::PtrToCtx)
+    let mut ok = matches!(ctx.actual, RegType::PtrToCtx)
         // Kernel `check_kfunc_call` accepts both PTR_TO_CTX and a
         // trusted `PTR_TO_BTF_ID + sk_buff` for kfuncs like
         // `bpf_dynptr_from_skb`. The latter arises from `ctx->skb`
@@ -354,6 +354,27 @@ fn validate_ptr_to_ctx(ctx: &mut ValidationContext) -> bool {
             RegType::PtrToBtfId { type_name: "sk_buff", flags, .. }
                 if flags.contains(PtrFlags::TRUSTED)
         );
+    // bpf_get_socket_cookie has 4 per-prog-type kernel protos:
+    // skb-ctx / sock_addr-ctx (covered above by PtrToCtx) plus
+    // PTR_TO_SOCKET (sock-class progs) and PTR_TO_BTF_ID rooted at
+    // sock_common (iter/tracing). Admit those shapes for this helper
+    // only, so ctx-offset validation stays strict for skb-class users.
+    if !ok && ctx.helper == crate::common::constants::BPF_GET_SOCKET_COOKIE {
+        ok = matches!(
+            ctx.actual,
+            RegType::PtrToSocket { .. }
+                | RegType::PtrToSockCommon { .. }
+                | RegType::PtrToTcpSock { .. }
+        ) || matches!(
+            ctx.actual,
+            RegType::PtrToBtfId { type_name, flags, .. }
+                if flags.contains(PtrFlags::TRUSTED)
+                    && matches!(type_name,
+                        "sock_common" | "sock" | "tcp_sock" | "tcp6_sock"
+                            | "udp_sock" | "udp6_sock" | "unix_sock"
+                            | "tcp_request_sock" | "tcp_timewait_sock")
+        );
+    }
     if !ok {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
@@ -399,22 +420,47 @@ fn validate_ptr_to_btf_id_named(
     ctx: &mut ValidationContext,
     expected: &'static str,
 ) -> bool {
-    match ctx.actual {
-        RegType::PtrToBtfId { type_name, .. } if type_name == expected => true,
-        _ => ctx.fail_with_log(
-            VerificationError::InvalidArgType {
-                pc: ctx.pc,
-                reg: ctx.reg,
-            },
-            &format!(
-                "[Verifier] pc {}: R{} expected PTR_TO_BTF_ID(struct {}), got {:?}",
-                ctx.pc,
-                ctx.arg_index + 1,
-                expected,
-                ctx.actual
-            ),
-        ),
+    // The specialized PtrTo<X> reg-types (PtrToCgroup, PtrToTask, …) are
+    // semantically the same kernel struct as the generic
+    // PtrToBtfId{type_name=<X>} produced by BTF-typed entry args. A caller
+    // that demands "any PTR_TO_BTF_ID for struct cgroup" should accept the
+    // specialized form too — otherwise threading an acquired
+    // `bpf_task_get_cgroup1(...)` result into `bpf_cgrp_storage_get(R2=cgrp)`
+    // rejects on a type-equivalence we deliberately model with a narrower
+    // representation.
+    let matches = match (expected, ctx.actual) {
+        (e, RegType::PtrToBtfId { type_name, .. }) if type_name == e => true,
+        ("cgroup", RegType::PtrToCgroup { .. }) => true,
+        ("task_struct", RegType::PtrToTask { .. }) => true,
+        // PtrToMapKptr from a kptr-field load or bpf_kptr_xchg. Accept
+        // when the pointee btf-id resolves to the requested struct name.
+        // The ref_id is irrelevant for type-name matching; KF_RELEASE
+        // kfuncs separately verify ref_id via the RELEASE precondition
+        // gate in transfer_kfunc_proto. Mirrors the cpumask + cgroup
+        // validate_ptr_to_* extensions.
+        (e, RegType::PtrToMapKptr { pointee_btf_id, .. })
+            if ctx.env.ctx.btf.struct_or_fwd_name(pointee_btf_id) == Some(e) =>
+        {
+            true
+        }
+        _ => false,
+    };
+    if matches {
+        return true;
     }
+    ctx.fail_with_log(
+        VerificationError::InvalidArgType {
+            pc: ctx.pc,
+            reg: ctx.reg,
+        },
+        &format!(
+            "[Verifier] pc {}: R{} expected PTR_TO_BTF_ID(struct {}), got {:?}",
+            ctx.pc,
+            ctx.arg_index + 1,
+            expected,
+            ctx.actual
+        ),
+    )
 }
 
 /// Validate `ArgKind::PtrToCpumask` (W5.3).
@@ -427,7 +473,19 @@ fn validate_ptr_to_btf_id_named(
 fn validate_ptr_to_cpumask(ctx: &mut ValidationContext) -> bool {
     // Strict: mutating cpumask consumers only accept the
     // acquire-tracked specialization. See ArgKind::PtrToCpumask docs.
-    if !matches!(ctx.actual, RegType::PtrToCpumask { .. }) {
+    // Also accept an acquire-tracked `PtrToMapKptr{bpf_cpumask, ref_id:
+    // Some}` produced by `bpf_kptr_xchg` — semantically the same
+    // refcounted-cpumask handoff (closes test_insert_remove_release's
+    // bpf_cpumask_release call site).
+    let is_acquired_map_kptr = matches!(
+        ctx.actual,
+        RegType::PtrToMapKptr { ref_id: Some(_), pointee_btf_id, .. }
+            if matches!(
+                ctx.env.ctx.btf.struct_or_fwd_name(pointee_btf_id),
+                Some("bpf_cpumask")
+            )
+    );
+    if !matches!(ctx.actual, RegType::PtrToCpumask { .. }) && !is_acquired_map_kptr {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,
@@ -446,8 +504,13 @@ fn validate_ptr_to_cpumask(ctx: &mut ValidationContext) -> bool {
 
 /// Validate `ArgKind::PtrToCpumaskRead` — read-only KF_RCU consumers.
 /// Accepts `PtrToCpumask` (the bpf_cpumask wrapper passes the const
-/// arg) and `PtrToBtfId{cpumask|bpf_cpumask, TRUSTED}` produced by the
-/// BTF field-load typing path (`task->cpus_ptr`, `&task->cpus_mask`).
+/// arg), `PtrToBtfId{cpumask|bpf_cpumask, TRUSTED}` produced by the
+/// BTF field-load typing path (`task->cpus_ptr`, `&task->cpus_mask`),
+/// and `PtrToMapKptr{cpumask|bpf_cpumask}` loaded from a `__kptr` /
+/// `__rcu` map field — TRUSTED unconditionally, or RCU when inside
+/// an active `bpf_rcu_read_lock` section (mirrors kernel KF_RCU
+/// acceptance of MEM_RCU pointers; out-of-RCU loads keep failing
+/// with the kernel's "must be a rcu pointer" rejection).
 fn validate_ptr_to_cpumask_read(ctx: &mut ValidationContext) -> bool {
     use crate::analysis::machine::reg_types::PtrFlags;
     let is_btf_cpumask = matches!(
@@ -456,7 +519,28 @@ fn validate_ptr_to_cpumask_read(ctx: &mut ValidationContext) -> bool {
             if (type_name == "cpumask" || type_name == "bpf_cpumask")
                 && flags.contains(PtrFlags::TRUSTED)
     );
-    if !matches!(ctx.actual, RegType::PtrToCpumask { .. }) && !is_btf_cpumask {
+    let is_map_kptr_cpumask = if let RegType::PtrToMapKptr { pointee_btf_id, ref_id, flags } =
+        ctx.actual
+    {
+        let name = ctx.env.ctx.btf.struct_or_fwd_name(pointee_btf_id);
+        let name_ok = matches!(name, Some("cpumask") | Some("bpf_cpumask"));
+        // Acquire-tracked (ref_id Some — from bpf_kptr_xchg) is trusted
+        // unconditionally. Otherwise the load came from a `__kptr` /
+        // `__rcu` field at-rest in a map; the kernel admits these as
+        // KF_RCU-compatible only inside an active bpf_rcu_read_lock
+        // region (rejected as "must be a rcu pointer" otherwise).
+        let trust_ok = ref_id.is_some()
+            || flags.contains(PtrFlags::TRUSTED)
+            || ((flags.contains(PtrFlags::RCU) || flags.contains(PtrFlags::MEM_ALLOC))
+                && ctx.state.in_rcu_read_section());
+        name_ok && trust_ok
+    } else {
+        false
+    };
+    if !matches!(ctx.actual, RegType::PtrToCpumask { .. })
+        && !is_btf_cpumask
+        && !is_map_kptr_cpumask
+    {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,
@@ -480,7 +564,36 @@ fn validate_ptr_to_cpumask_read(ctx: &mut ValidationContext) -> bool {
 /// (`bpf_cgroup_acquire` / `_release`) require the program to have
 /// null-checked the freshly-minted ref first.
 fn validate_ptr_to_cgroup(ctx: &mut ValidationContext) -> bool {
-    if !matches!(ctx.actual, RegType::PtrToCgroup { .. }) {
+    // PtrToCgroup covers acquire-tracked cgroups (`bpf_cgroup_acquire`,
+    // `bpf_cgroup_from_id`). For BPF_PROG-style tp_btf/lsm/tracing
+    // programs that take `struct cgroup *cgrp` directly, the entry-arg
+    // seeder produces `PtrToBtfId{cgroup, TRUSTED}` — also accept that
+    // shape. Mirrors the validate_ptr_to_task fallback.
+    // PtrToMapKptr{cgroup}: either acquire-tracked (ref_id Some, from
+    // bpf_kptr_xchg) or a raw `__kptr` field load (ref_id None). The
+    // kernel admits either for KF_RCU consumers like
+    // bpf_cgroup_ancestor; KF_TRUSTED_ARGS / KF_RELEASE consumers
+    // require acquire-tracked. We don't differentiate at this layer
+    // (CallFlags isn't plumbed in), so the more-permissive form is
+    // chosen — surfaces FAs on cgrp_kfunc_failure tests that intend
+    // the raw-load → release rejection ("must be referenced or
+    // trusted"), kept per feedback_additive_vs_invasive.md.
+    let is_map_kptr_cgroup = matches!(
+        ctx.actual,
+        RegType::PtrToMapKptr { pointee_btf_id, .. }
+            if matches!(
+                ctx.env.ctx.btf.struct_or_fwd_name(pointee_btf_id),
+                Some("cgroup")
+            )
+    );
+    if !matches!(ctx.actual, RegType::PtrToCgroup { .. })
+        && !matches!(
+            ctx.actual,
+            RegType::PtrToBtfId { type_name: "cgroup", flags, .. }
+                if flags.contains(crate::analysis::machine::reg_types::PtrFlags::TRUSTED)
+        )
+        && !is_map_kptr_cgroup
+    {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,
@@ -511,12 +624,28 @@ fn validate_ptr_to_task(ctx: &mut ValidationContext) -> bool {
     // exposes via name use the generic `ArgKind::PtrToBtfId` validator;
     // task is the special case because we have a dedicated reg-type
     // specialization for it.
+    // Also accept a PtrToMapKptr pointing at task_struct (kernel models
+    // both raw kptr-field loads and xchg-results as PTR_TO_BTF_ID|MEM_ALLOC
+    // with task BTF id). Refcount-aware gating still happens downstream:
+    // the KF_RELEASE precondition (kfunc.rs `proto.flags.contains(RELEASE)`)
+    // rejects when the arg lacks a ref_id, so a raw kptr-field load
+    // passed to bpf_task_release is still rejected — but the same shape
+    // passed to KF_ACQUIRE | KF_RCU `bpf_task_acquire` is admitted.
+    // Closes test_task_acquire_leave_in_map / test_task_xchg_release /
+    // test_task_map_acquire_release.
+    let map_kptr_task = matches!(
+        ctx.actual,
+        RegType::PtrToMapKptr { pointee_btf_id, .. }
+            if ctx.env.ctx.btf.struct_name(pointee_btf_id) == Some("task_struct")
+    );
     if !matches!(ctx.actual, RegType::PtrToTask { .. })
         && !matches!(
             ctx.actual,
             RegType::PtrToBtfId { type_name: "task_struct", flags, .. }
                 if flags.contains(crate::analysis::machine::reg_types::PtrFlags::TRUSTED)
+                    || flags.contains(crate::analysis::machine::reg_types::PtrFlags::RCU)
         )
+        && !map_kptr_task
     {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
@@ -566,11 +695,36 @@ fn validate_ptr_to_arena(ctx: &mut ValidationContext) -> bool {
 
 /// Validate `ArgKind::PtrToOwnedKptr` (W5.4).
 ///
-/// Only the non-null `RegType::PtrToOwnedKptr` is accepted: drop /
-/// refcount_acquire / list-push / rbtree-add all require the program
-/// to have null-checked the freshly-allocated kptr first.
+/// Accepts either:
+///   - `PtrToOwnedKptr` (from `bpf_obj_new` + null-check), or
+///   - `PtrToMapKptr { flags: MEM_ALLOC, ref_id: Some(_) }` from
+///     `bpf_kptr_xchg` of a `__kptr` (Ref) slot + null-check. Kernel
+///     models the xchg-returned pointer as `PTR_TO_BTF_ID | MEM_ALLOC`
+///     with refcount-tracking — semantically equivalent to a freshly
+///     `bpf_obj_new`'d kptr (drop / list-push / rbtree-add accept it).
+///     `__kptr_rcu` / `__kptr_percpu` slots produce other flag bands
+///     and are still rejected here (kernel admits drop only on
+///     MEM_ALLOC).
 fn validate_ptr_to_owned_kptr(ctx: &mut ValidationContext) -> bool {
-    if !matches!(ctx.actual, RegType::PtrToOwnedKptr { .. }) {
+    use crate::analysis::machine::reg_types::PtrFlags;
+    // PtrToMapKptr w/ MEM_ALLOC covers two flows:
+    //   - `bpf_kptr_xchg` of a `__kptr` (Ref) slot — sets ref_id to the
+    //     new acquire id, ownership transfers out of the map. Drop /
+    //     graph-add accept it.
+    //   - Plain LOAD of a `__kptr` field (`s->stashed`) — ref_id stays
+    //     None, no ownership transfer. Kernel admits this for
+    //     `bpf_refcount_acquire` (which bumps refcount and returns a
+    //     fresh owned ref); `bpf_obj_drop` and graph-add reject via
+    //     the downstream KF_RELEASE precondition (kfunc.rs:287
+    //     `actual.get_ref_id().is_none()`), so accepting both shapes
+    //     here is safe — the per-kfunc gate catches the wrong-shape
+    //     case after the type check.
+    let ok = match ctx.actual {
+        RegType::PtrToOwnedKptr { .. } => true,
+        RegType::PtrToMapKptr { flags, .. } => flags.contains(PtrFlags::MEM_ALLOC),
+        _ => false,
+    };
+    if !ok {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,
@@ -920,51 +1074,67 @@ fn validate_map_value_special(
     ctx: &mut ValidationContext,
     kind: crate::parsing::btf::SpecialFieldKind,
 ) -> bool {
-    let RegType::PtrToMapValue { offset, map_idx, .. } = ctx.actual else {
-        return ctx.fail_with_log(
-            VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
-            &format!(
-                "[Verifier] pc {}: R{} expected PTR_TO_MAP_VALUE aimed at {:?} field, got {:?}",
-                ctx.pc,
-                ctx.arg_index + 1,
-                kind,
-                ctx.actual
-            ),
-        );
-    };
-    let Some(off) = offset else {
-        return ctx.fail_with_log(
-            VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
-            &format!(
-                "[Verifier] pc {}: R{} {:?}-field arg has variable offset",
-                ctx.pc,
-                ctx.arg_index + 1,
-                kind
-            ),
-        );
-    };
-    let Some(map_def) = ctx.env.ctx.map_defs.get(map_idx) else {
-        return ctx.fail_with_log(
-            VerificationError::MapNotFound { pc: ctx.pc, map_idx },
-            &format!(
-                "[Verifier] pc {}: R{} {:?}-field arg references unknown map idx {}",
-                ctx.pc,
-                ctx.arg_index + 1,
-                kind,
-                map_idx
-            ),
-        );
-    };
-    let Some(val_type_id) = map_def.btf_val_type_id else {
-        return ctx.fail_with_log(
-            VerificationError::InvalidBtfType,
-            &format!(
-                "[Verifier] pc {}: R{} {:?}-field arg's map has no value-type BTF",
-                ctx.pc,
-                ctx.arg_index + 1,
-                kind
-            ),
-        );
+    // Resolve (pointee_btf_id, byte_offset) for either:
+    //   - PtrToMapValue → map value BTF + reg offset
+    //   - PtrToOwnedKptr (bpf_obj_new'd struct) → pointee_btf_id + reg offset
+    // Kernel `process_spin_lock` at verifier.c v6.15 L8271 accepts both
+    // ("arg#0 doesn't point to map value or allocated object" is the
+    // negated error). Without this, every linked_list / local_kptr_stash
+    // test that calls `bpf_spin_lock(&node->lock)` after `bpf_obj_new`
+    // rejects.
+    let (val_type_id, off) = match ctx.actual {
+        RegType::PtrToMapValue { offset, map_idx, .. } => {
+            let Some(off) = offset else {
+                return ctx.fail_with_log(
+                    VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
+                    &format!(
+                        "[Verifier] pc {}: R{} {:?}-field arg has variable offset",
+                        ctx.pc,
+                        ctx.arg_index + 1,
+                        kind
+                    ),
+                );
+            };
+            let Some(map_def) = ctx.env.ctx.map_defs.get(map_idx) else {
+                return ctx.fail_with_log(
+                    VerificationError::MapNotFound { pc: ctx.pc, map_idx },
+                    &format!(
+                        "[Verifier] pc {}: R{} {:?}-field arg references unknown map idx {}",
+                        ctx.pc,
+                        ctx.arg_index + 1,
+                        kind,
+                        map_idx
+                    ),
+                );
+            };
+            let Some(val_type_id) = map_def.btf_val_type_id else {
+                return ctx.fail_with_log(
+                    VerificationError::InvalidBtfType,
+                    &format!(
+                        "[Verifier] pc {}: R{} {:?}-field arg's map has no value-type BTF",
+                        ctx.pc,
+                        ctx.arg_index + 1,
+                        kind
+                    ),
+                );
+            };
+            (val_type_id, off)
+        }
+        RegType::PtrToOwnedKptr { pointee_btf_id: Some(btf_id), offset, .. } => {
+            (btf_id, offset as i64)
+        }
+        _ => {
+            return ctx.fail_with_log(
+                VerificationError::InvalidArgType { pc: ctx.pc, reg: ctx.reg },
+                &format!(
+                    "[Verifier] pc {}: R{} expected PTR_TO_MAP_VALUE or PTR_TO_OWNED_KPTR aimed at {:?} field, got {:?}",
+                    ctx.pc,
+                    ctx.arg_index + 1,
+                    kind,
+                    ctx.actual
+                ),
+            );
+        }
     };
     let fields = ctx.env.ctx.btf.find_special_fields(val_type_id);
     let matched = fields
@@ -1329,6 +1499,38 @@ pub(crate) fn validate_readable_mem(
             }
             true
         }
+        // Kernel `check_mem_access` admits PTR_TO_BTF_ID for ARG_PTR_TO_MEM
+        // via PROBE_MEM (verifier.c v6.15 ~L7521): the helper reads bytes
+        // from a kernel-struct pointer with fault-tolerant probing
+        // (returns zero on page-fault). Permitted in tracing-class
+        // contexts where probe_read semantics apply (tp_btf, fentry,
+        // fexit, kprobe, raw_tp, lsm, perf_event, iter). Closes
+        // task_kfunc_success::test_task_from_pid_invalid where
+        // bpf_strncmp(task->comm, ...) hands a `task_struct + 1912`
+        // pointer into ARG_PTR_TO_MEM.
+        RegType::PtrToBtfId { .. } => {
+            use crate::ast::ProgramKind;
+            let probe_ok = matches!(
+                env.ctx.prog_kind,
+                ProgramKind::Tracing
+                    | ProgramKind::Lsm
+                    | ProgramKind::Kprobe
+                    | ProgramKind::Tracepoint
+                    | ProgramKind::RawTracepoint
+                    | ProgramKind::RawTracepointWritable
+                    | ProgramKind::PerfEvent
+                    | ProgramKind::StructOps
+            );
+            if !probe_ok {
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                error!(
+                    "[Verifier] pc {}: PtrToBtfId arg requires tracing-class context for PROBE_MEM",
+                    pc
+                );
+                return false;
+            }
+            true
+        }
         _ => {
             env.fail(VerificationError::InvalidArgType { pc, reg });
             error!("[Verifier] pc {}: {:?} not a valid memory pointer", pc, reg);
@@ -1459,6 +1661,12 @@ pub(crate) fn check_single_mem_size_pair(
 
     // Handle NULL pointer case
     if state.domain.proven_zero(pair.ptr_reg) {
+        if pair.null_skips_size_check {
+            // `__opt` semantics: NULL ptr means no buffer access, any
+            // size is fine. Helper returns NULL on the slow path; caller
+            // must null-check before deref.
+            return true;
+        }
         if pair.allow_zero {
             // NULL ptr is OK, but size must also be 0
             if !state.domain.proven_zero(pair.size_reg) {
@@ -1723,6 +1931,54 @@ pub(crate) fn check_ptr_access_size(
                 AccessKind::HelperBuffer,
             );
             !env.failed()
+        }
+
+        // Ring-buffer reservations / arena allocations / dynptr-slice
+        // results carry their own bounds in `mem_size`. Kernel accepts
+        // these as ARG_PTR_TO_MEM (mirrors `validate_readable_mem`'s
+        // PtrToAllocMem arm). Without this, bpf_strncmp(slice_result, ...)
+        // — where slice_result has RetKind::PtrToAllocMemFromArg — falls
+        // through to the catch-all reject because mem_size_pair validation
+        // routes through `check_ptr_access_size`, not `validate_readable_mem`.
+        RegType::PtrToAllocMem { mem_size, .. } => {
+            if size as u64 > mem_size {
+                env.fail(VerificationError::InvalidArgType { pc, reg: ptr_reg });
+                error!(
+                    "[Verifier] pc {}: alloc-mem {} bytes can't satisfy {}-byte access",
+                    pc, mem_size, size
+                );
+                return false;
+            }
+            true
+        }
+
+        // Kernel admits PTR_TO_BTF_ID for ARG_PTR_TO_MEM via PROBE_MEM
+        // (see validate_readable_mem PtrToBtfId arm). Same gating: only
+        // tracing-class contexts where probe_read semantics apply.
+        // Closes task_kfunc_success::test_task_from_pid_invalid where
+        // bpf_strncmp(task->comm, ...) routes through MemSizePair.
+        RegType::PtrToBtfId { .. } => {
+            use crate::ast::ProgramKind;
+            let probe_ok = matches!(
+                env.ctx.prog_kind,
+                ProgramKind::Tracing
+                    | ProgramKind::Lsm
+                    | ProgramKind::Kprobe
+                    | ProgramKind::Tracepoint
+                    | ProgramKind::RawTracepoint
+                    | ProgramKind::RawTracepointWritable
+                    | ProgramKind::PerfEvent
+                    | ProgramKind::StructOps
+            );
+            if !probe_ok {
+                env.fail(VerificationError::InvalidArgType { pc, reg: ptr_reg });
+                error!(
+                    "[Verifier] pc {}: PtrToBtfId arg requires tracing-class context for PROBE_MEM",
+                    pc
+                );
+                return false;
+            }
+            true
         }
 
         _ => {

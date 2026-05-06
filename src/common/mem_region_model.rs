@@ -219,16 +219,41 @@ const BPF_SOCK_FIELDS: &[MemRegionField] = &[
     },
 ];
 
+/// `bpf_sock_common_is_valid_access`: the subset of `bpf_sock` fields
+/// that map to `struct sock_common` (the embedded base shared by every
+/// sock subtype). Loadable through PTR_TO_SOCK_COMMON without first
+/// promoting via `bpf_sk_fullsock(sk)`.
+///
+/// What's IN: family, src/dst IPs, src/dst ports, state — all backed
+/// by `skc_*` fields in `struct sock_common`.
+///
+/// What's OUT (fullsock-only — kernel rejects with "invalid sock_common
+/// access" per `verifier_sock.c::sk_sk_type_fullsock_field_1`):
+/// bound_dev_if (0), type (8), protocol (12), mark (16), priority (20),
+/// rx_queue_mapping (76).
 const BPF_SOCK_COMMON_FIELDS: &[MemRegionField] = &[
-    // MemRegionField { offset: 0,  size: MemSize::U32, narrow_access: true }, // bound_dev_if
-    MemRegionField {
-        offset: 4,
-        size: MemSize::U32,
-        narrow_access: true,
-        kind: MemFieldKind::Scalar,
-    }, // family
-       // MemRegionField { offset: 8,  size: MemSize::U32, narrow_access: true }, // type
-       // MemRegionField { offset: 12, size: MemSize::U32, narrow_access: true }, // protocol
+    // family @ 4
+    MemRegionField { offset: 4, size: MemSize::U32, narrow_access: true, kind: MemFieldKind::Scalar },
+    // src_ip4 @ 24
+    MemRegionField { offset: 24, size: MemSize::U32, narrow_access: true, kind: MemFieldKind::Scalar },
+    // src_ip6[4] @ 28..44
+    MemRegionField { offset: 28, size: MemSize::U32, narrow_access: true, kind: MemFieldKind::Scalar },
+    MemRegionField { offset: 32, size: MemSize::U32, narrow_access: true, kind: MemFieldKind::Scalar },
+    MemRegionField { offset: 36, size: MemSize::U32, narrow_access: true, kind: MemFieldKind::Scalar },
+    MemRegionField { offset: 40, size: MemSize::U32, narrow_access: true, kind: MemFieldKind::Scalar },
+    // src_port @ 44
+    MemRegionField { offset: 44, size: MemSize::U32, narrow_access: true, kind: MemFieldKind::Scalar },
+    // dst_port @ 48 (BPF accepts U32 *and* U16 for compat — handled by narrow_access)
+    MemRegionField { offset: 48, size: MemSize::U32, narrow_access: true, kind: MemFieldKind::Scalar },
+    // dst_ip4 @ 52
+    MemRegionField { offset: 52, size: MemSize::U32, narrow_access: false, kind: MemFieldKind::Scalar },
+    // dst_ip6[4] @ 56..72
+    MemRegionField { offset: 56, size: MemSize::U32, narrow_access: true, kind: MemFieldKind::Scalar },
+    MemRegionField { offset: 60, size: MemSize::U32, narrow_access: true, kind: MemFieldKind::Scalar },
+    MemRegionField { offset: 64, size: MemSize::U32, narrow_access: true, kind: MemFieldKind::Scalar },
+    MemRegionField { offset: 68, size: MemSize::U32, narrow_access: true, kind: MemFieldKind::Scalar },
+    // state @ 72
+    MemRegionField { offset: 72, size: MemSize::U32, narrow_access: true, kind: MemFieldKind::Scalar },
 ];
 
 /// struct bpf_tcp_sock

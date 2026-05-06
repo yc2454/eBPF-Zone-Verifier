@@ -15,6 +15,8 @@ pub const BPF_MAX_CALL_FRAMES: usize = 8;
 
 pub const BPF_UNSPEC: u32 = 0;
 pub const BPF_MAP_LOOKUP_ELEM: u32 = 1;
+pub const BPF_MAP_LOOKUP_PERCPU_ELEM: u32 = 195;
+pub const BPF_SKC_TO_MPTCP_SOCK: u32 = 196;
 pub const BPF_MAP_UPDATE_ELEM: u32 = 2;
 pub const BPF_MAP_DELETE_ELEM: u32 = 3;
 pub const BPF_PROBE_READ: u32 = 4;

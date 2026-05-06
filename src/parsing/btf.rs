@@ -3,7 +3,7 @@
 // src/btf.rs
 use crate::parsing::elf::{BpfMapDef, KptrField, KptrFieldKind};
 use log::info;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 
 const BTF_MAGIC: u16 = 0xEB9F;
@@ -181,6 +181,23 @@ pub struct BtfContext {
     /// considered a kfunc when it carries a DECL_TAG whose name is "kfunc"
     /// or "bpf_kfunc".
     kfuncs: HashMap<String, u32>,
+    /// Names of subprograms whose ELF symbol carries STV_HIDDEN/STV_INTERNAL
+    /// visibility. libbpf rewrites their BTF FUNC linkage from GLOBAL to
+    /// STATIC at load (libbpf.c:3552), so the kernel verifies them inline
+    /// with the caller's concrete reg types instead of independently with
+    /// PTR_MAYBE_NULL-tagged signature args. Mirror that here so callers of
+    /// `__weak __hidden` helpers (e.g. libbpf's `bpf_usdt_arg`) skip the
+    /// global-subprog override path.
+    pub hidden_subprogs: HashSet<String>,
+    /// Memoization for `find_special_fields` keyed by type_id. The
+    /// recursive DATASEC walk (5f0362e) blew up the per-load cost when
+    /// invoked on every map-value access via
+    /// `check_btf_fields_access`. BTF is immutable per program, so the
+    /// per-type result is safe to cache. `Arc<Mutex>` rather than
+    /// `RefCell` because BtfContext must be `Send + Sync + Clone` for
+    /// the rayon-parallel sweep dispatcher; the `Arc` makes the cache
+    /// shared across clones (which represent the same BTF anyway).
+    special_fields_cache: std::sync::Arc<std::sync::Mutex<HashMap<u32, Vec<SpecialField>>>>,
 }
 
 impl BtfContext {
@@ -196,6 +213,8 @@ impl BtfContext {
             strings,
             decl_tags: Vec::new(),
             kfuncs: HashMap::new(),
+            hidden_subprogs: HashSet::new(),
+            special_fields_cache: Default::default(),
         }
     }
 
@@ -256,6 +275,62 @@ impl BtfContext {
     /// Used by `update_load_types` to type loads from `PtrToBtfId{X}` at
     /// known offsets, and by the pointer-arithmetic path to type
     /// interior pointers `&base->field` to embedded sub-structs.
+    /// Like `field_at_offset`, but additionally descends through any
+    /// NAMED embedded struct/union members whose [start, start+size)
+    /// range contains `byte_offset`. The kernel's `btf_struct_access`
+    /// walks embedded struct members; programs frequently emit a
+    /// single `Load[ptr+N]` for a multi-level field access like
+    /// `sock->sk_cgrp_data.cgroup` (offset 664 in tcp_sock,
+    /// `sk_cgrp_data` is a named embedded struct, `.cgroup` is at
+    /// offset 0 within it).
+    ///
+    /// Kept distinct from `field_at_offset` because some callers
+    /// (kfunc validators on `&task->cpus_mask` etc.) want the OUTER
+    /// named member's identity; this variant always returns the leaf.
+    pub fn field_at_offset_descend(
+        &self,
+        struct_id: u32,
+        byte_offset: u32,
+    ) -> Option<BtfFieldInfo<'_>> {
+        // Fast path: exact-offset hit, descend only when needed.
+        if let Some(info) = self.field_at_offset(struct_id, byte_offset)
+            && !matches!(info.kind, BtfFieldKind::Embedded { .. })
+        {
+            return Some(info);
+        }
+        let id = self.peel_modifiers(struct_id);
+        let ty = self.types.get(&id)?;
+        if !matches!(ty.kind(), BTF_KIND_STRUCT | BTF_KIND_UNION) {
+            return None;
+        }
+        let bit_offset = byte_offset.checked_mul(8)?;
+        // Find the member whose [start_bits, start_bits+size_bits)
+        // covers bit_offset. Iterate in reverse so a strictly-inner
+        // member wins over a same-start outer (matters for
+        // anonymous-union ABI patterns where multiple members share
+        // offset 0).
+        let member = ty.members.iter().rev().find(|m| {
+            if m.offset > bit_offset {
+                return false;
+            }
+            let size_bytes = self.type_size_bytes(m.type_id);
+            if size_bytes == 0 {
+                return m.offset == bit_offset;
+            }
+            m.offset + size_bytes * 8 > bit_offset
+        })?;
+        let inner_id = self.peel_modifiers(member.type_id);
+        if let Some(inner_ty) = self.types.get(&inner_id)
+            && matches!(inner_ty.kind(), BTF_KIND_STRUCT | BTF_KIND_UNION)
+        {
+            let inner_byte_offset = byte_offset - member.offset / 8;
+            if let Some(info) = self.field_at_offset_descend(inner_id, inner_byte_offset) {
+                return Some(info);
+            }
+        }
+        None
+    }
+
     pub fn field_at_offset(
         &self,
         struct_id: u32,
@@ -440,6 +515,23 @@ impl BtfContext {
     /// [`SpecialFieldKind::from_type_name`], with the offset taken from
     /// the DATASEC entry (already in bytes).
     pub fn find_special_fields(&self, type_id: u32) -> Vec<SpecialField> {
+        if let Some(cached) = self
+            .special_fields_cache
+            .lock()
+            .unwrap()
+            .get(&type_id)
+        {
+            return cached.clone();
+        }
+        let fields = self.find_special_fields_uncached(type_id);
+        self.special_fields_cache
+            .lock()
+            .unwrap()
+            .insert(type_id, fields.clone());
+        fields
+    }
+
+    fn find_special_fields_uncached(&self, type_id: u32) -> Vec<SpecialField> {
         let mut fields = Vec::new();
 
         let Some(ty) = self.types.get(&type_id) else {
@@ -457,28 +549,19 @@ impl BtfContext {
                 let Some((_var_name, target_id)) = self.var_info(entry.var_id) else {
                     continue;
                 };
-                let resolved_id = self.peel_modifiers(target_id);
-                let Some(resolved_ty) = self.types.get(&resolved_id) else {
-                    continue;
-                };
-                let Some(type_name) = self.get_string(resolved_ty.name_off) else {
-                    continue;
-                };
-                if let Some(kind) = SpecialFieldKind::from_type_name(type_name) {
-                    // `__contains` decl_tags on a `private(name)` global
-                    // (e.g. `ghead __contains(foo, node2)`) attach to the
-                    // VAR's btf_id — clang routes the variable-decl
-                    // attribute to the VAR, not the DATASEC.
-                    let contains = self
-                        .decl_tags_for(entry.var_id)
-                        .find_map(|t| self.parse_contains_tag(&t.name));
-                    fields.push(SpecialField {
-                        kind,
-                        offset: entry.offset,
-                        size: resolved_ty.size_or_type,
-                        contains,
-                    });
-                }
+                // `__contains` decl_tag is attached to the VAR (clang
+                // routes the variable-decl attribute there); inherited
+                // by every array element / nested-struct walk below.
+                let contains = self
+                    .decl_tags_for(entry.var_id)
+                    .find_map(|t| self.parse_contains_tag(&t.name));
+                self.collect_special_fields_at(
+                    target_id,
+                    entry.offset,
+                    contains.as_ref(),
+                    &mut fields,
+                    0,
+                );
             }
             return fields;
         }
@@ -510,6 +593,96 @@ impl BtfContext {
         }
 
         fields
+    }
+
+    /// Recursively walk a BTF type at `base_offset`, emitting one
+    /// `SpecialField` per recognized special-field struct
+    /// (`bpf_spin_lock`, `bpf_list_head`, `bpf_rb_root`, ...) reached
+    /// at any depth.
+    ///
+    /// Drives the DATASEC scan in `find_special_fields`: tolerates
+    /// nested struct (`private(D) struct head_nested ghead_nested;`
+    /// where `head_nested.inner.{lock,head}` carry the special
+    /// fields) and array layouts (`bpf_list_head ghead_array[N]`).
+    /// `inherited_contains` carries the VAR's `__contains` decl_tag
+    /// down through array elements; for nested STRUCT members the
+    /// per-member decl_tag wins (matches the kernel's
+    /// component_idx-keyed attachment).
+    fn collect_special_fields_at(
+        &self,
+        type_id: u32,
+        base_offset: u32,
+        inherited_contains: Option<&ContainsInfo>,
+        out: &mut Vec<SpecialField>,
+        depth: u32,
+    ) {
+        // Cap recursion as a defensive bound — graph nodes never need
+        // more than 2-3 levels (DATASEC → struct → inner struct).
+        if depth > 8 {
+            return;
+        }
+        let resolved_id = self.peel_modifiers(type_id);
+        let Some(ty) = self.types.get(&resolved_id) else {
+            return;
+        };
+
+        // Recognized special-field struct (terminal).
+        if let Some(name) = self.get_string(ty.name_off)
+            && let Some(kind) = SpecialFieldKind::from_type_name(name)
+        {
+            out.push(SpecialField {
+                kind,
+                offset: base_offset,
+                size: ty.size_or_type,
+                contains: inherited_contains.cloned(),
+            });
+            return;
+        }
+
+        match ty.kind() {
+            BTF_KIND_ARRAY => {
+                let Some(arr) = ty.members.first() else { return };
+                let elem_id = self.peel_modifiers(arr.type_id);
+                let nelems = arr.offset;
+                let Some(elem_ty) = self.types.get(&elem_id) else { return };
+                let elem_size = elem_ty.size_or_type;
+                if elem_size == 0 || nelems == 0 {
+                    return;
+                }
+                for i in 0..nelems {
+                    self.collect_special_fields_at(
+                        elem_id,
+                        base_offset + i * elem_size,
+                        inherited_contains,
+                        out,
+                        depth + 1,
+                    );
+                }
+            }
+            BTF_KIND_STRUCT | BTF_KIND_UNION => {
+                for (member_idx, member) in ty.members.iter().enumerate() {
+                    let member_byte_off = base_offset + member.offset / 8;
+                    // Per-member decl_tag overrides the VAR-inherited
+                    // one when present (struct member's __contains).
+                    let member_contains = self
+                        .decl_tags_for(resolved_id)
+                        .filter(|t| t.component_idx == member_idx as i32)
+                        .find_map(|t| self.parse_contains_tag(&t.name));
+                    let next_contains = member_contains
+                        .as_ref()
+                        .or(inherited_contains);
+                    let next_contains_clone = next_contains.cloned();
+                    self.collect_special_fields_at(
+                        member.type_id,
+                        member_byte_off,
+                        next_contains_clone.as_ref(),
+                        out,
+                        depth + 1,
+                    );
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Public read of an interned BTF string by its byte offset into the
@@ -611,6 +784,196 @@ impl BtfContext {
             return None;
         }
         self.get_string(ty.name_off)
+    }
+
+    /// Like `struct_name`, but also returns the declared name for
+    /// BTF_KIND_FWD types (forward declarations of opaque kernel
+    /// structs). Programs that hold typed `__kptr` fields to opaque
+    /// kernel types (e.g. `struct bpf_cpumask __kptr *`) carry only a
+    /// FWD entry for the inner type — the full struct definition lives
+    /// in vmlinux BTF, not the program's BTF. Validators that key off
+    /// the pointee type name (e.g. cpumask kfuncs accepting a kptr to
+    /// `bpf_cpumask`) need this fallback.
+    pub fn struct_or_fwd_name(&self, type_id: u32) -> Option<&str> {
+        let id = self.peel_modifiers(type_id);
+        let ty = self.types.get(&id)?;
+        if !matches!(ty.kind(), BTF_KIND_STRUCT | BTF_KIND_UNION | BTF_KIND_FWD) {
+            return None;
+        }
+        self.get_string(ty.name_off)
+    }
+
+    /// Resolved byte size of a type, peeling modifiers/typedefs/VARs.
+    /// Returns 0 for types we don't understand (FUNC_PROTO, FWD, …)
+    /// or on cyclic chains. Mirrors `get_resolved_size` in the raw-Vec
+    /// path but operates on `self.types`.
+    pub fn type_size_bytes(&self, type_id: u32) -> u32 {
+        self.type_size_bytes_depth(type_id, 0)
+    }
+
+    fn type_size_bytes_depth(&self, type_id: u32, depth: u32) -> u32 {
+        if depth > 16 {
+            return 0;
+        }
+        let Some(t) = self.types.get(&type_id) else {
+            return 0;
+        };
+        match t.kind() {
+            BTF_KIND_INT | BTF_KIND_ENUM | BTF_KIND_ENUM64 | BTF_KIND_FLOAT
+            | BTF_KIND_STRUCT | BTF_KIND_UNION | BTF_KIND_DATASEC => t.size_or_type,
+            BTF_KIND_PTR => 8,
+            BTF_KIND_ARRAY => {
+                if let Some(m) = t.members.first() {
+                    let elem_size = self.type_size_bytes_depth(m.type_id, depth + 1);
+                    elem_size.saturating_mul(m.offset) // m.offset = nelems
+                } else {
+                    0
+                }
+            }
+            BTF_KIND_TYPEDEF | BTF_KIND_CONST | BTF_KIND_VOLATILE | BTF_KIND_RESTRICT
+            | BTF_KIND_VAR | BTF_KIND_TYPE_TAG => {
+                self.type_size_bytes_depth(t.size_or_type, depth + 1)
+            }
+            _ => 0,
+        }
+    }
+
+    /// HashMap-based reimpl of `classify_kptr_field`. Walks a type chain
+    /// of modifiers + TYPE_TAGs around an outer `BTF_KIND_PTR`, picking
+    /// up the most-recently-seen kptr tag (kptr / kptr_untrusted / rcu /
+    /// percpu_kptr / uptr) on either side of the PTR. Returns
+    /// `(kptr-field-kind, pointee-btf-id)` if the chain ends in a typed
+    /// pointer carrying a kptr-style tag, else None.
+    fn classify_kptr_pointer(&self, field_type_id: u32) -> Option<(KptrFieldKind, u32)> {
+        let kind_from_tag = |name: &str| -> Option<KptrFieldKind> {
+            match name {
+                "kptr" => Some(KptrFieldKind::Ref),
+                "kptr_untrusted" => Some(KptrFieldKind::Unref),
+                "rcu" => Some(KptrFieldKind::Rcu),
+                "percpu_kptr" => Some(KptrFieldKind::Percpu),
+                "uptr" => Some(KptrFieldKind::Uptr),
+                _ => None,
+            }
+        };
+        let mut kind: Option<KptrFieldKind> = None;
+        let mut curr = field_type_id;
+        for _ in 0..16 {
+            let t = self.types.get(&curr)?;
+            match t.kind() {
+                BTF_KIND_TYPEDEF | BTF_KIND_CONST | BTF_KIND_VOLATILE | BTF_KIND_RESTRICT => {
+                    curr = t.size_or_type;
+                }
+                BTF_KIND_TYPE_TAG => {
+                    if let Some(name) = self.get_string(t.name_off)
+                        && let Some(k) = kind_from_tag(name)
+                    {
+                        kind = Some(k);
+                    }
+                    curr = t.size_or_type;
+                }
+                BTF_KIND_PTR => break,
+                _ => return None,
+            }
+        }
+        let ptr_t = self.types.get(&curr)?;
+        if ptr_t.kind() != BTF_KIND_PTR {
+            return None;
+        }
+        let mut pointee = ptr_t.size_or_type;
+        for _ in 0..16 {
+            let Some(t) = self.types.get(&pointee) else {
+                break;
+            };
+            match t.kind() {
+                BTF_KIND_TYPEDEF | BTF_KIND_CONST | BTF_KIND_VOLATILE | BTF_KIND_RESTRICT => {
+                    pointee = t.size_or_type;
+                }
+                BTF_KIND_TYPE_TAG => {
+                    if let Some(name) = self.get_string(t.name_off)
+                        && let Some(k) = kind_from_tag(name)
+                    {
+                        kind = Some(k);
+                    }
+                    pointee = t.size_or_type;
+                }
+                _ => break,
+            }
+        }
+        kind.map(|k| (k, pointee))
+    }
+
+    /// Walk every kptr-tagged pointer reachable through `type_id` and
+    /// emit a `KptrField` at `base_offset + relative_offset` for each.
+    /// Recurses into structs/unions (member offsets) and arrays
+    /// (per-element stride). Mirrors `extract_kptr_fields_recurse` but
+    /// HashMap-based.
+    fn collect_kptr_fields_at(
+        &self,
+        type_id: u32,
+        base_offset: u32,
+        out: &mut Vec<KptrField>,
+        depth: u32,
+    ) {
+        if depth > 8 {
+            return;
+        }
+        // Direct kptr pointer — including chains through outer modifiers.
+        if let Some((kind, pointee_btf_id)) = self.classify_kptr_pointer(type_id) {
+            out.push(KptrField {
+                offset: base_offset,
+                kind,
+                pointee_btf_id,
+            });
+            return;
+        }
+        let id = self.peel_modifiers(type_id);
+        let Some(t) = self.types.get(&id) else {
+            return;
+        };
+        match t.kind() {
+            BTF_KIND_STRUCT | BTF_KIND_UNION => {
+                for m in &t.members {
+                    let member_byte_off = base_offset + m.offset / 8;
+                    self.collect_kptr_fields_at(m.type_id, member_byte_off, out, depth + 1);
+                }
+            }
+            BTF_KIND_ARRAY => {
+                let Some(arr) = t.members.first() else {
+                    return;
+                };
+                let elem_type = arr.type_id;
+                let nelems = arr.offset;
+                let elem_size = self.type_size_bytes(elem_type);
+                if elem_size == 0 || nelems == 0 {
+                    return;
+                }
+                for i in 0..nelems {
+                    let off = base_offset + i * elem_size;
+                    self.collect_kptr_fields_at(elem_type, off, out, depth + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Extract every kptr-tagged field reachable through a
+    /// `BTF_KIND_DATASEC`'s VAR entries. Used by the data-section map
+    /// loader (`load_data_section_maps`) so that `private(NAME) static
+    /// struct foo __kptr * x` (and nested struct/array variants) carry
+    /// the same `kptr_fields` metadata as the explicit `.maps`-section
+    /// `struct __cpumask_map_value { struct bpf_cpumask __kptr * cpumask; }`
+    /// path. Without this, `bpf_kptr_xchg(&global_mask, …)` rejects with
+    /// "Invalid argument type" because `kptr_field_at` finds no field
+    /// at the data-section offset.
+    pub fn extract_datasec_kptr_fields(&self, datasec_id: u32) -> Vec<KptrField> {
+        let mut out = Vec::new();
+        for entry in self.datasec_entries(datasec_id) {
+            let Some((_name, target_id)) = self.var_info(entry.var_id) else {
+                continue;
+            };
+            self.collect_kptr_fields_at(target_id, entry.offset, &mut out, 0);
+        }
+        out
     }
 
     /// Resolve the parameter list of a single struct_ops member.
@@ -830,6 +1193,12 @@ impl BtfContext {
     /// independently against their declared signature; static subprogs
     /// inherit the caller's concrete types.
     pub fn is_global_func(&self, func_name: &str) -> bool {
+        // libbpf demotes hidden-visibility weak/global subprogs to STATIC
+        // before kernel load (libbpf.c:3552) so the kernel verifies them
+        // inline. Treat them as static here too.
+        if self.hidden_subprogs.contains(func_name) {
+            return false;
+        }
         let Some(func_ty) = self.types.values().find(|ty| {
             ty.kind() == BTF_KIND_FUNC && self.get_string(ty.name_off) == Some(func_name)
         }) else {
@@ -1461,6 +1830,8 @@ pub fn parse_btf(bytes: &[u8]) -> Result<BtfContext, String> {
         strings,
         decl_tags,
         kfuncs,
+        hidden_subprogs: HashSet::new(),
+        special_fields_cache: Default::default(),
     })
 }
 

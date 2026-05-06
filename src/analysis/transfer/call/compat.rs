@@ -25,8 +25,38 @@ pub fn is_ptr_to_sock_common(t: &RegType) -> bool {
     matches!(t, RegType::PtrToSockCommon { .. })
 }
 
+pub fn is_ptr_to_sock_common_or_null(t: &RegType) -> bool {
+    matches!(t, RegType::PtrToSockCommonOrNull { .. })
+}
+
+pub fn is_ptr_to_socket_or_null(t: &RegType) -> bool {
+    matches!(t, RegType::PtrToSocketOrNull { .. })
+}
+
 pub fn is_ptr_to_tcp_sock(t: &RegType) -> bool {
     matches!(t, RegType::PtrToTcpSock { .. })
+}
+
+/// True iff `t` is `PtrToBtfId{<sock-subtype>, ...}` — the kernel
+/// `struct tcp_sock` / `tcp6_sock` / `tcp_timewait_sock` /
+/// `tcp_request_sock` / `udp6_sock` / `unix_sock` produced by
+/// `bpf_skc_to_*` helpers. The kernel's `bpf_sk_release` accepts any
+/// PTR_TO_BTF_ID rooted at `struct sock_common` (subclass walk via
+/// BTF). We approximate with a name allowlist: the closed set of
+/// concrete kernel-struct names returned by the skc_to_* family.
+pub fn is_ptr_to_btf_sock_subtype(t: &RegType) -> bool {
+    matches!(
+        t,
+        RegType::PtrToBtfId {
+            type_name: "tcp_sock"
+                | "tcp6_sock"
+                | "tcp_timewait_sock"
+                | "tcp_request_sock"
+                | "udp6_sock"
+                | "unix_sock",
+            ..
+        }
+    )
 }
 
 pub fn is_ptr_to_stack(t: &RegType) -> bool {
@@ -85,12 +115,17 @@ pub static SOCKET_COMPAT: &[fn(&RegType) -> bool] = &[
     is_ptr_to_socket,
     is_ptr_to_sock_common,
     is_ptr_to_tcp_sock,
+    is_ptr_to_btf_sock_subtype,
     is_ptr_to_stack,
 ];
 
 /// Types compatible with PtrToSockCommon argument
-pub static SOCK_COMMON_COMPAT: &[fn(&RegType) -> bool] =
-    &[is_ptr_to_sock_common, is_ptr_to_socket, is_ptr_to_tcp_sock];
+pub static SOCK_COMMON_COMPAT: &[fn(&RegType) -> bool] = &[
+    is_ptr_to_sock_common,
+    is_ptr_to_socket,
+    is_ptr_to_tcp_sock,
+    is_ptr_to_btf_sock_subtype,
+];
 
 /// Types compatible with PtrToBTFIdSockCommon argument.
 ///
@@ -101,11 +136,25 @@ pub static SOCK_COMMON_COMPAT: &[fn(&RegType) -> bool] =
 /// exact type name (intern_btf_type_name returns "unknown"), so the
 /// best we can do here is "any PtrToBtfId" — narrowing requires
 /// resolving subclass relationships in BTF, which is W7 territory.
+///
+/// Also includes the OrNull variants: bpf_sk_storage_{get,delete}'s
+/// R2 declares `ARG_PTR_TO_BTF_ID_SOCK_COMMON | PTR_MAYBE_NULL`, so
+/// kernel accepts both null and non-null pointers (helper returns
+/// NULL / no-op when arg is NULL). Tests like connect_force_port4
+/// pass `ctx->sk` directly without an intervening null check.
 pub static BTF_SOCK_COMMON_COMPAT: &[fn(&RegType) -> bool] = &[
     is_ptr_to_sock_common,
+    is_ptr_to_sock_common_or_null,
     is_ptr_to_socket,
+    is_ptr_to_socket_or_null,
     is_ptr_to_tcp_sock,
     is_ptr_to_btf_id,
+    // cgroup/sock_create / cgroup/sock_release / cgroup/sockopt
+    // contexts ARE a `struct bpf_sock *` — programs pass ctx directly
+    // as the sk arg of bpf_sk_storage_{get,delete}. Kernel admits
+    // PTR_TO_CTX for these per-prog-type registrations. udp_limit.c::
+    // {sock,sock_release} drives this.
+    is_ptr_to_ctx,
 ];
 
 /// Types compatible with generic memory pointers (PtrToMem)
