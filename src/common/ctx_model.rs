@@ -1320,11 +1320,16 @@ const SK_MSG_MD_FIELDS: &[CtxField] = &[
         readable: true,
         narrow_access: false,
     },
-    // __bpf_md_ptr(struct bpf_sock *, sk) - current socket
+    // __bpf_md_ptr(struct bpf_sock *, sk) - current socket. Kernel
+    // sk_msg_is_valid_access returns PTR_TO_SOCKET (non-null) for this
+    // load — sk_msg programs run with an established socket, so the
+    // pointer is guaranteed non-null at program entry. Tests in
+    // test_skmsg_load_helpers.c pass `msg->sk` directly to
+    // bpf_sk_storage_get without an intervening null check.
     CtxField {
         offset: 72,
         size: MemSize::U64,
-        kind: CtxFieldKind::Scalar,
+        kind: CtxFieldKind::Socket,
         writable: false,
         readable: true,
         narrow_access: false,
