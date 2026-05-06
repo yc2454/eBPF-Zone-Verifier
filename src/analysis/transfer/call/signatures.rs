@@ -604,6 +604,12 @@ pub struct MemSizePair {
     pub size_reg: Reg,
     /// If true, size can be 0 (and if ptr is NULL, size MUST be 0)
     pub allow_zero: bool,
+    /// If true, NULL ptr skips the size check entirely. Mirrors the
+    /// kernel's `is_kfunc_arg_optional` (the `__opt` suffix) — when the
+    /// pointer is NULL, no buffer access happens, so any size is fine.
+    /// Used by `bpf_dynptr_slice`/`_rdwr` whose `buffer__opt` is the
+    /// scratch-buffer for the slow copy path.
+    pub null_skips_size_check: bool,
 }
 
 impl MemSizePair {
@@ -612,6 +618,7 @@ impl MemSizePair {
             ptr_reg,
             size_reg,
             allow_zero: false,
+            null_skips_size_check: false,
         }
     }
 
@@ -620,6 +627,16 @@ impl MemSizePair {
             ptr_reg,
             size_reg,
             allow_zero: true,
+            null_skips_size_check: false,
+        }
+    }
+
+    pub(crate) const fn new_optional(ptr_reg: Reg, size_reg: Reg) -> Self {
+        Self {
+            ptr_reg,
+            size_reg,
+            allow_zero: false,
+            null_skips_size_check: true,
         }
     }
 }
@@ -2184,9 +2201,9 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // RetKind::PtrToAllocMemFromArg{size_arg=3}.
         "bpf_dynptr_slice" => CallProto::with_args([
             DynptrArg { uninit: false, rdwr_only: false }, // R1: src dynptr
-            Anything,       // R2: offset
-            PtrToUninitMem, // R3: scratch buffer (write target on slow path)
-            ConstSize,      // R4: buffer size
+            Anything,             // R2: offset
+            PtrToUninitMemOrNull, // R3: scratch buffer (NULL OK — `buffer__opt`)
+            ConstSize,            // R4: buffer size
             DontCare,
         ])
         .ret(RetKind::PtrToAllocMemFromArg { size_arg: 3 })
@@ -2203,9 +2220,9 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // real consumer needs it.
         "bpf_dynptr_slice_rdwr" => CallProto::with_args([
             DynptrArg { uninit: false, rdwr_only: true }, // R1: src dynptr
-            Anything,       // R2: offset
-            PtrToUninitMem, // R3: scratch buffer (write target on slow path)
-            ConstSize,      // R4: buffer size
+            Anything,             // R2: offset
+            PtrToUninitMemOrNull, // R3: scratch buffer (NULL OK — `buffer__opt`)
+            ConstSize,            // R4: buffer size
             DontCare,
         ])
         .ret(RetKind::PtrToAllocMemFromArg { size_arg: 3 })
@@ -4038,7 +4055,10 @@ pub(super) mod pairs {
     pub static DYNPTR_WRITE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
 
     // ---- Slice cluster (W4.2g) ----
-    pub static DYNPTR_SLICE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+    // R3 (`buffer__opt`) is the kernel's `__opt` scratch buffer: NULL is
+    // allowed regardless of R4 (the helper just returns NULL when the
+    // slow copy path would have been needed).
+    pub static DYNPTR_SLICE: [MemSizePair; 1] = [MemSizePair::new_optional(Reg::R3, Reg::R4)];
 
     // ---- bpf_cpumask_populate(R1=dst, R2=src, R3=src__sz) ----
     pub static CPUMASK_POPULATE: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];

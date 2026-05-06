@@ -1640,6 +1640,12 @@ pub(crate) fn check_single_mem_size_pair(
 
     // Handle NULL pointer case
     if state.domain.proven_zero(pair.ptr_reg) {
+        if pair.null_skips_size_check {
+            // `__opt` semantics: NULL ptr means no buffer access, any
+            // size is fine. Helper returns NULL on the slow path; caller
+            // must null-check before deref.
+            return true;
+        }
         if pair.allow_zero {
             // NULL ptr is OK, but size must also be 0
             if !state.domain.proven_zero(pair.size_reg) {
@@ -1904,6 +1910,25 @@ pub(crate) fn check_ptr_access_size(
                 AccessKind::HelperBuffer,
             );
             !env.failed()
+        }
+
+        // Ring-buffer reservations / arena allocations / dynptr-slice
+        // results carry their own bounds in `mem_size`. Kernel accepts
+        // these as ARG_PTR_TO_MEM (mirrors `validate_readable_mem`'s
+        // PtrToAllocMem arm). Without this, bpf_strncmp(slice_result, ...)
+        // — where slice_result has RetKind::PtrToAllocMemFromArg — falls
+        // through to the catch-all reject because mem_size_pair validation
+        // routes through `check_ptr_access_size`, not `validate_readable_mem`.
+        RegType::PtrToAllocMem { mem_size, .. } => {
+            if size as u64 > mem_size {
+                env.fail(VerificationError::InvalidArgType { pc, reg: ptr_reg });
+                error!(
+                    "[Verifier] pc {}: alloc-mem {} bytes can't satisfy {}-byte access",
+                    pc, mem_size, size
+                );
+                return false;
+            }
+            true
         }
 
         // Kernel admits PTR_TO_BTF_ID for ARG_PTR_TO_MEM via PROBE_MEM
