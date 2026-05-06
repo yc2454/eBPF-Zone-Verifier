@@ -62,6 +62,16 @@ pub enum CtxFieldKind {
         /// rejected at deref by access.rs.
         tag_flags: crate::analysis::machine::reg_types::PtrFlags,
     },
+
+    /// Bounded scalar field: a normal scalar with a known `[lo, hi]`
+    /// integer range applied at load time. Used for LSM int-hook
+    /// trailing `int ret` args (kernel constrains to `[-MAX_ERRNO, 0]`
+    /// at attach). Materializes as `RegType::ScalarValue` with the
+    /// destination register's interval domain bounded.
+    BoundedScalar {
+        lo: i64,
+        hi: i64,
+    },
 }
 
 /// A field in a BPF context struct.
@@ -1960,6 +1970,9 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                             nullable: *nullable || nullable_from_table,
                             tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
                         }
+                    }
+                    EntryArg::BoundedScalar { lo, hi } => {
+                        CtxFieldKind::BoundedScalar { lo: *lo, hi: *hi }
                     }
                 };
                 return Some(CtxAccessInfo {

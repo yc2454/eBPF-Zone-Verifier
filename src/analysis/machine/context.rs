@@ -27,6 +27,16 @@ pub enum EntryArg {
         type_name: &'static str,
         nullable: bool,
     },
+    /// Bounded scalar arg — `ScalarValue` reg-type with an additional
+    /// `[lo, hi]` numeric bound applied to the destination register at
+    /// the BPF_PROG ctx-array load site. Used for LSM int-hook trailing
+    /// `int ret` args where the kernel constrains the value at attach
+    /// to `[-MAX_ERRNO, 0]` — without this bound the program's
+    /// `return ret;` pattern over-rejects against the LSM retval rule.
+    BoundedScalar {
+        lo: i64,
+        hi: i64,
+    },
 }
 
 /// Intern a kernel struct/union name resolved from BTF into a `&'static

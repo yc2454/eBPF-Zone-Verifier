@@ -481,6 +481,29 @@ pub(crate) fn update_load_types(
                             );
                         }
                     }
+                    CtxFieldKind::BoundedScalar { lo, hi } => {
+                        // LSM int-hook trailing `int ret` arg etc. —
+                        // kernel constrains the value at attach to
+                        // `[lo, hi]`. Materialize as ScalarValue + apply
+                        // the range to both the s64 and s32 shadows.
+                        // We need the s32 bound because `return ret;`
+                        // patterns get truncated through a W32 mov
+                        // (`w0 = r_src`) before exit, and the LSM retval
+                        // rule is checked on the s32 view (kernel
+                        // `retval_range_s32`). Without the s32 bound
+                        // propagating through the W32 mov, R0's s32
+                        // view widens to full range.
+                        state.types.set(dst, RegType::ScalarValue);
+                        state.domain.forget(dst);
+                        state.domain.assume_ge_imm(dst, lo);
+                        state.domain.assume_le_imm(dst, hi);
+                        if lo >= i32::MIN as i64 && hi <= i32::MAX as i64 {
+                            state
+                                .domain
+                                .set_s32_bounds(dst, lo as i32, hi as i32);
+                        }
+                        return;
+                    }
                     _ => state.types.set(dst, RegType::ScalarValue),
                 }
             } else {

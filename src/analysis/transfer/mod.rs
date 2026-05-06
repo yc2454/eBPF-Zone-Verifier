@@ -343,10 +343,33 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
             // Kernel `check_return_code` uses `retval_range_s32` for
             // hooks whose retval is `int` — clang emits `return -EPERM`
             // as `w0 = 0xFFFFFFFF` (W32 mov), which zero-extends to
-            // u64=4294967295 but reads as s32=-1. Use the s32 view when
-            // the rule's lower bound is negative (i.e. errno-style)
-            // or when r0's full s64 view sits in the high u32 half.
-            let out_of_range = r0_min < rule.lo || r0_max > rule.hi;
+            // u64=4294967295 but reads as s32=-1. When the rule's lower
+            // bound is negative (errno-style int return) and R0's full
+            // s64 value sits cleanly in the [0, u32::MAX] band (zero-
+            // extension of a 32-bit move), reinterpret the bounds in
+            // s32. The kernel's `verifier.c` `retval_range_s32` does the
+            // equivalent: it checks the s32 view of R0 against the
+            // hook's s32 retval range. Closes
+            // lsm.c::test_int_hook / test_bpf_cookie::test_int_hook /
+            // iters_css_task::iter_css_task_for_each (`return -EPERM`).
+            // For errno-style int retval rules (rule.lo < 0), prefer the
+            // s32 view of R0 — the kernel's `retval_range_s32` checks
+            // the s32 register width, not the u64 register. This handles
+            // (a) `return -EPERM` (W32 mov of 0xFFFFFFFF: u64 = 4294967295,
+            // s32 = -1) and (b) `return ret;` where `ret` was bounded
+            // s64=[-4095, 0] at the entry-arg load but split to a
+            // disjoint u64 set after W32 mov truncation. The s32 shadow
+            // tracker preserves the [-4095, 0] view across the W32 mov.
+            let (r0_lo_eff, r0_hi_eff) = if rule.lo < 0
+                && rule.lo >= i32::MIN as i64
+                && rule.hi <= i32::MAX as i64
+            {
+                let (s32_lo, s32_hi) = state.domain.get_s32_bounds(Reg::R0);
+                (s32_lo as i64, s32_hi as i64)
+            } else {
+                (r0_min, r0_max)
+            };
+            let out_of_range = r0_lo_eff < rule.lo || r0_hi_eff > rule.hi;
             let needs_known = rule.require_known
                 && (r0_min != r0_max
                     || state.types.get(Reg::R0) != RegType::ScalarValue);

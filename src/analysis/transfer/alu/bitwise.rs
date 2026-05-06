@@ -42,6 +42,7 @@ pub(crate) fn handle_mov(state: &mut State, width: Width, dst: Reg, src: &Operan
                 // would widen to [0, u32::MAX], blowing the Mul bound.
                 let preserved = state.domain.proven_u32_range(*r, Reg::Zero);
                 let (u32_min, u32_max) = state.domain.get_u32_bounds(*r);
+                let (s32_min, s32_max) = state.domain.get_s32_bounds(*r);
                 state.domain.forget(dst);
                 if preserved {
                     state.domain.assign_reg(dst, *r);
@@ -49,6 +50,14 @@ pub(crate) fn handle_mov(state: &mut State, width: Width, dst: Reg, src: &Operan
                     state.domain.assume_ge_imm(dst, u32_min as i64);
                     state.domain.assume_le_imm(dst, u32_max as i64);
                 }
+                // Always propagate src's s32 shadow to dst — W32 mov
+                // copies the low 32 bits unchanged, so the s32
+                // interpretation of dst matches the s32 view of src.
+                // Required for LSM int-hook `return ret;` patterns
+                // where `ret` was bounded `[-MAX_ERRNO, 0]` in s32 at
+                // entry and the W32 mov before exit must preserve
+                // that band for the retval rule check.
+                state.domain.set_s32_bounds(dst, s32_min, s32_max);
             } else {
                 if dst == *r {
                     return;
@@ -58,14 +67,25 @@ pub(crate) fn handle_mov(state: &mut State, width: Width, dst: Reg, src: &Operan
             }
         }
         Operand::Imm(c) => {
-            let c = if width == Width::W32 {
+            let c64 = if width == Width::W32 {
                 (*c as u32) as i64
             } else {
                 *c
             };
             state.domain.forget(dst);
-            state.domain.assume_le_imm(dst, c);
-            state.domain.assume_ge_imm(dst, c);
+            state.domain.assume_le_imm(dst, c64);
+            state.domain.assume_ge_imm(dst, c64);
+            // For W32 mov of an immediate, also set the s32 shadow:
+            // the assembler-encoded `c` is already a 32-bit value, and
+            // `w0 = -1` lands as imm=0xFFFFFFFF (u32). The s32 view is
+            // `c as i32` (= -1). Without this, the s32 shadow stays at
+            // the default full s32 range and downstream W32 mov-from-reg
+            // / retval checks (LSM int-hook `return -EPERM`) lose the
+            // s32 precision the kernel uses for retval_range_s32.
+            if width == Width::W32 {
+                let c32 = *c as i32;
+                state.domain.set_s32_bounds(dst, c32, c32);
+            }
         }
     }
 }

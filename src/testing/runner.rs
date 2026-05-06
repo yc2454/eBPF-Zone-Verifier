@@ -393,6 +393,45 @@ pub fn tracing_attach_arg_kind(target: Option<&str>, arg_idx: u8) -> Option<Trac
         .map(|(_, _, k)| *k)
 }
 
+/// LSM int-hook trailing scalar args appended after the typed-pointer
+/// prefix. Kernel constrains `int ret` to `[-MAX_ERRNO, 0]` at attach
+/// (so `return ret;` patterns satisfy the LSM retval rule). Trailing
+/// positional `unsigned long` args (e.g. `reqprot`, `prot` for
+/// `file_mprotect`) are bounded ≥ 0 in principle, but no current test
+/// depends on those bounds — we emit plain `Scalar` slots to keep
+/// kernel arg layout aligned and only bound the final `ret` slot.
+fn lsm_int_hook_trailing_args(
+    prog_kind: crate::ast::ProgramKind,
+    target: &str,
+) -> Vec<EntryArg> {
+    use crate::ast::ProgramKind;
+    use crate::common::constants::MAX_ERRNO;
+    if prog_kind != ProgramKind::Lsm {
+        return Vec::new();
+    }
+    match target {
+        // file_mprotect(struct vm_area_struct *vma,
+        //               unsigned long reqprot,
+        //               unsigned long prot, int ret)
+        "file_mprotect" => vec![
+            EntryArg::Scalar,
+            EntryArg::Scalar,
+            EntryArg::BoundedScalar { lo: -MAX_ERRNO, hi: 0 },
+        ],
+        _ => Vec::new(),
+    }
+}
+
+/// Number of typed-pointer args at the head of an LSM int-hook's
+/// arg list. Used to splice the pointer prefix from BTF resolution
+/// with the static `lsm_int_hook_trailing_args` tail.
+fn lsm_int_hook_pointer_prefix(target: &str) -> usize {
+    match target {
+        "file_mprotect" => 1, // (vma)
+        _ => 0,
+    }
+}
+
 fn is_tracing_attach_denied(target: &str) -> bool {
     matches!(
         target,
@@ -1312,6 +1351,35 @@ impl Analyzer {
                                 .collect(),
                         );
                     }
+                }
+            }
+
+            // Post-processing: LSM int-hook trailing scalar args. Kernel
+            // constrains `int ret` (last arg) to `[-MAX_ERRNO, 0]` at
+            // attach so `return ret;` patterns satisfy the LSM retval
+            // rule. Append/replace the trailing slots regardless of
+            // whether entry_args came from BTF resolution or the static
+            // fallback. Indices align with kernel arg layout (BPF_PROG
+            // ctx-array slots `0..n` map to the user-declared args).
+            if let Some(target) = ctx.attach_subtype.as_deref() {
+                let lsm_int_args = lsm_int_hook_trailing_args(ctx.prog_kind, target);
+                if !lsm_int_args.is_empty() {
+                    let pointer_prefix_len = lsm_int_hook_pointer_prefix(target);
+                    let mut new_args: Vec<EntryArg> = ctx
+                        .entry_args
+                        .take()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .take(pointer_prefix_len)
+                        .collect();
+                    // Pad with Scalar if BTF resolution gave us fewer
+                    // pointer args than expected (shouldn't happen in
+                    // practice; defensive).
+                    while new_args.len() < pointer_prefix_len {
+                        new_args.push(EntryArg::Scalar);
+                    }
+                    new_args.extend(lsm_int_args);
+                    ctx.entry_args = Some(new_args);
                 }
             }
         }
