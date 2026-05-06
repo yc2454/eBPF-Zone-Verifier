@@ -1654,11 +1654,11 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // Pair (R1,R2) bounds the dst write. Reads from any dynptr kind
         // including rdonly.
         "bpf_dynptr_read" => CallProto::with_args([
-            PtrToUninitMem, // R1: dst
-            ConstSize,      // R2: len
+            PtrToUninitMem,   // R1: dst
+            ConstSizeOrZero,  // R2: len (0 accepted; runtime returns 0)
             DynptrArg { uninit: false, rdwr_only: false }, // R3: src dynptr
-            Anything,       // R4: offset
-            Anything,       // R5: flags
+            Anything,         // R4: offset
+            Anything,         // R5: flags
         ])
         .ret(RetKind::Scalar)
         .mem_size_pairs(&pairs::DYNPTR_READ),
@@ -1676,7 +1676,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             DynptrArg { uninit: false, rdwr_only: false }, // R1: dst dynptr
             Anything,                                      // R2: offset
             PtrToMem,                                      // R3: src
-            ConstSize,                                     // R4: len
+            ConstSizeOrZero,                               // R4: len (0 accepted)
             Anything,                                      // R5: flags
         ])
         .ret(RetKind::Scalar)
@@ -4054,8 +4054,9 @@ pub(super) mod pairs {
 
     // ---- Local-cluster dynptr kfuncs (W4.2e) ----
     pub static DYNPTR_FROM_MEM: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
-    pub static DYNPTR_READ: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
-    pub static DYNPTR_WRITE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+    // size=0 accepted (kernel runtime no-ops on zero-len read/write).
+    pub static DYNPTR_READ: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R1, Reg::R2)];
+    pub static DYNPTR_WRITE: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R3, Reg::R4)];
 
     // ---- Slice cluster (W4.2g) ----
     // R3 (`buffer__opt`) is the kernel's `__opt` scratch buffer: NULL is
