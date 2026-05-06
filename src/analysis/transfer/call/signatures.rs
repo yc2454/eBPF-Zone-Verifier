@@ -1667,10 +1667,13 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         //                      void *src, u32 len, u64 flags)
         //
         // Copies `len` bytes from `src` into `dst` dynptr at `offset`.
-        // `rdwr_only` rejects rdonly dynptrs (e.g. would-be skb/xdp
-        // dynptrs). Pair (R3,R4) bounds the src read.
+        // Kernel doesn't enforce rdwr at verify time (no `__rdwr` on the
+        // kfunc) — runtime returns -EINVAL when dst is rdonly. Tests
+        // like test_skb_readonly / test_dynptr_skb_tp_btf rely on the
+        // verifier accepting the call statically and then asserting on
+        // the runtime errno.
         "bpf_dynptr_write" => CallProto::with_args([
-            DynptrArg { uninit: false, rdwr_only: true }, // R1: dst dynptr
+            DynptrArg { uninit: false, rdwr_only: false }, // R1: dst dynptr
             Anything,                                      // R2: offset
             PtrToMem,                                      // R3: src
             ConstSize,                                     // R4: len
