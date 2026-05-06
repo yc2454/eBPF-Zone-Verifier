@@ -1412,11 +1412,11 @@ const LSM_ONLY_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 1] =
     [crate::ast::ProgramKind::Lsm];
 
 /// `bpf_dynptr_from_skb` allowlist (W4.2f). The kfunc is registered for
-/// program types that receive an `__sk_buff *` context — sched_cls/act
+/// program types that receive a skb-shaped context — sched_cls/act
 /// (tc), socket_filter, cgroup_skb, lwt_*, sk_skb, sock_ops, sk_msg,
-/// flow_dissector. raw_tp / tracing / xdp / others get the kernel's
-/// "calling kernel function bpf_dynptr_from_skb is not allowed".
-const SKB_DYNPTR_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 12] = [
+/// flow_dissector, netfilter, and Tracing (tp_btf hooks like
+/// `kfree_skb`/`consume_skb` whose first arg is `struct sk_buff *`).
+const SKB_DYNPTR_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 13] = [
     crate::ast::ProgramKind::SchedCls,
     crate::ast::ProgramKind::SchedAct,
     crate::ast::ProgramKind::SocketFilter,
@@ -1433,6 +1433,11 @@ const SKB_DYNPTR_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 12] = [
     // is `__success` calling `bpf_dynptr_from_skb` from a netfilter
     // hook.
     crate::ast::ProgramKind::Netfilter,
+    // tp_btf hooks like `kfree_skb`/`consume_skb` receive
+    // `struct sk_buff *` as their first arg; kernel allows
+    // bpf_dynptr_from_skb here. dynptr_success::test_dynptr_skb_tp_btf
+    // exercises this combination.
+    crate::ast::ProgramKind::Tracing,
 ];
 
 /// `bpf_dynptr_from_xdp` allowlist (W4.2f) — only XDP programs receive

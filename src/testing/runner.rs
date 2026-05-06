@@ -1201,6 +1201,13 @@ impl Analyzer {
                         (ProgramKind::Tracing, Some("tp_btf"), "tcp_probe") => {
                             Some(vec![("sock", false), ("sk_buff", false)])
                         }
+                        // kfree_skb: TRACE_EVENT(kfree_skb,
+                        //   TP_PROTO(struct sk_buff *skb, void *location, ...))
+                        // dynptr_success::test_dynptr_skb_tp_btf calls
+                        // bpf_dynptr_from_skb on the skb arg.
+                        (ProgramKind::Tracing, Some("tp_btf"), "kfree_skb") => {
+                            Some(vec![("sk_buff", false)])
+                        }
                         // cgroup_mkdir: TRACE_EVENT(cgroup_mkdir,
                         //   TP_PROTO(struct cgroup *cgrp, const char *path))
                         // const char* trailing scalar is dropped.
