@@ -43,6 +43,9 @@ impl BtfContext {
     }
 
     /// Returns the FUNC btf_id of a registered kfunc by name, if any.
+    /// Currently exercised only by the BTF parser tests; production
+    /// callers go through `kfunc_name` (the reverse direction).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn lookup_kfunc(&self, name: &str) -> Option<u32> {
         self.kfuncs.get(name).copied()
     }
@@ -68,7 +71,9 @@ impl BtfContext {
 
     /// If `type_id` names a BTF_KIND_TYPE_TAG, returns the tag name and the
     /// inner type it wraps. Used by later phases to recognize `__kptr`,
-    /// `__rcu`, `__percpu`, etc.
+    /// `__rcu`, `__percpu`, etc. Currently only exercised by the BTF
+    /// parser tests; classify_kptr_pointer walks TYPE_TAGs internally.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn type_tag_name(&self, type_id: u32) -> Option<(&str, u32)> {
         let ty = self.types.get(&type_id)?;
         if ty.kind() != BTF_KIND_TYPE_TAG {

@@ -10,8 +10,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-pub const BTF_MAGIC: u16 = 0xEB9F;
-
 /// Decoded view of the 24-byte BTF section header. Both `parse_btf` and
 /// `parse_btf_map_defs` start by reading the same fields; this struct
 /// shares the decode and the bounds check.

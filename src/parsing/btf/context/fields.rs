@@ -208,31 +208,6 @@ impl BtfContext {
         })
     }
 
-    /// Looks up a struct member at a specific byte offset.
-    /// Returns the Type ID of that member if found.
-    pub fn resolve_field_type_id(&self, struct_id: u32, byte_offset: u32) -> Option<u32> {
-        let bit_offset = byte_offset * 8;
-
-        if let Some(ty) = self.types.get(&struct_id) {
-            match ty.kind() {
-                BTF_KIND_STRUCT | BTF_KIND_UNION => {
-                    for member in &ty.members {
-                        // Exact match for now
-                        if member.offset == bit_offset {
-                            return Some(member.type_id);
-                        }
-                    }
-                }
-                // Handle typedefs/const/volatile by peeling the wrapper
-                BTF_KIND_TYPEDEF | BTF_KIND_VOLATILE | BTF_KIND_CONST | BTF_KIND_RESTRICT => {
-                    return self.resolve_field_type_id(ty.size_or_type, byte_offset);
-                }
-                _ => {}
-            }
-        }
-        None
-    }
-
     /// Find the struct/union member that begins exactly at `byte_offset`.
     /// Returns the member's declared name. Used by the struct_ops binding
     /// resolver to translate a relocation offset into a method name.

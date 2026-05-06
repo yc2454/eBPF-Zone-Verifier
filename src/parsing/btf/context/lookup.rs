@@ -127,26 +127,6 @@ impl BtfContext {
         }
     }
 
-    /// Helper to check if a type ID effectively resolves to a Pointer.
-    pub fn is_pointer(&self, mut type_id: u32) -> bool {
-        let mut depth = 0;
-        while let Some(ty) = self.types.get(&type_id) {
-            let kind = ty.kind();
-            match kind {
-                BTF_KIND_PTR => return true,
-                BTF_KIND_TYPEDEF | BTF_KIND_VOLATILE | BTF_KIND_CONST | BTF_KIND_RESTRICT => {
-                    type_id = ty.size_or_type;
-                }
-                _ => return false,
-            }
-            depth += 1;
-            if depth > 10 {
-                break;
-            } // Prevent loops
-        }
-        false
-    }
-
     /// Walk a type id past TYPEDEF/CONST/VOLATILE/RESTRICT modifiers and
     /// return true if the underlying kind is an integer-class scalar
     /// (INT / ENUM / ENUM64). Used to validate exception-callback
