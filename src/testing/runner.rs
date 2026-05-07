@@ -584,6 +584,25 @@ const GPL_ONLY_STRUCT_OPS: &[&str] = &[
 
 impl Analyzer {
     fn derive_program_kind(&self, section: &str) -> ProgramKind {
+        self.derive_program_kind_with_func(section, None)
+    }
+
+    /// freplace target inheritance: SEC("freplace/<target>") attaches
+    /// to a subprog of another already-loaded program. The kernel
+    /// creates an EXT-type prog whose ctx and kfunc allowlist match
+    /// the target's prog-type. We don't have the target's BPF object
+    /// file, but the function's first arg type already reveals the
+    /// intended ctx — clang preserved it in the ELF's BTF
+    /// (`int new_get_skb_len(struct __sk_buff *skb)` → SchedCls;
+    /// `int freplace_rx(struct xdp_md *ctx)` → Xdp). Without this,
+    /// `from_section("freplace/...")` returns Unknown and the ctx
+    /// model + kfunc allowlists treat the program as having no
+    /// recognizable attach class.
+    fn derive_program_kind_with_func(
+        &self,
+        section: &str,
+        func_name: Option<&str>,
+    ) -> ProgramKind {
         if let Ok(kind) = program_kind_for_object(Path::new(&self.path)) {
             return kind;
         }
@@ -591,6 +610,34 @@ impl Analyzer {
         let direct = ProgramKind::from_section(section);
         if direct != ProgramKind::Unknown {
             return direct;
+        }
+
+        if section.to_lowercase().starts_with("freplace/")
+            && let Some(fname) = func_name
+            && let Some(args) = self.btf.resolve_func_args(fname)
+        {
+            use crate::parsing::btf::StructOpsArg;
+            // Scan ALL args for a recognizable ctx struct — freplace
+            // signatures may have scalar args before the ctx pointer
+            // (`new_get_skb_ifindex(int val, struct __sk_buff *skb,
+            // int var)` — ctx is arg #1, not arg #0).
+            let inferred = args.iter().find_map(|a| match a {
+                StructOpsArg::TrustedPtr(name) => match name.as_str() {
+                    "__sk_buff" => Some(ProgramKind::SchedCls),
+                    "xdp_md" => Some(ProgramKind::Xdp),
+                    "bpf_sock" => Some(ProgramKind::CgroupSock),
+                    "bpf_sock_addr" => Some(ProgramKind::CgroupSockAddr),
+                    "bpf_sock_ops" => Some(ProgramKind::SockOps),
+                    "sk_msg_md" => Some(ProgramKind::SkMsg),
+                    "bpf_sk_lookup" => Some(ProgramKind::SkLookup),
+                    "sk_reuseport_md" => Some(ProgramKind::SkReuseport),
+                    _ => None,
+                },
+                _ => None,
+            });
+            if let Some(k) = inferred {
+                return k;
+            }
         }
 
         // Fallback for numeric/anonymous sections (e.g., "2/3"):
@@ -1018,7 +1065,36 @@ impl Analyzer {
         }
 
         // Determine program kind
-        ctx.prog_kind = self.derive_program_kind(section);
+        ctx.prog_kind = self.derive_program_kind_with_func(section, Some(&func.name));
+
+        // freplace per-arg entry-state typing: each declared arg goes
+        // *directly* in R1, R2, ... (the extension acts as a regular
+        // subprog call), so populate `freplace_arg_types` from the
+        // function's BTF FUNC_PROTO. Consumed by `analyze_program_full`
+        // to set the initial register types. Distinct from `entry_args`
+        // (which drives the BPF_PROG ctx-array unpacking idiom in
+        // validate_ctx_access) — freplace doesn't unpack, so we keep
+        // entry_args None for these and use freplace_arg_types instead.
+        if section.to_lowercase().starts_with("freplace/") {
+            use crate::parsing::btf::StructOpsArg;
+            if let Some(args) = self.btf.resolve_func_args(&func.name) {
+                ctx.freplace_arg_types = Some(
+                    args.into_iter()
+                        .map(|a| match a {
+                            StructOpsArg::Scalar => EntryArg::Scalar,
+                            StructOpsArg::OpaquePtr => EntryArg::TrustedPtrBtfId {
+                                type_name: "struct",
+                                nullable: false,
+                            },
+                            StructOpsArg::TrustedPtr(name) => EntryArg::TrustedPtrBtfId {
+                                type_name: intern_btf_type_name_strict(&name),
+                                nullable: false,
+                            },
+                        })
+                        .collect(),
+                );
+            }
+        }
         // Subtype is the SEC suffix after the first delimiter — '/' for
         // hook-bound sections (`cgroup/recvmsg6`, `lsm/file_mprotect`),
         // or '.' for attach-flavored sections that carry no explicit
@@ -1541,7 +1617,9 @@ impl Analyzer {
         register_kfunc_relocs(&mut ctx.btf, &pc_to_reloc);
         ctx.pc_to_reloc = pc_to_reloc;
 
-        // Determine program kind
+        // Determine program kind. Section-only path (no per-function
+        // FUNC info) — freplace inference unavailable here; falls back
+        // to `from_section` which returns Unknown for `freplace/...`.
         ctx.prog_kind = self.derive_program_kind(section);
         // Subtype is the SEC suffix after the first delimiter — '/' for
         // hook-bound sections (`cgroup/recvmsg6`, `lsm/file_mprotect`),

@@ -345,7 +345,16 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     // for the (prog_kind, attach_subtype) pair, prefer it over the coarse
     // `requires_strict_return_code` check below — the kernel's per-hook
     // ranges are tighter (e.g. cgroup/recvmsg* must return exactly 1).
-    if state.at_main_frame() {
+    // freplace EXT programs: skip both the per-attach-type retval rule
+    // and the coarse `requires_strict_return_code` gate. The EXT's
+    // return value is the *replaced subprog's* return (a regular `int`,
+    // unconstrained), not the program's overall retval. Kernel verifier
+    // skips `check_return_code`'s prog-type-specific range gates for
+    // BPF_PROG_TYPE_EXT. Without this, freplace_connect_v4_prog
+    // (returns 255 — out of cgroup/connect_v4's [0,1] rule) falsely
+    // rejects.
+    let is_freplace_ext = env.ctx.attach_flavor.as_deref() == Some("freplace");
+    if state.at_main_frame() && !is_freplace_ext {
         if let Some(rule) = crate::ast::expected_retval_rule(
             env.ctx.prog_kind,
             env.ctx.attach_subtype.as_deref(),

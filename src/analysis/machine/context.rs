@@ -148,6 +148,16 @@ pub struct ExecContext {
     /// default `R1 = PtrToCtx` with these. None means "no struct_ops
     /// binding available" — fall back to the default.
     pub entry_args: Option<Vec<EntryArg>>,
+    /// freplace target inheritance: per-arg types for the EXT program's
+    /// R1..Rn entry state. Distinct from `entry_args` because freplace
+    /// programs receive their declared args *directly* in R1..Rn (the
+    /// extension takes the place of a regular subprog call), whereas
+    /// `entry_args` drives the BPF_PROG ctx-array unpacking idiom used
+    /// by Lsm/Tracing/struct_ops. Populated by the runner for
+    /// `SEC("freplace/<target>")` programs from
+    /// `BtfContext::resolve_func_args(func.name)`; consumed by
+    /// `analyze_program_full` to type each argument register at entry.
+    pub freplace_arg_types: Option<Vec<EntryArg>>,
     /// W6.4a-followon: true when the matched struct_ops member's
     /// FUNC_PROTO declares a void return. `transfer_exit` skips the
     /// "R0 not initialized" rejection in this case — void methods are
@@ -240,6 +250,7 @@ pub fn default_exec_ctx() -> ExecContext {
         mode: VerificationMode::Priviledged,
         kfunc: None,
         entry_args: None,
+        freplace_arg_types: None,
         entry_returns_void: false,
         struct_ops_member: None,
         attach_subtype: None,
