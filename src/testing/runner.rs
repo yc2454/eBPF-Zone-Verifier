@@ -231,6 +231,63 @@ pub(crate) fn out_of_scope_reason(path: &str) -> Option<&'static str> {
     }
 }
 
+/// Per-(file, func) OOS gate for tests where only some functions need
+/// loader-side / framework-side preprocessing we don't model. Used in
+/// preference to file-level gating when the file mixes resize-dependent
+/// programs with trivial ones (test_global_map_resize: bss_array_sum +
+/// data_array_sum need the resize, test_1 is a `return 0` struct_ops).
+pub(crate) fn out_of_scope_reason_per_func(path: &str, func_name: &str) -> Option<&'static str> {
+    let stem = std::path::Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let test_name = stem
+        .strip_prefix("zovia_selftest_")
+        .unwrap_or(stem);
+    match (test_name, func_name) {
+        // libbpf bpf_map__set_value_size grows `int array[1]` to a
+        // userspace-chosen size before kernel load. Without the resize
+        // pass, `array[i]` for i > 0 is OOB to our verifier — kernel
+        // never sees the un-resized version. test_1 is a trivial
+        // struct_ops/test_1 that doesn't depend on resize.
+        ("test_global_map_resize", "bss_array_sum")
+        | ("test_global_map_resize", "data_array_sum") => {
+            Some("needs global-map-resize loader pass")
+        }
+        // SEC("?struct_ops/test_1") with kernel-supported member where
+        // the userspace driver explicitly sets ops->test_1 = NULL
+        // before load. The program is never bound or executed; libbpf
+        // marks autoload=false, so the kernel verifier doesn't see it.
+        // Our static analyzer has no notion of autoload.
+        ("struct_ops_nulled_out_cb", "test_1_turn_off") => {
+            Some("autoload=false: program not loaded by userspace driver")
+        }
+        // fentry/FUNC and fexit/FUNC are libbpf placeholders that the
+        // userspace driver replaces with a real attach target via
+        // bpf_program__set_attach_target. Without that target's BTF we
+        // can't resolve the program's ctx args (they come from the
+        // attach target's signature, not the SEC string).
+        ("test_xdp_bpf2bpf", "trace_on_entry")
+        | ("test_xdp_bpf2bpf", "trace_on_exit") => {
+            Some("needs runtime attach-target resolution (fentry/fexit FUNC placeholder)")
+        }
+        // USDT relocation: `r1 = 0; r1 = *(u32*)(r1+0)` is a placeholder
+        // that libbpf rewrites at load time to a real address from the
+        // USDT spec array. We don't ship the USDT spec relocation pass.
+        ("test_usdt_multispec", "usdt_100") => {
+            Some("needs USDT spec-array relocation")
+        }
+        // CO-RE downsize: `__type(value, struct foo)` where struct foo
+        // shrinks at runtime via CO-RE relocation. The static struct
+        // size mismatches the at-runtime size; kernel sees the relocated
+        // version and accepts.
+        ("test_core_autosize", "handle_downsize") => {
+            Some("needs CO-RE relocation pass")
+        }
+        _ => None,
+    }
+}
+
 /// Cluster E: LSM hooks the kernel's `lsm/disabled_hooks_list` rejects at
 /// attach time. Mirrors `BPF_LSM_DISABLED_HOOKS` in `kernel/bpf/bpf_lsm.c`.
 /// Names match the SEC suffix (`SEC("lsm/<hook>")`).
@@ -900,6 +957,9 @@ impl Analyzer {
         // would produce a misleading FALSE_REJECT against an upstream
         // ACCEPT that's only valid post-pre-processing.
         if let Some(reason) = out_of_scope_reason(&self.path) {
+            return AnalysisResult::OutOfScope(reason.into());
+        }
+        if let Some(reason) = out_of_scope_reason_per_func(&self.path, func_name) {
             return AnalysisResult::OutOfScope(reason.into());
         }
 
