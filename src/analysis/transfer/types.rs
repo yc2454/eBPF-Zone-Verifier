@@ -476,6 +476,11 @@ pub(crate) fn update_load_types(
                             .types
                             .set(dst, RegType::PtrToSocket { ref_id: None });
                     }
+                    CtxFieldKind::SocketOrNull => {
+                        state
+                            .types
+                            .set(dst, RegType::PtrToSocketOrNull { ref_id: None });
+                    }
                     CtxFieldKind::AllocMem { mem_size } => {
                         state.types.set(
                             dst,

@@ -32,6 +32,14 @@ pub enum CtxFieldKind {
     /// the sk pointer in a state that still requires a null-check.
     Socket,
 
+    /// Nullable `struct bpf_sock *` ctx field. Maps to
+    /// `RegType::PtrToSocketOrNull { ref_id: None }`. Used for sk_lookup
+    /// ctx->sk where kernel returns PTR_TO_SOCKET_OR_NULL (the field
+    /// reflects the verdict's selected sk; null until bpf_sk_assign).
+    /// JEQ-refinement against a sk1 from `bpf_map_lookup_elem` on a
+    /// SOCKMAP (also PtrToSocket flavor) promotes the nullable side.
+    SocketOrNull,
+
     /// Pointer to the start of the packet data.
     PacketStart,
 
@@ -898,11 +906,18 @@ const SK_REUSEPORT_FIELDS: &[CtxField] = &[
 ///     __u32 local_port;           // 60-64
 /// };
 const SK_LOOKUP_FIELDS: &[CtxField] = &[
-    // struct bpf_sock *sk (offset 0)
+    // struct bpf_sock *sk (offset 0). Kernel types this as
+    // PTR_TO_SOCKET_OR_NULL (`bpf_sk_lookup_is_valid_access`); a sk1
+    // from `bpf_map_lookup_elem` on a SOCKMAP/REUSEPORT_SOCKARRAY is
+    // PtrToSocket — the JEQ-refinement on `ctx->sk == sk1` only
+    // promotes nullable→non-null when the two flavors match. Was
+    // SockCommon, which broke equality refinement in test_sk_lookup
+    // ::access_ctx_sk's `if (ctx->sk != sk1) goto out; ctx->sk->family`
+    // pattern (kernel admits, we rejected post-equality deref).
     CtxField {
         offset: 0,
         size: MemSize::U64,
-        kind: CtxFieldKind::SockCommon,
+        kind: CtxFieldKind::SocketOrNull,
         writable: false,
         readable: true,
         narrow_access: false,
