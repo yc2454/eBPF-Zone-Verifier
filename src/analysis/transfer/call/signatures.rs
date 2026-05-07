@@ -2936,6 +2936,54 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .flags(CallFlags::RELEASE | CallFlags::RELEASE_NON_OWN | CallFlags::SPIN_LOCK_HELD)
         .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 1 }]),
 
+        // ---- bpf_wq family (kernel v6.10) ----
+        //
+        // Async work-queue: same shape as bpf_timer but cb runs in a
+        // workqueue context. Three kfuncs:
+        //
+        //   int bpf_wq_init(struct bpf_wq *wq, struct bpf_map *map, u64 flags)
+        //   int bpf_wq_set_callback_impl(struct bpf_wq *wq,
+        //                                int (*callback)(void*,int*,void*),
+        //                                u64 flags__ign,
+        //                                void *aux__ign)
+        //   int bpf_wq_start(struct bpf_wq *wq, u64 flags)
+        //
+        // R1 is `&map_value->wq` (PtrToMapValue carrying owning map_idx),
+        // validated via MapValueSpecial(Wq). bpf_wq_init has a kernel
+        // cross-arg check that R1's owning map matches R2's map_uid; we
+        // mirror via a coarse map_idx-equality check in transfer.rs's
+        // bpf_wq_init arm (keeps wq_failures::test_wq_init_wrong_map
+        // correctly rejecting). bpf_wq_set_callback_impl is routed
+        // through a kfunc callback-fork in transfer.rs (the cb runs
+        // async, so registration requires no held locks / unreleased
+        // refs — same async-constraint as BPF_TIMER_SET_CALLBACK).
+        "bpf_wq_init" => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::Wq }, // R1: &wq field
+            ConstMapPtr,                                    // R2: owning map
+            Anything,                                       // R3: flags
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        "bpf_wq_set_callback_impl" => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::Wq }, // R1: &wq field
+            PtrToCallback,                                  // R2: callback subprog
+            Anything,                                       // R3: flags__ign
+            DontCare,                                       // R4: aux__ign
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        "bpf_wq_start" => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::Wq }, // R1: &wq field
+            Anything,                                       // R2: flags
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
         // ---- W6.4a-followon: kernel-exported TCP CC helpers ----
         //
         // bpf_dctcp.c and bpf_cubic.c reach into the kernel's TCP
@@ -3300,6 +3348,18 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // (test driver puts a kprobe on this function to count invocations).
         // Trivially additive: no args, no side effects.
         "bpf_kfunc_common_test" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        // ---- bpf_kfunc_call_test_sleepable (testmod, KF_SLEEPABLE) ----
+        // `void bpf_kfunc_call_test_sleepable(void)`. Used by wq.c's
+        // sleepable cb (`wq_cb_sleepable`) to mark the cb path as
+        // sleepable for the test driver. KF_SLEEPABLE is a runtime
+        // gate (kernel rejects non-sleepable callers); we don't enforce
+        // it here because the wq cb's sleepable-ness is set via the wq
+        // setup, not visible at the call site.
+        "bpf_kfunc_call_test_sleepable" => CallProto::with_args([
             DontCare, DontCare, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::Void),

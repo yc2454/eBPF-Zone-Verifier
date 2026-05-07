@@ -89,6 +89,11 @@ pub enum SpecialFieldKind {
     /// (kernel verifier.c L8305 emits "map '<m>' has no valid
     /// bpf_res_spin_lock" when the requested record-flavor is missing).
     ResSpinLock,
+    /// `struct bpf_wq` — async work queue, kernel v6.10. The
+    /// `bpf_wq_init` / `bpf_wq_set_callback_impl` / `bpf_wq_start`
+    /// kfunc family takes a pointer to a wq field embedded in a
+    /// map value. Mirrors the Timer family.
+    Wq,
     // Future types...
 }
 
@@ -103,6 +108,7 @@ impl SpecialFieldKind {
             "bpf_rb_root" => Some(Self::RbRoot),
             "bpf_rb_node" => Some(Self::RbNode),
             "bpf_refcount" => Some(Self::Refcount),
+            "bpf_wq" => Some(Self::Wq),
             _ => None,
         }
     }

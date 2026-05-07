@@ -317,6 +317,44 @@ fn transfer_kfunc_proto(
         }
     }
 
+    // ---- bpf_wq family cross-arg + callback-fork dispatch ----
+    //
+    // Done by name lookup since the kfunc family doesn't fit the generic
+    // proto + side-effects model:
+    //   * `bpf_wq_init` cross-arg: kernel rejects when R1's owning
+    //     map_uid != R2's map_uid ("workqueue pointer in R1 map_uid=N
+    //     doesn't match map pointer in R2 map_uid=M") — keeps
+    //     wq_failures::test_wq_init_wrong_map FA-safe. Coarse map_idx
+    //     equality (we don't track map_uid) is sufficient because every
+    //     map declared in a single ELF gets a distinct map_idx.
+    //   * `bpf_wq_set_callback_impl` callback-fork: cb runs async, so
+    //     registration requires no held locks / unreleased refs (mirrors
+    //     BPF_TIMER_SET_CALLBACK). The cb signature is
+    //     `(map, key, value)` typed from caller's R1 (wq's owning
+    //     map_idx).
+    {
+        let kfunc_name = env.ctx.btf.kfunc_name(btf_id);
+        if kfunc_name == Some("bpf_wq_init") {
+            if let (
+                RegType::PtrToMapValue { map_idx: wq_map, .. },
+                RegType::PtrToMapObject { map_idx: ptr_map },
+            ) = (in_types.get(Reg::R1), in_types.get(Reg::R2))
+            {
+                if wq_map != ptr_map {
+                    env.fail(
+                        crate::analysis::machine::error::VerificationError::InvalidArgType {
+                            pc,
+                            reg: Reg::R2,
+                        },
+                    );
+                    return vec![];
+                }
+            }
+        } else if kfunc_name == Some("bpf_wq_set_callback_impl") {
+            return transfer_kfunc_wq_set_callback(env, &in_types, state, btf_id, proto);
+        }
+    }
+
     if proto.flags.contains(CallFlags::RELEASE) {
         let is_non_own = proto.flags.contains(CallFlags::RELEASE_NON_OWN);
         for eff in proto.side_effects {
@@ -568,6 +606,11 @@ fn transfer_kfunc_proto(
     }
 
     apply_call_proto_r0(&in_types, &mut state, proto, env.ctx.prog_kind);
+
+    // (Cross-arg + callback-fork dispatch above intercepts
+    // bpf_wq_set_callback_impl before this point — we never reach here
+    // for it, so the post-call sequence below applies cleanly to
+    // bpf_wq_init / bpf_wq_start which are flat-shaped kfuncs.)
 
     // Populate `pointee_btf_id` on the freshly-minted PtrToOwnedKptr in
     // R0 for kfuncs that surface a known pointee type:
@@ -1261,4 +1304,134 @@ fn throw(env: &mut VerifierEnv, state: State) -> Vec<State> {
 /// invalidating the constraint.
 fn tracing_requires_zero_retval(ctx: &crate::analysis::machine::context::ExecContext) -> bool {
     matches!(ctx.attach_flavor.as_deref(), Some("fentry") | Some("fexit"))
+}
+
+/// Callback-fork for `bpf_wq_set_callback_impl(wq, cb, flags__ign, aux__ign)`.
+///
+/// The cb runs asynchronously when the workqueue fires, so registration
+/// must occur with no held spin lock and no unreleased refs (mirrors
+/// `BPF_TIMER_SET_CALLBACK`'s constraint). The cb signature is
+/// `int (*cb)(void *map, int *key, void *value)` — the kernel installs
+/// R1=CONST_PTR_TO_MAP, R2=PTR_TO_MAP_KEY, R3=PTR_TO_MAP_VALUE off the
+/// wq's owning map (caller's R1 is `&map_value->wq` whose `map_idx`
+/// identifies the owning map). We don't track PTR_TO_MAP_KEY distinctly;
+/// approximate as the lax `PtrToBtfId{type_name:"unknown",TRUSTED}`
+/// (matches the timer-cb fallback). On the cb's Exit `transfer_exit`
+/// drops the path; only the skip path carries post-call state forward.
+fn transfer_kfunc_wq_set_callback(
+    env: &mut VerifierEnv,
+    in_types: &crate::analysis::machine::reg_types::TypeState,
+    state: State,
+    btf_id: u32,
+    proto: &CallProto,
+) -> Vec<State> {
+    let pc = state.pc;
+
+    // R2 must be PtrToCallback — the proto's PtrToCallback validator
+    // already accepted; pull subprog target.
+    let RegType::PtrToCallback { subprog_pc } = in_types.get(Reg::R2) else {
+        env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
+        return vec![];
+    };
+    let cb_entry = subprog_pc as usize;
+
+    // Async-cb constraint: registration cannot happen while a spin lock
+    // is held or refs are outstanding — kernel rejects the same way it
+    // does for `bpf_timer_set_callback`.
+    if state.has_active_lock() || state.has_unreleased_refs() {
+        env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
+        return vec![];
+    }
+
+    // Successor A: skip path. Apply proto-driven R0 (Scalar return),
+    // clobber caller-saved.
+    let mut skip_state = state.clone();
+    apply_call_proto_r0(in_types, &mut skip_state, proto, env.ctx.prog_kind);
+    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+        skip_state.types.set(r, RegType::NotInit);
+        skip_state.domain.forget(r);
+        skip_state.set_tnum(r, Tnum::unknown());
+        skip_state.clear_scalar_id(r);
+    }
+    skip_state.pc = pc + 1;
+
+    // Successor B: enter the cb with a fresh frame. Bail with the skip
+    // state alone if we're at max call depth.
+    if state.num_frames() >= 8 {
+        return vec![skip_state];
+    }
+
+    // Pull caller's R1 (wq) `map_idx` for cb-arg typing.
+    let wq_map_idx = match in_types.get(Reg::R1) {
+        RegType::PtrToMapValue { map_idx, .. } => Some(map_idx),
+        _ => None,
+    };
+
+    let mut cb_state = state;
+    let caller_level_idx = cb_state.current_frame_level();
+    let caller_stack_snapshot = cb_state.frames.get(caller_level_idx).stack.clone();
+    // `helper` field on the frame is helper-id-keyed (see
+    // `apply_return_bounds_for_cb_helper`); kfunc cbs have no real
+    // helper id. Pass 0 — the consumer falls back to a generic Scalar
+    // R0, which matches what the proto already emits for skip_state.
+    // Async cbs drop on Exit anyway, so this only matters if a future
+    // path threads cb-Exit back to caller.
+    let _ = btf_id;
+    cb_state.push_callback_frame(pc + 1, 0);
+    cb_state.frames.current_mut().set_cb_propagation(
+        caller_stack_snapshot,
+        caller_level_idx.index(),
+        /* widen */ false, // async, kernel doesn't iterate; concrete merge
+    );
+
+    crate::analysis::transfer::types::update_call_rel_types(&mut cb_state);
+    cb_state.domain.clear_packet_size_bounds();
+
+    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+        cb_state.types.set(r, RegType::NotInit);
+        cb_state.domain.forget(r);
+        cb_state.set_tnum(r, Tnum::unknown());
+        cb_state.clear_scalar_id(r);
+    }
+
+    use crate::analysis::machine::reg_types::PtrFlags;
+    let unknown_btf = || RegType::PtrToBtfId {
+        type_name: "unknown",
+        flags: PtrFlags::TRUSTED,
+        ref_id: None,
+    };
+    // R1 = CONST_PTR_TO_MAP (the wq's owning map).
+    let r1_ty = match wq_map_idx {
+        Some(map_idx) => RegType::PtrToMapObject { map_idx },
+        None => unknown_btf(),
+    };
+    cb_state.types.set(Reg::R1, r1_ty);
+    cb_state.domain.forget(Reg::R1);
+    cb_state.set_tnum(Reg::R1, Tnum::unknown());
+    cb_state.clear_scalar_id(Reg::R1);
+    // R2 = key (PTR_TO_MAP_KEY in kernel; approximate as lax BtfId).
+    cb_state.types.set(Reg::R2, unknown_btf());
+    cb_state.domain.forget(Reg::R2);
+    cb_state.set_tnum(Reg::R2, Tnum::unknown());
+    cb_state.clear_scalar_id(Reg::R2);
+    // R3 = value (PTR_TO_MAP_VALUE off the owning map).
+    let r3_ty = match wq_map_idx {
+        Some(map_idx) => RegType::PtrToMapValue {
+            id: new_ptr_id(),
+            offset: Some(0),
+            map_idx,
+        },
+        None => unknown_btf(),
+    };
+    cb_state.types.set(Reg::R3, r3_ty);
+    cb_state.domain.forget(Reg::R3);
+    if wq_map_idx.is_some() {
+        cb_state.domain.init_map_value_ptr(Reg::R3);
+    }
+    cb_state.set_tnum(Reg::R3, Tnum::unknown());
+    cb_state.clear_scalar_id(Reg::R3);
+
+    cb_state.pc = cb_entry;
+
+    vec![skip_state, cb_state]
 }
