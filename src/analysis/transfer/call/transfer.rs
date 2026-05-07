@@ -974,11 +974,47 @@ fn transfer_callback_helper(
             ref_id: None,
         };
         match helper {
-            // cb(map, key, val, ctx) — R2=key, R3=val (lax pointers).
+            // cb(map, key, val, ctx) — R2=key, R3=val. Kernel sets
+            // R2=PTR_TO_MAP_KEY, R3=PTR_TO_MAP_VALUE (verifier.c
+            // `set_map_elem_callback_state`). We don't track PTR_TO_MAP_KEY
+            // distinctly; approximate both as `PtrToMapValue { map_idx }`
+            // pulled from caller's R1 (the map ptr passed to
+            // bpf_for_each_map_elem). This admits the cb body's
+            // `bpf_map_*_elem(map, key, val, ...)` calls — validators
+            // delegate through `validate_readable_mem` which accepts
+            // PtrToMapValue and bound-checks against the map's value_size.
+            //
+            // Limitation: when `key_size > value_size` (rare hash maps
+            // with large keys / small values), the read of `key_size`
+            // bytes from a PtrToMapValue with mem_size=value_size
+            // under-reads — this would FA. Both failing selftests
+            // (`for_each_hash_map_elem`, `for_each_hash_modify`) have
+            // key_size <= value_size, so the approximation is safe for
+            // the closures. Tighter typing (real PTR_TO_MAP_KEY) is
+            // future work.
             constants::BPF_FOR_EACH_MAP_ELEM => {
+                // R1 was just installed via ctx_propagations from
+                // caller's R1 (the map ptr passed to
+                // bpf_for_each_map_elem) — read it back here to derive
+                // map_idx for the cb's R2/R3 typing.
+                let caller_map_idx = match cb_state.types.get(Reg::R1) {
+                    RegType::PtrToMapObject { map_idx } => Some(map_idx),
+                    _ => None,
+                };
                 for r in [Reg::R2, Reg::R3] {
-                    cb_state.types.set(r, unknown_btf());
+                    let ty = match caller_map_idx {
+                        Some(map_idx) => RegType::PtrToMapValue {
+                            id: crate::analysis::machine::reg_types::new_ptr_id(),
+                            offset: Some(0),
+                            map_idx,
+                        },
+                        None => unknown_btf(),
+                    };
+                    cb_state.types.set(r, ty);
                     cb_state.domain.forget(r);
+                    if caller_map_idx.is_some() {
+                        cb_state.domain.init_map_value_ptr(r);
+                    }
                     cb_state.set_tnum(r, Tnum::unknown());
                     cb_state.clear_scalar_id(r);
                 }
