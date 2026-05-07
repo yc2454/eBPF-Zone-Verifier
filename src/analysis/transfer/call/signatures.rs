@@ -3180,6 +3180,34 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Void),
 
+        // int *bpf_kfunc_call_test_get_rdwr_mem(struct prog_test_ref_kfunc *p,
+        //                                       const int rdwr_buf_size)
+        // int *bpf_kfunc_call_test_get_rdonly_mem(struct prog_test_ref_kfunc *p,
+        //                                         const int rdonly_buf_size)
+        // KF_RET_NULL on both. Returns a bounded mem region whose size
+        // is the value of R2 (a `const int`). Lite scope: model both with
+        // `RetKind::PtrToAllocMemFromArg { size_arg: 1 }` — no rdonly /
+        // ref-id-on-mem distinction. The matching `kfunc_call_fail.c`
+        // siblings (rdonly-store, use-after-free, oob, non-const-size)
+        // are upstream-ACCEPT in the v6.15 baseline (skel `?tc`-gated),
+        // so the absent rdonly enforcement and ref-id propagation don't
+        // surface FAs.
+        "bpf_kfunc_call_test_get_rdwr_mem" => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "prog_test_ref_kfunc" },
+            Anything,
+            DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToAllocMemFromArg { size_arg: 1 })
+        .flags(CallFlags::RET_NULL),
+
+        "bpf_kfunc_call_test_get_rdonly_mem" => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "prog_test_ref_kfunc" },
+            Anything,
+            DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToAllocMemFromArg { size_arg: 1 })
+        .flags(CallFlags::RET_NULL),
+
         // struct bpf_testmod_ctx *bpf_testmod_ctx_create(int *err)
         //   KF_ACQUIRE | KF_RET_NULL.
         // void bpf_testmod_ctx_release(struct bpf_testmod_ctx *ctx)
@@ -3224,6 +3252,14 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             Anything, Anything, Anything, Anything, Anything,
         ])
         .ret(RetKind::Scalar),
+        // struct sock *bpf_kfunc_call_test3(struct sock *sk) — passthrough
+        // (returns the same sock). No KF_ACQUIRE / KF_RET_NULL flags;
+        // caller dereferences the returned sock directly without a null
+        // check (`bpf_kfunc_call_test3(sk)->__sk_common.skc_state`).
+        "bpf_kfunc_call_test3" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "sock" }),
         "bpf_kfunc_call_test2" => CallProto::with_args([
             Anything, Anything, Anything, DontCare, DontCare,
         ])
