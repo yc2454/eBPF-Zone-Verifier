@@ -542,6 +542,31 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
         return transfer_callback_helper(env, state, &in_types, helper);
     }
 
+    // bpf_timer_init cross-arg map_uid check: kernel rejects "timer
+    // pointer in R1 map_uid=N doesn't match map pointer in R2
+    // map_uid=M" when val (R1's owning map_uid, propagated through
+    // chained map-of-maps lookups) and the target map (R2) are
+    // different instances. Only fires when both sides have a Some
+    // map_uid — direct map decls (PtrToMapObject) carry no uid, so
+    // the common timer.c::race pattern (val from same array, R2 is
+    // &array) is unaffected. Closes timer_mim_reject::test1.
+    if helper == constants::BPF_TIMER_INIT {
+        if let (
+            RegType::PtrToMapValue {
+                map_uid: Some(u1), ..
+            },
+            RegType::PtrToMapValue {
+                map_uid: Some(u2), ..
+            },
+        ) = (in_types.get(Reg::R1), in_types.get(Reg::R2))
+        {
+            if u1 != u2 {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
+                return vec![];
+            }
+        }
+    }
+
     // bpf_get_local_storage doesn't not support type 1 map and flag must be 0
     if helper == constants::BPF_GET_LOCAL_STORAGE {
         if let RegType::PtrToMapObject { map_idx } = state.types.get(Reg::R1)
@@ -1084,6 +1109,7 @@ fn transfer_callback_helper(
                             id: crate::analysis::machine::reg_types::new_ptr_id(),
                             offset: Some(0),
                             map_idx,
+                            map_uid: None,
                         },
                         None => unknown_btf(),
                     };
@@ -1165,6 +1191,7 @@ fn transfer_callback_helper(
                 id: crate::analysis::machine::reg_types::new_ptr_id(),
                 offset: Some(0),
                 map_idx,
+                map_uid: None,
             },
             None => unknown_btf(),
         };

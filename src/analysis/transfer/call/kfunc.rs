@@ -1420,6 +1420,7 @@ fn transfer_kfunc_wq_set_callback(
             id: new_ptr_id(),
             offset: Some(0),
             map_idx,
+            map_uid: None,
         },
         None => unknown_btf(),
     };

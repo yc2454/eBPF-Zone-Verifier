@@ -68,6 +68,7 @@ fn adjust_map_value_offset(ty: RegType, delta: Option<i64>) -> RegType {
             id,
             offset,
             map_idx,
+            map_uid,
         } => {
             let new_offset = match (offset, delta) {
                 (Some(o), Some(d)) => Some(o + d),
@@ -77,6 +78,7 @@ fn adjust_map_value_offset(ty: RegType, delta: Option<i64>) -> RegType {
                 id,
                 offset: new_offset,
                 map_idx,
+                map_uid,
             }
         }
         other => other,
@@ -396,6 +398,7 @@ pub(crate) fn update_alu_types(
                                         id: new_ptr_id(),
                                         offset: Some(info.offset),
                                         map_idx: info.map_idx,
+                                        map_uid: None,
                                     },
                                 );
                             } else {
@@ -1115,6 +1118,32 @@ pub(crate) fn update_call_types(
                         // target) — type R0 as PtrToMapValue directly so the
                         // user can dereference without an explicit null check,
                         // matching kernel behaviour.
+                        // map_uid: kernel mints a fresh per-lookup uid
+                        // when the lookup target is a map-of-maps
+                        // (each result represents a possibly-distinct
+                        // inner-map instance). For inner-of-inner
+                        // chains, R1 itself is a PtrToMapValue carrying
+                        // the outer-lookup's uid; propagate. Reused by
+                        // the bpf_timer_init / bpf_wq_init cross-arg
+                        // check (timer_mim_reject::test1).
+                        let map_uid: Option<u32> = match in_types.get(Reg::R1) {
+                            RegType::PtrToMapObject { map_idx: outer } => env
+                                .ctx
+                                .map_defs
+                                .get(outer)
+                                .and_then(|m| {
+                                    matches!(
+                                        m.type_,
+                                        constants::BPF_MAP_TYPE_ARRAY_OF_MAPS
+                                            | constants::BPF_MAP_TYPE_HASH_OF_MAPS
+                                    )
+                                    .then(crate::analysis::machine::reg_types::new_map_uid)
+                                }),
+                            RegType::PtrToMapValue {
+                                map_uid: outer_uid, ..
+                            } => outer_uid,
+                            _ => None,
+                        };
                         if helper == constants::BPF_GET_LOCAL_STORAGE {
                             let id = new_ptr_id();
                             state.types.set(
@@ -1123,6 +1152,7 @@ pub(crate) fn update_call_types(
                                     id,
                                     offset: Some(0),
                                     map_idx,
+                                    map_uid,
                                 },
                             );
                             state.domain.init_map_value_ptr(Reg::R0);
@@ -1144,14 +1174,20 @@ pub(crate) fn update_call_types(
                                     id,
                                     offset: Some(0),
                                     map_idx,
+                                    map_uid,
                                 },
                             );
                             state.domain.init_map_value_ptr(Reg::R0);
                         } else {
                             let id = new_ptr_id();
-                            state
-                                .types
-                                .set(Reg::R0, RegType::PtrToMapValueOrNull { id, map_idx });
+                            state.types.set(
+                                Reg::R0,
+                                RegType::PtrToMapValueOrNull {
+                                    id,
+                                    map_idx,
+                                    map_uid,
+                                },
+                            );
                         }
                     }
                 }
@@ -1325,9 +1361,14 @@ pub(crate) fn update_call_types(
                 _ => 0,
             };
             let id = new_ptr_id();
-            state
-                .types
-                .set(Reg::R0, RegType::PtrToMapValueOrNull { id, map_idx });
+            state.types.set(
+                Reg::R0,
+                RegType::PtrToMapValueOrNull {
+                    id,
+                    map_idx,
+                    map_uid: None,
+                },
+            );
         }
 
         // tail_call: R0 is undefined on failure path
@@ -1475,6 +1516,9 @@ pub(crate) fn update_map_load_types(
             id: if is_static_data_section { 0 } else { new_ptr_id() },
             map_idx: map_fd,
             offset: Some(offset),
+            // Direct map decl — no map_uid (the per-instance identity
+            // only matters for chained map-of-maps lookups).
+            map_uid: None,
         },
         // Modern kinds are filtered upstream in transfer_map_load; reaching
         // them here would be a bug.

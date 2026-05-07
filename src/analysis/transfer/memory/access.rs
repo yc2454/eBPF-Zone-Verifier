@@ -101,6 +101,7 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             id: _,
             offset: map_off_opt,
             map_idx,
+            ..
         } => {
             if let Some(map_def) = ctx.map_defs.get(map_idx) {
                 if map_def.map_flags & constants::BPF_F_WRONLY_PROG != 0 {
@@ -414,6 +415,7 @@ pub fn check_store(
             id: _,
             offset: map_off,
             map_idx,
+            ..
         } => {
             if let Some(map_def) = ctx.map_defs.get(map_idx) {
                 if map_def.map_flags & constants::BPF_F_RDONLY_PROG != 0 {

@@ -443,6 +443,7 @@ pub fn try_load_from_rodata(
         id: _,
         map_idx,
         offset: base_offset,
+        ..
     } = state.types.get(base)
         && let Some(ptr_val) = base_offset
     {

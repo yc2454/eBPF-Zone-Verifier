@@ -1928,6 +1928,7 @@ pub(crate) fn check_ptr_access_size(
             map_idx,
             offset,
             id: _,
+            ..
         } => {
             // Map value: check offset + size <= value_size
             let Some(map_def) = env.ctx.map_defs.get(map_idx) else {

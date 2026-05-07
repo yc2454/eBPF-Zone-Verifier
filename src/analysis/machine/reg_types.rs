@@ -80,11 +80,22 @@ pub enum RegType {
     PtrToMapValueOrNull {
         id: u32,
         map_idx: usize,
+        /// Fresh per-lookup-instance identifier, propagated through
+        /// chained lookups. Mirrors kernel `map_uid`. Two map-of-maps
+        /// lookups at different keys yield different uids; subsequent
+        /// inner-lookups inherit their owner's uid. Cross-arg checks
+        /// (bpf_timer_init / bpf_wq_init) compare uids to reject
+        /// e.g. timer_mim_reject's `bpf_timer_init(&val->timer,
+        /// inner_map2)` where val came from a different inner-map
+        /// instance. `None` = "unconstrained" (raw map-decl, ALU
+        /// drops, path-merge widening) — never rejects.
+        map_uid: Option<u32>,
     },
     PtrToMapValue {
         id: u32,
         offset: Option<i64>,
         map_idx: usize,
+        map_uid: Option<u32>,
     },
     PtrToSocket {
         ref_id: Option<u32>,
@@ -351,11 +362,14 @@ impl RegType {
     /// Returns the non-null version of a nullable pointer type
     pub fn to_non_null(&self) -> Option<RegType> {
         match *self {
-            RegType::PtrToMapValueOrNull { id, map_idx } => Some(RegType::PtrToMapValue {
-                offset: Some(0),
-                map_idx,
-                id,
-            }),
+            RegType::PtrToMapValueOrNull { id, map_idx, map_uid } => {
+                Some(RegType::PtrToMapValue {
+                    offset: Some(0),
+                    map_idx,
+                    id,
+                    map_uid,
+                })
+            }
             RegType::PtrToSocketOrNull { ref_id: id } => Some(RegType::PtrToSocket { ref_id: id }),
             RegType::PtrToSockCommonOrNull { ref_id: id } => {
                 Some(RegType::PtrToSockCommon { ref_id: id })
@@ -518,6 +532,15 @@ pub fn new_ref_id() -> u32 {
     use std::sync::atomic::{AtomicU32, Ordering};
     static REF_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
     REF_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
+}
+
+/// Fresh per-lookup map_uid (kernel: each map-of-maps lookup result
+/// gets a distinct uid). Zero is reserved for "no uid"; the first
+/// minted is 1.
+pub fn new_map_uid() -> u32 {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static MAP_UID_COUNTER: AtomicU32 = AtomicU32::new(1);
+    MAP_UID_COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
 /// Fresh identity token for a scalar value. Two registers/slots that share
