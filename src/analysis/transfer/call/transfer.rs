@@ -215,46 +215,63 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     //     this is the *previous* slot contents, ownership transferred to
     //     the program. R2's ref is consumed (transferred into the map).
     if helper == constants::BPF_KPTR_XCHG {
+        // Resolve R1 to (kptr_field_kind, pointee_btf_id) — accepts both:
+        //   - `PtrToMapValue { offset, map_idx }` aimed at a kptr field in
+        //     the map's value BTF (existing path, via `map_def.kptr_fields`).
+        //   - `PtrToOwnedKptr { pointee_btf_id, offset }` aimed at a kptr
+        //     field embedded inside a `bpf_obj_new`'d struct (new path,
+        //     via `extract_value_kptr_fields(pointee_btf_id)`).
+        // Kernel `process_kf_arg_ptr_to_kptr` (verifier.c v6.15 ~L13266)
+        // accepts both shapes uniformly via `reg_btf_record(reg)`.
+        // Closes the local_kptr_stash + map_kptr `__kptr` xchg-into-alloc'd
+        // -object idioms.
+        use crate::parsing::elf::{KptrField, KptrFieldKind};
         let r1 = state.types.get(Reg::R1);
-        let RegType::PtrToMapValue {
-            offset: r1_off_opt,
-            map_idx,
-            ..
-        } = r1
-        else {
-            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
-            return vec![];
-        };
-        let final_off = crate::analysis::transfer::memory::map::resolve_const_map_off(
-            &state, Reg::R1, r1_off_opt, 0,
-        );
-        let Some(off_val) = final_off else {
-            env.fail(VerificationError::KptrAccessVariableOffset { pc, map_idx });
-            return vec![];
-        };
-        let map_def = match env.ctx.map_defs.get(map_idx) {
-            Some(m) => m,
-            None => {
-                env.fail(VerificationError::MapNotFound { pc, map_idx });
+        let resolved: Option<(KptrFieldKind, u32)> = match r1 {
+            RegType::PtrToMapValue { offset: r1_off_opt, map_idx, .. } => {
+                let final_off = crate::analysis::transfer::memory::map::resolve_const_map_off(
+                    &state, Reg::R1, r1_off_opt, 0,
+                );
+                let Some(off_val) = final_off else {
+                    env.fail(VerificationError::KptrAccessVariableOffset { pc, map_idx });
+                    return vec![];
+                };
+                let map_def = match env.ctx.map_defs.get(map_idx) {
+                    Some(m) => m,
+                    None => {
+                        env.fail(VerificationError::MapNotFound { pc, map_idx });
+                        return vec![];
+                    }
+                };
+                crate::analysis::transfer::memory::map::kptr_field_at(map_def, off_val, 8)
+                    .map(|f| (f.kind, f.pointee_btf_id))
+            }
+            RegType::PtrToOwnedKptr { pointee_btf_id: Some(struct_btf_id), offset: r1_off, .. } => {
+                let off_val = r1_off as i64;
+                let fields: Vec<KptrField> =
+                    env.ctx.btf.extract_value_kptr_fields(struct_btf_id);
+                fields
+                    .into_iter()
+                    .find(|f| f.offset as i64 == off_val)
+                    .map(|f| (f.kind, f.pointee_btf_id))
+            }
+            _ => {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
                 return vec![];
             }
         };
-        let Some(field) =
-            crate::analysis::transfer::memory::map::kptr_field_at(map_def, off_val, 8)
-        else {
+        let Some((kind, pointee_btf_id)) = resolved else {
             env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
             return vec![];
         };
-        use crate::parsing::elf::KptrFieldKind;
-        if matches!(field.kind, KptrFieldKind::Unref | KptrFieldKind::Uptr) {
+        if matches!(kind, KptrFieldKind::Unref | KptrFieldKind::Uptr) {
             // Unref kptr: "off=N kptr isn't referenced kptr".
             // Uptr: kptr_xchg has no meaning on a userspace-pointer slot —
             // mirror the unref path's rejection.
             env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
             return vec![];
         }
-        let pointee_btf_id = field.pointee_btf_id;
-        let slot_flags = match field.kind {
+        let slot_flags = match kind {
             KptrFieldKind::Ref => crate::analysis::machine::reg_types::PtrFlags::MEM_ALLOC,
             KptrFieldKind::Rcu => crate::analysis::machine::reg_types::PtrFlags::RCU,
             KptrFieldKind::Percpu => crate::analysis::machine::reg_types::PtrFlags::PERCPU,
