@@ -1467,7 +1467,7 @@ pub(crate) fn validate_readable_mem(
                 true
             }
         }
-        RegType::PtrToPacket => {
+        RegType::PtrToPacket | RegType::PtrToPacketMeta => {
             if let Some(size) = size {
                 access::check_load(env, state, reg, size as i64, 0);
                 if env.failed() {
