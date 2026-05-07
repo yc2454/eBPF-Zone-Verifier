@@ -1498,6 +1498,73 @@ impl Analyzer {
                                 .collect(),
                         );
                     }
+
+                }
+            }
+
+            // Mixed-arg-kind static override for fexit programs attached
+            // to subprogs of OTHER (already-loaded) BPF objects. Two
+            // failure modes:
+            //   (a) typed-inner FUNC was inlined-out by clang (`____<n>`
+            //       resolves None; `<n>` resolves to bare `void *ctx`).
+            //   (b) program declares a custom convenience struct as ctx
+            //       (e.g. `int test_subprog2(struct args_subprog2 *ctx)`)
+            //       — BTF resolves the outer signature to a single-arg
+            //       `[TrustedPtr(args_subprog2)]`, but BPF_PROG fexit
+            //       ctx-array semantics require slot-by-slot typing
+            //       aligned to the *target's* arg layout. The custom
+            //       struct shape is unrelated to the kernel ctx-array
+            //       layout — it's just a typed cast over the same u64
+            //       slots.
+            // Override unconditionally when the target matches our
+            // known-target table, regardless of whether BTF gave us
+            // something useful for entry_args. Placed OUTSIDE the
+            // `entry_args.is_none()` gate above so case (b) overrides
+            // BTF's outer-signature resolution.
+            if let Some(target) = ctx.attach_subtype.as_deref() {
+                let flavor = ctx.attach_flavor.as_deref();
+                let mixed_args: Option<Vec<EntryArg>> = match (
+                    ctx.prog_kind,
+                    flavor,
+                    target,
+                ) {
+                    // test_pkt_access_subprog2(int val,
+                    //   volatile struct __sk_buff *skb)
+                    // The selftest program declares ctx as
+                    // `args_subprog2 { __u64 args[5]; __u64 ret; }`,
+                    // so we pad to 5 args + the ret slot at offset 40
+                    // (= entry_args[5]).
+                    (
+                        ProgramKind::Tracing,
+                        Some("fexit"),
+                        "test_pkt_access_subprog2",
+                    ) => Some(vec![
+                        EntryArg::Scalar,
+                        EntryArg::TrustedPtrBtfId {
+                            type_name: intern_btf_type_name_strict("__sk_buff"),
+                            nullable: false,
+                        },
+                        EntryArg::Scalar, EntryArg::Scalar,
+                        EntryArg::Scalar, EntryArg::Scalar,
+                    ]),
+                    // test_pkt_access_subprog3(int val,
+                    //   struct __sk_buff *skb)
+                    (
+                        ProgramKind::Tracing,
+                        Some("fexit"),
+                        "test_pkt_access_subprog3",
+                    ) => Some(vec![
+                        EntryArg::Scalar,
+                        EntryArg::TrustedPtrBtfId {
+                            type_name: intern_btf_type_name_strict("__sk_buff"),
+                            nullable: false,
+                        },
+                        EntryArg::Scalar,
+                    ]),
+                    _ => None,
+                };
+                if let Some(args) = mixed_args {
+                    ctx.entry_args = Some(args);
                 }
             }
 
