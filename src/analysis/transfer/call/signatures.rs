@@ -1666,9 +1666,9 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // `size` bytes are accessible. No ref tracking — Local dynptrs
         // are pure metadata and need no release.
         "bpf_dynptr_from_mem" => CallProto::with_args([
-            PtrToMem,    // R1: source buffer
-            ConstSize,   // R2: size
-            Anything,    // R3: flags (rdonly bit etc. — not modeled yet)
+            PtrToMem,        // R1: source buffer
+            ConstSizeOrZero, // R2: size (kernel accepts 0 — returns -EINVAL at runtime, not at verification)
+            Anything,        // R3: flags (rdonly bit etc. — not modeled yet)
             DynptrArg { uninit: true, rdwr_only: false }, // R4: &dynptr
             DontCare,
         ])
