@@ -108,7 +108,14 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
         // Mirrors `tailcall_fail::reject_tail_call_rcu_lock`. Re-uses
         // the existing InvalidArgType / R0 family — no dedicated
         // variant for this rejection family elsewhere.
-        if state.in_rcu_read_section() {
+        //
+        // Only reject for *explicit* bpf_rcu_read_lock holds — kernel's
+        // `env->cur_state->active_rcu_lock` is incremented by the helper,
+        // not by prog-type implicit RCU (kprobe/raw_tp/PerfEvent/etc.,
+        // which we model via `implicit_rcu_at_entry`). raw_tp programs
+        // legitimately tail_call (test_prog_array_init::entry).
+        let implicit_baseline = if state.implicit_rcu_at_entry { 1 } else { 0 };
+        if state.rcu_read_depth as i32 > implicit_baseline {
             env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R0 });
             return vec![];
         }
