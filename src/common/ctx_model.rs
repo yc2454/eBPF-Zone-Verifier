@@ -811,6 +811,66 @@ const SOCK_ADDR_USER_IP6_END: i16 = 24; // 8 + 4*4 = 23
 const SOCK_ADDR_MSG_SRC_IP6_START: i16 = 44;
 const SOCK_ADDR_MSG_SRC_IP6_END: i16 = 56; // 44 + 4*4 = 56
 
+/// struct sk_reuseport_md (SK_REUSEPORT context)
+///
+/// Reference: linux/include/uapi/linux/bpf.h, kernel
+/// `sk_reuseport_is_valid_access` in net/core/filter.c.
+///
+/// struct sk_reuseport_md {
+///     __bpf_md_ptr(void *, data);              // 0-8   PTR_TO_PACKET
+///     __bpf_md_ptr(void *, data_end);          // 8-16  PTR_TO_PACKET_END
+///     __u32 len;                                // 16-20
+///     __u32 eth_protocol;                       // 20-24
+///     __u32 ip_protocol;                        // 24-28
+///     __u32 bind_inany;                         // 28-32
+///     __u32 hash;                               // 32-36
+///     __bpf_md_ptr(struct bpf_sock *, sk);          // 40-48 PTR_TO_SOCKET
+///     __bpf_md_ptr(struct bpf_sock *, migrating_sk);// 48-56 PTR_TO_SOCK_COMMON_OR_NULL
+/// };
+const SK_REUSEPORT_FIELDS: &[CtxField] = &[
+    // void *data (PTR_TO_PACKET)
+    CtxField {
+        offset: 0,
+        size: MemSize::U64,
+        kind: CtxFieldKind::PacketStart,
+        writable: false,
+        readable: true,
+        narrow_access: false,
+    },
+    // void *data_end (PTR_TO_PACKET_END)
+    CtxField {
+        offset: 8,
+        size: MemSize::U64,
+        kind: CtxFieldKind::PacketEnd,
+        writable: false,
+        readable: true,
+        narrow_access: false,
+    },
+    CtxField { offset: 16, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
+    CtxField { offset: 20, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
+    CtxField { offset: 24, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
+    CtxField { offset: 28, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
+    CtxField { offset: 32, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
+    // struct bpf_sock *sk (PTR_TO_SOCKET, non-null)
+    CtxField {
+        offset: 40,
+        size: MemSize::U64,
+        kind: CtxFieldKind::Socket,
+        writable: false,
+        readable: true,
+        narrow_access: false,
+    },
+    // struct bpf_sock *migrating_sk (PTR_TO_SOCK_COMMON_OR_NULL)
+    CtxField {
+        offset: 48,
+        size: MemSize::U64,
+        kind: CtxFieldKind::SockCommon,
+        writable: false,
+        readable: true,
+        narrow_access: false,
+    },
+];
+
 /// struct bpf_sk_lookup (SK_LOOKUP context)
 ///
 /// Reference: linux/include/uapi/linux/bpf.h
@@ -1641,6 +1701,7 @@ fn get_field_tables(
         ContextKind::BpfSockAddr => Some((SOCK_ADDR_FIELDS, &[])),
         ContextKind::BpfSockopt => Some((BPF_SOCKOPT_FIELDS, &[])),
         ContextKind::SkLookup => Some((SK_LOOKUP_FIELDS, &[])),
+        ContextKind::SkReuseport => Some((SK_REUSEPORT_FIELDS, &[])),
         ContextKind::SockOps => Some((SOCK_OPS_FIELDS, &[])),
         ContextKind::BpfSock => Some((BPF_SOCK_FIELDS, &[])),
         ContextKind::SkMsgMd => Some((SK_MSG_MD_FIELDS, &[])),
@@ -1858,9 +1919,14 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
     // load on the ctx struct, not the BPF_PROG ctx-array idiom. Look
     // up `(ctx_struct, off)` in BTF and type the load via the
     // `trusted_field_load` allowlist.
-    let is_direct_typed_ctx = matches!(prog_kind, ProgramKind::SkReuseport)
-        || (prog_kind == ProgramKind::Tracing
-            && matches!(env.ctx.attach_flavor.as_deref(), Some("iter")));
+    // SkReuseport now has its own static field table (`SK_REUSEPORT_FIELDS`)
+    // — fall through to the standard ctx-table lookup so the data /
+    // data_end / sk / migrating_sk fields produce typed pointers
+    // (PtrToPacket, PtrToSocket, PtrToSockCommonOrNull) instead of the
+    // BTF-driven Scalar/AllocMem fallback that this direct-typed path
+    // returns.
+    let is_direct_typed_ctx = prog_kind == ProgramKind::Tracing
+        && matches!(env.ctx.attach_flavor.as_deref(), Some("iter"));
     // Direct typed ctx loads: 8-byte pointer fields and 1/2/4/8-byte
     // scalar fields. The size-8/off%8 path resolves pointer-typed
     // fields via BTF (allowlisted); the size-1/2/4/8 path falls

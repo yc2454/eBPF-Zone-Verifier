@@ -228,6 +228,16 @@ fn reject_atomic_on_typed_ptr(env: &mut VerifierEnv, state: &State, base: Reg) -
             | RegType::PtrToPacket
             | RegType::PtrToPacketMeta
             | RegType::PtrToPacketEnd
+            // Kernel `check_atomic` rejects BPF_ATOMIC against sock-class
+            // pointer bases ("BPF_ATOMIC loads from R<N> sock is not
+            // allowed"). Mirrors verifier_load_acquire::
+            // load_acquire_from_sock_pointer.
+            | RegType::PtrToSocket { .. }
+            | RegType::PtrToSocketOrNull { .. }
+            | RegType::PtrToSockCommon { .. }
+            | RegType::PtrToSockCommonOrNull { .. }
+            | RegType::PtrToTcpSock { .. }
+            | RegType::PtrToTcpSockOrNull { .. }
     ) || is_flow_keys;
     if rejected {
         env.fail(VerificationError::UnsupportedModernFeature {
