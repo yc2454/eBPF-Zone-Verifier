@@ -1283,6 +1283,21 @@ impl Analyzer {
             ctx.priv_stack_requested = binding
                 .map(|b| struct_ops_member_priv_stack_requested(&b.ops_struct, &b.member))
                 .unwrap_or(false);
+            // Fallback: SEC("?struct_ops/<member>") with no
+            // `.struct_ops.link` binding (libbpf optional-load), where the
+            // BPF_PROG inner was `__always_inline`'d so `____<name>` has no
+            // surviving FUNC entry in BTF. The outer wrapper is
+            // `int <name>(unsigned long long *ctx)` (bare void-ctx, no
+            // typed args), so neither `resolve_struct_ops_method` nor
+            // `resolve_func_args` can recover per-arg types. Seed ctx as
+            // 8 Scalar slots — admits the common int/long-arg case
+            // (struct_ops_module::test_3 does `a + b + 3`); pointer-arg
+            // dereferences would still reject because Scalar isn't
+            // dereferenceable, which is the kernel's behavior at attach
+            // time when the program isn't bound to a member.
+            if ctx.entry_args.is_none() && section.trim_start().starts_with('?') {
+                ctx.entry_args = Some(vec![EntryArg::Scalar; 8]);
+            }
         } else if matches!(
             ctx.prog_kind,
             ProgramKind::Lsm
