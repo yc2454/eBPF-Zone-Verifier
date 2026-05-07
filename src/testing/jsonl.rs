@@ -155,6 +155,7 @@ fn emit_for_file<W: Write>(
             AnalysisResult::Fail(e) => ("FAIL", Some(e.description().to_string())),
             AnalysisResult::Timeout => ("TIMEOUT", None),
             AnalysisResult::LoadError(e) => ("LOAD_ERROR", Some(e)),
+            AnalysisResult::OutOfScope(r) => ("OUT_OF_SCOPE", Some(r)),
         };
 
         let mut record = json!({

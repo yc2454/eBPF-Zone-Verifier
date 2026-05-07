@@ -154,6 +154,9 @@ fn print_analysis_result(result: AnalysisResult) {
         AnalysisResult::Fail(e) => println!("\n=== FAIL: {} ===", e.description()),
         AnalysisResult::Timeout => println!("\n=== TIMEOUT: Complexity limit reached ==="),
         AnalysisResult::LoadError(e) => println!("\n=== LOAD ERROR: {} ===", e),
+        AnalysisResult::OutOfScope(reason) => {
+            println!("\n=== OUT-OF-SCOPE: {} ===", reason)
+        }
     }
 }
 
@@ -171,6 +174,7 @@ fn run_analyze_all(path: &str, config: VerifierConfig) {
     let mut fail = 0;
     let mut timeout = 0;
     let mut error = 0;
+    let mut out_of_scope = 0;
     for (section, res) in &results {
         print!("Section '{}'... ", section);
         match res {
@@ -190,6 +194,10 @@ fn run_analyze_all(path: &str, config: VerifierConfig) {
                 println!("ERROR ({})", e);
                 error += 1;
             }
+            AnalysisResult::OutOfScope(reason) => {
+                println!("OUT-OF-SCOPE ({})", reason);
+                out_of_scope += 1;
+            }
         }
     }
     println!("\n========================================");
@@ -206,6 +214,7 @@ fn run_analyze_all(path: &str, config: VerifierConfig) {
     println!("Fail:   {}", fail);
     println!("Timeout: {}", timeout);
     println!("Errors: {}", error);
+    println!("Out-of-scope: {}", out_of_scope);
     if fail > 0 {
         println!("\n--- FAILURES ---");
         for (section, res) in &results {
@@ -536,7 +545,7 @@ fn run_modern_selftest_dir(dir: &str, config: &VerifierConfig) {
         }
     };
 
-    let mut totals = (0usize, 0usize, 0usize, 0usize, 0usize); // pass, false_reject, false_accept, skipped, error
+    let mut totals = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize); // pass, false_reject, false_accept, skipped, error, out_of_scope
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) != Some("c") {
@@ -553,6 +562,7 @@ fn run_modern_selftest_dir(dir: &str, config: &VerifierConfig) {
                         Outcome::FalseAccept => totals.2 += 1,
                         Outcome::Skipped(_) => totals.3 += 1,
                         Outcome::Error(_) => totals.4 += 1,
+                        Outcome::OutOfScope(_) => totals.5 += 1,
                     }
                 }
             }
@@ -561,8 +571,8 @@ fn run_modern_selftest_dir(dir: &str, config: &VerifierConfig) {
     }
     println!("\n=== Suite summary ===");
     println!(
-        "  pass={}  false_reject={}  false_accept={}  skipped={}  error={}",
-        totals.0, totals.1, totals.2, totals.3, totals.4
+        "  pass={}  false_reject={}  false_accept={}  skipped={}  error={}  out_of_scope={}",
+        totals.0, totals.1, totals.2, totals.3, totals.4, totals.5
     );
 }
 
@@ -1044,6 +1054,7 @@ fn print_modern_report(report: &crate::testing::selftest::runner::FileReport) {
             Outcome::FalseReject(e) => format!("FALSE-REJECT ({e})"),
             Outcome::FalseAccept => "FALSE-ACCEPT (soundness!)".into(),
             Outcome::Skipped(r) => format!("skip: {r}"),
+            Outcome::OutOfScope(r) => format!("out-of-scope: {r}"),
             Outcome::Error(e) => format!("ERROR: {e}"),
         };
         println!("  [{tag}]  {} ({})", p.func_name, p.description);

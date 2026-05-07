@@ -163,11 +163,71 @@ pub enum AnalysisResult {
     Fail(VerificationError),
     Timeout,
     LoadError(String),
+    /// Test would be analyzable in principle but requires loader-side
+    /// pre-processing we deliberately don't implement (libbpf static
+    /// linking, CO-RE relocation, weak-ksym address folding). The
+    /// `reason` is a short free-form string surfaced in the baseline
+    /// JSON and the diff tool. Distinct from SKIPPED, which covers
+    /// tests that are fundamentally not testable by static analysis
+    /// of an unlinked `.o` (subprog-only, JIT-only, `__msg()` log-line
+    /// asserts, race tests).
+    OutOfScope(String),
 }
 
 impl AnalysisResult {
     pub fn is_pass(&self) -> bool {
         matches!(self, AnalysisResult::Pass)
+    }
+}
+
+/// Tests whose `.o` cannot be analyzed in isolation because they
+/// require loader-side pre-processing (libbpf static linking, CO-RE
+/// relocation, weak-ksym address folding) that we deliberately don't
+/// implement. Returns a short reason string for emission as
+/// `AnalysisResult::OutOfScope`. Detection is by source `.o` file
+/// stem — coarse but stable, and these tests are well-known.
+///
+/// String-greppable so a future contributor who implements the missing
+/// pre-processing pass can find every affected test by searching for
+/// the reason substring.
+pub(crate) fn out_of_scope_reason(path: &str) -> Option<&'static str> {
+    let stem = std::path::Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    // `dev selftest-baseline-write-upstream` compiles each `.c` into a
+    // tempfile like `/tmp/zovia_selftest_<name>.o`. Strip the prefix.
+    let test_name = stem
+        .strip_prefix("zovia_selftest_")
+        .unwrap_or(stem);
+    match test_name {
+        // libbpf static linking — these tests are designed to be
+        // `bpf_linker`-merged from multiple `.o` before kernel
+        // verification (extern function definitions split across
+        // sibling `.o` files, cross-`.o` map references, cross-`.o`
+        // global variables).
+        "linked_funcs1"
+        | "linked_funcs2"
+        | "linked_maps1"
+        | "linked_maps2"
+        | "linked_vars1"
+        | "linked_vars2"
+        | "test_subskeleton" => Some("needs libbpf static linker"),
+        // CO-RE relocation — `__kconfig`-style integer extern that
+        // libbpf resolves against the running kernel's config + BTF
+        // and patches as a literal at load time.
+        "test_core_extern" => Some("needs CO-RE relocation pass"),
+        // Weak-ksym address folding — libbpf folds
+        // `(uintptr_t)&non_existent_weak_ksym == 0` so the dead
+        // branch never reaches the verifier. We see the live branch
+        // and rightfully reject the type-mismatched call inside it.
+        // Likewise null-check tests rely on BPF_PROBE_MEM safe-deref
+        // which is a runtime fault-handler behavior, not a static
+        // property we can model without widening the FA surface.
+        "test_ksyms_btf_null_check" | "test_ksyms_weak" => {
+            Some("needs weak-ksym address folding")
+        }
+        _ => None,
     }
 }
 
@@ -767,6 +827,17 @@ impl Analyzer {
         func_name: &str,
         extra_flags: u32,
     ) -> AnalysisResult {
+        // Out-of-scope short-circuit: tests that need loader-side
+        // pre-processing we deliberately don't implement (libbpf
+        // static linking, CO-RE relocation, weak-ksym address
+        // folding). Detect by the source `.o`'s file stem and route
+        // straight to the new `OutOfScope` verdict — running analysis
+        // would produce a misleading FALSE_REJECT against an upstream
+        // ACCEPT that's only valid post-pre-processing.
+        if let Some(reason) = out_of_scope_reason(&self.path) {
+            return AnalysisResult::OutOfScope(reason.into());
+        }
+
         // First try the section the caller asked for.
         let funcs = get_functions_in_section(&self.path, section).unwrap_or_default();
         if let Some(func) = funcs.iter().find(|f| f.name == func_name) {

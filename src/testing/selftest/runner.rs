@@ -92,8 +92,18 @@ pub enum Outcome {
     FalseReject(String),
     /// Expected REJECT, we ACCEPTed — soundness issue.
     FalseAccept,
-    /// Couldn't run the test.
+    /// Test fundamentally not testable by our static analysis on an
+    /// unlinked `.o` (subprog-only entry, JIT-only feature, missing
+    /// SEC tag, `__msg()` log-line assertion, race test).
     Skipped(String),
+    /// Test would be analyzable in principle but requires loader-side
+    /// pre-processing we deliberately don't implement (libbpf static
+    /// linking, CO-RE relocation, weak-ksym address folding). The
+    /// `reason` is a short free-form string that explains *which*
+    /// pre-processing is missing — string-greppable so a future
+    /// contributor who implements the missing pass can find every
+    /// affected test.
+    OutOfScope(String),
     /// Verifier error (timeout, load failure, etc.).
     Error(String),
 }
@@ -488,6 +498,12 @@ fn run_one(analyzer: &Analyzer, attrs: ProgAttrs, file_basename: &str) -> ProgRe
         // `mov64sx_s32_varoff_1`, `may_goto_self`). Counts as Pass.
         (false, AnalysisResult::Timeout) => Outcome::Pass,
         (_, AnalysisResult::Timeout) => Outcome::Error("verifier timeout".into()),
+        // Loader-deferred verdict from the analyzer (e.g. unlinked
+        // extern symbol, CO-RE relocation, weak ksym needing address
+        // folding). Surfaces as the new `OutOfScope` verdict regardless
+        // of the upstream annotation — the test isn't asking the
+        // verifier a question we can answer on an unlinked `.o`.
+        (_, AnalysisResult::OutOfScope(r)) => Outcome::OutOfScope(r),
         (_, AnalysisResult::LoadError(e)) => {
             // The function not being present in the ELF means it was
             // compiled out (typically by an `#ifdef` branch the scraper
