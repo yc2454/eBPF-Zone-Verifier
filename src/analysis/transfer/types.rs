@@ -610,16 +610,30 @@ pub(crate) fn update_load_types(
                     KptrFieldKind::Percpu => PtrFlags::PERCPU,
                     KptrFieldKind::Uptr => {
                         // `__uptr` loads yield a userspace-pointer value.
-                        // No PtrToMapKptr* variant fits — the kernel types
-                        // these as `PTR_TO_MEM | MEM_USER | PTR_MAYBE_NULL`
-                        // and rejects deref-before-null-check
-                        // ("invalid mem access 'mem_or_null'"). Until a
-                        // dedicated reg type lands, fall through to
-                        // ScalarValue: the two tests we're closing here
-                        // (uptr_write{,_nested}) only exercise the store
-                        // path. Load-side tests (uptr_no_null_check) stay
-                        // FA for now and fall to a follow-up.
-                        state.types.set(dst, RegType::ScalarValue);
+                        // Kernel types this as `PTR_TO_MEM | MEM_USER |
+                        // PTR_MAYBE_NULL` and rejects deref-before-
+                        // null-check ("invalid mem access 'mem_or_null'").
+                        // We mirror via `PtrToAllocMemOrNull` whose
+                        // `mem_size` comes from the pointee struct's BTF
+                        // size; deref through OrNull falls into the
+                        // generic-load reject arm, and post-null-check
+                        // refinement to `PtrToAllocMem` enables bounded
+                        // field reads. Closes task_ls_uptr.c::on_enter
+                        // (`v->udata->result` after null check).
+                        let mem_size = env
+                            .ctx
+                            .btf
+                            .type_size_bytes(field.pointee_btf_id)
+                            as u64;
+                        state.types.set(
+                            dst,
+                            RegType::PtrToAllocMemOrNull {
+                                id: crate::analysis::machine::reg_types::new_ptr_id(),
+                                mem_size,
+                                ref_id: None,
+                                dynptr_id: None,
+                            },
+                        );
                         return false;
                     }
                 };
