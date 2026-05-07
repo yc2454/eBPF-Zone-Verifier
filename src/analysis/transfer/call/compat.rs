@@ -52,6 +52,7 @@ pub fn is_ptr_to_btf_sock_subtype(t: &RegType) -> bool {
                 | "tcp6_sock"
                 | "tcp_timewait_sock"
                 | "tcp_request_sock"
+                | "udp_sock"
                 | "udp6_sock"
                 | "unix_sock",
             ..
