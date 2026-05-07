@@ -533,7 +533,7 @@ fn validate_ptr_to_cpumask_read(ctx: &mut ValidationContext) -> bool {
             if (type_name == "cpumask" || type_name == "bpf_cpumask")
                 && flags.contains(PtrFlags::TRUSTED)
     );
-    let is_map_kptr_cpumask = if let RegType::PtrToMapKptr { pointee_btf_id, ref_id, flags } =
+    let is_map_kptr_cpumask = if let RegType::PtrToMapKptr { pointee_btf_id, ref_id, flags, .. } =
         ctx.actual
     {
         let name = ctx.env.ctx.btf.struct_or_fwd_name(pointee_btf_id);

@@ -255,6 +255,24 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
                     .find(|f| f.offset as i64 == off_val)
                     .map(|f| (f.kind, f.pointee_btf_id))
             }
+            // Third resolver path: R1 = `xchg_result + K` aimed at a
+            // kptr field embedded inside the previously xchg'd object
+            // (`unstash_rb_node` idiom). The pointee struct's BTF id
+            // identifies the container; `offset` (bumped by ALU) hits
+            // the inner kptr field. Mirror the PtrToOwnedKptr arm.
+            // Kernel `process_kf_arg_ptr_to_kptr` accepts both shapes
+            // uniformly via `reg_btf_record(reg)` (verifier.c v6.15).
+            RegType::PtrToMapKptr { pointee_btf_id: struct_btf_id, offset: r1_off, flags, .. }
+                if flags.contains(crate::analysis::machine::reg_types::PtrFlags::MEM_ALLOC) =>
+            {
+                let off_val = r1_off as i64;
+                let fields: Vec<KptrField> =
+                    env.ctx.btf.extract_value_kptr_fields(struct_btf_id);
+                fields
+                    .into_iter()
+                    .find(|f| f.offset as i64 == off_val)
+                    .map(|f| (f.kind, f.pointee_btf_id))
+            }
             _ => {
                 env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
                 return vec![];
@@ -354,6 +372,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
                 pointee_btf_id,
                 ref_id: Some(new_ref),
                 flags: slot_flags,
+                offset: 0,
             },
         );
         state.domain.forget(Reg::R0);

@@ -110,6 +110,39 @@ fn update_ptr_arithmetic_type(
         RegType::PtrToStack { frame_level } => {
             types.set(dst, RegType::PtrToStack { frame_level });
         }
+        RegType::PtrToMapKptr {
+            pointee_btf_id,
+            ref_id,
+            flags,
+            offset,
+        } => {
+            // Mirror PtrToOwnedKptr arithmetic: kernel preserves
+            // PTR_TO_BTF_ID|MEM_* through `Add reg, K` / `Sub reg, K`
+            // and bumps `reg->off`. Required for the
+            // `R6 = bpf_kptr_xchg(...); R1 = R6 + 16; bpf_kptr_xchg(R1, NULL)`
+            // idiom (local_kptr_stash::unstash_rb_node), where the
+            // second xchg targets a kptr field embedded inside the
+            // previously xchg'd object.
+            // Variable delta on a kptr is rejected by the kernel
+            // ("variable untrusted_ptr_ access var_off=..."); drop to
+            // ScalarValue so the downstream kptr-field store gate
+            // catches the source-type mismatch.
+            let Some(d) = signed_delta else {
+                types.set(dst, RegType::ScalarValue);
+                return;
+            };
+            let new_offset =
+                offset.saturating_add(d.clamp(i32::MIN as i64, i32::MAX as i64) as i32);
+            types.set(
+                dst,
+                RegType::PtrToMapKptr {
+                    pointee_btf_id,
+                    ref_id,
+                    flags,
+                    offset: new_offset,
+                },
+            );
+        }
         RegType::PtrToOwnedKptr {
             ref_id,
             offset,
@@ -589,6 +622,7 @@ pub(crate) fn update_load_types(
                         pointee_btf_id: field.pointee_btf_id,
                         ref_id: None,
                         flags,
+                        offset: 0,
                     },
                 );
             } else {

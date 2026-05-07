@@ -263,11 +263,24 @@ pub enum RegType {
         pointee_btf_id: u32,
         ref_id: Option<u32>,
         flags: PtrFlags,
+        /// Signed byte-offset within the kptr's pointee struct. Bumped by
+        /// `Add reg, K` / `Sub reg, K` (kernel `verifier.c` v6.15 ~L15170
+        /// preserves PTR_TO_BTF_ID|MEM_* through pointer arithmetic and
+        /// propagates `reg->off`). Required for the
+        /// `R6 = bpf_kptr_xchg(...); R1 = R6 + 16; bpf_kptr_xchg(R1, NULL)`
+        /// idiom (second xchg aimed at a kptr field embedded inside the
+        /// previously xchg'd object — `local_kptr_stash::unstash_rb_node`).
+        /// Release sinks (`bpf_obj_drop`, `bpf_kptr_xchg` arg1) reject
+        /// non-zero offsets in the post-call gate.
+        offset: i32,
     },
     PtrToMapKptrOrNull {
         pointee_btf_id: u32,
         ref_id: Option<u32>,
         flags: PtrFlags,
+        /// Mirrors `PtrToMapKptr.offset` so the offset survives across
+        /// the null-check refinement (`to_non_null` round-trips it).
+        offset: i32,
     },
     /// Pointer to a callback subprogram, produced by `LD_IMM64 BPF_PSEUDO_FUNC`
     /// (W3.4a). Consumed by callback-taking helpers (`bpf_loop`,
@@ -366,10 +379,12 @@ impl RegType {
                 pointee_btf_id,
                 ref_id,
                 flags,
+                offset,
             } => Some(RegType::PtrToMapKptr {
                 pointee_btf_id,
                 ref_id,
                 flags,
+                offset,
             }),
             RegType::PtrToBtfIdOrNull {
                 id: _,
@@ -409,6 +424,7 @@ impl RegType {
                 offset, map_idx: _, ..
             } => offset,
             RegType::PtrToOwnedKptr { offset, .. } => Some(offset as i64),
+            RegType::PtrToMapKptr { offset, .. } => Some(offset as i64),
             _ => None,
         }
     }
@@ -690,6 +706,7 @@ mod tests {
             pointee_btf_id: 12,
             ref_id: Some(7),
             flags: PtrFlags::UNTRUSTED,
+            offset: 0,
         };
         assert!(n.is_nullable());
         assert!(n.is_null_checked());

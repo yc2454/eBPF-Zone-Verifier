@@ -197,14 +197,22 @@ pub(crate) fn transfer_store(
                     matches!(src_type, RegType::ScalarValue) && state.domain.proven_zero(*r)
                 }
             };
-            let src_is_acquired_ptr = matches!(
-                src_type,
-                RegType::PtrToBtfId { .. }
-                    | RegType::PtrToMapKptr { .. }
-                    | RegType::PtrToMapKptrOrNull { .. }
-                    | RegType::PtrToOwnedKptr { .. }
-                    | RegType::PtrToOwnedKptrOrNull { .. }
-            );
+            // Stored kptr value must have zero offset — kernel
+            // "invalid kptr access, R1 type=untrusted_ptr_..." rejects
+            // a kptr loaded from a slot, bumped by `+ K`, and stored
+            // back (`reject_bad_type_match` in map_kptr_fail.c).
+            // PtrToOwnedKptr never appears as a kptr-store source in
+            // realistic programs (alloc'd objects pass through xchg,
+            // not direct store), so a present-but-non-zero offset on
+            // any of these variants signals the bad-arith pattern.
+            let src_is_acquired_ptr = match src_type {
+                RegType::PtrToBtfId { .. } => true,
+                RegType::PtrToMapKptr { offset, .. }
+                | RegType::PtrToMapKptrOrNull { offset, .. } => offset == 0,
+                RegType::PtrToOwnedKptr { offset, .. } => offset == 0,
+                RegType::PtrToOwnedKptrOrNull { offset, .. } => offset == 0,
+                _ => false,
+            };
             if !src_is_zero && !src_is_acquired_ptr {
                 env.fail(VerificationError::InvalidArgType {
                     pc: state.pc,
