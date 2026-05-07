@@ -890,6 +890,21 @@ fn transfer_callback_helper(
     // hits "R2/R3 !read_ok".
     let mut ctx_propagations: Vec<(Reg, RegType, Tnum, (i64, i64))> = Vec::new();
     let snap = |st: &State, r: Reg| (st.types.get(r), st.get_tnum(r), st.domain.get_interval(r));
+
+    // bpf_timer_set_callback: caller's R1 = `&map_value->timer`
+    // (PtrToMapValue carrying the timer's owning map_idx). Captured here
+    // so the cb-arg typing block below can install
+    // R1=PtrToMapObject{map_idx}, R2/R3=PtrToMapValue{map_idx} once
+    // `state` has been moved into `cb_state`.
+    let caller_r1_for_timer_cb: Option<usize> =
+        if helper == constants::BPF_TIMER_SET_CALLBACK {
+            match state.types.get(Reg::R1) {
+                RegType::PtrToMapValue { map_idx, .. } => Some(map_idx),
+                _ => None,
+            }
+        } else {
+            None
+        };
     match helper {
         // bpf_loop(nr_loops, cb, ctx, flags) → cb(idx, ctx); R1=idx (scalar, set later), ctx → R2.
         constants::BPF_LOOP
@@ -1076,36 +1091,64 @@ fn transfer_callback_helper(
     // Timer cb signature is `(struct bpf_map *, void *key, void *value)`
     // — kernel `set_timer_callback_state` (verifier.c ~L10685, v6.15)
     // sets R1=CONST_PTR_TO_MAP, R2=PTR_TO_MAP_KEY, R3=PTR_TO_MAP_VALUE
-    // off the timer's owning map. Without typed R2/R3 the cb body
-    // hits "R2 !read_ok" on the very first `Mov R1=R2`.
-    // Approximate with scalar pointers: the cb in
-    // `verifier_private_stack.c::private_stack_async_callback_2`
-    // immediately forwards `key` to a global subprog that
-    // dereferences it as `int *`, so a generic readable scalar
-    // suffices for that closure. Tighter typing (real PTR_TO_MAP_KEY
-    // / VALUE) is future work — surfaced as the next FR if any test
-    // does map-aware arithmetic in a timer cb.
+    // off the timer's owning map. Caller's R1 is `&map_value->timer`
+    // (PtrToMapValue with the timer's owning map_idx); pull map_idx
+    // from there. Required so the cb body's `bpf_timer_start(timer, ...)`
+    // sees R3 = PtrToMapValue{map_idx, offset:0} and the helper's
+    // Timer-field validator can walk the value type — without this
+    // R3 falls back to PtrToBtfId{type_name:"unknown"} and the
+    // validator rejects (timer.c::race).
     if helper == constants::BPF_TIMER_SET_CALLBACK {
-        // R1=map ptr, R2=key ptr, R3=value ptr. We don't track
-        // PTR_TO_MAP_KEY/VALUE distinctly, so approximate with a lax
-        // BTF-typed pointer (type_name="unknown" gives the existing
-        // "unknown-layout" load/store policy: any offset accepted,
-        // loads produce ScalarValue). Concrete enough that subprogs
-        // dereferencing the key (e.g. `subprog1(key) → *val`) verify;
-        // loose enough that we don't claim more precision than the
-        // kernel actually requires for these pointer args.
+        let timer_map_idx = match caller_r1_for_timer_cb {
+            Some(idx) => Some(idx),
+            None => None,
+        };
         use crate::analysis::machine::reg_types::PtrFlags;
         let unknown_btf = || RegType::PtrToBtfId {
             type_name: "unknown",
             flags: PtrFlags::TRUSTED,
             ref_id: None,
         };
-        for r in [Reg::R1, Reg::R2, Reg::R3] {
-            cb_state.types.set(r, unknown_btf());
-            cb_state.domain.forget(r);
-            cb_state.set_tnum(r, Tnum::unknown());
-            cb_state.clear_scalar_id(r);
+        // R1 = CONST_PTR_TO_MAP (the timer's owning map).
+        let r1_ty = match timer_map_idx {
+            Some(map_idx) => RegType::PtrToMapObject { map_idx },
+            None => unknown_btf(),
+        };
+        cb_state.types.set(Reg::R1, r1_ty);
+        cb_state.domain.forget(Reg::R1);
+        cb_state.set_tnum(Reg::R1, Tnum::unknown());
+        cb_state.clear_scalar_id(Reg::R1);
+        // R2 = key. Kernel sets PTR_TO_MAP_KEY (size=key_size). We don't
+        // track PTR_TO_MAP_KEY distinctly; the lax BtfId{unknown}
+        // already accepts the deref-and-forward pattern that
+        // verifier_private_stack.c::private_stack_async_callback_2
+        // exercises (`subprog1(key) → tmp[0] = *val → subprog2(tmp)`),
+        // so don't tighten this slot — typing it as PtrToMapValue
+        // bound-checks against value_size which forces a different
+        // (incorrect) load-size policy through the int-deref path.
+        cb_state.types.set(Reg::R2, unknown_btf());
+        cb_state.domain.forget(Reg::R2);
+        cb_state.set_tnum(Reg::R2, Tnum::unknown());
+        cb_state.clear_scalar_id(Reg::R2);
+        // R3 = value. Type as PtrToMapValue{map_idx, offset:0} so the
+        // cb body's `bpf_timer_*(value, ...)` Timer-field validator
+        // can walk the map's value BTF (timer.c::race_timer_callback's
+        // `bpf_timer_start(timer)` where `timer` is the cb's R3 arg).
+        let r3_ty = match timer_map_idx {
+            Some(map_idx) => RegType::PtrToMapValue {
+                id: crate::analysis::machine::reg_types::new_ptr_id(),
+                offset: Some(0),
+                map_idx,
+            },
+            None => unknown_btf(),
+        };
+        cb_state.types.set(Reg::R3, r3_ty);
+        cb_state.domain.forget(Reg::R3);
+        if timer_map_idx.is_some() {
+            cb_state.domain.init_map_value_ptr(Reg::R3);
         }
+        cb_state.set_tnum(Reg::R3, Tnum::unknown());
+        cb_state.clear_scalar_id(Reg::R3);
     }
 
     cb_state.pc = cb_entry;
