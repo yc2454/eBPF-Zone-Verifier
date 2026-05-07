@@ -1390,6 +1390,28 @@ pub(crate) fn update_call_types(
             state.invalidate_dynptr_slices(did);
         }
     }
+
+    // bpf_dynptr_write: kernel only invalidates slices when the target
+    // dynptr is BPF_DYNPTR_TYPE_SKB (verifier.c v6.15 ~L11512: "this will
+    // trigger clear_all_pkt_pointers(), which will invalidate all dynptr
+    // slices associated with the skb"). XDP-typed dynptrs don't trigger
+    // the invalidation — `test_xdp_dynptr::_xdp_tx_iptunnel` writes
+    // through a `bpf_dynptr_from_xdp` dynptr and continues using prior
+    // slice-derived ptrs. Look up R1's stack-slot dynptr kind here
+    // rather than blanket-invalidating via helper_invalidates_packets.
+    // Closes dynptr_fail::skb_invalid_data_slice3, skb_invalid_data_slice4.
+    if helper == constants::BPF_DYNPTR_WRITE {
+        use crate::analysis::machine::stack_state::DynptrKind;
+        if let RegType::PtrToStack { frame_level } = in_types.get(Reg::R1)
+            && let Some(off) = state.domain.get_distance_fixed(Reg::R1, Reg::R10)
+            && let Ok(off_i16) = i16::try_from(off)
+            && let Some(slot) = state.stack_at(frame_level).stack_get_dynptr(off_i16)
+            && matches!(slot.kind, DynptrKind::Skb)
+        {
+            let did = slot.dynptr_id;
+            state.invalidate_dynptr_slices(did);
+        }
+    }
 }
 
 pub(crate) fn update_call_rel_types(state: &mut State) {
