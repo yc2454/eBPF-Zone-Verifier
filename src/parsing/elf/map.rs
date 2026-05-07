@@ -244,6 +244,12 @@ fn is_known_percpu_ksym(name: &str) -> bool {
         "runqueues"
             | "bpf_prog_active"
             | "bpf_testmod_ksym_percpu"
+            // `DEFINE_PER_CPU(int, bpf_task_storage_busy)` in
+            // kernel/bpf/bpf_task_storage.c — declared in selftests as
+            // `extern const int bpf_task_storage_busy __ksym` (no
+            // program-side `__percpu` annotation), so the percpu flag
+            // can only come from this allowlist.
+            | "bpf_task_storage_busy"
     )
 }
 
