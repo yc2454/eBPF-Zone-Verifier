@@ -284,6 +284,17 @@ pub(crate) fn out_of_scope_reason_per_func(path: &str, func_name: &str) -> Optio
         ("test_core_autosize", "handle_downsize") => {
             Some("needs CO-RE relocation pass")
         }
+        // bpf_map metadata read via CO-RE: program declares its own
+        // `struct bpf_map { ... } __attribute__((preserve_access_index))`
+        // and casts `(struct bpf_map *)&map_decl` to read fields like
+        // `map->id`, `map->map_type`. libbpf rewrites the field offsets
+        // to match the kernel's real `struct bpf_map` layout at load
+        // time; without that pass, our verifier sees the program's
+        // declared offsets (0/4/8/12/16) and rejects against the real
+        // field table (24/28/32/36/48).
+        ("map_ptr_kern", "cg_skb") | ("syscall", "update_outer_map") => {
+            Some("needs CO-RE relocation pass (bpf_map field offset rewrites)")
+        }
         _ => None,
     }
 }
