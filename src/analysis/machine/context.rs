@@ -37,6 +37,20 @@ pub enum EntryArg {
         lo: i64,
         hi: i64,
     },
+    /// struct_ops refcounted `task_struct *task__ref` arg: the kmod
+    /// registers this slot as ref-acquired at entry; the BPF program
+    /// must release the ref before exit. The `ref_id` is allocated
+    /// at `struct_ops_entry_args` build time (one per refcounted slot)
+    /// and seeded into `state.active_refs` at init. The ctx-array load
+    /// at `*(u64 *)(ctx + 8*idx)` materializes as
+    /// `RegType::PtrToTask { ref_id: Some(ref_id) }` so the matching
+    /// `bpf_task_release(task)` consumes the ref through the existing
+    /// KF_RELEASE path. Closes
+    /// struct_ops_refcounted.c::refcounted (the only test that exits
+    /// with an outstanding entry-acquired task ref).
+    TrustedRefcountedTask {
+        ref_id: u32,
+    },
 }
 
 /// Intern a kernel struct/union name resolved from BTF into a `&'static

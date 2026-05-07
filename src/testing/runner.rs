@@ -802,6 +802,11 @@ impl Analyzer {
                         &binding.member,
                         idx as u8,
                     );
+                    let refcounted = is_struct_ops_arg_refcounted(
+                        &binding.ops_struct,
+                        &binding.member,
+                        idx as u8,
+                    );
                     match a {
                         StructOpsArg::Scalar => EntryArg::Scalar,
                         // OpaquePtr falls back to a generic typed pointer rather
@@ -812,6 +817,19 @@ impl Analyzer {
                             type_name: "struct",
                             nullable,
                         },
+                        StructOpsArg::TrustedPtr(name)
+                            if refcounted && name == "task_struct" =>
+                        {
+                            // Refcounted task arg: allocate a ref_id at
+                            // entry-args build time. mod.rs seeds the
+                            // initial state's active_refs from this.
+                            // The ctx-array load at offset 8*idx
+                            // produces PtrToTask{ref_id: Some(ref_id)}
+                            // so bpf_task_release consumes the ref.
+                            let ref_id =
+                                crate::analysis::machine::reg_types::new_ref_id();
+                            EntryArg::TrustedRefcountedTask { ref_id }
+                        }
                         StructOpsArg::TrustedPtr(name) => EntryArg::TrustedPtrBtfId {
                             type_name: intern_btf_type_name(&name),
                             nullable,

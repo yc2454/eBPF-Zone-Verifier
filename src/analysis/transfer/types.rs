@@ -519,6 +519,13 @@ pub(crate) fn update_load_types(
                             );
                         }
                     }
+                    CtxFieldKind::RefcountedTask { ref_id } => {
+                        state.types.set(
+                            dst,
+                            RegType::PtrToTask { ref_id: Some(ref_id) },
+                        );
+                        state.domain.forget(dst);
+                    }
                     CtxFieldKind::BoundedScalar { lo, hi } => {
                         // LSM int-hook trailing `int ret` arg etc. —
                         // kernel constrains the value at attach to

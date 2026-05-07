@@ -332,6 +332,25 @@ fn transfer_kfunc_proto(
                     );
                     return vec![];
                 }
+                // Kernel verifier rejects releasing an already-released
+                // ref ("Reference may already be released" — see
+                // struct_ops_refcounted_fail__global_subprog where a
+                // global subprog re-loads the ctx-array task slot after
+                // the parent released it). Without this active_refs
+                // membership check, our typing fix that propagates
+                // ref_id through ctx-array loads accepts the
+                // double-release.
+                if let Some(rid) = actual.get_ref_id()
+                    && !state.active_refs.contains(&rid)
+                {
+                    env.fail(
+                        crate::analysis::machine::error::VerificationError::InvalidArgType {
+                            pc,
+                            reg,
+                        },
+                    );
+                    return vec![];
+                }
                 // Kernel verifier.c v6.15 ~L13242: for a full-release
                 // kfunc (`bpf_obj_drop`, `bpf_kptr_xchg`) the released
                 // pointer must reference the head of the alloc; the

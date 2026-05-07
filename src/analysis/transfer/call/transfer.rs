@@ -66,6 +66,25 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             env.fail(VerificationError::UnreleasedReference {});
             return vec![];
         }
+        // Kernel rejects bpf_tail_call from any program that takes a
+        // refcounted entry arg ("program with __ref argument cannot
+        // tail call" — struct_ops_refcounted_fail__tail_call). The
+        // ref obligation is on the *program*, not just on the live
+        // active_refs at the call site: once the entry-acquired ref
+        // is released, the tail-call would jump into a different
+        // program that has no record of the ref's prior existence,
+        // breaking the kernel's per-prog ref-tracking invariant.
+        if let Some(args) = env.ctx.entry_args.as_ref()
+            && args.iter().any(|a| {
+                matches!(
+                    a,
+                    crate::analysis::machine::context::EntryArg::TrustedRefcountedTask { .. }
+                )
+            })
+        {
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R0 });
+            return vec![];
+        }
         // Kernel `check_lock` path (verifier.c v6.15 ~L11096) gates
         // tail_call alongside BPF_EXIT under preempt-disable: tail-calling
         // out of a preempt-disabled region would jump into a different

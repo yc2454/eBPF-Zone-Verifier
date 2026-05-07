@@ -72,6 +72,13 @@ pub enum CtxFieldKind {
         lo: i64,
         hi: i64,
     },
+    /// struct_ops `task_struct *task__ref` ctx-array slot — the
+    /// `EntryArg::TrustedRefcountedTask` companion. Materializes as
+    /// `RegType::PtrToTask { ref_id: Some(ref_id) }` so the matching
+    /// `bpf_task_release(task)` consumes the entry-acquired ref.
+    RefcountedTask {
+        ref_id: u32,
+    },
 }
 
 /// A field in a BPF context struct.
@@ -2039,6 +2046,9 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                     }
                     EntryArg::BoundedScalar { lo, hi } => {
                         CtxFieldKind::BoundedScalar { lo: *lo, hi: *hi }
+                    }
+                    EntryArg::TrustedRefcountedTask { ref_id } => {
+                        CtxFieldKind::RefcountedTask { ref_id: *ref_id }
                     }
                 };
                 return Some(CtxAccessInfo {

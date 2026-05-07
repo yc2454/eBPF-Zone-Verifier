@@ -233,6 +233,12 @@ pub fn analyze_program_full(
                     }
                 }
                 EntryArg::BoundedScalar { .. } => RegType::ScalarValue,
+                // freplace doesn't currently emit this; struct_ops uses
+                // the BPF_PROG ctx-array idiom, not this R1..Rn path.
+                // Map for completeness so the match stays exhaustive.
+                EntryArg::TrustedRefcountedTask { ref_id } => RegType::PtrToTask {
+                    ref_id: Some(*ref_id),
+                },
             };
             initial_state.types.set(reg, ty);
         }
@@ -282,8 +288,19 @@ pub fn analyze_program_full(
     // needed to type the loaded ctx slot as a refcounted PtrToTask, which
     // we leave for a follow-up if a corresponding success-case test
     // surfaces as a false-reject.
-    for _ in 0..ctx.struct_ops_refcounted_args {
-        initial_state.acquire_ref();
+    // Seed outstanding refs for entry-acquired struct_ops args. Each
+    // `EntryArg::TrustedRefcountedTask` carries a pre-allocated ref_id
+    // (alloc'd in `struct_ops_entry_args` so the per-arg load site can
+    // type the load as `PtrToTask{ref_id: Some(rid)}`); insert each
+    // into active_refs so the matching `bpf_task_release(task)`
+    // release-path balances out before exit.
+    if let Some(args) = ctx.entry_args.as_ref() {
+        use crate::analysis::machine::context::EntryArg;
+        for arg in args {
+            if let EntryArg::TrustedRefcountedTask { ref_id } = arg {
+                initial_state.active_refs.insert(*ref_id);
+            }
+        }
     }
 
     // 3. & 4. Run worklist analysis
