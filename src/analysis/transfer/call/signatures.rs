@@ -4083,7 +4083,12 @@ pub(super) mod pairs {
         MemSizePair::new_nullable(Reg::R4, Reg::R5),
     ];
     pub static STRNCMP: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
-    pub static GET_STACK: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    // ARG_CONST_SIZE_OR_ZERO: kernel admits size=0 (no buffer access),
+    // mirrors `bpf_get_stack`'s `ARG_CONST_SIZE_OR_ZERO` flag at the
+    // helper proto. The previous `MemSizePair::new` (allow_zero=false)
+    // was incorrect — it rejected `bpf_get_stack(ctx, buf, 0, flags)`
+    // even though the kernel accepts.
+    pub static GET_STACK: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R2, Reg::R3)];
     pub static PERF_EVENT_OUTPUT: [MemSizePair; 1] = [MemSizePair::new(Reg::R4, Reg::R5)];
     pub static GET_CURRENT_COMM: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
     pub static PERF_EVENT_READ_VALUE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
