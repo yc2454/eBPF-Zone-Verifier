@@ -288,7 +288,11 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             // Mirrors PtrToBtfId's lax admit for layout-known names
             // not in `mem_region_model`.
         }
-        PtrToMapKptr { pointee_btf_id, .. } => {
+        PtrToMapKptr {
+            pointee_btf_id,
+            offset: reg_off,
+            ..
+        } => {
             // Field deref through a kptr loaded from a map's `__kptr*`
             // field. Kernel admits these via `btf_struct_access` using
             // the kptr's pointee BTF (mark_btf_ld_reg attenuates the
@@ -311,9 +315,16 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             // caller are i16/i64 of the load instruction; we only
             // enforce when the pointee BTF id resolves to a known
             // size (>0).
+            // Effective offset into the pointee struct = reg.offset
+            // (carried from prior `R = R + K` ALU per session 14a) plus the
+            // load insn's immediate `off`. Programs use the
+            // `R += sizeof_field; R = *(T *)(R - sizeof_field)` idiom
+            // (jit_probe_mem.c) to test JIT probe-mem path; the deref is at
+            // effective offset 0 even though insn `off` is negative.
             let pointee_size = ctx.btf.type_size_bytes(pointee_btf_id);
+            let eff_off = (off as i64).saturating_add(reg_off as i64);
             if pointee_size > 0
-                && (off < 0 || (off as i64).saturating_add(size) > pointee_size as i64)
+                && (eff_off < 0 || eff_off.saturating_add(size) > pointee_size as i64)
             {
                 let name = ctx
                     .btf
@@ -322,7 +333,7 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
                     .unwrap_or_else(|| format!("btf_id_{pointee_btf_id}"));
                 error!(
                     "[Verifier] pc {}: access beyond struct {} at off {} size {}",
-                    pc, name, off, size
+                    pc, name, eff_off, size
                 );
                 env.fail(VerificationError::UnsafeGenericLoad {
                     pc,
