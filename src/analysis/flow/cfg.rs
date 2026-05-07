@@ -19,6 +19,22 @@ fn callback_arg_reg(helper_id: u32) -> Option<Reg> {
     }
 }
 
+/// Same as `callback_arg_reg` but for kfuncs, keyed by registered kfunc
+/// name. Without this, programs that pass a `BPF_PSEUDO_FUNC` subprog
+/// pointer to a callback-taking kfunc (e.g. `bpf_rbtree_add_impl`'s
+/// `less` cb at R3, `bpf_wq_set_callback_impl`'s cb at R2) leave the cb
+/// subprog body unvisited by DFS and the post-walk `unreachable insn`
+/// check fires. Mirror of the helper handling at L114.
+fn kfunc_callback_arg_reg(name: &str) -> Option<Reg> {
+    match name {
+        // int bpf_rbtree_add_impl(root, node, less_cb, meta__ign, off__ign)
+        "bpf_rbtree_add_impl" => Some(Reg::R3),
+        // int bpf_wq_set_callback_impl(wq, callback_fn, flags__ign, ...)
+        "bpf_wq_set_callback_impl" => Some(Reg::R2),
+        _ => None,
+    }
+}
+
 /// Scan backward from `call_pc` through the current linear run of
 /// instructions to find the PSEUDO_FUNC load that feeds `cb_reg`.
 /// Follows reg-to-reg Mov chains (`Mov cb_reg, R6` → keep scanning for
@@ -117,8 +133,16 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
             // callback subprog so DFS explores it. The callback arg's
             // PSEUDO_FUNC feed is resolved by a backward scan within the
             // current basic block.
-            if let CallKind::Helper { id } = kind
-                && let Some(cb_reg) = callback_arg_reg(*id)
+            let cb_reg = match kind {
+                CallKind::Helper { id } => callback_arg_reg(*id),
+                CallKind::Kfunc { btf_id, .. } => env
+                    .ctx
+                    .btf
+                    .kfunc_name(*btf_id)
+                    .and_then(kfunc_callback_arg_reg),
+                _ => None,
+            };
+            if let Some(cb_reg) = cb_reg
                 && let Some(subprog_pc) = find_pseudo_func_for_call(prog, pc, cb_reg)
             {
                 let target = subprog_pc as usize;
