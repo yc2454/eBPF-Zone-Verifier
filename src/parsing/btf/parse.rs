@@ -214,5 +214,6 @@ pub fn parse_btf(bytes: &[u8]) -> Result<BtfContext, String> {
         kfuncs,
         hidden_subprogs: HashSet::new(),
         special_fields_cache: Default::default(),
+        btf_ext: None,
     })
 }

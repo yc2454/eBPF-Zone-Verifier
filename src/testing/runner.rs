@@ -769,6 +769,36 @@ impl Analyzer {
             btf::BtfContext::new()
         };
 
+        // Foundation: parse the optional `.BTF.ext` section and stash the
+        // CO-RE relocation records on `btf.btf_ext`. No resolver is wired
+        // today (would need vmlinux BTF or a runtime-supplied target BTF).
+        // Failures here are non-fatal — most objects have no `.BTF.ext`,
+        // and even when they do, our analyzer doesn't yet consult the
+        // records. See `src/parsing/btf/ext.rs`.
+        let btf_ext_bytes =
+            elf::prog::load_section_bytes(path, ".BTF.ext", false).unwrap_or_default();
+        if !btf_ext_bytes.is_empty() {
+            match btf::parse_btf_ext(&btf_ext_bytes, &btf.strings) {
+                Ok(ext) => {
+                    if config.verbosity > 0 {
+                        let total: usize =
+                            ext.core_relos_by_section.iter().map(|(_, r)| r.len()).sum();
+                        println!(
+                            "BTF.ext: parsed {} CO-RE relos across {} sections",
+                            total,
+                            ext.core_relos_by_section.len()
+                        );
+                    }
+                    btf.btf_ext = Some(ext);
+                }
+                Err(e) => {
+                    if config.verbosity > 0 {
+                        println!("BTF.ext Parse Warning: {}", e);
+                    }
+                }
+            }
+        }
+
         // Mirror libbpf's STV_HIDDEN → BTF_FUNC_STATIC demotion (libbpf.c:3552):
         // global/weak subprogs with hidden visibility are verified inline
         // by the kernel, not as standalone global subprogs.

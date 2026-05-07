@@ -239,6 +239,13 @@ pub struct BtfContext {
     /// shared across clones (which represent the same BTF anyway).
     pub(super) special_fields_cache:
         std::sync::Arc<std::sync::Mutex<HashMap<u32, Vec<SpecialField>>>>,
+    /// Parsed `.BTF.ext` records (CO-RE relocations grouped by SEC name).
+    /// Populated by [`crate::parsing::btf::parse_btf_ext`] when an ELF
+    /// carries a `.BTF.ext` section. Empty for objects without one and
+    /// for objects where parsing failed (parse errors are non-fatal).
+    /// Foundation only: no resolver wired today (would need vmlinux BTF
+    /// or a runtime-supplied target BTF).
+    pub btf_ext: Option<super::ext::BtfExt>,
 }
 
 /// One variable inside a BTF_KIND_DATASEC.

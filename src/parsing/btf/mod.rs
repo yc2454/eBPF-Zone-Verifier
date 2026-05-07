@@ -7,6 +7,7 @@
 //!   * [`map_defs`] — `parse_btf_map_defs` (BTF-driven map-def discovery)
 
 mod context;
+mod ext;
 mod map_defs;
 mod parse;
 mod types;
@@ -14,6 +15,7 @@ mod types;
 #[cfg(test)]
 mod tests;
 
+pub use ext::{BtfExt, CoreRelo, CoreReloKind, parse_btf_ext};
 pub use map_defs::parse_btf_map_defs;
 pub use parse::parse_btf;
 pub use types::{
