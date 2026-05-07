@@ -1632,6 +1632,23 @@ pub(crate) fn validate_writable_mem(
             );
             false
         }
+        RegType::PtrToPacketMeta => {
+            // data_meta region IS writable via helpers/kfuncs (XDP only —
+            // kernel's `xdp_metadata_rx_*` kfuncs write hash / rss_type /
+            // vlan_tci into the meta region). Bounds-check the write size
+            // against the meta-region range via the standard packet-meta
+            // access check (mirrors the read path at L1470 added in
+            // commit b0ac782).
+            if let Some(size) = size {
+                crate::analysis::transfer::memory::access::check_load(
+                    env, state, reg, size as i64, 0,
+                );
+                if env.failed() {
+                    return false;
+                }
+            }
+            true
+        }
         RegType::PtrToAllocMem { mem_size, .. } => {
             // Ringbuf-reserved (or kfunc bpf_obj_new) memory is writable.
             // Bound check: helper write-size must fit within remaining
