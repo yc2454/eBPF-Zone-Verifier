@@ -207,6 +207,15 @@ pub(crate) fn transfer_store(
             // any of these variants signals the bad-arith pattern.
             let src_is_acquired_ptr = match src_type {
                 RegType::PtrToBtfId { .. } => true,
+                // Specialized kernel-struct pointers (returned by helpers
+                // like bpf_get_current_task_btf, bpf_task_from_pid,
+                // bpf_cpumask_*) are equivalent to PtrToBtfId{<name>} for
+                // kptr-store purposes. Closes lru_bug.c::nanosleep
+                // (`v->ptr = bpf_get_current_task_btf()` into a
+                // `__kptr_untrusted task_struct *` field).
+                RegType::PtrToTask { .. }
+                | RegType::PtrToCgroup { .. }
+                | RegType::PtrToCpumask { .. } => true,
                 RegType::PtrToMapKptr { offset, .. }
                 | RegType::PtrToMapKptrOrNull { offset, .. } => offset == 0,
                 RegType::PtrToOwnedKptr { offset, .. } => offset == 0,
