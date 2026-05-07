@@ -366,6 +366,17 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                     if m.kptr_fields.is_empty() && !btf_m.kptr_fields.is_empty() {
                         m.kptr_fields = btf_m.kptr_fields.clone();
                     }
+                    // Inner-map mapping for ARRAY_OF_MAPS / HASH_OF_MAPS:
+                    // legacy bpf_map_def carries inner_map_idx in its
+                    // tail; modern BTF-described maps populate it via
+                    // parse_btf_map_defs's `__array(values, struct T)`
+                    // post-pass. Skip here — `btf_m.inner_map_idx` is
+                    // an index into the BTF-side vector whose order
+                    // differs from the live `maps` (legacy section is
+                    // symbol-order, BTF is HashMap-order). A second
+                    // pass below translates by name into the live
+                    // vector's index space.
+                    let _ = btf_m;
                     // BTF-described maps encode `__uint(map_flags, …)` in BTF;
                     // the legacy `bpf_map_def` slot in the .maps section reads
                     // as 0. Trust BTF when the section side is unset.
@@ -386,6 +397,56 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
         {
             // Legacy map of maps without inner map info. Fallback to 4 for basic analysis.
             m.value_size = 4;
+        }
+    }
+
+    // Translate BTF-side `inner_map_idx` into live `maps`-vector
+    // indices. parse_btf_map_defs's post-pass records inner_map_idx as
+    // an index into its OWN HashMap-iterated output; that order
+    // generally differs from `maps` (which is legacy-symbol-order
+    // post-merge). Re-resolve by matching the BTF inner-map's name
+    // against `maps[].name`. Always run for ARRAY_OF_MAPS/HASH_OF_MAPS
+    // maps that have a BTF-side entry with `inner_map_idx = Some(_)`
+    // — the legacy section parser unconditionally reads bytes 20..24
+    // and yields `Some(0)` garbage for modern BTF-described maps, so a
+    // pre-existing `Some` doesn't mean the value is correct.
+    if let Some(btf_bytes) = btf_data
+        && let Ok(btf_maps) = btf::parse_btf_map_defs(btf_bytes)
+    {
+        // For each map in the live `maps` vector that's a map-of-maps,
+        // look up the matching BTF entry by name, then translate its
+        // inner_map_idx (BTF-order) → name → live-order.
+        let live_index_by_name: std::collections::HashMap<&str, usize> = maps
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (m.name.as_str(), i))
+            .collect();
+        // Snapshot just the resolved live indices first to avoid the
+        // outer mutable borrow of `maps` while we look up by name.
+        let mut updates: Vec<(usize, usize)> = Vec::new();
+        for (i, m) in maps.iter().enumerate() {
+            if !matches!(
+                m.type_,
+                constants::BPF_MAP_TYPE_ARRAY_OF_MAPS | constants::BPF_MAP_TYPE_HASH_OF_MAPS
+            ) {
+                continue;
+            }
+            let Some(btf_m) = btf_maps.iter().find(|bm| bm.name == m.name) else {
+                continue;
+            };
+            let Some(btf_inner_idx) = btf_m.inner_map_idx else {
+                continue;
+            };
+            let Some(btf_inner_name) = btf_maps.get(btf_inner_idx).map(|bm| bm.name.as_str())
+            else {
+                continue;
+            };
+            if let Some(&live_idx) = live_index_by_name.get(btf_inner_name) {
+                updates.push((i, live_idx));
+            }
+        }
+        for (outer, inner) in updates {
+            maps[outer].inner_map_idx = Some(inner);
         }
     }
 
