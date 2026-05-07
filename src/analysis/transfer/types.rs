@@ -987,7 +987,7 @@ pub(crate) fn update_call_types(
         crate::analysis::transfer::call::signatures::get_helper_proto(helper)
     {
         crate::analysis::transfer::call::side_effects::apply_call_proto_r0(
-            in_types, state, &proto,
+            in_types, state, &proto, env.ctx.prog_kind,
         )
     } else {
         false

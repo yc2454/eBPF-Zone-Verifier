@@ -547,7 +547,7 @@ fn transfer_kfunc_proto(
         // irqsave) ran already on the original `state` via
         // apply_side_effects above; we leave them in place.
         state.res_lock_acquire(reg_id, ptr_id, is_irq);
-        apply_call_proto_r0(&in_types, &mut state, proto);
+        apply_call_proto_r0(&in_types, &mut state, proto, env.ctx.prog_kind);
         // Success branch's R0 is the kfunc-return scalar — but
         // semantically it's 0. Pin to a proven-zero scalar so the
         // typical `if (bpf_res_spin_lock(&l)) return …;` correctly
@@ -567,7 +567,7 @@ fn transfer_kfunc_proto(
         return vec![state, fail];
     }
 
-    apply_call_proto_r0(&in_types, &mut state, proto);
+    apply_call_proto_r0(&in_types, &mut state, proto, env.ctx.prog_kind);
 
     // Populate `pointee_btf_id` on the freshly-minted PtrToOwnedKptr in
     // R0 for kfuncs that surface a known pointee type:
