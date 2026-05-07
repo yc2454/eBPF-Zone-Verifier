@@ -309,6 +309,24 @@ impl RegType {
                 | PtrToTask { .. }
                 | PtrToOwnedKptr { .. }
                 | PtrToMapKptr { .. }
+        ) || matches!(
+            self,
+            // Acquire-tracked PtrToBtfId (`ref_id: Some`) is the
+            // promoted, post-null-check form of `PtrToBtfIdOrNull`
+            // minted by an ACQUIRE-flagged kfunc returning
+            // `RetKind::PtrToBtfIdNamed` (e.g. `bpf_testmod_ctx_create`).
+            // Kernel guarantees non-null after the program's explicit
+            // null check; treat as null-checked so `condition_outcome`
+            // resolves a redundant `==0` test as dead, preventing the
+            // dead-branch from leaking the live ref into the exit-time
+            // unreleased-reference check (kfunc_call_test::kfunc_call_ctx).
+            //
+            // Restrict to `ref_id: Some` to preserve the legitimate
+            // null-feasibility of UNTRUSTED PtrToBtfId from struct-field
+            // loads (which the kernel can dereference via PROBE_MEM but
+            // which the program may legitimately null-check, e.g.
+            // `task->real_parent` in rcu_read_lock::non_sleepable_rcu_mismatch).
+            RegType::PtrToBtfId { ref_id: Some(_), .. }
         )
     }
 
