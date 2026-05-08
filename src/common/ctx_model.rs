@@ -2003,11 +2003,56 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                     }
                 }
                 // Fallback for non-allowlisted iter / sk_reuseport ctx
-                // fields: scalar (loose). Mirrors the existing iter
-                // behavior pre-cluster-#2 — the kernel admits these
-                // loads but our verifier doesn't have ctx-field
-                // metadata for every iter ctx struct. Now extended
-                // to also cover sub-8-byte aligned reads.
+                // fields: scalar for non-pointer-sized reads, lax
+                // TrustedPtr for 8-byte loads. For BPF_PROG-wrapped
+                // iter programs whose `bpf_iter__<subtype>` struct
+                // isn't in the program's BTF (compiled-out as
+                // unused — the wrapper accesses ctx fields by raw
+                // offset, not by named member), the convention is:
+                //   offset 0 → bpf_iter_meta *
+                //   offset 8 → struct <payload> *
+                // Pick the payload struct name from the SEC subtype via
+                // a small table covering the iter classes our corpus
+                // exercises. Closes cgroup_hierarchical_stats::dumper
+                // (subtype "cgroup" → field-8 pointee = "cgroup",
+                // accepted by `cgroup_rstat_flush`'s PtrToCgroup arg
+                // validator). Other subtypes fall back to
+                // TrustedPtr{"unknown"} which still keeps the chain
+                // typed.
+                if size == 8 {
+                    let pointee_name: &'static str = if off == 0 {
+                        "bpf_iter_meta"
+                    } else if off == 8 {
+                        match *type_name {
+                            "bpf_iter__cgroup" => "cgroup",
+                            "bpf_iter__task" => "task_struct",
+                            "bpf_iter__task_file" => "task_struct",
+                            "bpf_iter__task_vma" => "task_struct",
+                            "bpf_iter__bpf_map" => "bpf_map",
+                            "bpf_iter__bpf_link" => "bpf_link",
+                            "bpf_iter__bpf_prog" => "bpf_prog",
+                            "bpf_iter__tcp" => "sock_common",
+                            "bpf_iter__udp" => "udp_sock",
+                            "bpf_iter__unix" => "unix_sock",
+                            "bpf_iter__netlink" => "netlink_sock",
+                            "bpf_iter__sockmap" => "bpf_map",
+                            "bpf_iter__ksym" => "kallsym_iter",
+                            "bpf_iter__bpf_sk_storage_map" => "bpf_map",
+                            _ => "unknown",
+                        }
+                    } else {
+                        "unknown"
+                    };
+                    return Some(CtxAccessInfo {
+                        kind: CtxFieldKind::TrustedPtr {
+                            type_name: pointee_name,
+                            nullable: false,
+                            tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
+                        },
+                        readable: true,
+                        writable: false,
+                    });
+                }
                 return Some(CtxAccessInfo {
                     kind: CtxFieldKind::Scalar,
                     readable: true,

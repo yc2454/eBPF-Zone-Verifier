@@ -1650,6 +1650,25 @@ impl Analyzer {
             //       struct shape is unrelated to the kernel ctx-array
             //       layout — it's just a typed cast over the same u64
             //       slots.
+            // BPF_PROG-wrapped iter programs (`SEC("iter[.s]/<subtype>")`)
+            // declared with multiple typed args after BPF_PROG: the
+            // OUTER `void *ctx` is `struct bpf_iter__<subtype> *`. The
+            // BPF_PROG inner is `__always_inline`, so its typed args
+            // don't survive in BTF; the outer signature alone gives
+            // `void *ctx`. Synthesize entry_args[0] from the SEC
+            // subtype regardless of what BTF resolved (overrides bare
+            // void-ctx None *and* a partial inner-arg resolution).
+            // Closes cgroup_hierarchical_stats::dumper.
+            if matches!(ctx.attach_flavor.as_deref(), Some("iter"))
+                && let Some(subtype) = ctx.attach_subtype.as_deref()
+            {
+                let outer = format!("bpf_iter__{}", subtype);
+                ctx.entry_args = Some(vec![EntryArg::TrustedPtrBtfId {
+                    type_name: intern_btf_type_name_strict(&outer),
+                    nullable: false,
+                }]);
+            }
+
             // Override unconditionally when the target matches our
             // known-target table, regardless of whether BTF gave us
             // something useful for entry_args. Placed OUTSIDE the
