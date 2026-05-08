@@ -1485,6 +1485,12 @@ const SCHED_EXT_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 2] = [
     crate::ast::ProgramKind::Syscall,
 ];
 
+/// Sock-ops-only kfuncs (kernel `bpf_sock_ops_kfunc_set` in
+/// net/core/filter.c). Only `bpf_sock_ops_enable_tx_tstamp` lives here
+/// today.
+const SOCK_OPS_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 1] =
+    [crate::ast::ProgramKind::SockOps];
+
 /// Kfunc prototypes indexed by kfunc name. Returns `None` for kfuncs not
 /// yet on the proto path — the caller falls back to the legacy bespoke
 /// dispatch in `kfunc.rs`.
@@ -4145,6 +4151,22 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         "bpf_cast_to_kern_ctx" => CallProto::with_args([
             Anything, DontCare, DontCare, DontCare, DontCare,
         ]),
+
+        // int bpf_sock_ops_enable_tx_tstamp(struct bpf_sock_ops_kern *skops, u64 flags)
+        // Enables egress TX timestamping on the socket associated with
+        // `skops`. Registered to BPF_PROG_TYPE_SOCK_OPS only (kernel
+        // `bpf_sock_ops_kfunc_set` in net/core/filter.c). Used by
+        // `net_timestamping::skops_sockopt` after a
+        // `bpf_cast_to_kern_ctx` from the bpf_sock_ops ctx. R1 is
+        // accepted as Anything — the cast-to-kern-ctx return is typed
+        // as `PtrToBtfId{"bpf_sock_ops_kern", TRUSTED}` and the test
+        // body doesn't deref it through us; we just need to clear the
+        // dispatch-time "unknown kfunc" rejection.
+        "bpf_sock_ops_enable_tx_tstamp" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .prog_type_allowlist(&SOCK_OPS_KFUNC_PROG_TYPES),
 
         _ => return None,
     })
