@@ -2102,11 +2102,21 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Void)
         .flags(CallFlags::RCU),
 
+        // bpf_iter_css_next(&it) → struct cgroup_subsys_state *
+        // Kernel KF_RCU: returned pointer is RCU-protected (must be in
+        // RCU CS). Use IterNextBtfId so chained loads through pos
+        // (`pos->cgroup`, etc. — iters_css::iter_css_for_each) get
+        // typed via the cgroup_subsys_state struct rather than dying
+        // at PtrToAllocMem{8}'s opaque memory.
         "bpf_iter_css_next" => CallProto::with_args([
             IterArg { kind: IterKind::Css, expected: IterArgExpect::ActiveOrDrained },
             DontCare, DontCare, DontCare, DontCare,
         ])
-        .ret(RetKind::IterNextElem { iter_arg: 0, elem_size: 8 }),
+        .ret(RetKind::IterNextBtfId {
+            iter_arg: 0,
+            type_name: "cgroup_subsys_state",
+            flags: crate::analysis::machine::reg_types::PtrFlags::RCU,
+        }),
 
         "bpf_iter_bits_next" => CallProto::with_args([
             IterArg { kind: IterKind::Bits, expected: IterArgExpect::ActiveOrDrained },
