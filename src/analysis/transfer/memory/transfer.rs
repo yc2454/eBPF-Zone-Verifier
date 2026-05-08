@@ -479,18 +479,19 @@ pub fn try_load_from_rodata(
                     state.domain.forget(dst);
                     state.domain.assume_eq_imm(dst, val as i64);
                     state.types.set(dst, RegType::ScalarValue);
-                    // Clear the tnum too. forget() resets DBM and the
-                    // numeric bound is then pinned to `val`, but the
-                    // tnum is owned by State (not domain) and survives
-                    // — a prior iteration's stale const tnum can then
-                    // contradict the freshly-loaded DBM value, tripping
-                    // the cross-domain consistency check on the next
-                    // op. Surfaced by may_goto_c_code's loop reload of
-                    // `gvar`. Setting `unknown` (vs. the loaded const)
-                    // avoids over-constraining state subsumption — a
-                    // const tnum makes otherwise-equivalent iterations
-                    // look distinct and FRs `loop_inside_iter_volatile_limit`.
-                    state.set_tnum(dst, Tnum::unknown());
+                    // Pin tnum to the loaded constant too. Kernel's
+                    // `bpf_map_is_rdonly` path produces a fully-known
+                    // tnum (`tnum_const(val)`). Without this the next
+                    // bitwise/ALU op (e.g. `r &= 1` to test a low bit)
+                    // collapses the constant: handle_and does
+                    // forget(dst) then apply_and_imm which only sets
+                    // [0, mask], and tnum.and_imm(mask) on unknown tnum
+                    // never becomes constant — so the conditional
+                    // branch on the result splits both ways and dead
+                    // loop bodies (`while (*p & 1)` over rodata=2)
+                    // get explored. Mirrors kernel verifier.c v6.15
+                    // L6928 (`bpf_map_direct_read`).
+                    state.set_tnum(dst, Tnum::constant(val));
 
                     return true;
                 }
