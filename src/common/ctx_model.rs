@@ -1947,8 +1947,20 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
     // (PtrToPacket, PtrToSocket, PtrToSockCommonOrNull) instead of the
     // BTF-driven Scalar/AllocMem fallback that this direct-typed path
     // returns.
-    let is_direct_typed_ctx = prog_kind == ProgramKind::Tracing
-        && matches!(env.ctx.attach_flavor.as_deref(), Some("iter"));
+    // Direct-typed ctx: programs whose ctx pointer is named (carries
+    // a real BTF struct name in arg0) and supports field access by
+    // offset. Covers:
+    //  - iter programs (`bpf_iter__<X>` ctx, BPF_PROG-wrapped)
+    //  - raw_tracepoint with `struct pt_regs *ctx` (kprobe-style direct
+    //    pt_regs access). Without this, raw_tracepoint pt_regs.ax loads
+    //    fall into the lax TrustedPtr fallback and the program FRs on
+    //    arithmetic over the bogus pointer (loop1::nested_loops).
+    let is_direct_typed_ctx = (prog_kind == ProgramKind::Tracing
+        && matches!(env.ctx.attach_flavor.as_deref(), Some("iter")))
+        || matches!(
+            prog_kind,
+            ProgramKind::RawTracepoint | ProgramKind::RawTracepointWritable
+        );
     // Direct typed ctx loads: 8-byte pointer fields and 1/2/4/8-byte
     // scalar fields. The size-8/off%8 path resolves pointer-typed
     // fields via BTF (allowlisted); the size-1/2/4/8 path falls
@@ -2000,6 +2012,21 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                                 writable: false,
                             });
                         }
+                    }
+                    // Scalar BTF field (INT/ENUM/FLOAT — pt_regs.ax /
+                    // .di / etc. are u64 register dumps; raw u64 args
+                    // for raw_tracepoint slot loads). Return Scalar so
+                    // downstream arithmetic doesn't hit
+                    // "Invalid pointer arithmetic" on a bogus ptr type.
+                    // Closes loop1::nested_loops (PT_REGS_RC(ctx)→m;
+                    // m * i was failing under the lax TrustedPtr
+                    // fallback).
+                    if matches!(info.kind, BtfFieldKind::Scalar) {
+                        return Some(CtxAccessInfo {
+                            kind: CtxFieldKind::Scalar,
+                            readable: true,
+                            writable: false,
+                        });
                     }
                 }
                 // Fallback for non-allowlisted iter / sk_reuseport ctx
