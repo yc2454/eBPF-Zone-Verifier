@@ -226,6 +226,17 @@ pub struct VerifierEnv<'a> {
     /// per-path precision walker to look up the specific cached state
     /// referenced by a `parent_cache_id` chain.
     pub cache_loc_by_id: HashMap<u32, (usize, usize)>,
+
+    /// Eviction-resistant precision marks keyed by `(pc, reg)`.
+    /// `mark_chain_precision_backward` writes here as it walks the
+    /// per-path history, so widening sites can detect "this reg was
+    /// proven precision-critical at this pc on some earlier path"
+    /// even after `max_states_per_pc` evicts the specific cached
+    /// state that the walker originally marked. Reg-name boundaries
+    /// (e.g. `r7 = r1` mov chains) are bridged at the *widening*
+    /// site via the cached `scalar_ids` map: the widener checks the
+    /// reg's id against all regs in cur/prev that share that id.
+    pub precise_pcs: HashSet<(usize, Reg)>,
 }
 
 impl<'a> VerifierEnv<'a> {
@@ -253,6 +264,7 @@ impl<'a> VerifierEnv<'a> {
             analyzing_exception_cb: false,
             next_cache_id: 0,
             cache_loc_by_id: HashMap::new(),
+            precise_pcs: HashSet::new(),
         }
     }
 
@@ -354,7 +366,20 @@ impl<'a> VerifierEnv<'a> {
                 };
                 let parent_idx = step.parent_idx;
                 let instr_copy = step.instr;
+                let step_pc = step.pc;
                 update_frontier(&mut frontier, &instr_copy, &caller_saved);
+                // Mirror frontier marks into `precise_pcs` at every
+                // history step the walker traverses. The widening site
+                // checks (pc, scalar_id) regardless of whether a
+                // cached state at that pc still exists — eviction-
+                // resistant. We need the cached state at this pc to
+                // resolve scalar_ids for the frontier regs; if no
+                // cached state exists at step_pc, fall back to the
+                // current state's id which is the closest ground
+                // truth for the path.
+                for &r in &frontier {
+                    self.precise_pcs.insert((step_pc, r));
+                }
                 current_history = parent_idx;
 
                 if frontier.is_empty() {
@@ -365,12 +390,23 @@ impl<'a> VerifierEnv<'a> {
             // Mark precise on the parent cached state with the
             // frontier we've evolved back to its perspective. Per-path:
             // only this cached state, not all states at its PC.
-            if let Some((pc, idx)) = parent_loc
-                && let Some(states) = self.explored_states.get_mut(&pc)
-                && let Some(s) = states.get_mut(idx)
-            {
+            if let Some((pc, idx)) = parent_loc {
+                if let Some(states) = self.explored_states.get_mut(&pc)
+                    && let Some(s) = states.get_mut(idx)
+                {
+                    for &r in &frontier {
+                        s.precise_regs.insert(r);
+                    }
+                }
+                // Mirror the marks into the eviction-resistant
+                // `precise_pcs` set. Cache eviction
+                // (`max_states_per_pc`) drops the cached state's
+                // `precise_regs` from the lookup chain — keep the
+                // (pc, reg) facts in the env so widening sites can
+                // still consult them, even after the specific cached
+                // state that recorded the mark is gone.
                 for &r in &frontier {
-                    s.precise_regs.insert(r);
+                    self.precise_pcs.insert((pc, r));
                 }
             }
 
@@ -453,10 +489,31 @@ fn update_frontier(
         Instr::Endian { dst, .. } => {
             let _ = dst;
         }
-        Instr::Call { .. } | Instr::CallRel { .. } => {
+        Instr::Call { .. } => {
+            // Helper / kfunc call: forward-direction clobbers
+            // R0..R5. Going backward at this step means the values in
+            // R0..R5 immediately after the call don't have a
+            // pre-call source (R0 is the helper's return; R1..R5 are
+            // clobbered). Drop them from the frontier.
             for r in caller_saved {
                 frontier.remove(r);
             }
+        }
+        Instr::CallRel { .. } => {
+            // Subprog call: drop only R0 (the callee's return value
+            // — its source lives inside the callee body, which the
+            // walker already traversed before reaching this CallRel
+            // step on the linear history). R1..R5 in the frontier
+            // post-call are the caller's pre-call arg-setup regs and
+            // must propagate further back so the precision walk
+            // reaches the caller-side instructions that wrote them
+            // (e.g. `w2 = r7` at the call site, which is what
+            // bridges arena_htab_llvm's loop-counter `r7` back to
+            // the access-time precision sink inside the callee).
+            // Walking across frames is more permissive than the
+            // kernel's per-frame `mark_chain_precision` but matches
+            // our linear-history walker's structure.
+            frontier.remove(&Reg::R0);
         }
         _ => {}
     }

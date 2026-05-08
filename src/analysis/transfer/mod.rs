@@ -186,7 +186,7 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
                 state_fall.pc = fallthrough_pc;
                 state_fall.may_goto_depth = state_fall.may_goto_depth.saturating_add(1);
                 if let Some(prev) = prev_snapshot.as_ref() {
-                    call::kfunc::widen_imprecise_scalars_at_iter_next(prev, &mut state_fall);
+                    call::kfunc::widen_imprecise_scalars_at_iter_next(env, prev, &mut state_fall);
                 }
                 return vec![state_fall];
             }
@@ -202,8 +202,8 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
             state_fall.may_goto_depth = state_fall.may_goto_depth.saturating_add(1);
 
             if let Some(prev) = prev_snapshot.as_ref() {
-                call::kfunc::widen_imprecise_scalars_at_iter_next(prev, &mut state_taken);
-                call::kfunc::widen_imprecise_scalars_at_iter_next(prev, &mut state_fall);
+                call::kfunc::widen_imprecise_scalars_at_iter_next(env, prev, &mut state_taken);
+                call::kfunc::widen_imprecise_scalars_at_iter_next(env, prev, &mut state_fall);
             }
 
             vec![state_taken, state_fall]
@@ -793,14 +793,15 @@ fn cb_exit_propagate(env: &VerifierEnv, mut state: State) -> Vec<State> {
     // transfer in the worklist driver, so the most recent cached state
     // at `return_pc` is the just-recorded current state — skip it and
     // take the previous one.
-    if should_widen
-        && let Some(prev_states) = env.explored_states.get(&return_pc)
-    {
-        let mut iter = prev_states.iter().rev().filter(|s| s.pc == return_pc);
-        iter.next();
-        if let Some(prev) = iter.next() {
+    if should_widen {
+        let prev_clone: Option<State> = env.explored_states.get(&return_pc).and_then(|prev_states| {
+            let mut iter = prev_states.iter().rev().filter(|s| s.pc == return_pc);
+            iter.next();
+            iter.next().cloned()
+        });
+        if let Some(prev) = prev_clone.as_ref() {
             crate::analysis::transfer::call::kfunc::widen_imprecise_scalars_at_iter_next(
-                prev, &mut state,
+                env, prev, &mut state,
             );
         }
     }

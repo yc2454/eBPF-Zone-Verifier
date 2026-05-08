@@ -1104,7 +1104,7 @@ fn iter_next_fork(
         })
         .cloned();
     if let Some(prev) = prev_snapshot.as_ref() {
-        widen_imprecise_scalars_at_iter_next_call(prev, &mut nonnull);
+        widen_imprecise_scalars_at_iter_next_call(env, prev, &mut nonnull);
     }
 
     vec![nonnull, null]
@@ -1116,8 +1116,12 @@ fn iter_next_fork(
 /// reg/slot not flagged precise whose abstract value disagrees with
 /// `prev` collapses to UNKNOWN. Precise entries are left intact (the
 /// kernel preserves them via the idmap; we use `precise_regs`).
-pub(crate) fn widen_imprecise_scalars_at_iter_next(prev: &State, cur: &mut State) {
-    widen_imprecise_scalars_impl(prev, cur, false)
+pub(crate) fn widen_imprecise_scalars_at_iter_next(
+    env: &VerifierEnv,
+    prev: &State,
+    cur: &mut State,
+) {
+    widen_imprecise_scalars_impl(env, prev, cur, false)
 }
 
 /// Same as `widen_imprecise_scalars_at_iter_next` but called at the
@@ -1129,11 +1133,20 @@ pub(crate) fn widen_imprecise_scalars_at_iter_next(prev: &State, cur: &mut State
 /// cb-return / may_goto callers keep the strict gate — those are
 /// different convergence regimes where prev-precise really does
 /// reflect the live precision contract.
-pub(crate) fn widen_imprecise_scalars_at_iter_next_call(prev: &State, cur: &mut State) {
-    widen_imprecise_scalars_impl(prev, cur, true)
+pub(crate) fn widen_imprecise_scalars_at_iter_next_call(
+    env: &VerifierEnv,
+    prev: &State,
+    cur: &mut State,
+) {
+    widen_imprecise_scalars_impl(env, prev, cur, true)
 }
 
-fn widen_imprecise_scalars_impl(prev: &State, cur: &mut State, at_iter_next_call: bool) {
+fn widen_imprecise_scalars_impl(
+    env: &VerifierEnv,
+    prev: &State,
+    cur: &mut State,
+    at_iter_next_call: bool,
+) {
     use crate::analysis::machine::reg::Reg;
 
     // Bucket F-D: once the may_goto/iter_next has been visited many
@@ -1180,7 +1193,31 @@ fn widen_imprecise_scalars_impl(prev: &State, cur: &mut State, at_iter_next_call
         // next time the kernel's rold->precise is typically still
         // false. Other callers (cb-return / may_goto) stay strict.
         let prev_block = !at_iter_next_call && prev.precise_regs.contains(&r);
-        if !force_widen && (cur.precise_regs.contains(&r) || prev_block) {
+        // Eviction-resistant precision check: query the env's
+        // `precise_pcs` set, which the per-path walker writes at every
+        // history step (not just at parent-cache boundaries). Bridges
+        // reg-name boundaries via the cached `scalar_ids` map: any
+        // reg sharing `r`'s scalar id (in cur or prev) extends the
+        // precision check to that aliased reg name as well.
+        let aliased_regs: Vec<Reg> = {
+            let mut acc: Vec<Reg> = vec![r];
+            for ids in [&cur.scalar_ids, &prev.scalar_ids] {
+                if let Some(&r_id) = ids.get(&r) {
+                    for (&other_r, &id) in ids.iter() {
+                        if id == r_id && other_r != r {
+                            acc.push(other_r);
+                        }
+                    }
+                }
+            }
+            acc
+        };
+        let pc_precise = !at_iter_next_call
+            && aliased_regs.iter().any(|&ar| {
+                env.precise_pcs.contains(&(prev.pc, ar))
+                    || env.precise_pcs.contains(&(cur.pc, ar))
+            });
+        if !force_widen && (cur.precise_regs.contains(&r) || prev_block || pc_precise) {
             continue;
         }
         // Only widen scalar-typed regs; pointer types are kept exact
