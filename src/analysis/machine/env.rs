@@ -184,6 +184,23 @@ pub struct VerifierEnv<'a> {
     /// not reachable from any single-iteration analysis).
     pub cb_body_store_offsets: HashMap<usize, std::collections::HashSet<i16>>,
 
+    /// Per-cb-subprog flag: does the body call (directly) any
+    /// dynptr-(re)initializing helper or kfunc?
+    /// (`BPF_DYNPTR_FROM_MEM`, `BPF_RINGBUF_RESERVE_DYNPTR`,
+    /// `bpf_dynptr_from_skb`, `bpf_dynptr_from_xdp`, `bpf_dynptr_clone`,
+    /// `bpf_dynptr_adjust`.) Pre-computed at env init by scanning the
+    /// cb body. Used by `transfer_callback_helper` to suppress the
+    /// kernel-pessimism dynptr-slice invalidation on the post-cb
+    /// continuation when the cb provably cannot re-init the dynptr —
+    /// the invalidation is required for FA safety on `invalid_data_slices`
+    /// (cb body actually re-inits) but FRs valid programs like
+    /// `dynptr_success::test_ringbuf` (cb body just reads via
+    /// `bpf_dynptr_data`). Mirrors the kernel's actual model: only
+    /// `destroy_if_dynptr_stack_slot` invalidates slices, and that
+    /// only fires on real init/release operations. Conservatively true
+    /// for cbs that make a `CallRel` (we don't transitively scan).
+    pub cb_body_can_reinit_dynptr: HashSet<usize>,
+
     // --- Dynamic State ---
     pub insn_processed: usize,
     /// Holds the FIRST critical failure encountered.
@@ -228,6 +245,7 @@ impl<'a> VerifierEnv<'a> {
             addr_space_cast_to_arena_pcs: prog.addr_space_cast_to_arena_pcs.clone(),
             tainted_cb_subprogs: compute_tainted_cb_subprogs(prog, &ctx.btf),
             cb_body_store_offsets: compute_cb_body_store_offsets(prog),
+            cb_body_can_reinit_dynptr: compute_cb_body_can_reinit_dynptr(prog, &ctx.btf),
             insn_processed: 0,
             error: None,
             history: History::new(),
@@ -572,6 +590,101 @@ fn compute_tainted_cb_subprogs(
         }
     }
     tainted
+}
+
+/// Per-cb-subprog flag: does the body directly call any
+/// dynptr-(re)initializing helper or kfunc? Used to suppress the
+/// kernel-pessimism slice invalidation in `transfer_callback_helper`
+/// when the cb provably cannot re-init the source dynptr.
+fn compute_cb_body_can_reinit_dynptr(
+    prog: &crate::ast::Program,
+    btf: &crate::parsing::btf::BtfContext,
+) -> HashSet<usize> {
+    use crate::ast::{CallKind, Instr, MapLoadKind};
+    use crate::common::constants;
+
+    let mut entries: Vec<usize> = Vec::new();
+    for insn in &prog.instrs {
+        if let Instr::LoadMap {
+            kind: MapLoadKind::PseudoFunc { subprog_pc },
+            ..
+        } = insn
+        {
+            entries.push(*subprog_pc as usize);
+        }
+    }
+    entries.sort();
+    entries.dedup();
+
+    let mut all_entries: Vec<usize> = vec![0];
+    for insn in &prog.instrs {
+        match insn {
+            Instr::CallRel { target } => all_entries.push(*target),
+            Instr::LoadMap {
+                kind: MapLoadKind::PseudoFunc { subprog_pc },
+                ..
+            } => all_entries.push(*subprog_pc as usize),
+            _ => {}
+        }
+    }
+    all_entries.sort();
+    all_entries.dedup();
+
+    let is_init_kfunc = |name: &str| {
+        matches!(
+            name,
+            "bpf_dynptr_from_skb"
+                | "bpf_dynptr_from_xdp"
+                | "bpf_dynptr_clone"
+                | "bpf_dynptr_adjust"
+        )
+    };
+
+    let mut out: HashSet<usize> = HashSet::new();
+    for &start in &entries {
+        let end = all_entries
+            .iter()
+            .find(|&&pc| pc > start)
+            .copied()
+            .unwrap_or(prog.instrs.len());
+        let body = &prog.instrs[start..end.min(prog.instrs.len())];
+        let mut bad = false;
+        for insn in body {
+            match insn {
+                Instr::Call { kind } => match *kind {
+                    CallKind::Helper { id } => {
+                        if id == constants::BPF_DYNPTR_FROM_MEM
+                            || id == constants::BPF_RINGBUF_RESERVE_DYNPTR
+                        {
+                            bad = true;
+                            break;
+                        }
+                    }
+                    CallKind::Kfunc { btf_id, .. } => {
+                        if let Some(name) = btf.kfunc_name(btf_id)
+                            && is_init_kfunc(name)
+                        {
+                            bad = true;
+                            break;
+                        }
+                    }
+                },
+                // Conservative: a CallRel to a global subprog could re-init
+                // through a stack-passed dynptr ptr. We don't transitively
+                // scan; treat any CallRel as taint. Cbs in our corpus that
+                // reach the test cases of interest don't make CallRel.
+                Instr::CallRel { .. } => {
+                    bad = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        if bad {
+            out.insert(start);
+        }
+    }
+    out
 }
 
 /// Per-cb-subprog set of byte offsets (relative to the cb's ctx-arg

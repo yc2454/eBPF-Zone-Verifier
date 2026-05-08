@@ -863,7 +863,24 @@ fn transfer_callback_helper(
         constants::BPF_FIND_VMA => Some(Reg::R4),
         _ => None,
     };
-    if let Some(ctx_reg) = cb_ctx_reg
+    // Only invalidate when the cb body could plausibly destroy (re-init
+    // or overwrite) the dynptr — kernel `destroy_if_dynptr_stack_slot`
+    // fires on real init operations OR direct stack writes that
+    // overlap a dynptr slot. Without this gate we FR
+    // dynptr_success::test_ringbuf (cb just reads via bpf_dynptr_data).
+    // The pessimism is still required for:
+    //   - `invalid_data_slices`: cb writes `*data = 123` to the ctx arg
+    //     (the &dynptr stack address), partially destroying it →
+    //     `cb_body_store_offsets` is non-empty.
+    //   - cbs that call dynptr-init kfuncs → `cb_body_can_reinit_dynptr`.
+    let cb_could_reinit = env.cb_body_can_reinit_dynptr.contains(&cb_entry)
+        || env
+            .cb_body_store_offsets
+            .get(&cb_entry)
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+    if cb_could_reinit
+        && let Some(ctx_reg) = cb_ctx_reg
         && let RegType::PtrToStack { frame_level } = skip_state.types.get(ctx_reg)
         && let Some(off) = skip_state.domain.get_distance_fixed(ctx_reg, Reg::R10)
         && let Ok(base_off) = i16::try_from(off)
