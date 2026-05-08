@@ -352,6 +352,42 @@ impl StackState {
         );
     }
 
+    /// Widen a scalar slot in-place by joining its bounds and tnum with
+    /// the corresponding slot from a previous explored state. Used by
+    /// the iter_next / may_goto / cb-return widener as a less-destructive
+    /// alternative to `invalidate_slot`: when slot values diverge across
+    /// loop iterations, taking the union (rather than full reset) keeps
+    /// downstream pointer-arithmetic gates (MAX_VAR_OFF) feasible for
+    /// loops whose per-iteration scalar is bounded but not constant
+    /// (e.g. an IPv4 IHL × 4 byte offset that takes values in {20, 40,
+    /// 60} across paths). source_reg / scalar_id are preserved only if
+    /// both sides agree; otherwise they're cleared.
+    ///
+    /// Caller must verify the slot exists; no-op if absent.
+    pub fn widen_slot(&mut self, offset: i16, prev: &SpilledReg) {
+        let Some(cur) = self.slots.get_mut(&offset) else {
+            return;
+        };
+        if !matches!(cur.reg_type, RegType::ScalarValue)
+            || !matches!(prev.reg_type, RegType::ScalarValue)
+        {
+            return;
+        }
+        cur.bounds = ScalarBounds {
+            min: cur.bounds.min.min(prev.bounds.min),
+            max: cur.bounds.max.max(prev.bounds.max),
+        };
+        cur.tnum = cur.tnum.widen(prev.tnum);
+        if cur.source_reg != prev.source_reg {
+            cur.source_reg = None;
+            cur.scalar_id = None;
+        } else if cur.scalar_id != prev.scalar_id {
+            cur.scalar_id = None;
+        }
+        cur.precise = false;
+        cur.ptr_bounds = None;
+    }
+
     /// Demote a stack slot's type to ScalarValue while preserving bounds/tnum.
     /// Used at merge points where different paths have incompatible pointer types.
     pub fn demote_slot_to_scalar(&mut self, offset: i16) {

@@ -1211,14 +1211,24 @@ fn widen_imprecise_scalars_impl(prev: &State, cur: &mut State, at_iter_next_call
         }
     }
 
-    // Spilled scalar slots: walk both frames' stacks. Drop any slot
-    // whose abstract value disagrees and isn't precise.
+    // Spilled scalar slots: walk both frames' stacks. For slots whose
+    // abstract value disagrees and isn't precise, widen by joining the
+    // current slot's bounds/tnum with the previous explored state's
+    // slot rather than fully invalidating. Full invalidation
+    // (source_reg=None, bounds=[i64::MIN, i64::MAX]) is too aggressive
+    // for loops whose per-iteration scalar is bounded but not constant
+    // — downstream MAX_VAR_OFF gates on `ptr += scalar_from_slot`
+    // reject the unbounded fill (xdp_synproxy_kern's IHL × 4 spill at
+    // r10-128 takes {20, 40} across iterations and gets used as a
+    // packet-pointer offset on the next iteration). Union widening
+    // gives [20, 40] which the gate accepts.
     use crate::analysis::machine::frame_stack::FrameLevel;
     let n = cur.frames.depth().min(prev.frames.depth());
     for fi in 0..n {
         let level = FrameLevel::from_index(fi);
         let prev_stack_offsets: Vec<i16> = prev.frames.get(level).stack.slot_offsets();
-        let mut to_invalidate: Vec<i16> = Vec::new();
+        let mut to_widen: Vec<(i16, crate::analysis::machine::stack_state::SpilledReg)> =
+            Vec::new();
         for off in prev_stack_offsets {
             let prev_ty = prev.frames.get(level).stack.get_slot_type(off);
             let cur_ty = cur.frames.get(level).stack.get_slot_type(off);
@@ -1235,15 +1245,15 @@ fn widen_imprecise_scalars_impl(prev: &State, cur: &mut State, at_iter_next_call
             };
             let cur_precise = cur_slot.map(|s| s.precise).unwrap_or(false);
             let prev_precise = prev_slot.map(|s| s.precise).unwrap_or(false);
-            // Skip widening if either side is precise (kernel parity),
-            // unless we're past the force-widen threshold.
             if differs && (force_widen || (!cur_precise && !prev_precise)) {
-                to_invalidate.push(off);
+                if let Some(p) = prev_slot {
+                    to_widen.push((off, p.clone()));
+                }
             }
         }
         let cur_stack = &mut cur.frames.get_mut(level).stack;
-        for off in to_invalidate {
-            cur_stack.invalidate_slot(off);
+        for (off, prev_slot) in to_widen {
+            cur_stack.widen_slot(off, &prev_slot);
         }
     }
 }
