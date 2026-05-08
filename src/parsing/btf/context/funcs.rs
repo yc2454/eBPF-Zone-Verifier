@@ -209,6 +209,14 @@ impl BtfContext {
                             .unwrap_or(0);
                         GlobalFuncArg::PtrToMem { mem_size, nonnull: false }
                     }
+                    // Pointer-to-pointer (e.g. `struct S **s`): kernel
+                    // treats as ARG_PTR_TO_MEM with mem_size = sizeof(void*)
+                    // = 8. Closes test_global_func_args::test_cls — `baz`
+                    // does `*s = 0` (8-byte store at R1+0).
+                    BTF_KIND_PTR => GlobalFuncArg::PtrToMem {
+                        mem_size: 8,
+                        nonnull: false,
+                    },
                     _ => GlobalFuncArg::PtrToMem { mem_size: 0, nonnull: false },
                 }
             }
