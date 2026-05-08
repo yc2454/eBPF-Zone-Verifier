@@ -1541,6 +1541,12 @@ pub(crate) fn transfer_call_rel(
                     // ARG_PTR_TO_DYNPTR | MEM_RDONLY (btf.c:7784) — no
                     // override.
                 }
+                crate::parsing::btf::GlobalFuncArg::PtrToArena => {
+                    // Preserve caller's PtrToArena. Arena is a sparse
+                    // 4GB address space and the body verifies arithmetic
+                    // on it via the PtrToArena fast-path in
+                    // check_ptr_arithmetic — no override needed.
+                }
                 crate::parsing::btf::GlobalFuncArg::PtrToBtfIdTrusted {
                     type_name,
                     nullable,
@@ -1658,6 +1664,7 @@ fn caller_arg_compatible<F: Fn() -> bool>(
             _ => false,
         },
         GlobalFuncArg::PtrToDynptr => matches!(actual, RegType::PtrToStack { .. }),
+        GlobalFuncArg::PtrToArena => matches!(actual, RegType::PtrToArena { .. }),
         GlobalFuncArg::PermissivePtr => match actual {
             RegType::PtrToCtx
             | RegType::PtrToStack { .. }

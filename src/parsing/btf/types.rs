@@ -340,6 +340,13 @@ pub enum GlobalFuncArg {
     /// and (b) the callee's R is preserved across the call boundary
     /// rather than reseeded as `PtrToAllocMemOrNull`.
     PtrToDynptr,
+    /// Arena pointer arg (`__arg_arena` btf_decl_tag = `arg:arena`).
+    /// Caller must pass `PtrToArena`; callee receives the same. The
+    /// arena address space is sparse-mapped 4GB and the verifier
+    /// permits liberal arithmetic on PtrToArena (see
+    /// `check_ptr_arithmetic`'s arena fast-path), so this is just a
+    /// pass-through arg classification — no MEM_OR_NULL reseed.
+    PtrToArena,
 }
 
 /// Refine a base `GlobalFuncArg` classification using `__arg_*` decl
@@ -361,6 +368,10 @@ pub(super) fn refine_global_arg_with_tags(
     let nullable = tags.iter().any(|t| *t == "arg:nullable");
     let nonnull = tags.iter().any(|t| *t == "arg:nonnull");
     let ctx_tag = tags.iter().any(|t| *t == "arg:ctx");
+    let arena_tag = tags.iter().any(|t| *t == "arg:arena");
+    if arena_tag {
+        return GlobalFuncArg::PtrToArena;
+    }
     if ctx_tag {
         return GlobalFuncArg::PtrToCtx;
     }
