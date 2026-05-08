@@ -1802,6 +1802,14 @@ pub(crate) fn apply_pre_call_lock_flags(
     }
 
     if proto.flags.contains(CallFlags::RCU_READ_LOCK) {
+        // Kernel rejects nested `bpf_rcu_read_lock` at the kfunc-arg
+        // processing path: a second lock while already in an RCU CS
+        // surfaces as "nested rcu_read_lock". Closes
+        // rcu_read_lock::nested_rcu_region.
+        if state.in_rcu_read_section() {
+            env.fail(VerificationError::RcuReadNotHeld { pc });
+            return false;
+        }
         state.rcu_read_lock();
     }
 
@@ -1810,14 +1818,14 @@ pub(crate) fn apply_pre_call_lock_flags(
             env.fail(VerificationError::RcuReadNotHeld { pc });
             return false;
         }
-        // Kernel verifier.c v6.15 ~L13543: on rcu_read_unlock, every
-        // MEM_RCU reg/slot is re-flagged PTR_UNTRUSTED. We mirror this
-        // for iter slots only — the use-after-unlock pattern (lock /
-        // iter_*_new / next / unlock / next or unlock / lock / next)
-        // is what `iters_task_failure::iter_tasks_lock_and_unlock`
-        // exercises. Other reg-type RCU promotions are out of scope.
+        // Kernel verifier.c v6.15 ~L13543: on outermost rcu_read_unlock,
+        // every MEM_RCU reg/slot is re-flagged PTR_UNTRUSTED. Mirrored
+        // for iter slots and (since this session) for typed BTF
+        // pointers, so `bpf_task_storage_get(real_parent)` after
+        // unlock rejects on the UNTRUSTED arg.
         if !state.in_rcu_read_section() {
             state.invalidate_rcu_iter_slots();
+            state.demote_rcu_btf_regs_to_untrusted();
         }
     }
 

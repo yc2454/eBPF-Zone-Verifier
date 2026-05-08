@@ -442,7 +442,26 @@ fn validate_ptr_to_btf_id_named(
     // `bpf_task_get_cgroup1(...)` result into `bpf_cgrp_storage_get(R2=cgrp)`
     // rejects on a type-equivalence we deliberately model with a narrower
     // representation.
+    // Reject UNTRUSTED PtrToBtfId for the `cgroup` / `task_struct`
+    // local-storage arg slots ONLY in sleepable programs outside an
+    // active RCU read-side CS. Kernel's `bpf_{cgrp,task}_storage_*`
+    // helpers reject "untrusted in sleepable prog outside of RCU CS";
+    // non-sleepable tracing programs hold an implicit RCU CS at entry
+    // and accept the same UNTRUSTED descent (e.g. `tcp_sk->...->cgroup`
+    // in cgroup_skb / sockops, where the tcp_sock chain has no
+    // dedicated trusted-field allowlist entry). Closes
+    // cgrp_ls_sleepable::no_rcu_lock without regressing
+    // cgrp_ls_attach_cgroup::set_cookie / update_cookie_sockops.
+    let sleepable_no_rcu = ctx.env.ctx.is_sleepable && !ctx.state.in_rcu_read_section();
     let matches = match (expected, ctx.actual) {
+        (e, RegType::PtrToBtfId { type_name, flags, .. })
+            if type_name == e
+                && matches!(e, "cgroup" | "task_struct")
+                && flags.contains(crate::analysis::machine::reg_types::PtrFlags::UNTRUSTED)
+                && sleepable_no_rcu =>
+        {
+            false
+        }
         (e, RegType::PtrToBtfId { type_name, .. }) if type_name == e => true,
         ("cgroup", RegType::PtrToCgroup { .. }) => true,
         ("task_struct", RegType::PtrToTask { .. }) => true,

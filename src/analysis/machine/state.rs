@@ -490,6 +490,44 @@ impl State {
     /// the iter's `_next` consumer rejects on the untrusted slot in the
     /// next iteration. Called by `transfer_call` after a successful
     /// `state.rcu_read_unlock()` that leaves us outside any RCU CS.
+    /// Demote every reg / spilled slot whose `PtrToBtfId{,OrNull}` is
+    /// flagged `MEM_RCU` to `PTR_UNTRUSTED`. Mirrors kernel verifier.c
+    /// v6.15 ~L13543: on `bpf_rcu_read_unlock` (outermost), every
+    /// MEM_RCU reg/slot is re-flagged UNTRUSTED so subsequent
+    /// helper/kfunc args requiring TRUSTED reject. Iter slots are
+    /// handled separately in `invalidate_rcu_iter_slots`.
+    ///
+    /// Closes rcu_read_lock::{task_untrusted_rcuptr,cross_rcu_region}:
+    /// `task->real_parent` loaded under RCU lands as PtrToBtfId{RCU};
+    /// after unlock it becomes UNTRUSTED, then `bpf_task_storage_get`
+    /// (which expects PtrToTask / TRUSTED PtrToBtfId{task_struct})
+    /// rejects.
+    pub fn demote_rcu_btf_regs_to_untrusted(&mut self) {
+        use crate::analysis::machine::reg_types::PtrFlags;
+        let demote_flags = |flags: PtrFlags| -> PtrFlags {
+            if flags.contains(PtrFlags::RCU) {
+                flags.difference(PtrFlags::RCU | PtrFlags::TRUSTED)
+                    .union(PtrFlags::UNTRUSTED)
+            } else {
+                flags
+            }
+        };
+        let demote_one = |ty: &mut RegType| match ty {
+            RegType::PtrToBtfId { flags, .. } | RegType::PtrToBtfIdOrNull { flags, .. } => {
+                *flags = demote_flags(*flags);
+            }
+            _ => {}
+        };
+        for i in 0..self.types.regs.len() {
+            demote_one(&mut self.types.regs[i]);
+        }
+        for frame in self.frames.iter_mut() {
+            for (_off, spilled) in frame.stack.slots.iter_mut() {
+                demote_one(&mut spilled.reg_type);
+            }
+        }
+    }
+
     pub fn invalidate_rcu_iter_slots(&mut self) {
         for frame in self.frames.iter_mut() {
             let offsets = frame.stack.slot_offsets();
