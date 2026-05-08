@@ -107,6 +107,13 @@ pub enum DynptrKind {
     Skb,
     /// `bpf_dynptr_from_xdp` — into xdp frame data.
     Xdp,
+    /// Kernel-managed user-ringbuf dynptr — synthesized for the
+    /// `bpf_user_ringbuf_drain` cb's R1 (kernel sets
+    /// `PTR_TO_DYNPTR | DYNPTR_TYPE_USER | MEM_RDONLY`,
+    /// `set_user_ringbuf_callback_state` verifier.c v6.15 ~L10800).
+    /// Not stack-based; only ever attached to `RegType::PtrToDynptr`,
+    /// not to a `DynptrSlot` on the stack.
+    User,
 }
 
 /// Per-slot dynptr annotation (W4.2). A dynptr occupies two adjacent

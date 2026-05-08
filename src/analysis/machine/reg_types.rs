@@ -301,6 +301,23 @@ pub enum RegType {
     PtrToCallback {
         subprog_pc: u32,
     },
+    /// Kernel-managed dynptr pointer (kernel `PTR_TO_DYNPTR`).
+    /// Distinct from a stack-based dynptr (which is `PtrToStack` aimed
+    /// at a `DynptrSlot`). Synthesized for the `bpf_user_ringbuf_drain`
+    /// cb's R1 (kernel `set_user_ringbuf_callback_state`,
+    /// verifier.c v6.15 ~L10800). Accepted by dynptr consumers
+    /// (`bpf_dynptr_data`, `_read`); rejected by the
+    /// `validate_dynptr_arg` `uninit:true` branch (constructors)
+    /// and by the `rdwr_only` branch when `rdonly` is set
+    /// (`bpf_dynptr_write`). Not dereferenceable as data — load/store
+    /// fall through to `UnsafeGenericLoad`/`Store` ("invalid mem access
+    /// 'dynptr_ptr'", verifier.c v6.15 ~L7400 `check_mem_access`).
+    /// Pointer arithmetic demotes to scalar (kernel rejects "dereference
+    /// of modified dynptr_ptr ptr").
+    PtrToDynptr {
+        kind: crate::analysis::machine::stack_state::DynptrKind,
+        rdonly: bool,
+    },
 }
 
 impl RegType {
@@ -613,6 +630,7 @@ pub fn type_family(ty: &RegType) -> u8 {
         PtrToCgroup { .. } | PtrToCgroupOrNull { .. } => 18,
         PtrToTask { .. } | PtrToTaskOrNull { .. } => 19,
         PtrToMapKptr { .. } | PtrToMapKptrOrNull { .. } => 20,
+        PtrToDynptr { .. } => 21,
     }
 }
 

@@ -1122,6 +1122,27 @@ fn transfer_callback_helper(
                     cb_state.clear_scalar_id(r);
                 }
             }
+            // cb(struct bpf_dynptr *dynptr, void *ctx) — kernel sets
+            // R1 = PTR_TO_DYNPTR | DYNPTR_TYPE_USER | MEM_RDONLY
+            // (`set_user_ringbuf_callback_state`, verifier.c v6.15
+            // ~L10800). PtrToDynptr accepts dynptr consumer kfuncs
+            // (`bpf_dynptr_data`, `_read`); load/store on it falls
+            // through to UnsafeGenericLoad/Store ("invalid mem access
+            // 'dynptr_ptr'"); ALU demotes to scalar (kernel rejects
+            // "dereference of modified dynptr_ptr ptr").
+            constants::BPF_USER_RINGBUF_DRAIN => {
+                use crate::analysis::machine::stack_state::DynptrKind;
+                cb_state.types.set(
+                    Reg::R1,
+                    RegType::PtrToDynptr {
+                        kind: DynptrKind::User,
+                        rdonly: true,
+                    },
+                );
+                cb_state.domain.forget(Reg::R1);
+                cb_state.set_tnum(Reg::R1, Tnum::unknown());
+                cb_state.clear_scalar_id(Reg::R1);
+            }
             // cb(task, vma, ctx) — R2 = PTR_TO_BTF_ID{vm_area_struct, TRUSTED}.
             constants::BPF_FIND_VMA => {
                 cb_state.types.set(

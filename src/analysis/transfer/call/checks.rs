@@ -789,6 +789,64 @@ fn validate_ptr_to_stack(ctx: &mut ValidationContext) -> bool {
 ///   second slot) are rejected. If `rdwr_only` is set, an `rdonly`
 ///   dynptr is rejected (e.g. `bpf_dynptr_write` on an `Skb` dynptr).
 fn validate_dynptr_arg(ctx: &mut ValidationContext, uninit: bool, rdwr_only: bool) -> bool {
+    // Kernel `PTR_TO_DYNPTR` (e.g. user-ringbuf cb's R1, set by
+    // `set_user_ringbuf_callback_state` verifier.c v6.15 ~L10800):
+    // accepted by consumer kfuncs (`uninit:false`); rejected by
+    // constructors (`uninit:true`, kernel "Dynptr has to be an
+    // uninitialized dynptr"); rdwr-only consumers reject `rdonly`
+    // (kernel "cannot write into rdonly dynptr"). The PTR_TO_DYNPTR
+    // is kernel-managed, not stack-based — there's no slot to inspect.
+    if let RegType::PtrToDynptr { rdonly, .. } = ctx.actual {
+        if uninit {
+            return ctx.fail_with_log(
+                VerificationError::InvalidArgType {
+                    pc: ctx.pc,
+                    reg: ctx.reg,
+                },
+                &format!(
+                    "[Verifier] pc {}: R{} cannot pass PTR_TO_DYNPTR to dynptr constructor (kernel: 'Dynptr has to be an uninitialized dynptr')",
+                    ctx.pc,
+                    ctx.arg_index + 1
+                ),
+            );
+        }
+        // PTR_TO_DYNPTR carries no acquire ref — kernel-managed.
+        // Release-class consumers (`bpf_ringbuf_{submit,discard}_dynptr`)
+        // require a refcounted (Ringbuf) dynptr; kernel
+        // `release_reference` rejects with "cannot release unowned
+        // const bpf_dynptr" (verifier.c v6.15 ~L11800).
+        if matches!(
+            ctx.helper,
+            crate::common::constants::BPF_RINGBUF_SUBMIT_DYNPTR
+                | crate::common::constants::BPF_RINGBUF_DISCARD_DYNPTR
+        ) {
+            return ctx.fail_with_log(
+                VerificationError::InvalidArgType {
+                    pc: ctx.pc,
+                    reg: ctx.reg,
+                },
+                &format!(
+                    "[Verifier] pc {}: R{} cannot release unowned const bpf_dynptr (PTR_TO_DYNPTR)",
+                    ctx.pc,
+                    ctx.arg_index + 1
+                ),
+            );
+        }
+        if rdwr_only && rdonly {
+            return ctx.fail_with_log(
+                VerificationError::InvalidArgType {
+                    pc: ctx.pc,
+                    reg: ctx.reg,
+                },
+                &format!(
+                    "[Verifier] pc {}: R{} cannot pass rdonly PTR_TO_DYNPTR to rdwr-only kfunc",
+                    ctx.pc,
+                    ctx.arg_index + 1
+                ),
+            );
+        }
+        return true;
+    }
     let RegType::PtrToStack { frame_level } = ctx.actual else {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
