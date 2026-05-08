@@ -180,6 +180,19 @@ pub enum PointerBounds {
         anchor: Option<Reg>,
         anchor_lo: Option<i64>, // anchor - reg <= ? (i.e., reg >= anchor + lo)
         anchor_hi: Option<i64>, // reg - anchor <= ? (i.e., reg <= anchor + hi)
+        // Secondary packet anchor relation. For PtrToPacket /
+        // PtrToPacketMeta the primary anchor (AnchorData /
+        // AnchorDataMeta) plus DBM closure isn't enough on fill: the
+        // distance between distinct packet anchors is bounded but not
+        // fixed, so a `r - @data_end` bound proven before spill (e.g.
+        // from a `r + N > data_end` check that tightens both r and
+        // r5's relation to @data_end) cannot be reconstructed from the
+        // saved `r - @data` bound alone. Save the @data_end edge here
+        // and replay it on fill so the post-fill closure preserves the
+        // packet-bounds invariant the access at `r + off` depends on.
+        end_anchor: Option<Reg>,
+        end_lo: Option<i64>,
+        end_hi: Option<i64>,
     },
     Interval {
         off: Option<i64>,     // fixed offset from anchor

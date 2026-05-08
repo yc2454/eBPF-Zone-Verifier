@@ -417,7 +417,31 @@ pub(crate) fn update_alu_types(
             let dst_ty = in_types.get(dst);
             let is_add = op == AluOp::Add;
 
-            if dst_ty.is_pointer() {
+            // Same-family packet ptr subtraction (PtrToPacket - PtrToPacket
+            // etc.) collapses to a scalar byte distance. The
+            // `is_pointer()` arm below would otherwise keep dst typed as
+            // a packet pointer (no anchor change is detectable from
+            // dst-vs-AnchorData), which then fails the next non-Add/Sub
+            // ALU op as "Invalid pointer arithmetic". The DBM domain
+            // already carries the correct scalar bounds via apply_sub_reg
+            // in handle_sub.
+            let same_family_sub = !is_add
+                && match src {
+                    Operand::Reg(r) => {
+                        let src_ty = in_types.get(*r);
+                        matches!(
+                            (&dst_ty, &src_ty),
+                            (RegType::PtrToPacket, RegType::PtrToPacket)
+                                | (RegType::PtrToPacketEnd, RegType::PtrToPacketEnd)
+                                | (RegType::PtrToPacketMeta, RegType::PtrToPacketMeta)
+                        )
+                    }
+                    _ => false,
+                };
+
+            if same_family_sub {
+                types.set(dst, RegType::ScalarValue);
+            } else if dst_ty.is_pointer() {
                 update_ptr_arithmetic_type(env, types, domain, dst, dst_ty, src, is_add);
             } else {
                 handle_scalar_arithmetic_type(in_types, types, dst, src, is_add);

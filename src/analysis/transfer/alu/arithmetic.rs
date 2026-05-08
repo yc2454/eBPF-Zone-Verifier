@@ -157,6 +157,17 @@ pub(crate) fn handle_sub(
                     // Bounded but not constant: fall back to interval
                     state.domain.apply_sub_reg(dst, *r);
                 }
+            } else if is_same_family_ptr_subtraction(&dst_type, &src_type) {
+                // ptrX - ptrX (same packet family): result is the scalar
+                // byte distance between the two pointers within the same
+                // packet region. apply_sub_reg already carries the DBM
+                // relation `dst = old_dst - src` so any constraint the
+                // verifier proved on `old_dst - src` (e.g. == 20) is
+                // preserved as the new dst's bounds. Type demotion to
+                // ScalarValue happens in `update_ptr_arithmetic_type` via
+                // `handle_scalar_arithmetic_type` once we drop into that
+                // path; we just compute the domain effect here.
+                state.domain.apply_sub_reg(dst, *r);
             } else if is_packet_ptr_subtraction(&dst_type, &src_type) {
                 // SPECIAL CASE: Packet Pointer Subtraction (Correlated Branch Support)
                 // When computing `dst = packet_end - packet`, the result is a scalar
@@ -348,6 +359,20 @@ fn is_packet_ptr_subtraction(dst_type: &RegType, src_type: &RegType) -> bool {
         (RegType::PtrToPacketEnd, RegType::PtrToPacket)
             | (RegType::PtrToPacketEnd, RegType::PtrToPacketMeta)
             | (RegType::PtrToPacket, RegType::PtrToPacketMeta)
+    )
+}
+
+/// Same-family packet pointer subtraction: both operands share the same
+/// packet anchor (e.g. two PtrToPacket regs derived from `data + N`
+/// after independent bounds checks). Result is a scalar byte distance,
+/// no anchor linkage needed — the DBM relation `dst - src` post
+/// `apply_sub_reg` already captures the proven distance.
+fn is_same_family_ptr_subtraction(dst_type: &RegType, src_type: &RegType) -> bool {
+    matches!(
+        (dst_type, src_type),
+        (RegType::PtrToPacket, RegType::PtrToPacket)
+            | (RegType::PtrToPacketEnd, RegType::PtrToPacketEnd)
+            | (RegType::PtrToPacketMeta, RegType::PtrToPacketMeta)
     )
 }
 
