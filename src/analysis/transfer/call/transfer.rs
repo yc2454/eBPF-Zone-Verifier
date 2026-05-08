@@ -1664,7 +1664,31 @@ fn caller_arg_compatible<F: Fn() -> bool>(
             _ => false,
         },
         GlobalFuncArg::PtrToDynptr => matches!(actual, RegType::PtrToStack { .. }),
-        GlobalFuncArg::PtrToArena => matches!(actual, RegType::PtrToArena { .. }),
+        GlobalFuncArg::PtrToArena => {
+            // Mirrors kernel `verifier.c:10370` `ARG_PTR_TO_ARENA`
+            // arg-check: accepts `PTR_TO_ARENA` or any `SCALAR_VALUE`
+            // (no NULL/zero requirement). Comment in the kernel:
+            // "Can pass any value and the kernel won't crash, but only
+            // PTR_TO_ARENA or SCALAR make sense." Required for
+            // arena_htab_llvm where `htab = bpf_alloc(...)` returns
+            // a possibly-null arena pointer and the program calls
+            // `htab_update_elem(htab, …)` without a NULL check —
+            // both branches reach the call: non-null path with
+            // `PtrToArena`, null path with `ScalarValue 0` (or
+            // `PtrToArenaOrNull` if the verifier didn't narrow yet).
+            // The kernel accepts because `cast_kern` is an LLVM-
+            // implicit nop under `__BPF_FEATURE_ADDR_SPACE_CAST`
+            // (bpf_arena_common.h:38) — the arena address space is
+            // sparse-mapped 4GB and a null arena access faults
+            // softly, so the verifier doesn't gate on null-ness here.
+            let _ = scalar_is_zero;
+            matches!(
+                actual,
+                RegType::PtrToArena { .. }
+                    | RegType::PtrToArenaOrNull { .. }
+                    | RegType::ScalarValue
+            )
+        }
         GlobalFuncArg::PermissivePtr => match actual {
             RegType::PtrToCtx
             | RegType::PtrToStack { .. }
