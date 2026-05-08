@@ -87,4 +87,45 @@ impl BtfContext {
         let name = self.get_string(ty.name_off)?;
         Some((name, ty.size_or_type))
     }
+
+    /// Classify a `__ksym` extern's type chain (the var's `size_or_type`
+    /// from `.ksyms` DATASEC) into `(struct_name, is_percpu)`.
+    ///
+    /// Walks past TYPEDEF/CONST/VOLATILE/RESTRICT modifiers, capturing any
+    /// `percpu` TYPE_TAG seen. Terminates at STRUCT/UNION/FWD (returning
+    /// the name) or any other terminal kind (returning `None` for
+    /// `struct_name` — typeless / primitive ksyms).
+    pub fn classify_ksym_type(&self, start_id: u32) -> (Option<String>, bool) {
+        use super::super::types::{
+            BTF_KIND_CONST, BTF_KIND_FWD, BTF_KIND_RESTRICT, BTF_KIND_STRUCT, BTF_KIND_TYPE_TAG,
+            BTF_KIND_TYPEDEF, BTF_KIND_UNION, BTF_KIND_VOLATILE,
+        };
+        let mut id = start_id;
+        let mut is_percpu = false;
+        for _ in 0..16 {
+            let Some(t) = self.types.get(&id) else { break };
+            match t.kind() {
+                BTF_KIND_TYPEDEF
+                | BTF_KIND_CONST
+                | BTF_KIND_VOLATILE
+                | BTF_KIND_RESTRICT => {
+                    id = t.size_or_type;
+                }
+                BTF_KIND_TYPE_TAG => {
+                    if self.get_string(t.name_off) == Some("percpu") {
+                        is_percpu = true;
+                    }
+                    id = t.size_or_type;
+                }
+                BTF_KIND_STRUCT | BTF_KIND_UNION | BTF_KIND_FWD => {
+                    return (
+                        self.get_string(t.name_off).map(|s| s.to_string()),
+                        is_percpu,
+                    );
+                }
+                _ => return (None, is_percpu),
+            }
+        }
+        (None, is_percpu)
+    }
 }

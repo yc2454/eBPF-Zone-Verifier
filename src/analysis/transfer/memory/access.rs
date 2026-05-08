@@ -101,6 +101,7 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             id: _,
             offset: map_off_opt,
             map_idx,
+            ..
         } => {
             if let Some(map_def) = ctx.map_defs.get(map_idx) {
                 if map_def.map_flags & constants::BPF_F_WRONLY_PROG != 0 {
@@ -288,7 +289,11 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             // Mirrors PtrToBtfId's lax admit for layout-known names
             // not in `mem_region_model`.
         }
-        PtrToMapKptr { pointee_btf_id, .. } => {
+        PtrToMapKptr {
+            pointee_btf_id,
+            offset: reg_off,
+            ..
+        } => {
             // Field deref through a kptr loaded from a map's `__kptr*`
             // field. Kernel admits these via `btf_struct_access` using
             // the kptr's pointee BTF (mark_btf_ld_reg attenuates the
@@ -311,9 +316,16 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             // caller are i16/i64 of the load instruction; we only
             // enforce when the pointee BTF id resolves to a known
             // size (>0).
+            // Effective offset into the pointee struct = reg.offset
+            // (carried from prior `R = R + K` ALU per session 14a) plus the
+            // load insn's immediate `off`. Programs use the
+            // `R += sizeof_field; R = *(T *)(R - sizeof_field)` idiom
+            // (jit_probe_mem.c) to test JIT probe-mem path; the deref is at
+            // effective offset 0 even though insn `off` is negative.
             let pointee_size = ctx.btf.type_size_bytes(pointee_btf_id);
+            let eff_off = (off as i64).saturating_add(reg_off as i64);
             if pointee_size > 0
-                && (off < 0 || (off as i64).saturating_add(size) > pointee_size as i64)
+                && (eff_off < 0 || eff_off.saturating_add(size) > pointee_size as i64)
             {
                 let name = ctx
                     .btf
@@ -322,7 +334,7 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
                     .unwrap_or_else(|| format!("btf_id_{pointee_btf_id}"));
                 error!(
                     "[Verifier] pc {}: access beyond struct {} at off {} size {}",
-                    pc, name, off, size
+                    pc, name, eff_off, size
                 );
                 env.fail(VerificationError::UnsafeGenericLoad {
                     pc,
@@ -403,6 +415,7 @@ pub fn check_store(
             id: _,
             offset: map_off,
             map_idx,
+            ..
         } => {
             if let Some(map_def) = ctx.map_defs.get(map_idx) {
                 if map_def.map_flags & constants::BPF_F_RDONLY_PROG != 0 {
@@ -522,6 +535,7 @@ pub fn check_store(
         //     mem_region_model. Future work: extend mem_region_model with
         //     entries for named kernel structs and tighten this arm.
         PtrToBtfId { .. } => {
+            use crate::analysis::machine::reg_types::PtrFlags;
             let is_unknown = matches!(
                 base_ty,
                 PtrToBtfId {
@@ -529,6 +543,14 @@ pub fn check_store(
                     ..
                 }
             );
+            // MEM_ALLOC: `PTR_TO_BTF_ID | MEM_ALLOC` (kernel) marks
+            // pointers into program-owned objects (`bpf_obj_new`,
+            // `bpf_per_cpu_ptr` of a local `__percpu_kptr`). The
+            // kernel allows direct field stores via `btf_struct_access`
+            // — no field-table check needed on our side. Without this,
+            // `percpu_alloc_array::test_array_map_2`'s `v->c = 1`
+            // FRs.
+            let is_mem_alloc = base_ty.ptr_flags().contains(PtrFlags::MEM_ALLOC);
             // Conntrack types: `nf_conn___init` is the transient
             // init-state from `bpf_skb_ct_alloc` / `bpf_xdp_ct_alloc`
             // (pre-insert), `nf_conn` is the post-insert form. Kernel
@@ -544,6 +566,7 @@ pub fn check_store(
             );
             if !is_unknown
                 && !store_skip
+                && !is_mem_alloc
                 && !mem_region_model::is_valid_mem_region_read(state.types.get(base), off, size)
             {
                 error!(

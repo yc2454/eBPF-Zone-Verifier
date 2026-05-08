@@ -66,6 +66,25 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             env.fail(VerificationError::UnreleasedReference {});
             return vec![];
         }
+        // Kernel rejects bpf_tail_call from any program that takes a
+        // refcounted entry arg ("program with __ref argument cannot
+        // tail call" — struct_ops_refcounted_fail__tail_call). The
+        // ref obligation is on the *program*, not just on the live
+        // active_refs at the call site: once the entry-acquired ref
+        // is released, the tail-call would jump into a different
+        // program that has no record of the ref's prior existence,
+        // breaking the kernel's per-prog ref-tracking invariant.
+        if let Some(args) = env.ctx.entry_args.as_ref()
+            && args.iter().any(|a| {
+                matches!(
+                    a,
+                    crate::analysis::machine::context::EntryArg::TrustedRefcountedTask { .. }
+                )
+            })
+        {
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R0 });
+            return vec![];
+        }
         // Kernel `check_lock` path (verifier.c v6.15 ~L11096) gates
         // tail_call alongside BPF_EXIT under preempt-disable: tail-calling
         // out of a preempt-disabled region would jump into a different
@@ -89,7 +108,14 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
         // Mirrors `tailcall_fail::reject_tail_call_rcu_lock`. Re-uses
         // the existing InvalidArgType / R0 family — no dedicated
         // variant for this rejection family elsewhere.
-        if state.in_rcu_read_section() {
+        //
+        // Only reject for *explicit* bpf_rcu_read_lock holds — kernel's
+        // `env->cur_state->active_rcu_lock` is incremented by the helper,
+        // not by prog-type implicit RCU (kprobe/raw_tp/PerfEvent/etc.,
+        // which we model via `implicit_rcu_at_entry`). raw_tp programs
+        // legitimately tail_call (test_prog_array_init::entry).
+        let implicit_baseline = if state.implicit_rcu_at_entry { 1 } else { 0 };
+        if state.rcu_read_depth as i32 > implicit_baseline {
             env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R0 });
             return vec![];
         }
@@ -215,46 +241,81 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     //     this is the *previous* slot contents, ownership transferred to
     //     the program. R2's ref is consumed (transferred into the map).
     if helper == constants::BPF_KPTR_XCHG {
+        // Resolve R1 to (kptr_field_kind, pointee_btf_id) — accepts both:
+        //   - `PtrToMapValue { offset, map_idx }` aimed at a kptr field in
+        //     the map's value BTF (existing path, via `map_def.kptr_fields`).
+        //   - `PtrToOwnedKptr { pointee_btf_id, offset }` aimed at a kptr
+        //     field embedded inside a `bpf_obj_new`'d struct (new path,
+        //     via `extract_value_kptr_fields(pointee_btf_id)`).
+        // Kernel `process_kf_arg_ptr_to_kptr` (verifier.c v6.15 ~L13266)
+        // accepts both shapes uniformly via `reg_btf_record(reg)`.
+        // Closes the local_kptr_stash + map_kptr `__kptr` xchg-into-alloc'd
+        // -object idioms.
+        use crate::parsing::elf::{KptrField, KptrFieldKind};
         let r1 = state.types.get(Reg::R1);
-        let RegType::PtrToMapValue {
-            offset: r1_off_opt,
-            map_idx,
-            ..
-        } = r1
-        else {
-            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
-            return vec![];
-        };
-        let final_off = crate::analysis::transfer::memory::map::resolve_const_map_off(
-            &state, Reg::R1, r1_off_opt, 0,
-        );
-        let Some(off_val) = final_off else {
-            env.fail(VerificationError::KptrAccessVariableOffset { pc, map_idx });
-            return vec![];
-        };
-        let map_def = match env.ctx.map_defs.get(map_idx) {
-            Some(m) => m,
-            None => {
-                env.fail(VerificationError::MapNotFound { pc, map_idx });
+        let resolved: Option<(KptrFieldKind, u32)> = match r1 {
+            RegType::PtrToMapValue { offset: r1_off_opt, map_idx, .. } => {
+                let final_off = crate::analysis::transfer::memory::map::resolve_const_map_off(
+                    &state, Reg::R1, r1_off_opt, 0,
+                );
+                let Some(off_val) = final_off else {
+                    env.fail(VerificationError::KptrAccessVariableOffset { pc, map_idx });
+                    return vec![];
+                };
+                let map_def = match env.ctx.map_defs.get(map_idx) {
+                    Some(m) => m,
+                    None => {
+                        env.fail(VerificationError::MapNotFound { pc, map_idx });
+                        return vec![];
+                    }
+                };
+                crate::analysis::transfer::memory::map::kptr_field_at(map_def, off_val, 8)
+                    .map(|f| (f.kind, f.pointee_btf_id))
+            }
+            RegType::PtrToOwnedKptr { pointee_btf_id: Some(struct_btf_id), offset: r1_off, .. } => {
+                let off_val = r1_off as i64;
+                let fields: Vec<KptrField> =
+                    env.ctx.btf.extract_value_kptr_fields(struct_btf_id);
+                fields
+                    .into_iter()
+                    .find(|f| f.offset as i64 == off_val)
+                    .map(|f| (f.kind, f.pointee_btf_id))
+            }
+            // Third resolver path: R1 = `xchg_result + K` aimed at a
+            // kptr field embedded inside the previously xchg'd object
+            // (`unstash_rb_node` idiom). The pointee struct's BTF id
+            // identifies the container; `offset` (bumped by ALU) hits
+            // the inner kptr field. Mirror the PtrToOwnedKptr arm.
+            // Kernel `process_kf_arg_ptr_to_kptr` accepts both shapes
+            // uniformly via `reg_btf_record(reg)` (verifier.c v6.15).
+            RegType::PtrToMapKptr { pointee_btf_id: struct_btf_id, offset: r1_off, flags, .. }
+                if flags.contains(crate::analysis::machine::reg_types::PtrFlags::MEM_ALLOC) =>
+            {
+                let off_val = r1_off as i64;
+                let fields: Vec<KptrField> =
+                    env.ctx.btf.extract_value_kptr_fields(struct_btf_id);
+                fields
+                    .into_iter()
+                    .find(|f| f.offset as i64 == off_val)
+                    .map(|f| (f.kind, f.pointee_btf_id))
+            }
+            _ => {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
                 return vec![];
             }
         };
-        let Some(field) =
-            crate::analysis::transfer::memory::map::kptr_field_at(map_def, off_val, 8)
-        else {
+        let Some((kind, pointee_btf_id)) = resolved else {
             env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
             return vec![];
         };
-        use crate::parsing::elf::KptrFieldKind;
-        if matches!(field.kind, KptrFieldKind::Unref | KptrFieldKind::Uptr) {
+        if matches!(kind, KptrFieldKind::Unref | KptrFieldKind::Uptr) {
             // Unref kptr: "off=N kptr isn't referenced kptr".
             // Uptr: kptr_xchg has no meaning on a userspace-pointer slot —
             // mirror the unref path's rejection.
             env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
             return vec![];
         }
-        let pointee_btf_id = field.pointee_btf_id;
-        let slot_flags = match field.kind {
+        let slot_flags = match kind {
             KptrFieldKind::Ref => crate::analysis::machine::reg_types::PtrFlags::MEM_ALLOC,
             KptrFieldKind::Rcu => crate::analysis::machine::reg_types::PtrFlags::RCU,
             KptrFieldKind::Percpu => crate::analysis::machine::reg_types::PtrFlags::PERCPU,
@@ -306,27 +367,49 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
         // showed. Skip the check when R2 is null (no pointee) or its
         // pointee BTF id is unknown (lite-scope producers).
         if !r2_is_null {
-            let r2_pointee = match r2 {
-                RegType::PtrToOwnedKptr { pointee_btf_id, .. } => pointee_btf_id,
-                RegType::PtrToMapKptr { pointee_btf_id, .. } => Some(pointee_btf_id),
+            let kptr_name = env.ctx.btf.struct_name(pointee_btf_id);
+            let r2_name = match r2 {
+                RegType::PtrToOwnedKptr {
+                    pointee_btf_id: Some(id),
+                    ..
+                } => env.ctx.btf.struct_name(id),
+                RegType::PtrToMapKptr { pointee_btf_id, .. } => {
+                    env.ctx.btf.struct_name(pointee_btf_id)
+                }
+                // bpf_percpu_obj_new returns PtrToBtfId carrying the
+                // local-BTF type_name directly. Match on that for the
+                // pointee-type-mismatch check (kernel
+                // "invalid kptr access, R2 type=percpu_ptr_X
+                // expected=ptr_Y" — closes
+                // percpu_alloc_fail::test_array_map_2).
+                RegType::PtrToBtfId { type_name, .. } => Some(type_name),
                 _ => None,
             };
-            if let Some(r2_id) = r2_pointee {
-                let kptr_name = env.ctx.btf.struct_name(pointee_btf_id);
-                let r2_name = env.ctx.btf.struct_name(r2_id);
-                if let (Some(a), Some(b)) = (kptr_name, r2_name)
-                    && a != b
-                {
-                    env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
-                    return vec![];
-                }
+            if let (Some(a), Some(b)) = (kptr_name, r2_name)
+                && a != b
+            {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
+                return vec![];
             }
         }
 
-        // Consume R2's ref (transfer ownership into the map).
+        // Consume R2's ref (transfer ownership into the map). Aliases
+        // pointing to the same object are valid for read access only
+        // while the surrounding RCU read section holds (the object
+        // lives via the map slot, but our local ref is gone). Kernel
+        // model: when RCU is held, aliases survive as
+        // `PTR_TO_BTF_ID | MEM_RCU` (writable / accepted by per-cpu-
+        // ptr); otherwise they must be `mark_reg_unknown`-style
+        // invalidated. Closes percpu_alloc_array::test_array_map_10
+        // (bpf_rcu_read_lock around the body) while keeping
+        // percpu_alloc_fail::test_array_map_3 (no RCU) FA-safe.
         if let Some(id) = r2_ref {
             state.release_ref(id);
-            state.invalidate_ref(id);
+            if state.in_rcu_read_section() {
+                state.convert_ref_to_non_owning(id);
+            } else {
+                state.invalidate_ref(id);
+            }
         }
 
         // R0 = previous slot contents: PtrToMapKptrOrNull, fresh ref_id.
@@ -337,6 +420,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
                 pointee_btf_id,
                 ref_id: Some(new_ref),
                 flags: slot_flags,
+                offset: 0,
             },
         );
         state.domain.forget(Reg::R0);
@@ -478,6 +562,31 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     //     carries helper post-state forward.
     if is_callback_helper(helper) {
         return transfer_callback_helper(env, state, &in_types, helper);
+    }
+
+    // bpf_timer_init cross-arg map_uid check: kernel rejects "timer
+    // pointer in R1 map_uid=N doesn't match map pointer in R2
+    // map_uid=M" when val (R1's owning map_uid, propagated through
+    // chained map-of-maps lookups) and the target map (R2) are
+    // different instances. Only fires when both sides have a Some
+    // map_uid — direct map decls (PtrToMapObject) carry no uid, so
+    // the common timer.c::race pattern (val from same array, R2 is
+    // &array) is unaffected. Closes timer_mim_reject::test1.
+    if helper == constants::BPF_TIMER_INIT {
+        if let (
+            RegType::PtrToMapValue {
+                map_uid: Some(u1), ..
+            },
+            RegType::PtrToMapValue {
+                map_uid: Some(u2), ..
+            },
+        ) = (in_types.get(Reg::R1), in_types.get(Reg::R2))
+        {
+            if u1 != u2 {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
+                return vec![];
+            }
+        }
     }
 
     // bpf_get_local_storage doesn't not support type 1 map and flag must be 0
@@ -776,7 +885,24 @@ fn transfer_callback_helper(
         constants::BPF_FIND_VMA => Some(Reg::R4),
         _ => None,
     };
-    if let Some(ctx_reg) = cb_ctx_reg
+    // Only invalidate when the cb body could plausibly destroy (re-init
+    // or overwrite) the dynptr — kernel `destroy_if_dynptr_stack_slot`
+    // fires on real init operations OR direct stack writes that
+    // overlap a dynptr slot. Without this gate we FR
+    // dynptr_success::test_ringbuf (cb just reads via bpf_dynptr_data).
+    // The pessimism is still required for:
+    //   - `invalid_data_slices`: cb writes `*data = 123` to the ctx arg
+    //     (the &dynptr stack address), partially destroying it →
+    //     `cb_body_store_offsets` is non-empty.
+    //   - cbs that call dynptr-init kfuncs → `cb_body_can_reinit_dynptr`.
+    let cb_could_reinit = env.cb_body_can_reinit_dynptr.contains(&cb_entry)
+        || env
+            .cb_body_store_offsets
+            .get(&cb_entry)
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+    if cb_could_reinit
+        && let Some(ctx_reg) = cb_ctx_reg
         && let RegType::PtrToStack { frame_level } = skip_state.types.get(ctx_reg)
         && let Some(off) = skip_state.domain.get_distance_fixed(ctx_reg, Reg::R10)
         && let Ok(base_off) = i16::try_from(off)
@@ -854,6 +980,21 @@ fn transfer_callback_helper(
     // hits "R2/R3 !read_ok".
     let mut ctx_propagations: Vec<(Reg, RegType, Tnum, (i64, i64))> = Vec::new();
     let snap = |st: &State, r: Reg| (st.types.get(r), st.get_tnum(r), st.domain.get_interval(r));
+
+    // bpf_timer_set_callback: caller's R1 = `&map_value->timer`
+    // (PtrToMapValue carrying the timer's owning map_idx). Captured here
+    // so the cb-arg typing block below can install
+    // R1=PtrToMapObject{map_idx}, R2/R3=PtrToMapValue{map_idx} once
+    // `state` has been moved into `cb_state`.
+    let caller_r1_for_timer_cb: Option<usize> =
+        if helper == constants::BPF_TIMER_SET_CALLBACK {
+            match state.types.get(Reg::R1) {
+                RegType::PtrToMapValue { map_idx, .. } => Some(map_idx),
+                _ => None,
+            }
+        } else {
+            None
+        };
     match helper {
         // bpf_loop(nr_loops, cb, ctx, flags) → cb(idx, ctx); R1=idx (scalar, set later), ctx → R2.
         constants::BPF_LOOP
@@ -974,14 +1115,72 @@ fn transfer_callback_helper(
             ref_id: None,
         };
         match helper {
-            // cb(map, key, val, ctx) — R2=key, R3=val (lax pointers).
+            // cb(map, key, val, ctx) — R2=key, R3=val. Kernel sets
+            // R2=PTR_TO_MAP_KEY, R3=PTR_TO_MAP_VALUE (verifier.c
+            // `set_map_elem_callback_state`). We don't track PTR_TO_MAP_KEY
+            // distinctly; approximate both as `PtrToMapValue { map_idx }`
+            // pulled from caller's R1 (the map ptr passed to
+            // bpf_for_each_map_elem). This admits the cb body's
+            // `bpf_map_*_elem(map, key, val, ...)` calls — validators
+            // delegate through `validate_readable_mem` which accepts
+            // PtrToMapValue and bound-checks against the map's value_size.
+            //
+            // Limitation: when `key_size > value_size` (rare hash maps
+            // with large keys / small values), the read of `key_size`
+            // bytes from a PtrToMapValue with mem_size=value_size
+            // under-reads — this would FA. Both failing selftests
+            // (`for_each_hash_map_elem`, `for_each_hash_modify`) have
+            // key_size <= value_size, so the approximation is safe for
+            // the closures. Tighter typing (real PTR_TO_MAP_KEY) is
+            // future work.
             constants::BPF_FOR_EACH_MAP_ELEM => {
+                // R1 was just installed via ctx_propagations from
+                // caller's R1 (the map ptr passed to
+                // bpf_for_each_map_elem) — read it back here to derive
+                // map_idx for the cb's R2/R3 typing.
+                let caller_map_idx = match cb_state.types.get(Reg::R1) {
+                    RegType::PtrToMapObject { map_idx } => Some(map_idx),
+                    _ => None,
+                };
                 for r in [Reg::R2, Reg::R3] {
-                    cb_state.types.set(r, unknown_btf());
+                    let ty = match caller_map_idx {
+                        Some(map_idx) => RegType::PtrToMapValue {
+                            id: crate::analysis::machine::reg_types::new_ptr_id(),
+                            offset: Some(0),
+                            map_idx,
+                            map_uid: None,
+                        },
+                        None => unknown_btf(),
+                    };
+                    cb_state.types.set(r, ty);
                     cb_state.domain.forget(r);
+                    if caller_map_idx.is_some() {
+                        cb_state.domain.init_map_value_ptr(r);
+                    }
                     cb_state.set_tnum(r, Tnum::unknown());
                     cb_state.clear_scalar_id(r);
                 }
+            }
+            // cb(struct bpf_dynptr *dynptr, void *ctx) — kernel sets
+            // R1 = PTR_TO_DYNPTR | DYNPTR_TYPE_USER | MEM_RDONLY
+            // (`set_user_ringbuf_callback_state`, verifier.c v6.15
+            // ~L10800). PtrToDynptr accepts dynptr consumer kfuncs
+            // (`bpf_dynptr_data`, `_read`); load/store on it falls
+            // through to UnsafeGenericLoad/Store ("invalid mem access
+            // 'dynptr_ptr'"); ALU demotes to scalar (kernel rejects
+            // "dereference of modified dynptr_ptr ptr").
+            constants::BPF_USER_RINGBUF_DRAIN => {
+                use crate::analysis::machine::stack_state::DynptrKind;
+                cb_state.types.set(
+                    Reg::R1,
+                    RegType::PtrToDynptr {
+                        kind: DynptrKind::User,
+                        rdonly: true,
+                    },
+                );
+                cb_state.domain.forget(Reg::R1);
+                cb_state.set_tnum(Reg::R1, Tnum::unknown());
+                cb_state.clear_scalar_id(Reg::R1);
             }
             // cb(task, vma, ctx) — R2 = PTR_TO_BTF_ID{vm_area_struct, TRUSTED}.
             constants::BPF_FIND_VMA => {
@@ -1004,36 +1203,65 @@ fn transfer_callback_helper(
     // Timer cb signature is `(struct bpf_map *, void *key, void *value)`
     // — kernel `set_timer_callback_state` (verifier.c ~L10685, v6.15)
     // sets R1=CONST_PTR_TO_MAP, R2=PTR_TO_MAP_KEY, R3=PTR_TO_MAP_VALUE
-    // off the timer's owning map. Without typed R2/R3 the cb body
-    // hits "R2 !read_ok" on the very first `Mov R1=R2`.
-    // Approximate with scalar pointers: the cb in
-    // `verifier_private_stack.c::private_stack_async_callback_2`
-    // immediately forwards `key` to a global subprog that
-    // dereferences it as `int *`, so a generic readable scalar
-    // suffices for that closure. Tighter typing (real PTR_TO_MAP_KEY
-    // / VALUE) is future work — surfaced as the next FR if any test
-    // does map-aware arithmetic in a timer cb.
+    // off the timer's owning map. Caller's R1 is `&map_value->timer`
+    // (PtrToMapValue with the timer's owning map_idx); pull map_idx
+    // from there. Required so the cb body's `bpf_timer_start(timer, ...)`
+    // sees R3 = PtrToMapValue{map_idx, offset:0} and the helper's
+    // Timer-field validator can walk the value type — without this
+    // R3 falls back to PtrToBtfId{type_name:"unknown"} and the
+    // validator rejects (timer.c::race).
     if helper == constants::BPF_TIMER_SET_CALLBACK {
-        // R1=map ptr, R2=key ptr, R3=value ptr. We don't track
-        // PTR_TO_MAP_KEY/VALUE distinctly, so approximate with a lax
-        // BTF-typed pointer (type_name="unknown" gives the existing
-        // "unknown-layout" load/store policy: any offset accepted,
-        // loads produce ScalarValue). Concrete enough that subprogs
-        // dereferencing the key (e.g. `subprog1(key) → *val`) verify;
-        // loose enough that we don't claim more precision than the
-        // kernel actually requires for these pointer args.
+        let timer_map_idx = match caller_r1_for_timer_cb {
+            Some(idx) => Some(idx),
+            None => None,
+        };
         use crate::analysis::machine::reg_types::PtrFlags;
         let unknown_btf = || RegType::PtrToBtfId {
             type_name: "unknown",
             flags: PtrFlags::TRUSTED,
             ref_id: None,
         };
-        for r in [Reg::R1, Reg::R2, Reg::R3] {
-            cb_state.types.set(r, unknown_btf());
-            cb_state.domain.forget(r);
-            cb_state.set_tnum(r, Tnum::unknown());
-            cb_state.clear_scalar_id(r);
+        // R1 = CONST_PTR_TO_MAP (the timer's owning map).
+        let r1_ty = match timer_map_idx {
+            Some(map_idx) => RegType::PtrToMapObject { map_idx },
+            None => unknown_btf(),
+        };
+        cb_state.types.set(Reg::R1, r1_ty);
+        cb_state.domain.forget(Reg::R1);
+        cb_state.set_tnum(Reg::R1, Tnum::unknown());
+        cb_state.clear_scalar_id(Reg::R1);
+        // R2 = key. Kernel sets PTR_TO_MAP_KEY (size=key_size). We don't
+        // track PTR_TO_MAP_KEY distinctly; the lax BtfId{unknown}
+        // already accepts the deref-and-forward pattern that
+        // verifier_private_stack.c::private_stack_async_callback_2
+        // exercises (`subprog1(key) → tmp[0] = *val → subprog2(tmp)`),
+        // so don't tighten this slot — typing it as PtrToMapValue
+        // bound-checks against value_size which forces a different
+        // (incorrect) load-size policy through the int-deref path.
+        cb_state.types.set(Reg::R2, unknown_btf());
+        cb_state.domain.forget(Reg::R2);
+        cb_state.set_tnum(Reg::R2, Tnum::unknown());
+        cb_state.clear_scalar_id(Reg::R2);
+        // R3 = value. Type as PtrToMapValue{map_idx, offset:0} so the
+        // cb body's `bpf_timer_*(value, ...)` Timer-field validator
+        // can walk the map's value BTF (timer.c::race_timer_callback's
+        // `bpf_timer_start(timer)` where `timer` is the cb's R3 arg).
+        let r3_ty = match timer_map_idx {
+            Some(map_idx) => RegType::PtrToMapValue {
+                id: crate::analysis::machine::reg_types::new_ptr_id(),
+                offset: Some(0),
+                map_idx,
+                map_uid: None,
+            },
+            None => unknown_btf(),
+        };
+        cb_state.types.set(Reg::R3, r3_ty);
+        cb_state.domain.forget(Reg::R3);
+        if timer_map_idx.is_some() {
+            cb_state.domain.init_map_value_ptr(Reg::R3);
         }
+        cb_state.set_tnum(Reg::R3, Tnum::unknown());
+        cb_state.clear_scalar_id(Reg::R3);
     }
 
     cb_state.pc = cb_entry;
@@ -1112,13 +1340,17 @@ pub(crate) fn transfer_call_rel(
         }
         // Static call-graph gate: kernel rejects a global subprog whose
         // body transitively reaches a MIGHT_SLEEP helper/kfunc when the
-        // call site is inside an irq- or preempt-disabled region. Path-
-        // independent (closes irq_sleepable_*_subprog* and
-        // preempt_global_sleepable_subprog_indirect FAs that escape the
-        // per-call MIGHT_SLEEP gate when the dataflow-pruned path
-        // dead-codes the inner sleepable call).
+        // call site is inside an irq-, preempt-, or RCU-disabled region
+        // (verifier.c v6.15 ~L10543). Path-independent (closes
+        // irq_sleepable_*_subprog*, preempt_global_sleepable_subprog_
+        // indirect, and rcu_read_lock_sleepable_*_global_subprog FAs
+        // that escape the per-call MIGHT_SLEEP gate when the
+        // dataflow-pruned path dead-codes the inner sleepable call).
+        let explicit_rcu_baseline =
+            if state.implicit_rcu_at_entry { 1 } else { 0 };
+        let rcu_active = state.rcu_read_depth > explicit_rcu_baseline;
         if env.ctx.may_sleep_subprogs.contains(&target)
-            && (state.in_irq_disabled() || state.in_preempt_disabled())
+            && (state.in_irq_disabled() || state.in_preempt_disabled() || rcu_active)
         {
             env.fail(VerificationError::GlobalFuncMaySleepInNonSleepable {
                 pc,
@@ -1309,6 +1541,12 @@ pub(crate) fn transfer_call_rel(
                     // ARG_PTR_TO_DYNPTR | MEM_RDONLY (btf.c:7784) — no
                     // override.
                 }
+                crate::parsing::btf::GlobalFuncArg::PtrToArena => {
+                    // Preserve caller's PtrToArena. Arena is a sparse
+                    // 4GB address space and the body verifies arithmetic
+                    // on it via the PtrToArena fast-path in
+                    // check_ptr_arithmetic — no override needed.
+                }
                 crate::parsing::btf::GlobalFuncArg::PtrToBtfIdTrusted {
                     type_name,
                     nullable,
@@ -1426,6 +1664,31 @@ fn caller_arg_compatible<F: Fn() -> bool>(
             _ => false,
         },
         GlobalFuncArg::PtrToDynptr => matches!(actual, RegType::PtrToStack { .. }),
+        GlobalFuncArg::PtrToArena => {
+            // Mirrors kernel `verifier.c:10370` `ARG_PTR_TO_ARENA`
+            // arg-check: accepts `PTR_TO_ARENA` or any `SCALAR_VALUE`
+            // (no NULL/zero requirement). Comment in the kernel:
+            // "Can pass any value and the kernel won't crash, but only
+            // PTR_TO_ARENA or SCALAR make sense." Required for
+            // arena_htab_llvm where `htab = bpf_alloc(...)` returns
+            // a possibly-null arena pointer and the program calls
+            // `htab_update_elem(htab, …)` without a NULL check —
+            // both branches reach the call: non-null path with
+            // `PtrToArena`, null path with `ScalarValue 0` (or
+            // `PtrToArenaOrNull` if the verifier didn't narrow yet).
+            // The kernel accepts because `cast_kern` is an LLVM-
+            // implicit nop under `__BPF_FEATURE_ADDR_SPACE_CAST`
+            // (bpf_arena_common.h:38) — the arena address space is
+            // sparse-mapped 4GB and a null arena access faults
+            // softly, so the verifier doesn't gate on null-ness here.
+            let _ = scalar_is_zero;
+            matches!(
+                actual,
+                RegType::PtrToArena { .. }
+                    | RegType::PtrToArenaOrNull { .. }
+                    | RegType::ScalarValue
+            )
+        }
         GlobalFuncArg::PermissivePtr => match actual {
             RegType::PtrToCtx
             | RegType::PtrToStack { .. }

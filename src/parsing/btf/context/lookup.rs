@@ -100,6 +100,39 @@ impl BtfContext {
         self.type_size_bytes_depth(type_id, 0)
     }
 
+    /// True if the struct (or any nested struct member) contains a
+    /// PTR-typed field. Used by `bpf_percpu_obj_new` validation to
+    /// reject pointee structs that would carry stale pointers across
+    /// percpu copies (kernel "type ID argument must be of a struct of
+    /// scalars"). Walks one level into nested structs/unions; arrays
+    /// of scalars are fine, arrays of pointers are not.
+    pub fn struct_contains_pointer(&self, type_id: u32) -> bool {
+        self.struct_contains_pointer_depth(type_id, 0)
+    }
+
+    fn struct_contains_pointer_depth(&self, type_id: u32, depth: u32) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let id = self.peel_modifiers(type_id);
+        let Some(ty) = self.types.get(&id) else {
+            return false;
+        };
+        match ty.kind() {
+            BTF_KIND_PTR => true,
+            BTF_KIND_STRUCT | BTF_KIND_UNION => ty
+                .members
+                .iter()
+                .any(|m| self.struct_contains_pointer_depth(m.type_id, depth + 1)),
+            BTF_KIND_ARRAY => ty
+                .members
+                .first()
+                .map(|m| self.struct_contains_pointer_depth(m.type_id, depth + 1))
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+
     pub(in crate::parsing::btf) fn type_size_bytes_depth(&self, type_id: u32, depth: u32) -> u32 {
         if depth > 16 {
             return 0;

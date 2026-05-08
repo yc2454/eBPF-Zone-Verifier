@@ -107,6 +107,13 @@ pub enum DynptrKind {
     Skb,
     /// `bpf_dynptr_from_xdp` — into xdp frame data.
     Xdp,
+    /// Kernel-managed user-ringbuf dynptr — synthesized for the
+    /// `bpf_user_ringbuf_drain` cb's R1 (kernel sets
+    /// `PTR_TO_DYNPTR | DYNPTR_TYPE_USER | MEM_RDONLY`,
+    /// `set_user_ringbuf_callback_state` verifier.c v6.15 ~L10800).
+    /// Not stack-based; only ever attached to `RegType::PtrToDynptr`,
+    /// not to a `DynptrSlot` on the stack.
+    User,
 }
 
 /// Per-slot dynptr annotation (W4.2). A dynptr occupies two adjacent
@@ -173,6 +180,19 @@ pub enum PointerBounds {
         anchor: Option<Reg>,
         anchor_lo: Option<i64>, // anchor - reg <= ? (i.e., reg >= anchor + lo)
         anchor_hi: Option<i64>, // reg - anchor <= ? (i.e., reg <= anchor + hi)
+        // Secondary packet anchor relation. For PtrToPacket /
+        // PtrToPacketMeta the primary anchor (AnchorData /
+        // AnchorDataMeta) plus DBM closure isn't enough on fill: the
+        // distance between distinct packet anchors is bounded but not
+        // fixed, so a `r - @data_end` bound proven before spill (e.g.
+        // from a `r + N > data_end` check that tightens both r and
+        // r5's relation to @data_end) cannot be reconstructed from the
+        // saved `r - @data` bound alone. Save the @data_end edge here
+        // and replay it on fill so the post-fill closure preserves the
+        // packet-bounds invariant the access at `r + off` depends on.
+        end_anchor: Option<Reg>,
+        end_lo: Option<i64>,
+        end_hi: Option<i64>,
     },
     Interval {
         off: Option<i64>,     // fixed offset from anchor
@@ -330,6 +350,42 @@ impl StackState {
                     irq_flag: None,
             },
         );
+    }
+
+    /// Widen a scalar slot in-place by joining its bounds and tnum with
+    /// the corresponding slot from a previous explored state. Used by
+    /// the iter_next / may_goto / cb-return widener as a less-destructive
+    /// alternative to `invalidate_slot`: when slot values diverge across
+    /// loop iterations, taking the union (rather than full reset) keeps
+    /// downstream pointer-arithmetic gates (MAX_VAR_OFF) feasible for
+    /// loops whose per-iteration scalar is bounded but not constant
+    /// (e.g. an IPv4 IHL × 4 byte offset that takes values in {20, 40,
+    /// 60} across paths). source_reg / scalar_id are preserved only if
+    /// both sides agree; otherwise they're cleared.
+    ///
+    /// Caller must verify the slot exists; no-op if absent.
+    pub fn widen_slot(&mut self, offset: i16, prev: &SpilledReg) {
+        let Some(cur) = self.slots.get_mut(&offset) else {
+            return;
+        };
+        if !matches!(cur.reg_type, RegType::ScalarValue)
+            || !matches!(prev.reg_type, RegType::ScalarValue)
+        {
+            return;
+        }
+        cur.bounds = ScalarBounds {
+            min: cur.bounds.min.min(prev.bounds.min),
+            max: cur.bounds.max.max(prev.bounds.max),
+        };
+        cur.tnum = cur.tnum.widen(prev.tnum);
+        if cur.source_reg != prev.source_reg {
+            cur.source_reg = None;
+            cur.scalar_id = None;
+        } else if cur.scalar_id != prev.scalar_id {
+            cur.scalar_id = None;
+        }
+        cur.precise = false;
+        cur.ptr_bounds = None;
     }
 
     /// Demote a stack slot's type to ScalarValue while preserving bounds/tnum.

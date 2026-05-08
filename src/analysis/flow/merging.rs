@@ -240,6 +240,29 @@ fn is_readable_ptr(ty: &RegType) -> bool {
             // distinct caller-state shape (`push_async_cb` makes the cb
             // a separate verifier root).
             | PtrToBtfId { .. }
+            // Sock-class pointers (`bpf_skc_lookup_tcp` returns sock_common,
+            // `bpf_sk_lookup_*` returns socket; programs converge them at
+            // the post-null-check `if (sk)` join — vrf_socket_lookup,
+            // test_sk_assign, test_btf_skc_cls_ingress). Without these
+            // two arms get demoted to Scalar at the merge and fail at
+            // `bpf_sk_release` downstream. Each cached path validates its
+            // own sock subtype independently against the release sink
+            // (kernel `bpf_sk_release` accepts both PTR_TO_SOCKET and
+            // PTR_TO_SOCK_COMMON via `btf_struct_ids_match` supertyping).
+            | PtrToSocket { .. } | PtrToSocketOrNull { .. }
+            | PtrToSockCommon { .. } | PtrToSockCommonOrNull { .. }
+            | PtrToTcpSock { .. } | PtrToTcpSockOrNull { .. }
+            // Refcounted-kptr family (PTR_TO_BTF_ID|MEM_ALLOC). The graph-
+            // pop / kptr-xchg patterns in local_kptr_stash + map_kptr
+            // mint these from two different sources (`bpf_obj_new` →
+            // PtrToOwnedKptr; `bpf_kptr_xchg` previous-slot → PtrToMapKptr
+            // with MEM_ALLOC) and converge them at a post-null-check `if`
+            // before passing to a release sink (`bpf_obj_drop`,
+            // `bpf_kfunc_call_test_release`). The kernel accepts both at
+            // the same sink via `reg_btf_record(reg)`; without these two
+            // arms the merge demotes to Scalar.
+            | PtrToOwnedKptr { .. } | PtrToOwnedKptrOrNull { .. }
+            | PtrToMapKptr { .. } | PtrToMapKptrOrNull { .. }
     )
 }
 

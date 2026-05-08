@@ -80,11 +80,22 @@ pub enum RegType {
     PtrToMapValueOrNull {
         id: u32,
         map_idx: usize,
+        /// Fresh per-lookup-instance identifier, propagated through
+        /// chained lookups. Mirrors kernel `map_uid`. Two map-of-maps
+        /// lookups at different keys yield different uids; subsequent
+        /// inner-lookups inherit their owner's uid. Cross-arg checks
+        /// (bpf_timer_init / bpf_wq_init) compare uids to reject
+        /// e.g. timer_mim_reject's `bpf_timer_init(&val->timer,
+        /// inner_map2)` where val came from a different inner-map
+        /// instance. `None` = "unconstrained" (raw map-decl, ALU
+        /// drops, path-merge widening) — never rejects.
+        map_uid: Option<u32>,
     },
     PtrToMapValue {
         id: u32,
         offset: Option<i64>,
         map_idx: usize,
+        map_uid: Option<u32>,
     },
     PtrToSocket {
         ref_id: Option<u32>,
@@ -263,11 +274,24 @@ pub enum RegType {
         pointee_btf_id: u32,
         ref_id: Option<u32>,
         flags: PtrFlags,
+        /// Signed byte-offset within the kptr's pointee struct. Bumped by
+        /// `Add reg, K` / `Sub reg, K` (kernel `verifier.c` v6.15 ~L15170
+        /// preserves PTR_TO_BTF_ID|MEM_* through pointer arithmetic and
+        /// propagates `reg->off`). Required for the
+        /// `R6 = bpf_kptr_xchg(...); R1 = R6 + 16; bpf_kptr_xchg(R1, NULL)`
+        /// idiom (second xchg aimed at a kptr field embedded inside the
+        /// previously xchg'd object — `local_kptr_stash::unstash_rb_node`).
+        /// Release sinks (`bpf_obj_drop`, `bpf_kptr_xchg` arg1) reject
+        /// non-zero offsets in the post-call gate.
+        offset: i32,
     },
     PtrToMapKptrOrNull {
         pointee_btf_id: u32,
         ref_id: Option<u32>,
         flags: PtrFlags,
+        /// Mirrors `PtrToMapKptr.offset` so the offset survives across
+        /// the null-check refinement (`to_non_null` round-trips it).
+        offset: i32,
     },
     /// Pointer to a callback subprogram, produced by `LD_IMM64 BPF_PSEUDO_FUNC`
     /// (W3.4a). Consumed by callback-taking helpers (`bpf_loop`,
@@ -276,6 +300,23 @@ pub enum RegType {
     /// Not dereferenceable as data; arithmetic on it produces a scalar.
     PtrToCallback {
         subprog_pc: u32,
+    },
+    /// Kernel-managed dynptr pointer (kernel `PTR_TO_DYNPTR`).
+    /// Distinct from a stack-based dynptr (which is `PtrToStack` aimed
+    /// at a `DynptrSlot`). Synthesized for the `bpf_user_ringbuf_drain`
+    /// cb's R1 (kernel `set_user_ringbuf_callback_state`,
+    /// verifier.c v6.15 ~L10800). Accepted by dynptr consumers
+    /// (`bpf_dynptr_data`, `_read`); rejected by the
+    /// `validate_dynptr_arg` `uninit:true` branch (constructors)
+    /// and by the `rdwr_only` branch when `rdonly` is set
+    /// (`bpf_dynptr_write`). Not dereferenceable as data — load/store
+    /// fall through to `UnsafeGenericLoad`/`Store` ("invalid mem access
+    /// 'dynptr_ptr'", verifier.c v6.15 ~L7400 `check_mem_access`).
+    /// Pointer arithmetic demotes to scalar (kernel rejects "dereference
+    /// of modified dynptr_ptr ptr").
+    PtrToDynptr {
+        kind: crate::analysis::machine::stack_state::DynptrKind,
+        rdonly: bool,
     },
 }
 
@@ -309,6 +350,24 @@ impl RegType {
                 | PtrToTask { .. }
                 | PtrToOwnedKptr { .. }
                 | PtrToMapKptr { .. }
+        ) || matches!(
+            self,
+            // Acquire-tracked PtrToBtfId (`ref_id: Some`) is the
+            // promoted, post-null-check form of `PtrToBtfIdOrNull`
+            // minted by an ACQUIRE-flagged kfunc returning
+            // `RetKind::PtrToBtfIdNamed` (e.g. `bpf_testmod_ctx_create`).
+            // Kernel guarantees non-null after the program's explicit
+            // null check; treat as null-checked so `condition_outcome`
+            // resolves a redundant `==0` test as dead, preventing the
+            // dead-branch from leaking the live ref into the exit-time
+            // unreleased-reference check (kfunc_call_test::kfunc_call_ctx).
+            //
+            // Restrict to `ref_id: Some` to preserve the legitimate
+            // null-feasibility of UNTRUSTED PtrToBtfId from struct-field
+            // loads (which the kernel can dereference via PROBE_MEM but
+            // which the program may legitimately null-check, e.g.
+            // `task->real_parent` in rcu_read_lock::non_sleepable_rcu_mismatch).
+            RegType::PtrToBtfId { ref_id: Some(_), .. }
         )
     }
 
@@ -320,11 +379,14 @@ impl RegType {
     /// Returns the non-null version of a nullable pointer type
     pub fn to_non_null(&self) -> Option<RegType> {
         match *self {
-            RegType::PtrToMapValueOrNull { id, map_idx } => Some(RegType::PtrToMapValue {
-                offset: Some(0),
-                map_idx,
-                id,
-            }),
+            RegType::PtrToMapValueOrNull { id, map_idx, map_uid } => {
+                Some(RegType::PtrToMapValue {
+                    offset: Some(0),
+                    map_idx,
+                    id,
+                    map_uid,
+                })
+            }
             RegType::PtrToSocketOrNull { ref_id: id } => Some(RegType::PtrToSocket { ref_id: id }),
             RegType::PtrToSockCommonOrNull { ref_id: id } => {
                 Some(RegType::PtrToSockCommon { ref_id: id })
@@ -348,10 +410,12 @@ impl RegType {
                 pointee_btf_id,
                 ref_id,
                 flags,
+                offset,
             } => Some(RegType::PtrToMapKptr {
                 pointee_btf_id,
                 ref_id,
                 flags,
+                offset,
             }),
             RegType::PtrToBtfIdOrNull {
                 id: _,
@@ -391,6 +455,7 @@ impl RegType {
                 offset, map_idx: _, ..
             } => offset,
             RegType::PtrToOwnedKptr { offset, .. } => Some(offset as i64),
+            RegType::PtrToMapKptr { offset, .. } => Some(offset as i64),
             _ => None,
         }
     }
@@ -486,6 +551,15 @@ pub fn new_ref_id() -> u32 {
     REF_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
+/// Fresh per-lookup map_uid (kernel: each map-of-maps lookup result
+/// gets a distinct uid). Zero is reserved for "no uid"; the first
+/// minted is 1.
+pub fn new_map_uid() -> u32 {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static MAP_UID_COUNTER: AtomicU32 = AtomicU32::new(1);
+    MAP_UID_COUNTER.fetch_add(1, Ordering::SeqCst)
+}
+
 /// Fresh identity token for a scalar value. Two registers/slots that share
 /// an id represent the same underlying unknown scalar, so refining one
 /// (e.g. via a conditional) can be propagated to the others.
@@ -556,6 +630,7 @@ pub fn type_family(ty: &RegType) -> u8 {
         PtrToCgroup { .. } | PtrToCgroupOrNull { .. } => 18,
         PtrToTask { .. } | PtrToTaskOrNull { .. } => 19,
         PtrToMapKptr { .. } | PtrToMapKptrOrNull { .. } => 20,
+        PtrToDynptr { .. } => 21,
     }
 }
 
@@ -672,6 +747,7 @@ mod tests {
             pointee_btf_id: 12,
             ref_id: Some(7),
             flags: PtrFlags::UNTRUSTED,
+            offset: 0,
         };
         assert!(n.is_nullable());
         assert!(n.is_null_checked());

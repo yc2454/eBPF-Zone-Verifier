@@ -27,6 +27,30 @@ pub enum EntryArg {
         type_name: &'static str,
         nullable: bool,
     },
+    /// Bounded scalar arg — `ScalarValue` reg-type with an additional
+    /// `[lo, hi]` numeric bound applied to the destination register at
+    /// the BPF_PROG ctx-array load site. Used for LSM int-hook trailing
+    /// `int ret` args where the kernel constrains the value at attach
+    /// to `[-MAX_ERRNO, 0]` — without this bound the program's
+    /// `return ret;` pattern over-rejects against the LSM retval rule.
+    BoundedScalar {
+        lo: i64,
+        hi: i64,
+    },
+    /// struct_ops refcounted `task_struct *task__ref` arg: the kmod
+    /// registers this slot as ref-acquired at entry; the BPF program
+    /// must release the ref before exit. The `ref_id` is allocated
+    /// at `struct_ops_entry_args` build time (one per refcounted slot)
+    /// and seeded into `state.active_refs` at init. The ctx-array load
+    /// at `*(u64 *)(ctx + 8*idx)` materializes as
+    /// `RegType::PtrToTask { ref_id: Some(ref_id) }` so the matching
+    /// `bpf_task_release(task)` consumes the ref through the existing
+    /// KF_RELEASE path. Closes
+    /// struct_ops_refcounted.c::refcounted (the only test that exits
+    /// with an outstanding entry-acquired task ref).
+    TrustedRefcountedTask {
+        ref_id: u32,
+    },
 }
 
 /// Intern a kernel struct/union name resolved from BTF into a `&'static
@@ -138,6 +162,16 @@ pub struct ExecContext {
     /// default `R1 = PtrToCtx` with these. None means "no struct_ops
     /// binding available" — fall back to the default.
     pub entry_args: Option<Vec<EntryArg>>,
+    /// freplace target inheritance: per-arg types for the EXT program's
+    /// R1..Rn entry state. Distinct from `entry_args` because freplace
+    /// programs receive their declared args *directly* in R1..Rn (the
+    /// extension takes the place of a regular subprog call), whereas
+    /// `entry_args` drives the BPF_PROG ctx-array unpacking idiom used
+    /// by Lsm/Tracing/struct_ops. Populated by the runner for
+    /// `SEC("freplace/<target>")` programs from
+    /// `BtfContext::resolve_func_args(func.name)`; consumed by
+    /// `analyze_program_full` to type each argument register at entry.
+    pub freplace_arg_types: Option<Vec<EntryArg>>,
     /// W6.4a-followon: true when the matched struct_ops member's
     /// FUNC_PROTO declares a void return. `transfer_exit` skips the
     /// "R0 not initialized" rejection in this case — void methods are
@@ -230,6 +264,7 @@ pub fn default_exec_ctx() -> ExecContext {
         mode: VerificationMode::Priviledged,
         kfunc: None,
         entry_args: None,
+        freplace_arg_types: None,
         entry_returns_void: false,
         struct_ops_member: None,
         attach_subtype: None,

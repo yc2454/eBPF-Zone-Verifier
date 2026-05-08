@@ -32,6 +32,7 @@ pub(crate) fn apply_call_proto_r0(
     in_types: &TypeState,
     state: &mut State,
     proto: &CallProto,
+    prog_kind: crate::ast::ProgramKind,
 ) -> bool {
     // ReleaseRefFromArg fires before R0 typing because the released
     // ref-id might be the one we'd otherwise read (defensive ordering;
@@ -71,6 +72,26 @@ pub(crate) fn apply_call_proto_r0(
                 }
             }
             SideEffect::DynptrInitOnArg { arg, kind, rdonly } => {
+                // Per-prog-kind override: SchedCls / SchedAct programs
+                // can mutate skb data, so a `bpf_dynptr_from_skb`-init'd
+                // dynptr is rdwr there even though the static proto sets
+                // rdonly=true (kernel default for read-only skb prog
+                // types). Mirrors kernel `bpf_dynptr_init` which omits
+                // DYNPTR_RDONLY_BIT when the prog_type allows packet
+                // writes. Closes test_l4lb_noinline_dynptr::balancer_ingress
+                // (`bpf_dynptr_slice_rdwr` after `bpf_dynptr_from_skb`
+                // in a `tc` program).
+                let rdonly = if matches!(kind, DynptrKind::Skb)
+                    && matches!(
+                        prog_kind,
+                        crate::ast::ProgramKind::SchedCls
+                            | crate::ast::ProgramKind::SchedAct
+                    )
+                {
+                    false
+                } else {
+                    rdonly
+                };
                 let reg = arg_reg(arg);
                 let Some((frame, base_off)) = resolve_stack_arg(state, reg) else {
                     // Validator already accepted the arg, so we expect a

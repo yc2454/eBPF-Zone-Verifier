@@ -1162,6 +1162,27 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         ])
         .flags(CallFlags::MIGHT_SLEEP),
 
+        // bpf_copy_from_user_task(void *dst, u32 size, const void __user
+        // *src, struct task_struct *task, u64 flags) — sleepable variant
+        // that reads from another task's address space. Required as a
+        // *helper* proto (helper id 191) so the MIGHT_SLEEP gate fires
+        // when called inside an RCU read region — closes
+        // rcu_read_lock::inproper_sleepable_helper. R4 uses bare
+        // `PtrToBtfId` (any BTF id) rather than `PtrToBtfIdNamed{"task_struct"}`
+        // because kernel selftests pass `task_struct___local`-typed
+        // subprog args via `__arg_trusted` (libbpf rewrites the FUNC
+        // proto to a local struct alias for CO-RE compatibility);
+        // strict-name matching breaks `verifier_global_ptr_args::flavor_ptr_*`.
+        constants::BPF_COPY_FROM_USER_TASK => CallProto::with_args([
+            PtrToUninitMem, // R1: dst
+            ConstSize,      // R2: size
+            Anything,       // R3: user_ptr
+            PtrToBtfId,     // R4: task (any BTF id; libbpf alias-tolerant)
+            Anything,       // R5: flags
+        ])
+        .mem_size_pairs(&pairs::COPY_FROM_USER_STR)
+        .flags(CallFlags::MIGHT_SLEEP),
+
         constants::BPF_GET_CGROUP_CLASS_ID => {
             CallProto::with_args([PtrToCtx, DontCare, DontCare, DontCare, DontCare])
         }
@@ -1464,6 +1485,12 @@ const SCHED_EXT_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 2] = [
     crate::ast::ProgramKind::Syscall,
 ];
 
+/// Sock-ops-only kfuncs (kernel `bpf_sock_ops_kfunc_set` in
+/// net/core/filter.c). Only `bpf_sock_ops_enable_tx_tstamp` lives here
+/// today.
+const SOCK_OPS_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 1] =
+    [crate::ast::ProgramKind::SockOps];
+
 /// Kfunc prototypes indexed by kfunc name. Returns `None` for kfuncs not
 /// yet on the proto path — the caller falls back to the legacy bespoke
 /// dispatch in `kfunc.rs`.
@@ -1645,9 +1672,9 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // `size` bytes are accessible. No ref tracking — Local dynptrs
         // are pure metadata and need no release.
         "bpf_dynptr_from_mem" => CallProto::with_args([
-            PtrToMem,    // R1: source buffer
-            ConstSize,   // R2: size
-            Anything,    // R3: flags (rdonly bit etc. — not modeled yet)
+            PtrToMem,        // R1: source buffer
+            ConstSizeOrZero, // R2: size (kernel accepts 0 — returns -EINVAL at runtime, not at verification)
+            Anything,        // R3: flags (rdonly bit etc. — not modeled yet)
             DynptrArg { uninit: true, rdwr_only: false }, // R4: &dynptr
             DontCare,
         ])
@@ -2075,11 +2102,21 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Void)
         .flags(CallFlags::RCU),
 
+        // bpf_iter_css_next(&it) → struct cgroup_subsys_state *
+        // Kernel KF_RCU: returned pointer is RCU-protected (must be in
+        // RCU CS). Use IterNextBtfId so chained loads through pos
+        // (`pos->cgroup`, etc. — iters_css::iter_css_for_each) get
+        // typed via the cgroup_subsys_state struct rather than dying
+        // at PtrToAllocMem{8}'s opaque memory.
         "bpf_iter_css_next" => CallProto::with_args([
             IterArg { kind: IterKind::Css, expected: IterArgExpect::ActiveOrDrained },
             DontCare, DontCare, DontCare, DontCare,
         ])
-        .ret(RetKind::IterNextElem { iter_arg: 0, elem_size: 8 }),
+        .ret(RetKind::IterNextBtfId {
+            iter_arg: 0,
+            type_name: "cgroup_subsys_state",
+            flags: crate::analysis::machine::reg_types::PtrFlags::RCU,
+        }),
 
         "bpf_iter_bits_next" => CallProto::with_args([
             IterArg { kind: IterKind::Bits, expected: IterArgExpect::ActiveOrDrained },
@@ -2671,6 +2708,10 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .mem_size_pairs(&pairs::D_PATH)
         .ret(RetKind::Scalar)
+        // KF_TRUSTED_ARGS — kernel rejects an untrusted `struct path *`
+        // (e.g. one walked from `task->fs->root` outside an RCU CS).
+        // Closes verifier_vfs_reject::path_d_path_kfunc_untrusted_*.
+        .flags(CallFlags::TRUSTED_ARGS)
         .prog_type_allowlist(&LSM_ONLY_KFUNC_PROG_TYPES),
 
         // ---- nested-acquire test kfuncs (testmod) ----
@@ -2793,6 +2834,31 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .flags(CallFlags::RELEASE)
         .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
 
+        // void *bpf_percpu_obj_new_impl(u64 local_type_id, void *meta__ign)
+        // KF_ACQUIRE | KF_RET_NULL — heap-allocates a percpu object.
+        // Kernel returns `PTR_TO_BTF_ID | MEM_ALLOC | MEM_PERCPU |
+        // PTR_TRUSTED | MAYBE_NULL`. We type R0 in the kfunc.rs post-
+        // call hook (resolves local_type_id → struct name from R1's
+        // const value, mints PtrToBtfIdOrNull with PERCPU+MEM_ALLOC).
+        // CallProto here just clears the dispatch-time "unknown kfunc"
+        // rejection.
+        "bpf_percpu_obj_new_impl" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ]),
+
+        // void bpf_percpu_obj_drop_impl(void *kptr, void *meta__ign)
+        // KF_RELEASE — drops the percpu allocation. R1 is a percpu
+        // BTF-id pointer (acquired via bpf_percpu_obj_new or
+        // bpf_kptr_xchg out of a __percpu_kptr field). Validator gates
+        // on PtrToBtfId with PERCPU + ref_id; ReleaseRefFromArg
+        // invalidates aliases.
+        "bpf_percpu_obj_drop_impl" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+
         // void *bpf_refcount_acquire_impl(void *kptr, void *meta__ign)
         // KF_ACQUIRE | KF_RET_NULL — bumps the refcount and returns a
         // fresh ref to the same object. The input ref stays valid (no
@@ -2910,6 +2976,54 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Void)
         .flags(CallFlags::RELEASE | CallFlags::RELEASE_NON_OWN | CallFlags::SPIN_LOCK_HELD)
         .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 1 }]),
+
+        // ---- bpf_wq family (kernel v6.10) ----
+        //
+        // Async work-queue: same shape as bpf_timer but cb runs in a
+        // workqueue context. Three kfuncs:
+        //
+        //   int bpf_wq_init(struct bpf_wq *wq, struct bpf_map *map, u64 flags)
+        //   int bpf_wq_set_callback_impl(struct bpf_wq *wq,
+        //                                int (*callback)(void*,int*,void*),
+        //                                u64 flags__ign,
+        //                                void *aux__ign)
+        //   int bpf_wq_start(struct bpf_wq *wq, u64 flags)
+        //
+        // R1 is `&map_value->wq` (PtrToMapValue carrying owning map_idx),
+        // validated via MapValueSpecial(Wq). bpf_wq_init has a kernel
+        // cross-arg check that R1's owning map matches R2's map_uid; we
+        // mirror via a coarse map_idx-equality check in transfer.rs's
+        // bpf_wq_init arm (keeps wq_failures::test_wq_init_wrong_map
+        // correctly rejecting). bpf_wq_set_callback_impl is routed
+        // through a kfunc callback-fork in transfer.rs (the cb runs
+        // async, so registration requires no held locks / unreleased
+        // refs — same async-constraint as BPF_TIMER_SET_CALLBACK).
+        "bpf_wq_init" => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::Wq }, // R1: &wq field
+            ConstMapPtr,                                    // R2: owning map
+            Anything,                                       // R3: flags
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        "bpf_wq_set_callback_impl" => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::Wq }, // R1: &wq field
+            PtrToCallback,                                  // R2: callback subprog
+            Anything,                                       // R3: flags__ign
+            DontCare,                                       // R4: aux__ign
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        "bpf_wq_start" => CallProto::with_args([
+            MapValueSpecial { kind: SpecialFieldKind::Wq }, // R1: &wq field
+            Anything,                                       // R2: flags
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
 
         // ---- W6.4a-followon: kernel-exported TCP CC helpers ----
         //
@@ -3155,6 +3269,34 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Void),
 
+        // int *bpf_kfunc_call_test_get_rdwr_mem(struct prog_test_ref_kfunc *p,
+        //                                       const int rdwr_buf_size)
+        // int *bpf_kfunc_call_test_get_rdonly_mem(struct prog_test_ref_kfunc *p,
+        //                                         const int rdonly_buf_size)
+        // KF_RET_NULL on both. Returns a bounded mem region whose size
+        // is the value of R2 (a `const int`). Lite scope: model both with
+        // `RetKind::PtrToAllocMemFromArg { size_arg: 1 }` — no rdonly /
+        // ref-id-on-mem distinction. The matching `kfunc_call_fail.c`
+        // siblings (rdonly-store, use-after-free, oob, non-const-size)
+        // are upstream-ACCEPT in the v6.15 baseline (skel `?tc`-gated),
+        // so the absent rdonly enforcement and ref-id propagation don't
+        // surface FAs.
+        "bpf_kfunc_call_test_get_rdwr_mem" => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "prog_test_ref_kfunc" },
+            Anything,
+            DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToAllocMemFromArg { size_arg: 1 })
+        .flags(CallFlags::RET_NULL),
+
+        "bpf_kfunc_call_test_get_rdonly_mem" => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "prog_test_ref_kfunc" },
+            Anything,
+            DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToAllocMemFromArg { size_arg: 1 })
+        .flags(CallFlags::RET_NULL),
+
         // struct bpf_testmod_ctx *bpf_testmod_ctx_create(int *err)
         //   KF_ACQUIRE | KF_RET_NULL.
         // void bpf_testmod_ctx_release(struct bpf_testmod_ctx *ctx)
@@ -3199,6 +3341,14 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             Anything, Anything, Anything, Anything, Anything,
         ])
         .ret(RetKind::Scalar),
+        // struct sock *bpf_kfunc_call_test3(struct sock *sk) — passthrough
+        // (returns the same sock). No KF_ACQUIRE / KF_RET_NULL flags;
+        // caller dereferences the returned sock directly without a null
+        // check (`bpf_kfunc_call_test3(sk)->__sk_common.skc_state`).
+        "bpf_kfunc_call_test3" => CallProto::with_args([
+            Anything, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::PtrToBtfIdNamed { type_name: "sock" }),
         "bpf_kfunc_call_test2" => CallProto::with_args([
             Anything, Anything, Anything, DontCare, DontCare,
         ])
@@ -3239,6 +3389,18 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // (test driver puts a kprobe on this function to count invocations).
         // Trivially additive: no args, no side effects.
         "bpf_kfunc_common_test" => CallProto::with_args([
+            DontCare, DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void),
+
+        // ---- bpf_kfunc_call_test_sleepable (testmod, KF_SLEEPABLE) ----
+        // `void bpf_kfunc_call_test_sleepable(void)`. Used by wq.c's
+        // sleepable cb (`wq_cb_sleepable`) to mark the cb path as
+        // sleepable for the test driver. KF_SLEEPABLE is a runtime
+        // gate (kernel rejects non-sleepable callers); we don't enforce
+        // it here because the wq cb's sleepable-ness is set via the wq
+        // setup, not visible at the call site.
+        "bpf_kfunc_call_test_sleepable" => CallProto::with_args([
             DontCare, DontCare, DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::Void),
@@ -4025,6 +4187,22 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             Anything, DontCare, DontCare, DontCare, DontCare,
         ]),
 
+        // int bpf_sock_ops_enable_tx_tstamp(struct bpf_sock_ops_kern *skops, u64 flags)
+        // Enables egress TX timestamping on the socket associated with
+        // `skops`. Registered to BPF_PROG_TYPE_SOCK_OPS only (kernel
+        // `bpf_sock_ops_kfunc_set` in net/core/filter.c). Used by
+        // `net_timestamping::skops_sockopt` after a
+        // `bpf_cast_to_kern_ctx` from the bpf_sock_ops ctx. R1 is
+        // accepted as Anything — the cast-to-kern-ctx return is typed
+        // as `PtrToBtfId{"bpf_sock_ops_kern", TRUSTED}` and the test
+        // body doesn't deref it through us; we just need to clear the
+        // dispatch-time "unknown kfunc" rejection.
+        "bpf_sock_ops_enable_tx_tstamp" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .prog_type_allowlist(&SOCK_OPS_KFUNC_PROG_TYPES),
+
         _ => return None,
     })
 }
@@ -4058,7 +4236,12 @@ pub(super) mod pairs {
         MemSizePair::new_nullable(Reg::R4, Reg::R5),
     ];
     pub static STRNCMP: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
-    pub static GET_STACK: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    // ARG_CONST_SIZE_OR_ZERO: kernel admits size=0 (no buffer access),
+    // mirrors `bpf_get_stack`'s `ARG_CONST_SIZE_OR_ZERO` flag at the
+    // helper proto. The previous `MemSizePair::new` (allow_zero=false)
+    // was incorrect — it rejected `bpf_get_stack(ctx, buf, 0, flags)`
+    // even though the kernel accepts.
+    pub static GET_STACK: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R2, Reg::R3)];
     pub static PERF_EVENT_OUTPUT: [MemSizePair; 1] = [MemSizePair::new(Reg::R4, Reg::R5)];
     pub static GET_CURRENT_COMM: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
     pub static PERF_EVENT_READ_VALUE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];

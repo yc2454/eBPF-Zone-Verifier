@@ -443,6 +443,28 @@ impl Dbm {
         let n = self.num_vars();
         let mut result = self.clone();
         result.provenance = None; // provenance doesn't survive widening
+        // The `bounds[]` shadow (s64/s32/u64/u32 mins/maxes) is initialized
+        // to "unknown" (e.g. s64_min=i64::MIN) and only ever tightened —
+        // unless `sync_bounds` has been called to import information from
+        // the DBM matrix (which carries the real bounds via `Zero <-> r`
+        // edges), the shadow stays loose. Cousot widening on a loose
+        // shadow is a one-way trap: once `b1.s64_min == i64::MIN`,
+        // `b2.s64_min < b1.s64_min` is impossible, so result.s64_min
+        // stays i64::MIN forever even when the DBM clearly bounds the
+        // register (e.g. arena_htab_llvm's `r7 in [0, 99999]` after
+        // bounds checks). Sync both inputs first so the per-bounds
+        // widen sees the real abstract values.
+        let mut self_synced = self.clone();
+        let mut newer_synced = newer.clone();
+        for i in 0..n {
+            let r = REG_ENV.all().get(i).copied();
+            if let Some(reg) = r {
+                if reg != Reg::Zero && !reg.is_anchor() {
+                    crate::domains::zone::ops::sync_bounds(&mut self_synced, reg);
+                    crate::domains::zone::ops::sync_bounds(&mut newer_synced, reg);
+                }
+            }
+        }
         for i in 0..n {
             for j in 0..n {
                 if newer.data[i][j] > self.data[i][j] {
@@ -450,8 +472,8 @@ impl Dbm {
                 }
                 // If newer <= self, keep self (stable/tightening)
             }
-            let b1 = &self.bounds[i];
-            let b2 = &newer.bounds[i];
+            let b1 = &self_synced.bounds[i];
+            let b2 = &newer_synced.bounds[i];
             result.bounds[i].s32_min = if b2.s32_min < b1.s32_min {
                 i32::MIN
             } else {

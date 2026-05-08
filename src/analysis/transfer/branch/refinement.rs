@@ -260,11 +260,11 @@ pub(crate) fn refine_branch(state: &mut State, instr: &Instr, branch_taken: bool
 /// Promotes a Nullable Map Pointer to a Safe Map Pointer.
 fn maybe_promote_map_val(state: &mut State, reg: Reg) {
     let (target_id, _target_map_idx) = match state.types.get(reg) {
-        RegType::PtrToMapValueOrNull { id, map_idx } => (id, map_idx),
+        RegType::PtrToMapValueOrNull { id, map_idx, .. } => (id, map_idx),
         _ => return,
     };
     for r in Reg::ALL {
-        if let RegType::PtrToMapValueOrNull { id, map_idx } = state.types.get(r)
+        if let RegType::PtrToMapValueOrNull { id, map_idx, map_uid } = state.types.get(r)
             && id == target_id
         {
             state.types.set(
@@ -273,6 +273,7 @@ fn maybe_promote_map_val(state: &mut State, reg: Reg) {
                     id,
                     offset: Some(0),
                     map_idx,
+                    map_uid,
                 },
             );
             // Initialize PtrOffset tracking for interval domain
@@ -283,10 +284,11 @@ fn maybe_promote_map_val(state: &mut State, reg: Reg) {
         state,
         |ty| matches!(ty, RegType::PtrToMapValueOrNull { id, .. } if *id == target_id),
         |ty| match ty {
-            RegType::PtrToMapValueOrNull { id, map_idx } => RegType::PtrToMapValue {
+            RegType::PtrToMapValueOrNull { id, map_idx, map_uid } => RegType::PtrToMapValue {
                 id: *id,
                 offset: Some(0),
                 map_idx: *map_idx,
+                map_uid: *map_uid,
             },
             _ => unreachable!(),
         },

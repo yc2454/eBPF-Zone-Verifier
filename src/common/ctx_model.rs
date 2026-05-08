@@ -32,6 +32,14 @@ pub enum CtxFieldKind {
     /// the sk pointer in a state that still requires a null-check.
     Socket,
 
+    /// Nullable `struct bpf_sock *` ctx field. Maps to
+    /// `RegType::PtrToSocketOrNull { ref_id: None }`. Used for sk_lookup
+    /// ctx->sk where kernel returns PTR_TO_SOCKET_OR_NULL (the field
+    /// reflects the verdict's selected sk; null until bpf_sk_assign).
+    /// JEQ-refinement against a sk1 from `bpf_map_lookup_elem` on a
+    /// SOCKMAP (also PtrToSocket flavor) promotes the nullable side.
+    SocketOrNull,
+
     /// Pointer to the start of the packet data.
     PacketStart,
 
@@ -61,6 +69,23 @@ pub enum CtxFieldKind {
         /// Propagated to `RegType::PtrToBtfId.flags` by transfer/types.rs;
         /// rejected at deref by access.rs.
         tag_flags: crate::analysis::machine::reg_types::PtrFlags,
+    },
+
+    /// Bounded scalar field: a normal scalar with a known `[lo, hi]`
+    /// integer range applied at load time. Used for LSM int-hook
+    /// trailing `int ret` args (kernel constrains to `[-MAX_ERRNO, 0]`
+    /// at attach). Materializes as `RegType::ScalarValue` with the
+    /// destination register's interval domain bounded.
+    BoundedScalar {
+        lo: i64,
+        hi: i64,
+    },
+    /// struct_ops `task_struct *task__ref` ctx-array slot — the
+    /// `EntryArg::TrustedRefcountedTask` companion. Materializes as
+    /// `RegType::PtrToTask { ref_id: Some(ref_id) }` so the matching
+    /// `bpf_task_release(task)` consumes the entry-acquired ref.
+    RefcountedTask {
+        ref_id: u32,
     },
 }
 
@@ -801,6 +826,66 @@ const SOCK_ADDR_USER_IP6_END: i16 = 24; // 8 + 4*4 = 23
 const SOCK_ADDR_MSG_SRC_IP6_START: i16 = 44;
 const SOCK_ADDR_MSG_SRC_IP6_END: i16 = 56; // 44 + 4*4 = 56
 
+/// struct sk_reuseport_md (SK_REUSEPORT context)
+///
+/// Reference: linux/include/uapi/linux/bpf.h, kernel
+/// `sk_reuseport_is_valid_access` in net/core/filter.c.
+///
+/// struct sk_reuseport_md {
+///     __bpf_md_ptr(void *, data);              // 0-8   PTR_TO_PACKET
+///     __bpf_md_ptr(void *, data_end);          // 8-16  PTR_TO_PACKET_END
+///     __u32 len;                                // 16-20
+///     __u32 eth_protocol;                       // 20-24
+///     __u32 ip_protocol;                        // 24-28
+///     __u32 bind_inany;                         // 28-32
+///     __u32 hash;                               // 32-36
+///     __bpf_md_ptr(struct bpf_sock *, sk);          // 40-48 PTR_TO_SOCKET
+///     __bpf_md_ptr(struct bpf_sock *, migrating_sk);// 48-56 PTR_TO_SOCK_COMMON_OR_NULL
+/// };
+const SK_REUSEPORT_FIELDS: &[CtxField] = &[
+    // void *data (PTR_TO_PACKET)
+    CtxField {
+        offset: 0,
+        size: MemSize::U64,
+        kind: CtxFieldKind::PacketStart,
+        writable: false,
+        readable: true,
+        narrow_access: false,
+    },
+    // void *data_end (PTR_TO_PACKET_END)
+    CtxField {
+        offset: 8,
+        size: MemSize::U64,
+        kind: CtxFieldKind::PacketEnd,
+        writable: false,
+        readable: true,
+        narrow_access: false,
+    },
+    CtxField { offset: 16, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
+    CtxField { offset: 20, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
+    CtxField { offset: 24, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
+    CtxField { offset: 28, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
+    CtxField { offset: 32, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false },
+    // struct bpf_sock *sk (PTR_TO_SOCKET, non-null)
+    CtxField {
+        offset: 40,
+        size: MemSize::U64,
+        kind: CtxFieldKind::Socket,
+        writable: false,
+        readable: true,
+        narrow_access: false,
+    },
+    // struct bpf_sock *migrating_sk (PTR_TO_SOCK_COMMON_OR_NULL)
+    CtxField {
+        offset: 48,
+        size: MemSize::U64,
+        kind: CtxFieldKind::SockCommon,
+        writable: false,
+        readable: true,
+        narrow_access: false,
+    },
+];
+
 /// struct bpf_sk_lookup (SK_LOOKUP context)
 ///
 /// Reference: linux/include/uapi/linux/bpf.h
@@ -821,11 +906,18 @@ const SOCK_ADDR_MSG_SRC_IP6_END: i16 = 56; // 44 + 4*4 = 56
 ///     __u32 local_port;           // 60-64
 /// };
 const SK_LOOKUP_FIELDS: &[CtxField] = &[
-    // struct bpf_sock *sk (offset 0)
+    // struct bpf_sock *sk (offset 0). Kernel types this as
+    // PTR_TO_SOCKET_OR_NULL (`bpf_sk_lookup_is_valid_access`); a sk1
+    // from `bpf_map_lookup_elem` on a SOCKMAP/REUSEPORT_SOCKARRAY is
+    // PtrToSocket — the JEQ-refinement on `ctx->sk == sk1` only
+    // promotes nullable→non-null when the two flavors match. Was
+    // SockCommon, which broke equality refinement in test_sk_lookup
+    // ::access_ctx_sk's `if (ctx->sk != sk1) goto out; ctx->sk->family`
+    // pattern (kernel admits, we rejected post-equality deref).
     CtxField {
         offset: 0,
         size: MemSize::U64,
-        kind: CtxFieldKind::SockCommon,
+        kind: CtxFieldKind::SocketOrNull,
         writable: false,
         readable: true,
         narrow_access: false,
@@ -1631,6 +1723,7 @@ fn get_field_tables(
         ContextKind::BpfSockAddr => Some((SOCK_ADDR_FIELDS, &[])),
         ContextKind::BpfSockopt => Some((BPF_SOCKOPT_FIELDS, &[])),
         ContextKind::SkLookup => Some((SK_LOOKUP_FIELDS, &[])),
+        ContextKind::SkReuseport => Some((SK_REUSEPORT_FIELDS, &[])),
         ContextKind::SockOps => Some((SOCK_OPS_FIELDS, &[])),
         ContextKind::BpfSock => Some((BPF_SOCK_FIELDS, &[])),
         ContextKind::SkMsgMd => Some((SK_MSG_MD_FIELDS, &[])),
@@ -1848,9 +1941,26 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
     // load on the ctx struct, not the BPF_PROG ctx-array idiom. Look
     // up `(ctx_struct, off)` in BTF and type the load via the
     // `trusted_field_load` allowlist.
-    let is_direct_typed_ctx = matches!(prog_kind, ProgramKind::SkReuseport)
-        || (prog_kind == ProgramKind::Tracing
-            && matches!(env.ctx.attach_flavor.as_deref(), Some("iter")));
+    // SkReuseport now has its own static field table (`SK_REUSEPORT_FIELDS`)
+    // — fall through to the standard ctx-table lookup so the data /
+    // data_end / sk / migrating_sk fields produce typed pointers
+    // (PtrToPacket, PtrToSocket, PtrToSockCommonOrNull) instead of the
+    // BTF-driven Scalar/AllocMem fallback that this direct-typed path
+    // returns.
+    // Direct-typed ctx: programs whose ctx pointer is named (carries
+    // a real BTF struct name in arg0) and supports field access by
+    // offset. Covers:
+    //  - iter programs (`bpf_iter__<X>` ctx, BPF_PROG-wrapped)
+    //  - raw_tracepoint with `struct pt_regs *ctx` (kprobe-style direct
+    //    pt_regs access). Without this, raw_tracepoint pt_regs.ax loads
+    //    fall into the lax TrustedPtr fallback and the program FRs on
+    //    arithmetic over the bogus pointer (loop1::nested_loops).
+    let is_direct_typed_ctx = (prog_kind == ProgramKind::Tracing
+        && matches!(env.ctx.attach_flavor.as_deref(), Some("iter")))
+        || matches!(
+            prog_kind,
+            ProgramKind::RawTracepoint | ProgramKind::RawTracepointWritable
+        );
     // Direct typed ctx loads: 8-byte pointer fields and 1/2/4/8-byte
     // scalar fields. The size-8/off%8 path resolves pointer-typed
     // fields via BTF (allowlisted); the size-1/2/4/8 path falls
@@ -1903,13 +2013,73 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                             });
                         }
                     }
+                    // Scalar BTF field (INT/ENUM/FLOAT — pt_regs.ax /
+                    // .di / etc. are u64 register dumps; raw u64 args
+                    // for raw_tracepoint slot loads). Return Scalar so
+                    // downstream arithmetic doesn't hit
+                    // "Invalid pointer arithmetic" on a bogus ptr type.
+                    // Closes loop1::nested_loops (PT_REGS_RC(ctx)→m;
+                    // m * i was failing under the lax TrustedPtr
+                    // fallback).
+                    if matches!(info.kind, BtfFieldKind::Scalar) {
+                        return Some(CtxAccessInfo {
+                            kind: CtxFieldKind::Scalar,
+                            readable: true,
+                            writable: false,
+                        });
+                    }
                 }
                 // Fallback for non-allowlisted iter / sk_reuseport ctx
-                // fields: scalar (loose). Mirrors the existing iter
-                // behavior pre-cluster-#2 — the kernel admits these
-                // loads but our verifier doesn't have ctx-field
-                // metadata for every iter ctx struct. Now extended
-                // to also cover sub-8-byte aligned reads.
+                // fields: scalar for non-pointer-sized reads, lax
+                // TrustedPtr for 8-byte loads. For BPF_PROG-wrapped
+                // iter programs whose `bpf_iter__<subtype>` struct
+                // isn't in the program's BTF (compiled-out as
+                // unused — the wrapper accesses ctx fields by raw
+                // offset, not by named member), the convention is:
+                //   offset 0 → bpf_iter_meta *
+                //   offset 8 → struct <payload> *
+                // Pick the payload struct name from the SEC subtype via
+                // a small table covering the iter classes our corpus
+                // exercises. Closes cgroup_hierarchical_stats::dumper
+                // (subtype "cgroup" → field-8 pointee = "cgroup",
+                // accepted by `cgroup_rstat_flush`'s PtrToCgroup arg
+                // validator). Other subtypes fall back to
+                // TrustedPtr{"unknown"} which still keeps the chain
+                // typed.
+                if size == 8 {
+                    let pointee_name: &'static str = if off == 0 {
+                        "bpf_iter_meta"
+                    } else if off == 8 {
+                        match *type_name {
+                            "bpf_iter__cgroup" => "cgroup",
+                            "bpf_iter__task" => "task_struct",
+                            "bpf_iter__task_file" => "task_struct",
+                            "bpf_iter__task_vma" => "task_struct",
+                            "bpf_iter__bpf_map" => "bpf_map",
+                            "bpf_iter__bpf_link" => "bpf_link",
+                            "bpf_iter__bpf_prog" => "bpf_prog",
+                            "bpf_iter__tcp" => "sock_common",
+                            "bpf_iter__udp" => "udp_sock",
+                            "bpf_iter__unix" => "unix_sock",
+                            "bpf_iter__netlink" => "netlink_sock",
+                            "bpf_iter__sockmap" => "bpf_map",
+                            "bpf_iter__ksym" => "kallsym_iter",
+                            "bpf_iter__bpf_sk_storage_map" => "bpf_map",
+                            _ => "unknown",
+                        }
+                    } else {
+                        "unknown"
+                    };
+                    return Some(CtxAccessInfo {
+                        kind: CtxFieldKind::TrustedPtr {
+                            type_name: pointee_name,
+                            nullable: false,
+                            tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
+                        },
+                        readable: true,
+                        writable: false,
+                    });
+                }
                 return Some(CtxAccessInfo {
                     kind: CtxFieldKind::Scalar,
                     readable: true,
@@ -1960,6 +2130,12 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                             nullable: *nullable || nullable_from_table,
                             tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
                         }
+                    }
+                    EntryArg::BoundedScalar { lo, hi } => {
+                        CtxFieldKind::BoundedScalar { lo: *lo, hi: *hi }
+                    }
+                    EntryArg::TrustedRefcountedTask { ref_id } => {
+                        CtxFieldKind::RefcountedTask { ref_id: *ref_id }
                     }
                 };
                 return Some(CtxAccessInfo {

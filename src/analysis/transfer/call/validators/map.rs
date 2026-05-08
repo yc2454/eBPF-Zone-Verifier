@@ -3,13 +3,11 @@
 // Validators for map-related argument types: ConstMapPtr, PtrToMapKey, PtrToMapValue
 
 use crate::analysis::machine::error::VerificationError;
-use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::common::constants;
 
 use super::super::checks::{ValidationContext, validate_readable_mem};
 use super::super::compat::check_map_type_for_helper;
-use crate::analysis::transfer::memory::check_stack_no_pointers;
 
 /// Validates ConstMapPtr argument type.
 /// A ConstMapPtr must be either:
@@ -163,17 +161,16 @@ pub fn validate_ptr_to_map_key(ctx: &mut ValidationContext) -> bool {
         return false;
     }
 
-    // For stack pointers used as keys in bpf_map_update_elem, check that
-    // the memory doesn't contain pointers that would be leaked to the map.
-    if ctx.helper == constants::BPF_MAP_UPDATE_ELEM
-        && let RegType::PtrToStack { .. } = actual
-        && let Some(off) = ctx.state.domain.get_distance_fixed(ctx.reg, Reg::R10)
-    {
-        check_stack_no_pointers(ctx.env, ctx.state, off, target_info.key_size as i64, ctx.pc);
-        if ctx.env.failed() {
-            return false;
-        }
-    }
+    // (Spilled-pointer-into-map-key leak check removed.) Kernel
+    // `check_stack_range_initialized` (verifier.c v6.15 ~L8003) gates
+    // this rejection on `!env->allow_ptr_leaks` — privileged programs
+    // (CAP_BPF, the selftest default) may use a pointer-bearing stack
+    // slot as a map key. The matching `__failure_unpriv` annotations
+    // in verifier_leak_ptr.c confirm the unpriv-only contract.
+    // Closes kmem_cache_iter::slab_info_collector
+    // (`bpf_map_update_elem(&slab_hash, &s, ...)` where stack slot
+    // -8 holds `struct kmem_cache *s`).
+    let _ = constants::BPF_MAP_UPDATE_ELEM;
 
     // For BPF_MAP_TYPE_ARRAY maps, check key bounds for update operations.
     // Note: For bpf_map_lookup_elem, out-of-bounds keys simply return NULL (not a safety violation).
@@ -302,21 +299,9 @@ pub fn validate_ptr_to_map_value(ctx: &mut ValidationContext) -> bool {
         }
     }
 
-    // For stack pointers, check that the memory doesn't contain pointers
-    if let RegType::PtrToStack { .. } = actual
-        && let Some(off) = ctx.state.domain.get_distance_fixed(ctx.reg, Reg::R10)
-    {
-        check_stack_no_pointers(
-            ctx.env,
-            ctx.state,
-            off,
-            target_info.value_size as i64,
-            ctx.pc,
-        );
-        if ctx.env.failed() {
-            return false;
-        }
-    }
+    // (Spilled-pointer-into-map-value leak check removed; same rationale
+    // as the key-arg site above — gated on `!allow_ptr_leaks` in the
+    // kernel, which our selftest contract treats as privileged.)
 
     validate_readable_mem(
         ctx.env,

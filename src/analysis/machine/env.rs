@@ -184,6 +184,23 @@ pub struct VerifierEnv<'a> {
     /// not reachable from any single-iteration analysis).
     pub cb_body_store_offsets: HashMap<usize, std::collections::HashSet<i16>>,
 
+    /// Per-cb-subprog flag: does the body call (directly) any
+    /// dynptr-(re)initializing helper or kfunc?
+    /// (`BPF_DYNPTR_FROM_MEM`, `BPF_RINGBUF_RESERVE_DYNPTR`,
+    /// `bpf_dynptr_from_skb`, `bpf_dynptr_from_xdp`, `bpf_dynptr_clone`,
+    /// `bpf_dynptr_adjust`.) Pre-computed at env init by scanning the
+    /// cb body. Used by `transfer_callback_helper` to suppress the
+    /// kernel-pessimism dynptr-slice invalidation on the post-cb
+    /// continuation when the cb provably cannot re-init the dynptr —
+    /// the invalidation is required for FA safety on `invalid_data_slices`
+    /// (cb body actually re-inits) but FRs valid programs like
+    /// `dynptr_success::test_ringbuf` (cb body just reads via
+    /// `bpf_dynptr_data`). Mirrors the kernel's actual model: only
+    /// `destroy_if_dynptr_stack_slot` invalidates slices, and that
+    /// only fires on real init/release operations. Conservatively true
+    /// for cbs that make a `CallRel` (we don't transitively scan).
+    pub cb_body_can_reinit_dynptr: HashSet<usize>,
+
     // --- Dynamic State ---
     pub insn_processed: usize,
     /// Holds the FIRST critical failure encountered.
@@ -209,6 +226,17 @@ pub struct VerifierEnv<'a> {
     /// per-path precision walker to look up the specific cached state
     /// referenced by a `parent_cache_id` chain.
     pub cache_loc_by_id: HashMap<u32, (usize, usize)>,
+
+    /// Eviction-resistant precision marks keyed by `(pc, reg)`.
+    /// `mark_chain_precision_backward` writes here as it walks the
+    /// per-path history, so widening sites can detect "this reg was
+    /// proven precision-critical at this pc on some earlier path"
+    /// even after `max_states_per_pc` evicts the specific cached
+    /// state that the walker originally marked. Reg-name boundaries
+    /// (e.g. `r7 = r1` mov chains) are bridged at the *widening*
+    /// site via the cached `scalar_ids` map: the widener checks the
+    /// reg's id against all regs in cur/prev that share that id.
+    pub precise_pcs: HashSet<(usize, Reg)>,
 }
 
 impl<'a> VerifierEnv<'a> {
@@ -228,6 +256,7 @@ impl<'a> VerifierEnv<'a> {
             addr_space_cast_to_arena_pcs: prog.addr_space_cast_to_arena_pcs.clone(),
             tainted_cb_subprogs: compute_tainted_cb_subprogs(prog, &ctx.btf),
             cb_body_store_offsets: compute_cb_body_store_offsets(prog),
+            cb_body_can_reinit_dynptr: compute_cb_body_can_reinit_dynptr(prog, &ctx.btf),
             insn_processed: 0,
             error: None,
             history: History::new(),
@@ -235,6 +264,7 @@ impl<'a> VerifierEnv<'a> {
             analyzing_exception_cb: false,
             next_cache_id: 0,
             cache_loc_by_id: HashMap::new(),
+            precise_pcs: HashSet::new(),
         }
     }
 
@@ -336,7 +366,20 @@ impl<'a> VerifierEnv<'a> {
                 };
                 let parent_idx = step.parent_idx;
                 let instr_copy = step.instr;
+                let step_pc = step.pc;
                 update_frontier(&mut frontier, &instr_copy, &caller_saved);
+                // Mirror frontier marks into `precise_pcs` at every
+                // history step the walker traverses. The widening site
+                // checks (pc, scalar_id) regardless of whether a
+                // cached state at that pc still exists — eviction-
+                // resistant. We need the cached state at this pc to
+                // resolve scalar_ids for the frontier regs; if no
+                // cached state exists at step_pc, fall back to the
+                // current state's id which is the closest ground
+                // truth for the path.
+                for &r in &frontier {
+                    self.precise_pcs.insert((step_pc, r));
+                }
                 current_history = parent_idx;
 
                 if frontier.is_empty() {
@@ -347,12 +390,23 @@ impl<'a> VerifierEnv<'a> {
             // Mark precise on the parent cached state with the
             // frontier we've evolved back to its perspective. Per-path:
             // only this cached state, not all states at its PC.
-            if let Some((pc, idx)) = parent_loc
-                && let Some(states) = self.explored_states.get_mut(&pc)
-                && let Some(s) = states.get_mut(idx)
-            {
+            if let Some((pc, idx)) = parent_loc {
+                if let Some(states) = self.explored_states.get_mut(&pc)
+                    && let Some(s) = states.get_mut(idx)
+                {
+                    for &r in &frontier {
+                        s.precise_regs.insert(r);
+                    }
+                }
+                // Mirror the marks into the eviction-resistant
+                // `precise_pcs` set. Cache eviction
+                // (`max_states_per_pc`) drops the cached state's
+                // `precise_regs` from the lookup chain — keep the
+                // (pc, reg) facts in the env so widening sites can
+                // still consult them, even after the specific cached
+                // state that recorded the mark is gone.
                 for &r in &frontier {
-                    s.precise_regs.insert(r);
+                    self.precise_pcs.insert((pc, r));
                 }
             }
 
@@ -435,10 +489,31 @@ fn update_frontier(
         Instr::Endian { dst, .. } => {
             let _ = dst;
         }
-        Instr::Call { .. } | Instr::CallRel { .. } => {
+        Instr::Call { .. } => {
+            // Helper / kfunc call: forward-direction clobbers
+            // R0..R5. Going backward at this step means the values in
+            // R0..R5 immediately after the call don't have a
+            // pre-call source (R0 is the helper's return; R1..R5 are
+            // clobbered). Drop them from the frontier.
             for r in caller_saved {
                 frontier.remove(r);
             }
+        }
+        Instr::CallRel { .. } => {
+            // Subprog call: drop only R0 (the callee's return value
+            // — its source lives inside the callee body, which the
+            // walker already traversed before reaching this CallRel
+            // step on the linear history). R1..R5 in the frontier
+            // post-call are the caller's pre-call arg-setup regs and
+            // must propagate further back so the precision walk
+            // reaches the caller-side instructions that wrote them
+            // (e.g. `w2 = r7` at the call site, which is what
+            // bridges arena_htab_llvm's loop-counter `r7` back to
+            // the access-time precision sink inside the callee).
+            // Walking across frames is more permissive than the
+            // kernel's per-frame `mark_chain_precision` but matches
+            // our linear-history walker's structure.
+            frontier.remove(&Reg::R0);
         }
         _ => {}
     }
@@ -572,6 +647,101 @@ fn compute_tainted_cb_subprogs(
         }
     }
     tainted
+}
+
+/// Per-cb-subprog flag: does the body directly call any
+/// dynptr-(re)initializing helper or kfunc? Used to suppress the
+/// kernel-pessimism slice invalidation in `transfer_callback_helper`
+/// when the cb provably cannot re-init the source dynptr.
+fn compute_cb_body_can_reinit_dynptr(
+    prog: &crate::ast::Program,
+    btf: &crate::parsing::btf::BtfContext,
+) -> HashSet<usize> {
+    use crate::ast::{CallKind, Instr, MapLoadKind};
+    use crate::common::constants;
+
+    let mut entries: Vec<usize> = Vec::new();
+    for insn in &prog.instrs {
+        if let Instr::LoadMap {
+            kind: MapLoadKind::PseudoFunc { subprog_pc },
+            ..
+        } = insn
+        {
+            entries.push(*subprog_pc as usize);
+        }
+    }
+    entries.sort();
+    entries.dedup();
+
+    let mut all_entries: Vec<usize> = vec![0];
+    for insn in &prog.instrs {
+        match insn {
+            Instr::CallRel { target } => all_entries.push(*target),
+            Instr::LoadMap {
+                kind: MapLoadKind::PseudoFunc { subprog_pc },
+                ..
+            } => all_entries.push(*subprog_pc as usize),
+            _ => {}
+        }
+    }
+    all_entries.sort();
+    all_entries.dedup();
+
+    let is_init_kfunc = |name: &str| {
+        matches!(
+            name,
+            "bpf_dynptr_from_skb"
+                | "bpf_dynptr_from_xdp"
+                | "bpf_dynptr_clone"
+                | "bpf_dynptr_adjust"
+        )
+    };
+
+    let mut out: HashSet<usize> = HashSet::new();
+    for &start in &entries {
+        let end = all_entries
+            .iter()
+            .find(|&&pc| pc > start)
+            .copied()
+            .unwrap_or(prog.instrs.len());
+        let body = &prog.instrs[start..end.min(prog.instrs.len())];
+        let mut bad = false;
+        for insn in body {
+            match insn {
+                Instr::Call { kind } => match *kind {
+                    CallKind::Helper { id } => {
+                        if id == constants::BPF_DYNPTR_FROM_MEM
+                            || id == constants::BPF_RINGBUF_RESERVE_DYNPTR
+                        {
+                            bad = true;
+                            break;
+                        }
+                    }
+                    CallKind::Kfunc { btf_id, .. } => {
+                        if let Some(name) = btf.kfunc_name(btf_id)
+                            && is_init_kfunc(name)
+                        {
+                            bad = true;
+                            break;
+                        }
+                    }
+                },
+                // Conservative: a CallRel to a global subprog could re-init
+                // through a stack-passed dynptr ptr. We don't transitively
+                // scan; treat any CallRel as taint. Cbs in our corpus that
+                // reach the test cases of interest don't make CallRel.
+                Instr::CallRel { .. } => {
+                    bad = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        if bad {
+            out.insert(start);
+        }
+    }
+    out
 }
 
 /// Per-cb-subprog set of byte offsets (relative to the cb's ctx-arg

@@ -172,6 +172,7 @@ fn prog_to_entry(p: &super::runner::ProgReport) -> ProgEntry {
         Outcome::FalseReject(e) => ("FALSE_REJECT", Some(e.clone())),
         Outcome::FalseAccept => ("FALSE_ACCEPT", None),
         Outcome::Skipped(r) => ("SKIPPED", Some(r.clone())),
+        Outcome::OutOfScope(r) => ("OUT_OF_SCOPE", Some(r.clone())),
         Outcome::Error(e) if e.starts_with("wallclock") => ("TIMEOUT", Some(e.clone())),
         Outcome::Error(e) => ("ERROR", Some(e.clone())),
     };
@@ -200,7 +201,11 @@ fn upstream_for(p: &super::runner::ProgReport) -> &'static str {
         }
         Outcome::FalseAccept => "REJECT",
         Outcome::Skipped(r) if r.contains("no __success/__failure") => "UNANNOTATED",
-        Outcome::Skipped(_) | Outcome::Error(_) => "UNKNOWN",
+        // Out-of-scope tests still have a real upstream verdict
+        // (typically ACCEPT — the test is meant to load fine after
+        // the missing pre-processing). We don't track it precisely
+        // here because we never analyze the post-pre-processing form.
+        Outcome::Skipped(_) | Outcome::Error(_) | Outcome::OutOfScope(_) => "UNKNOWN",
     }
 }
 

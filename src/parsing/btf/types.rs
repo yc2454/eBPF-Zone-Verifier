@@ -89,6 +89,11 @@ pub enum SpecialFieldKind {
     /// (kernel verifier.c L8305 emits "map '<m>' has no valid
     /// bpf_res_spin_lock" when the requested record-flavor is missing).
     ResSpinLock,
+    /// `struct bpf_wq` — async work queue, kernel v6.10. The
+    /// `bpf_wq_init` / `bpf_wq_set_callback_impl` / `bpf_wq_start`
+    /// kfunc family takes a pointer to a wq field embedded in a
+    /// map value. Mirrors the Timer family.
+    Wq,
     // Future types...
 }
 
@@ -103,6 +108,7 @@ impl SpecialFieldKind {
             "bpf_rb_root" => Some(Self::RbRoot),
             "bpf_rb_node" => Some(Self::RbNode),
             "bpf_refcount" => Some(Self::Refcount),
+            "bpf_wq" => Some(Self::Wq),
             _ => None,
         }
     }
@@ -158,8 +164,16 @@ pub struct BtfFieldInfo<'a> {
 pub enum BtfFieldKind {
     /// Pointer field: `pointee_name` is the named struct it points to
     /// (or None if the pointee isn't a named struct — function ptr,
-    /// pointer-to-primitive, …).
-    Pointer { pointee_name: Option<String> },
+    /// pointer-to-primitive, …). `type_tag` is the kernel TYPE_TAG
+    /// annotation seen between the field and the PTR layer
+    /// (`"percpu"` / `"user"` / `"rcu"`), or None for plain pointers.
+    /// The verifier propagates this onto the loaded reg's PtrFlags so
+    /// access-time deref rejection (memory/access.rs) and trust-band
+    /// kfunc gating fire correctly.
+    Pointer {
+        pointee_name: Option<String>,
+        type_tag: Option<String>,
+    },
     /// Embedded struct/union member (no PTR layer). `type_name` is the
     /// BTF struct name. Used for `&base->field` interior-pointer
     /// arithmetic to produce a typed pointer to the member.
@@ -231,6 +245,13 @@ pub struct BtfContext {
     /// shared across clones (which represent the same BTF anyway).
     pub(super) special_fields_cache:
         std::sync::Arc<std::sync::Mutex<HashMap<u32, Vec<SpecialField>>>>,
+    /// Parsed `.BTF.ext` records (CO-RE relocations grouped by SEC name).
+    /// Populated by [`crate::parsing::btf::parse_btf_ext`] when an ELF
+    /// carries a `.BTF.ext` section. Empty for objects without one and
+    /// for objects where parsing failed (parse errors are non-fatal).
+    /// Foundation only: no resolver wired today (would need vmlinux BTF
+    /// or a runtime-supplied target BTF).
+    pub btf_ext: Option<super::ext::BtfExt>,
 }
 
 /// One variable inside a BTF_KIND_DATASEC.
@@ -319,6 +340,13 @@ pub enum GlobalFuncArg {
     /// and (b) the callee's R is preserved across the call boundary
     /// rather than reseeded as `PtrToAllocMemOrNull`.
     PtrToDynptr,
+    /// Arena pointer arg (`__arg_arena` btf_decl_tag = `arg:arena`).
+    /// Caller must pass `PtrToArena`; callee receives the same. The
+    /// arena address space is sparse-mapped 4GB and the verifier
+    /// permits liberal arithmetic on PtrToArena (see
+    /// `check_ptr_arithmetic`'s arena fast-path), so this is just a
+    /// pass-through arg classification — no MEM_OR_NULL reseed.
+    PtrToArena,
 }
 
 /// Refine a base `GlobalFuncArg` classification using `__arg_*` decl
@@ -340,6 +368,10 @@ pub(super) fn refine_global_arg_with_tags(
     let nullable = tags.iter().any(|t| *t == "arg:nullable");
     let nonnull = tags.iter().any(|t| *t == "arg:nonnull");
     let ctx_tag = tags.iter().any(|t| *t == "arg:ctx");
+    let arena_tag = tags.iter().any(|t| *t == "arg:arena");
+    if arena_tag {
+        return GlobalFuncArg::PtrToArena;
+    }
     if ctx_tag {
         return GlobalFuncArg::PtrToCtx;
     }

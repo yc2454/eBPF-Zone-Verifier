@@ -12,13 +12,21 @@ the typical workflow is now
 Categories
 ----------
 PASS-likes:  PASS
-non-PASS:    FALSE_REJECT, FALSE_ACCEPT, ERROR, anything else
+non-PASS:    FALSE_REJECT, FALSE_ACCEPT, ERROR, OUT_OF_SCOPE, SKIPPED,
+             anything else
+
+OUT_OF_SCOPE is the verdict for tests that need loader-side
+pre-processing we deliberately don't implement (libbpf static linking,
+CO-RE relocation, weak-ksym address folding). It's distinct from
+SKIPPED — SKIPPED means "no static-analysis question to answer here"
+(subprog-only, JIT-only, `__msg()` log-line asserts, race tests).
 
 * regression: PASS in baseline, non-PASS now (gates the build, exits 1)
 * improvement: non-PASS in baseline, PASS now (just informational)
 * neutral change: ours-field changed but neither side is PASS (e.g.
   ERROR <-> FALSE_REJECT shuffles when a kernel-rejection mask gets
-  unmasked)
+  unmasked, or FALSE_REJECT -> OUT_OF_SCOPE when a test gets
+  reclassified)
 * new entry: prog is in current but not baseline (UNTRACKED — does not
   fail the gate, but worth flagging)
 * removed entry: in baseline but missing from current

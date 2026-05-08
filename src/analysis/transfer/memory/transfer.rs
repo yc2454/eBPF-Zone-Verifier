@@ -45,23 +45,33 @@ pub(crate) fn transfer_load(
         return vec![state];
     }
 
-    update_load_types(env, &mut state, access_size as usize, dst, base, off);
-    state.domain.forget(dst);
+    let bounds_set =
+        update_load_types(env, &mut state, access_size as usize, dst, base, off);
+    if !bounds_set {
+        // Default post-load: forget any prior dst bounds and re-clamp to
+        // the access width's zero-extended range. Skipped when
+        // `update_load_types` returned `true`, signaling it already
+        // installed an explicit numeric bound (e.g. LSM int-hook
+        // `BoundedScalar` ctx-arg load — the bound there is tighter than
+        // the access width's clamp would be, and the s32 shadow we set
+        // would be lost).
+        state.domain.forget(dst);
 
-    match size {
-        MemSize::U8 => {
-            state.domain.assume_ge_imm(dst, 0);
-            state.domain.assume_le_imm(dst, 0xFF);
+        match size {
+            MemSize::U8 => {
+                state.domain.assume_ge_imm(dst, 0);
+                state.domain.assume_le_imm(dst, 0xFF);
+            }
+            MemSize::U16 => {
+                state.domain.assume_ge_imm(dst, 0);
+                state.domain.assume_le_imm(dst, 0xFFFF);
+            }
+            MemSize::U32 => {
+                state.domain.assume_ge_imm(dst, 0);
+                state.domain.assume_le_imm(dst, 0xFFFFFFFF);
+            }
+            MemSize::U64 => {}
         }
-        MemSize::U16 => {
-            state.domain.assume_ge_imm(dst, 0);
-            state.domain.assume_le_imm(dst, 0xFFFF);
-        }
-        MemSize::U32 => {
-            state.domain.assume_ge_imm(dst, 0);
-            state.domain.assume_le_imm(dst, 0xFFFFFFFF);
-        }
-        MemSize::U64 => {}
     }
 
     match state.types.get(dst) {
@@ -187,14 +197,31 @@ pub(crate) fn transfer_store(
                     matches!(src_type, RegType::ScalarValue) && state.domain.proven_zero(*r)
                 }
             };
-            let src_is_acquired_ptr = matches!(
-                src_type,
-                RegType::PtrToBtfId { .. }
-                    | RegType::PtrToMapKptr { .. }
-                    | RegType::PtrToMapKptrOrNull { .. }
-                    | RegType::PtrToOwnedKptr { .. }
-                    | RegType::PtrToOwnedKptrOrNull { .. }
-            );
+            // Stored kptr value must have zero offset — kernel
+            // "invalid kptr access, R1 type=untrusted_ptr_..." rejects
+            // a kptr loaded from a slot, bumped by `+ K`, and stored
+            // back (`reject_bad_type_match` in map_kptr_fail.c).
+            // PtrToOwnedKptr never appears as a kptr-store source in
+            // realistic programs (alloc'd objects pass through xchg,
+            // not direct store), so a present-but-non-zero offset on
+            // any of these variants signals the bad-arith pattern.
+            let src_is_acquired_ptr = match src_type {
+                RegType::PtrToBtfId { .. } => true,
+                // Specialized kernel-struct pointers (returned by helpers
+                // like bpf_get_current_task_btf, bpf_task_from_pid,
+                // bpf_cpumask_*) are equivalent to PtrToBtfId{<name>} for
+                // kptr-store purposes. Closes lru_bug.c::nanosleep
+                // (`v->ptr = bpf_get_current_task_btf()` into a
+                // `__kptr_untrusted task_struct *` field).
+                RegType::PtrToTask { .. }
+                | RegType::PtrToCgroup { .. }
+                | RegType::PtrToCpumask { .. } => true,
+                RegType::PtrToMapKptr { offset, .. }
+                | RegType::PtrToMapKptrOrNull { offset, .. } => offset == 0,
+                RegType::PtrToOwnedKptr { offset, .. } => offset == 0,
+                RegType::PtrToOwnedKptrOrNull { offset, .. } => offset == 0,
+                _ => false,
+            };
             if !src_is_zero && !src_is_acquired_ptr {
                 env.fail(VerificationError::InvalidArgType {
                     pc: state.pc,
@@ -416,6 +443,7 @@ pub fn try_load_from_rodata(
         id: _,
         map_idx,
         offset: base_offset,
+        ..
     } = state.types.get(base)
         && let Some(ptr_val) = base_offset
     {
@@ -451,18 +479,19 @@ pub fn try_load_from_rodata(
                     state.domain.forget(dst);
                     state.domain.assume_eq_imm(dst, val as i64);
                     state.types.set(dst, RegType::ScalarValue);
-                    // Clear the tnum too. forget() resets DBM and the
-                    // numeric bound is then pinned to `val`, but the
-                    // tnum is owned by State (not domain) and survives
-                    // — a prior iteration's stale const tnum can then
-                    // contradict the freshly-loaded DBM value, tripping
-                    // the cross-domain consistency check on the next
-                    // op. Surfaced by may_goto_c_code's loop reload of
-                    // `gvar`. Setting `unknown` (vs. the loaded const)
-                    // avoids over-constraining state subsumption — a
-                    // const tnum makes otherwise-equivalent iterations
-                    // look distinct and FRs `loop_inside_iter_volatile_limit`.
-                    state.set_tnum(dst, Tnum::unknown());
+                    // Pin tnum to the loaded constant too. Kernel's
+                    // `bpf_map_is_rdonly` path produces a fully-known
+                    // tnum (`tnum_const(val)`). Without this the next
+                    // bitwise/ALU op (e.g. `r &= 1` to test a low bit)
+                    // collapses the constant: handle_and does
+                    // forget(dst) then apply_and_imm which only sets
+                    // [0, mask], and tnum.and_imm(mask) on unknown tnum
+                    // never becomes constant — so the conditional
+                    // branch on the result splits both ways and dead
+                    // loop bodies (`while (*p & 1)` over rodata=2)
+                    // get explored. Mirrors kernel verifier.c v6.15
+                    // L6928 (`bpf_map_direct_read`).
+                    state.set_tnum(dst, Tnum::constant(val));
 
                     return true;
                 }

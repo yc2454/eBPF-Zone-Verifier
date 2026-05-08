@@ -174,6 +174,85 @@ pub fn load_btf_extern_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
     Ok(maps)
 }
 
+/// One `__ksym` extern variable (declared in the `.ksyms` BTF DATASEC).
+/// Populated by `load_ksyms` and consumed by the relocation pass to emit
+/// `RelocKind::Ksym` for `R_BPF_64_64` against UND ksym symbols.
+#[derive(Clone, Debug)]
+pub struct KsymInfo {
+    /// Symbol name (e.g. `runqueues`, `bpf_prog_active`).
+    pub name: String,
+    /// Resolved struct/union/fwd name underlying the var's type chain,
+    /// `None` for typeless / primitive ksyms (`extern const int X __ksym;`,
+    /// `extern const void X __ksym;`).
+    pub struct_name: Option<String>,
+    /// True if any TYPE_TAG named `percpu` appears in the var's type chain
+    /// (kernel `DECLARE_PER_CPU(...)` lowers to a `__percpu` tag).
+    pub is_percpu: bool,
+}
+
+/// Extract `__ksym` extern declarations from the program's BTF `.ksyms`
+/// DATASEC. Used by the relocation pass to type `R_BPF_64_64` against UND
+/// ksym symbols as `BPF_PSEUDO_BTF_ID` (LDIMM64 src=3) loads with
+/// resolved struct + percpu metadata.
+pub fn load_ksyms<P: AsRef<Path>>(path: P) -> Result<Vec<KsymInfo>> {
+    let buf = fs::read(&path)?;
+    let elf = Elf::parse(&buf)?;
+
+    let btf_ctx = elf.section_headers.iter().find_map(|sh| {
+        if elf.shdr_strtab.get_at(sh.sh_name) == Some(".BTF") {
+            let start = sh.sh_offset as usize;
+            let end = start + sh.sh_size as usize;
+            if end <= buf.len() {
+                return btf::parse_btf(&buf[start..end]).ok();
+            }
+        }
+        None
+    });
+
+    let Some(ctx) = btf_ctx else { return Ok(Vec::new()); };
+    let Some(datasec_id) = ctx.find_datasec(".ksyms") else { return Ok(Vec::new()); };
+
+    let mut out = Vec::new();
+    for entry in ctx.datasec_entries(datasec_id) {
+        let Some((name, var_type_id)) = ctx.var_info(entry.var_id) else { continue };
+        let (struct_name, mut is_percpu) = ctx.classify_ksym_type(var_type_id);
+        // Kernel `DECLARE_PER_CPU(...)` symbols carry the `__percpu`
+        // TYPE_TAG only in vmlinux/module BTF — programs that import them
+        // via `extern const T X __ksym;` see a plain T in their own BTF.
+        // We don't ship vmlinux BTF, so fall back to a static allowlist
+        // of the known percpu ksyms exercised by the test corpus.
+        if !is_percpu && is_known_percpu_ksym(name) {
+            is_percpu = true;
+        }
+        out.push(KsymInfo {
+            name: name.to_string(),
+            struct_name,
+            is_percpu,
+        });
+    }
+    Ok(out)
+}
+
+/// Static allowlist of known kernel/testmod ksym names that are
+/// `__percpu`-tagged in vmlinux/module BTF. Mirrors the kernel's
+/// per-cpu declarations exercised by the upstream selftest corpus —
+/// extending this list is the right move whenever a new test imports
+/// a percpu kernel symbol.
+fn is_known_percpu_ksym(name: &str) -> bool {
+    matches!(
+        name,
+        "runqueues"
+            | "bpf_prog_active"
+            | "bpf_testmod_ksym_percpu"
+            // `DEFINE_PER_CPU(int, bpf_task_storage_busy)` in
+            // kernel/bpf/bpf_task_storage.c — declared in selftests as
+            // `extern const int bpf_task_storage_busy __ksym` (no
+            // program-side `__percpu` annotation), so the percpu flag
+            // can only come from this allowlist.
+            | "bpf_task_storage_busy"
+    )
+}
+
 pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
     let buf = fs::read(&path)?;
     let elf = Elf::parse(&buf)?;
@@ -287,6 +366,17 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
                     if m.kptr_fields.is_empty() && !btf_m.kptr_fields.is_empty() {
                         m.kptr_fields = btf_m.kptr_fields.clone();
                     }
+                    // Inner-map mapping for ARRAY_OF_MAPS / HASH_OF_MAPS:
+                    // legacy bpf_map_def carries inner_map_idx in its
+                    // tail; modern BTF-described maps populate it via
+                    // parse_btf_map_defs's `__array(values, struct T)`
+                    // post-pass. Skip here — `btf_m.inner_map_idx` is
+                    // an index into the BTF-side vector whose order
+                    // differs from the live `maps` (legacy section is
+                    // symbol-order, BTF is HashMap-order). A second
+                    // pass below translates by name into the live
+                    // vector's index space.
+                    let _ = btf_m;
                     // BTF-described maps encode `__uint(map_flags, …)` in BTF;
                     // the legacy `bpf_map_def` slot in the .maps section reads
                     // as 0. Trust BTF when the section side is unset.
@@ -307,6 +397,56 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
         {
             // Legacy map of maps without inner map info. Fallback to 4 for basic analysis.
             m.value_size = 4;
+        }
+    }
+
+    // Translate BTF-side `inner_map_idx` into live `maps`-vector
+    // indices. parse_btf_map_defs's post-pass records inner_map_idx as
+    // an index into its OWN HashMap-iterated output; that order
+    // generally differs from `maps` (which is legacy-symbol-order
+    // post-merge). Re-resolve by matching the BTF inner-map's name
+    // against `maps[].name`. Always run for ARRAY_OF_MAPS/HASH_OF_MAPS
+    // maps that have a BTF-side entry with `inner_map_idx = Some(_)`
+    // — the legacy section parser unconditionally reads bytes 20..24
+    // and yields `Some(0)` garbage for modern BTF-described maps, so a
+    // pre-existing `Some` doesn't mean the value is correct.
+    if let Some(btf_bytes) = btf_data
+        && let Ok(btf_maps) = btf::parse_btf_map_defs(btf_bytes)
+    {
+        // For each map in the live `maps` vector that's a map-of-maps,
+        // look up the matching BTF entry by name, then translate its
+        // inner_map_idx (BTF-order) → name → live-order.
+        let live_index_by_name: std::collections::HashMap<&str, usize> = maps
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (m.name.as_str(), i))
+            .collect();
+        // Snapshot just the resolved live indices first to avoid the
+        // outer mutable borrow of `maps` while we look up by name.
+        let mut updates: Vec<(usize, usize)> = Vec::new();
+        for (i, m) in maps.iter().enumerate() {
+            if !matches!(
+                m.type_,
+                constants::BPF_MAP_TYPE_ARRAY_OF_MAPS | constants::BPF_MAP_TYPE_HASH_OF_MAPS
+            ) {
+                continue;
+            }
+            let Some(btf_m) = btf_maps.iter().find(|bm| bm.name == m.name) else {
+                continue;
+            };
+            let Some(btf_inner_idx) = btf_m.inner_map_idx else {
+                continue;
+            };
+            let Some(btf_inner_name) = btf_maps.get(btf_inner_idx).map(|bm| bm.name.as_str())
+            else {
+                continue;
+            };
+            if let Some(&live_idx) = live_index_by_name.get(btf_inner_name) {
+                updates.push((i, live_idx));
+            }
+        }
+        for (outer, inner) in updates {
+            maps[outer].inner_map_idx = Some(inner);
         }
     }
 

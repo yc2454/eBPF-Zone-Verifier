@@ -68,6 +68,7 @@ fn adjust_map_value_offset(ty: RegType, delta: Option<i64>) -> RegType {
             id,
             offset,
             map_idx,
+            map_uid,
         } => {
             let new_offset = match (offset, delta) {
                 (Some(o), Some(d)) => Some(o + d),
@@ -77,6 +78,7 @@ fn adjust_map_value_offset(ty: RegType, delta: Option<i64>) -> RegType {
                 id,
                 offset: new_offset,
                 map_idx,
+                map_uid,
             }
         }
         other => other,
@@ -110,6 +112,39 @@ fn update_ptr_arithmetic_type(
         RegType::PtrToStack { frame_level } => {
             types.set(dst, RegType::PtrToStack { frame_level });
         }
+        RegType::PtrToMapKptr {
+            pointee_btf_id,
+            ref_id,
+            flags,
+            offset,
+        } => {
+            // Mirror PtrToOwnedKptr arithmetic: kernel preserves
+            // PTR_TO_BTF_ID|MEM_* through `Add reg, K` / `Sub reg, K`
+            // and bumps `reg->off`. Required for the
+            // `R6 = bpf_kptr_xchg(...); R1 = R6 + 16; bpf_kptr_xchg(R1, NULL)`
+            // idiom (local_kptr_stash::unstash_rb_node), where the
+            // second xchg targets a kptr field embedded inside the
+            // previously xchg'd object.
+            // Variable delta on a kptr is rejected by the kernel
+            // ("variable untrusted_ptr_ access var_off=..."); drop to
+            // ScalarValue so the downstream kptr-field store gate
+            // catches the source-type mismatch.
+            let Some(d) = signed_delta else {
+                types.set(dst, RegType::ScalarValue);
+                return;
+            };
+            let new_offset =
+                offset.saturating_add(d.clamp(i32::MIN as i64, i32::MAX as i64) as i32);
+            types.set(
+                dst,
+                RegType::PtrToMapKptr {
+                    pointee_btf_id,
+                    ref_id,
+                    flags,
+                    offset: new_offset,
+                },
+            );
+        }
         RegType::PtrToOwnedKptr {
             ref_id,
             offset,
@@ -138,6 +173,38 @@ fn update_ptr_arithmetic_type(
                     pointee_btf_id,
                 },
             );
+        }
+        RegType::PtrToAllocMem {
+            id,
+            mem_size,
+            ref_id,
+            dynptr_id,
+        } => {
+            // Kernel `verifier.c` ~L15170 (v6.15): pointer arithmetic on
+            // PTR_TO_MEM (alloc) preserves the type and bumps `reg->off`
+            // by the constant delta. We don't carry an offset field on
+            // PtrToAllocMem, so model the offset by shrinking mem_size
+            // (the remaining-bytes-from-here invariant). Forward-only
+            // adds within bounds preserve the type; anything else (sub,
+            // unknown delta, out-of-range delta) demotes to scalar so
+            // the access check rejects rather than silently allowing.
+            // Drop ref_id — an interior pointer is no longer the
+            // acquire-tracked owner and can't be released through.
+            let _ = ref_id;
+            match signed_delta {
+                Some(d) if d >= 0 && (d as u64) <= mem_size => {
+                    types.set(
+                        dst,
+                        RegType::PtrToAllocMem {
+                            id,
+                            mem_size: mem_size - d as u64,
+                            ref_id: None,
+                            dynptr_id,
+                        },
+                    );
+                }
+                _ => types.set(dst, RegType::ScalarValue),
+            }
         }
         RegType::PtrToArena { ref_id, mem_size } => {
             // Kernel `verifier.c` ~L15191 (v6.15): when dst is
@@ -331,6 +398,7 @@ pub(crate) fn update_alu_types(
                                         id: new_ptr_id(),
                                         offset: Some(info.offset),
                                         map_idx: info.map_idx,
+                                        map_uid: None,
                                     },
                                 );
                             } else {
@@ -349,7 +417,31 @@ pub(crate) fn update_alu_types(
             let dst_ty = in_types.get(dst);
             let is_add = op == AluOp::Add;
 
-            if dst_ty.is_pointer() {
+            // Same-family packet ptr subtraction (PtrToPacket - PtrToPacket
+            // etc.) collapses to a scalar byte distance. The
+            // `is_pointer()` arm below would otherwise keep dst typed as
+            // a packet pointer (no anchor change is detectable from
+            // dst-vs-AnchorData), which then fails the next non-Add/Sub
+            // ALU op as "Invalid pointer arithmetic". The DBM domain
+            // already carries the correct scalar bounds via apply_sub_reg
+            // in handle_sub.
+            let same_family_sub = !is_add
+                && match src {
+                    Operand::Reg(r) => {
+                        let src_ty = in_types.get(*r);
+                        matches!(
+                            (&dst_ty, &src_ty),
+                            (RegType::PtrToPacket, RegType::PtrToPacket)
+                                | (RegType::PtrToPacketEnd, RegType::PtrToPacketEnd)
+                                | (RegType::PtrToPacketMeta, RegType::PtrToPacketMeta)
+                        )
+                    }
+                    _ => false,
+                };
+
+            if same_family_sub {
+                types.set(dst, RegType::ScalarValue);
+            } else if dst_ty.is_pointer() {
                 update_ptr_arithmetic_type(env, types, domain, dst, dst_ty, src, is_add);
             } else {
                 handle_scalar_arithmetic_type(in_types, types, dst, src, is_add);
@@ -372,7 +464,12 @@ pub(crate) fn update_alu_types(
     }
 }
 
-/// Updates register types after a Load operation.
+/// Updates register types after a Load operation. Returns `true` when
+/// the function has explicitly set numeric domain bounds on `dst`
+/// (e.g. via `CtxFieldKind::BoundedScalar`), in which case the caller
+/// must skip its default post-load `forget(dst)` + width-based clamp —
+/// otherwise the explicit bounds get wiped before they're observed by
+/// downstream transfer steps.
 pub(crate) fn update_load_types(
     env: &VerifierEnv,
     state: &mut State,
@@ -380,7 +477,7 @@ pub(crate) fn update_load_types(
     dst: Reg,
     base: Reg,
     off: i16,
-) {
+) -> bool {
     let base_ty = state.types.get(base);
     match base_ty {
         RegType::PtrToCtx => {
@@ -405,6 +502,11 @@ pub(crate) fn update_load_types(
                         state
                             .types
                             .set(dst, RegType::PtrToSocket { ref_id: None });
+                    }
+                    CtxFieldKind::SocketOrNull => {
+                        state
+                            .types
+                            .set(dst, RegType::PtrToSocketOrNull { ref_id: None });
                     }
                     CtxFieldKind::AllocMem { mem_size } => {
                         state.types.set(
@@ -448,6 +550,42 @@ pub(crate) fn update_load_types(
                                 },
                             );
                         }
+                    }
+                    CtxFieldKind::RefcountedTask { ref_id } => {
+                        state.types.set(
+                            dst,
+                            RegType::PtrToTask { ref_id: Some(ref_id) },
+                        );
+                        state.domain.forget(dst);
+                    }
+                    CtxFieldKind::BoundedScalar { lo, hi } => {
+                        // LSM int-hook trailing `int ret` arg etc. —
+                        // kernel constrains the value at attach to
+                        // `[lo, hi]`. Materialize as ScalarValue + apply
+                        // the range to both the s64 and s32 shadows.
+                        // We need the s32 bound because `return ret;`
+                        // patterns get truncated through a W32 mov
+                        // (`w0 = r_src`) before exit, and the LSM retval
+                        // rule is checked on the s32 view (kernel
+                        // `retval_range_s32`). Without the s32 bound
+                        // propagating through the W32 mov, R0's s32
+                        // view widens to full range.
+                        //
+                        // Return `true` so `transfer_load_ext` skips its
+                        // post-load `forget(dst)` + access-size clamp;
+                        // those would wipe the explicit bound we just
+                        // set and cap u32 at u32::MAX, defeating the
+                        // s32 carry-through.
+                        state.types.set(dst, RegType::ScalarValue);
+                        state.domain.forget(dst);
+                        state.domain.assume_ge_imm(dst, lo);
+                        state.domain.assume_le_imm(dst, hi);
+                        if lo >= i32::MIN as i64 && hi <= i32::MAX as i64 {
+                            state
+                                .domain
+                                .set_s32_bounds(dst, lo as i32, hi as i32);
+                        }
+                        return true;
                     }
                     _ => state.types.set(dst, RegType::ScalarValue),
                 }
@@ -504,17 +642,31 @@ pub(crate) fn update_load_types(
                     KptrFieldKind::Percpu => PtrFlags::PERCPU,
                     KptrFieldKind::Uptr => {
                         // `__uptr` loads yield a userspace-pointer value.
-                        // No PtrToMapKptr* variant fits — the kernel types
-                        // these as `PTR_TO_MEM | MEM_USER | PTR_MAYBE_NULL`
-                        // and rejects deref-before-null-check
-                        // ("invalid mem access 'mem_or_null'"). Until a
-                        // dedicated reg type lands, fall through to
-                        // ScalarValue: the two tests we're closing here
-                        // (uptr_write{,_nested}) only exercise the store
-                        // path. Load-side tests (uptr_no_null_check) stay
-                        // FA for now and fall to a follow-up.
-                        state.types.set(dst, RegType::ScalarValue);
-                        return;
+                        // Kernel types this as `PTR_TO_MEM | MEM_USER |
+                        // PTR_MAYBE_NULL` and rejects deref-before-
+                        // null-check ("invalid mem access 'mem_or_null'").
+                        // We mirror via `PtrToAllocMemOrNull` whose
+                        // `mem_size` comes from the pointee struct's BTF
+                        // size; deref through OrNull falls into the
+                        // generic-load reject arm, and post-null-check
+                        // refinement to `PtrToAllocMem` enables bounded
+                        // field reads. Closes task_ls_uptr.c::on_enter
+                        // (`v->udata->result` after null check).
+                        let mem_size = env
+                            .ctx
+                            .btf
+                            .type_size_bytes(field.pointee_btf_id)
+                            as u64;
+                        state.types.set(
+                            dst,
+                            RegType::PtrToAllocMemOrNull {
+                                id: crate::analysis::machine::reg_types::new_ptr_id(),
+                                mem_size,
+                                ref_id: None,
+                                dynptr_id: None,
+                            },
+                        );
+                        return false;
                     }
                 };
                 state.types.set(
@@ -523,6 +675,7 @@ pub(crate) fn update_load_types(
                         pointee_btf_id: field.pointee_btf_id,
                         ref_id: None,
                         flags,
+                        offset: 0,
                     },
                 );
             } else {
@@ -568,40 +721,66 @@ pub(crate) fn update_load_types(
                 && let Some(info) = env.ctx.btf.field_at_offset_descend(struct_id, off as u32)
                 && let BtfFieldKind::Pointer {
                     pointee_name: Some(pointee),
-                    ..
-                } = info.kind
+                    type_tag,
+                } = &info.kind
             {
                 let trusted = trusted_field_load(type_name, info.name);
                 let rcu = rcu_field_load(type_name, info.name);
-                // RCU-tagged fields (kernel `__rcu` annotation): inside an
-                // RCU CS the load yields PTR_TO_BTF_ID|MEM_RCU; outside,
-                // the kernel calls it "old style ptr_to_btf_id" and the
-                // pointer carries no trust flag — downstream kfunc/helper
-                // arg validators that require TRUSTED/RCU reject. We
-                // model "no trust outside CS" by leaving dst as
-                // ScalarValue (the typed-pointer fallthrough).
-                let flags = if trusted {
-                    Some(PtrFlags::TRUSTED)
-                } else if rcu && state.in_rcu_read_section() {
-                    Some(PtrFlags::RCU)
-                } else {
-                    None
+                // BTF TYPE_TAG-driven flags: kernel `__percpu` / `__user`
+                // pointers are non-derefable directly. memory/access.rs
+                // rejects deref of PtrToBtfId carrying USER or PERCPU;
+                // bpf_per_cpu_ptr / bpf_copy_from_user are the kernel
+                // path through. Closes btf_type_tag_percpu::test_percpu_load
+                // — `cgrp->rstat_cpu` is `__percpu *` and the test expects
+                // direct deref to be rejected.
+                // BTF TYPE_TAG-driven flags from the program's BTF.
+                // Falls back to a static (struct, field) allowlist for
+                // kernel-defined fields whose `__percpu` / `__user`
+                // annotation lives in vmlinux BTF (which we don't ship).
+                let tag_str = type_tag
+                    .as_deref()
+                    .or_else(|| percpu_or_user_field(type_name, info.name));
+                let tag_flags = match tag_str {
+                    Some("percpu") => PtrFlags::PERCPU,
+                    Some("user") => PtrFlags::USER,
+                    _ => PtrFlags::empty(),
                 };
-                if let Some(flags) = flags {
-                    let pointee_static =
-                        crate::analysis::machine::context::intern_btf_type_name_strict(
-                            &pointee,
-                        );
-                    state.types.set(
-                        dst,
-                        RegType::PtrToBtfId {
-                            type_name: pointee_static,
-                            flags,
-                            ref_id: None,
-                        },
+                // Three trust bands mirror kernel `btf_struct_walk`:
+                //  - TRUSTED: explicit `__safe_trusted` allowlist
+                //  - RCU: explicit `__safe_rcu` allowlist, gated on CS
+                //  - UNTRUSTED (default): kernel "old-style ptr_to_btf_id"
+                //    (verifier.c v6.15 ~L7140). Load is admitted, downstream
+                //    chained derefs work, but consumer validators that
+                //    require KF_TRUSTED_ARGS / KF_RCU reject.
+                //
+                // Previously the default arm collapsed to ScalarValue,
+                // which broke chained pointer field walks (e.g.
+                // `skb->dev->ifalias->...` in tracing programs). The
+                // UNTRUSTED variant matches kernel exactly and preserves
+                // the type chain; the FA risk is bounded to consumer
+                // validators that don't enforce TRUSTED — those should
+                // be tightened independently.
+                let trust_flag = if trusted {
+                    PtrFlags::TRUSTED
+                } else if rcu && state.in_rcu_read_section() {
+                    PtrFlags::RCU
+                } else {
+                    PtrFlags::UNTRUSTED
+                };
+                let flags = trust_flag.union(tag_flags);
+                let pointee_static =
+                    crate::analysis::machine::context::intern_btf_type_name_strict(
+                        pointee,
                     );
-                    typed = true;
-                }
+                state.types.set(
+                    dst,
+                    RegType::PtrToBtfId {
+                        type_name: pointee_static,
+                        flags,
+                        ref_id: None,
+                    },
+                );
+                typed = true;
             }
             if !typed {
                 state.types.set(dst, RegType::ScalarValue);
@@ -609,6 +788,7 @@ pub(crate) fn update_load_types(
         }
         _ => state.types.set(dst, RegType::ScalarValue),
     }
+    false
 }
 
 /// Allowlist of `(struct_name, field_name)` pairs whose loaded pointer
@@ -768,6 +948,24 @@ pub fn rcu_field_load(struct_name: &str, field_name: &str) -> bool {
     )
 }
 
+/// Static allowlist of `(struct, field) → "percpu" | "user"` for kernel
+/// fields whose BTF TYPE_TAG annotation lives in vmlinux BTF (which we
+/// don't ship). Direct deref of these is rejected by `memory/access.rs`'s
+/// PERCPU/USER check; programs must go through `bpf_per_cpu_ptr` /
+/// `bpf_copy_from_user`. Without this, the BTF field-walk produces an
+/// untagged pointer and the kernel-rejection mechanism doesn't fire.
+///
+/// Mirror kernel sources only — adding speculative entries would FA
+/// `__failure` tests that exercise the matching deref path.
+fn percpu_or_user_field(struct_name: &str, field_name: &str) -> Option<&'static str> {
+    match (struct_name, field_name) {
+        // struct cgroup { ... struct cgroup_rstat_cpu __percpu *rstat_cpu; }
+        // — drives btf_type_tag_percpu::test_percpu_load (`__failure`).
+        ("cgroup", "rstat_cpu") => Some("percpu"),
+        _ => None,
+    }
+}
+
 /// Updates stack types after a Store operation.
 /// `resolved_stack_offset` is the already-resolved stack slot (base_offset + insn_off),
 /// or None if the base is not a stack pointer or offset is unknown.
@@ -835,11 +1033,103 @@ pub(crate) fn update_call_types(
         crate::analysis::transfer::call::signatures::get_helper_proto(helper)
     {
         crate::analysis::transfer::call::side_effects::apply_call_proto_r0(
-            in_types, state, &proto,
+            in_types, state, &proto, env.ctx.prog_kind,
         )
     } else {
         false
     };
+
+    // bpf_per_cpu_ptr / bpf_this_cpu_ptr R0 typing. Kernel
+    // `check_helper_call` dispatches `RET_PTR_TO_MEM_OR_BTF_ID`:
+    //   - typed ksyms (struct R1): R0 = PTR_TO_BTF_ID | MEM_RCU [| MAYBE_NULL]
+    //     preserving the struct name, dropping PERCPU.
+    //   - typeless ksyms (`extern const void X __ksym;`): would produce
+    //     PTR_TO_MEM, but we never see those reach the helper today (they
+    //     materialize as ScalarValue and the per_cpu_ptr arg gate rejects).
+    // bpf_per_cpu_ptr returns NULL on invalid CPU; bpf_this_cpu_ptr never
+    // returns NULL (always callable on the current CPU).
+    if !routed
+        && (helper == constants::BPF_PER_CPU_PTR || helper == constants::BPF_THIS_CPU_PTR)
+    {
+        // Resolve (type_name, in_flags) from the percpu source pointer.
+        // Two source shapes today:
+        //   - typed __ksym (`extern percpu T sym __ksym;`) → PtrToBtfId
+        //   - `__percpu_kptr` map field load → PtrToMapKptr{PERCPU,
+        //     pointee_btf_id} (kernel `PTR_TO_BTF_ID | MEM_PERCPU` on
+        //     reg, mirrored as PtrToMapKptr in our model).
+        let resolved: Option<(&'static str, crate::analysis::machine::reg_types::PtrFlags)> =
+            match in_types.get(Reg::R1) {
+                RegType::PtrToBtfId { type_name, flags, .. } => Some((type_name, flags)),
+                RegType::PtrToMapKptr {
+                    pointee_btf_id,
+                    flags,
+                    ..
+                }
+                | RegType::PtrToMapKptrOrNull {
+                    pointee_btf_id,
+                    flags,
+                    ..
+                } => env.ctx.btf.struct_name(pointee_btf_id).map(|n| {
+                    (
+                        crate::analysis::machine::context::intern_btf_type_name_strict(n),
+                        flags,
+                    )
+                }),
+                _ => None,
+            };
+        if let Some((type_name, flags)) = resolved {
+            // Drop PERCPU + RDONLY on the result; kernel marks the
+            // post-call ptr as RCU-protected (typed ksym deref needs to
+            // be inside an RCU read region, but our existing trust-band
+            // model accepts TRUSTED-flagged BTF id pointers without
+            // modeling RCU here). RDONLY is dropped because we don't
+            // enforce ksym-derived per-cpu store rejection at the
+            // field-store level today.
+            let drop = crate::analysis::machine::reg_types::PtrFlags::PERCPU
+                | crate::analysis::machine::reg_types::PtrFlags::RDONLY;
+            let mut out_flags = flags.difference(drop)
+                | crate::analysis::machine::reg_types::PtrFlags::TRUSTED;
+            // Stamp MEM_ALLOC when the source was a `__percpu_kptr`
+            // map field (PtrToMapKptr) — the dereferenced object is
+            // program-owned (allocated via `bpf_percpu_obj_new`), so
+            // direct field stores through R0 are allowed by the
+            // kernel's `btf_struct_access`. Typed ksym sources
+            // (PtrToBtfId) don't get MEM_ALLOC: those name kernel-
+            // owned percpu vars (`__cpu_active_mask`-style) where
+            // writes are rejected.
+            let from_local_kptr = matches!(
+                in_types.get(Reg::R1),
+                RegType::PtrToMapKptr { .. } | RegType::PtrToMapKptrOrNull { .. }
+            );
+            if from_local_kptr {
+                out_flags = out_flags
+                    | crate::analysis::machine::reg_types::PtrFlags::MEM_ALLOC;
+            }
+            if helper == constants::BPF_PER_CPU_PTR {
+                let id = new_ptr_id();
+                state.types.set(
+                    Reg::R0,
+                    RegType::PtrToBtfIdOrNull {
+                        id,
+                        type_name,
+                        flags: out_flags,
+                        ref_id: None,
+                    },
+                );
+            } else {
+                state.types.set(
+                    Reg::R0,
+                    RegType::PtrToBtfId {
+                        type_name,
+                        flags: out_flags,
+                        ref_id: None,
+                    },
+                );
+            }
+            return;
+        }
+        // Fall through to default (Scalar) for typeless / non-BTF inputs.
+    }
 
     // Set R0 based on helper return type (legacy path for non-migrated helpers)
     if !routed {
@@ -894,6 +1184,32 @@ pub(crate) fn update_call_types(
                         // target) — type R0 as PtrToMapValue directly so the
                         // user can dereference without an explicit null check,
                         // matching kernel behaviour.
+                        // map_uid: kernel mints a fresh per-lookup uid
+                        // when the lookup target is a map-of-maps
+                        // (each result represents a possibly-distinct
+                        // inner-map instance). For inner-of-inner
+                        // chains, R1 itself is a PtrToMapValue carrying
+                        // the outer-lookup's uid; propagate. Reused by
+                        // the bpf_timer_init / bpf_wq_init cross-arg
+                        // check (timer_mim_reject::test1).
+                        let map_uid: Option<u32> = match in_types.get(Reg::R1) {
+                            RegType::PtrToMapObject { map_idx: outer } => env
+                                .ctx
+                                .map_defs
+                                .get(outer)
+                                .and_then(|m| {
+                                    matches!(
+                                        m.type_,
+                                        constants::BPF_MAP_TYPE_ARRAY_OF_MAPS
+                                            | constants::BPF_MAP_TYPE_HASH_OF_MAPS
+                                    )
+                                    .then(crate::analysis::machine::reg_types::new_map_uid)
+                                }),
+                            RegType::PtrToMapValue {
+                                map_uid: outer_uid, ..
+                            } => outer_uid,
+                            _ => None,
+                        };
                         if helper == constants::BPF_GET_LOCAL_STORAGE {
                             let id = new_ptr_id();
                             state.types.set(
@@ -902,6 +1218,7 @@ pub(crate) fn update_call_types(
                                     id,
                                     offset: Some(0),
                                     map_idx,
+                                    map_uid,
                                 },
                             );
                             state.domain.init_map_value_ptr(Reg::R0);
@@ -923,14 +1240,20 @@ pub(crate) fn update_call_types(
                                     id,
                                     offset: Some(0),
                                     map_idx,
+                                    map_uid,
                                 },
                             );
                             state.domain.init_map_value_ptr(Reg::R0);
                         } else {
                             let id = new_ptr_id();
-                            state
-                                .types
-                                .set(Reg::R0, RegType::PtrToMapValueOrNull { id, map_idx });
+                            state.types.set(
+                                Reg::R0,
+                                RegType::PtrToMapValueOrNull {
+                                    id,
+                                    map_idx,
+                                    map_uid,
+                                },
+                            );
                         }
                     }
                 }
@@ -965,6 +1288,45 @@ pub(crate) fn update_call_types(
         constants::BPF_TCP_SOCK => {
             let id = state.types.get(Reg::R1).get_ref_id();
             state.types.set(Reg::R0, RegType::PtrToTcpSockOrNull { id });
+        }
+
+        // bpf_sock_from_file(struct file *file): kernel returns
+        // `struct socket *` or NULL. R0 = PtrToBtfIdOrNull{socket, TRUSTED}
+        // so `sock->sk` field-load downstream resolves via the
+        // `("socket", "sk")` trusted_field_load entry. Closes
+        // bpf_iter_bpf_sk_storage_helpers::fill_socket_owner.
+        constants::BPF_SOCK_FROM_FILE => {
+            let id = new_ptr_id();
+            state.types.set(
+                Reg::R0,
+                RegType::PtrToBtfIdOrNull {
+                    id,
+                    type_name: crate::analysis::machine::context::intern_btf_type_name_strict(
+                        "socket",
+                    ),
+                    flags: PtrFlags::TRUSTED,
+                    ref_id: None,
+                },
+            );
+        }
+
+        // bpf_task_pt_regs(struct task_struct *task): kernel returns
+        // `struct pt_regs *` (NULL only if `task` is invalid; treated as
+        // PtrToBtfIdOrNull). Closes bpf_iter_tasks::dump_task_sleepable
+        // (PT_REGS_IP(regs) reads regs->ip at offset 128 on x86_64).
+        constants::BPF_TASK_PT_REGS => {
+            let id = new_ptr_id();
+            state.types.set(
+                Reg::R0,
+                RegType::PtrToBtfIdOrNull {
+                    id,
+                    type_name: crate::analysis::machine::context::intern_btf_type_name_strict(
+                        "pt_regs",
+                    ),
+                    flags: PtrFlags::TRUSTED,
+                    ref_id: None,
+                },
+            );
         }
 
         // SKC lookup - returns PTR_TO_SOCK_COMMON_OR_NULL
@@ -1065,9 +1427,14 @@ pub(crate) fn update_call_types(
                 _ => 0,
             };
             let id = new_ptr_id();
-            state
-                .types
-                .set(Reg::R0, RegType::PtrToMapValueOrNull { id, map_idx });
+            state.types.set(
+                Reg::R0,
+                RegType::PtrToMapValueOrNull {
+                    id,
+                    map_idx,
+                    map_uid: None,
+                },
+            );
         }
 
         // tail_call: R0 is undefined on failure path
@@ -1149,6 +1516,28 @@ pub(crate) fn update_call_types(
             state.invalidate_dynptr_slices(did);
         }
     }
+
+    // bpf_dynptr_write: kernel only invalidates slices when the target
+    // dynptr is BPF_DYNPTR_TYPE_SKB (verifier.c v6.15 ~L11512: "this will
+    // trigger clear_all_pkt_pointers(), which will invalidate all dynptr
+    // slices associated with the skb"). XDP-typed dynptrs don't trigger
+    // the invalidation — `test_xdp_dynptr::_xdp_tx_iptunnel` writes
+    // through a `bpf_dynptr_from_xdp` dynptr and continues using prior
+    // slice-derived ptrs. Look up R1's stack-slot dynptr kind here
+    // rather than blanket-invalidating via helper_invalidates_packets.
+    // Closes dynptr_fail::skb_invalid_data_slice3, skb_invalid_data_slice4.
+    if helper == constants::BPF_DYNPTR_WRITE {
+        use crate::analysis::machine::stack_state::DynptrKind;
+        if let RegType::PtrToStack { frame_level } = in_types.get(Reg::R1)
+            && let Some(off) = state.domain.get_distance_fixed(Reg::R1, Reg::R10)
+            && let Ok(off_i16) = i16::try_from(off)
+            && let Some(slot) = state.stack_at(frame_level).stack_get_dynptr(off_i16)
+            && matches!(slot.kind, DynptrKind::Skb)
+        {
+            let did = slot.dynptr_id;
+            state.invalidate_dynptr_slices(did);
+        }
+    }
 }
 
 pub(crate) fn update_call_rel_types(state: &mut State) {
@@ -1193,6 +1582,9 @@ pub(crate) fn update_map_load_types(
             id: if is_static_data_section { 0 } else { new_ptr_id() },
             map_idx: map_fd,
             offset: Some(offset),
+            // Direct map decl — no map_uid (the per-instance identity
+            // only matters for chained map-of-maps lookups).
+            map_uid: None,
         },
         // Modern kinds are filtered upstream in transfer_map_load; reaching
         // them here would be a bug.

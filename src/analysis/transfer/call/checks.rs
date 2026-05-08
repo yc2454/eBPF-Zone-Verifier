@@ -393,7 +393,21 @@ fn validate_ptr_to_ctx(ctx: &mut ValidationContext) -> bool {
 }
 
 fn validate_ptr_to_btf_id(ctx: &mut ValidationContext) -> bool {
-    if !matches!(ctx.actual, RegType::PtrToBtfId { .. }) {
+    // The specialized kernel-struct reg-types (PtrToTask, PtrToCgroup,
+    // PtrToCpumask, …) are the same kernel object as the generic
+    // `PtrToBtfId{type_name=<X>, ...}`; helpers/kfuncs that demand "any
+    // PTR_TO_BTF_ID" (no specific struct match) should accept the
+    // specialized form too. Without this, e.g.
+    // `bpf_copy_from_user_task(..., bpf_get_current_task_btf(), ...)`
+    // rejects R4=PtrToTask under the loose proto. Mirrors the
+    // equivalence already wired in `validate_ptr_to_btf_id_named`.
+    let is_specialized_btf = matches!(
+        ctx.actual,
+        RegType::PtrToTask { .. }
+            | RegType::PtrToCgroup { .. }
+            | RegType::PtrToCpumask { .. }
+    );
+    if !matches!(ctx.actual, RegType::PtrToBtfId { .. }) && !is_specialized_btf {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
                 pc: ctx.pc,
@@ -519,7 +533,7 @@ fn validate_ptr_to_cpumask_read(ctx: &mut ValidationContext) -> bool {
             if (type_name == "cpumask" || type_name == "bpf_cpumask")
                 && flags.contains(PtrFlags::TRUSTED)
     );
-    let is_map_kptr_cpumask = if let RegType::PtrToMapKptr { pointee_btf_id, ref_id, flags } =
+    let is_map_kptr_cpumask = if let RegType::PtrToMapKptr { pointee_btf_id, ref_id, flags, .. } =
         ctx.actual
     {
         let name = ctx.env.ctx.btf.struct_or_fwd_name(pointee_btf_id);
@@ -775,6 +789,64 @@ fn validate_ptr_to_stack(ctx: &mut ValidationContext) -> bool {
 ///   second slot) are rejected. If `rdwr_only` is set, an `rdonly`
 ///   dynptr is rejected (e.g. `bpf_dynptr_write` on an `Skb` dynptr).
 fn validate_dynptr_arg(ctx: &mut ValidationContext, uninit: bool, rdwr_only: bool) -> bool {
+    // Kernel `PTR_TO_DYNPTR` (e.g. user-ringbuf cb's R1, set by
+    // `set_user_ringbuf_callback_state` verifier.c v6.15 ~L10800):
+    // accepted by consumer kfuncs (`uninit:false`); rejected by
+    // constructors (`uninit:true`, kernel "Dynptr has to be an
+    // uninitialized dynptr"); rdwr-only consumers reject `rdonly`
+    // (kernel "cannot write into rdonly dynptr"). The PTR_TO_DYNPTR
+    // is kernel-managed, not stack-based — there's no slot to inspect.
+    if let RegType::PtrToDynptr { rdonly, .. } = ctx.actual {
+        if uninit {
+            return ctx.fail_with_log(
+                VerificationError::InvalidArgType {
+                    pc: ctx.pc,
+                    reg: ctx.reg,
+                },
+                &format!(
+                    "[Verifier] pc {}: R{} cannot pass PTR_TO_DYNPTR to dynptr constructor (kernel: 'Dynptr has to be an uninitialized dynptr')",
+                    ctx.pc,
+                    ctx.arg_index + 1
+                ),
+            );
+        }
+        // PTR_TO_DYNPTR carries no acquire ref — kernel-managed.
+        // Release-class consumers (`bpf_ringbuf_{submit,discard}_dynptr`)
+        // require a refcounted (Ringbuf) dynptr; kernel
+        // `release_reference` rejects with "cannot release unowned
+        // const bpf_dynptr" (verifier.c v6.15 ~L11800).
+        if matches!(
+            ctx.helper,
+            crate::common::constants::BPF_RINGBUF_SUBMIT_DYNPTR
+                | crate::common::constants::BPF_RINGBUF_DISCARD_DYNPTR
+        ) {
+            return ctx.fail_with_log(
+                VerificationError::InvalidArgType {
+                    pc: ctx.pc,
+                    reg: ctx.reg,
+                },
+                &format!(
+                    "[Verifier] pc {}: R{} cannot release unowned const bpf_dynptr (PTR_TO_DYNPTR)",
+                    ctx.pc,
+                    ctx.arg_index + 1
+                ),
+            );
+        }
+        if rdwr_only && rdonly {
+            return ctx.fail_with_log(
+                VerificationError::InvalidArgType {
+                    pc: ctx.pc,
+                    reg: ctx.reg,
+                },
+                &format!(
+                    "[Verifier] pc {}: R{} cannot pass rdonly PTR_TO_DYNPTR to rdwr-only kfunc",
+                    ctx.pc,
+                    ctx.arg_index + 1
+                ),
+            );
+        }
+        return true;
+    }
     let RegType::PtrToStack { frame_level } = ctx.actual else {
         return ctx.fail_with_log(
             VerificationError::InvalidArgType {
@@ -1453,7 +1525,7 @@ pub(crate) fn validate_readable_mem(
                 true
             }
         }
-        RegType::PtrToPacket => {
+        RegType::PtrToPacket | RegType::PtrToPacketMeta => {
             if let Some(size) = size {
                 access::check_load(env, state, reg, size as i64, 0);
                 if env.failed() {
@@ -1617,6 +1689,41 @@ pub(crate) fn validate_writable_mem(
                 pc
             );
             false
+        }
+        RegType::PtrToPacketMeta => {
+            // data_meta region IS writable via helpers/kfuncs (XDP only —
+            // kernel's `xdp_metadata_rx_*` kfuncs write hash / rss_type /
+            // vlan_tci into the meta region). Bounds-check the write size
+            // against the meta-region range via the standard packet-meta
+            // access check (mirrors the read path at L1470 added in
+            // commit b0ac782).
+            if let Some(size) = size {
+                crate::analysis::transfer::memory::access::check_load(
+                    env, state, reg, size as i64, 0,
+                );
+                if env.failed() {
+                    return false;
+                }
+            }
+            true
+        }
+        RegType::PtrToAllocMem { mem_size, .. } => {
+            // Ringbuf-reserved (or kfunc bpf_obj_new) memory is writable.
+            // Bound check: helper write-size must fit within remaining
+            // bytes from this pointer's offset (mem_size already encodes
+            // the post-offset remaining size after pointer arithmetic
+            // through `update_ptr_arithmetic_type`).
+            if let Some(sz) = size {
+                if (sz as u64) > mem_size {
+                    env.fail(VerificationError::InvalidArgType { pc, reg });
+                    error!(
+                        "[Verifier] pc {}: write size {} exceeds remaining alloc-mem size {}",
+                        pc, sz, mem_size
+                    );
+                    return false;
+                }
+            }
+            true
         }
         _ => {
             env.fail(VerificationError::InvalidArgType { pc, reg });
@@ -1879,6 +1986,7 @@ pub(crate) fn check_ptr_access_size(
             map_idx,
             offset,
             id: _,
+            ..
         } => {
             // Map value: check offset + size <= value_size
             let Some(map_def) = env.ctx.map_defs.get(map_idx) else {

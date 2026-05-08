@@ -789,11 +789,21 @@ impl State {
                 })
             } else {
                 let (a, lo, hi) = self.save_anchor_info(reg);
-                if a.is_some() || lo.is_some() || hi.is_some() {
+                let (ea, elo, ehi) = self.save_secondary_anchor_info(reg);
+                if a.is_some()
+                    || lo.is_some()
+                    || hi.is_some()
+                    || ea.is_some()
+                    || elo.is_some()
+                    || ehi.is_some()
+                {
                     Some(PointerBounds::Zone {
                         anchor: a,
                         anchor_lo: lo,
                         anchor_hi: hi,
+                        end_anchor: ea,
+                        end_lo: elo,
+                        end_hi: ehi,
                     })
                 } else {
                     None
@@ -1142,6 +1152,37 @@ impl State {
         }
     }
 
+    /// Save a packet pointer's secondary anchor relation (the @data_end
+    /// edge for PtrToPacket / PtrToPacketMeta, or the @data edge for
+    /// PtrToPacketEnd). Returns `(None, None, None)` for non-packet
+    /// pointers and when the constraint is INF.
+    ///
+    /// Needed alongside `save_anchor_info` because the relations between
+    /// distinct packet anchors are bounded but not fixed: a `r - @data`
+    /// bound preserved across spill/fill is insufficient on its own to
+    /// reconstruct a tighter `r - @data_end` bound that the access-site
+    /// `end_ok` check depends on.
+    pub fn save_secondary_anchor_info(
+        &self,
+        reg: Reg,
+    ) -> (Option<Reg>, Option<i64>, Option<i64>) {
+        let secondary = match self.types.get(reg) {
+            RegType::PtrToPacket | RegType::PtrToPacketMeta => Some(Reg::AnchorDataEnd),
+            RegType::PtrToPacketEnd => Some(Reg::AnchorData),
+            _ => None,
+        };
+
+        if let Some(a) = secondary {
+            let hi = self.domain.get(reg, a);
+            let lo = self.domain.get(a, reg);
+            let hi = if hi >= INF { None } else { Some(hi) };
+            let lo = if lo >= INF { None } else { Some(lo) };
+            (Some(a), lo, hi)
+        } else {
+            (None, None, None)
+        }
+    }
+
     /// Save interval mode PtrOffset info for a register
     pub fn save_interval_ptr_offset(&self, reg: Reg) -> (Option<i64>, Option<u64>, Option<i64>) {
         use crate::domains::numeric::NumericDomain;
@@ -1164,14 +1205,30 @@ impl State {
                 anchor,
                 anchor_lo,
                 anchor_hi,
+                end_anchor,
+                end_lo,
+                end_hi,
             }) => {
+                let mut touched = false;
                 if let Some(anchor_reg) = anchor {
                     if let Some(hi) = anchor_hi {
-                        self.domain.add_constraint(reg, *anchor_reg, *hi); // reg - anchor <= hi
+                        self.domain.add_constraint(reg, *anchor_reg, *hi);
                     }
                     if let Some(lo) = anchor_lo {
-                        self.domain.add_constraint(*anchor_reg, reg, *lo); // anchor - reg <= lo
+                        self.domain.add_constraint(*anchor_reg, reg, *lo);
                     }
+                    touched = true;
+                }
+                if let Some(end_reg) = end_anchor {
+                    if let Some(hi) = end_hi {
+                        self.domain.add_constraint(reg, *end_reg, *hi);
+                    }
+                    if let Some(lo) = end_lo {
+                        self.domain.add_constraint(*end_reg, reg, *lo);
+                    }
+                    touched = true;
+                }
+                if touched {
                     self.domain.close();
                 }
             }

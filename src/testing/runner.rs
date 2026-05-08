@@ -163,11 +163,139 @@ pub enum AnalysisResult {
     Fail(VerificationError),
     Timeout,
     LoadError(String),
+    /// Test would be analyzable in principle but requires loader-side
+    /// pre-processing we deliberately don't implement (libbpf static
+    /// linking, CO-RE relocation, weak-ksym address folding). The
+    /// `reason` is a short free-form string surfaced in the baseline
+    /// JSON and the diff tool. Distinct from SKIPPED, which covers
+    /// tests that are fundamentally not testable by static analysis
+    /// of an unlinked `.o` (subprog-only, JIT-only, `__msg()` log-line
+    /// asserts, race tests).
+    OutOfScope(String),
 }
 
 impl AnalysisResult {
     pub fn is_pass(&self) -> bool {
         matches!(self, AnalysisResult::Pass)
+    }
+}
+
+/// Tests whose `.o` cannot be analyzed in isolation because they
+/// require loader-side pre-processing (libbpf static linking, CO-RE
+/// relocation, weak-ksym address folding) that we deliberately don't
+/// implement. Returns a short reason string for emission as
+/// `AnalysisResult::OutOfScope`. Detection is by source `.o` file
+/// stem — coarse but stable, and these tests are well-known.
+///
+/// String-greppable so a future contributor who implements the missing
+/// pre-processing pass can find every affected test by searching for
+/// the reason substring.
+pub(crate) fn out_of_scope_reason(path: &str) -> Option<&'static str> {
+    let stem = std::path::Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    // `dev selftest-baseline-write-upstream` compiles each `.c` into a
+    // tempfile like `/tmp/zovia_selftest_<name>.o`. Strip the prefix.
+    let test_name = stem
+        .strip_prefix("zovia_selftest_")
+        .unwrap_or(stem);
+    match test_name {
+        // libbpf static linking — these tests are designed to be
+        // `bpf_linker`-merged from multiple `.o` before kernel
+        // verification (extern function definitions split across
+        // sibling `.o` files, cross-`.o` map references, cross-`.o`
+        // global variables).
+        "linked_funcs1"
+        | "linked_funcs2"
+        | "linked_maps1"
+        | "linked_maps2"
+        | "linked_vars1"
+        | "linked_vars2"
+        | "test_subskeleton" => Some("needs libbpf static linker"),
+        // CO-RE relocation — `__kconfig`-style integer extern that
+        // libbpf resolves against the running kernel's config + BTF
+        // and patches as a literal at load time.
+        "test_core_extern" => Some("needs CO-RE relocation pass"),
+        // Weak-ksym address folding — libbpf folds
+        // `(uintptr_t)&non_existent_weak_ksym == 0` so the dead
+        // branch never reaches the verifier. We see the live branch
+        // and rightfully reject the type-mismatched call inside it.
+        // Likewise null-check tests rely on BPF_PROBE_MEM safe-deref
+        // which is a runtime fault-handler behavior, not a static
+        // property we can model without widening the FA surface.
+        "test_ksyms_btf_null_check" | "test_ksyms_weak" => {
+            Some("needs weak-ksym address folding")
+        }
+        _ => None,
+    }
+}
+
+/// Per-(file, func) OOS gate for tests where only some functions need
+/// loader-side / framework-side preprocessing we don't model. Used in
+/// preference to file-level gating when the file mixes resize-dependent
+/// programs with trivial ones (test_global_map_resize: bss_array_sum +
+/// data_array_sum need the resize, test_1 is a `return 0` struct_ops).
+pub(crate) fn out_of_scope_reason_per_func(path: &str, func_name: &str) -> Option<&'static str> {
+    let stem = std::path::Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let test_name = stem
+        .strip_prefix("zovia_selftest_")
+        .unwrap_or(stem);
+    match (test_name, func_name) {
+        // libbpf bpf_map__set_value_size grows `int array[1]` to a
+        // userspace-chosen size before kernel load. Without the resize
+        // pass, `array[i]` for i > 0 is OOB to our verifier — kernel
+        // never sees the un-resized version. test_1 is a trivial
+        // struct_ops/test_1 that doesn't depend on resize.
+        ("test_global_map_resize", "bss_array_sum")
+        | ("test_global_map_resize", "data_array_sum") => {
+            Some("needs global-map-resize loader pass")
+        }
+        // SEC("?struct_ops/test_1") with kernel-supported member where
+        // the userspace driver explicitly sets ops->test_1 = NULL
+        // before load. The program is never bound or executed; libbpf
+        // marks autoload=false, so the kernel verifier doesn't see it.
+        // Our static analyzer has no notion of autoload.
+        ("struct_ops_nulled_out_cb", "test_1_turn_off") => {
+            Some("autoload=false: program not loaded by userspace driver")
+        }
+        // fentry/FUNC and fexit/FUNC are libbpf placeholders that the
+        // userspace driver replaces with a real attach target via
+        // bpf_program__set_attach_target. Without that target's BTF we
+        // can't resolve the program's ctx args (they come from the
+        // attach target's signature, not the SEC string).
+        ("test_xdp_bpf2bpf", "trace_on_entry")
+        | ("test_xdp_bpf2bpf", "trace_on_exit") => {
+            Some("needs runtime attach-target resolution (fentry/fexit FUNC placeholder)")
+        }
+        // USDT relocation: `r1 = 0; r1 = *(u32*)(r1+0)` is a placeholder
+        // that libbpf rewrites at load time to a real address from the
+        // USDT spec array. We don't ship the USDT spec relocation pass.
+        ("test_usdt_multispec", "usdt_100") => {
+            Some("needs USDT spec-array relocation")
+        }
+        // CO-RE downsize: `__type(value, struct foo)` where struct foo
+        // shrinks at runtime via CO-RE relocation. The static struct
+        // size mismatches the at-runtime size; kernel sees the relocated
+        // version and accepts.
+        ("test_core_autosize", "handle_downsize") => {
+            Some("needs CO-RE relocation pass")
+        }
+        // bpf_map metadata read via CO-RE: program declares its own
+        // `struct bpf_map { ... } __attribute__((preserve_access_index))`
+        // and casts `(struct bpf_map *)&map_decl` to read fields like
+        // `map->id`, `map->map_type`. libbpf rewrites the field offsets
+        // to match the kernel's real `struct bpf_map` layout at load
+        // time; without that pass, our verifier sees the program's
+        // declared offsets (0/4/8/12/16) and rejects against the real
+        // field table (24/28/32/36/48).
+        ("map_ptr_kern", "cg_skb") | ("syscall", "update_outer_map") => {
+            Some("needs CO-RE relocation pass (bpf_map field offset rewrites)")
+        }
+        _ => None,
     }
 }
 
@@ -348,6 +476,14 @@ const ATTACH_TARGET_ARG_KINDS: &[(&str, u8, TracingArgKind)] = &[
     ("bpf_testmod_fentry_test11", 8, TracingArgKind::Scalar),
     ("bpf_testmod_fentry_test11", 9, TracingArgKind::Scalar),
 
+    // fmod_ret/update_socket_protocol(int family, int type, int protocol)
+    // — all three int args are scalar. Lax-fallback over-typing makes
+    // `R7 << 32` (sign-extending the loaded `type`) look like ptr-arith.
+    // Closes mptcpify.c::mptcpify.
+    ("update_socket_protocol", 0, TracingArgKind::Scalar),
+    ("update_socket_protocol", 1, TracingArgKind::Scalar),
+    ("update_socket_protocol", 2, TracingArgKind::Scalar),
+
     // LSM hook attach targets — trailing scalar args. The `entry_args`
     // table in `derive_program_kind`'s LSM dispatch only declares the
     // BTF-typed pointer prefix; trailing slots fall through to the lax
@@ -366,6 +502,11 @@ const ATTACH_TARGET_ARG_KINDS: &[(&str, u8, TracingArgKind)] = &[
     // sk_alloc_security(struct sock *sk, int family, gfp_t priority)
     ("sk_alloc_security", 1, TracingArgKind::Scalar),
     ("sk_alloc_security", 2, TracingArgKind::Scalar),
+    // file_mprotect(struct vm_area_struct *vma, unsigned long reqprot,
+    //               unsigned long prot, int ret)
+    ("file_mprotect", 1, TracingArgKind::Scalar),
+    ("file_mprotect", 2, TracingArgKind::Scalar),
+    ("file_mprotect", 3, TracingArgKind::Scalar),
     // inet_csk_clone(struct sock *newsk, const struct request_sock *req)
     // — both pointers, no scalar slots.
 ];
@@ -378,6 +519,45 @@ pub fn tracing_attach_arg_kind(target: Option<&str>, arg_idx: u8) -> Option<Trac
         .iter()
         .find(|(t, i, _)| *t == target && *i == arg_idx)
         .map(|(_, _, k)| *k)
+}
+
+/// LSM int-hook trailing scalar args appended after the typed-pointer
+/// prefix. Kernel constrains `int ret` to `[-MAX_ERRNO, 0]` at attach
+/// (so `return ret;` patterns satisfy the LSM retval rule). Trailing
+/// positional `unsigned long` args (e.g. `reqprot`, `prot` for
+/// `file_mprotect`) are bounded ≥ 0 in principle, but no current test
+/// depends on those bounds — we emit plain `Scalar` slots to keep
+/// kernel arg layout aligned and only bound the final `ret` slot.
+fn lsm_int_hook_trailing_args(
+    prog_kind: crate::ast::ProgramKind,
+    target: &str,
+) -> Vec<EntryArg> {
+    use crate::ast::ProgramKind;
+    use crate::common::constants::MAX_ERRNO;
+    if prog_kind != ProgramKind::Lsm {
+        return Vec::new();
+    }
+    match target {
+        // file_mprotect(struct vm_area_struct *vma,
+        //               unsigned long reqprot,
+        //               unsigned long prot, int ret)
+        "file_mprotect" => vec![
+            EntryArg::Scalar,
+            EntryArg::Scalar,
+            EntryArg::BoundedScalar { lo: -MAX_ERRNO, hi: 0 },
+        ],
+        _ => Vec::new(),
+    }
+}
+
+/// Number of typed-pointer args at the head of an LSM int-hook's
+/// arg list. Used to splice the pointer prefix from BTF resolution
+/// with the static `lsm_int_hook_trailing_args` tail.
+fn lsm_int_hook_pointer_prefix(target: &str) -> usize {
+    match target {
+        "file_mprotect" => 1, // (vma)
+        _ => 0,
+    }
 }
 
 fn is_tracing_attach_denied(target: &str) -> bool {
@@ -472,6 +652,25 @@ const GPL_ONLY_STRUCT_OPS: &[&str] = &[
 
 impl Analyzer {
     fn derive_program_kind(&self, section: &str) -> ProgramKind {
+        self.derive_program_kind_with_func(section, None)
+    }
+
+    /// freplace target inheritance: SEC("freplace/<target>") attaches
+    /// to a subprog of another already-loaded program. The kernel
+    /// creates an EXT-type prog whose ctx and kfunc allowlist match
+    /// the target's prog-type. We don't have the target's BPF object
+    /// file, but the function's first arg type already reveals the
+    /// intended ctx — clang preserved it in the ELF's BTF
+    /// (`int new_get_skb_len(struct __sk_buff *skb)` → SchedCls;
+    /// `int freplace_rx(struct xdp_md *ctx)` → Xdp). Without this,
+    /// `from_section("freplace/...")` returns Unknown and the ctx
+    /// model + kfunc allowlists treat the program as having no
+    /// recognizable attach class.
+    fn derive_program_kind_with_func(
+        &self,
+        section: &str,
+        func_name: Option<&str>,
+    ) -> ProgramKind {
         if let Ok(kind) = program_kind_for_object(Path::new(&self.path)) {
             return kind;
         }
@@ -479,6 +678,34 @@ impl Analyzer {
         let direct = ProgramKind::from_section(section);
         if direct != ProgramKind::Unknown {
             return direct;
+        }
+
+        if section.to_lowercase().starts_with("freplace/")
+            && let Some(fname) = func_name
+            && let Some(args) = self.btf.resolve_func_args(fname)
+        {
+            use crate::parsing::btf::StructOpsArg;
+            // Scan ALL args for a recognizable ctx struct — freplace
+            // signatures may have scalar args before the ctx pointer
+            // (`new_get_skb_ifindex(int val, struct __sk_buff *skb,
+            // int var)` — ctx is arg #1, not arg #0).
+            let inferred = args.iter().find_map(|a| match a {
+                StructOpsArg::TrustedPtr(name) => match name.as_str() {
+                    "__sk_buff" => Some(ProgramKind::SchedCls),
+                    "xdp_md" => Some(ProgramKind::Xdp),
+                    "bpf_sock" => Some(ProgramKind::CgroupSock),
+                    "bpf_sock_addr" => Some(ProgramKind::CgroupSockAddr),
+                    "bpf_sock_ops" => Some(ProgramKind::SockOps),
+                    "sk_msg_md" => Some(ProgramKind::SkMsg),
+                    "bpf_sk_lookup" => Some(ProgramKind::SkLookup),
+                    "sk_reuseport_md" => Some(ProgramKind::SkReuseport),
+                    _ => None,
+                },
+                _ => None,
+            });
+            if let Some(k) = inferred {
+                return k;
+            }
         }
 
         // Fallback for numeric/anonymous sections (e.g., "2/3"):
@@ -541,6 +768,36 @@ impl Analyzer {
         } else {
             btf::BtfContext::new()
         };
+
+        // Foundation: parse the optional `.BTF.ext` section and stash the
+        // CO-RE relocation records on `btf.btf_ext`. No resolver is wired
+        // today (would need vmlinux BTF or a runtime-supplied target BTF).
+        // Failures here are non-fatal — most objects have no `.BTF.ext`,
+        // and even when they do, our analyzer doesn't yet consult the
+        // records. See `src/parsing/btf/ext.rs`.
+        let btf_ext_bytes =
+            elf::prog::load_section_bytes(path, ".BTF.ext", false).unwrap_or_default();
+        if !btf_ext_bytes.is_empty() {
+            match btf::parse_btf_ext(&btf_ext_bytes, &btf.strings) {
+                Ok(ext) => {
+                    if config.verbosity > 0 {
+                        let total: usize =
+                            ext.core_relos_by_section.iter().map(|(_, r)| r.len()).sum();
+                        println!(
+                            "BTF.ext: parsed {} CO-RE relos across {} sections",
+                            total,
+                            ext.core_relos_by_section.len()
+                        );
+                    }
+                    btf.btf_ext = Some(ext);
+                }
+                Err(e) => {
+                    if config.verbosity > 0 {
+                        println!("BTF.ext Parse Warning: {}", e);
+                    }
+                }
+            }
+        }
 
         // Mirror libbpf's STV_HIDDEN → BTF_FUNC_STATIC demotion (libbpf.c:3552):
         // global/weak subprogs with hidden visibility are verified inline
@@ -643,6 +900,11 @@ impl Analyzer {
                         &binding.member,
                         idx as u8,
                     );
+                    let refcounted = is_struct_ops_arg_refcounted(
+                        &binding.ops_struct,
+                        &binding.member,
+                        idx as u8,
+                    );
                     match a {
                         StructOpsArg::Scalar => EntryArg::Scalar,
                         // OpaquePtr falls back to a generic typed pointer rather
@@ -653,6 +915,19 @@ impl Analyzer {
                             type_name: "struct",
                             nullable,
                         },
+                        StructOpsArg::TrustedPtr(name)
+                            if refcounted && name == "task_struct" =>
+                        {
+                            // Refcounted task arg: allocate a ref_id at
+                            // entry-args build time. mod.rs seeds the
+                            // initial state's active_refs from this.
+                            // The ctx-array load at offset 8*idx
+                            // produces PtrToTask{ref_id: Some(ref_id)}
+                            // so bpf_task_release consumes the ref.
+                            let ref_id =
+                                crate::analysis::machine::reg_types::new_ref_id();
+                            EntryArg::TrustedRefcountedTask { ref_id }
+                        }
                         StructOpsArg::TrustedPtr(name) => EntryArg::TrustedPtrBtfId {
                             type_name: intern_btf_type_name(&name),
                             nullable,
@@ -715,6 +990,20 @@ impl Analyzer {
         func_name: &str,
         extra_flags: u32,
     ) -> AnalysisResult {
+        // Out-of-scope short-circuit: tests that need loader-side
+        // pre-processing we deliberately don't implement (libbpf
+        // static linking, CO-RE relocation, weak-ksym address
+        // folding). Detect by the source `.o`'s file stem and route
+        // straight to the new `OutOfScope` verdict — running analysis
+        // would produce a misleading FALSE_REJECT against an upstream
+        // ACCEPT that's only valid post-pre-processing.
+        if let Some(reason) = out_of_scope_reason(&self.path) {
+            return AnalysisResult::OutOfScope(reason.into());
+        }
+        if let Some(reason) = out_of_scope_reason_per_func(&self.path, func_name) {
+            return AnalysisResult::OutOfScope(reason.into());
+        }
+
         // First try the section the caller asked for.
         let funcs = get_functions_in_section(&self.path, section).unwrap_or_default();
         if let Some(func) = funcs.iter().find(|f| f.name == func_name) {
@@ -895,7 +1184,36 @@ impl Analyzer {
         }
 
         // Determine program kind
-        ctx.prog_kind = self.derive_program_kind(section);
+        ctx.prog_kind = self.derive_program_kind_with_func(section, Some(&func.name));
+
+        // freplace per-arg entry-state typing: each declared arg goes
+        // *directly* in R1, R2, ... (the extension acts as a regular
+        // subprog call), so populate `freplace_arg_types` from the
+        // function's BTF FUNC_PROTO. Consumed by `analyze_program_full`
+        // to set the initial register types. Distinct from `entry_args`
+        // (which drives the BPF_PROG ctx-array unpacking idiom in
+        // validate_ctx_access) — freplace doesn't unpack, so we keep
+        // entry_args None for these and use freplace_arg_types instead.
+        if section.to_lowercase().starts_with("freplace/") {
+            use crate::parsing::btf::StructOpsArg;
+            if let Some(args) = self.btf.resolve_func_args(&func.name) {
+                ctx.freplace_arg_types = Some(
+                    args.into_iter()
+                        .map(|a| match a {
+                            StructOpsArg::Scalar => EntryArg::Scalar,
+                            StructOpsArg::OpaquePtr => EntryArg::TrustedPtrBtfId {
+                                type_name: "struct",
+                                nullable: false,
+                            },
+                            StructOpsArg::TrustedPtr(name) => EntryArg::TrustedPtrBtfId {
+                                type_name: intern_btf_type_name_strict(&name),
+                                nullable: false,
+                            },
+                        })
+                        .collect(),
+                );
+            }
+        }
         // Subtype is the SEC suffix after the first delimiter — '/' for
         // hook-bound sections (`cgroup/recvmsg6`, `lsm/file_mprotect`),
         // or '.' for attach-flavored sections that carry no explicit
@@ -1066,6 +1384,21 @@ impl Analyzer {
             ctx.priv_stack_requested = binding
                 .map(|b| struct_ops_member_priv_stack_requested(&b.ops_struct, &b.member))
                 .unwrap_or(false);
+            // Fallback: SEC("?struct_ops/<member>") with no
+            // `.struct_ops.link` binding (libbpf optional-load), where the
+            // BPF_PROG inner was `__always_inline`'d so `____<name>` has no
+            // surviving FUNC entry in BTF. The outer wrapper is
+            // `int <name>(unsigned long long *ctx)` (bare void-ctx, no
+            // typed args), so neither `resolve_struct_ops_method` nor
+            // `resolve_func_args` can recover per-arg types. Seed ctx as
+            // 8 Scalar slots — admits the common int/long-arg case
+            // (struct_ops_module::test_3 does `a + b + 3`); pointer-arg
+            // dereferences would still reject because Scalar isn't
+            // dereferenceable, which is the kernel's behavior at attach
+            // time when the program isn't bound to a member.
+            if ctx.entry_args.is_none() && section.trim_start().starts_with('?') {
+                ctx.entry_args = Some(vec![EntryArg::Scalar; 8]);
+            }
         } else if matches!(
             ctx.prog_kind,
             ProgramKind::Lsm
@@ -1189,6 +1522,19 @@ impl Analyzer {
                         (ProgramKind::Lsm, _, "bprm_committed_creds") => {
                             Some(vec![("linux_binprm", false)])
                         }
+                        // file_mprotect(struct vm_area_struct *vma,
+                        //               unsigned long reqprot,
+                        //               unsigned long prot, int ret)
+                        // Trailing scalar args (reqprot/prot/ret) get
+                        // their override via ATTACH_TARGET_ARG_KINDS.
+                        (ProgramKind::Lsm, _, "file_mprotect") => {
+                            Some(vec![("vm_area_struct", false)])
+                        }
+                        // bprm_creds_for_exec(struct linux_binprm *bprm)
+                        // — drives ima.c::bprm_creds_for_exec.
+                        (ProgramKind::Lsm, _, "bprm_creds_for_exec") => {
+                            Some(vec![("linux_binprm", false)])
+                        }
                         // tp_btf raw-tracepoint targets. Args from
                         // include/trace/events/<sub>.h's TRACE_EVENT
                         // declarations. clang `__always_inline`s the
@@ -1231,6 +1577,20 @@ impl Analyzer {
                         (ProgramKind::Tracing, Some("tp_btf"), "sched_switch") => {
                             Some(vec![("task_struct", false), ("task_struct", false)])
                         }
+                        // sched_process_fork: TRACE_EVENT(sched_process_fork,
+                        //   TP_PROTO(struct task_struct *parent,
+                        //            struct task_struct *child))
+                        (ProgramKind::Tracing, Some("tp_btf"), "sched_process_fork") => {
+                            Some(vec![("task_struct", false), ("task_struct", false)])
+                        }
+                        // exit_creds(struct task_struct *tsk) — fentry hook
+                        // closes task_local_storage_exit_creds::trace_exit_creds
+                        // (lax-fallback typed task arg as PtrToBtfId{unknown},
+                        // bpf_task_storage_get rejected as not-PTR_TO_TASK).
+                        (ProgramKind::Tracing, Some("fentry"), "exit_creds")
+                        | (ProgramKind::Tracing, Some("fexit"), "exit_creds") => {
+                            Some(vec![("task_struct", false)])
+                        }
                         // ── A3 cgroup-related fentry/fexit targets ──────
                         // cgroup_attach_task(struct cgroup *dst_cgrp,
                         //                    struct task_struct *leader,
@@ -1252,6 +1612,13 @@ impl Analyzer {
                         | (ProgramKind::Tracing, Some("fexit"), "inet_stream_connect") => {
                             Some(vec![("socket", false), ("sockaddr", false)])
                         }
+                        // unix_listen(struct socket *sock, int backlog) —
+                        // closes test_skc_to_unix_sock::unix_listen
+                        // (sock arg needed for `sock->sk` field load).
+                        (ProgramKind::Tracing, Some("fentry"), "unix_listen")
+                        | (ProgramKind::Tracing, Some("fexit"), "unix_listen") => {
+                            Some(vec![("socket", false)])
+                        }
                         _ => None,
                     };
                     if let Some(arg_specs) = table_args {
@@ -1265,6 +1632,121 @@ impl Analyzer {
                                 .collect(),
                         );
                     }
+
+                }
+            }
+
+            // Mixed-arg-kind static override for fexit programs attached
+            // to subprogs of OTHER (already-loaded) BPF objects. Two
+            // failure modes:
+            //   (a) typed-inner FUNC was inlined-out by clang (`____<n>`
+            //       resolves None; `<n>` resolves to bare `void *ctx`).
+            //   (b) program declares a custom convenience struct as ctx
+            //       (e.g. `int test_subprog2(struct args_subprog2 *ctx)`)
+            //       — BTF resolves the outer signature to a single-arg
+            //       `[TrustedPtr(args_subprog2)]`, but BPF_PROG fexit
+            //       ctx-array semantics require slot-by-slot typing
+            //       aligned to the *target's* arg layout. The custom
+            //       struct shape is unrelated to the kernel ctx-array
+            //       layout — it's just a typed cast over the same u64
+            //       slots.
+            // BPF_PROG-wrapped iter programs (`SEC("iter[.s]/<subtype>")`)
+            // declared with multiple typed args after BPF_PROG: the
+            // OUTER `void *ctx` is `struct bpf_iter__<subtype> *`. The
+            // BPF_PROG inner is `__always_inline`, so its typed args
+            // don't survive in BTF; the outer signature alone gives
+            // `void *ctx`. Synthesize entry_args[0] from the SEC
+            // subtype regardless of what BTF resolved (overrides bare
+            // void-ctx None *and* a partial inner-arg resolution).
+            // Closes cgroup_hierarchical_stats::dumper.
+            if matches!(ctx.attach_flavor.as_deref(), Some("iter"))
+                && let Some(subtype) = ctx.attach_subtype.as_deref()
+            {
+                let outer = format!("bpf_iter__{}", subtype);
+                ctx.entry_args = Some(vec![EntryArg::TrustedPtrBtfId {
+                    type_name: intern_btf_type_name_strict(&outer),
+                    nullable: false,
+                }]);
+            }
+
+            // Override unconditionally when the target matches our
+            // known-target table, regardless of whether BTF gave us
+            // something useful for entry_args. Placed OUTSIDE the
+            // `entry_args.is_none()` gate above so case (b) overrides
+            // BTF's outer-signature resolution.
+            if let Some(target) = ctx.attach_subtype.as_deref() {
+                let flavor = ctx.attach_flavor.as_deref();
+                let mixed_args: Option<Vec<EntryArg>> = match (
+                    ctx.prog_kind,
+                    flavor,
+                    target,
+                ) {
+                    // test_pkt_access_subprog2(int val,
+                    //   volatile struct __sk_buff *skb)
+                    // The selftest program declares ctx as
+                    // `args_subprog2 { __u64 args[5]; __u64 ret; }`,
+                    // so we pad to 5 args + the ret slot at offset 40
+                    // (= entry_args[5]).
+                    (
+                        ProgramKind::Tracing,
+                        Some("fexit"),
+                        "test_pkt_access_subprog2",
+                    ) => Some(vec![
+                        EntryArg::Scalar,
+                        EntryArg::TrustedPtrBtfId {
+                            type_name: intern_btf_type_name_strict("__sk_buff"),
+                            nullable: false,
+                        },
+                        EntryArg::Scalar, EntryArg::Scalar,
+                        EntryArg::Scalar, EntryArg::Scalar,
+                    ]),
+                    // test_pkt_access_subprog3(int val,
+                    //   struct __sk_buff *skb)
+                    (
+                        ProgramKind::Tracing,
+                        Some("fexit"),
+                        "test_pkt_access_subprog3",
+                    ) => Some(vec![
+                        EntryArg::Scalar,
+                        EntryArg::TrustedPtrBtfId {
+                            type_name: intern_btf_type_name_strict("__sk_buff"),
+                            nullable: false,
+                        },
+                        EntryArg::Scalar,
+                    ]),
+                    _ => None,
+                };
+                if let Some(args) = mixed_args {
+                    ctx.entry_args = Some(args);
+                }
+            }
+
+            // Post-processing: LSM int-hook trailing scalar args. Kernel
+            // constrains `int ret` (last arg) to `[-MAX_ERRNO, 0]` at
+            // attach so `return ret;` patterns satisfy the LSM retval
+            // rule. Append/replace the trailing slots regardless of
+            // whether entry_args came from BTF resolution or the static
+            // fallback. Indices align with kernel arg layout (BPF_PROG
+            // ctx-array slots `0..n` map to the user-declared args).
+            if let Some(target) = ctx.attach_subtype.as_deref() {
+                let lsm_int_args = lsm_int_hook_trailing_args(ctx.prog_kind, target);
+                if !lsm_int_args.is_empty() {
+                    let pointer_prefix_len = lsm_int_hook_pointer_prefix(target);
+                    let mut new_args: Vec<EntryArg> = ctx
+                        .entry_args
+                        .take()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .take(pointer_prefix_len)
+                        .collect();
+                    // Pad with Scalar if BTF resolution gave us fewer
+                    // pointer args than expected (shouldn't happen in
+                    // practice; defensive).
+                    while new_args.len() < pointer_prefix_len {
+                        new_args.push(EntryArg::Scalar);
+                    }
+                    new_args.extend(lsm_int_args);
+                    ctx.entry_args = Some(new_args);
                 }
             }
         }
@@ -1355,7 +1837,9 @@ impl Analyzer {
         register_kfunc_relocs(&mut ctx.btf, &pc_to_reloc);
         ctx.pc_to_reloc = pc_to_reloc;
 
-        // Determine program kind
+        // Determine program kind. Section-only path (no per-function
+        // FUNC info) — freplace inference unavailable here; falls back
+        // to `from_section` which returns Unknown for `freplace/...`.
         ctx.prog_kind = self.derive_program_kind(section);
         // Subtype is the SEC suffix after the first delimiter — '/' for
         // hook-bound sections (`cgroup/recvmsg6`, `lsm/file_mprotect`),

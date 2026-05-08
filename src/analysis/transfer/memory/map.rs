@@ -401,7 +401,12 @@ pub(crate) fn transfer_map_load(
         MapLoadKind::MapPtr | MapLoadKind::MapValue => None,
         // W3.4a: BPF_PSEUDO_FUNC is now handled below as PtrToCallback.
         MapLoadKind::PseudoFunc { .. } => None,
-        MapLoadKind::PseudoBtfId { .. } => Some("LD_IMM64 BPF_PSEUDO_BTF_ID (ksym/percpu)"),
+        // BPF_PSEUDO_BTF_ID: handled below for `__ksym` extern relocations
+        // when a `RelocKind::Ksym` reloc is registered for the LDIMM64 PC.
+        // Bare `PseudoBtfId` without a reloc still falls through to reject
+        // (kernel BTF id without our resolution context — we don't ship
+        // vmlinux BTF).
+        MapLoadKind::PseudoBtfId { .. } => None,
         MapLoadKind::PseudoMapIdx => Some("LD_IMM64 BPF_PSEUDO_MAP_IDX"),
         MapLoadKind::PseudoMapIdxValue => Some("LD_IMM64 BPF_PSEUDO_MAP_IDX_VALUE"),
     };
@@ -422,6 +427,58 @@ pub(crate) fn transfer_map_load(
         state.domain.forget(dst);
         state.pc += 2;
         return vec![state];
+    }
+
+    // BPF_PSEUDO_BTF_ID for `__ksym` externs. The kernel resolves these to
+    // a kernel BTF id at load time; we don't ship vmlinux BTF, so we route
+    // off the `RelocKind::Ksym` info (struct name + percpu flag from the
+    // .o-file's `.ksyms` BTF DATASEC). Typed struct ksyms become
+    // `PtrToBtfId{flags: TRUSTED|MEM_RDONLY[|PERCPU]}`; typeless / primitive
+    // ksyms (`extern const int X __ksym;`, `extern const void X __ksym;`)
+    // become a scalar address — code that uses them as `(__u64)&X` is fine
+    // either way; passing them to `bpf_per_cpu_ptr` requires the typed form.
+    if matches!(kind, MapLoadKind::PseudoBtfId { .. }) {
+        if let Some(reloc) = env.ctx.pc_to_reloc.get(&state.pc).cloned() {
+            if reloc.kind == crate::parsing::elf::RelocKind::Ksym {
+                use crate::analysis::machine::context::intern_btf_type_name_strict;
+                use crate::analysis::machine::reg_types::PtrFlags;
+                let mut flags = PtrFlags::TRUSTED | PtrFlags::RDONLY;
+                if reloc.ksym_is_percpu {
+                    flags |= PtrFlags::PERCPU;
+                }
+                // Typed struct ksyms get the resolved struct name.
+                // Primitive / typeless ksyms (`extern const int X __ksym;`,
+                // `extern const void X __ksym;`) become PtrToBtfId with
+                // type_name="unknown" — the flag combination still routes
+                // through `bpf_per_cpu_ptr`'s arg check (PERCPU-tagged
+                // BTF id), and `(__u64)&X`-style scalar uses just take
+                // the address through ptr-to-int conversion.
+                let type_name = reloc
+                    .ksym_struct_name
+                    .as_deref()
+                    .map(intern_btf_type_name_strict)
+                    .unwrap_or("unknown");
+                state.types.set(
+                    dst,
+                    RegType::PtrToBtfId {
+                        type_name,
+                        flags,
+                        ref_id: None,
+                    },
+                );
+                state.domain.forget(dst);
+                state.pc += 2;
+                return vec![state];
+            }
+        }
+        // No reloc info / unrecognized form. Fall through to reject —
+        // a bare PSEUDO_BTF_ID without a Ksym reloc means the symbol
+        // wasn't in `.ksyms`, which we can't resolve.
+        env.fail(VerificationError::UnsupportedModernFeature {
+            pc: state.pc,
+            feature: "LD_IMM64 BPF_PSEUDO_BTF_ID (ksym/percpu)",
+        });
+        return vec![];
     }
 
     let reloc_info = env.ctx.pc_to_reloc.get(&state.pc);

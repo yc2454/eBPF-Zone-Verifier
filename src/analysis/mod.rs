@@ -179,6 +179,71 @@ pub fn analyze_program_full(
     );
     initial_state.domain.init_packet_anchors();
 
+    // freplace target inheritance: for `SEC("freplace/<target>")`, the
+    // EXT program receives its declared args *directly* in R1..Rn (the
+    // extension takes the place of a regular subprog call). Override
+    // the default `R1 = PtrToCtx` from above with per-arg typing
+    // populated by the runner via `BtfContext::resolve_func_args`. The
+    // arg whose type matches the target's ctx struct (`__sk_buff`,
+    // `xdp_md`, ...) gets `PtrToCtx`; other pointer args become
+    // unknown trusted pointers; scalars become initialized
+    // `ScalarValue`. Without this, multi-arg freplace functions like
+    // `new_get_skb_ifindex(int val, struct __sk_buff *skb, int var)`
+    // hit `R2 !read_ok` at the first `If R2, ...` because R2 was
+    // never typed at entry.
+    if let Some(args) = ctx.freplace_arg_types.as_ref() {
+        use crate::analysis::machine::context::EntryArg;
+        use crate::analysis::machine::reg_types::PtrFlags;
+        // Reset R1 (default PtrToCtx) before re-typing per declared arg.
+        initial_state.types.set(Reg::R1, RegType::NotInit);
+        let arg_regs = [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
+        let ctx_struct_for_kind = |kind: ProgramKind| -> Option<&'static str> {
+            match kind {
+                ProgramKind::SchedCls
+                | ProgramKind::SchedAct
+                | ProgramKind::SocketFilter
+                | ProgramKind::SkSkb
+                | ProgramKind::CgroupSkb
+                | ProgramKind::FlowDissector => Some("__sk_buff"),
+                ProgramKind::Xdp => Some("xdp_md"),
+                ProgramKind::SockOps => Some("bpf_sock_ops"),
+                ProgramKind::CgroupSockAddr => Some("bpf_sock_addr"),
+                ProgramKind::CgroupSockopt => Some("bpf_sockopt"),
+                ProgramKind::CgroupSock => Some("bpf_sock"),
+                ProgramKind::SkMsg => Some("sk_msg_md"),
+                ProgramKind::SkLookup => Some("bpf_sk_lookup"),
+                ProgramKind::SkReuseport => Some("sk_reuseport_md"),
+                _ => None,
+            }
+        };
+        let ctx_struct = ctx_struct_for_kind(ctx.prog_kind);
+        for (i, arg) in args.iter().enumerate().take(arg_regs.len()) {
+            let reg = arg_regs[i];
+            let ty = match arg {
+                EntryArg::Scalar => RegType::ScalarValue,
+                EntryArg::TrustedPtrBtfId { type_name, .. } => {
+                    if Some(*type_name) == ctx_struct {
+                        RegType::PtrToCtx
+                    } else {
+                        RegType::PtrToBtfId {
+                            type_name,
+                            flags: PtrFlags::TRUSTED,
+                            ref_id: None,
+                        }
+                    }
+                }
+                EntryArg::BoundedScalar { .. } => RegType::ScalarValue,
+                // freplace doesn't currently emit this; struct_ops uses
+                // the BPF_PROG ctx-array idiom, not this R1..Rn path.
+                // Map for completeness so the match stays exhaustive.
+                EntryArg::TrustedRefcountedTask { ref_id } => RegType::PtrToTask {
+                    ref_id: Some(*ref_id),
+                },
+            };
+            initial_state.types.set(reg, ty);
+        }
+    }
+
     // Non-sleepable tracing programs (kprobe, tracepoint, raw_tp,
     // perf_event) run with an implicit RCU read-side critical section
     // held by the kernel before invoking the BPF prog. The kernel
@@ -223,8 +288,19 @@ pub fn analyze_program_full(
     // needed to type the loaded ctx slot as a refcounted PtrToTask, which
     // we leave for a follow-up if a corresponding success-case test
     // surfaces as a false-reject.
-    for _ in 0..ctx.struct_ops_refcounted_args {
-        initial_state.acquire_ref();
+    // Seed outstanding refs for entry-acquired struct_ops args. Each
+    // `EntryArg::TrustedRefcountedTask` carries a pre-allocated ref_id
+    // (alloc'd in `struct_ops_entry_args` so the per-arg load site can
+    // type the load as `PtrToTask{ref_id: Some(rid)}`); insert each
+    // into active_refs so the matching `bpf_task_release(task)`
+    // release-path balances out before exit.
+    if let Some(args) = ctx.entry_args.as_ref() {
+        use crate::analysis::machine::context::EntryArg;
+        for arg in args {
+            if let EntryArg::TrustedRefcountedTask { ref_id } = arg {
+                initial_state.active_refs.insert(*ref_id);
+            }
+        }
     }
 
     // 3. & 4. Run worklist analysis

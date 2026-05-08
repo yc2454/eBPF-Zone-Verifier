@@ -52,6 +52,7 @@ pub fn is_ptr_to_btf_sock_subtype(t: &RegType) -> bool {
                 | "tcp6_sock"
                 | "tcp_timewait_sock"
                 | "tcp_request_sock"
+                | "udp_sock"
                 | "udp6_sock"
                 | "unix_sock",
             ..
@@ -101,6 +102,23 @@ pub fn is_ptr_to_btf_id(t: &RegType) -> bool {
     matches!(t, RegType::PtrToBtfId { .. })
 }
 
+/// Stricter PtrToBtfId predicate: only TRUSTED or RCU bands.
+/// Mirrors kernel `ARG_PTR_TO_BTF_ID_SOCK_COMMON`'s requirement that
+/// the pointer be `ptr_`, `trusted_ptr_`, or `rcu_ptr_` (verifier.c
+/// rejects `untrusted_ptr_*`). Used by sock-class helper validators
+/// (bpf_sk_storage_get/_delete) so a chained load like `skb->next`
+/// — which our BTF field-walk types as PtrToBtfId{sk_buff, UNTRUSTED}
+/// per kernel "old-style ptr_to_btf_id" — is rejected as the kernel
+/// would, rather than accepted as a generic any-PtrToBtfId match.
+pub fn is_ptr_to_btf_id_trusted_or_rcu(t: &RegType) -> bool {
+    use crate::analysis::machine::reg_types::PtrFlags;
+    matches!(
+        t,
+        RegType::PtrToBtfId { flags, .. }
+            if flags.contains(PtrFlags::TRUSTED) || flags.contains(PtrFlags::RCU)
+    )
+}
+
 // ============================================================================
 // Type Compatibility Tables
 // ============================================================================
@@ -148,7 +166,11 @@ pub static BTF_SOCK_COMMON_COMPAT: &[fn(&RegType) -> bool] = &[
     is_ptr_to_socket,
     is_ptr_to_socket_or_null,
     is_ptr_to_tcp_sock,
-    is_ptr_to_btf_id,
+    // Strict trust gating on the generic PtrToBtfId fallthrough: kernel
+    // rejects `untrusted_ptr_*` for ARG_PTR_TO_BTF_ID_SOCK_COMMON. The
+    // bare `is_ptr_to_btf_id` would FA non-trusted chained loads like
+    // `skb->next` passed to bpf_sk_storage_get (nested_trust_failure).
+    is_ptr_to_btf_id_trusted_or_rcu,
     // cgroup/sock_create / cgroup/sock_release / cgroup/sockopt
     // contexts ARE a `struct bpf_sock *` — programs pass ctx directly
     // as the sk arg of bpf_sk_storage_{get,delete}. Kernel admits

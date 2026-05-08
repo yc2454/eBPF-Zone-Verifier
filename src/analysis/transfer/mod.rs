@@ -186,7 +186,7 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
                 state_fall.pc = fallthrough_pc;
                 state_fall.may_goto_depth = state_fall.may_goto_depth.saturating_add(1);
                 if let Some(prev) = prev_snapshot.as_ref() {
-                    call::kfunc::widen_imprecise_scalars_at_iter_next(prev, &mut state_fall);
+                    call::kfunc::widen_imprecise_scalars_at_iter_next(env, prev, &mut state_fall);
                 }
                 return vec![state_fall];
             }
@@ -202,8 +202,8 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
             state_fall.may_goto_depth = state_fall.may_goto_depth.saturating_add(1);
 
             if let Some(prev) = prev_snapshot.as_ref() {
-                call::kfunc::widen_imprecise_scalars_at_iter_next(prev, &mut state_taken);
-                call::kfunc::widen_imprecise_scalars_at_iter_next(prev, &mut state_fall);
+                call::kfunc::widen_imprecise_scalars_at_iter_next(env, prev, &mut state_taken);
+                call::kfunc::widen_imprecise_scalars_at_iter_next(env, prev, &mut state_fall);
             }
 
             vec![state_taken, state_fall]
@@ -228,6 +228,16 @@ fn reject_atomic_on_typed_ptr(env: &mut VerifierEnv, state: &State, base: Reg) -
             | RegType::PtrToPacket
             | RegType::PtrToPacketMeta
             | RegType::PtrToPacketEnd
+            // Kernel `check_atomic` rejects BPF_ATOMIC against sock-class
+            // pointer bases ("BPF_ATOMIC loads from R<N> sock is not
+            // allowed"). Mirrors verifier_load_acquire::
+            // load_acquire_from_sock_pointer.
+            | RegType::PtrToSocket { .. }
+            | RegType::PtrToSocketOrNull { .. }
+            | RegType::PtrToSockCommon { .. }
+            | RegType::PtrToSockCommonOrNull { .. }
+            | RegType::PtrToTcpSock { .. }
+            | RegType::PtrToTcpSockOrNull { .. }
     ) || is_flow_keys;
     if rejected {
         env.fail(VerificationError::UnsupportedModernFeature {
@@ -335,12 +345,50 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     // for the (prog_kind, attach_subtype) pair, prefer it over the coarse
     // `requires_strict_return_code` check below — the kernel's per-hook
     // ranges are tighter (e.g. cgroup/recvmsg* must return exactly 1).
-    if state.at_main_frame() {
+    // freplace EXT programs: skip both the per-attach-type retval rule
+    // and the coarse `requires_strict_return_code` gate. The EXT's
+    // return value is the *replaced subprog's* return (a regular `int`,
+    // unconstrained), not the program's overall retval. Kernel verifier
+    // skips `check_return_code`'s prog-type-specific range gates for
+    // BPF_PROG_TYPE_EXT. Without this, freplace_connect_v4_prog
+    // (returns 255 — out of cgroup/connect_v4's [0,1] rule) falsely
+    // rejects.
+    let is_freplace_ext = env.ctx.attach_flavor.as_deref() == Some("freplace");
+    if state.at_main_frame() && !is_freplace_ext {
         if let Some(rule) = crate::ast::expected_retval_rule(
             env.ctx.prog_kind,
             env.ctx.attach_subtype.as_deref(),
         ) {
-            let out_of_range = r0_min < rule.lo || r0_max > rule.hi;
+            // Kernel `check_return_code` uses `retval_range_s32` for
+            // hooks whose retval is `int` — clang emits `return -EPERM`
+            // as `w0 = 0xFFFFFFFF` (W32 mov), which zero-extends to
+            // u64=4294967295 but reads as s32=-1. When the rule's lower
+            // bound is negative (errno-style int return) and R0's full
+            // s64 value sits cleanly in the [0, u32::MAX] band (zero-
+            // extension of a 32-bit move), reinterpret the bounds in
+            // s32. The kernel's `verifier.c` `retval_range_s32` does the
+            // equivalent: it checks the s32 view of R0 against the
+            // hook's s32 retval range. Closes
+            // lsm.c::test_int_hook / test_bpf_cookie::test_int_hook /
+            // iters_css_task::iter_css_task_for_each (`return -EPERM`).
+            // For errno-style int retval rules (rule.lo < 0), prefer the
+            // s32 view of R0 — the kernel's `retval_range_s32` checks
+            // the s32 register width, not the u64 register. This handles
+            // (a) `return -EPERM` (W32 mov of 0xFFFFFFFF: u64 = 4294967295,
+            // s32 = -1) and (b) `return ret;` where `ret` was bounded
+            // s64=[-4095, 0] at the entry-arg load but split to a
+            // disjoint u64 set after W32 mov truncation. The s32 shadow
+            // tracker preserves the [-4095, 0] view across the W32 mov.
+            let (r0_lo_eff, r0_hi_eff) = if rule.lo < 0
+                && rule.lo >= i32::MIN as i64
+                && rule.hi <= i32::MAX as i64
+            {
+                let (s32_lo, s32_hi) = state.domain.get_s32_bounds(Reg::R0);
+                (s32_lo as i64, s32_hi as i64)
+            } else {
+                (r0_min, r0_max)
+            };
+            let out_of_range = r0_lo_eff < rule.lo || r0_hi_eff > rule.hi;
             let needs_known = rule.require_known
                 && (r0_min != r0_max
                     || state.types.get(Reg::R0) != RegType::ScalarValue);
@@ -432,8 +480,16 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     // tolerate it. Anything above 1 in that case, or anything > 0 in
     // sleepable / non-tracing programs, is an unreleased explicit
     // bpf_rcu_read_lock.
+    //
+    // Only enforce at main-frame exit. Subprog exits with an open RCU
+    // CS are valid: the caller may have called bpf_rcu_read_lock and
+    // expects the unlock either inside the subprog (e.g. rcu_read_lock_
+    // subprog_unlock) or after the return (rcu_read_lock_subprog).
+    // Kernel checks at the root frame's BPF_EXIT, mirroring
+    // `check_lock` callers — same shape as the preempt/irq/lock
+    // checks below this one.
     let baseline = if state.implicit_rcu_at_entry { 1 } else { 0 };
-    if state.rcu_read_depth > baseline {
+    if state.at_main_frame() && state.rcu_read_depth > baseline {
         env.fail(VerificationError::UnreleasedRcuRead);
         return vec![];
     }
@@ -568,6 +624,19 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         // These represent packet bounds (data/data_end/data_meta)
         // that were verified in the callee and remain valid.
         state.domain.preserve_anchor_constraints(&callee_domain);
+
+        // If the callee's anchor constraints contradict the caller's saved
+        // state, the path through the callee is infeasible from the caller's
+        // context. Concretely: caller verified `data_end - data >= 82` along
+        // its prefix, callee's exit path reached `data_end - data <= 53`
+        // (an internal short-packet error branch). Both can't hold for the
+        // same packet, so this exit edge is dead. Without dropping, repeated
+        // `close()` passes downstream amplify the negative cycle into
+        // garbage bounds (e.g. `r1 - 0 ≤ -875228325050`) which then mis-
+        // route variable-offset / W32-truncation checks.
+        if state.domain.is_inconsistent() {
+            return vec![];
+        }
 
         // Re-apply R0 from callee's return value
         state.types.set(Reg::R0, ret_type.clone());
@@ -724,14 +793,15 @@ fn cb_exit_propagate(env: &VerifierEnv, mut state: State) -> Vec<State> {
     // transfer in the worklist driver, so the most recent cached state
     // at `return_pc` is the just-recorded current state — skip it and
     // take the previous one.
-    if should_widen
-        && let Some(prev_states) = env.explored_states.get(&return_pc)
-    {
-        let mut iter = prev_states.iter().rev().filter(|s| s.pc == return_pc);
-        iter.next();
-        if let Some(prev) = iter.next() {
+    if should_widen {
+        let prev_clone: Option<State> = env.explored_states.get(&return_pc).and_then(|prev_states| {
+            let mut iter = prev_states.iter().rev().filter(|s| s.pc == return_pc);
+            iter.next();
+            iter.next().cloned()
+        });
+        if let Some(prev) = prev_clone.as_ref() {
             crate::analysis::transfer::call::kfunc::widen_imprecise_scalars_at_iter_next(
-                prev, &mut state,
+                env, prev, &mut state,
             );
         }
     }
