@@ -472,6 +472,13 @@ pub enum SideEffect {
     /// and drop its ref_id (W4.2). Drives `bpf_ringbuf_submit_dynptr` and
     /// `bpf_ringbuf_discard_dynptr`.
     DynptrReleaseFromArg { arg: u8 },
+    /// Initialize the dynptr at `dst_arg` as a clone of the dynptr at
+    /// `src_arg`: copies the source slot's `kind` / `rdonly` and shares
+    /// its `ref_id` so a subsequent `bpf_ringbuf_submit_dynptr(parent)`
+    /// invalidates both slots (kernel `bpf_dynptr_clone` propagates
+    /// `ref_obj_id`). Mints a fresh `dynptr_id` for the clone (per-instance
+    /// identity for slice tracking). Drives `bpf_dynptr_clone`.
+    DynptrCloneOnArg { src_arg: u8, dst_arg: u8 },
     /// Initialize an iterator slot (W4.3). Validator already accepted
     /// the arg as Uninit; the applier zeros `bpf_iter_size(kind)` bytes
     /// (matching the kernel's STACK_ITER mark) and stamps an `Active`
@@ -1755,25 +1762,22 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // int bpf_dynptr_clone(const struct bpf_dynptr *ptr,
         //                      struct bpf_dynptr *clone__init)
         //
-        // Initializes `clone__init` as a fresh dynptr. Kernel propagates
-        // source kind + rdonly onto the clone; we stamp DynptrKind::Local
-        // with rdonly=false because we don't track parent-to-clone
-        // invalidation lineage or propagate Xdp/Skb source kind. Those
-        // are REAL coverage gaps that surface as FAs on
-        // dynptr_fail::clone_invalidate1 + clone_xdp_packet_data —
-        // suppressing the kfunc to mask them would be dishonest about
-        // the verifier's coverage. Keep registered; surface the FAs.
+        // Kernel `bpf_dynptr_clone` propagates source `type`, `rdonly`
+        // bit, and `ref_obj_id` onto the clone slot — sharing
+        // `ref_obj_id` is what lets a `bpf_ringbuf_submit_dynptr(parent)`
+        // sweep both slots (kernel walks every dynptr stack slot whose
+        // `ref_obj_id` matches the released id). The slice-invalidation
+        // path ties on `dynptr_id` instead: each dynptr keeps its own
+        // per-instance id for slices, but `collect_packet_dynptr_ids`
+        // returns ids of *all* Skb/Xdp slots so packet mutators sweep
+        // the clone's slices too via the propagated `kind`.
         "bpf_dynptr_clone" => CallProto::with_args([
             DynptrArg { uninit: false, rdwr_only: false },
             DynptrArg { uninit: true, rdwr_only: false },
             DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::Scalar)
-        .side_effects(&[SideEffect::DynptrInitOnArg {
-            arg: 1,
-            kind: DynptrKind::Local,
-            rdonly: false,
-        }]),
+        .side_effects(&[SideEffect::DynptrCloneOnArg { src_arg: 0, dst_arg: 1 }]),
 
         // int bpf_dynptr_copy(struct bpf_dynptr *dst, u32 dst_off,
         //                     const struct bpf_dynptr *src, u32 src_off,

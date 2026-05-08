@@ -534,6 +534,41 @@ impl State {
         ids
     }
 
+    /// Sweep dynptr stack slots whose `ref_id` matches `id`, clear their
+    /// annotation and slot bytes, and invalidate any slices tied to those
+    /// slots' `dynptr_id`. Mirrors kernel `release_reference` walking all
+    /// stack slots in addition to regs (verifier.c v6.15) — needed for
+    /// `bpf_dynptr_clone` lineage where clone and parent share `ref_obj_id`
+    /// but live at different stack offsets.
+    pub fn invalidate_dynptr_slots_by_ref(&mut self, id: u32) {
+        if id == 0 {
+            return;
+        }
+        let mut slice_ids: Vec<u32> = Vec::new();
+        let mut to_clear: Vec<(crate::analysis::machine::frame_stack::FrameLevel, i16)> =
+            Vec::new();
+        for (idx, frame) in self.frames.iter().enumerate() {
+            let frame_level = crate::analysis::machine::frame_stack::FrameLevel::from_index(idx);
+            for off in frame.stack.slot_offsets() {
+                let off_i16 = off as i16;
+                if let Some(slot) = frame.stack.stack_get_dynptr(off_i16)
+                    && slot.ref_id == id
+                {
+                    if slot.first_slot && !slice_ids.contains(&slot.dynptr_id) {
+                        slice_ids.push(slot.dynptr_id);
+                    }
+                    to_clear.push((frame_level, off_i16));
+                }
+            }
+        }
+        for (frame_level, off) in to_clear {
+            self.stack_at_mut(frame_level).stack_clear_dynptr(off);
+        }
+        for did in slice_ids {
+            self.invalidate_dynptr_slices(did);
+        }
+    }
+
     pub fn invalidate_dynptr_slices(&mut self, dynptr_id: u32) {
         for i in 0..self.types.regs.len() {
             let demote = matches!(
