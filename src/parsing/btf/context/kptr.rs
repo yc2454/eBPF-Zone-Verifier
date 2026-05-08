@@ -75,6 +75,19 @@ impl BtfContext {
     pub fn extract_value_kptr_fields(&self, value_type_id: u32) -> Vec<KptrField> {
         let mut out = Vec::new();
         self.collect_kptr_fields_at(value_type_id, 0, &mut out, 0);
+        // Kernel `btf_parse_fields` caps at `BTF_FIELDS_MAX` (= 11 in
+        // v6.15) and returns -E2BIG when a value type has more
+        // kptr/list_node/rb_node/timer/wq fields than that. The map
+        // either fails to register or registers without the overflow
+        // entries, depending on the kernel path; the verifier-visible
+        // outcome is the same: bpf_kptr_xchg / bpf_obj_drop on an
+        // offset past the cap surfaces "<op> kptr isn't referenced
+        // kptr" / "has no valid kptr". Truncate to mirror that.
+        // Closes cpumask_failure::test_invalid_nested_array.
+        const BTF_FIELDS_MAX: usize = 11;
+        if out.len() > BTF_FIELDS_MAX {
+            out.truncate(BTF_FIELDS_MAX);
+        }
         out
     }
 
@@ -147,6 +160,15 @@ impl BtfContext {
                 continue;
             };
             self.collect_kptr_fields_at(target_id, entry.offset, &mut out, 0);
+        }
+        // Match `extract_value_kptr_fields`: kernel `btf_parse_fields`
+        // caps at `BTF_FIELDS_MAX` (= 11 in v6.15). Excess fields are
+        // dropped; subsequent `bpf_kptr_xchg` at the dropped offset
+        // rejects with "has no valid kptr". Closes
+        // cpumask_failure::test_invalid_nested_array.
+        const BTF_FIELDS_MAX: usize = 11;
+        if out.len() > BTF_FIELDS_MAX {
+            out.truncate(BTF_FIELDS_MAX);
         }
         out
     }
