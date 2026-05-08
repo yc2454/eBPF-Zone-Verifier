@@ -474,12 +474,24 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     }
 
     // F: sockmap/sockhash mutation via map_update_elem / map_delete_elem.
-    // Kernel's `may_update_sockmap` (net/core/sock_map.c) accepts every
-    // prog type except RawTracepoint / RawTracepointWritable (the
-    // verifier_sockmap_mutate.c `__failure` corpus pins down only those
-    // two as rejected). Mirror that denylist instead of an allowlist so
-    // SocketFilter / Tracing / Xdp / SkLookup / SkReuseport-mapped-Unknown
-    // / etc. all pass without enumeration.
+    // The two ops have different denylists per the verifier_sockmap_mutate
+    // corpus:
+    //
+    //   update: rejected from RawTracepoint{,Writable} AND SockOps. The
+    //     dedicated `bpf_sock_map_update` / `_hash_update` helpers must be
+    //     used in those contexts (kernel `may_update_sockmap`,
+    //     net/core/sock_map.c v6.15 — covers SOCK_OPS via the
+    //     `case BPF_PROG_TYPE_SOCK_OPS: return false;` arm).
+    //   delete: rejected from RawTracepoint{,Writable} only — SockOps
+    //     accepts (verifier_sockmap_mutate::test_sockops_delete is
+    //     __success). The raw_tp rejection comes from the per-prog-type
+    //     helper-proto allowlist in `raw_tp_prog_func_proto`, not from
+    //     `may_update_sockmap`, but kernel surfaces the same "cannot
+    //     update sockmap in this context" message.
+    //
+    // Closes test_sockmap_invalid_update::bpf_sockmap +
+    // verifier_sockmap_mutate::test_sockops_update; preserves PASS for
+    // test_sockops_delete + the existing raw_tp_delete reject.
     if matches!(
         helper,
         constants::BPF_MAP_UPDATE_ELEM | constants::BPF_MAP_DELETE_ELEM
@@ -494,17 +506,21 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
                 map_def.type_,
                 constants::BPF_MAP_TYPE_SOCKMAP | constants::BPF_MAP_TYPE_SOCKHASH
             )
-            && matches!(
+        {
+            let raw_tp = matches!(
                 env.ctx.prog_kind,
                 ProgramKind::RawTracepoint | ProgramKind::RawTracepointWritable
-            )
-        {
-            env.fail(VerificationError::HelperNotAllowedForProgram {
-                pc,
-                helper,
-                kind: env.ctx.prog_kind,
-            });
-            return vec![];
+            );
+            let sockops_update = helper == constants::BPF_MAP_UPDATE_ELEM
+                && matches!(env.ctx.prog_kind, ProgramKind::SockOps);
+            if raw_tp || sockops_update {
+                env.fail(VerificationError::HelperNotAllowedForProgram {
+                    pc,
+                    helper,
+                    kind: env.ctx.prog_kind,
+                });
+                return vec![];
+            }
         }
     }
 
