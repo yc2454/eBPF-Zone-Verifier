@@ -69,6 +69,7 @@ fn adjust_map_value_offset(ty: RegType, delta: Option<i64>) -> RegType {
             offset,
             map_idx,
             map_uid,
+            rdonly,
         } => {
             let new_offset = match (offset, delta) {
                 (Some(o), Some(d)) => Some(o + d),
@@ -79,6 +80,7 @@ fn adjust_map_value_offset(ty: RegType, delta: Option<i64>) -> RegType {
                 offset: new_offset,
                 map_idx,
                 map_uid,
+                rdonly,
             }
         }
         other => other,
@@ -401,6 +403,7 @@ pub(crate) fn update_alu_types(
                                         offset: Some(info.offset),
                                         map_idx: info.map_idx,
                                         map_uid: None,
+                                        rdonly: false,
                                     },
                                 );
                             } else {
@@ -1240,6 +1243,7 @@ pub(crate) fn update_call_types(
                                     offset: Some(0),
                                     map_idx,
                                     map_uid,
+                                    rdonly: false,
                                 },
                             );
                             state.domain.init_map_value_ptr(Reg::R0);
@@ -1262,6 +1266,7 @@ pub(crate) fn update_call_types(
                                     offset: Some(0),
                                     map_idx,
                                     map_uid,
+                                    rdonly: false,
                                 },
                             );
                             state.domain.init_map_value_ptr(Reg::R0);
@@ -1607,6 +1612,7 @@ pub(crate) fn update_map_load_types(
             // Direct map decl — no map_uid (the per-instance identity
             // only matters for chained map-of-maps lookups).
             map_uid: None,
+            rdonly: false,
         },
         // Modern kinds are filtered upstream in transfer_map_load; reaching
         // them here would be a bug.

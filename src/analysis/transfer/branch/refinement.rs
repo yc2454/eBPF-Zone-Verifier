@@ -274,6 +274,7 @@ fn maybe_promote_map_val(state: &mut State, reg: Reg) {
                     offset: Some(0),
                     map_idx,
                     map_uid,
+                    rdonly: false,
                 },
             );
             // Initialize PtrOffset tracking for interval domain
@@ -289,6 +290,7 @@ fn maybe_promote_map_val(state: &mut State, reg: Reg) {
                 offset: Some(0),
                 map_idx: *map_idx,
                 map_uid: *map_uid,
+                rdonly: false,
             },
             _ => unreachable!(),
         },

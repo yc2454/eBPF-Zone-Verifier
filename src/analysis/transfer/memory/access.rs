@@ -415,8 +415,21 @@ pub fn check_store(
             id: _,
             offset: map_off,
             map_idx,
+            rdonly,
             ..
         } => {
+            if rdonly {
+                // PTR_TO_MAP_KEY-style read-only marker (set on R2 of
+                // bpf_for_each_map_elem callbacks). Kernel: "write to
+                // map_key forbidden". Closes
+                // for_each_map_elem_write_key::test_map_key_write.
+                error!(
+                    "[Verifier] pc {}: write into rdonly map_key at off {} size {}",
+                    pc, off, size
+                );
+                env.fail(VerificationError::MapStoreForbidden { pc, map_idx });
+                return;
+            }
             if let Some(map_def) = ctx.map_defs.get(map_idx) {
                 if map_def.map_flags & constants::BPF_F_RDONLY_PROG != 0 {
                     error!("Map store is forbidden!");

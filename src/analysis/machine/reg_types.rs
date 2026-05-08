@@ -96,6 +96,14 @@ pub enum RegType {
         offset: Option<i64>,
         map_idx: usize,
         map_uid: Option<u32>,
+        /// Read-only marker. Set on R2 of a `bpf_for_each_map_elem`
+        /// callback (kernel `set_map_elem_callback_state` stamps
+        /// PTR_TO_MAP_KEY on the key arg, distinct from R3's writable
+        /// PTR_TO_MAP_VALUE) so writes through it reject. Default
+        /// `false` for the standard map-value path; the OrNull /
+        /// non-rdonly map-value cluster all keep the standard
+        /// writable semantics.
+        rdonly: bool,
     },
     PtrToSocket {
         ref_id: Option<u32>,
@@ -392,6 +400,7 @@ impl RegType {
                     map_idx,
                     id,
                     map_uid,
+                    rdonly: false,
                 })
             }
             RegType::PtrToSocketOrNull { ref_id: id } => Some(RegType::PtrToSocket { ref_id: id }),

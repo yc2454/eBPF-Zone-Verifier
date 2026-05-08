@@ -1557,6 +1557,7 @@ fn transfer_kfunc_wq_set_callback(
             offset: Some(0),
             map_idx,
             map_uid: None,
+            rdonly: false,
         },
         None => unknown_btf(),
     };

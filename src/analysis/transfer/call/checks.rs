@@ -1663,8 +1663,17 @@ pub(crate) fn validate_writable_mem(
         RegType::PtrToMapValue {
             map_idx,
             offset: map_off,
+            rdonly,
             ..
         } => {
+            if rdonly {
+                // Read-only PTR_TO_MAP_KEY (set on cb's R2 by
+                // bpf_for_each_map_elem). Helper write buffers can't
+                // overwrite the key. Mirrors kernel rejection at the
+                // helper-arg level.
+                env.fail(VerificationError::MapStoreForbidden { pc, map_idx });
+                return false;
+            }
             let writable = env
                 .ctx
                 .map_defs

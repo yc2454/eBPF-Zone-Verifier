@@ -1159,12 +1159,21 @@ fn transfer_callback_helper(
                     _ => None,
                 };
                 for r in [Reg::R2, Reg::R3] {
+                    // Kernel `set_map_elem_callback_state` stamps R2 as
+                    // PTR_TO_MAP_KEY (read-only) and R3 as
+                    // PTR_TO_MAP_VALUE (writable). We don't track
+                    // PTR_TO_MAP_KEY distinctly — approximate with
+                    // PtrToMapValue but mark `rdonly: true` on R2 so
+                    // helper write-paths reject. Closes
+                    // for_each_map_elem_write_key::test_map_key_write
+                    // (`bpf_get_current_comm(key, sizeof(*key))`).
                     let ty = match caller_map_idx {
                         Some(map_idx) => RegType::PtrToMapValue {
                             id: crate::analysis::machine::reg_types::new_ptr_id(),
                             offset: Some(0),
                             map_idx,
                             map_uid: None,
+                            rdonly: r == Reg::R2,
                         },
                         None => unknown_btf(),
                     };
@@ -1268,6 +1277,7 @@ fn transfer_callback_helper(
                 offset: Some(0),
                 map_idx,
                 map_uid: None,
+                rdonly: false,
             },
             None => unknown_btf(),
         };
