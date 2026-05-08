@@ -714,6 +714,94 @@ fn transfer_kfunc_proto(
         }
     }
 
+    // bpf_percpu_obj_drop_impl(p, meta__ign): R1 must be a percpu BTF
+    // id pointer with a live ref. Kernel "arg#0 expected for
+    // bpf_percpu_obj_drop_impl()" rejects regular (non-percpu)
+    // bpf_obj_new pointers passed here. Closes
+    // percpu_alloc_fail::test_array_map_5.
+    if let Some(kfunc_name) = env.ctx.btf.kfunc_name(btf_id)
+        && kfunc_name == "bpf_percpu_obj_drop_impl"
+    {
+        use crate::analysis::machine::reg_types::PtrFlags;
+        let r1 = in_types.get(Reg::R1);
+        // Accept either:
+        //   - PtrToBtfId/OrNull with PERCPU (from bpf_percpu_obj_new),
+        //   - PtrToMapKptr/OrNull with PERCPU (from a bpf_kptr_xchg
+        //     return out of a `__percpu_kptr` slot).
+        // Both must carry an acquired ref (the source held ownership).
+        let percpu_ok = matches!(
+            r1,
+            RegType::PtrToBtfId { .. }
+                | RegType::PtrToBtfIdOrNull { .. }
+                | RegType::PtrToMapKptr { .. }
+                | RegType::PtrToMapKptrOrNull { .. }
+        ) && r1.ptr_flags().contains(PtrFlags::PERCPU)
+            && r1.get_ref_id().is_some();
+        if !percpu_ok {
+            env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+            return vec![];
+        }
+    }
+
+    // bpf_percpu_obj_new_impl(local_type_id, meta__ign):
+    //   R0 = PtrToBtfIdOrNull{local_struct_name, TRUSTED|PERCPU|MEM_ALLOC,
+    //                         ref_id=fresh_acquire}
+    // Kernel `PTR_TO_BTF_ID | MEM_ALLOC | MEM_PERCPU | PTR_TRUSTED |
+    // MAYBE_NULL` (verifier.c v6.15 ~L13117 + KF_ACQUIRE+KF_RET_NULL
+    // post-call wrap). The local_type_id is R1's const value, which
+    // clang plants via `bpf_percpu_obj_new(struct T)` macro. Without
+    // this, R0 stays Scalar after the call and downstream
+    // `bpf_kptr_xchg(&e->pc, p)` rejects p as non-ref.
+    if let Some(kfunc_name) = env.ctx.btf.kfunc_name(btf_id)
+        && kfunc_name == "bpf_percpu_obj_new_impl"
+    {
+        use crate::analysis::machine::context::intern_btf_type_name_strict;
+        use crate::analysis::machine::reg_types::PtrFlags;
+        let local_type_id = state
+            .domain
+            .get_fixed_value(Reg::R1)
+            .and_then(|v| u32::try_from(v).ok());
+        // Pre-call validation against the requested local-BTF struct.
+        // Kernel `bpf_percpu_obj_new_impl` rejects with three distinct
+        // messages (verifier.c v6.15 + helpers.c percpu allocator):
+        //   - "type size (N) is greater than 512" — limit
+        //   - "type ID argument must be of a struct of scalars" — any
+        //     pointer field disqualifies
+        //   - "type ID argument must not contain special fields" —
+        //     bpf_spin_lock / bpf_timer / bpf_list_head / bpf_rb_root
+        //   Closes percpu_alloc_fail::test_array_map_{6,7,8}.
+        if let Some(id) = local_type_id {
+            let size = env.ctx.btf.type_size_bytes(id);
+            if size > 512 {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+                return vec![];
+            }
+            if env.ctx.btf.struct_contains_pointer(id) {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+                return vec![];
+            }
+            let specials = env.ctx.btf.find_special_fields(id);
+            if !specials.is_empty() {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
+                return vec![];
+            }
+        }
+        let type_name = local_type_id
+            .and_then(|id| env.ctx.btf.struct_name(id))
+            .map(intern_btf_type_name_strict)
+            .unwrap_or("unknown");
+        let ref_id = state.acquire_ref();
+        state.types.set(
+            Reg::R0,
+            RegType::PtrToBtfIdOrNull {
+                id: crate::analysis::machine::reg_types::new_ptr_id(),
+                type_name,
+                flags: PtrFlags::TRUSTED | PtrFlags::PERCPU | PtrFlags::MEM_ALLOC,
+                ref_id: Some(ref_id),
+            },
+        );
+    }
+
     // bpf_cast_to_kern_ctx(ctx): R0 = PtrToBtfId{kern_ctx_type_name,
     // TRUSTED}. The kernel-side struct depends on the calling
     // program's prog_kind (mirrors `find_kern_ctx_type_id` /

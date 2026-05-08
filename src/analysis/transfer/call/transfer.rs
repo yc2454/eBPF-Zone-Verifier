@@ -367,27 +367,49 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
         // showed. Skip the check when R2 is null (no pointee) or its
         // pointee BTF id is unknown (lite-scope producers).
         if !r2_is_null {
-            let r2_pointee = match r2 {
-                RegType::PtrToOwnedKptr { pointee_btf_id, .. } => pointee_btf_id,
-                RegType::PtrToMapKptr { pointee_btf_id, .. } => Some(pointee_btf_id),
+            let kptr_name = env.ctx.btf.struct_name(pointee_btf_id);
+            let r2_name = match r2 {
+                RegType::PtrToOwnedKptr {
+                    pointee_btf_id: Some(id),
+                    ..
+                } => env.ctx.btf.struct_name(id),
+                RegType::PtrToMapKptr { pointee_btf_id, .. } => {
+                    env.ctx.btf.struct_name(pointee_btf_id)
+                }
+                // bpf_percpu_obj_new returns PtrToBtfId carrying the
+                // local-BTF type_name directly. Match on that for the
+                // pointee-type-mismatch check (kernel
+                // "invalid kptr access, R2 type=percpu_ptr_X
+                // expected=ptr_Y" — closes
+                // percpu_alloc_fail::test_array_map_2).
+                RegType::PtrToBtfId { type_name, .. } => Some(type_name),
                 _ => None,
             };
-            if let Some(r2_id) = r2_pointee {
-                let kptr_name = env.ctx.btf.struct_name(pointee_btf_id);
-                let r2_name = env.ctx.btf.struct_name(r2_id);
-                if let (Some(a), Some(b)) = (kptr_name, r2_name)
-                    && a != b
-                {
-                    env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
-                    return vec![];
-                }
+            if let (Some(a), Some(b)) = (kptr_name, r2_name)
+                && a != b
+            {
+                env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
+                return vec![];
             }
         }
 
-        // Consume R2's ref (transfer ownership into the map).
+        // Consume R2's ref (transfer ownership into the map). Aliases
+        // pointing to the same object are valid for read access only
+        // while the surrounding RCU read section holds (the object
+        // lives via the map slot, but our local ref is gone). Kernel
+        // model: when RCU is held, aliases survive as
+        // `PTR_TO_BTF_ID | MEM_RCU` (writable / accepted by per-cpu-
+        // ptr); otherwise they must be `mark_reg_unknown`-style
+        // invalidated. Closes percpu_alloc_array::test_array_map_10
+        // (bpf_rcu_read_lock around the body) while keeping
+        // percpu_alloc_fail::test_array_map_3 (no RCU) FA-safe.
         if let Some(id) = r2_ref {
             state.release_ref(id);
-            state.invalidate_ref(id);
+            if state.in_rcu_read_section() {
+                state.convert_ref_to_non_owning(id);
+            } else {
+                state.invalidate_ref(id);
+            }
         }
 
         // R0 = previous slot contents: PtrToMapKptrOrNull, fresh ref_id.

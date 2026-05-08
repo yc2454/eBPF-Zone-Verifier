@@ -2824,6 +2824,31 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .flags(CallFlags::RELEASE)
         .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
 
+        // void *bpf_percpu_obj_new_impl(u64 local_type_id, void *meta__ign)
+        // KF_ACQUIRE | KF_RET_NULL — heap-allocates a percpu object.
+        // Kernel returns `PTR_TO_BTF_ID | MEM_ALLOC | MEM_PERCPU |
+        // PTR_TRUSTED | MAYBE_NULL`. We type R0 in the kfunc.rs post-
+        // call hook (resolves local_type_id → struct name from R1's
+        // const value, mints PtrToBtfIdOrNull with PERCPU+MEM_ALLOC).
+        // CallProto here just clears the dispatch-time "unknown kfunc"
+        // rejection.
+        "bpf_percpu_obj_new_impl" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ]),
+
+        // void bpf_percpu_obj_drop_impl(void *kptr, void *meta__ign)
+        // KF_RELEASE — drops the percpu allocation. R1 is a percpu
+        // BTF-id pointer (acquired via bpf_percpu_obj_new or
+        // bpf_kptr_xchg out of a __percpu_kptr field). Validator gates
+        // on PtrToBtfId with PERCPU + ref_id; ReleaseRefFromArg
+        // invalidates aliases.
+        "bpf_percpu_obj_drop_impl" => CallProto::with_args([
+            Anything, Anything, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Void)
+        .flags(CallFlags::RELEASE)
+        .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
+
         // void *bpf_refcount_acquire_impl(void *kptr, void *meta__ign)
         // KF_ACQUIRE | KF_RET_NULL — bumps the refcount and returns a
         // fresh ref to the same object. The input ref stays valid (no
