@@ -87,24 +87,45 @@ pub(crate) fn handle_add(
         }
     }
 
-    let dst_tnum = state.get_tnum(dst);
-    let new_tnum = match src {
-        Operand::Imm(c) => dst_tnum.add_imm(*c),
-        Operand::Reg(r) => dst_tnum.add(state.get_tnum(*r)),
+    // Tnum / sync_tnum_to_dbm are scalar-domain bookkeeping. When the dst
+    // is (or stays) a pointer and the src is a scalar, the dst's tnum
+    // represents the offset within the base, not the absolute address —
+    // syncing it to DBM bounds-from-zero installs a bogus absolute bound
+    // on the pointer reg, which `check_map_access`'s variable-offset path
+    // then reads as a wildly inflated range. Skip it for that case and
+    // clear any stale scalar-era tnum the dst carried from before it
+    // became a pointer.
+    let dst_is_ptr_post = state.types.get(dst).is_pointer();
+    let src_is_ptr = match src {
+        Operand::Imm(_) => false,
+        Operand::Reg(r) => in_types.get(*r).is_pointer(),
     };
-    let new_tnum = if width == Width::W32 {
-        new_tnum.trunc32()
+    if dst_is_ptr_post && !src_is_ptr {
+        state.set_tnum(dst, Tnum::unknown());
+        if width == Width::W32 {
+            state.domain.apply_w32_truncation(dst);
+        }
+        check_ptr_bounds(state, dst);
     } else {
-        new_tnum
-    };
-    state.set_tnum(dst, new_tnum);
+        let dst_tnum = state.get_tnum(dst);
+        let new_tnum = match src {
+            Operand::Imm(c) => dst_tnum.add_imm(*c),
+            Operand::Reg(r) => dst_tnum.add(state.get_tnum(*r)),
+        };
+        let new_tnum = if width == Width::W32 {
+            new_tnum.trunc32()
+        } else {
+            new_tnum
+        };
+        state.set_tnum(dst, new_tnum);
 
-    if width == Width::W32 {
-        state.domain.apply_w32_truncation(dst);
+        if width == Width::W32 {
+            state.domain.apply_w32_truncation(dst);
+        }
+
+        check_ptr_bounds(state, dst);
+        sync_tnum_to_dbm(state, dst);
     }
-
-    check_ptr_bounds(state, dst);
-    sync_tnum_to_dbm(state, dst);
 }
 
 pub(crate) fn handle_sub(
@@ -152,32 +173,48 @@ pub(crate) fn handle_sub(
         }
     }
 
-    let dst_tnum = state.get_tnum(dst);
-    let new_tnum = match src {
-        Operand::Imm(c) => dst_tnum.sub_imm(*c),
-        Operand::Reg(r) => dst_tnum.sub(state.get_tnum(*r)),
-    };
-    let new_tnum = if width == Width::W32 {
-        new_tnum.trunc32()
-    } else {
-        new_tnum
-    };
-    state.set_tnum(dst, new_tnum);
-
-    if width == Width::W32 {
-        state.domain.apply_w32_truncation(dst);
-    }
-
-    let dst_is_ptr = in_types.get(dst).is_pointer();
+    // See handle_add for rationale: when dst is a pointer and src is a
+    // scalar, skip the absolute-address tnum propagation and reset the
+    // tnum to unknown so a stale scalar-era value can't leak into DBM
+    // via sync_tnum_to_dbm.
+    let dst_is_ptr_post = state.types.get(dst).is_pointer();
     let src_is_ptr = match src {
         Operand::Imm(_) => false,
         Operand::Reg(r) => in_types.get(*r).is_pointer(),
     };
-    if !(dst_is_ptr && src_is_ptr) {
-        check_ptr_bounds(state, dst);
-    }
+    if dst_is_ptr_post && !src_is_ptr {
+        state.set_tnum(dst, Tnum::unknown());
+        if width == Width::W32 {
+            state.domain.apply_w32_truncation(dst);
+        }
+        let dst_is_ptr = in_types.get(dst).is_pointer();
+        if !(dst_is_ptr && src_is_ptr) {
+            check_ptr_bounds(state, dst);
+        }
+    } else {
+        let dst_tnum = state.get_tnum(dst);
+        let new_tnum = match src {
+            Operand::Imm(c) => dst_tnum.sub_imm(*c),
+            Operand::Reg(r) => dst_tnum.sub(state.get_tnum(*r)),
+        };
+        let new_tnum = if width == Width::W32 {
+            new_tnum.trunc32()
+        } else {
+            new_tnum
+        };
+        state.set_tnum(dst, new_tnum);
 
-    sync_tnum_to_dbm(state, dst);
+        if width == Width::W32 {
+            state.domain.apply_w32_truncation(dst);
+        }
+
+        let dst_is_ptr = in_types.get(dst).is_pointer();
+        if !(dst_is_ptr && src_is_ptr) {
+            check_ptr_bounds(state, dst);
+        }
+
+        sync_tnum_to_dbm(state, dst);
+    }
 }
 
 pub(crate) fn handle_neg(state: &mut State, width: Width, dst: Reg) {
