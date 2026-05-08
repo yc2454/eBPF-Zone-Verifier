@@ -1197,15 +1197,17 @@ pub fn combine_function_with_subprogs<P: AsRef<Path> + Clone>(
     let mut combined_relocs: HashMap<usize, RelocInfo> = HashMap::new();
     let mut func_offsets: HashMap<String, usize> = HashMap::new();
     let mut visited: HashSet<(String, String)> = HashSet::new();
-    let mut queue: Vec<(String, String)> =
-        vec![(main_section.to_string(), main_func.to_string())];
-    // Extra roots (e.g. an `__exception_cb` registered via decl_tag) get
-    // appended so their bodies are combined and tracked in
-    // `func_offsets`. They're unreachable from main's CFG, but the
-    // verifier needs their PC to drive a separate analysis pass.
+    // The queue is processed via `pop()` (back of vec). Push extras
+    // FIRST so main is popped first → main's body lands at pc 0 (the
+    // CFG/analysis entry assumes pc 0 = main entry). Without this,
+    // exception_ext_mod_cb_runtime FRs as "unreachable insn at pc 10"
+    // because the cb body ends up at pc 0 and the main body at pc 10
+    // (CFG DFS from pc 0 walks the cb but never reaches main).
+    let mut queue: Vec<(String, String)> = Vec::new();
     for r in extra_roots {
         queue.push(r.clone());
     }
+    queue.push((main_section.to_string(), main_func.to_string()));
 
     while let Some((section, func_name)) = queue.pop() {
         if !visited.insert((section.clone(), func_name.clone())) {

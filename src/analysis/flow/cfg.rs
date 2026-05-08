@@ -386,12 +386,26 @@ pub fn check_cfg(
     let mut state = vec![VisitState::Unvisited; n];
     let mut stack = Vec::new();
 
-    // Start at PC 0
-    state[0] = VisitState::Discovered;
-    stack.push(0);
-
-    // Mark entry as prune point (implicit in kernel logic often)
-    init_explored_state(env, 0);
+    // Roots: pc 0 (main entry) plus any registered `__exception_cb`
+    // subprog. Exception cbs are unreachable from main's CFG by design
+    // — kernel invokes them via the unwind path — but their bodies
+    // must still pass the unreachable-insn check (kernel's
+    // `do_check_subprogs` force-marks them as called).
+    let mut roots: Vec<usize> = vec![0];
+    if let Some(cb_name) = env.ctx.exception_callback.as_deref() {
+        for (&pc, name) in env.ctx.pc_to_subprog_name.iter() {
+            if name == cb_name {
+                roots.push(pc);
+            }
+        }
+    }
+    for &root in &roots {
+        if root < n && state[root] == VisitState::Unvisited {
+            state[root] = VisitState::Discovered;
+            stack.push(root);
+            init_explored_state(env, root);
+        }
+    }
 
     while let Some(&pc) = stack.last() {
         // If we haven't processed children yet (Discovered), do so now.
