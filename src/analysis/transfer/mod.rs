@@ -625,6 +625,19 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         // that were verified in the callee and remain valid.
         state.domain.preserve_anchor_constraints(&callee_domain);
 
+        // If the callee's anchor constraints contradict the caller's saved
+        // state, the path through the callee is infeasible from the caller's
+        // context. Concretely: caller verified `data_end - data >= 82` along
+        // its prefix, callee's exit path reached `data_end - data <= 53`
+        // (an internal short-packet error branch). Both can't hold for the
+        // same packet, so this exit edge is dead. Without dropping, repeated
+        // `close()` passes downstream amplify the negative cycle into
+        // garbage bounds (e.g. `r1 - 0 ≤ -875228325050`) which then mis-
+        // route variable-offset / W32-truncation checks.
+        if state.domain.is_inconsistent() {
+            return vec![];
+        }
+
         // Re-apply R0 from callee's return value
         state.types.set(Reg::R0, ret_type.clone());
         state.set_tnum(Reg::R0, ret_tnum);
