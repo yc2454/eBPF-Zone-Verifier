@@ -1027,7 +1027,33 @@ pub(crate) fn update_call_types(
     if !routed
         && (helper == constants::BPF_PER_CPU_PTR || helper == constants::BPF_THIS_CPU_PTR)
     {
-        if let RegType::PtrToBtfId { type_name, flags, .. } = in_types.get(Reg::R1) {
+        // Resolve (type_name, in_flags) from the percpu source pointer.
+        // Two source shapes today:
+        //   - typed __ksym (`extern percpu T sym __ksym;`) → PtrToBtfId
+        //   - `__percpu_kptr` map field load → PtrToMapKptr{PERCPU,
+        //     pointee_btf_id} (kernel `PTR_TO_BTF_ID | MEM_PERCPU` on
+        //     reg, mirrored as PtrToMapKptr in our model).
+        let resolved: Option<(&'static str, crate::analysis::machine::reg_types::PtrFlags)> =
+            match in_types.get(Reg::R1) {
+                RegType::PtrToBtfId { type_name, flags, .. } => Some((type_name, flags)),
+                RegType::PtrToMapKptr {
+                    pointee_btf_id,
+                    flags,
+                    ..
+                }
+                | RegType::PtrToMapKptrOrNull {
+                    pointee_btf_id,
+                    flags,
+                    ..
+                } => env.ctx.btf.struct_name(pointee_btf_id).map(|n| {
+                    (
+                        crate::analysis::machine::context::intern_btf_type_name_strict(n),
+                        flags,
+                    )
+                }),
+                _ => None,
+            };
+        if let Some((type_name, flags)) = resolved {
             // Drop PERCPU + RDONLY on the result; kernel marks the
             // post-call ptr as RCU-protected (typed ksym deref needs to
             // be inside an RCU read region, but our existing trust-band
@@ -1037,8 +1063,24 @@ pub(crate) fn update_call_types(
             // field-store level today.
             let drop = crate::analysis::machine::reg_types::PtrFlags::PERCPU
                 | crate::analysis::machine::reg_types::PtrFlags::RDONLY;
-            let out_flags = flags.difference(drop)
+            let mut out_flags = flags.difference(drop)
                 | crate::analysis::machine::reg_types::PtrFlags::TRUSTED;
+            // Stamp MEM_ALLOC when the source was a `__percpu_kptr`
+            // map field (PtrToMapKptr) — the dereferenced object is
+            // program-owned (allocated via `bpf_percpu_obj_new`), so
+            // direct field stores through R0 are allowed by the
+            // kernel's `btf_struct_access`. Typed ksym sources
+            // (PtrToBtfId) don't get MEM_ALLOC: those name kernel-
+            // owned percpu vars (`__cpu_active_mask`-style) where
+            // writes are rejected.
+            let from_local_kptr = matches!(
+                in_types.get(Reg::R1),
+                RegType::PtrToMapKptr { .. } | RegType::PtrToMapKptrOrNull { .. }
+            );
+            if from_local_kptr {
+                out_flags = out_flags
+                    | crate::analysis::machine::reg_types::PtrFlags::MEM_ALLOC;
+            }
             if helper == constants::BPF_PER_CPU_PTR {
                 let id = new_ptr_id();
                 state.types.set(

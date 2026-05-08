@@ -535,6 +535,7 @@ pub fn check_store(
         //     mem_region_model. Future work: extend mem_region_model with
         //     entries for named kernel structs and tighten this arm.
         PtrToBtfId { .. } => {
+            use crate::analysis::machine::reg_types::PtrFlags;
             let is_unknown = matches!(
                 base_ty,
                 PtrToBtfId {
@@ -542,6 +543,14 @@ pub fn check_store(
                     ..
                 }
             );
+            // MEM_ALLOC: `PTR_TO_BTF_ID | MEM_ALLOC` (kernel) marks
+            // pointers into program-owned objects (`bpf_obj_new`,
+            // `bpf_per_cpu_ptr` of a local `__percpu_kptr`). The
+            // kernel allows direct field stores via `btf_struct_access`
+            // — no field-table check needed on our side. Without this,
+            // `percpu_alloc_array::test_array_map_2`'s `v->c = 1`
+            // FRs.
+            let is_mem_alloc = base_ty.ptr_flags().contains(PtrFlags::MEM_ALLOC);
             // Conntrack types: `nf_conn___init` is the transient
             // init-state from `bpf_skb_ct_alloc` / `bpf_xdp_ct_alloc`
             // (pre-insert), `nf_conn` is the post-insert form. Kernel
@@ -557,6 +566,7 @@ pub fn check_store(
             );
             if !is_unknown
                 && !store_skip
+                && !is_mem_alloc
                 && !mem_region_model::is_valid_mem_region_read(state.types.get(base), off, size)
             {
                 error!(
