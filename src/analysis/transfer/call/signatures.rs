@@ -370,6 +370,12 @@ pub enum RetKind {
     /// with `CallFlags::RET_NULL` the applier wraps as
     /// `PtrToAllocMemOrNull`.
     PtrToAllocMemFromArg { size_arg: u8 },
+    /// Same as `PtrToAllocMemFromArg` but stamps `rdonly: true` on the
+    /// returned `PtrToAllocMem*`. Used by `bpf_dynptr_slice` (kernel
+    /// returns `const void *`) so subsequent stores through the slice
+    /// reject with "cannot write into rdonly_mem". `bpf_dynptr_slice_rdwr`
+    /// keeps the non-rdonly variant.
+    PtrToAllocMemFromArgRdonly { size_arg: u8 },
     /// `RegType::PtrToAllocMem` with a const element size baked in
     /// (W4.3). Used by `bpf_iter_*_next` whose returned pointer width
     /// is per-iter-kind, not driven by an arg. Combined with
@@ -2258,7 +2264,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             ConstSize,            // R4: buffer size
             DontCare,
         ])
-        .ret(RetKind::PtrToAllocMemFromArg { size_arg: 3 })
+        .ret(RetKind::PtrToAllocMemFromArgRdonly { size_arg: 3 })
         .flags(CallFlags::RET_NULL)
         .mem_size_pairs(&pairs::DYNPTR_SLICE),
 

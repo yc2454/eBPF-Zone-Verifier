@@ -1524,6 +1524,7 @@ pub(crate) fn transfer_call_rel(
                             mem_size: *mem_size as u64,
                             ref_id: None,
                             dynptr_id: None,
+                            rdonly: false,
                         }
                     } else {
                         RegType::PtrToAllocMemOrNull {
@@ -1531,6 +1532,7 @@ pub(crate) fn transfer_call_rel(
                             mem_size: *mem_size as u64,
                             ref_id: None,
                             dynptr_id: None,
+                            rdonly: false,
                         }
                     };
                     state.types.set(*reg, ty);

@@ -179,6 +179,7 @@ fn update_ptr_arithmetic_type(
             mem_size,
             ref_id,
             dynptr_id,
+            rdonly,
         } => {
             // Kernel `verifier.c` ~L15170 (v6.15): pointer arithmetic on
             // PTR_TO_MEM (alloc) preserves the type and bumps `reg->off`
@@ -200,6 +201,7 @@ fn update_ptr_arithmetic_type(
                             mem_size: mem_size - d as u64,
                             ref_id: None,
                             dynptr_id,
+                            rdonly,
                         },
                     );
                 }
@@ -516,6 +518,7 @@ pub(crate) fn update_load_types(
                                 mem_size,
                                 ref_id: None,
                                 dynptr_id: None,
+                                rdonly: false,
                             },
                         );
                     }
@@ -664,6 +667,7 @@ pub(crate) fn update_load_types(
                                 mem_size,
                                 ref_id: None,
                                 dynptr_id: None,
+                                rdonly: false,
                             },
                         );
                         return false;
@@ -1471,6 +1475,7 @@ pub(crate) fn update_call_types(
                     mem_size: hi as u64,
                     ref_id: None,
                     dynptr_id: None,
+                    rdonly: false,
                 },
             );
         }

@@ -492,7 +492,25 @@ pub fn check_store(
                 base_type: base_ty,
             });
         }
-        PtrToAllocMem { mem_size, .. } => {
+        PtrToAllocMem { mem_size, rdonly, .. } => {
+            // `bpf_dynptr_slice` returns `const void *` — kernel rejects
+            // any store through it with "cannot write into rdonly_mem".
+            // The rdonly bit is stamped on the slice result by
+            // `RetKind::PtrToAllocMemFromArgRdonly` and survives null-check
+            // refinement; `bpf_dynptr_slice_rdwr` keeps `rdonly: false`.
+            if rdonly {
+                error!(
+                    "Unsafe memory store at pc {}: base {:?}+{} size {} writes into rdonly_mem",
+                    pc, base, off, size
+                );
+                env.fail(VerificationError::UnsafeMemoryStore {
+                    pc,
+                    base,
+                    off,
+                    size,
+                });
+                return;
+            }
             let access_end = off as i64 + size;
             if access_end > mem_size as i64 {
                 error!(

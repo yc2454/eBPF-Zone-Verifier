@@ -153,12 +153,19 @@ pub enum RegType {
         /// sweeps regs + slots demoting matches to `ScalarValue` —
         /// catches use-after-reinit even when `ref_id` is None.
         dynptr_id: Option<u32>,
+        /// Read-only marker for the underlying allocation. Set by
+        /// `bpf_dynptr_slice` (kernel returns `const void *` regardless
+        /// of source-dynptr rdonly bit) so subsequent stores reject
+        /// with "cannot write into rdonly_mem". `bpf_dynptr_slice_rdwr`
+        /// keeps `false`; default `false` for non-slice paths.
+        rdonly: bool,
     },
     PtrToAllocMem {
         id: u32,
         mem_size: u64,
         ref_id: Option<u32>,
         dynptr_id: Option<u32>,
+        rdonly: bool,
     },
     /// Refcounted pointer to a `struct bpf_cpumask` (W5.3). Mirrors
     /// `PtrToSocket` ref-tracking: `bpf_cpumask_create` mints a fresh

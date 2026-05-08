@@ -345,6 +345,7 @@ pub(crate) fn apply_call_proto_r0(
                     mem_size,
                     ref_id: None,
                     dynptr_id: None,
+                    rdonly: false,
                 }
             } else {
                 RegType::PtrToAllocMem {
@@ -352,6 +353,7 @@ pub(crate) fn apply_call_proto_r0(
                     mem_size,
                     ref_id: None,
                     dynptr_id: None,
+                    rdonly: false,
                 }
             };
             state.types.set(Reg::R0, ty);
@@ -419,46 +421,52 @@ pub(crate) fn apply_call_proto_r0(
             true
         }
         RetKind::PtrToAllocMemFromArg { size_arg } => {
-            // Read the size arg's upper bound from the pre-call domain
-            // (apply_call_proto_r0 runs before caller-saved clobber, so
-            // R1..R5 still hold their pre-call values here).
-            let size_reg = arg_reg(size_arg);
-            let (_, max_size) = state.domain.get_interval(size_reg);
-            let mem_size = max_size.max(0) as u64;
-            let id = new_ptr_id();
-            // Inherit the source dynptr's ref_id from R1 so that releasing
-            // the dynptr (`bpf_ringbuf_submit_dynptr` etc.) invalidates the
-            // returned slice pointer too — catches use-after-release.
-            // Also inherit `dynptr_id` (the per-instance identity) so
-            // overwriting the source dynptr with `bpf_dynptr_from_mem`
-            // (etc.) demotes the slice — mirrors kernel verifier.c v6.15
-            // L11701 `regs[BPF_REG_0].dynptr_id = meta.dynptr_id`. All
-            // current `PtrToAllocMemFromArg` users (`bpf_dynptr_data`,
-            // `bpf_dynptr_slice`, `bpf_dynptr_slice_rdwr`) have R1 as
-            // the source dynptr.
-            let src_slot = resolve_stack_arg(state, arg_reg(0))
-                .and_then(|(frame, off)| state.stack_at(frame).stack_get_dynptr(off));
-            let ref_id = src_slot.map(|s| s.ref_id).filter(|id| *id != 0);
-            let dynptr_id = src_slot.map(|s| s.dynptr_id);
-            let ty = if proto.flags.contains(CallFlags::RET_NULL) {
-                RegType::PtrToAllocMemOrNull {
-                    id,
-                    mem_size,
-                    ref_id,
-                    dynptr_id,
-                }
-            } else {
-                RegType::PtrToAllocMem {
-                    id,
-                    mem_size,
-                    ref_id,
-                    dynptr_id,
-                }
-            };
-            state.types.set(Reg::R0, ty);
+            apply_alloc_mem_from_arg(state, proto, size_arg, false);
+            true
+        }
+        RetKind::PtrToAllocMemFromArgRdonly { size_arg } => {
+            apply_alloc_mem_from_arg(state, proto, size_arg, true);
             true
         }
     }
+}
+
+/// Shared body of `RetKind::PtrToAllocMemFromArg{,Rdonly}`. Reads the
+/// size-arg upper bound, resolves the source dynptr slot to inherit
+/// `ref_id` / `dynptr_id`, and stamps the supplied `rdonly` bit on the
+/// returned `PtrToAllocMem*`.
+fn apply_alloc_mem_from_arg(
+    state: &mut State,
+    proto: &CallProto,
+    size_arg: u8,
+    rdonly: bool,
+) {
+    let size_reg = arg_reg(size_arg);
+    let (_, max_size) = state.domain.get_interval(size_reg);
+    let mem_size = max_size.max(0) as u64;
+    let id = new_ptr_id();
+    let src_slot = resolve_stack_arg(state, arg_reg(0))
+        .and_then(|(frame, off)| state.stack_at(frame).stack_get_dynptr(off));
+    let ref_id = src_slot.map(|s| s.ref_id).filter(|id| *id != 0);
+    let dynptr_id = src_slot.map(|s| s.dynptr_id);
+    let ty = if proto.flags.contains(CallFlags::RET_NULL) {
+        RegType::PtrToAllocMemOrNull {
+            id,
+            mem_size,
+            ref_id,
+            dynptr_id,
+            rdonly,
+        }
+    } else {
+        RegType::PtrToAllocMem {
+            id,
+            mem_size,
+            ref_id,
+            dynptr_id,
+            rdonly,
+        }
+    };
+    state.types.set(Reg::R0, ty);
 }
 
 /// True if a dynptr of this kind carries an acquire/release ref

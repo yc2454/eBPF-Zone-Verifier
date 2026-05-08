@@ -344,12 +344,12 @@ fn maybe_promote_mem(state: &mut State, reg: Reg) {
         _ => return,
     };
     for r in Reg::ALL {
-        if let RegType::PtrToAllocMemOrNull { id, mem_size, ref_id, dynptr_id } = state.types.get(r)
+        if let RegType::PtrToAllocMemOrNull { id, mem_size, ref_id, dynptr_id, rdonly } = state.types.get(r)
             && id == target_id
         {
             state.types.set(
                 r,
-                RegType::PtrToAllocMem { id, mem_size, ref_id, dynptr_id },
+                RegType::PtrToAllocMem { id, mem_size, ref_id, dynptr_id, rdonly },
             );
         }
     }
@@ -362,11 +362,13 @@ fn maybe_promote_mem(state: &mut State, reg: Reg) {
                 mem_size,
                 ref_id,
                 dynptr_id,
+                rdonly,
             } => RegType::PtrToAllocMem {
                 id: *id,
                 mem_size: *mem_size,
                 ref_id: *ref_id,
                 dynptr_id: *dynptr_id,
+                rdonly: *rdonly,
             },
             _ => unreachable!(),
         },
