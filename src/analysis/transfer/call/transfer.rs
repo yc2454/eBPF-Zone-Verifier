@@ -385,8 +385,23 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
                 RegType::PtrToBtfId { type_name, .. } => Some(type_name),
                 _ => None,
             };
+            // Skip the pointee-name match when r2's name is "unknown"
+            // — that's the sentinel from `intern_btf_type_name_strict`
+            // when the local_type_id couldn't resolve to a registered
+            // mem_region_model name. Mostly arises with
+            // `bpf_percpu_obj_new(struct T)`'s first arg being a load
+            // from `const volatile T_btf_ids[idx]`: libbpf relocates
+            // those entries to concrete btf_ids at load time, but we
+            // read the pre-relocation `.rodata` zero and resolve to
+            // "unknown". Closes test_bpf_ma::test_batch_percpu_alloc_free
+            // and test_percpu_free_through_map_free without weakening
+            // the strict mismatch check for cases where both sides
+            // resolve concretely (still rejects e.g.
+            // local_kptr_stash_fail::stash_rb_nodes' node_data2 vs
+            // expected node_data).
             if let (Some(a), Some(b)) = (kptr_name, r2_name)
                 && a != b
+                && b != "unknown"
             {
                 env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
                 return vec![];
