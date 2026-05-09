@@ -145,11 +145,28 @@ fn loop_body_implied_bound(
         if body_pc >= prog.instrs.len() {
             continue;
         }
-        let Instr::If { op, left, right: Operand::Imm(k), .. } = &prog.instrs[body_pc]
-        else {
+        let Instr::If { op, left, right, .. } = &prog.instrs[body_pc] else {
             continue;
         };
         if *left != target_reg {
+            continue;
+        }
+        let (k, right_is_reg) = match right {
+            Operand::Imm(k) => (*k, false),
+            Operand::Reg(r) => {
+                let (lo, hi) = state.domain.get_interval(*r);
+                if lo == hi { (lo, true) } else { continue }
+            }
+        };
+        // Right-hand side `Reg(k_const)` is only safe for *unsigned*
+        // comparison ops. For signed ops the counter may live in the
+        // negative half (e.g.
+        // `verifier_bounds::crossing_32_bit_signed_boundary_2` runs
+        // `r0 += 1` from `0x80000000`); applying a `[0, k]` widening
+        // would unsoundly drop the low half of its actual range.
+        if right_is_reg
+            && !matches!(op, CmpOp::Ne | CmpOp::Eq | CmpOp::UGe | CmpOp::UGt | CmpOp::ULt | CmpOp::ULe)
+        {
             continue;
         }
         let upper = match op {
@@ -158,8 +175,8 @@ fn loop_body_implied_bound(
             | CmpOp::UGe
             | CmpOp::SGe
             | CmpOp::ULt
-            | CmpOp::SLt => *k - 1,
-            CmpOp::UGt | CmpOp::SGt | CmpOp::ULe | CmpOp::SLe => *k,
+            | CmpOp::SLt => k - 1,
+            CmpOp::UGt | CmpOp::SGt | CmpOp::ULe | CmpOp::SLe => k,
             _ => continue,
         };
         if upper <= 0 {
@@ -279,6 +296,323 @@ fn is_at_loop_point(env: &VerifierEnv, state: &State, pc: usize, prog: &Program)
 
 /// Apply loop bound constraints to the state.
 /// Returns true if bounds were applied.
+/// Spilled-counter shape: a stack slot at `slot_offset` (frame 0) is
+/// updated each iter via a load-add-store triple
+/// (`R := *(R10+slot); R += stride; *(R10+slot) := R`), AND the loop's
+/// back-edge tests `*(R10+slot) < K` (or similar `<`/`<=` shape) against
+/// a constant K. The slot is the iteration counter; widening it to
+/// `[0, K - stride*slack]` lets singleton-precise arrivals subsume.
+///
+/// Excludes the oscillating / constant counterexamples
+/// (`infinite_loop_three_jump_trick`, `infinite_loop_in_two_jumps`):
+/// neither has a load-add-store stack-counter triple — the constant
+/// case never writes to a slot, the oscillating case operates entirely
+/// in registers with `r0 &= 1`.
+#[derive(Clone, Copy, Debug)]
+struct SlotCounterInfo {
+    slot_offset: i16,
+    upper: i64,
+}
+
+fn detect_slot_counter(
+    env: &VerifierEnv,
+    state: &State,
+    current_pc: usize,
+    prog: &Program,
+) -> Option<SlotCounterInfo> {
+    // Find the back-edge: either current_pc is a branch back to the
+    // loop top, or we just arrived via one. Identify the back-edge's
+    // `If left CMP right` shape and capture (left, k).
+    let body_pcs_set: HashSet<usize> = state
+        .history_idx
+        .map(|idx| {
+            env.history
+                .loop_body_pcs(idx, current_pc, Some(state.num_frames()))
+                .into_iter()
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let (left_reg, k) = {
+        // Walk body PCs (plus current) for the back-edge `If` whose
+        // target lands at current_pc. Multiple body Ifs are possible;
+        // we want the one whose taken branch is the back-edge.
+        let mut found: Option<(Reg, i64)> = None;
+        let mut scan_pcs: Vec<usize> = body_pcs_set.iter().copied().collect();
+        scan_pcs.push(current_pc);
+        for pc in scan_pcs {
+            if pc >= prog.instrs.len() {
+                continue;
+            }
+            let Instr::If {
+                op,
+                left,
+                right,
+                target,
+                ..
+            } = &prog.instrs[pc]
+            else {
+                continue;
+            };
+            // Back-edge: taken branch loops back to current_pc, OR the
+            // fall-through is the back-edge (target leaves the loop).
+            // Both directions count as a "loop test" — we just need the
+            // continue-direction's upper bound on `left`.
+            let target_in_body = body_pcs_set.contains(target) || *target == current_pc;
+            let fall = pc + 1;
+            let fall_in_body = body_pcs_set.contains(&fall) || fall == current_pc;
+            if !target_in_body && !fall_in_body {
+                continue;
+            }
+            let k_opt = match right {
+                Operand::Imm(k) => Some(*k),
+                Operand::Reg(r) => {
+                    let (lo, hi) = state.domain.get_interval(*r);
+                    if lo == hi { Some(lo) } else { None }
+                }
+            };
+            let Some(k) = k_opt else { continue };
+            if k <= 0 {
+                continue;
+            }
+            // Determine the upper bound on `left` along the continue
+            // direction. Continue direction = whichever branch stays in
+            // the body.
+            let (cont_dir_taken, _) = (target_in_body, fall_in_body);
+            let upper = if cont_dir_taken {
+                // Continue when branch is TAKEN: left CMP k holds.
+                match op {
+                    CmpOp::Ne | CmpOp::ULt | CmpOp::SLt => k - 1,
+                    CmpOp::ULe | CmpOp::SLe => k,
+                    _ => continue,
+                }
+            } else {
+                // Continue when branch is NOT TAKEN: !(left CMP k) holds.
+                match op {
+                    CmpOp::UGe | CmpOp::SGe => k - 1,
+                    CmpOp::UGt | CmpOp::SGt => k,
+                    _ => continue,
+                }
+            };
+            if upper <= 0 {
+                continue;
+            }
+            found = Some((*left, upper));
+            break;
+        }
+        found?
+    };
+
+    // Walk body PCs to find the load-add-store triple targeting a stack
+    // slot, where the loaded register is `left_reg` (or feeds it).
+    // Specifically:
+    //   - `Load { dst: Rx, base: R10, off: slot_offset }`
+    //   - `Alu { op: Add, dst: Rx, src: Imm(positive) }`
+    //   - `Store { base: R10, off: slot_offset, src: Reg(Rx) }`
+    // The sequence may have unrelated body insns interleaved; we just
+    // need all three to be present and reference the same slot_offset
+    // and same Rx, in that program order.
+    let mut body_seq: Vec<usize> = body_pcs_set.iter().copied().collect();
+    body_seq.sort_unstable();
+
+    let mut load_info: Option<(usize, Reg, i16)> = None; // (pc, dst, off)
+    let mut add_info: Option<(usize, Reg, i64)> = None;
+    let mut store_match: Option<i16> = None;
+    for &pc in &body_seq {
+        if pc >= prog.instrs.len() {
+            continue;
+        }
+        match &prog.instrs[pc] {
+            Instr::Load { dst, base, off, .. } if *base == Reg::R10 => {
+                load_info = Some((pc, *dst, *off));
+                add_info = None;
+            }
+            Instr::Alu {
+                op: crate::ast::AluOp::Add,
+                dst,
+                src: Operand::Imm(k),
+                ..
+            } => {
+                if let Some((_lpc, ldst, _loff)) = load_info
+                    && *dst == ldst
+                    && *k > 0
+                {
+                    add_info = Some((pc, *dst, *k));
+                }
+            }
+            Instr::Store {
+                base,
+                off,
+                src: Operand::Reg(s),
+                ..
+            } if *base == Reg::R10 => {
+                if let (Some((_lpc, ldst, loff)), Some((_apc, adst, _ak))) =
+                    (load_info, add_info)
+                    && loff == *off
+                    && ldst == *s
+                    && adst == ldst
+                {
+                    store_match = Some(*off);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let slot_offset = store_match?;
+
+    // Confirm that `left_reg` itself was loaded from this slot somewhere
+    // in the body (typically just before the back-edge for the
+    // post-store reload). If `left_reg` was loaded from the same slot
+    // we identified, the back-edge is genuinely testing the counter.
+    let mut left_loads_from_slot = false;
+    for &pc in &body_seq {
+        if pc >= prog.instrs.len() {
+            continue;
+        }
+        if let Instr::Load { dst, base, off, .. } = &prog.instrs[pc]
+            && *dst == left_reg
+            && *base == Reg::R10
+            && *off == slot_offset
+        {
+            left_loads_from_slot = true;
+            break;
+        }
+    }
+    if !left_loads_from_slot {
+        return None;
+    }
+
+    Some(SlotCounterInfo {
+        slot_offset,
+        upper: k,
+    })
+}
+
+/// Apply a detected slot counter's bound: widen the slot's bounds and
+/// tnum to `[0, upper]`. Mirrors the register-side `apply_loop_bound`
+/// but targets the spilled scalar at frame 0, slot offset.
+fn apply_slot_loop_bound(state: &mut State, info: SlotCounterInfo) -> bool {
+    use crate::analysis::machine::frame_stack::FrameLevel;
+    use crate::analysis::machine::stack_state::ScalarBounds;
+
+    // First read+rewrite the slot, capturing its `scalar_id` so we can
+    // clear linked register IDs in step 2. Linkage propagates from the
+    // slot at fill time: any register loaded from this slot inherits
+    // the slot's `scalar_id`. Counter-shape classification at the
+    // existing reg-side widening rejects regs with non-None scalar_id,
+    // so leaving the link in place blocks the reg-counter widening
+    // from firing on the loaded R3 — convergence requires both the
+    // slot widening AND the reg-counter widening on the loaded reg.
+    let prior_scalar_id: Option<u32>;
+    {
+        let stack = &mut state.frames.get_mut(FrameLevel::from_index(0)).stack;
+        let Some(slot) = stack.get_slot_mut(info.slot_offset) else {
+            return false;
+        };
+        if slot.bounds.min < 0 || info.upper < 0 {
+            return false;
+        }
+        let new_max = info.upper.max(slot.bounds.min);
+        slot.bounds = ScalarBounds {
+            min: 0,
+            max: new_max,
+        };
+        slot.tnum = Tnum::from_range(0, new_max as u64);
+        slot.precise = false;
+        prior_scalar_id = slot.scalar_id;
+        slot.scalar_id = None;
+    }
+
+    // Clear scalar_id on any register linked to this slot via the
+    // captured id. The kernel's `sync_linked_regs` would refine all
+    // linked siblings together — clearing the link is safe because
+    // we've already widened the slot beyond the per-iter precise value
+    // (any subsequent refinement that targeted this id would have been
+    // overridden by the widening anyway).
+    if let Some(sid) = prior_scalar_id {
+        for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5,
+                  Reg::R6, Reg::R7, Reg::R8, Reg::R9] {
+            if state.scalar_id(r) == Some(sid) {
+                state.clear_scalar_id(r);
+            }
+        }
+    }
+    true
+}
+
+/// Demote precision on scalar stack slots that are written in the loop
+/// body via load-modify-store (any RHS, not just `Imm`), excluding the
+/// detected counter slot. Used together with `apply_slot_loop_bound` to
+/// let `sum += val`-style accumulators stop blocking loop-top
+/// subsumption. Sound for slots NOT involved in the loop-test back-edge.
+fn demote_body_written_scalar_slots(
+    env: &VerifierEnv,
+    state: &mut State,
+    current_pc: usize,
+    prog: &Program,
+    skip_offset: i16,
+) {
+    use crate::analysis::machine::frame_stack::FrameLevel;
+
+    let body_pcs: HashSet<usize> = state
+        .history_idx
+        .map(|idx| {
+            env.history
+                .loop_body_pcs(idx, current_pc, Some(state.num_frames()))
+                .into_iter()
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Find all `Store { base: R10, off: K, src: Reg(_) }` body offsets
+    // that participate in a load → ALU → store triple.
+    let mut load_dst: std::collections::HashMap<i16, Reg> = std::collections::HashMap::new();
+    let mut alu_seen: std::collections::HashSet<Reg> = std::collections::HashSet::new();
+    let mut written_offsets: std::collections::HashSet<i16> = std::collections::HashSet::new();
+    let mut body_seq: Vec<usize> = body_pcs.iter().copied().collect();
+    body_seq.sort_unstable();
+    for pc_b in body_seq {
+        if pc_b >= prog.instrs.len() {
+            continue;
+        }
+        match &prog.instrs[pc_b] {
+            Instr::Load { dst, base, off, .. } if *base == Reg::R10 => {
+                load_dst.insert(*off, *dst);
+                alu_seen.clear();
+            }
+            Instr::Alu { dst, .. } => {
+                alu_seen.insert(*dst);
+            }
+            Instr::Store {
+                base,
+                off,
+                src: Operand::Reg(s),
+                ..
+            } if *base == Reg::R10 => {
+                if load_dst.get(off) == Some(s) || alu_seen.contains(s) {
+                    written_offsets.insert(*off);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let stack = &mut state.frames.get_mut(FrameLevel::from_index(0)).stack;
+    for offset in written_offsets {
+        if offset == skip_offset {
+            continue;
+        }
+        if let Some(slot) = stack.get_slot_mut(offset)
+            && slot.precise
+        {
+            slot.precise = false;
+            slot.tnum = Tnum::UNKNOWN;
+        }
+    }
+}
+
 fn apply_loop_bound(state: &mut State, loop_bound: Option<(Reg, i64)>) -> bool {
     if let Some((reg, upper_bound)) = loop_bound {
         let (cur_lo, _) = state.domain.get_interval(reg);
@@ -461,6 +795,17 @@ fn handle_loop_pruning(
 
     // Apply bound before subsumption check
     apply_loop_bound(state, loop_bound);
+
+    // Stack-spilled counter widening: covers `volatile __u64 i` patterns
+    // (loop3::while_true) where the counter lives entirely on the stack
+    // and never gets a persistent register at the loop top. The detector
+    // requires a load-add-store triple targeting the same slot —
+    // structurally distinct from the register-only oscillating /
+    // constant counterexamples (`infinite_loop_three_jump_trick` etc).
+    if let Some(slot_info) = detect_slot_counter(env, state, pc, prog) {
+        apply_slot_loop_bound(state, slot_info);
+        demote_body_written_scalar_slots(env, state, pc, prog, slot_info.slot_offset);
+    }
 
     // Walk prev_states once, recording the first hit (if any) and all
     // walked-past indices. We hold the borrow only inside this scope so
@@ -686,7 +1031,18 @@ fn handle_loop_pruning(
                 //   - doesn't feed an accumulator (`dst := dst OP r`),
                 //   - singleton-precise strict direction on last slot,
                 //   - has a cap (asc: body bound; desc: max observed).
-                let is_counter_shape = state.scalar_id(r).is_none()
+                // The counter widening branch unconditionally calls
+                // `assume_ge_imm(r, 0)` and sets tnum to `[0, upper]`,
+                // which is unsound when the reg's interval crosses
+                // zero (e.g. the signed-boundary tests in
+                // verifier_bounds.c::crossing_*_signed_boundary_*
+                // operate in the negative half of i64). Gate counter
+                // classification on `cur_lo >= 0` so the unsound apply
+                // step never fires for these. Mirrors the same gate
+                // in `detect_loop_bound` (`if lo >= 0`).
+                let (cur_lo, _) = state.domain.get_interval(r);
+                let is_counter_shape = cur_lo >= 0
+                    && state.scalar_id(r).is_none()
                     && loop_body_tests_reg(env, state, pc, prog, r)
                     && !body_feeds_other_live_reg_from(env, state, pc, prog, r, live_regs);
                 if is_counter_shape {
@@ -1494,9 +1850,34 @@ fn loop_body_tests_reg(
         if body_pc >= prog.instrs.len() {
             continue;
         }
-        if let Instr::If { left, right: Operand::Imm(_), .. } = &prog.instrs[body_pc] {
-            if *left == target_reg {
-                return true;
+        if let Instr::If { op, left, right, .. } = &prog.instrs[body_pc]
+            && *left == target_reg
+        {
+            // Counter-shape branch: right-side is either an immediate or
+            // a register holding a singleton constant. The latter is
+            // restricted to unsigned comparison ops because signed ops
+            // permit the counter to live in the negative half (see
+            // `loop_body_implied_bound` for the matching gate; both
+            // helpers must agree on what counts as a counter shape so
+            // classification and bound extraction stay in sync).
+            match right {
+                Operand::Imm(_) => return true,
+                Operand::Reg(r) => {
+                    let (lo, hi) = state.domain.get_interval(*r);
+                    if lo == hi
+                        && matches!(
+                            op,
+                            CmpOp::Ne
+                                | CmpOp::Eq
+                                | CmpOp::UGe
+                                | CmpOp::UGt
+                                | CmpOp::ULt
+                                | CmpOp::ULe
+                        )
+                    {
+                        return true;
+                    }
+                }
             }
         }
     }
