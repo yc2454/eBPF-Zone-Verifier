@@ -1599,7 +1599,7 @@ pub(crate) fn validate_readable_mem(
         // task_kfunc_success::test_task_from_pid_invalid where
         // bpf_strncmp(task->comm, ...) hands a `task_struct + 1912`
         // pointer into ARG_PTR_TO_MEM.
-        RegType::PtrToBtfId { .. } => {
+        RegType::PtrToBtfId { type_name, .. } => {
             use crate::ast::ProgramKind;
             let probe_ok = matches!(
                 env.ctx.prog_kind,
@@ -1619,6 +1619,29 @@ pub(crate) fn validate_readable_mem(
                     pc
                 );
                 return false;
+            }
+            // Bound-check the read against the leaf member size when ALU
+            // resolved a containing field. Closes
+            // task_kfunc_failure::task_access_comm{1,2} (kernel
+            // `btf_struct_access` rejects "access beyond the end of
+            // member comm" for `bpf_strncmp(task->comm, 17, …)` and
+            // `bpf_strncmp(task->comm + 1, 16, …)`). When the field-ref
+            // is absent (no ALU resolved a member, or the entry was
+            // cleared) we keep the existing lax accept — this is a
+            // tightening, not a replacement.
+            if let Some(field) = state.btf_field_refs.get(&reg).cloned()
+                && field.struct_name == type_name
+                && let Some(sz) = size
+            {
+                let remaining = field.field_end.saturating_sub(field.current_offset);
+                if (sz as u64) > remaining as u64 {
+                    error!(
+                        "[Verifier] pc {}: read of {} bytes at offset {} exceeds end of member at [{}, {}) in struct {}",
+                        pc, sz, field.current_offset, field.field_start, field.field_end, field.struct_name
+                    );
+                    env.fail(VerificationError::InvalidArgType { pc, reg });
+                    return false;
+                }
             }
             true
         }
@@ -2093,7 +2116,7 @@ pub(crate) fn check_ptr_access_size(
         // tracing-class contexts where probe_read semantics apply.
         // Closes task_kfunc_success::test_task_from_pid_invalid where
         // bpf_strncmp(task->comm, ...) routes through MemSizePair.
-        RegType::PtrToBtfId { .. } => {
+        RegType::PtrToBtfId { type_name, .. } => {
             use crate::ast::ProgramKind;
             let probe_ok = matches!(
                 env.ctx.prog_kind,
@@ -2113,6 +2136,28 @@ pub(crate) fn check_ptr_access_size(
                     pc
                 );
                 return false;
+            }
+            // Bound-check against the leaf BTF member size when ALU
+            // resolved a containing field. Closes
+            // task_kfunc_failure::task_access_comm{1,2}: kernel
+            // `btf_struct_access` rejects "access beyond the end of
+            // member comm" for `bpf_strncmp(task->comm, 17, …)` and
+            // `bpf_strncmp(task->comm + 1, 16, …)`. Same logic as the
+            // `validate_readable_mem` PtrToBtfId arm — kept in sync
+            // because helpers with `mem_size_pairs` route through
+            // `check_ptr_access_size`, bypassing `validate_readable_mem`.
+            if let Some(field) = state.btf_field_refs.get(&ptr_reg).cloned()
+                && field.struct_name == type_name
+            {
+                let remaining = field.field_end.saturating_sub(field.current_offset);
+                if (size as u64) > remaining as u64 {
+                    error!(
+                        "[Verifier] pc {}: read of {} bytes at offset {} exceeds end of member at [{}, {}) in struct {}",
+                        pc, size, field.current_offset, field.field_start, field.field_end, field.struct_name
+                    );
+                    env.fail(VerificationError::InvalidArgType { pc, reg: ptr_reg });
+                    return false;
+                }
             }
             true
         }

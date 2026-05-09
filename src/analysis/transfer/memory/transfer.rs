@@ -29,6 +29,11 @@ pub(crate) fn transfer_load(
         return vec![];
     }
 
+    // A load fully redefines dst; any prior BTF field-offset tracking
+    // (from earlier ptr-arith on this register) becomes stale and would
+    // mislead the helper-arg bounds-checker.
+    state.btf_field_refs.remove(&dst);
+
     let access_size = size.bytes() as i64;
     access::check_load(env, &state, base, access_size, off);
 

@@ -39,6 +39,34 @@ pub enum ResLockReleaseError {
     WrongClass,
 }
 
+/// Tracks the BTF struct field that a `PtrToBtfId` register currently
+/// points into, so helper-arg readers can bound-check the read length
+/// against the leaf member's size. Mirrors the kernel's
+/// `bpf_reg_state.off` + `btf_struct_walk` work, but kept as a sparse
+/// side channel keyed by Reg rather than as a new variant on
+/// `RegType::PtrToBtfId` — propagating an extra field across the 100+
+/// PtrToBtfId construction sites would be invasive (per the
+/// "encapsulate representation changes" guideline).
+///
+/// Set when pointer arithmetic on a PtrToBtfId resolves a known-size
+/// member (`r1 = task; r1 += 1912` → comm at [1912, 1928)). Updated on
+/// further `r1 += k` while staying inside the same field. Cleared
+/// otherwise, and ignored at the read site if the reg's type is no
+/// longer `PtrToBtfId{struct_name}` matching this entry's struct.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BtfFieldRef {
+    /// Containing struct name (must match `PtrToBtfId.type_name`; if
+    /// the reg's type changes, the entry becomes stale and validators
+    /// must filter it out by re-checking).
+    pub struct_name: &'static str,
+    /// Current absolute byte offset of the reg within the struct.
+    pub current_offset: u32,
+    /// Start of the containing leaf field (byte offset within struct).
+    pub field_start: u32,
+    /// End (exclusive) of the containing leaf field.
+    pub field_end: u32,
+}
+
 /// Per-program `may_goto` iteration budget. Mirrors the kernel's
 /// `BPF_MAY_GOTO_LIMIT` (see `kernel/bpf/verifier.c`). Each time the
 /// verifier takes a `may_goto` back-edge it decrements this counter; the
@@ -188,6 +216,11 @@ pub struct State {
     /// matching kernel `maybe_widen_reg` L8752).
     pub var_off_contributor: HashMap<Reg, Reg>,
 
+    /// Sparse map: register → containing-BTF-field info, used by the
+    /// helper-arg validators to bound-check `bpf_strncmp(task->comm, N)`
+    /// style reads against the leaf member's size. See [`BtfFieldRef`].
+    pub btf_field_refs: HashMap<Reg, BtfFieldRef>,
+
     /// Program-default exception callback entry PC (W3.3a plumbing).
     /// Used when `bpf_throw` unwinds past every frame without finding a
     /// frame-local `exception_cb` (see [`CallFrame::exception_cb`]). A
@@ -230,6 +263,7 @@ impl State {
             goto_budget: BPF_MAY_GOTO_LIMIT,
             may_goto_depth: 0,
             var_off_contributor: HashMap::new(),
+            btf_field_refs: HashMap::new(),
             program_exception_cb: None,
         }
     }
