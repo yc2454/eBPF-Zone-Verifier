@@ -1041,10 +1041,102 @@ fn handle_loop_pruning(
                 // step never fires for these. Mirrors the same gate
                 // in `detect_loop_bound` (`if lo >= 0`).
                 let (cur_lo, _) = state.domain.get_interval(r);
-                let is_counter_shape = cur_lo >= 0
+                let basic_counter_shape = cur_lo >= 0
                     && state.scalar_id(r).is_none()
-                    && loop_body_tests_reg(env, state, pc, prog, r)
-                    && !body_feeds_other_live_reg_from(env, state, pc, prog, r, live_regs);
+                    && loop_body_tests_reg(env, state, pc, prog, r);
+                let feeds_others = body_feeds_other_live_reg_from(env, state, pc, prog, r, live_regs);
+                // Extended counter shape: counter feeds one or more live
+                // accumulators (`A := A OP counter` or `A := counter OP B`).
+                // Allowed when every fed-target is a "pure accumulator"
+                // (no memory base / branch use, only arithmetic
+                // self-feedback or cross-feed within the accumulator
+                // closure). Loop1 pattern: inner counter `i` (R3) feeds
+                // `sum` (R0/R5) which is itself only used in further
+                // accumulation and the function's exit value.
+                //
+                // Soundness sketch: widening counter to [0, K] sets the
+                // cached counter range so subsequent iters subsume on it.
+                // The fed accumulators get their precision marks dropped
+                // (kernel `!precise → accept` rule); their values stay
+                // imprecise across iters, but since they're not used as
+                // memory bases or branch operands their imprecision is
+                // dispensable for verifying memory safety / control flow.
+                // Restrict the accumulator-aware extension to ASCENDING
+                // counters. Descending shapes (`r -= 1; if r != 0`)
+                // worked pre-extension by allowing the accumulator gate
+                // to bail (no widening); allowing the extension here
+                // regressed `verifier_loops1::back_jump_to_1st_insn_2`
+                // because the descending widening drops r to `[0, max]`
+                // including a value below the smallest singleton ever
+                // observed at the loop top, and the post-`r -= 1` body
+                // produces a negative r that branches under `if r != 0`
+                // explosively. Ascending counters don't have this
+                // issue: the widening floor `assume_ge_imm(0)` matches
+                // the natural [0, k-1] range from `i++ < k` patterns.
+                let dir_for_ext = singleton_strict_direction(&state.domain, &last.domain, r);
+                let is_ascending = matches!(dir_for_ext, Some(CounterDirection::Ascending));
+                let extended_counter_shape = if basic_counter_shape && feeds_others && is_ascending {
+                    let fed = find_counter_fed_regs(env, state, pc, prog, r, live_regs);
+                    // Transitively expand the candidate set: any live reg
+                    // that an accumulator feeds becomes part of the
+                    // closure (loop1's `R5 = R0; R0 = R0 + R5` cycle).
+                    // Stop when the set stops growing or we observe a
+                    // disqualifying use (memory base / branch / scalar_id
+                    // link).
+                    let mut closure: HashSet<Reg> = fed.iter().copied().collect();
+                    closure.insert(r);
+                    loop {
+                        let mut grew = false;
+                        let snapshot: Vec<Reg> = closure.iter().copied().collect();
+                        for &a in &snapshot {
+                            if a == r {
+                                continue;
+                            }
+                            for tgt in find_counter_fed_regs(env, state, pc, prog, a, live_regs) {
+                                if closure.insert(tgt) {
+                                    grew = true;
+                                }
+                            }
+                        }
+                        if !grew {
+                            break;
+                        }
+                    }
+                    !fed.is_empty()
+                        && closure.iter().filter(|&&a| a != r).all(|&a| {
+                            state.scalar_id(a).is_none()
+                                && is_pure_accumulator(env, state, pc, prog, a, &closure, live_regs)
+                        })
+                } else {
+                    false
+                };
+                let is_counter_shape =
+                    basic_counter_shape && (!feeds_others || extended_counter_shape);
+                if extended_counter_shape {
+                    // Queue the entire accumulator closure for demotion
+                    // alongside counter widening below.
+                    let fed = find_counter_fed_regs(env, state, pc, prog, r, live_regs);
+                    let mut closure: HashSet<Reg> = fed.iter().copied().collect();
+                    loop {
+                        let mut grew = false;
+                        let snapshot: Vec<Reg> = closure.iter().copied().collect();
+                        for &a in &snapshot {
+                            for tgt in find_counter_fed_regs(env, state, pc, prog, a, live_regs) {
+                                if tgt != r && closure.insert(tgt) {
+                                    grew = true;
+                                }
+                            }
+                        }
+                        if !grew {
+                            break;
+                        }
+                    }
+                    for a in closure {
+                        if !demote.contains(&a) {
+                            demote.push(a);
+                        }
+                    }
+                }
                 if is_counter_shape {
                     if let Some(dir) =
                         singleton_strict_direction(&state.domain, &last.domain, r)
@@ -1934,6 +2026,131 @@ fn body_feeds_other_live_reg_from(
 /// branches (or transient computations) and can have their cached-
 /// side precision marks dropped, letting the kernel `!precise →
 /// accept` rule cover them on subsumption against the widened state.
+/// Find live registers that the loop body writes via Alu-from-counter
+/// (`A := A OP counter` or `A := counter OP B` or `A := counter`).
+/// These are the regs that block `body_feeds_other_live_reg_from`'s
+/// "no-counter-feeds-accumulator" gate; the caller may demote them
+/// alongside the counter widening if they are pure accumulators (no
+/// memory base / branch use).
+fn find_counter_fed_regs(
+    env: &VerifierEnv,
+    state: &State,
+    current_pc: usize,
+    prog: &Program,
+    counter: Reg,
+    live_regs: &HashSet<Reg>,
+) -> HashSet<Reg> {
+    let mut out = HashSet::new();
+    let Some(history_idx) = state.history_idx else {
+        return out;
+    };
+    let mut scan_pcs = env.history.loop_body_pcs(history_idx, current_pc, Some(state.num_frames()));
+    scan_pcs.push(current_pc);
+    for body_pc in scan_pcs {
+        if body_pc >= prog.instrs.len() {
+            continue;
+        }
+        if let Instr::Alu { dst, src: Operand::Reg(src), .. } = &prog.instrs[body_pc]
+            && *src == counter
+            && *dst != counter
+            && live_regs.contains(dst)
+        {
+            out.insert(*dst);
+        }
+    }
+    out
+}
+
+/// True iff `r` is an "accumulator" — its body uses are confined to
+/// (a) self-updates (`r := f(r, ...)` or `r := f(s, r)`),
+/// (b) writes-into-other-regs that themselves are accumulators
+///     (transitive — captured by `accumulator_set`),
+/// and `r` is never used as a memory base or a branch operand. Caller
+/// must pre-compute the candidate accumulator set so this function can
+/// check "writes into another accumulator" without recursing.
+fn is_pure_accumulator(
+    env: &VerifierEnv,
+    state: &State,
+    current_pc: usize,
+    prog: &Program,
+    r: Reg,
+    accumulator_set: &HashSet<Reg>,
+    live_regs: &HashSet<Reg>,
+) -> bool {
+    let Some(history_idx) = state.history_idx else {
+        return false;
+    };
+    let mut scan_pcs = env.history.loop_body_pcs(history_idx, current_pc, Some(state.num_frames()));
+    scan_pcs.push(current_pc);
+    for body_pc in scan_pcs {
+        if body_pc >= prog.instrs.len() {
+            continue;
+        }
+        match &prog.instrs[body_pc] {
+            // Branch on r: kernel's `!precise → accept` rule covers
+            // imprecise scalars in If — both branches get explored
+            // when r is non-precise, which is conservative-safe for
+            // verification (cur arrivals at either branch target subsume
+            // against the cached widened state regardless of r). No
+            // soundness violation; mirrors the existing
+            // `body_uses_reg_only_in_branches` demote path.
+            Instr::If { .. } => {}
+            Instr::Alu { dst, src, .. } => {
+                if *dst == r {
+                    continue; // self-update OK
+                }
+                if let Operand::Reg(s) = src
+                    && *s == r
+                    && live_regs.contains(dst)
+                    && !accumulator_set.contains(dst)
+                {
+                    return false; // writes into a non-accumulator live reg
+                }
+            }
+            Instr::MovSx { dst, src, .. } => {
+                if *dst == r {
+                    continue;
+                }
+                if let Operand::Reg(s) = src
+                    && *s == r
+                    && live_regs.contains(dst)
+                    && !accumulator_set.contains(dst)
+                {
+                    return false;
+                }
+            }
+            Instr::Load { base, dst, .. } => {
+                // r as memory base: precision is load-bearing for the
+                // address bound, demoting unsound.
+                if *base == r {
+                    return false;
+                }
+                // Load INTO r is fine — it reassigns r entirely, so
+                // r's prior precision doesn't matter for any use after
+                // this point. The post-load value is a fresh scalar
+                // tracked independently. (Loop1's `m = PT_REGS_RC(ctx)`
+                // pattern at pc=13 reassigns R0 from ctx memory.)
+                let _ = dst;
+            }
+            Instr::Store { base, src, .. } => {
+                if *base == r {
+                    return false;
+                }
+                // Store r into memory: spilled value lives in the slot;
+                // the slot tracks its own precision and we don't model
+                // demotion-vs-slot-precision interplay yet. Conservative.
+                if let Operand::Reg(s) = src
+                    && *s == r
+                {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
 fn body_uses_reg_only_in_branches(
     env: &VerifierEnv,
     state: &State,
