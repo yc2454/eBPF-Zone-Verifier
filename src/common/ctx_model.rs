@@ -58,10 +58,26 @@ pub enum CtxFieldKind {
         mem_size: u64,
     },
 
-    /// Trusted pointer to a kernel struct (PTR_TO_BTF_ID equivalent)
+    /// Trusted pointer to a kernel struct (PTR_TO_BTF_ID equivalent).
+    ///
+    /// `trusted` mirrors kernel `prog_args_trusted()` (btf.c v6.15
+    /// L6422): entry args are TRUSTED for tp_btf / raw_tp / iter /
+    /// LSM / struct_ops, but plain `PTR_TO_BTF_ID` (untrusted) for
+    /// fentry / fexit / fmod_ret. ARG_PTR_TO_MEM helpers
+    /// (`bpf_strncmp`, `bpf_probe_read_kernel`, …) reject untrusted
+    /// PTR_TO_BTF_ID via the `mem_types` table (verifier.c L9019).
+    /// Closes `task_kfunc_failure::task_access_comm4` (fentry rejects
+    /// `bpf_strncmp(task->comm, 16, …)` with "R1 type=ptr_ expected").
+    /// Default is `true` (legacy behavior); fentry/fexit/fmod_ret
+    /// entry-arg paths set it `false`.
     TrustedPtr {
         type_name: &'static str,
         nullable: bool,
+        /// True iff the kernel marks this ctx-arg load as
+        /// `PTR_TO_BTF_ID | PTR_TRUSTED`. False for fentry/fexit/
+        /// fmod_ret entry args (the kernel "legacy ptr_to_btf_id"
+        /// case).
+        trusted: bool,
         /// BTF TYPE_TAG flags from the attach-target arg (USER /
         /// PERCPU). Default empty for static ctx-field tables; the
         /// fentry/LSM/tp_btf lax fallback populates this from
@@ -484,6 +500,7 @@ const FLOW_DISSECTOR_EXTENDED_FIELDS: &[CtxField] = &[CtxField {
     kind: CtxFieldKind::TrustedPtr {
         type_name: "bpf_flow_keys",
         nullable: false,
+        trusted: true,
         tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
     },
     writable: false,
@@ -1615,6 +1632,7 @@ const TRACE_ITER_TASK_FIELDS: &[CtxField] = &[
         kind: CtxFieldKind::TrustedPtr {
             type_name: "bpf_iter_meta",
             nullable: false,
+            trusted: true,
             tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
         },
         writable: false,
@@ -1628,6 +1646,7 @@ const TRACE_ITER_TASK_FIELDS: &[CtxField] = &[
         kind: CtxFieldKind::TrustedPtr {
             type_name: "task_struct",
             nullable: true,
+            trusted: true,
             tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
         },
         writable: false,
@@ -1855,6 +1874,39 @@ fn apply_prog_type_overrides(prog_kind: ProgramKind, off: i16, info: &mut CtxAcc
 }
 
 // ===========================================================================
+/// Mirrors kernel `prog_args_trusted()` (btf.c v6.15 L6422). Returns
+/// true iff ctx-arg loads in this attach context get
+/// `PTR_TO_BTF_ID | PTR_TRUSTED`. False for the "legacy ptr_to_btf_id"
+/// case (plain `PTR_TO_BTF_ID`) — fentry / fexit / fmod_ret in
+/// particular. Used by the entry-args ctx access path to gate the
+/// downstream `PtrFlags::TRUSTED` flag, which in turn governs whether
+/// the pointer satisfies ARG_PTR_TO_MEM helpers like `bpf_strncmp`
+/// (kernel `mem_types` requires TRUSTED, verifier.c L9019).
+fn entry_arg_trusted_for_attach(
+    prog_kind: crate::ast::ProgramKind,
+    attach_flavor: Option<&str>,
+) -> bool {
+    use crate::ast::ProgramKind;
+    match prog_kind {
+        // BPF_PROG_TYPE_TRACING: only RAW_TP and ITER are trusted.
+        // fentry/fexit/fmod_ret are PTR_TO_BTF_ID without PTR_TRUSTED.
+        ProgramKind::Tracing => matches!(
+            attach_flavor,
+            Some("tp_btf") | Some("raw_tp") | Some("raw_tp.w") | Some("iter") | Some("iter.s")
+        ),
+        // BPF_PROG_TYPE_LSM: kernel checks `bpf_lsm_is_trusted`; almost
+        // all hooks are trusted. Default true for the LSM-corpus paths
+        // we exercise; tighten if a counterexample surfaces.
+        ProgramKind::Lsm => true,
+        // BPF_PROG_TYPE_STRUCT_OPS: always trusted.
+        ProgramKind::StructOps => true,
+        // Other kinds reach this helper via the same fallback paths;
+        // their classic ctx-field tables already establish trust at
+        // the per-field level (network ctx, etc.).
+        _ => true,
+    }
+}
+
 // Per-tracepoint MAYBE_NULL arg table (tp_btf / raw_tp)
 // ===========================================================================
 
@@ -1996,6 +2048,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                                 kind: CtxFieldKind::TrustedPtr {
                                     type_name: pointee_static,
                                     nullable: false,
+                                    trusted: true,
                                     tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
                                 },
                                 readable: true,
@@ -2074,6 +2127,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                         kind: CtxFieldKind::TrustedPtr {
                             type_name: pointee_name,
                             nullable: false,
+                            trusted: true,
                             tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
                         },
                         readable: true,
@@ -2122,12 +2176,15 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                     .as_deref()
                     .map(|tp| tp_btf_arg_is_maybe_null(tp, idx as u8))
                     .unwrap_or(false);
+                let attach_trusted =
+                    entry_arg_trusted_for_attach(prog_kind, env.ctx.attach_flavor.as_deref());
                 let kind = match &args[idx] {
                     EntryArg::Scalar => CtxFieldKind::Scalar,
                     EntryArg::TrustedPtrBtfId { type_name, nullable } => {
                         CtxFieldKind::TrustedPtr {
                             type_name,
                             nullable: *nullable || nullable_from_table,
+                            trusted: attach_trusted,
                             tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
                         }
                     }
@@ -2199,10 +2256,13 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                     writable: false,
                 });
             }
+            let attach_trusted =
+                entry_arg_trusted_for_attach(prog_kind, env.ctx.attach_flavor.as_deref());
             return Some(CtxAccessInfo {
                 kind: CtxFieldKind::TrustedPtr {
                     type_name: "unknown",
                     nullable,
+                    trusted: attach_trusted,
                     tag_flags,
                 },
                 readable: true,
@@ -2247,6 +2307,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                 kind: CtxFieldKind::TrustedPtr {
                     type_name,
                     nullable: false,
+                    trusted: true,
                     tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
                 },
                 readable: true,

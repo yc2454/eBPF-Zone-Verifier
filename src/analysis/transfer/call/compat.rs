@@ -102,20 +102,28 @@ pub fn is_ptr_to_btf_id(t: &RegType) -> bool {
     matches!(t, RegType::PtrToBtfId { .. })
 }
 
-/// Stricter PtrToBtfId predicate: only TRUSTED or RCU bands.
-/// Mirrors kernel `ARG_PTR_TO_BTF_ID_SOCK_COMMON`'s requirement that
-/// the pointer be `ptr_`, `trusted_ptr_`, or `rcu_ptr_` (verifier.c
-/// rejects `untrusted_ptr_*`). Used by sock-class helper validators
-/// (bpf_sk_storage_get/_delete) so a chained load like `skb->next`
-/// — which our BTF field-walk types as PtrToBtfId{sk_buff, UNTRUSTED}
-/// per kernel "old-style ptr_to_btf_id" — is rejected as the kernel
-/// would, rather than accepted as a generic any-PtrToBtfId match.
+/// PtrToBtfId predicate: any flavor except UNTRUSTED.
+/// Mirrors kernel `btf_id_sock_common_types` (verifier.c v6.15 L9006),
+/// which lists `PTR_TO_BTF_ID`, `PTR_TO_BTF_ID | PTR_TRUSTED`, and
+/// `PTR_TO_BTF_ID | MEM_RCU` — i.e., everything is acceptable except
+/// `PTR_TO_BTF_ID | PTR_UNTRUSTED` (which fails the exact-`type ==
+/// expected` match in `check_reg_type`). Used by sock-class helper
+/// validators (bpf_sk_storage_get/_delete).
+///
+/// Plain (no-flag) PtrToBtfId is the kernel's "legacy" form — what
+/// fentry / fexit / fmod_ret ctx args carry per `prog_args_trusted()`.
+/// Those programs legitimately call `bpf_sk_storage_get(map, sk, …)`;
+/// the previous TRUSTED-only version unsoundly relied on us mistakenly
+/// flagging fentry args TRUSTED. With s32's attach-flavor-aware trust
+/// gating, we accept plain explicitly. UNTRUSTED-banded chained loads
+/// like `skb->next` (nested_trust_failure::test_invalid_skb_field) are
+/// still rejected.
 pub fn is_ptr_to_btf_id_trusted_or_rcu(t: &RegType) -> bool {
     use crate::analysis::machine::reg_types::PtrFlags;
     matches!(
         t,
         RegType::PtrToBtfId { flags, .. }
-            if flags.contains(PtrFlags::TRUSTED) || flags.contains(PtrFlags::RCU)
+            if !flags.contains(PtrFlags::UNTRUSTED)
     )
 }
 

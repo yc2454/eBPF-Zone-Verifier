@@ -528,6 +528,7 @@ pub(crate) fn update_load_types(
                     CtxFieldKind::TrustedPtr {
                         type_name,
                         nullable,
+                        trusted,
                         tag_flags,
                     } => {
                         // Compose TRUSTED with attach-target tag flags
@@ -535,7 +536,17 @@ pub(crate) fn update_load_types(
                         // pointers is rejected at the load-site check
                         // in memory/access.rs — programs must go through
                         // bpf_copy_from_user / bpf_per_cpu_ptr first.
-                        let flags = PtrFlags::TRUSTED.union(tag_flags);
+                        // `trusted=false` mirrors kernel
+                        // `prog_args_trusted()` returning false for
+                        // fentry / fexit / fmod_ret: ctx args are plain
+                        // PTR_TO_BTF_ID without PTR_TRUSTED, which makes
+                        // ARG_PTR_TO_MEM helpers reject them.
+                        let base = if trusted {
+                            PtrFlags::TRUSTED
+                        } else {
+                            PtrFlags::empty()
+                        };
+                        let flags = base.union(tag_flags);
                         if nullable {
                             state.types.set(
                                 dst,
