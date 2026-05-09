@@ -1504,19 +1504,15 @@ fn loop_body_tests_reg(
 }
 
 /// True iff the loop body contains an Alu instruction `dst := dst OP counter`
-/// where `dst != counter`. This "feeds-accumulator" pattern means
-/// widening `counter` would also widen `dst`'s bounds (`dst += [0, K]`
-/// per iter), causing the accumulator to escape its natural range and
-/// break subsumption on it. Pattern observed in
-/// `verifier_loops1::back_jump_to_1st_insn_2` (`r2 += r1; r1 -= 1;
+/// where `dst != counter` and `dst` is in `live_regs`. Widening a
+/// counter that feeds a live accumulator unbounds the accumulator
+/// across iterations and breaks subsumption on it. Pattern observed
+/// in `verifier_loops1::back_jump_to_1st_insn_2` (`r2 += r1; r1 -= 1;
 /// if r1 != 0 goto`). We check the body's instruction stream rather
 /// than precision marks because the live arrival state hasn't yet
 /// accumulated marks for `dst` at the time the gate is evaluated —
 /// precision propagates retroactively via mark_chain_precision after
-/// the back-edge fires. The static "is there a `dst += counter`
-/// instruction with `dst` in `live_regs`" check is conservative but
-/// catches the regression class without needing dynamic precision
-/// propagation.
+/// the back-edge fires.
 fn body_feeds_other_live_reg_from(
     env: &VerifierEnv,
     state: &State,
@@ -1754,6 +1750,22 @@ fn interval_subsumed_by(
     true
 }
 
+/// Stack-slot type subsumption: stricter than `type_subsumed_by`.
+/// NotInit only subsumes NotInit (no "covers anything" rule), and
+/// otherwise we use the same family rules as registers.
+fn stack_slot_type_subsumed_by(new_ty: &RegType, old_ty: &RegType) -> bool {
+    use RegType::*;
+    match (old_ty, new_ty) {
+        (NotInit, NotInit) => true,
+        // For non-NotInit pairs, defer to register-style rules.
+        // The default rule `(a, b) if a == b => true` covers most
+        // pointer types; ScalarValue→ScalarValue covers the common
+        // "spilled scalar" case; PtrToMapValue offsets etc. have
+        // their own match arms in `type_subsumed_by`.
+        _ => type_subsumed_by(new_ty, old_ty),
+    }
+}
+
 fn stack_subsumed_by(cur: &State, old: &State) -> bool {
     // Kernel-aligned idmap (verifier.c v6.15 `check_ids` in regsafe at
     // STACK_ITER L18583): iter ids are minted fresh by every
@@ -1775,7 +1787,24 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
         for offset in all_offsets {
             let old_ty = old_frame.stack.get_slot_type(offset);
             let new_ty = new_frame.stack.get_slot_type(offset);
-            if !type_subsumed_by(&new_ty, &old_ty) {
+            // Stack-specific subsumption is STRICTER than register
+            // `type_subsumed_by`. For registers, `(NotInit, _) => true`
+            // is correct: an uninit reg "covers" anything because
+            // future reads error anyway. For STACK slots, NotInit
+            // means "never written" — semantically a specific state
+            // distinct from "written with type X". Pruning cur (with
+            // a written slot) against cached (with the slot
+            // unwritten) skips exploring cur's continuation, which
+            // observes the written slot; cached's continuation never
+            // does, so the two are not equivalent.
+            //
+            // Pattern from `rbtree::rbtree_add_and_remove_array` and
+            // `test_cls_redirect::cls_redirect`: slot reused across
+            // paths with different types; cached state with NotInit
+            // (or earlier-spilled scalar) wrongly subsumes a path
+            // that has spilled `PtrToOwnedKptr` / `PtrToPacket` to
+            // the same offset.
+            if !stack_slot_type_subsumed_by(&new_ty, &old_ty) {
                 return false;
             }
 
