@@ -121,6 +121,54 @@ fn detect_loop_bound(
     None
 }
 
+/// Scan the loop body for a `reg cmp imm` branch comparing `reg` against
+/// a positive immediate. Returns the implied upper bound on `reg` under
+/// monotone-from-zero increment semantics. **Used only by the widening
+/// gate** — not by `apply_loop_bound`, because applying the bound
+/// unconditionally (e.g. via `assume_le_imm` + tnum=UNKNOWN) is unsound
+/// for multi-branch loops like `verifier_loops1::infinite_loop_three_jump_trick`,
+/// where the per-branch test caps `r0` but the loop is genuinely infinite.
+/// The widening gate consumes this bound only as a sanity check on the
+/// diverging precise register; convergence soundness is then enforced by
+/// the monotone-progress check on cur vs old intervals.
+fn loop_body_implied_bound(
+    env: &VerifierEnv,
+    state: &State,
+    current_pc: usize,
+    prog: &Program,
+    target_reg: Reg,
+) -> Option<i64> {
+    let history_idx = state.history_idx?;
+    let body_pcs = env.history.loop_body_pcs(history_idx, current_pc, Some(state.num_frames()));
+    for body_pc in body_pcs {
+        if body_pc >= prog.instrs.len() {
+            continue;
+        }
+        let Instr::If { op, left, right: Operand::Imm(k), .. } = &prog.instrs[body_pc]
+        else {
+            continue;
+        };
+        if *left != target_reg {
+            continue;
+        }
+        let upper = match op {
+            CmpOp::Ne
+            | CmpOp::Eq
+            | CmpOp::UGe
+            | CmpOp::SGe
+            | CmpOp::ULt
+            | CmpOp::SLt => *k - 1,
+            CmpOp::UGt | CmpOp::SGt | CmpOp::ULe | CmpOp::SLe => *k,
+            _ => continue,
+        };
+        if upper <= 0 {
+            continue;
+        }
+        return Some(upper);
+    }
+    None
+}
+
 /// Check if any conditional branch in the loop body has had its exit path
 /// actually explored (i.e., the exit PC has explored states). This detects
 /// cases where a conditional exit exists syntactically but is never feasible.
@@ -513,7 +561,75 @@ fn handle_loop_pruning(
         && miss_reasons
             .iter()
             .all(|r| *r == SubsumptionMissReason::Tnum);
-    if (config.use_widening || force_widen_for_may_goto || only_tnum_misses)
+    // Domain-only divergence at a back-edge whose sole diverging precise
+    // scalar across every cached state is the same register, AND that
+    // register is bounded by a body branch comparing it to a positive
+    // immediate, AND every cached→arrival pair shows monotone progress
+    // on it. This is the `for(i=0; i<N; i++)` counter pattern: widening
+    // collapses the per-iter divergent counter to its loop-bound interval
+    // and lets subsumption converge. The triple gate (unique diverging
+    // reg / body-implied bound / monotone progress) prevents firing on
+    //   - load-bearing precise regs that aren't the counter (would FR
+    //     `bpf_iter_task_stack::dump_task_stack` etc.),
+    //   - oscillating counters in genuinely infinite loops with a bound-
+    //     shaped exit branch (`verifier_loops1::infinite_loop_three_jump_trick`,
+    //     where `r0 = (r0+1) & 1` cycles 0,1 within `r0 < 2`).
+    // Critically this does NOT extend `detect_loop_bound`, which would
+    // make `apply_loop_bound` set tnum=UNKNOWN unconditionally and
+    // unsoundly subsume infinite-loop tests whose multi-branch body has
+    // a per-branch comparison shaped like a bound. See
+    // `project_push3_domain_widen_audit_2026-05-08`.
+    let body_loop_bound: Option<(Reg, i64)> = if !miss_reasons.is_empty()
+        && miss_reasons
+            .iter()
+            .all(|r| *r == SubsumptionMissReason::Domain)
+    {
+        env.explored_states.get(&pc).cloned().and_then(|prev_states| {
+            if prev_states.is_empty() {
+                return None;
+            }
+            let candidate = precise_domain_unique_diverging_reg(
+                &state.domain,
+                &prev_states[0].domain,
+                live_regs,
+                &prev_states[0].precise_regs,
+            )?;
+            let upper = loop_body_implied_bound(env, state, pc, prog, candidate)?;
+            // Counter must not be linked to any other live register via
+            // `scalar_ids`. A linked diverging reg means a downstream
+            // safety check on a sibling register is reading through this
+            // one (kernel mark_chain_precision propagates precision via
+            // the link); widening would drop the bound the sibling
+            // depends on. Pattern observed in
+            // `bpf_iter_task_stack::dump_task_stack` and
+            // `res_spin_lock::res_spin_lock_test_held_lock_max`, where
+            // the loop counter is id-aliased with a precise scalar used
+            // in a downstream array-index / lock-id check.
+            if state.scalar_id(candidate).is_some() {
+                return None;
+            }
+            let same_reg_everywhere = prev_states.iter().all(|prev| {
+                precise_domain_unique_diverging_reg(
+                    &state.domain,
+                    &prev.domain,
+                    live_regs,
+                    &prev.precise_regs,
+                ) == Some(candidate)
+            });
+            if same_reg_everywhere {
+                Some((candidate, upper))
+            } else {
+                None
+            }
+        })
+    } else {
+        None
+    };
+    let domain_widen_loop_counter_only = body_loop_bound.is_some();
+    if (config.use_widening
+        || force_widen_for_may_goto
+        || only_tnum_misses
+        || domain_widen_loop_counter_only)
         && prev_states_len > 0
     {
         // Re-fetch the last cached state for widening (after eviction
@@ -521,7 +637,15 @@ fn handle_loop_pruning(
         if let Some(prev_states) = env.explored_states.get(&pc)
             && let Some(old) = prev_states.last().cloned().as_ref()
         {
-            apply_widening(state, old, live_regs, loop_bound);
+            // Prefer body-implied bound when our domain-counter gate
+            // fired: it pins the diverging counter to its loop range
+            // even when `detect_loop_bound` (Cases 1/2 only) couldn't
+            // infer a bound from the back-edge branch alone. Without
+            // this, widening loosens the counter to INF and downstream
+            // array-index checks (e.g. `digest[i]` in `test_fsverity`)
+            // fail because the bound was lost.
+            let widen_bound = body_loop_bound.or(loop_bound);
+            apply_widening(state, old, live_regs, widen_bound);
         }
     }
 
@@ -1123,6 +1247,66 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
 /// equality rather than superset coverage: a bound-check refinement that
 /// W2.2 flagged as precision-critical must not be generalised away by
 /// pruning against a looser cached state.
+/// If exactly one precise live register fails the kernel `range_within` check
+/// (`old ⊇ cur`) between `cur` and `old` AND that register is *monotone
+/// progressing* — `cur_min >= old_min` and `cur_max > old_max` — return it.
+/// Otherwise return None (zero divergence, multiple, or non-monotone).
+///
+/// The monotone-progress requirement guards against unsoundly widening
+/// oscillating counters: e.g. `verifier_loops1::infinite_loop_three_jump_trick`
+/// where `r0 = (r0+1) & 1` alternates 0,1,0,1 within bound `r0 < 2`. The
+/// counter has finite range and a syntactic conditional exit, but the loop
+/// never terminates. Without the monotone guard, widening "converges" the
+/// loop falsely and we accept an infinite program. With it, widening fires
+/// only when iter k+1's counter strictly exceeds iter k's — the
+/// `for(i=0;i<K;i++)` pattern that test_bpf_ma's macro expansion uses.
+fn precise_domain_unique_diverging_reg(
+    cur: &NumericDomain,
+    old: &NumericDomain,
+    live_regs: &HashSet<Reg>,
+    precise: &HashSet<Reg>,
+) -> Option<Reg> {
+    let mut found: Option<Reg> = None;
+    for &r in live_regs {
+        if !precise.contains(&r) {
+            continue;
+        }
+        let (old_min, old_max) = old.get_interval(r);
+        let (cur_min, cur_max) = cur.get_interval(r);
+        if !(old_min <= cur_min && old_max >= cur_max) {
+            // Diverges. Require monotone progress AND singleton intervals
+            // on both sides. The singleton requirement (`min == max` in
+            // both cur and old) is what distinguishes a true loop counter
+            // (`i = 0`, then `i = 1`, ...) from a precise scalar that the
+            // abstract domain has joined to an interval (e.g. `i ∈ [0,1]`
+            // after a branch). Joined intervals signal the abstract domain
+            // already covers multiple iterations at this PC; widening
+            // them would drop information needed by downstream checks
+            // (`bpf_iter_task_stack::dump_task_stack`,
+            // `res_spin_lock::res_spin_lock_test_held_lock_max`).
+            if old_min != old_max || cur_min != cur_max {
+                return None;
+            }
+            // Strict +1 increment: this is the canonical `i++` per-iter
+            // step. Coarser increments (`i += stride`) or non-increment
+            // refinements would also subsume into this, but we tighten
+            // here because the FRs we observed (`bpf_iter_task_stack`,
+            // `res_spin_lock`) had the same singleton-precise diverging
+            // reg yet widening dropped DBM relations downstream needed
+            // for safety. Limiting to +1 confines the trigger to the
+            // narrow set of test_bpf_ma-shaped macro expansions.
+            if cur_min != old_min + 1 {
+                return None;
+            }
+            if found.is_some() {
+                return None;
+            }
+            found = Some(r);
+        }
+    }
+    found
+}
+
 fn domain_subsumed_by(
     cur: &NumericDomain,
     old: &NumericDomain,
