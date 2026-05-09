@@ -482,10 +482,38 @@ fn run_one(analyzer: &Analyzer, attrs: ProgAttrs, file_basename: &str) -> ProgRe
         };
     }
 
-    // Termination is bounded by the verifier's own complexity-limit
-    // check — see `SELFTEST_MAX_INSN` and `with_selftest_caps` below.
-    // No wallclock timeout, no orphan threads.
-    let result = analyzer.analyze_function_with_flags(&sec, &attrs.func_name, attrs.prog_flags);
+    // libbpf rejects a struct_ops prog wired to slots of DIFFERENT
+    // ops-struct types ("invalid reuse of prog X" — see
+    // bad_struct_ops's test driver for the canonical error string).
+    // Reuse across multiple INSTANCES of the same ops-struct is
+    // legitimate (e.g. dctcp's init across two `tcp_congestion_ops`
+    // map values) and must NOT trigger this check. Reuse across
+    // libbpf flavors (`bpf_testmod_ops` vs `bpf_testmod_ops___v2`)
+    // is also legitimate — the `___suffix` denotes a flavor, treated
+    // as the same struct semantically.
+    fn normalize_ops_struct(name: &str) -> &str {
+        match name.find("___") {
+            Some(i) => &name[..i],
+            None => name,
+        }
+    }
+    let distinct_ops_structs: std::collections::HashSet<&str> = analyzer
+        .struct_ops_bindings
+        .iter()
+        .filter(|b| b.subprog == attrs.func_name)
+        .map(|b| normalize_ops_struct(b.ops_struct.as_str()))
+        .collect();
+    let struct_ops_reuse = distinct_ops_structs.len() > 1;
+    let result = if struct_ops_reuse {
+        AnalysisResult::Fail(crate::analysis::machine::error::VerificationError::StructOpsProgReuse {
+            prog: attrs.func_name.clone(),
+        })
+    } else {
+        // Termination is bounded by the verifier's own complexity-limit
+        // check — see `SELFTEST_MAX_INSN` and `with_selftest_caps` below.
+        // No wallclock timeout, no orphan threads.
+        analyzer.analyze_function_with_flags(&sec, &attrs.func_name, attrs.prog_flags)
+    };
     let outcome = match (expected_accept, result) {
         (true, AnalysisResult::Pass) => Outcome::Pass,
         (false, AnalysisResult::Fail(_)) => Outcome::Pass,
