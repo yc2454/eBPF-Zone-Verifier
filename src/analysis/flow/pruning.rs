@@ -641,9 +641,44 @@ fn handle_loop_pruning(
             if !same_set_everywhere {
                 return (Vec::new(), Vec::new());
             }
+            // Additionally collect non-precise live regs whose DBM
+            // cells advance — they block `zone_subsumed_by` even when
+            // their precision marks are absent. Same-set requirement
+            // applies. Pattern from `test_parse_tcp_hdr_opt_dynptr`'s
+            // R6 (byte_offset accumulator).
+            let dbm_extra: Vec<Reg> = {
+                let first_dbm = dbm_diverging_regs(
+                    &state.domain, &prev_states[0].domain, live_regs);
+                let same_dbm = prev_states.iter().all(|prev| {
+                    dbm_diverging_regs(&state.domain, &prev.domain, live_regs) == first_dbm
+                });
+                if same_dbm {
+                    first_dbm
+                        .into_iter()
+                        .filter(|r| !first_set.contains(r))
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            };
             let last = prev_states.last().unwrap();
             let mut bounded: Vec<(Reg, i64)> = Vec::new();
             let mut demote: Vec<Reg> = Vec::new();
+            // Process the non-precise DBM-diverging regs first: they
+            // can ONLY be demoted (no counter widening since they're
+            // not precise so wouldn't enter the singleton-direction
+            // logic meaningfully, and we want to leave their value
+            // tracking alone if branch-only). Demotion here clears
+            // their DBM cells so `zone_subsumed_by` stops blocking.
+            for &r in &dbm_extra {
+                if state.scalar_id(r).is_none()
+                    && body_uses_reg_only_in_branches(env, state, pc, prog, r, live_regs)
+                {
+                    demote.push(r);
+                } else {
+                    return (Vec::new(), Vec::new());
+                }
+            }
             for &r in &first_set {
                 // Try to classify as counter first. Counter pattern:
                 //   - no scalar_id link,
@@ -1367,6 +1402,34 @@ fn precise_domain_diverging_regs(
     let mut out = Vec::new();
     for &r in live_regs {
         if !precise.contains(&r) {
+            continue;
+        }
+        let (old_min, old_max) = old.get_interval(r);
+        let (cur_min, cur_max) = cur.get_interval(r);
+        if !(old_min <= cur_min && old_max >= cur_max) {
+            out.push(r);
+        }
+    }
+    out
+}
+
+/// Set of live registers (precise or not) whose `(reg → anchor)` DBM
+/// cell value strictly increased between `old` and `cur`, i.e.
+/// `old.get(r, anchor) < cur.get(r, anchor)`. These are the regs that
+/// block `zone_subsumed_by`'s reg↔anchor check independent of
+/// precision marks. Used by the widening gate to identify scalars
+/// that aren't tracked as precise but still cause domain misses
+/// because their DBM-tracked intervals diverge across cached states.
+/// Pattern from `test_parse_tcp_hdr_opt_dynptr` where R6 (byte_offset
+/// accumulator) is non-precise yet its DBM cells advance per iter.
+fn dbm_diverging_regs(
+    cur: &NumericDomain,
+    old: &NumericDomain,
+    live_regs: &HashSet<Reg>,
+) -> Vec<Reg> {
+    let mut out = Vec::new();
+    for &r in live_regs {
+        if r.is_anchor() {
             continue;
         }
         let (old_min, old_max) = old.get_interval(r);
