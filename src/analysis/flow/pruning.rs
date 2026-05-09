@@ -604,33 +604,21 @@ fn handle_loop_pruning(
     // unsoundly subsume infinite-loop tests whose multi-branch body has
     // a per-branch comparison shaped like a bound. See
     // `project_push3_domain_widen_audit_2026-05-08`.
-    let counter_widen_set: Vec<(Reg, i64)> = if !miss_reasons.is_empty()
+    // (counter_widen_set, demote_set): counters to widen with their
+    // bound, plus non-counter precise diverging regs whose precision
+    // mark we can safely drop on the live state (kernel rule
+    // `!precise → accept` will then cover them on subsumption against
+    // the cached widened state). Both empty means we don't fire.
+    let (counter_widen_set, demote_set): (Vec<(Reg, i64)>, Vec<Reg>) = if !miss_reasons
+        .is_empty()
         && miss_reasons
             .iter()
             .all(|r| *r == SubsumptionMissReason::Domain)
     {
         env.explored_states.get(&pc).cloned().map(|prev_states| {
-            // Need a substantial cache (≥ 4 states) before widening.
-            // Early cache slots can have an incomplete divergence
-            // picture: precision marks propagate retroactively as
-            // safety sinks fire, so a register that's NOT yet in
-            // `precise_regs` at iter 2 may become precise later.
-            // Pattern observed in `verifier_loops1::back_jump_to_1st_insn_2`
-            // — R1 diverges first, but R2 (the accumulator
-            // `r2 += r1`) only enters `precise_regs` on visits 4+.
-            // Premature widening on R1 alone (committing on cache=1
-            // or 2) caches a state whose R1-widened shape doesn't
-            // align with later natural-iteration states once R2's
-            // precision surfaces. Cache ≥ 4 is empirical: short loops
-            // (10 iters in `back_jump_to_1st_insn_2`) reach natural
-            // termination before this threshold; long loops
-            // (`test_bpf_ma`'s 128-iter, `bloom_filter_bench`'s
-            // 1024-iter) blow past 4 quickly and still benefit from
-            // widening.
             if prev_states.len() < 4 {
-                return Vec::new();
+                return (Vec::new(), Vec::new());
             }
-            // First cached state defines the candidate counter set.
             let first_set: Vec<Reg> = precise_domain_diverging_regs(
                 &state.domain,
                 &prev_states[0].domain,
@@ -638,7 +626,7 @@ fn handle_loop_pruning(
                 &prev_states[0].precise_regs,
             );
             if first_set.is_empty() {
-                return Vec::new();
+                return (Vec::new(), Vec::new());
             }
             // Every cached state must produce the SAME diverging set.
             let same_set_everywhere = prev_states.iter().all(|prev| {
@@ -651,77 +639,79 @@ fn handle_loop_pruning(
                 s == first_set
             });
             if !same_set_everywhere {
-                return Vec::new();
+                return (Vec::new(), Vec::new());
             }
             let last = prev_states.last().unwrap();
             let mut bounded: Vec<(Reg, i64)> = Vec::new();
+            let mut demote: Vec<Reg> = Vec::new();
             for &r in &first_set {
-                // No scalar_id link to other live regs — a link signals
-                // the counter is aliased into a downstream safety
-                // check. Pattern from `bpf_iter_task_stack` regression
-                // analysis.
-                if state.scalar_id(r).is_some() {
-                    return Vec::new();
-                }
-                // Must be a real counter: body has an `If r cmp imm`
-                // branch. Distinguishes from arbitrary monotone scalars.
-                if !loop_body_tests_reg(env, state, pc, prog, r) {
-                    return Vec::new();
-                }
-                // Skip if the counter feeds a precise-live accumulator
-                // via `dst := dst OP counter`. Widening a counter that
-                // feeds an accumulator unbounds the accumulator across
-                // iterations and breaks subsumption on it. See
-                // `body_feeds_precise_reg_from`.
-                if body_feeds_other_live_reg_from(env, state, pc, prog, r, live_regs) {
-                    return Vec::new();
-                }
-                // Most-recent cache slot must show strict singleton
-                // progress; classify direction.
-                let dir = match singleton_strict_direction(
-                    &state.domain, &last.domain, r,
-                ) {
-                    Some(d) => d,
-                    None => return Vec::new(),
-                };
-                // Cap selection by direction:
-                //   - Ascending: body-implied upper from the loop test
-                //     branch (e.g. `if i < K` → cap K-1). Covers entire
-                //     remaining iteration range in one shot.
-                //   - Descending: max value observed across cached
-                //     states + arrival. The first cache slot typically
-                //     holds the entry value (peak of count-down), so
-                //     this caps at the loop's natural maximum. Pattern
-                //     used by LLVM-emitted count-down forms of
-                //     `for(i=0; i<N; i++)`, e.g. `bloom_filter_bench`'s
-                //     1024-iter map-lookup loop with `R7=1024,1023,…,0`.
-                let cap: i64 = match dir {
-                    CounterDirection::Ascending => {
-                        match loop_body_implied_bound(env, state, pc, prog, r) {
-                            Some(u) => u,
-                            None => return Vec::new(),
-                        }
-                    }
-                    CounterDirection::Descending => {
-                        let mut max_seen = state.domain.get_interval(r).1;
-                        for ps in &prev_states {
-                            let (_, pm) = ps.domain.get_interval(r);
-                            if pm > max_seen {
-                                max_seen = pm;
+                // Try to classify as counter first. Counter pattern:
+                //   - no scalar_id link,
+                //   - body has `If r cmp imm` test,
+                //   - doesn't feed an accumulator (`dst := dst OP r`),
+                //   - singleton-precise strict direction on last slot,
+                //   - has a cap (asc: body bound; desc: max observed).
+                let is_counter_shape = state.scalar_id(r).is_none()
+                    && loop_body_tests_reg(env, state, pc, prog, r)
+                    && !body_feeds_other_live_reg_from(env, state, pc, prog, r, live_regs);
+                if is_counter_shape {
+                    if let Some(dir) =
+                        singleton_strict_direction(&state.domain, &last.domain, r)
+                    {
+                        let cap_opt: Option<i64> = match dir {
+                            CounterDirection::Ascending => {
+                                loop_body_implied_bound(env, state, pc, prog, r)
                             }
+                            CounterDirection::Descending => {
+                                let mut max_seen = state.domain.get_interval(r).1;
+                                for ps in &prev_states {
+                                    let (_, pm) = ps.domain.get_interval(r);
+                                    if pm > max_seen {
+                                        max_seen = pm;
+                                    }
+                                }
+                                if max_seen > 0 { Some(max_seen) } else { None }
+                            }
+                        };
+                        if let Some(cap) = cap_opt {
+                            bounded.push((r, cap));
+                            continue;
                         }
-                        if max_seen <= 0 {
-                            return Vec::new();
-                        }
-                        max_seen
                     }
-                };
-                bounded.push((r, cap));
+                }
+                // Not a counter — try demotion. A precise scalar that
+                // only ever drives a branch (no memory access, no
+                // arithmetic feeding another reg, no helper-call
+                // arg) can have its cached-side precise mark dropped:
+                // the kernel `!precise → accept` rule then covers it,
+                // so future arrivals subsume against the cached
+                // widened state regardless of this reg's value.
+                // Pattern observed in `test_parse_tcp_hdr_opt`'s R4
+                // (`bytes_remaining` loaded from stack, only used in
+                // `if !bytes_remaining break`).
+                if state.scalar_id(r).is_none()
+                    && body_uses_reg_only_in_branches(env, state, pc, prog, r, live_regs)
+                {
+                    demote.push(r);
+                    continue;
+                }
+                // Neither counter nor demotable — bail.
+                return (Vec::new(), Vec::new());
             }
-            bounded
-        }).unwrap_or_default()
+            // At least one counter must be widening for the firing
+            // to make sense. Pure demotion (no widening) was tried
+            // and introduced an FA in
+            // `verifier_search_pruning::short_loop1` and a regression
+            // in `bpf_iter_task_stack` — without a forced-progress
+            // signal, demoting precision marks alone allows
+            // converging loops we shouldn't.
+            if bounded.is_empty() {
+                return (Vec::new(), Vec::new());
+            }
+            (bounded, demote)
+        }).unwrap_or((Vec::new(), Vec::new()))
     } else {
-        Vec::new()
+        (Vec::new(), Vec::new())
     };
     let domain_widen_loop_counter_only = !counter_widen_set.is_empty();
     if (config.use_widening
@@ -736,22 +726,36 @@ fn handle_loop_pruning(
             && let Some(old) = prev_states.last().cloned().as_ref()
         {
             if !counter_widen_set.is_empty() {
-                // Targeted per-counter widening: forget DBM relations
-                // involving each counter, then re-pin its interval to
-                // [0, upper]. Unlike the full-DBM `apply_widening`
-                // (which sets every looser cell to INF), this leaves
-                // unrelated relations intact — critical when an
-                // index-pointer increments in lockstep with the
-                // counter, as in `res_spin_lock_test_held_lock_max`'s
-                // `locks[i] = e` pattern. Multi-counter aware:
-                // `bloom_filter_bench` has two diverging precise
-                // counters per iter (`i++` and `index += value_size`);
-                // both get forgotten + re-pinned.
+                // Targeted per-counter widening + non-counter demotion.
                 for (counter, upper) in &counter_widen_set {
                     state.domain.forget(*counter);
                     state.domain.assume_le_imm(*counter, *upper);
                     state.domain.assume_ge_imm(*counter, 0);
                     state.set_tnum(*counter, Tnum::from_range(0, *upper as u64));
+                }
+                // Demote precision marks AND forget DBM cells for
+                // non-counter precise diverging regs classified as
+                // branch-only. Two complementary effects:
+                //
+                //   1. `precise_regs.remove` drops the kernel-rule
+                //      `precise → range_within` check on this reg
+                //      (`!precise → accept` covers it). Mirrors lazy
+                //      mark_chain_precision.
+                //   2. `domain.forget` clears the reg's DBM cells.
+                //      Without this, `zone_subsumed_by`'s live-reg
+                //      pair check (`old_dbm.get(r, a) >= cur_dbm.get`)
+                //      keeps blocking subsumption even with the
+                //      precise mark gone, because DBM cells are
+                //      checked unconditionally for live regs.
+                //
+                // Pattern from `test_parse_tcp_hdr_opt`'s R4
+                // (byte_offset accumulator) — it's not a counter
+                // (interval grows each iter, not singleton) but only
+                // drives an `If R4 cmp imm` body branch, so the
+                // precision is dispensable for verification.
+                for r in &demote_set {
+                    state.precise_regs.remove(r);
+                    state.domain.forget(*r);
                 }
             } else {
                 apply_widening(state, old, live_regs, loop_bound);
@@ -1478,6 +1482,78 @@ fn body_feeds_other_live_reg_from(
         }
     }
     false
+}
+
+/// True iff `r`'s precise value is "safely demotable": no body use
+/// transfers `r`'s value into another LIVE register or memory address.
+/// Reading `r` into a non-live transient register is fine (the
+/// transient is reset each iter). Reading `r` as a memory base or
+/// into a live destination is not.
+///
+/// Used to identify precise diverging registers that only drive
+/// branches (or transient computations) and can have their cached-
+/// side precision marks dropped, letting the kernel `!precise →
+/// accept` rule cover them on subsumption against the widened state.
+fn body_uses_reg_only_in_branches(
+    env: &VerifierEnv,
+    state: &State,
+    current_pc: usize,
+    prog: &Program,
+    r: Reg,
+    live_regs: &HashSet<Reg>,
+) -> bool {
+    let Some(history_idx) = state.history_idx else {
+        return false;
+    };
+    let mut scan_pcs = env.history.loop_body_pcs(history_idx, current_pc, Some(state.num_frames()));
+    scan_pcs.push(current_pc);
+    for body_pc in scan_pcs {
+        if body_pc >= prog.instrs.len() {
+            continue;
+        }
+        match &prog.instrs[body_pc] {
+            Instr::If { .. } => {}
+            Instr::Alu { dst, src, .. } => {
+                // Self-update (r := r OP _): always fine (the reg
+                // mutates itself within the loop).
+                if *dst == r {
+                    continue;
+                }
+                // r as src into a non-r dst: only a "use of r's
+                // precision" if dst is live across the loop head.
+                if let Operand::Reg(s) = src {
+                    if *s == r && live_regs.contains(dst) {
+                        return false;
+                    }
+                }
+            }
+            Instr::MovSx { dst, src, .. } => {
+                if *dst == r {
+                    continue;
+                }
+                if let Operand::Reg(s) = src {
+                    if *s == r && live_regs.contains(dst) {
+                        return false;
+                    }
+                }
+            }
+            Instr::Load { base, .. } => {
+                if *base == r {
+                    return false;
+                }
+            }
+            Instr::Store { base, .. } => {
+                // r-as-base is a hard memory-access use. r-as-src
+                // just spills the value to memory; the stack slot
+                // tracks its own precision independently.
+                if *base == r {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
 }
 
 fn domain_subsumed_by(
