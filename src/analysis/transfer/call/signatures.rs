@@ -1128,6 +1128,22 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         ])
         .mem_size_pairs(&pairs::GET_TASK_STACK),
 
+        // bpf_get_branch_snapshot(void *entries, u32 size, u64 flags) -> long
+        // Writes ≤ size bytes; R0 ∈ [-MAX_ERRNO, R2_max]. The size-arg
+        // bound on R0 is what unblocks `total_entries / 24 ≤ ENTRY_CNT`
+        // for static reasoning over `entries[i]` arrays — without it,
+        // total_entries is unbounded and the `i < total_entries` exit
+        // branch can't refine i's bound.
+        constants::BPF_GET_BRANCH_SNAPSHOT => CallProto::with_args([
+            PtrToUninitMem,
+            ConstSize,
+            Anything,
+            DontCare,
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::GET_BRANCH_SNAPSHOT)
+        .ret(RetKind::Scalar),
+
         // ---- Sockmap operations ----
         constants::BPF_SOCK_MAP_UPDATE => CallProto::with_args([
             PtrToCtx,    // R1: bpf_sock_ops context (SockOps only)
@@ -4240,6 +4256,7 @@ pub(super) mod pairs {
     pub static SK_LOOKUP_UDP: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
     pub static GET_SOCKOPT: [MemSizePair; 1] = [MemSizePair::new(Reg::R4, Reg::R5)];
     pub static GET_TASK_STACK: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    pub static GET_BRANCH_SNAPSHOT: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
     pub static D_PATH: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
     pub static SNPRINTF: [MemSizePair; 2] = [
         MemSizePair::new_nullable(Reg::R1, Reg::R2),

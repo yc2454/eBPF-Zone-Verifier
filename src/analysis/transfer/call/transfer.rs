@@ -810,6 +810,20 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
             state.domain.assume_le_imm(Reg::R0, hi);
             state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
         }
+        constants::BPF_GET_BRANCH_SNAPSHOT => {
+            // R0 = bytes written into the buffer (success) or -errno.
+            // Bound by the size arg (R2) so consumers like
+            // `total = R0 / sizeof(entry)` and the loop test
+            // `i < total` get a usable upper bound on iterations.
+            let pairs = get_helper_proto(helper).map(|p| p.mem_size_pairs).unwrap_or(&[]);
+            if let Some(p) = pairs.first() {
+                let (_, hi) = state.domain.get_interval(p.size_reg);
+                if hi != i64::MAX {
+                    state.domain.assume_le_imm(Reg::R0, hi);
+                }
+            }
+            state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
+        }
         // Mirrors kernel's `do_refine_retval_range()` for the str-family
         // probe-read helpers: R0 is bounded by [-MAX_ERRNO, R2_max].
         // Without this refinement, `if (len >= 0) ptr += len;` (a common
