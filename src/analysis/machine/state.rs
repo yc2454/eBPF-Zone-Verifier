@@ -221,6 +221,24 @@ pub struct State {
     /// style reads against the leaf member's size. See [`BtfFieldRef`].
     pub btf_field_refs: HashMap<Reg, BtfFieldRef>,
 
+    /// Set of registers whose tnum the *kernel* would have marked
+    /// unknown (`__mark_reg_unknown` via
+    /// `is_safe_to_compute_dst_reg_range` returning false; see
+    /// verifier.c v6.15 L15089). Concretely populated by DIV / MOD
+    /// (always) and non-const shifts. Propagates through subsequent
+    /// ALU ops so the imprecision tag survives chained transforms
+    /// (e.g. `r8 /= 1; r8 &= 8` — kernel sees both as imprecise).
+    /// Cleared on MOV-from-imm, MOV from a clean reg, and on any
+    /// load.
+    ///
+    /// Used at the `PtrToFlowKeys` arithmetic gate
+    /// ([alu/validation.rs]) to reject `flow_keys += off` whenever
+    /// the kernel would observe `tnum_is_const(off.var_off) == false`,
+    /// even if our own tnum stayed const through e.g. our div-by-1
+    /// preservation. Closes
+    /// verifier_value_illegal_alu::flow_keys_illegal_variable_offset_alu.
+    pub kernel_tnum_imprecise: HashSet<Reg>,
+
     /// Program-default exception callback entry PC (W3.3a plumbing).
     /// Used when `bpf_throw` unwinds past every frame without finding a
     /// frame-local `exception_cb` (see [`CallFrame::exception_cb`]). A
@@ -264,6 +282,7 @@ impl State {
             may_goto_depth: 0,
             var_off_contributor: HashMap::new(),
             btf_field_refs: HashMap::new(),
+            kernel_tnum_imprecise: HashSet::new(),
             program_exception_cb: None,
         }
     }

@@ -91,14 +91,33 @@ pub(crate) fn check_ptr_arithmetic(
                 if matches!(
                     dst_type,
                     RegType::PtrToBtfId { type_name, .. } if *type_name == "bpf_flow_keys"
-                ) && src_min != src_max
-                {
-                    error!(
-                        "[Verifier] pc {}: {} pointer arithmetic on flow_keys with variable offset prohibited",
-                        state.pc,
-                        dst.name()
-                    );
-                    return false;
+                ) {
+                    // Kernel `adjust_ptr_min_max_vals` PTR_TO_FLOW_KEYS
+                    // arm gates on `tnum_is_const(off_reg->var_off)`;
+                    // accept only known-constant offsets. Reject when
+                    //   (a) interval bounds aren't constant, OR
+                    //   (b) bounds are constant but the kernel would
+                    //       have lost tnum precision somewhere in the
+                    //       chain (DIV / MOD / non-const shift) — our
+                    //       state.kernel_tnum_imprecise side channel
+                    //       tracks exactly this.
+                    // Closes
+                    // verifier_value_illegal_alu::flow_keys_illegal_variable_offset_alu
+                    // (`r8 = 8; r8 /= 1; r8 &= 8` — our tnum stays
+                    // const(8) via the div-by-1 fast path, but the
+                    // kernel marks r8 imprecise at the DIV).
+                    let src_kernel_imprecise = match src {
+                        Operand::Imm(_) => false,
+                        Operand::Reg(r) => state.kernel_tnum_imprecise.contains(r),
+                    };
+                    if src_min != src_max || src_kernel_imprecise {
+                        error!(
+                            "[Verifier] pc {}: {} pointer arithmetic on flow_keys with variable offset prohibited",
+                            state.pc,
+                            dst.name()
+                        );
+                        return false;
+                    }
                 }
                 if width == Width::W32 {
                     return true;

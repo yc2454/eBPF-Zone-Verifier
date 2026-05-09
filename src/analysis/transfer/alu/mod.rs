@@ -70,6 +70,21 @@ pub(crate) fn transfer_alu(
     // is dropped and re-resolved below.
     let prev_btf_field_ref = state.btf_field_refs.remove(&dst);
 
+    // Capture dst's pre-op kernel-tnum-imprecision flag (kernel would
+    // have marked dst's var_off unknown via __mark_reg_unknown). Used
+    // to propagate imprecision through chained ALU: e.g. `r8 /= 1;
+    // r8 &= 8` keeps r8 imprecise because kernel's tnum_and(unknown,
+    // const(8)) yields a non-const var_off.
+    let dst_was_imprecise = state.kernel_tnum_imprecise.contains(&dst);
+    let src_imprecise = match &src {
+        Operand::Reg(r) => state.kernel_tnum_imprecise.contains(r),
+        Operand::Imm(_) => false,
+    };
+    let src_tnum_is_const = match &src {
+        Operand::Imm(_) => true,
+        Operand::Reg(r) => state.get_tnum(*r).const_value().is_some(),
+    };
+
     // 5. Execute operation
     match op {
         AluOp::Add => arithmetic::handle_add(env, &mut state, &in_types, width, dst, &src),
@@ -104,6 +119,28 @@ pub(crate) fn transfer_alu(
         &src,
         pc,
     );
+
+    // 6.3 Kernel-tnum-imprecision propagation. Mirrors kernel
+    // `is_safe_to_compute_dst_reg_range` (verifier.c v6.15 L15089):
+    // BPF_DIV / BPF_MOD always mark the result var_off unknown; non-
+    // const shifts likewise. Bitwise / arith ops compute precisely, so
+    // their result is imprecise only if a source operand was imprecise.
+    // MOV from imm or from a clean reg clears imprecision. Loads
+    // separately clear it in `transfer_load`.
+    let dst_now_imprecise = match (op, &src) {
+        (AluOp::Div | AluOp::Mod, _) => true,
+        (AluOp::Mov, Operand::Imm(_)) => false,
+        (AluOp::Mov, Operand::Reg(_)) => src_imprecise,
+        (AluOp::Lsh | AluOp::Rsh | AluOp::Arsh, _) => {
+            !src_tnum_is_const || src_imprecise || dst_was_imprecise
+        }
+        _ => src_imprecise || dst_was_imprecise,
+    };
+    if dst_now_imprecise {
+        state.kernel_tnum_imprecise.insert(dst);
+    } else {
+        state.kernel_tnum_imprecise.remove(&dst);
+    }
 
     // 6.4 BTF field-offset tracking. When dst is a PtrToBtfId after the
     // op, set `btf_field_refs[dst]` so helper-arg validators can
