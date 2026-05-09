@@ -284,7 +284,16 @@ fn apply_loop_bound(state: &mut State, loop_bound: Option<(Reg, i64)>) -> bool {
         if cur_lo <= upper_bound {
             state.domain.assume_le_imm(reg, upper_bound);
             state.domain.assume_ge_imm(reg, 0);
-            state.set_tnum(reg, Tnum::UNKNOWN);
+            // Use a tnum tight to the [0, upper_bound] interval rather
+            // than blanket UNKNOWN. UNKNOWN destroys stack-offset
+            // resolution downstream — `locks[i]` style stack stores
+            // need the tnum to keep the low bits known so the verifier
+            // can prove `r10 + offset + i*8` is a valid stack slot.
+            // Pattern observed in
+            // `res_spin_lock::res_spin_lock_test_held_lock_max`.
+            // `Tnum::from_range` mirrors the kernel's `tnum_range`
+            // (see kernel/bpf/tnum.c).
+            state.set_tnum(reg, Tnum::from_range(0, upper_bound as u64));
             return true;
         }
     }
@@ -637,15 +646,26 @@ fn handle_loop_pruning(
         if let Some(prev_states) = env.explored_states.get(&pc)
             && let Some(old) = prev_states.last().cloned().as_ref()
         {
-            // Prefer body-implied bound when our domain-counter gate
-            // fired: it pins the diverging counter to its loop range
-            // even when `detect_loop_bound` (Cases 1/2 only) couldn't
-            // infer a bound from the back-edge branch alone. Without
-            // this, widening loosens the counter to INF and downstream
-            // array-index checks (e.g. `digest[i]` in `test_fsverity`)
-            // fail because the bound was lost.
-            let widen_bound = body_loop_bound.or(loop_bound);
-            apply_widening(state, old, live_regs, widen_bound);
+            if let Some((counter, upper)) = body_loop_bound {
+                // Targeted widening: forget every DBM relation involving
+                // the counter, then re-pin its interval to [0, upper].
+                // Unlike the full-DBM `apply_widening` (which sets every
+                // looser cell to INF), this leaves unrelated relations
+                // intact — critical for tests where another register
+                // increments in lockstep with the counter (e.g. R7 = r10
+                // - 384 + i*8 in `res_spin_lock_test_held_lock_max`'s
+                // `locks[i] = e` pattern; full widening loses
+                // `R7 - R10`'s bound and the subsequent stack store
+                // fails). The body-implied bound + tight tnum from
+                // `Tnum::from_range` keeps stack-offset resolution
+                // working downstream.
+                state.domain.forget(counter);
+                state.domain.assume_le_imm(counter, upper);
+                state.domain.assume_ge_imm(counter, 0);
+                state.set_tnum(counter, Tnum::from_range(0, upper as u64));
+            } else {
+                apply_widening(state, old, live_regs, loop_bound);
+            }
         }
     }
 
