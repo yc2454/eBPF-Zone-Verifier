@@ -2044,10 +2044,34 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                     {
                         if let Some(pointee) = pointee_name {
                             let pointee_static = intern_btf_type_name_strict(pointee);
+                            // Iter payload pointers are
+                            // PTR_TO_BTF_ID_OR_NULL when they're the
+                            // iter's "current element" cursor (NULL on
+                            // terminating call). Per-subtype rules
+                            // mirror the lax-fallback path below; see
+                            // its comment for the full table.
+                            let is_iter_ctx = type_name.starts_with("bpf_iter__");
+                            let is_nullable_iter_payload = is_iter_ctx
+                                && match *type_name {
+                                    "bpf_iter__task"
+                                    | "bpf_iter__cgroup"
+                                    | "bpf_iter__tcp"
+                                    | "bpf_iter__udp"
+                                    | "bpf_iter__unix"
+                                    | "bpf_iter__netlink"
+                                    | "bpf_iter__bpf_link"
+                                    | "bpf_iter__bpf_prog"
+                                    | "bpf_iter__bpf_map" => off == 8,
+                                    "bpf_iter__task_file"
+                                    | "bpf_iter__task_vma" => off == 16,
+                                    "bpf_iter__bpf_map_elem"
+                                    | "bpf_iter__bpf_sk_storage_map" => off == 16 || off == 24,
+                                    _ => false,
+                                };
                             return Some(CtxAccessInfo {
                                 kind: CtxFieldKind::TrustedPtr {
                                     type_name: pointee_static,
-                                    nullable: false,
+                                    nullable: is_nullable_iter_payload,
                                     trusted: true,
                                     tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
                                 },
@@ -2123,10 +2147,52 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                     } else {
                         "unknown"
                     };
+                    // Kernel iter `ctx_arg_info[N].reg_type` is
+                    // `PTR_TO_BTF_ID_OR_NULL` for the iter's "current
+                    // element" pointer — the iter sends a final NULL
+                    // terminating call so the program can do per-iter
+                    // cleanup. Per-subtype: single-element iters
+                    // (task, cgroup, tcp, udp, unix, netlink, bpf_map,
+                    // bpf_link, bpf_prog, sockmap, …) put the nullable
+                    // payload at offset 8. Multi-pointer iters
+                    // (task_file, task_vma, bpf_map_elem) have a
+                    // mixture: a non-null target/owner at offset 8
+                    // and the nullable per-element fields after.
+                    // Encode via a per-subtype non-null offset set.
+                    // Closes bpf_iter_test_kern3::dump_task without
+                    // regressing bpf_iter_bpf_hash_map (where map at
+                    // offset 8 is the iter target, never null).
+                    let non_null_payload_offsets: &[i16] = match *type_name {
+                        // task/cgroup/sock/etc: single-element, payload
+                        // at offset 8 is the iter cursor (NULL on
+                        // terminating call).
+                        "bpf_iter__task"
+                        | "bpf_iter__cgroup"
+                        | "bpf_iter__tcp"
+                        | "bpf_iter__udp"
+                        | "bpf_iter__unix"
+                        | "bpf_iter__netlink"
+                        | "bpf_iter__bpf_link"
+                        | "bpf_iter__bpf_prog"
+                        | "bpf_iter__bpf_map" => &[],
+                        // task_file / task_vma: offset 8 is task
+                        // (parent, never null while iter is alive),
+                        // offset 16 is the file/vma cursor (nullable).
+                        "bpf_iter__task_file" | "bpf_iter__task_vma" => &[8],
+                        // bpf_map_elem: offset 8 is the target map
+                        // (never null), key/value at 16/24 are
+                        // nullable.
+                        "bpf_iter__bpf_map_elem" | "bpf_iter__bpf_sk_storage_map" => &[8],
+                        // Sockmap and others: keep current non-null
+                        // typing (no test currently exercises a NULL
+                        // payload deref outside of single-element).
+                        _ => &[0, 8, 16, 24],
+                    };
+                    let nullable = off != 0 && !non_null_payload_offsets.contains(&off);
                     return Some(CtxAccessInfo {
                         kind: CtxFieldKind::TrustedPtr {
                             type_name: pointee_name,
-                            nullable: false,
+                            nullable,
                             trusted: true,
                             tag_flags: crate::analysis::machine::reg_types::PtrFlags::empty(),
                         },

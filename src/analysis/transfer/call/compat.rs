@@ -127,6 +127,24 @@ pub fn is_ptr_to_btf_id_trusted_or_rcu(t: &RegType) -> bool {
     )
 }
 
+/// `PtrToBtfIdOrNull` variant of `is_ptr_to_btf_id_trusted_or_rcu`.
+/// Kernel ARG_PTR_TO_BTF_ID_SOCK_COMMON-class helpers that declare
+/// `| PTR_MAYBE_NULL` (e.g. bpf_sk_storage_{get,delete}) strip the
+/// MAYBE_NULL flag from the actual reg type before the type-match,
+/// so a `PTR_TO_BTF_ID | PTR_MAYBE_NULL` reg compares equal to the
+/// expected `PTR_TO_BTF_ID`. Programs commonly pass an iter ctx
+/// payload (e.g. `ctx->sk` from `bpf_iter__bpf_sk_storage_map`)
+/// without an intervening null-refining branch, since the helper
+/// itself no-ops on NULL.
+pub fn is_ptr_to_btf_id_or_null_trusted_or_rcu(t: &RegType) -> bool {
+    use crate::analysis::machine::reg_types::PtrFlags;
+    matches!(
+        t,
+        RegType::PtrToBtfIdOrNull { flags, .. }
+            if !flags.contains(PtrFlags::UNTRUSTED)
+    )
+}
+
 // ============================================================================
 // Type Compatibility Tables
 // ============================================================================
@@ -179,6 +197,7 @@ pub static BTF_SOCK_COMMON_COMPAT: &[fn(&RegType) -> bool] = &[
     // bare `is_ptr_to_btf_id` would FA non-trusted chained loads like
     // `skb->next` passed to bpf_sk_storage_get (nested_trust_failure).
     is_ptr_to_btf_id_trusted_or_rcu,
+    is_ptr_to_btf_id_or_null_trusted_or_rcu,
     // cgroup/sock_create / cgroup/sock_release / cgroup/sockopt
     // contexts ARE a `struct bpf_sock *` — programs pass ctx directly
     // as the sk arg of bpf_sk_storage_{get,delete}. Kernel admits
