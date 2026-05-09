@@ -1685,8 +1685,8 @@
       "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
     },
     "test_get_stack_rawtp_err.c": {
-      "expect": "accept",
-      "note": "Positive coverage; auto-classified by batch 6 audit (referencing prog_tests driver loads the skel positively)."
+      "expect": "reject",
+      "note": "Misclassified by auto-classifier. prog_tests/get_stack_raw_tp.c::test_get_stack_raw_tp at L99-101 calls `bpf_prog_test_load(file_err, ...)` and asserts `err >= 0` is bad — i.e., the load is expected to FAIL. The body's invalid bpf_get_stack(stack, 0, -1) flags + unbounded `while(1)` loop drive the kernel rejection. Reclassified 2026-05-08."
     },
     "test_get_xattr.c": {
       "expect": "accept",
