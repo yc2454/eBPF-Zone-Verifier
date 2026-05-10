@@ -60,8 +60,6 @@ pub enum Expect {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProgEntry {
     pub expect: Expect,
-    #[serde(default)]
-    pub note: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -71,8 +69,6 @@ pub struct Entry {
     /// progs then fall through to `Outcome::Skipped`).
     #[serde(default)]
     pub expect: Option<Expect>,
-    #[serde(default)]
-    pub note: String,
     #[serde(default)]
     pub progs: HashMap<String, ProgEntry>,
 }

@@ -122,6 +122,7 @@ fn clang_resource_include(clang: &str) -> Option<PathBuf> {
 ///
 /// `extra_defines` lets a caller pass `-D` macros — e.g. `CAN_USE_GOTOL`
 /// for files gated on cpuv4 features.
+#[allow(dead_code)]
 pub fn compile<P: AsRef<Path>, Q: AsRef<Path>>(
     src: P,
     out_path: Q,

@@ -298,10 +298,10 @@ fn compute_max_stack_depth(instrs: &[Instr]) -> u16 {
     // (off is signed so we can represent above-frame offsets, though the
     // kernel rejects positive R10 offsets elsewhere). None ⇒ unknown /
     // not a stack alias. R10 itself is always offset 0.
-    let mut alias: [Option<i64>; { Reg::ALL.len() }] = [None; { Reg::ALL.len() }];
+    let mut alias: [Option<i64>; Reg::ALL.len()] = [None; { Reg::ALL.len() }];
     alias[Reg::R10.idx()] = Some(0);
 
-    let track_access = |alias: &[Option<i64>; { Reg::ALL.len() }],
+    let track_access = |alias: &[Option<i64>; Reg::ALL.len()],
                         base: Reg,
                         off: i16,
                         max_depth: &mut u16| {
@@ -575,10 +575,10 @@ pub fn check_stack_overflow(
 /// such a load clears the alias.
 fn collect_async_cb_roots(instrs: &[Instr]) -> BTreeSet<usize> {
     let mut roots = BTreeSet::new();
-    let mut pseudofunc_alias: [Option<usize>; { Reg::ALL.len() }] =
+    let mut pseudofunc_alias: [Option<usize>; Reg::ALL.len()] =
         [None; { Reg::ALL.len() }];
 
-    let clear_dst = |alias: &mut [Option<usize>; { Reg::ALL.len() }], dst: Reg| {
+    let clear_dst = |alias: &mut [Option<usize>; Reg::ALL.len()], dst: Reg| {
         alias[dst.idx()] = None;
     };
 

@@ -140,7 +140,6 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
                     .btf
                     .kfunc_name(*btf_id)
                     .and_then(kfunc_callback_arg_reg),
-                _ => None,
             };
             if let Some(cb_reg) = cb_reg
                 && let Some(subprog_pc) = find_pseudo_func_for_call(prog, pc, cb_reg)

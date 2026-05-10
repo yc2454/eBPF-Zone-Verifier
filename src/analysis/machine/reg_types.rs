@@ -20,6 +20,7 @@ impl PtrFlags {
     pub const RDONLY: PtrFlags = PtrFlags(1 << 3);
     pub const PERCPU: PtrFlags = PtrFlags(1 << 4);
     pub const MEM_ALLOC: PtrFlags = PtrFlags(1 << 5);
+    #[allow(dead_code)]
     pub const NON_OWN_REF: PtrFlags = PtrFlags(1 << 6);
     /// `__user` BTF type tag — kernel pointer addressing user-space memory.
     /// Direct deref is rejected; programs must use `bpf_copy_from_user`.
@@ -44,6 +45,7 @@ impl PtrFlags {
         PtrFlags(self.0 & !other.0)
     }
 
+    #[allow(dead_code)]
     pub const fn bits(self) -> u16 {
         self.0
     }
@@ -517,7 +519,7 @@ impl RegType {
         self.ptr_flags().contains(PtrFlags::TRUSTED)
     }
 
-    /// True when the pointer is known-untrusted (e.g. result of a pointer walk).
+    #[allow(dead_code)]
     pub fn is_untrusted(&self) -> bool {
         self.ptr_flags().contains(PtrFlags::UNTRUSTED)
     }

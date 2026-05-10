@@ -1,4 +1,5 @@
 //! Map `SEC("…")` strings to BPF prog_type values.
+#![allow(dead_code)]
 //!
 //! Mirrors libbpf's `section_defs[]` table, scoped to the SECs that
 //! actually appear in `tools/testing/selftests/bpf/progs/verifier_*.c`

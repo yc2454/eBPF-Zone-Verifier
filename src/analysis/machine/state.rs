@@ -2,13 +2,10 @@
 use crate::analysis::machine::frame_stack::{CallFrame, FrameLevel, FrameStack};
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
-use crate::analysis::machine::stack_state::{ScalarBounds, SpilledReg, StackState};
-use crate::ast::MemSize;
+use crate::analysis::machine::stack_state::StackState;
 use crate::common::config::DomainMode;
-use crate::domains::dbm::INF;
 use crate::domains::numeric::NumericDomain;
 use crate::domains::tnum::Tnum;
-use log::trace;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

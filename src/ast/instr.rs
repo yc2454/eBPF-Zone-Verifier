@@ -19,18 +19,6 @@ pub enum CallKind {
     Kfunc { btf_id: u32, offset: i16 },
 }
 
-impl CallKind {
-    pub fn helper_id(self) -> Option<u32> {
-        match self {
-            CallKind::Helper { id } => Some(id),
-            _ => None,
-        }
-    }
-
-    pub fn is_kfunc(self) -> bool {
-        matches!(self, CallKind::Kfunc { .. })
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Instr {

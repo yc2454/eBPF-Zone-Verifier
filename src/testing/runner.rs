@@ -395,7 +395,6 @@ pub fn tracing_attach_arg_tag_flags(
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TracingArgKind {
     Scalar,
-    Pointer,
 }
 
 /// Per-attach-target arg-kind table. The kernel resolves args from the
@@ -971,16 +970,7 @@ impl Analyzer {
         self.analyze_section_as_single_program(section)
     }
 
-    /// Analyze a single named function within a section. Used by callers
-    /// that need per-function verdicts (e.g. the modern selftest runner,
-    /// where each `SEC()`-tagged program in a `.c` file gets its own
-    /// pass/fail expectation). Returns `LoadError` if the function isn't
-    /// found in the section.
-    pub fn analyze_function(&self, section: &str, func_name: &str) -> AnalysisResult {
-        self.analyze_function_with_flags(section, func_name, 0)
-    }
-
-    /// Variant of [`analyze_function`] that ORs `extra_flags` into the
+    /// Variant of [`analyze_function_with_flags`] that ORs `extra_flags` into the
     /// program's `ExecContext::flags` before analysis. Used by the
     /// modern selftest runner to honor `__flag(...)` annotations such
     /// as `BPF_F_STRICT_ALIGNMENT`.

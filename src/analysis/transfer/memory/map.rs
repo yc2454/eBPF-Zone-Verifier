@@ -22,7 +22,7 @@ pub enum KptrAccessOutcome<'a> {
     /// referenced (Ref/Rcu/Percpu).
     Hit(&'a KptrField),
     /// Access overlaps a kptr field with size != 8.
-    BadSize { field_off: u32, size: i64 },
+    BadSize { _field_off: u32, size: i64 },
     /// Access overlaps a kptr field with a misaligned start offset
     /// (i.e., `off != field.offset`, but the access window intersects
     /// the kptr's 8-byte slot).
@@ -49,7 +49,7 @@ pub fn classify_kptr_access(map_def: &BpfMapDef, off: i64, size: i64) -> KptrAcc
         if off == f_off {
             // Right offset, wrong size (e.g., 4-byte read of a kptr).
             return KptrAccessOutcome::BadSize {
-                field_off: f.offset,
+                _field_off: f.offset,
                 size,
             };
         }
@@ -136,7 +136,7 @@ pub fn check_kptr_field_access(
                     }
                 }
             }
-            KptrAccessOutcome::BadSize { field_off: _, size } => {
+            KptrAccessOutcome::BadSize { _field_off: _, size } => {
                 env.fail(VerificationError::KptrAccessSizeMustBeDW {
                     pc,
                     off: final_off,

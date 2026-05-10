@@ -279,32 +279,3 @@ pub fn check_stack_arg_readable(
         state.current_frame_level(),
     )
 }
-
-/// Check that a range of stack slots does not contain any pointers.
-/// This is used to prevent pointer leakage when stack memory is copied to maps.
-pub fn check_stack_no_pointers(
-    env: &mut VerifierEnv,
-    state: &State,
-    stack_offset: i64,
-    size: i64,
-    pc: usize,
-) {
-    let stack = state.stack_at(state.current_frame_level());
-
-    for i in 0..size {
-        let slot = (stack_offset + i) as i16;
-        if let Some(spilled) = stack.get_slot(slot)
-            && spilled.reg_type.is_pointer()
-        {
-            error!(
-                "[Verifier] pc {}: stack slot {} contains pointer {:?}, cannot expose to map",
-                pc, slot, spilled.reg_type
-            );
-            env.fail(VerificationError::PointerLeakage {
-                pc,
-                offset: slot as i64,
-            });
-            return;
-        }
-    }
-}
