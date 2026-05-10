@@ -1557,7 +1557,7 @@ fn state_subsumed_by(
         return Err(SubsumptionMissReason::ActiveLock);
     }
 
-    // W3.1c: `old` must have at least as much may_goto budget remaining as
+    // `old` must have at least as much may_goto budget remaining as
     // `cur`, otherwise pruning would let `cur` continue under behaviours
     // `old` never explored (old already exhausted the budget on a path cur
     // hasn't yet reached). Monotone: budget only ever decreases, so once
@@ -2429,7 +2429,7 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
                 }
             }
 
-            // W3.2c: open-coded iterator identity.
+            // open-coded iterator identity.
             //
             // An Active/Drained iterator slot represents a specific
             // loop instance (id minted at `*_new`). A cached state
@@ -2441,7 +2441,7 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
             // collapse into a single pruned state.
             //
             // Non-precise loop-varying scalars are allowed to converge
-            // via the existing W2.3 non-precise superset rule above —
+            // via the existing non-precise superset rule above —
             // this check is about the iterator identity itself, not
             // the loop variable.
             // `depth` is intentionally ignored — it grows monotonically

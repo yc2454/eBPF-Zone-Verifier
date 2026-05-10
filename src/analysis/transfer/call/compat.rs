@@ -173,7 +173,7 @@ pub static SOCK_COMMON_COMPAT: &[fn(&RegType) -> bool] = &[
 
 /// Types compatible with PtrToBTFIdSockCommon argument.
 ///
-/// W6.4a-followon: includes `PtrToBtfId` (any BTF-typed pointer). The
+/// includes `PtrToBtfId` (any BTF-typed pointer). The
 /// kernel verifier's `ARG_PTR_TO_BTF_ID_SOCK_COMMON` accepts any
 /// PTR_TO_BTF_ID whose type id is `struct sock` or a sock subclass
 /// (`tcp_sock`, `udp_sock`, …). For struct_ops methods we lose the

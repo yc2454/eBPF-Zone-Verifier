@@ -1,13 +1,8 @@
 // src/analysis/transfer/call/signatures.rs
 //
-// Unified call-proto representation (Phase 4 W4.1a).
-//
 // `CallProto` is the single shape consumed by the arg checker for both
-// helpers and (Phase 4+) kfuncs. For helpers it's built statically from
-// the table below; for kfuncs it'll be built at load time from BTF +
-// kfunc flags. Today (W4.1a) only the helper producer exists — the new
-// `ret`/`flags`/`side_effects` fields are populated with defaults and
-// act as infrastructure for W4.1b+.
+// helpers and kfuncs. For helpers it's built statically from the table
+// below; for kfuncs it's built at load time from BTF + kfunc flags.
 
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::stack_state::{DynptrKind, IrqKfuncClass, IterKind};
@@ -20,9 +15,7 @@ use crate::parsing::btf::SpecialFieldKind;
 
 /// Expected shape of a call argument (R1..R5).
 ///
-/// Classic helper kinds today; Phase 4 will extend with `BtfPtr`,
-/// `DynptrArg`, `IterArg`, `CallbackArg` variants consumed by the same
-/// checker.
+/// Expected shape of a call argument (R1..R5). Covers helpers and kfuncs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum ArgKind {
@@ -96,12 +89,12 @@ pub enum ArgKind {
     // ---- Fixed-size pointer ----
     PtrToLong,
 
-    // ---- Callback (W4.1c) ----
+    // ---- Callback ----
     /// Subprog pointer (`RegType::PtrToCallback`). Used by callback-
     /// taking kfuncs like `bpf_set_exception_callback`.
     PtrToCallback,
 
-    // ---- Dynptr (W4.2) ----
+    // ---- Dynptr ----
     /// `&bpf_dynptr` on the stack (a `PtrToStack` aimed at a 16-byte
     /// dynptr pair).
     ///
@@ -114,7 +107,7 @@ pub enum ArgKind {
     /// `bpf_dynptr_slice_rdwr`). `false` accepts both rdonly and rdwr.
     DynptrArg { uninit: bool, rdwr_only: bool },
 
-    // ---- Iterator (W4.3) ----
+    // ---- Iterator ----
     /// `&bpf_iter_*` on the stack. The iterator's kind and lifecycle
     /// state are tracked via `IteratorSlot`; this arg shape encodes both
     /// the expected `kind` and what slot states the kfunc accepts.
@@ -144,7 +137,7 @@ pub enum ArgKind {
     /// for the LIFO-match check.
     ResSpinLockArg { is_irq: bool },
 
-    // ---- Cpumask (W5.3) ----
+    // ---- Cpumask ----
     /// `struct bpf_cpumask *` argument — mutating consumers only
     /// (`bpf_cpumask_set_cpu`, `_clear_cpu`, `_clear`, `_copy`,
     /// `_release`, …). Strict: only the acquire-tracked
@@ -164,7 +157,7 @@ pub enum ArgKind {
     /// typing path (`task->cpus_ptr`, `&task->cpus_mask`).
     PtrToCpumaskRead,
 
-    // ---- Cgroup (W6.3-followon) ----
+    // ---- Cgroup ----
     /// `struct cgroup *` argument. Same shape as `PtrToCpumask` —
     /// only the non-null `RegType::PtrToCgroup` is accepted; the
     /// program must have null-checked a freshly minted ref before
@@ -179,7 +172,7 @@ pub enum ArgKind {
     /// task directly.
     PtrToTask,
 
-    // ---- Arena (W5.5) ----
+    // ---- Arena ----
     /// Bounded arena memory pointer. The actual reg must be a non-null,
     /// ref-tracked `RegType::PtrToArena` (i.e. the program has already
     /// null-checked a freshly allocated arena range). Drives
@@ -187,7 +180,7 @@ pub enum ArgKind {
     /// future arena-consumer kfuncs.
     PtrToArena,
 
-    // ---- Owned kptr (W5.4) ----
+    // ---- Owned kptr ----
     /// Refcounted heap-allocated kernel object. The actual reg must be
     /// a non-null, ref-tracked `RegType::PtrToOwnedKptr` (the program
     /// has already null-checked an alloc / pop / refcount_acquire
@@ -195,14 +188,13 @@ pub enum ArgKind {
     /// and the list/rbtree push kfuncs (which release the ref).
     PtrToOwnedKptr,
 
-    // ---- Map-value special field (W5.1) ----
+    // ---- Map-value special field ----
     /// Pointer into a map value, aimed at a specific kernel-defined
     /// field embedded in the value (e.g. `bpf_timer`, `bpf_spin_lock`).
     /// The actual reg must be `PtrToMapValue { offset, map_idx }` where
     /// the map's value BTF carries a `SpecialField` of `kind` at exactly
     /// `offset`. Drives `bpf_timer_*` arg validation; future use will
-    /// cover real `bpf_spin_lock` pointer args (W5.2) and rbtree/list
-    /// roots (W5.4).
+    /// cover real `bpf_spin_lock` pointer args and rbtree/list
     MapValueSpecial { kind: SpecialFieldKind },
 }
 
@@ -223,8 +215,7 @@ pub enum IterArgExpect {
 ///
 /// For helpers these are currently all unset — existing post-call
 /// logic in `transfer.rs` / `types.rs` handles acquire/release/
-/// ret-null by helper-id switch. W4.1b migrates that logic to be
-/// flag-driven (so kfuncs can reuse it).
+/// ret-null by helper-id switch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CallFlags(u32);
 
@@ -239,7 +230,7 @@ impl CallFlags {
     /// All pointer args must be trusted (kfunc KF_TRUSTED_ARGS).
     pub const TRUSTED_ARGS: Self = Self(1 << 3);
     /// Must run inside an RCU read-side critical section. Pre-call check
-    /// rejects if `state.rcu_read_depth == 0` (W5.2).
+    /// rejects if `state.rcu_read_depth == 0`.
     pub const RCU: Self = Self(1 << 4);
     /// Callable only from sleepable programs.
     pub const SLEEPABLE: Self = Self(1 << 5);
@@ -248,20 +239,19 @@ impl CallFlags {
     /// Pre-call: acquires the spin_lock pointed to by R1 (which the
     /// `MapValueSpecial { SpinLock }` arg validator has already shape-
     /// checked). Rejects if a lock is already held; otherwise records
-    /// `(ptr_id, lock_offset)` in `state.active_lock`. W5.2.
+    /// `(ptr_id, lock_offset)` in `state.active_lock`.
     pub const SPIN_LOCK_ACQUIRE: Self = Self(1 << 7);
     /// Pre-call: releases the spin_lock pointed to by R1. Rejects if no
     /// lock is held or if the held lock's `ptr_id` doesn't match R1's.
-    /// W5.2.
+    /// .
     pub const SPIN_LOCK_RELEASE: Self = Self(1 << 8);
     /// Pre-call: enters an RCU read-side critical section by
-    /// incrementing `state.rcu_read_depth`. W5.2.
+    /// incrementing `state.rcu_read_depth`.
     pub const RCU_READ_LOCK: Self = Self(1 << 9);
     /// Pre-call: exits an RCU read-side critical section by
     /// decrementing `state.rcu_read_depth`. Rejects if depth is already
-    /// zero. W5.2.
     pub const RCU_READ_UNLOCK: Self = Self(1 << 10);
-    /// Pre-call precondition: a spin_lock must be held (W5.4). Drives
+    /// Pre-call precondition: a spin_lock must be held. Drives
     /// rbtree / list mutation kfuncs which would race on the per-map-
     /// value head/root without the lock. Rejects with
     /// `NotInSpinLockSection` when `state.active_lock.is_none()`.
@@ -271,7 +261,7 @@ impl CallFlags {
     /// calling-convention hint (v6.13) lets clang emit shorter
     /// sequences around these calls because R1..R5 retain their
     /// pre-call values. Used by select helpers (see `is_fastcall_helper`)
-    /// and per-kfunc on cpumask read-only queries. W7.2.
+    /// and per-kfunc on cpumask read-only queries.
     pub const FASTCALL: Self = Self(1 << 12);
     /// Pre-call: enters a preempt-disabled region by incrementing
     /// `state.active_preempt_locks`. Mirrors kernel `bpf_preempt_disable`
@@ -364,7 +354,7 @@ pub enum RetKind {
     /// `RegType::PtrToSockCommon`. Same acquire/null semantics as above.
     PtrToSockCommon,
     /// `RegType::PtrToAllocMem` sized by the value of the arg at index
-    /// `size_arg` (W4.2g). Used by `bpf_dynptr_slice`/`slice_rdwr`,
+    /// `size_arg`. Used by `bpf_dynptr_slice`/`slice_rdwr`,
     /// which return a pointer into the dynptr's backing memory whose
     /// length matches the caller-supplied scratch-buffer size. Combined
     /// with `CallFlags::RET_NULL` the applier wraps as
@@ -377,29 +367,29 @@ pub enum RetKind {
     /// keeps the non-rdonly variant.
     PtrToAllocMemFromArgRdonly { size_arg: u8 },
     /// `RegType::PtrToAllocMem` with a const element size baked in
-    /// (W4.3). Used by `bpf_iter_*_next` whose returned pointer width
+    /// . Used by `bpf_iter_*_next` whose returned pointer width
     /// is per-iter-kind, not driven by an arg. Combined with
     /// `CallFlags::RET_NULL` the applier wraps as `PtrToAllocMemOrNull`.
     PtrToAllocMem { mem_size: u64 },
-    /// `RegType::PtrToCpumask` (W5.3). `bpf_cpumask_create` returns a
+    /// `RegType::PtrToCpumask`. `bpf_cpumask_create` returns a
     /// freshly-acquired cpumask. Combined with `CallFlags::ACQUIRE` the
     /// applier mints a fresh ref_id; combined with `CallFlags::RET_NULL`
     /// the result wraps as `PtrToCpumaskOrNull`.
     PtrToCpumask,
-    /// `RegType::PtrToArena` (W5.5). Used by `bpf_arena_alloc_pages`
+    /// `RegType::PtrToArena`. Used by `bpf_arena_alloc_pages`
     /// whose returned bounded-memory size is `R(page_cnt_arg+1) * PAGE_SIZE`
     /// — i.e. the page count argument scaled by the architectural page
     /// size (4096). Combined with `CallFlags::ACQUIRE` the applier mints
     /// a fresh ref_id; combined with `CallFlags::RET_NULL` the result
     /// wraps as `PtrToArenaOrNull`.
     PtrToArenaFromArg { page_cnt_arg: u8 },
-    /// `RegType::PtrToOwnedKptr` (W5.4). Used by `bpf_obj_new_impl`,
+    /// `RegType::PtrToOwnedKptr`. Used by `bpf_obj_new_impl`,
     /// `bpf_refcount_acquire_impl`, and the list/rbtree pop/remove
     /// kfuncs. Combined with `CallFlags::ACQUIRE` the applier mints a
     /// fresh ref_id; combined with `CallFlags::RET_NULL` the result
     /// wraps as `PtrToOwnedKptrOrNull`.
     PtrToOwnedKptr,
-    /// `RegType::PtrToCgroup` (W6.3-followon). Used by `bpf_cgroup_from_id`
+    /// `RegType::PtrToCgroup`. Used by `bpf_cgroup_from_id`
     /// and `bpf_cgroup_acquire`. Same applier shape as `PtrToCpumask`:
     /// `ACQUIRE` mints a ref, `RET_NULL` wraps as `PtrToCgroupOrNull`.
     PtrToCgroup,
@@ -421,7 +411,7 @@ pub enum RetKind {
     /// kfunc (the kernel's "Possibly NULL pointer passed to trusted
     /// arg0" diagnostic).
     PtrToBtfIdNamed { type_name: &'static str },
-    /// `bpf_iter_*_next(&it)` (W4.3b): forks the call into two
+    /// `bpf_iter_*_next(&it)`: forks the call into two
     /// successors. Non-NULL: R0 = `PtrToAllocMem { mem_size = elem_size }`,
     /// iterator slot at `iter_arg` stays Active. NULL: R0 = scalar 0,
     /// slot transitions Active → Drained. The kfunc dispatcher in
@@ -446,7 +436,7 @@ pub enum RetKind {
 }
 
 /// Post-call side effect entries — applied in order by the shared
-/// applier. Today only the release pattern; W4.2/W4.3 add dynptr/iter
+/// applier. Today only the release pattern; / add dynptr/iter
 /// transitions, stack-buffer init, etc.
 #[derive(Debug, Clone, Copy)]
 #[allow(dead_code)]
@@ -459,7 +449,7 @@ pub enum SideEffect {
     /// Drives `bpf_set_exception_callback`.
     SetExceptionCallbackFromArg { arg: u8 },
     /// Stamp a fresh dynptr annotation on the stack pair pointed to by
-    /// `arg` (W4.2). For acquire-tracked kinds (`Ringbuf`) the applier
+    /// `arg`. For acquire-tracked kinds (`Ringbuf`) the applier
     /// mints a ref_id and links it onto the slot; for non-acquire kinds
     /// the ref_id is 0. Drives `bpf_dynptr_from_mem`,
     /// `bpf_ringbuf_reserve_dynptr`, etc.
@@ -469,7 +459,7 @@ pub enum SideEffect {
         rdonly: bool,
     },
     /// Clear the dynptr annotation on the stack pair pointed to by `arg`
-    /// and drop its ref_id (W4.2). Drives `bpf_ringbuf_submit_dynptr` and
+    /// and drop its ref_id. Drives `bpf_ringbuf_submit_dynptr` and
     /// `bpf_ringbuf_discard_dynptr`.
     DynptrReleaseFromArg { arg: u8 },
     /// Initialize the dynptr at `dst_arg` as a clone of the dynptr at
@@ -479,12 +469,12 @@ pub enum SideEffect {
     /// `ref_obj_id`). Mints a fresh `dynptr_id` for the clone (per-instance
     /// identity for slice tracking). Drives `bpf_dynptr_clone`.
     DynptrCloneOnArg { src_arg: u8, dst_arg: u8 },
-    /// Initialize an iterator slot (W4.3). Validator already accepted
+    /// Initialize an iterator slot. Validator already accepted
     /// the arg as Uninit; the applier zeros `bpf_iter_size(kind)` bytes
     /// (matching the kernel's STACK_ITER mark) and stamps an `Active`
     /// annotation with a fresh `iter_id`. Drives `bpf_iter_*_new`.
     IterInitOnArg { arg: u8, kind: IterKind },
-    /// Clear an iterator slot (W4.3). Validator accepted Active|Drained
+    /// Clear an iterator slot. Validator accepted Active|Drained
     /// at this slot; the applier wipes the annotation. Drives
     /// `bpf_iter_*_destroy`.
     IterDestroyOnArg { arg: u8 },
@@ -511,7 +501,7 @@ pub const MAX_BPF_FUNC_ARGS: usize = 5;
 
 /// Unified proto for a helper or kfunc call.
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)] // W4.1b migrates post-call logic onto ret/flags/side_effects
+#[allow(dead_code)]
 pub struct CallProto {
     /// Argument shapes for R1..R5 (use `DontCare` for unused).
     pub args: [ArgKind; MAX_BPF_FUNC_ARGS],
@@ -524,16 +514,16 @@ pub struct CallProto {
     /// Pointer-size pairs to validate before the call: each pair links a
     /// pointer arg with the size arg that bounds its access. Drives the
     /// `check_mem_size_pairs` pass and the `validate_ptr_to_mem` skip
-    /// for paired pointers (W4.2d: was helper-id-keyed; now lives on
+    /// for paired pointers (: was helper-id-keyed; now lives on
     /// the proto so kfuncs reuse the same machinery).
     pub mem_size_pairs: &'static [MemSizePair],
-    /// Prog-type allowlist (W6.3). `None` means "allowed in any prog
+    /// Prog-type allowlist. `None` means "allowed in any prog
     /// type"; `Some(list)` restricts the kfunc to programs whose
     /// `ProgramKind` appears in the list. Mirrors the kernel verifier's
     /// per-kfunc `KF_PROG_TYPE_*` bitmap. Enforced once at the start of
     /// `transfer_kfunc_proto`; helper paths ignore this field.
     pub prog_type_allowlist: Option<&'static [crate::ast::ProgramKind]>,
-    /// W6.4c: per-(ops_struct, member) allowlist for struct_ops kfuncs.
+    /// per-(ops_struct, member) allowlist for struct_ops kfuncs.
     /// `None` means "no per-member restriction". `Some(list)` restricts
     /// the kfunc to subprogs wired into one of the listed (ops_struct,
     /// member) pairs. Mirrors kernel sched_ext's per-callback kfunc
@@ -584,7 +574,7 @@ impl CallProto {
 
     /// Builder: restrict the kfunc to a specific list of `ProgramKind`s.
     /// Programs with any other prog kind will reject the call. Used by
-    /// W6.3 to encode per-kfunc prog-type allowlists (cgroup / cpumask /
+    ///  to encode per-kfunc prog-type allowlists (cgroup / cpumask /
     /// task families gate access to syscall / tracepoint / perf_event
     /// and reject from raw_tp).
     const fn prog_type_allowlist(
@@ -596,7 +586,7 @@ impl CallProto {
     }
 
     /// Builder: restrict a struct_ops kfunc to a specific list of
-    /// (ops_struct, member) pairs. W6.4c.
+    /// (ops_struct, member) pairs.
     const fn ops_member_allowlist(
         mut self,
         list: &'static [(&'static str, &'static str)],
@@ -981,7 +971,7 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         ])
         .mem_size_pairs(&pairs::PERF_PROG_READ_VALUE),
 
-        // ---- Spin lock (W5.2) ----
+        // ---- Spin lock ----
         // void bpf_spin_lock(struct bpf_spin_lock *lock)
         // void bpf_spin_unlock(struct bpf_spin_lock *lock)
         // R1 must be a PtrToMapValue aimed at a `bpf_spin_lock` field
@@ -1009,7 +999,7 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         .ret(RetKind::Scalar)
         .flags(CallFlags::SPIN_LOCK_RELEASE),
 
-        // ---- RCU read-side critical section (W5.2) ----
+        // ---- RCU read-side critical section ----
         // void bpf_rcu_read_lock(void)
         // void bpf_rcu_read_unlock(void)
         constants::BPF_RCU_READ_LOCK => CallProto::with_args([
@@ -1024,7 +1014,7 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         .ret(RetKind::Scalar)
         .flags(CallFlags::RCU_READ_UNLOCK),
 
-        // ---- Timers (W5.1) ----
+        // ---- Timers ----
         // long bpf_timer_init(struct bpf_timer *timer, struct bpf_map *map, u64 flags)
         constants::BPF_TIMER_INIT => CallProto::with_args([
             MapValueSpecial { kind: SpecialFieldKind::Timer }, // R1: &timer field
@@ -1091,7 +1081,7 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             CallProto::with_args([PtrToAllocMem, Anything, DontCare, DontCare, DontCare])
         }
 
-        // W6.5: bpf_user_ringbuf_drain(map, callback, ctx, flags)
+        // bpf_user_ringbuf_drain(map, callback, ctx, flags)
         // Drains a user-space-written ringbuf, invoking `callback`
         // for each sample. Routed through `is_callback_helper` →
         // `transfer_callback_helper` so the callback subprog gets a
@@ -1250,7 +1240,7 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             Anything, // R5: flags
         ]),
 
-        // ---- W7.1: storage_get/_delete (sk + task + inode) ----
+        // ---- storage_get/_delete (sk + task + inode) ----
         // R0 typing for *_storage_get is handled by the legacy
         // `update_call_types` arm in transfer/types.rs, which keys
         // PtrToMapValueOrNull off R1 (the map) — same pattern as
@@ -1333,7 +1323,7 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         ])
         .ret(RetKind::PtrToTask),
 
-        // ---- W7.1: bpf_d_path ----
+        // ---- bpf_d_path ----
         // (path: struct path *, buf: writable, sz: const) -> s64
         constants::BPF_D_PATH => CallProto::with_args([
             PtrToBtfId,     // R1: struct path *
@@ -1345,7 +1335,7 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         .mem_size_pairs(&pairs::D_PATH)
         .ret(RetKind::Scalar),
 
-        // ---- W7.1: bpf_snprintf ----
+        // ---- bpf_snprintf ----
         // (buf, sz, fmt, data, data_len) -> s32
         // Lite scope: fmt and data are accepted as PtrToMem; the kernel
         // additionally validates fmt against const-rodata + matches data
@@ -1360,7 +1350,7 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         .mem_size_pairs(&pairs::SNPRINTF)
         .ret(RetKind::Scalar),
 
-        // ---- W7.1: bpf_strncmp ----
+        // ---- bpf_strncmp ----
         // (s1: PtrToMem, s1_sz: ConstSize, s2: PtrToConstStr) -> s32
         // Kernel rejects writable / non-NUL-terminated comparands via
         // ARG_PTR_TO_CONST_STR (validate_ptr_to_const_str enforces
@@ -1376,7 +1366,7 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         .mem_size_pairs(&pairs::STRNCMP)
         .ret(RetKind::Scalar),
 
-        // ---- Dynptr helpers (W4.2) ----
+        // ---- Dynptr helpers ----
         //
         // These are real helpers (numeric BPF_FUNC_* ids in v6.15 uapi),
         // not kfuncs — clang emits CALL insns with the helper id, not
@@ -1404,17 +1394,17 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
 }
 
 // ============================================================================
-// Kfunc Prototypes (W4.1c)
+// Kfunc Prototypes
 // ============================================================================
 //
 // Today this is a name-keyed override table — a small set of kfuncs whose
 // arg shape and side effects can't (yet) be derived purely from BTF +
-// KF_* flags. W4.2 (dynptr) and W4.3 (open-coded iterators) will populate
+// KF_* flags. (dynptr) and (open-coded iterators) will populate
 // it heavily; eventually most kfuncs should fall through to a generic
 // BTF-driven producer that reads the func-proto BTF + KF flags directly.
 
 /// Prog-type allowlist for kfunc families that need a vmlinux BTF
-/// context (W6.3 / W6.3-followon). Used by the cpumask family
+/// context. Used by the cpumask family
 /// (`bpf_cpumask_*`) and the cgroup family (`bpf_cgroup_*`) — both
 /// mirror the kernel verifier's `KF_PROG_TYPE_*` set. Permitted in
 /// syscall / tracing (fentry/fexit/tp_btf/iter) / tracepoint /
@@ -1424,7 +1414,7 @@ const CPUMASK_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 5] = [
     crate::ast::ProgramKind::Tracing,
     crate::ast::ProgramKind::Tracepoint,
     crate::ast::ProgramKind::PerfEvent,
-    // W6.4b: sched_ext implementations call bpf_cpumask_test_cpu and
+    // sched_ext implementations call bpf_cpumask_test_cpu and
     // friends on idle masks fetched via scx_bpf_get_idle_cpumask.
     crate::ast::ProgramKind::StructOps,
 ];
@@ -1468,7 +1458,7 @@ const TASK_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 6] = [
 const LSM_ONLY_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 1] =
     [crate::ast::ProgramKind::Lsm];
 
-/// `bpf_dynptr_from_skb` allowlist (W4.2f). The kfunc is registered for
+/// `bpf_dynptr_from_skb` allowlist. The kfunc is registered for
 /// program types that receive a skb-shaped context — sched_cls/act
 /// (tc), socket_filter, cgroup_skb, lwt_*, sk_skb, sock_ops, sk_msg,
 /// flow_dissector, netfilter, and Tracing (tp_btf hooks like
@@ -1497,12 +1487,12 @@ const SKB_DYNPTR_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 13] = [
     crate::ast::ProgramKind::Tracing,
 ];
 
-/// `bpf_dynptr_from_xdp` allowlist (W4.2f) — only XDP programs receive
+/// `bpf_dynptr_from_xdp` allowlist — only XDP programs receive
 /// `xdp_md *` context.
 const XDP_DYNPTR_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 1] =
     [crate::ast::ProgramKind::Xdp];
 
-/// Sched_ext kfunc family allowlist (W6.4b). The kernel registers most
+/// Sched_ext kfunc family allowlist. The kernel registers most
 /// `scx_bpf_*` kfuncs against the sched_ext class. A subset (notably
 /// `scx_bpf_create_dsq` / `_destroy_dsq` / `_exit_bstr`) is also exposed
 /// to `BPF_PROG_TYPE_SYSCALL` — see `prog_run.bpf.c`. We accept both for
@@ -1646,7 +1636,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Scalar)
         .side_effects(&[SideEffect::SetExceptionCallbackFromArg { arg: 0 }]),
 
-        // ---- Ringbuf dynptrs (W4.2c) ----
+        // ---- Ringbuf dynptrs ----
         //
         // void bpf_ringbuf_reserve_dynptr(struct bpf_map *rb, u32 size,
         //                                 u64 flags, struct bpf_dynptr *ptr)
@@ -1691,7 +1681,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Void)
         .side_effects(&[SideEffect::DynptrReleaseFromArg { arg: 0 }]),
 
-        // ---- Local-cluster dynptrs (W4.2e) ----
+        // ---- Local-cluster dynptrs ----
         //
         // int bpf_dynptr_from_mem(void *data, u32 size, u64 flags,
         //                         struct bpf_dynptr *ptr)
@@ -1881,7 +1871,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::PtrToAllocMemFromArg { size_arg: 2 })
         .flags(CallFlags::RET_NULL),
 
-        // ---- skb / xdp dynptrs (W4.2f) ----
+        // ---- skb / xdp dynptrs ----
         //
         // int bpf_dynptr_from_skb(struct __sk_buff *skb, u64 flags,
         //                         struct bpf_dynptr *ptr)
@@ -1926,7 +1916,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         }])
         .prog_type_allowlist(&XDP_DYNPTR_KFUNC_PROG_TYPES),
 
-        // ---- Open-coded iterators (W4.3a) ----
+        // ---- Open-coded iterators ----
         //
         // `bpf_iter_*_new(&it, ...)` — Uninit→Active. The iter struct is
         // stack-allocated by the program; the side-effect zero-inits its
@@ -2265,7 +2255,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar),
 
-        // ---- Slice cluster (W4.2g) ----
+        // ---- Slice cluster ----
         //
         // const void *bpf_dynptr_slice(const struct bpf_dynptr *p,
         //                              u32 offset,
@@ -2307,9 +2297,9 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .flags(CallFlags::RET_NULL)
         .mem_size_pairs(&pairs::DYNPTR_SLICE),
 
-        // ---- Cpumask kfuncs (W5.3 + W6.3) ----
+        // ---- Cpumask kfuncs ----
         //
-        // All cpumask kfuncs share the W6.3 prog-type allowlist
+        // All cpumask kfuncs share the prog-type allowlist
         // (`KF_PROG_TYPE_*` in the kernel): permitted in `syscall`,
         // `tracing` (fentry/fexit/tp_btf/iter), `tracepoint`, and
         // `perf_event`; rejected from `raw_tp` and other prog types
@@ -2550,7 +2540,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .mem_size_pairs(&pairs::CPUMASK_POPULATE)
         .prog_type_allowlist(&CPUMASK_KFUNC_PROG_TYPES),
 
-        // ---- Cgroup kfuncs (W6.3-followon) ----
+        // ---- Cgroup kfuncs ----
         //
         // Parallels the cpumask family: `RegType::PtrToCgroup{,OrNull}`,
         // acquire/release with ref_id tracking + null-check refinement.
@@ -2797,13 +2787,13 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .flags(CallFlags::RELEASE)
         .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }]),
 
-        // ---- Arena kfuncs (W5.5 + W6.1c + W6.1d) ----
+        // ---- Arena kfuncs ----
         //
-        // W6.1d realigns these protos with kernel semantics. The kernel
+        //  realigns these protos with kernel semantics. The kernel
         // registers both as `KF_TRUSTED_ARGS | KF_SLEEPABLE` — NOT
         // KF_ACQUIRE / KF_RELEASE. Arena pages are reclaimed when the
         // map is destroyed, not per-alloc; consequently:
-        //   - alloc without free is fine (W5.5's UnreleasedReference
+        //   - alloc without free is fine ('s UnreleasedReference
         //     check was over-approximation).
         //   - use after free is fine — freed pages simply read as zero.
         // The `ref_id` field on `RegType::PtrToArena{,OrNull}` stays
@@ -2814,7 +2804,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         //                                     u32 page_cnt, int node_id, u64 flags)
         // KF_RET_NULL — returns a bounded arena pointer or NULL on alloc
         // failure. R1 must be a `PtrToMapObject` whose backing map's
-        // `type_ == BPF_MAP_TYPE_ARENA` (W6.1c). The addr-hint arg is
+        // `type_ == BPF_MAP_TYPE_ARENA`. The addr-hint arg is
         // `Anything` — arena pointers come back from BTF as a kernel
         // type that we don't trace through the addr-cast.
         "bpf_arena_alloc_pages" => CallProto::with_args([
@@ -2836,7 +2826,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Void),
 
-        // ---- Owned-kptr alloc / drop / refcount (W5.4a) ----
+        // ---- Owned-kptr alloc / drop / refcount ----
         //
         // void *bpf_obj_new_impl(u64 local_type_id, void *meta__ign)
         // KF_ACQUIRE | KF_RET_NULL — heap-allocates a refcounted kernel
@@ -2900,7 +2890,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::PtrToOwnedKptr)
         .flags(CallFlags::ACQUIRE),
 
-        // ---- List + rbtree kfuncs (W5.4b) ----
+        // ---- List + rbtree kfuncs ----
         //
         // int bpf_list_push_front_impl(struct bpf_list_head *head,
         //                              struct bpf_list_node *node,
@@ -3051,7 +3041,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar),
 
-        // ---- W6.4a-followon: kernel-exported TCP CC helpers ----
+        // ---- kernel-exported TCP CC helpers ----
         //
         // bpf_dctcp.c and bpf_cubic.c reach into the kernel's TCP
         // congestion-control library via these ksyms. Clang emits each
@@ -3970,7 +3960,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             Anything, Anything, DontCare, DontCare, DontCare,
         ]),
 
-        // ---- Sched_ext kfuncs (W6.4b) ----
+        // ---- Sched_ext kfuncs ----
         //
         // All gated to `ProgramKind::StructOps` — the kernel registers
         // these against the sched_ext class. Task-pointer args use
@@ -4030,7 +4020,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // R4 is an output pointer; we accept any pointer (`Anything`)
         // here since the corpus passes a stack address and the kernel
         // verifier checks PTR_TO_STACK separately.
-        // W6.4c: kernel gates this kfunc to `sched_ext_ops.select_cpu`
+        // kernel gates this kfunc to `sched_ext_ops.select_cpu`
         // context only — calling it from `.enqueue` (or any other
         // member) rejects with the kfunc-context check. See
         // `selftests/sched_ext/enq_select_cpu_fails.bpf.c`.
@@ -4068,7 +4058,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
 
         // s32 scx_bpf_pick_idle_cpu(const cpumask_t *cpus_allowed, u64 flags)
         // s32 scx_bpf_pick_any_cpu(const cpumask_t *cpus_allowed, u64 flags)
-        // Cpumask args reuse W5.3 `PtrToCpumask` (the const cpumask vs
+        // Cpumask args reuse `PtrToCpumask` (the const cpumask vs
         // bpf_cpumask distinction isn't modeled — see bpf_cpumask_first).
         "scx_bpf_pick_idle_cpu" => CallProto::with_args([
             PtrToCpumask, Anything, DontCare, DontCare, DontCare,
@@ -4234,7 +4224,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
 }
 
 // Static mem-size-pair arrays referenced inline by helper / kfunc protos
-// (W4.2d: was helper-id-keyed via the now-deleted `get_mem_size_pairs`;
+// (: was helper-id-keyed via the now-deleted `get_mem_size_pairs`;
 // pairs now ride on `CallProto::mem_size_pairs` so the same machinery
 // serves both helpers and kfuncs).
 //
@@ -4274,13 +4264,13 @@ pub(super) mod pairs {
     pub static PERF_EVENT_READ_VALUE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
     pub static PERF_PROG_READ_VALUE: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
 
-    // ---- Local-cluster dynptr kfuncs (W4.2e) ----
+    // ---- Local-cluster dynptr kfuncs ----
     pub static DYNPTR_FROM_MEM: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
     // size=0 accepted (kernel runtime no-ops on zero-len read/write).
     pub static DYNPTR_READ: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R1, Reg::R2)];
     pub static DYNPTR_WRITE: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R3, Reg::R4)];
 
-    // ---- Slice cluster (W4.2g) ----
+    // ---- Slice cluster ----
     // R3 (`buffer__opt`) is the kernel's `__opt` scratch buffer: NULL is
     // allowed regardless of R4 (the helper just returns NULL when the
     // slow copy path would have been needed).
@@ -4294,7 +4284,7 @@ pub(super) mod pairs {
     pub static COPY_FROM_USER_STR: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R1, Reg::R2)];
 }
 
-/// W7.2: returns true if the helper is in the kernel's `is_fastcall_helper_call`
+/// returns true if the helper is in the kernel's `is_fastcall_helper_call`
 /// set. Fastcall helpers preserve R1..R5 across the call edge — the verifier
 /// skips the caller-saved clobber so clang-emitted no-spill sequences type-check.
 /// List mirrors `kernel/bpf/verifier.c::is_fastcall_helper_call` as of v6.13.

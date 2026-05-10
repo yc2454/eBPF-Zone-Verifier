@@ -399,7 +399,7 @@ pub(crate) fn transfer_map_load(
     // supported by the transfer domain. Fail cleanly here.
     let feature = match kind {
         MapLoadKind::MapPtr | MapLoadKind::MapValue => None,
-        // W3.4a: BPF_PSEUDO_FUNC is now handled below as PtrToCallback.
+        // BPF_PSEUDO_FUNC is now handled below as PtrToCallback.
         MapLoadKind::PseudoFunc { .. } => None,
         // BPF_PSEUDO_BTF_ID: handled below for `__ksym` extern relocations
         // when a `RelocKind::Ksym` reloc is registered for the LDIMM64 PC.
@@ -421,7 +421,7 @@ pub(crate) fn transfer_map_load(
     // BPF_PSEUDO_FUNC: materialize a callback pointer. Target PC was
     // resolved at decode time; no relocation lookup is needed. Consumed
     // by bpf_loop / bpf_for_each_map_elem / bpf_timer_set_callback and
-    // by bpf_set_exception_callback (W3.4).
+    // by bpf_set_exception_callback.
     if let MapLoadKind::PseudoFunc { subprog_pc } = kind {
         state.types.set(dst, RegType::PtrToCallback { subprog_pc });
         state.domain.forget(dst);

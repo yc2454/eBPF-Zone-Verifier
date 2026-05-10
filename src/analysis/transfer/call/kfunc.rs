@@ -2,7 +2,7 @@
 //
 // Kfunc call transfer.
 //
-// As of W4.3 the only bespoke handler left is `bpf_throw` (terminal
+// As of the only bespoke handler left is `bpf_throw` (terminal
 // control flow — drops the path with no successor). Every other kfunc
 // is driven by `CallProto` via the unified pipeline in `signatures` /
 // `checks` / `side_effects`. Forking kfuncs (`bpf_iter_*_next`) are
@@ -80,7 +80,7 @@ pub(crate) fn transfer_kfunc(env: &mut VerifierEnv, state: State, btf_id: u32) -
     }
 
     match name.as_deref() {
-        // W3.3b: `bpf_throw` is terminal on this path. Stays bespoke
+        // `bpf_throw` is terminal on this path. Stays bespoke
         // because the proto applier always produces at least one
         // continuing successor.
         Some("bpf_throw") => throw(env, state),
@@ -99,7 +99,7 @@ pub(crate) fn transfer_kfunc(env: &mut VerifierEnv, state: State, btf_id: u32) -
 /// post-call sequence in `transfer_call`: validate args → apply side
 /// effects + R0 → clobber caller-saved → advance pc.
 ///
-/// `RetKind::IterNextElem` is the lone forking case (W4.3b): args and
+/// `RetKind::IterNextElem` is the lone forking case: args and
 /// non-r0 side effects run on a shared base; then we split into two
 /// successors that get independent R0 typing + slot-state transitions.
 fn transfer_kfunc_proto(
@@ -111,7 +111,7 @@ fn transfer_kfunc_proto(
     let pc = state.pc;
     let in_types = state.types.clone();
 
-    // W6.3: enforce per-kfunc prog-type allowlist before any other
+    // enforce per-kfunc prog-type allowlist before any other
     // validation. Mirrors the kernel verifier's `KF_PROG_TYPE_*` check.
     if let Some(allowed) = proto.prog_type_allowlist
         && !allowed.contains(&env.ctx.prog_kind)
@@ -124,7 +124,7 @@ fn transfer_kfunc_proto(
         return vec![];
     }
 
-    // W6.4c: per-(ops_struct, member) allowlist for struct_ops kfuncs.
+    // per-(ops_struct, member) allowlist for struct_ops kfuncs.
     // The kernel sched_ext class gates some kfuncs to specific callbacks
     // (e.g. `scx_bpf_select_cpu_dfl` only callable from `.select_cpu`).
     // We only consult the binding when prog_kind is StructOps; for any
@@ -183,7 +183,7 @@ fn transfer_kfunc_proto(
         return vec![];
     }
 
-    // W5.4: enforce SPIN_LOCK_HELD / RCU / lock-acquire-release proto
+    // enforce SPIN_LOCK_HELD / RCU / lock-acquire-release proto
     // flags before arg validation. Done here (not in side_effects)
     // because rejection short-circuits the whole call.
     if !super::transfer::apply_pre_call_lock_flags(env, &mut state, btf_id, proto) {
@@ -895,7 +895,7 @@ fn transfer_kfunc_proto(
         }
     }
 
-    // W7.2: kfuncs marked `bpf_fastcall` (v6.13) preserve R1..R5 — skip
+    // kfuncs marked `bpf_fastcall` (v6.13) preserve R1..R5 — skip
     // the caller-saved clobber so clang-emitted no-spill sequences
     // type-check. Iter-next forks intentionally always clobber (no
     // fastcall iter_next kfunc exists in the kernel set).

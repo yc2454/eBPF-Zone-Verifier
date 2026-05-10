@@ -8,8 +8,8 @@
 // footprint to reserve and annotate the right span of stack slots.
 //
 // Members so far:
-//   - Open-coded iterators (Phase 3 W3.2): bpf_iter_num/_task/_css/_bits
-//   - Dynamic pointers (Phase 4 W4.2): bpf_dynptr
+//   - Open-coded iterators (Phase 3 ): bpf_iter_num/_task/_css/_bits
+//   - Dynamic pointers (Phase 4 ): bpf_dynptr
 //
 // Distinct from `mem_region_model`, which describes pointer-reachable kernel
 // structs whose individual fields the program is allowed to read.
@@ -17,7 +17,7 @@
 use crate::analysis::machine::stack_state::IterKind;
 
 // ---------------------------------------------------------------------------
-// Open-coded iterators (W3.2)
+// Open-coded iterators
 // ---------------------------------------------------------------------------
 //
 // Sizes are taken from `include/uapi/linux/bpf.h` in mainline
@@ -57,7 +57,7 @@ pub fn bpf_iter_size(kind: IterKind) -> usize {
 }
 
 // ---------------------------------------------------------------------------
-// Dynamic pointers (W4.2)
+// Dynamic pointers
 // ---------------------------------------------------------------------------
 //
 // A dynptr occupies a fixed 16 bytes on the stack regardless of which

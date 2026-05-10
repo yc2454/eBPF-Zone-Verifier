@@ -1971,7 +1971,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
         });
     }
 
-    // W6.4a: struct_ops subprogs receive their args via the BPF_PROG
+    // struct_ops subprogs receive their args via the BPF_PROG
     // wrapper's ctx-array idiom — clang emits each arg access as
     // `r_n = *(u64 *)(r1 + 8*i)` followed by an explicit cast to the
     // declared type. The verifier sees a PtrToCtx load whose result must
@@ -2273,7 +2273,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
         // rather than the user-declared args (the kernel resolves these
         // from the attach target's vmlinux BTF, which we don't ship).
         // Surface ctx-array slot loads as a "trusted unknown pointer" —
-        // the W6.4a-followon access path then accepts any field read off
+        // the access path then accepts any field read off
         // it via the `type_name == "unknown"` lax policy. Loose but
         // sound: the kernel accepts everything we'd accept here.
         if !matches!(prog_kind, ProgramKind::StructOps) {

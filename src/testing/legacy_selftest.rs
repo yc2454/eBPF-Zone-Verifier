@@ -421,7 +421,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             kptr_fields: Vec::new(),
             extern_var_offsets: Vec::new(),
         }),
-        // W5.1c: hash map whose value embeds a `struct bpf_timer` at byte 0.
+        // hash map whose value embeds a `struct bpf_timer` at byte 0.
         // Value layout: 16 bytes (matches struct bpf_timer footprint). BTF
         // value type id 5 is registered by create_spin_lock_btf.
         "fixup_map_timer" => Some(BpfMapDef {
@@ -437,7 +437,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             kptr_fields: Vec::new(),
             extern_var_offsets: Vec::new(),
         }),
-        // W5.4b: hash map whose value (`struct val_graph`, BTF id 8)
+        // hash map whose value (`struct val_graph`, BTF id 8)
         // embeds spin_lock @0, list_head @8, rb_root @24. Backs the
         // list/rbtree backport corpora.
         "fixup_map_graph" => Some(BpfMapDef {
@@ -453,7 +453,7 @@ fn map_def_for_fixup(fixup_name: &str) -> Option<BpfMapDef> {
             kptr_fields: Vec::new(),
             extern_var_offsets: Vec::new(),
         }),
-        // W6.1c: arena map fixture for legacy/arena.json. Valueless map
+        // arena map fixture for legacy/arena.json. Valueless map
         // kind (no key/value); `bpf_arena_alloc_pages` validates only
         // `map.type_ == BPF_MAP_TYPE_ARENA` (33).
         "fixup_map_arena" => Some(BpfMapDef {
@@ -485,15 +485,15 @@ pub fn create_spin_lock_btf() -> BtfContext {
     //  15: "val"            (id 3 name; reused as id 2's `l` member name? no: id 3)
     //  19: "cnt"            (id 3 member 0)
     //  23: "l"              (id 3 member 1)
-    //  25: "bpf_timer"      (id 4 name) — W5.1c
-    //  35: "val_t"          (id 5 name) — W5.1c
-    //  41: "t"              (id 5 member 0) — W5.1c
-    //  43: "bpf_list_head"  (id 6 name) — W5.4b
-    //  57: "bpf_rb_root"    (id 7 name) — W5.4b
-    //  69: "val_graph"      (id 8 name) — W5.4b
-    //  79: "lk"             (id 8 member 0 — spin_lock) — W5.4b
-    //  82: "lh"             (id 8 member 1 — list_head) — W5.4b
-    //  85: "rt"             (id 8 member 2 — rb_root) — W5.4b
+    //  25: "bpf_timer" (id 4 name)
+    //  35: "val_t" (id 5 name)
+    //  41: "t" (id 5 member 0)
+    //  43: "bpf_list_head" (id 6 name)
+    //  57: "bpf_rb_root" (id 7 name)
+    //  69: "val_graph" (id 8 name)
+    //  79: "lk" (id 8 member 0 — spin_lock)
+    //  82: "lh" (id 8 member 1 — list_head)
+    //  85: "rt" (id 8 member 2 — rb_root)
     let strings = b"\0bpf_spin_lock\0val\0cnt\0l\0bpf_timer\0val_t\0t\0bpf_list_head\0bpf_rb_root\0val_graph\0lk\0lh\0rt\0".to_vec();
 
     let mut types = HashMap::new();
@@ -549,7 +549,7 @@ pub fn create_spin_lock_btf() -> BtfContext {
         },
     );
 
-    // W5.1c: type 4 = struct bpf_timer (16 bytes, opaque). Only the type
+    // type 4 = struct bpf_timer (16 bytes, opaque). Only the type
     // *name* matters for SpecialFieldKind detection; vlen=0 (no members)
     // is fine because find_special_fields only inspects the container's
     // members and looks up the member's type name.
@@ -564,7 +564,7 @@ pub fn create_spin_lock_btf() -> BtfContext {
         },
     );
 
-    // W5.1c: type 5 = struct val_t (the timer-bearing map value type;
+    // type 5 = struct val_t (the timer-bearing map value type;
     // 16 bytes, struct bpf_timer at byte 0).
     types.insert(
         5,
@@ -581,7 +581,7 @@ pub fn create_spin_lock_btf() -> BtfContext {
         },
     );
 
-    // W5.4b: type 6 = struct bpf_list_head (16 bytes, opaque). Same
+    // type 6 = struct bpf_list_head (16 bytes, opaque). Same
     // pattern as bpf_timer above — only the name drives ListHead
     // detection in `find_special_fields`.
     types.insert(
@@ -595,7 +595,7 @@ pub fn create_spin_lock_btf() -> BtfContext {
         },
     );
 
-    // W5.4b: type 7 = struct bpf_rb_root (16 bytes, opaque).
+    // type 7 = struct bpf_rb_root (16 bytes, opaque).
     types.insert(
         7,
         BtfType {
@@ -607,7 +607,7 @@ pub fn create_spin_lock_btf() -> BtfContext {
         },
     );
 
-    // W5.4b: type 8 = struct val_graph — map value embedding all three
+    // type 8 = struct val_graph — map value embedding all three
     // special fields. Layout (40 bytes):
     //   spin_lock @ byte 0  (4 bytes)
     //   list_head @ byte 8  (16 bytes)
@@ -641,7 +641,7 @@ pub fn create_spin_lock_btf() -> BtfContext {
 
     let mut ctx = BtfContext::from_types_and_strings(types, strings);
 
-    // W3.2d: seed open-coded iterator kfunc names with stable btf_ids so
+    // seed open-coded iterator kfunc names with stable btf_ids so
     // selftest JSON can issue `BPF_PSEUDO_KFUNC_CALL` with imm = these ids
     // and the transfer dispatcher can reverse-resolve the name. btf_ids
     // here are synthetic (not backed by a FUNC type in `types`); the
@@ -660,37 +660,37 @@ pub fn create_spin_lock_btf() -> BtfContext {
         "bpf_iter_bits_new",
         "bpf_iter_bits_next",
         "bpf_iter_bits_destroy",
-        // W3.3b: exception-frame kfuncs.
+        // exception-frame kfuncs.
         "bpf_throw",
         "bpf_set_exception_callback",
-        // W4.2c: ringbuf dynptr kfuncs.
+        // ringbuf dynptr kfuncs.
         "bpf_ringbuf_reserve_dynptr",
         "bpf_ringbuf_submit_dynptr",
         "bpf_ringbuf_discard_dynptr",
-        // W4.2e: Local-cluster dynptr kfuncs.
+        // Local-cluster dynptr kfuncs.
         "bpf_dynptr_from_mem",
         "bpf_dynptr_read",
         "bpf_dynptr_write",
-        // W4.2f: skb / xdp dynptr kfuncs.
+        // skb / xdp dynptr kfuncs.
         "bpf_dynptr_from_skb",
         "bpf_dynptr_from_xdp",
-        // W4.2g: slice / slice_rdwr.
+        // slice / slice_rdwr.
         "bpf_dynptr_slice",
         "bpf_dynptr_slice_rdwr",
-        // W5.3: cpumask kfuncs.
+        // cpumask kfuncs.
         "bpf_cpumask_create",
         "bpf_cpumask_release",
         "bpf_cpumask_set_cpu",
         "bpf_cpumask_test_cpu",
         "bpf_cpumask_first",
-        // W5.5: arena kfuncs (ids 129, 130).
+        // arena kfuncs (ids 129, 130).
         "bpf_arena_alloc_pages",
         "bpf_arena_free_pages",
-        // W5.4a: owned-kptr alloc/drop/refcount kfuncs (ids 131..133).
+        // owned-kptr alloc/drop/refcount kfuncs (ids 131..133).
         "bpf_obj_new_impl",
         "bpf_obj_drop_impl",
         "bpf_refcount_acquire_impl",
-        // W5.4b: list / rbtree mutation kfuncs (ids 134..136).
+        // list / rbtree mutation kfuncs (ids 134..136).
         "bpf_list_push_front_impl",
         "bpf_list_pop_front",
         "bpf_rbtree_add_impl",

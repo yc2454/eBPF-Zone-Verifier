@@ -253,7 +253,7 @@ fn update_ptr_arithmetic_type(
                 types.set(dst, RegType::ScalarValue);
             }
         }
-        // W6.4a-followon: pointer arithmetic on a BTF-typed pointer (e.g.
+        // pointer arithmetic on a BTF-typed pointer (e.g.
         // `r1 = sk + 1296` to reach an embedded struct field) preserves
         // the type and trusted flags. Without this, struct_ops methods
         // that compute interior pointers via add/sub demoted to scalar
@@ -269,7 +269,7 @@ fn update_ptr_arithmetic_type(
         // matchers like `validate_ptr_to_cpumask` need to accept the
         // interior pointer. For non-named types (`"unknown"`,
         // `"struct"`) or unresolved offsets, fall back to preserving
-        // the source type — matches the W6.4a-followon shape.
+        // the source type — matches the shape.
         RegType::PtrToBtfId {
             type_name,
             flags,
@@ -1060,7 +1060,7 @@ pub(crate) fn update_call_types(
     // Default to scalar value
     state.types.set(Reg::R0, RegType::ScalarValue);
 
-    // Try the proto-driven path first (W4.1b). For helpers whose proto
+    // Try the proto-driven path first. For helpers whose proto
     // populates `ret`/`flags`/`side_effects`, this sets R0 and handles
     // acquire/release uniformly so kfuncs can reuse the same applier.
     // Returns false for helpers still on the legacy per-id match below.
@@ -1453,7 +1453,7 @@ pub(crate) fn update_call_types(
         // *_storage_get: R0 = PtrToMapValueOrNull keyed off the map (R1),
         // not the optional initial-value arg (R3). Real programs commonly
         // pass NULL for R3 (e.g. bpf_dctcp_init), and the prior version of
-        // this arm fell through to Scalar in that case. W7.1 fix.
+        // this arm fell through to Scalar in that case. fix.
         constants::BPF_SK_STORAGE_GET
         | constants::BPF_TASK_STORAGE_GET
         | constants::BPF_INODE_STORAGE_GET
@@ -1520,7 +1520,7 @@ pub(crate) fn update_call_types(
     } // end if !routed
 
     // Clobber caller-saved registers - they are NOT readable after the call.
-    // W7.2: fastcall helpers (v6.13) preserve R1..R5 — skip the regtype
+    // fastcall helpers (v6.13) preserve R1..R5 — skip the regtype
     // clobber so the values stay typed across the call. Paired with the
     // DBM/Tnum skip in `transfer.rs`.
     if !crate::analysis::transfer::call::signatures::is_fastcall_helper(helper) {

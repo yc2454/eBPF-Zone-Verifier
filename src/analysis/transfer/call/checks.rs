@@ -74,7 +74,7 @@ pub(crate) struct ValidationContext<'a, 'b> {
     pub arg_index: usize,
     pub map_info: &'a Option<MapInfo>,
     pub actual: RegType,
-    /// Pointer-size pairs for the call being validated (W4.2d). Lifted
+    /// Pointer-size pairs for the call being validated. Lifted
     /// off the proto at call entry so validators can short-circuit
     /// readability checks for pointers covered by an explicit pair
     /// without re-querying by helper id.
@@ -261,12 +261,12 @@ pub(crate) fn validate_single_arg(
         ArgKind::PtrToLong => validate_ptr_to_long(&mut ctx),
         ArgKind::PtrToCallback => validate_ptr_to_callback(&mut ctx),
 
-        // ---- Dynptr (W4.2c) ----
+        // ---- Dynptr ----
         ArgKind::DynptrArg { uninit, rdwr_only } => {
             validate_dynptr_arg(&mut ctx, uninit, rdwr_only)
         }
 
-        // ---- Iterator (W4.3) ----
+        // ---- Iterator ----
         ArgKind::IterArg { kind, expected } => validate_iter_arg(&mut ctx, kind, expected),
 
         // ---- IRQ flag ----
@@ -276,21 +276,21 @@ pub(crate) fn validate_single_arg(
 
         ArgKind::ResSpinLockArg { is_irq: _ } => validate_res_spin_lock_arg(&mut ctx),
 
-        // ---- Map-value special field (W5.1) ----
+        // ---- Map-value special field ----
         ArgKind::MapValueSpecial { kind } => validate_map_value_special(&mut ctx, kind),
 
-        // ---- Cpumask (W5.3) ----
+        // ---- Cpumask ----
         ArgKind::PtrToCpumask => validate_ptr_to_cpumask(&mut ctx),
         ArgKind::PtrToCpumaskRead => validate_ptr_to_cpumask_read(&mut ctx),
 
-        // ---- Cgroup (W6.3-followon) ----
+        // ---- Cgroup ----
         ArgKind::PtrToCgroup => validate_ptr_to_cgroup(&mut ctx),
         ArgKind::PtrToTask => validate_ptr_to_task(&mut ctx),
 
-        // ---- Arena (W5.5) ----
+        // ---- Arena ----
         ArgKind::PtrToArena => validate_ptr_to_arena(&mut ctx),
 
-        // ---- Owned kptr (W5.4) ----
+        // ---- Owned kptr ----
         ArgKind::PtrToOwnedKptr => validate_ptr_to_owned_kptr(&mut ctx),
 
         // ---- Anything (just needs to be readable) ----
@@ -496,7 +496,7 @@ fn validate_ptr_to_btf_id_named(
     )
 }
 
-/// Validate `ArgKind::PtrToCpumask` (W5.3).
+/// Validate `ArgKind::PtrToCpumask`.
 ///
 /// Only the non-null `RegType::PtrToCpumask` is accepted: cpumask
 /// kfuncs (set_cpu / test_cpu / first / release) all require the
@@ -590,7 +590,7 @@ fn validate_ptr_to_cpumask_read(ctx: &mut ValidationContext) -> bool {
     true
 }
 
-/// Validate `ArgKind::PtrToCgroup` (W6.3-followon).
+/// Validate `ArgKind::PtrToCgroup`.
 ///
 /// Mirrors `validate_ptr_to_cpumask`: only the non-null
 /// `RegType::PtrToCgroup` is accepted. Cgroup consumers
@@ -704,7 +704,7 @@ fn validate_ptr_to_task(ctx: &mut ValidationContext) -> bool {
     true
 }
 
-/// Validate `ArgKind::PtrToArena` (W5.5).
+/// Validate `ArgKind::PtrToArena`.
 ///
 /// Kernel `verifier.c` ~L10370 (v6.15) for `ARG_PTR_TO_ARENA`:
 /// "only PTR_TO_ARENA or SCALAR make sense" — both shapes are
@@ -734,7 +734,7 @@ fn validate_ptr_to_arena(ctx: &mut ValidationContext) -> bool {
     true
 }
 
-/// Validate `ArgKind::PtrToOwnedKptr` (W5.4).
+/// Validate `ArgKind::PtrToOwnedKptr`.
 ///
 /// Accepts either:
 ///   - `PtrToOwnedKptr` (from `bpf_obj_new` + null-check), or
@@ -800,7 +800,7 @@ fn validate_ptr_to_stack(ctx: &mut ValidationContext) -> bool {
     true
 }
 
-/// Validate `ArgKind::DynptrArg` (W4.2c).
+/// Validate `ArgKind::DynptrArg`.
 ///
 /// The actual reg must be a `PtrToStack` aimed at the dynptr's first
 /// slot. Behavior splits on `uninit`:
@@ -993,7 +993,7 @@ fn validate_dynptr_arg(ctx: &mut ValidationContext, uninit: bool, rdwr_only: boo
     true
 }
 
-/// Validate `ArgKind::IterArg` (W4.3).
+/// Validate `ArgKind::IterArg`.
 ///
 /// The actual reg must be a `PtrToStack` aimed at the iterator slot's
 /// base offset. The slot's recorded `kind` must match `kind`, and its
@@ -1162,7 +1162,7 @@ fn validate_irq_flag_arg(
     }
 }
 
-/// Validate `ArgKind::MapValueSpecial` (W5.1).
+/// Validate `ArgKind::MapValueSpecial`.
 ///
 /// The actual reg must be `PtrToMapValue { offset, map_idx }` where the
 /// map's value BTF carries a `SpecialField` of the requested `kind` at
@@ -1980,7 +1980,7 @@ pub(crate) fn check_ptr_access_size(
                     );
                     return false;
                 }
-                // W3.2 / W4.2: helper buffer access (read or write) may
+                //  / : helper buffer access (read or write) may
                 // not overlap an active iter slot or dynptr body. The
                 // initialization check below is skipped for PtrToUninitMem
                 // (helper writes the bytes), so the opaque-body rule

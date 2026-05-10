@@ -463,7 +463,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     }
 
     // ========================================================================
-    // Proto-flag-driven pre-call mutations (W5.2)
+    // Proto-flag-driven pre-call mutations
     //
     // bpf_spin_lock / _unlock and bpf_rcu_read_lock / _unlock all run
     // their state mutation here. Arg shape is already validated by
@@ -582,7 +582,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
         }
     }
 
-    // W3.4b: callback-taking helpers (bpf_loop / bpf_for_each_map_elem /
+    // callback-taking helpers (bpf_loop / bpf_for_each_map_elem /
     // bpf_timer_set_callback) split into two successors:
     //   - "skip": helper returns to pc+1 with its normal return-value
     //     bounds; the callback body is not treated as executing along
@@ -647,7 +647,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
 
     // 2.1 Scalar ID for helper return value.
     // An unknown scalar R0 gets a fresh id so that copies of it can later
-    // be linked and refined together (W2.1c).  Pointer or constant returns
+    // be linked and refined together. Pointer or constant returns
     // don't need scalar linking.
     use crate::analysis::machine::reg_types::RegType;
     if state.types.get(Reg::R0) == RegType::ScalarValue
@@ -662,7 +662,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     initialize_uninit_mem_args(&mut state, &in_types, helper);
 
     // 3. Update DBM - forget caller-saved registers and reset Tnums.
-    // W7.2: skip for fastcall helpers — kernel guarantees R1..R5 are
+    // skip for fastcall helpers — kernel guarantees R1..R5 are
     // preserved, so clang-emitted no-spill sequences must keep their
     // pre-call values + tnums + scalar_ids visible to the verifier.
     if !super::signatures::is_fastcall_helper(helper) {
@@ -858,7 +858,7 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
     }
 }
 
-/// True when `helper` takes a callback pointer argument (W3.4b + W6.5).
+/// True when `helper` takes a callback pointer argument.
 fn is_callback_helper(helper: u32) -> bool {
     matches!(
         helper,
@@ -876,7 +876,7 @@ fn callback_arg_reg(helper: u32) -> Reg {
         constants::BPF_LOOP => Reg::R2,
         constants::BPF_FOR_EACH_MAP_ELEM => Reg::R2,
         constants::BPF_TIMER_SET_CALLBACK => Reg::R2,
-        // W6.5: bpf_user_ringbuf_drain(map, callback, ctx, flags)
+        // bpf_user_ringbuf_drain(map, callback, ctx, flags)
         constants::BPF_USER_RINGBUF_DRAIN => Reg::R2,
         // bpf_find_vma(task, addr, callback, callback_ctx, flags)
         constants::BPF_FIND_VMA => Reg::R3,
@@ -901,7 +901,7 @@ fn transfer_callback_helper(
     };
     let cb_entry = subprog_pc as usize;
 
-    // W3.4c: bpf_timer_set_callback must be registered with no held locks
+    // bpf_timer_set_callback must be registered with no held locks
     // and no unreleased refs — the callback runs asynchronously, so any
     // state the verifier is still tracking on the caller frame would be
     // leaked. (Other callback helpers are synchronous and rely on the
@@ -1364,7 +1364,7 @@ pub(crate) fn transfer_call_rel(
         return vec![];
     }
 
-    // W6.5: global subprogs are verified independently against their
+    // global subprogs are verified independently against their
     // declared BTF FUNC_PROTO. At each call site we must:
     //   1. Reject malformed global signatures (void return, FWD args)
     //      that the kernel would reject at function-load time.
@@ -1652,7 +1652,7 @@ pub(crate) fn transfer_call_rel(
     vec![state]
 }
 
-/// Caller-side compatibility for a global subprog arg (W6.5). The
+/// Caller-side compatibility for a global subprog arg. The
 /// kernel rejects calls whose actual reg type doesn't satisfy the
 /// declared kind:
 ///   - declared Scalar: actual must be ScalarValue.
@@ -1759,7 +1759,7 @@ fn caller_arg_compatible<F: Fn() -> bool>(
     }
 }
 
-/// Apply the W5.2 lock / RCU pre-call flags carried on `proto`.
+/// Apply the lock / RCU pre-call flags carried on `proto`.
 /// Returns `false` (and calls `env.fail`) if the lock or RCU state
 /// machine rejects this call. Arg-shape checks already ran in
 /// `validate_helper_args`; here we only mutate `state.active_lock` /
@@ -1779,7 +1779,7 @@ pub(crate) fn apply_pre_call_lock_flags(
         return false;
     }
 
-    // W5.4: kfuncs marked SPIN_LOCK_HELD (rbtree / list mutation)
+    // kfuncs marked SPIN_LOCK_HELD (rbtree / list mutation)
     // require any spin_lock to be active. Lite scope doesn't match the
     // lock to a specific map's lock — any held lock satisfies.
     if proto.flags.contains(CallFlags::SPIN_LOCK_HELD) && !state.has_active_lock() {

@@ -15,7 +15,7 @@
 //! for those subprogs by walking the same relocations, which keeps the
 //! caller logic uniform (one path to reach `resolve_struct_ops_method`).
 //!
-//! Output is consumed by the W6.4a entry-state plumbing in the runner
+//! Output is consumed by the entry-state plumbing in the runner
 //! (step 4) — it joins each binding with
 //! [`crate::parsing::btf::BtfContext::resolve_struct_ops_method`] to
 //! type R1..Rn at subprog entry.

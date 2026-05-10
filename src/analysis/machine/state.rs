@@ -72,7 +72,6 @@ pub struct BtfFieldRef {
 /// verifier takes a `may_goto` back-edge it decrements this counter; the
 /// back-edge becomes infeasible once the counter hits zero, which is what
 /// lets the analysis terminate on unbounded-looking loops. Plumbing only in
-/// W3.1a — transfer semantics land in W3.1b, subsumption in W3.1c.
 pub const BPF_MAY_GOTO_LIMIT: u32 = 8_388_608;
 
 /// Mirrors `struct bpf_verifier_state` (partially).
@@ -117,8 +116,7 @@ pub struct State {
     /// a stack slot via `SpilledReg::scalar_id`) that share an id are the
     /// same underlying unknown scalar; refining one propagates to the
     /// others. See `new_scalar_id` / `alloc_scalar_id` / `link_scalar_id`.
-    /// Sparse: absent entry = unlinked. Phase-2 W2.1b wires assignment;
-    /// W2.1c consumes it in branch refinement.
+    /// Sparse: absent entry = unlinked.
     pub scalar_ids: HashMap<Reg, u32>,
 
     /// Registers whose exact scalar bounds are "precision-critical" — i.e. a
@@ -126,8 +124,8 @@ pub struct State {
     /// coarser widened bound. Populated by
     /// [`State::mark_reg_precise`] at branch comparisons and at
     /// variable-offset memory accesses. Propagated forward through ALU
-    /// (W2.2) and persisted across spills via [`SpilledReg::precise`].
-    /// Consumed in W2.3 to block state pruning from over-generalising
+    ///  and persisted across spills via [`SpilledReg::precise`].
+    /// Consumed to block state pruning from over-generalising
     /// across precision-marked registers.
     pub precise_regs: HashSet<Reg>,
 
@@ -145,7 +143,7 @@ pub struct State {
     // Active lock that is being held
     pub active_lock: Option<LockState>,
 
-    /// RCU read-side critical section nesting depth (W5.2). Incremented
+    /// RCU read-side critical section nesting depth. Incremented
     /// by `bpf_rcu_read_lock`, decremented by `bpf_rcu_read_unlock`.
     /// Helpers/kfuncs marked with `CallFlags::RCU` require depth > 0.
     /// Program exit rejects if depth > [`Self::implicit_rcu_at_entry`].
@@ -190,9 +188,9 @@ pub struct State {
 
     /// Remaining `may_goto` iterations on this path. Initialised to
     /// [`BPF_MAY_GOTO_LIMIT`] at entry. Decremented by the `may_goto`
-    /// transfer function on the taken branch (W3.1b); once zero the
+    /// transfer function on the taken branch; once zero the
     /// taken edge is infeasible. Subsumption will require the pruned
-    /// state's budget to be ≥ the candidate's (W3.1c).
+    /// state's budget to be ≥ the candidate's.
     pub goto_budget: u32,
 
     /// Static-analysis counter incremented each time the abstract
@@ -239,7 +237,7 @@ pub struct State {
     /// verifier_value_illegal_alu::flow_keys_illegal_variable_offset_alu.
     pub kernel_tnum_imprecise: HashSet<Reg>,
 
-    /// Program-default exception callback entry PC (W3.3a plumbing).
+    /// Program-default exception callback entry PC.
     /// Used when `bpf_throw` unwinds past every frame without finding a
     /// frame-local `exception_cb` (see [`CallFrame::exception_cb`]). A
     /// modern BPF program registers this via `bpf_set_exception_callback`
@@ -287,14 +285,14 @@ impl State {
         }
     }
 
-    // ── Exception handler (W3.3a plumbing) ──────────────────────
+    // ── Exception handler ──────────────────────
     //
     // Handler resolution mirrors the kernel: `bpf_throw` walks the frame
     // stack from innermost outward looking for a frame-local
     // `exception_cb`; if none is set, fall back to the program-default
     // slot. Call sites go through these helpers rather than touching
     // `program_exception_cb` / `CallFrame::exception_cb` directly.
-    // Semantics (throw/unwind, callback frame push) land in W3.3b.
+    // Semantics (throw/unwind, callback frame push) land.
 
     /// Program-default exception callback, if registered.
     #[allow(dead_code)]
@@ -329,12 +327,11 @@ impl State {
         self.frames.current_mut().set_exception_cb(pc);
     }
 
-    // ── may_goto budget (W3.1a plumbing) ───────────────────────
+    // ── may_goto budget ───────────────────────
     //
     // Helpers mirror the spin_lock / ref_id conventions: call sites go
     // through these methods rather than touching `goto_budget` directly.
-    // Semantics (decrement on taken edge, reject on empty must-take) land
-    // in W3.1b.
+    // Semantics: decrement on taken edge, reject on empty must-take.
 
     pub fn goto_budget(&self) -> u32 {
         self.goto_budget
@@ -392,7 +389,7 @@ impl State {
     //
     // Identity tokens for unknown scalars. Call sites use these helpers
     // instead of touching `scalar_ids` / `SpilledReg::scalar_id` directly
-    // (encapsulation). Semantics are wired in W2.1b/c; today these are
+    // (encapsulation). Semantics are wired; today these are
     // plumbing only and the maps stay empty during verification.
 
     /// Current scalar id of register `r`, or None if unlinked / not a scalar.
@@ -433,13 +430,13 @@ impl State {
         self.scalar_ids.remove(&r);
     }
 
-    // ── Precision marking (W2.2) ───────────────────────────────
+    // ── Precision marking ───────────────────────────────
     //
     // `mark_reg_precise` is the entry point for callers that recognise a
     // register's exact bounds matter for safety (e.g. a branch comparison
     // that will refine bounds, or a variable offset feeding a memory
     // access). Marks propagate along scalar-id equivalence classes and
-    // forward through arithmetic; the field is consumed in W2.3 to block
+    // forward through arithmetic; the field is consumed to block
     // pruning that would generalise the marked register.
 
     /// Mark `r` as precision-critical. Also marks any other register
@@ -752,7 +749,7 @@ impl State {
         self.active_lock.as_ref()
     }
 
-    // ── RCU read-side tracking (W5.2) ───────────────────────────
+    // ── RCU read-side tracking ───────────────────────────
 
     pub fn rcu_read_lock(&mut self) {
         self.rcu_read_depth = self.rcu_read_depth.saturating_add(1);
@@ -1218,7 +1215,7 @@ impl State {
                 self.scalar_ids.remove(&dst);
             }
 
-            // Restore precision mark carried at spill time (W2.2).
+            // Restore precision mark carried at spill time.
             if spilled.precise {
                 self.precise_regs.insert(dst);
             } else {
@@ -1453,7 +1450,7 @@ impl State {
         self.frames.get_mut(level).caller_rcu_read_depth_snapshot = Some(snapshot);
     }
 
-    /// Push a callback frame entered via a callback-taking helper (W3.4b).
+    /// Push a callback frame entered via a callback-taking helper.
     /// Caller state is captured like a normal push, but the frame is
     /// flagged so Exit drops the path instead of resuming the caller.
     /// `helper` is stashed on the frame for return-value tightening.

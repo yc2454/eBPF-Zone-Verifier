@@ -3,7 +3,7 @@ use crate::domains::tnum::Tnum;
 use crate::{analysis::machine::reg_types::RegType, ast::MemSize};
 use std::collections::{BTreeMap, HashSet};
 
-/// Open-coded iterator families (Phase 3 W3.2).
+/// Open-coded iterator families (Phase 3 ).
 ///
 /// Mirrors the four in-tree `bpf_iter_*` structs created by `*_new`,
 /// advanced by `*_next` and released by `*_destroy`. The iterator's
@@ -64,7 +64,7 @@ pub enum IterState {
 }
 
 /// Per-slot iterator annotation. `id` is a fresh token minted at `*_new`
-/// time (used by subsumption in W3.2c to match "same loop"). `depth`
+/// time (used by subsumption to match "same loop"). `depth`
 /// mirrors kernel `iter.depth`: incremented on every ACTIVE-branch fork
 /// at `*_next`, used by iter-loop convergence to keep iterations
 /// distinguishable so the inf-loop detector doesn't fire on legitimate
@@ -91,7 +91,7 @@ pub struct IteratorSlot {
     pub untrusted: bool,
 }
 
-/// Dynptr families (Phase 4 W4.2).
+/// Dynptr families (Phase 4 ).
 ///
 /// Mirrors the kernel's `enum bpf_dynptr_type`. The kind is fixed at
 /// construction by the producer kfunc and constrains which consumer
@@ -116,7 +116,7 @@ pub enum DynptrKind {
     User,
 }
 
-/// Per-slot dynptr annotation (W4.2). A dynptr occupies two adjacent
+/// Per-slot dynptr annotation. A dynptr occupies two adjacent
 /// 8-byte stack slots; both carry an annotation so the verifier can
 /// reject reads/writes that touch only one of the pair.
 ///
@@ -210,20 +210,20 @@ pub struct SpilledReg {
     pub bounds: ScalarBounds,
     pub size: MemSize,
     pub ptr_bounds: Option<PointerBounds>,
-    /// Identity token for this scalar value. `None` until Phase-2 W2.1b
-    /// wires assignment/linking; refinement (W2.1c) propagates bound/tnum
+    /// Identity token for this scalar value. `None` until Phase-2
+    /// wires assignment/linking; refinement propagates bound/tnum
     /// tightenings across all slots and registers sharing the same id.
     pub scalar_id: Option<u32>,
     /// Precision mark carried from the source register at spill time
-    /// (W2.2). Restored on fill so a register reloaded from the stack
+    /// . Restored on fill so a register reloaded from the stack
     /// stays on the precise chain.
     pub precise: bool,
-    /// Open-coded iterator annotation (W3.2). Set only on the base byte
+    /// Open-coded iterator annotation. Set only on the base byte
     /// of the iterator struct at `*_new` time; trailing bytes of the
     /// struct stay as ordinary spill sentinels. Private — all access
     /// outside this module goes through `stack_{get,set,clear}_iterator`.
     pub(crate) iterator: Option<IteratorSlot>,
-    /// Dynptr annotation (W4.2). Set on both 8-byte slots of the dynptr
+    /// Dynptr annotation. Set on both 8-byte slots of the dynptr
     /// pair at construction; cleared on release / overwrite. Private —
     /// all access outside this module goes through
     /// `stack_{get,set,clear}_dynptr`.
@@ -397,14 +397,14 @@ impl StackState {
     }
 
     /// Read the open-coded iterator annotation at a stack offset, if any
-    /// (W3.2). Only the base byte of a multi-byte iterator struct carries
+    /// . Only the base byte of a multi-byte iterator struct carries
     /// the annotation.
     pub fn stack_get_iterator(&self, offset: i16) -> Option<IteratorSlot> {
         self.slots.get(&offset).and_then(|s| s.iterator)
     }
 
     /// Set the open-coded iterator annotation on an already-initialized
-    /// slot (W3.2). The slot must exist — callers are expected to have
+    /// slot. The slot must exist — callers are expected to have
     /// reserved the iterator struct bytes on the stack first.
     pub fn stack_set_iterator(&mut self, offset: i16, iter: IteratorSlot) {
         if let Some(spilled) = self.slots.get_mut(&offset) {
@@ -412,7 +412,7 @@ impl StackState {
         }
     }
 
-    /// Clear the iterator annotation at a stack offset (W3.2). No-op if
+    /// Clear the iterator annotation at a stack offset. No-op if
     /// the slot doesn't exist or doesn't carry one.
     pub fn stack_clear_iterator(&mut self, offset: i16) {
         if let Some(spilled) = self.slots.get_mut(&offset) {
@@ -421,7 +421,7 @@ impl StackState {
     }
 
     /// True if any slot currently holds an Active or Drained iterator
-    /// (W3.2). Parallel to `has_unreleased_refs` — used at exit to
+    /// . Parallel to `has_unreleased_refs` — used at exit to
     /// reject programs that leak iterators.
     pub fn has_active_iterators(&self) -> bool {
         self.slots.values().any(|s| {
@@ -431,14 +431,14 @@ impl StackState {
         })
     }
 
-    /// Read the dynptr annotation at a stack offset, if any (W4.2). Both
+    /// Read the dynptr annotation at a stack offset, if any. Both
     /// the base and trailing slot of a dynptr pair carry an annotation;
     /// inspect `DynptrSlot::first_slot` to tell them apart.
     pub fn stack_get_dynptr(&self, offset: i16) -> Option<DynptrSlot> {
         self.slots.get(&offset).and_then(|s| s.dynptr)
     }
 
-    /// Set the dynptr annotation on an already-initialized slot (W4.2).
+    /// Set the dynptr annotation on an already-initialized slot.
     /// Callers are expected to have reserved the dynptr's 16 stack bytes
     /// first and to write *both* slots of the pair (base with
     /// `first_slot: true`, trailing with `first_slot: false`).
@@ -448,7 +448,7 @@ impl StackState {
         }
     }
 
-    /// Clear the dynptr annotation at a stack offset (W4.2). No-op if
+    /// Clear the dynptr annotation at a stack offset. No-op if
     /// the slot doesn't exist or doesn't carry one. Callers releasing a
     /// dynptr should clear both slots of the pair.
     pub fn stack_clear_dynptr(&mut self, offset: i16) {
@@ -458,7 +458,7 @@ impl StackState {
     }
 
     /// True if any slot holds a dynptr that carries an acquire/release
-    /// ref (W4.2). Parallel to `has_active_iterators` / `has_unreleased_refs`
+    /// ref. Parallel to `has_active_iterators` / `has_unreleased_refs`
     /// — used at exit to reject programs that leak ringbuf reservations
     /// or other ref-bearing dynptrs. Non-ref dynptrs (`Local`, `Skb`,
     /// `Xdp`) carry `ref_id == 0` and are allowed at exit (they're just
@@ -550,7 +550,7 @@ impl StackState {
     }
 
     /// True if a direct read at `off..off+size` overlaps any byte of a
-    /// dynptr's body (W4.2). Programs may not read the dynptr metadata
+    /// dynptr's body. Programs may not read the dynptr metadata
     /// bytes — they're opaque kernel state. Applies to *any* dynptr
     /// kind, regardless of ref_id (the body of a Local/Skb/Xdp dynptr
     /// is also not user-readable). Helpers reach into the dynptr via
@@ -568,7 +568,7 @@ impl StackState {
     }
 
     /// True if a stack access at `off..off+size` overlaps any byte of an
-    /// active open-coded iterator's body (W3.2). Iter structs span
+    /// active open-coded iterator's body. Iter structs span
     /// `bpf_iter_size(kind)` bytes — the annotation lives only on the
     /// base byte, so we resolve the size by looking at each annotated
     /// slot. Applies to both reads and writes: programs treat iter

@@ -63,7 +63,7 @@ fn fanout_scalar_bounds(state: &mut State, left: Reg) {
         // large sentinel values in the scalar interval.  In those
         // cases the fan-out is either a no-op (if IDs are stale) or
         // would produce a false inconsistency.  A future pass
-        // (W2.1d) will clean up stale IDs at merge points; for now
+        //  will clean up stale IDs at merge points; for now
         // we be conservative and only tighten when it's safe.
         if lo > r_hi || hi < r_lo {
             continue;

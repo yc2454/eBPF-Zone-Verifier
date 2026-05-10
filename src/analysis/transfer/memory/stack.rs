@@ -144,7 +144,7 @@ pub(crate) fn check_stack_initialization(
 
     match kind {
         AccessKind::Read => {
-            // W4.2: dynptr body bytes are opaque kernel metadata. A
+            // dynptr body bytes are opaque kernel metadata. A
             // direct read that overlaps any byte of an active dynptr's
             // 16-byte slot pair is the kernel's "invalid read from
             // stack" rejection. Programs reach inside via
@@ -156,7 +156,7 @@ pub(crate) fn check_stack_initialization(
                 });
                 return;
             }
-            // W3.2: same for open-coded iterators — body is opaque.
+            // same for open-coded iterators — body is opaque.
             if stack.access_overlaps_iterator(actual_offset, size) {
                 env.fail(VerificationError::InvalidStackRead {
                     pc,
@@ -205,7 +205,7 @@ pub(crate) fn check_stack_initialization(
             }
         }
         AccessKind::HelperBuffer | AccessKind::HelperPrimitive => {
-            // W4.2: same dynptr-body-read rule as direct loads —
+            // same dynptr-body-read rule as direct loads —
             // helpers reading a stack region overlapping a dynptr's
             // opaque metadata bytes is rejected ("invalid read from
             // stack"). Catches `add_dynptr_to_map1` and friends.
@@ -216,7 +216,7 @@ pub(crate) fn check_stack_initialization(
                 });
                 return;
             }
-            // W3.2: same for iter slots — helpers may not read or
+            // same for iter slots — helpers may not read or
             // write iter bodies. Catches probe_read_kernel(iter+7, 1).
             if stack.access_overlaps_iterator(actual_offset, size) {
                 env.fail(VerificationError::InvalidStackRead {
@@ -229,7 +229,7 @@ pub(crate) fn check_stack_initialization(
             // range to be initialized for non-uninit pointer kinds (see
             // check_helper_mem_access). The previous `any_initialized`
             // gate let partially-initialized buffers slip through —
-            // surfaced on the W4.2e bpf_dynptr_from_mem(buf=R10-24,
+            // surfaced on the bpf_dynptr_from_mem(buf=R10-24,
             // size=16) test where bytes -16..-9 were uninit.
             //
             // Privileged-mode exception: `int_ptr.json::ARG_PTR_TO_LONG

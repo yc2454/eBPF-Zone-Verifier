@@ -273,7 +273,7 @@ pub struct DatasecEntry {
 ///
 /// `TrustedPtr(name)` is a pointer to a named struct/union; the name
 /// is the BTF type name (e.g. "sock", "tcp_sock", "task_struct").
-/// The W6.4a entry-state plumbing maps this to
+/// The entry-state plumbing maps this to
 /// `RegType::PtrToBtfId { type_name, flags: TRUSTED }` after interning
 /// through a small static table of well-known kernel struct names.
 ///
@@ -288,7 +288,7 @@ pub enum StructOpsArg {
 }
 
 /// Classification of one parameter in a global subprog's BTF FUNC_PROTO.
-/// Drives the W6.5 "global function arg validation" path: caller-side
+/// Drives the "global function arg validation" path: caller-side
 /// type matching, callee-side R1..R5 entry-state seeding, and the
 /// `FWD size cannot be determined` rejection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -395,7 +395,7 @@ pub(super) fn refine_global_arg_with_tags(
 
 /// Names of struct types the kernel treats as a BPF program context
 /// when used as a pointer arg of a global subprog. Drives the
-/// caller-side "PtrToCtx is admissible" check in W6.5. Mirrors the
+/// caller-side "PtrToCtx is admissible" check. Mirrors the
 /// kernel's per-prog-type ctx struct allowlist (kept loose: any
 /// recognized name is accepted regardless of the calling prog kind —
 /// a tighter check would require per-prog-type plumbing we defer).

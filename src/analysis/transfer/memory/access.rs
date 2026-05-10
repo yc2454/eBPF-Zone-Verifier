@@ -236,7 +236,7 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             }
         }
         PtrToAllocMem { mem_size, .. } => {
-            // Bounded allocated memory (W4.2g: surfaced when
+            // Bounded allocated memory (: surfaced when
             // bpf_dynptr_slice's PtrToAllocMemOrNull return is
             // refined to PtrToAllocMem after a null check). Mirrors
             // the store-side bounds check at access.rs:269.
@@ -268,7 +268,7 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
         }
         // Phase 7 wrap-up: lax field-access on trusted typed BTF
         // pointers we don't have a `mem_region_model` entry for.
-        // Mirrors the W6.4a-followon `PtrToBtfId{type_name: "unknown"}`
+        // Mirrors the `PtrToBtfId{type_name: "unknown"}`
         // policy — accept any field read; result is `ScalarValue` (or a
         // nested PtrToBtfId if narrower modeling lands later).
         PtrToTask { .. } | PtrToCgroup { .. } => {
@@ -555,7 +555,7 @@ pub fn check_store(
             // so OOB-looking stores zero-fault rather than reject. The
             // kernel verifier doesn't bound stores against alloc size.
         }
-        // W6.4a-followon: writes through a BTF-typed pointer.
+        // writes through a BTF-typed pointer.
         // Mirror the load-side policy at access.rs::update_load_types:
         //   * `type_name == "unknown"` (no layout) — accept; the BTF
         //     resolver intentionally widens to "unknown" for kernel

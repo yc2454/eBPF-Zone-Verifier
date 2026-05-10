@@ -62,7 +62,7 @@ pub struct VerifierConfig {
     /// Enabled automatically by --kernel-mode.
     pub require_single_loop_entry: bool,
 
-    /// W7.3: model the v6.12 private-stack feature for eligible program
+    /// model the v6.12 private-stack feature for eligible program
     /// types (kprobe / tracepoint / perf_event / raw_tracepoint /
     /// struct_ops, with sched_ext landing through StructOps). When ON,
     /// subprograms in eligible programs get a separate stack arena and
@@ -96,7 +96,7 @@ impl Default for VerifierConfig {
             map_overrides: std::collections::HashMap::new(),
             detect_bounded_loops: true, // Default: enabled for precision
             require_single_loop_entry: false, // Default: allow multi-entry loops
-            enable_private_stack: true, // W7.3 default: mirror v6.12+ kernel
+            enable_private_stack: true, // mirror v6.12+ kernel default
             certificate_output: None,
             certificate_input: None,
             certificate: None,

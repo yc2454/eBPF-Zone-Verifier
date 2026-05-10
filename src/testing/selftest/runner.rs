@@ -165,7 +165,7 @@ pub const PER_FILE_DEFINES: &[(&str, &[&str])] = &[
     // payload functions by tripping those gates at compile time.
     ("verifier_load_acquire.c", &["CAN_USE_LOAD_ACQ_STORE_REL"]),
     ("verifier_store_release.c", &["ENABLE_ATOMICS_TESTS", "__TARGET_ARCH_x86"]),
-    // W7.3: private-stack tests are gated on __TARGET_ARCH_x86 in the
+    // private-stack tests are gated on __TARGET_ARCH_x86 in the
     // upstream source. The `__jited(...)` annotations check actual x86
     // codegen which we don't validate; only `__success`/`__failure` is
     // consulted by our runner, so the gate is safe to trip at compile time.

@@ -31,7 +31,7 @@ pub enum ProgramKind {
     Lsm,
     Tracing,
     /// `SEC("syscall")` — BPF_PROG_TYPE_SYSCALL (kernel v5.11+).
-    /// Distinct from generic Unknown so the W6.3 prog-type allowlist
+    /// Distinct from generic Unknown so the prog-type allowlist
     /// can permit cgroup / cpumask / task kfuncs in syscall programs
     /// (where they're allowed) but reject in raw_tp.
     Syscall,
@@ -40,7 +40,7 @@ pub enum ProgramKind {
     /// in v6.12). Each program implements one member of an ops-struct
     /// (`tcp_congestion_ops.init`, `sched_ext_ops.dispatch`, …); R1..Rn
     /// entry types are derived from that member's BTF FUNC_PROTO by the
-    /// W6.4 entry-state plumbing.
+    ///  entry-state plumbing.
     StructOps,
     /// `SEC("netfilter")` — BPF_PROG_TYPE_NETFILTER. R0 at exit must be a
     /// known value in [0, 1] (NF_DROP / NF_ACCEPT).
@@ -87,7 +87,7 @@ impl ProgramKind {
         let s = s.to_lowercase();
         let s = s.trim();
 
-        // ---- Modern aliases (W6.2) ----
+        // ---- Modern aliases ----
         //
         // Recognized natively rather than relying on incidental
         // `starts_with("tc")` matches or falling through to Unknown. Each
@@ -105,7 +105,7 @@ impl ProgramKind {
         // SECs without a corresponding ProgramKind variant
         // (`syscall`, `flow_dissector`, `sk_reuseport`, `sk_lookup`,
         // `struct_ops/*`, `netfilter/*`) intentionally fall through to
-        // Unknown — adding variants is W6.3/W6.4 territory.
+        // Unknown — adding variants is / territory.
         if s.starts_with("tcx/") || s.starts_with("netkit/") {
             return ProgramKind::SchedCls;
         }
@@ -215,7 +215,7 @@ impl ProgramKind {
         if s == "sk_reuseport" || s.starts_with("sk_reuseport/") {
             return ProgramKind::SkReuseport;
         }
-        // struct_ops (W6.4). Forms in the wild:
+        // struct_ops. Forms in the wild:
         //   "struct_ops"             — bare, member named after func symbol
         //   "struct_ops/<member>"    — explicit member binding
         //   "struct_ops.s/<member>"  — sleepable variant

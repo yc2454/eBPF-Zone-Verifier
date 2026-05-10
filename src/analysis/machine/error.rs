@@ -270,7 +270,7 @@ pub enum VerificationError {
         pc: usize,
     },
     /// Helper / kfunc marked `CallFlags::SPIN_LOCK_HELD` invoked
-    /// without an active spin_lock (W5.4). rbtree / list mutators
+    /// without an active spin_lock. rbtree / list mutators
     /// require a held lock to prevent races on the per-map-value
     /// head/root.
     NotInSpinLockSection {
@@ -378,7 +378,7 @@ pub enum VerificationError {
     LsmHookDisabled {
         hook: String,
     },
-    /// Kfunc proto carries a `prog_type_allowlist` (W6.3) and the
+    /// Kfunc proto carries a `prog_type_allowlist` and the
     /// program's `ProgramKind` is not in it. Mirrors the kernel
     /// verifier's per-kfunc `KF_PROG_TYPE_*` check (e.g. cgroup /
     /// cpumask / task families are gated to syscall / tracepoint /
@@ -388,7 +388,7 @@ pub enum VerificationError {
         btf_id: u32,
         kind: ProgramKind,
     },
-    /// W6.4c: kfunc rejected because the calling subprog is wired
+    /// kfunc rejected because the calling subprog is wired
     /// into a struct_ops member that's not in the kfunc's allowed
     /// (ops_struct, member) set. E.g. `scx_bpf_select_cpu_dfl` is
     /// callable only from `sched_ext_ops.select_cpu`.

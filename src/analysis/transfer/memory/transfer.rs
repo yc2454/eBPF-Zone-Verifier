@@ -248,7 +248,7 @@ pub(crate) fn transfer_store(
     if let RegType::PtrToStack { frame_level } = base_type {
         if let Some(base_off) = state.domain.get_distance_fixed(base, Reg::R10) {
             let full_offset = base_off + off as i64;
-            // W4.2: a stack write that overlaps any byte of an active
+            // a stack write that overlaps any byte of an active
             // ref-bearing dynptr (today: ringbuf reservations) is the
             // kernel's "cannot overwrite referenced dynptr" rejection.
             // Allowed for unreferenced dynptrs (Local/Skb/Xdp) — but
@@ -282,7 +282,7 @@ pub(crate) fn transfer_store(
                     state.invalidate_dynptr_slices(*vid);
                 }
             }
-            // W3.2: same shape for open-coded iterators. Iter bodies
+            // same shape for open-coded iterators. Iter bodies
             // are opaque — only `*_new`/`*_next`/`*_destroy` may write
             // them. Without this, `spill_at` silently wipes the iter
             // annotation and a missing destroy slips by the exit-time
