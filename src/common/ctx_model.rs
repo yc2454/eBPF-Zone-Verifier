@@ -2028,7 +2028,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
             use crate::analysis::machine::context::{
                 EntryArg, intern_btf_type_name_strict,
             };
-            use crate::analysis::transfer::types::trusted_field_load;
+            use crate::analysis::transfer::field_tables::trusted_field_load;
             use crate::parsing::btf::BtfFieldKind;
             if let EntryArg::TrustedPtrBtfId { type_name, .. } = arg0 {
                 if size == 8

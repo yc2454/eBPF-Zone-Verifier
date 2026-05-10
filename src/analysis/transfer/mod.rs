@@ -7,6 +7,7 @@ mod alu;
 mod branch;
 pub(crate) mod call;
 mod common;
+pub mod field_tables;
 mod memory;
 pub(crate) mod types;
 
