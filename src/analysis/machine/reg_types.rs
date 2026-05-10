@@ -20,6 +20,7 @@ impl PtrFlags {
     pub const RDONLY: PtrFlags = PtrFlags(1 << 3);
     pub const PERCPU: PtrFlags = PtrFlags(1 << 4);
     pub const MEM_ALLOC: PtrFlags = PtrFlags(1 << 5);
+    #[allow(dead_code)]
     pub const NON_OWN_REF: PtrFlags = PtrFlags(1 << 6);
     /// `__user` BTF type tag — kernel pointer addressing user-space memory.
     /// Direct deref is rejected; programs must use `bpf_copy_from_user`.
@@ -44,6 +45,7 @@ impl PtrFlags {
         PtrFlags(self.0 & !other.0)
     }
 
+    #[allow(dead_code)]
     pub const fn bits(self) -> u16 {
         self.0
     }
@@ -175,7 +177,7 @@ pub enum RegType {
         dynptr_id: Option<u32>,
         rdonly: bool,
     },
-    /// Refcounted pointer to a `struct bpf_cpumask` (W5.3). Mirrors
+    /// Refcounted pointer to a `struct bpf_cpumask`. Mirrors
     /// `PtrToSocket` ref-tracking: `bpf_cpumask_create` mints a fresh
     /// `ref_id` on the OrNull form; null-check refinement promotes to
     /// the non-null form on the success branch and drops the ref on
@@ -186,7 +188,7 @@ pub enum RegType {
     PtrToCpumaskOrNull {
         ref_id: Option<u32>,
     },
-    /// Bounded pointer to memory allocated from a BPF arena (W5.5).
+    /// Bounded pointer to memory allocated from a BPF arena.
     /// `bpf_arena_alloc_pages` mints a fresh `ref_id` on the OrNull form
     /// with `mem_size = page_cnt * PAGE_SIZE`; null-check refinement
     /// promotes to the non-null form on the success branch and drops the
@@ -201,8 +203,8 @@ pub enum RegType {
         ref_id: Option<u32>,
         mem_size: u64,
     },
-    /// Refcounted pointer to a `struct cgroup` (W6.3-followon). Mirrors
-    /// the W5.3 cpumask family acquire/release pattern. `bpf_cgroup_from_id`
+    /// Refcounted pointer to a `struct cgroup`. Mirrors
+    /// the cpumask family acquire/release pattern. `bpf_cgroup_from_id`
     /// mints a fresh `ref_id` on the OrNull form; null-check refinement
     /// promotes to the non-null form on the success branch and drops the
     /// ref on the null branch; `bpf_cgroup_release` consumes the ref.
@@ -213,7 +215,7 @@ pub enum RegType {
     PtrToCgroupOrNull {
         ref_id: Option<u32>,
     },
-    /// Pointer to a `struct task_struct` (Phase 7 wrap-up). Mirrors the
+    /// Pointer to a `struct task_struct`. Mirrors the
     /// cgroup family acquire/release/null-check pattern. Minted by
     /// `bpf_get_current_task_btf` (no acquire — kernel-trusted current
     /// pointer), `bpf_task_acquire`, `bpf_task_from_pid` (the latter
@@ -225,7 +227,7 @@ pub enum RegType {
     PtrToTaskOrNull {
         ref_id: Option<u32>,
     },
-    /// Refcounted pointer to a heap-allocated kernel object (W5.4).
+    /// Refcounted pointer to a heap-allocated kernel object.
     /// Minted by `bpf_obj_new_impl` / `bpf_refcount_acquire_impl` and by
     /// list/rbtree pop kfuncs; consumed by `bpf_obj_drop_impl` and by
     /// list/rbtree push kfuncs (which transfer ownership into the
@@ -309,7 +311,7 @@ pub enum RegType {
         offset: i32,
     },
     /// Pointer to a callback subprogram, produced by `LD_IMM64 BPF_PSEUDO_FUNC`
-    /// (W3.4a). Consumed by callback-taking helpers (`bpf_loop`,
+    /// . Consumed by callback-taking helpers (`bpf_loop`,
     /// `bpf_for_each_map_elem`, `bpf_timer_set_callback`) and by the
     /// `bpf_set_exception_callback` kfunc to register an exception handler.
     /// Not dereferenceable as data; arithmetic on it produces a scalar.
@@ -517,7 +519,7 @@ impl RegType {
         self.ptr_flags().contains(PtrFlags::TRUSTED)
     }
 
-    /// True when the pointer is known-untrusted (e.g. result of a pointer walk).
+    #[allow(dead_code)]
     pub fn is_untrusted(&self) -> bool {
         self.ptr_flags().contains(PtrFlags::UNTRUSTED)
     }
@@ -585,9 +587,9 @@ pub fn new_scalar_id() -> u32 {
     SCALAR_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
-/// Fresh identity token for an open-coded iterator (Phase 3 W3.2b).
+/// Fresh identity token for an open-coded iterator.
 /// Minted at `*_new` time and stored on the iterator's stack slot.
-/// Subsumption (W3.2c) matches states by this id to recognize "same
+/// Subsumption matches states by this id to recognize "same
 /// iterator loop" across revisits.
 pub fn new_iter_id() -> u32 {
     use std::sync::atomic::{AtomicU32, Ordering};

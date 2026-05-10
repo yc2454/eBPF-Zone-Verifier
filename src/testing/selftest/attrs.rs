@@ -87,7 +87,7 @@ pub fn scrape_str(text: &str) -> Vec<ProgAttrs> {
         //      ...). For struct_ops corpora the SEC lives on the outer ops-struct
         //      initializer, not on the per-callback function — without #2, only
         //      the first callback after the file-level `SEC("license")` attribute
-        //      gets emitted; the rest are silently dropped (W6.4c). expectations.json
+        //      gets emitted; the rest are silently dropped. expectations.json
         //      is consulted by the runner when no in-source verdict annotation is
         //      present, so emitting with an empty `cur` is safe.
         if let Some(name) = extract_func_name(line) {

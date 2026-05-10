@@ -4,7 +4,7 @@ use crate::parsing::btf::BtfContext;
 use crate::parsing::elf::{BpfMapDef, RelocInfo};
 use std::collections::{HashMap, HashSet};
 
-/// Per-argument entry-state typing for a struct_ops subprog (W6.4a).
+/// Per-argument entry-state typing for a struct_ops subprog.
 ///
 /// Captured by the runner once a `SEC("struct_ops*")` subprog has been
 /// matched against its ops-struct member binding (see
@@ -17,7 +17,7 @@ pub enum EntryArg {
     /// Trusted pointer to a named kernel struct. The string is interned
     /// via `intern_btf_type_name` so it satisfies the `&'static str`
     /// requirement of `RegType::PtrToBtfId`. `nullable` is set by the
-    /// runner from the W6.4c `STRUCT_OPS_MAYBE_NULL_ARGS` table —
+    /// runner from the `STRUCT_OPS_MAYBE_NULL_ARGS` table —
     /// some struct_ops callbacks declare specific args as PTR_MAYBE_NULL
     /// (e.g. `sched_ext_ops.dispatch`'s `prev`), and the program is
     /// required to null-check before deref. When true, the entry-arg
@@ -155,7 +155,7 @@ pub struct ExecContext {
     pub flags: u32,
     pub mode: VerificationMode,
     pub kfunc: Option<String>,
-    /// W6.4a struct_ops entry-state typing. When `prog_kind` is
+    ///  struct_ops entry-state typing. When `prog_kind` is
     /// `StructOps` and the runner has matched the subprog to its
     /// ops-struct member, this holds one [`EntryArg`] per kernel-passed
     /// argument (R1, R2, ...). `analyze_program_full` overrides the
@@ -172,19 +172,19 @@ pub struct ExecContext {
     /// `BtfContext::resolve_func_args(func.name)`; consumed by
     /// `analyze_program_full` to type each argument register at entry.
     pub freplace_arg_types: Option<Vec<EntryArg>>,
-    /// W6.4a-followon: true when the matched struct_ops member's
+    /// true when the matched struct_ops member's
     /// FUNC_PROTO declares a void return. `transfer_exit` skips the
     /// "R0 not initialized" rejection in this case — void methods are
     /// not required to set R0, just like in the kernel verifier.
     pub entry_returns_void: bool,
-    /// W6.4c: when verifying a struct_ops subprog, the (ops_struct,
+    /// when verifying a struct_ops subprog, the (ops_struct,
     /// member) pair this subprog implements. Set by the runner from
     /// the same binding used to populate `entry_args`. Consumed by
     /// `transfer_kfunc_proto` to enforce per-(ops, member)
     /// `kfunc_ops_member_allowlist` (e.g. `scx_bpf_select_cpu_dfl`
     /// is callable only from `sched_ext_ops.select_cpu`).
     pub struct_ops_member: Option<(String, String)>,
-    /// Cluster B: lowercase SEC suffix after the first `/`, used by
+    /// lowercase SEC suffix after the first `/`, used by
     /// `expected_retval_rule` to pick the per-attach-type R0 range
     /// enforced at exit. `None` for SECs without a slash (e.g. `"netfilter"`,
     /// `"syscall"`) or when the runner did not stash the section name.

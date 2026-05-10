@@ -15,7 +15,7 @@ mod types;
 #[cfg(test)]
 mod tests;
 
-pub use ext::{BtfExt, CoreRelo, CoreReloKind, parse_btf_ext};
+pub use ext::parse_btf_ext;
 pub use map_defs::parse_btf_map_defs;
 pub use parse::parse_btf;
 pub use types::{

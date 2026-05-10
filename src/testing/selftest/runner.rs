@@ -156,7 +156,7 @@ pub fn with_selftest_caps_for_file(
 /// Keep this list small and explicit — anything not listed here is
 /// compiled with no extra defines.
 pub const PER_FILE_DEFINES: &[(&str, &[&str])] = &[
-    // Phase 1 ISA gates.
+    // ISA gates.
     ("verifier_gotol.c", &["CAN_USE_GOTOL"]),
     ("verifier_ldsx.c", &["__TARGET_ARCH_x86"]),
     ("verifier_movsx.c", &["__TARGET_ARCH_x86"]),
@@ -165,7 +165,7 @@ pub const PER_FILE_DEFINES: &[(&str, &[&str])] = &[
     // payload functions by tripping those gates at compile time.
     ("verifier_load_acquire.c", &["CAN_USE_LOAD_ACQ_STORE_REL"]),
     ("verifier_store_release.c", &["ENABLE_ATOMICS_TESTS", "__TARGET_ARCH_x86"]),
-    // W7.3: private-stack tests are gated on __TARGET_ARCH_x86 in the
+    // private-stack tests are gated on __TARGET_ARCH_x86 in the
     // upstream source. The `__jited(...)` annotations check actual x86
     // codegen which we don't validate; only `__success`/`__failure` is
     // consulted by our runner, so the gate is safe to trip at compile time.
@@ -210,7 +210,6 @@ pub enum Outcome {
 pub struct ProgReport {
     pub func_name: String,
     pub description: String,
-    pub sec: String,
     pub outcome: Outcome,
 }
 
@@ -328,7 +327,6 @@ fn run_file_with_dirs_inner(
                 return ProgReport {
                     func_name: attrs.func_name.clone(),
                     description: attrs.description.clone().unwrap_or_default(),
-                    sec: attrs.sec.clone().unwrap_or_default(),
                     outcome: Outcome::Skipped("filtered (baseline non-deterministic)".into()),
                 };
             }
@@ -432,18 +430,6 @@ fn rescore_file_level_reject(file_basename: &str, progs: &mut [ProgReport]) {
     }
 }
 
-/// Sweep every `*.c` file under `dir`. Compile failures are surfaced
-/// as a single `Outcome::Error` entry on a synthetic `<compile>` prog
-/// so the report still has a row for the file. Per-file extra defines
-/// are pulled from [`PER_FILE_DEFINES`].
-pub fn run_dir(
-    dir: &Path,
-    headers_root: &Path,
-    config: &VerifierConfig,
-) -> Result<Vec<FileReport>> {
-    run_dir_filtered(dir, headers_root, config, &RunAll)
-}
-
 pub fn run_dir_filtered(
     dir: &Path,
     headers_root: &Path,
@@ -520,7 +506,6 @@ pub fn run_dir_with_dirs(
                     progs: vec![ProgReport {
                         func_name: "<compile>".into(),
                         description: String::new(),
-                        sec: String::new(),
                         outcome: Outcome::Error(format!("{e}")),
                     }],
                 },
@@ -543,7 +528,6 @@ fn run_one(analyzer: &Analyzer, attrs: ProgAttrs, file_basename: &str) -> ProgRe
         return ProgReport {
             func_name: attrs.func_name,
             description,
-            sec,
             outcome: Outcome::Skipped("__load_if_JITed (JIT-only semantics)".into()),
         };
     }
@@ -565,7 +549,6 @@ fn run_one(analyzer: &Analyzer, attrs: ProgAttrs, file_basename: &str) -> ProgRe
                 return ProgReport {
                     func_name: attrs.func_name,
                     description,
-                    sec,
                     outcome: Outcome::Skipped(
                         "no verdict source (no __success/__failure and not in selftests/expectations.json)".into(),
                     ),
@@ -578,7 +561,6 @@ fn run_one(analyzer: &Analyzer, attrs: ProgAttrs, file_basename: &str) -> ProgRe
         return ProgReport {
             func_name: attrs.func_name,
             description,
-            sec,
             outcome: Outcome::Skipped("missing SEC()".into()),
         };
     }
@@ -665,7 +647,6 @@ fn run_one(analyzer: &Analyzer, attrs: ProgAttrs, file_basename: &str) -> ProgRe
     ProgReport {
         func_name: attrs.func_name,
         description,
-        sec,
         outcome,
     }
 }

@@ -653,7 +653,7 @@ pub fn load_relocations_for_function<P: AsRef<Path>>(
                 }
             }
 
-            // Cluster D3: section-symbol BPF-to-BPF call relocation. clang
+            // section-symbol BPF-to-BPF call relocation. clang
             // emits `call <static __noinline subprog in .text>` as an
             // R_BPF_64_32 reloc against the section's STT_SECTION symbol
             // (name == "" or ".text") instead of the function symbol — the
@@ -1168,7 +1168,7 @@ pub fn combine_program_with_subprogs<P: AsRef<Path> + Clone>(
     })
 }
 
-/// Phase 7 wrap-up: per-function whole-program loader.
+/// per-function whole-program loader.
 ///
 /// Like `combine_program_with_subprogs`, but scoped to a single
 /// SEC()'d entry function instead of the whole section. Loads
@@ -1243,7 +1243,7 @@ pub fn combine_function_with_subprogs<P: AsRef<Path> + Clone>(
             combined_relocs.insert(func_pc_in_combined + local_pc, reloc);
         }
 
-        // Cluster D3 (cont.): same-section subprog-to-subprog calls don't
+        // same-section subprog-to-subprog calls don't
         // carry a relocation — clang fills the call's imm with the real
         // PC-relative offset directly, since the linker doesn't need to
         // touch them. When we splice a subprog body into a different

@@ -150,7 +150,7 @@ pub fn is_ptr_to_btf_id_or_null_trusted_or_rcu(t: &RegType) -> bool {
 // ============================================================================
 
 /// Types compatible with PtrToSocket argument.
-/// Phase 3 cluster B follow-on: `is_ptr_to_tcp_sock` accepts the
+/// `is_ptr_to_tcp_sock` accepts the
 /// narrowed-by-`bpf_skc_to_tcp_sock` form so `bpf_sk_release(tcp)`
 /// is allowed (kernel checks ref_id, not the static subclass —
 /// PtrToTcpSock carries the same ref_id as the original socket).
@@ -173,7 +173,7 @@ pub static SOCK_COMMON_COMPAT: &[fn(&RegType) -> bool] = &[
 
 /// Types compatible with PtrToBTFIdSockCommon argument.
 ///
-/// W6.4a-followon: includes `PtrToBtfId` (any BTF-typed pointer). The
+/// includes `PtrToBtfId` (any BTF-typed pointer). The
 /// kernel verifier's `ARG_PTR_TO_BTF_ID_SOCK_COMMON` accepts any
 /// PTR_TO_BTF_ID whose type id is `struct sock` or a sock subclass
 /// (`tcp_sock`, `udp_sock`, …). For struct_ops methods we lose the

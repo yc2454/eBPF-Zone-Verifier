@@ -1,8 +1,12 @@
 // src/analysis/transfer/call/mod.rs
 
+pub mod callback;
 pub mod checks;
+pub mod mem_checks;
 pub mod compat;
+pub mod helper_protos;
 pub mod kfunc;
+pub mod kfunc_protos;
 pub mod side_effects;
 pub mod signatures;
 pub mod transfer;

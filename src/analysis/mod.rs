@@ -268,7 +268,7 @@ pub fn analyze_program_full(
         initial_state.implicit_rcu_at_entry = true;
     }
 
-    // W6.4a: struct_ops subprogs receive their args via the BPF_PROG
+    // struct_ops subprogs receive their args via the BPF_PROG
     // macro's ctx-array idiom — R1 stays as PtrToCtx (a `u64 *ctx`), and
     // each declared arg is unpacked at runtime via `*(u64 *)(ctx + 8*i)`.
     // The per-arg typing happens inside `validate_ctx_access` (see

@@ -26,7 +26,7 @@ pub enum AccessKind {
 /// True iff `base` has a variable (non-fixed) offset relative to its
 /// underlying anchor — i.e. some scalar was added to it whose exact value
 /// is not statically known. We look at the interval domain's `ptr_off` and
-/// check `var_off > 0`. Bucket F-D: variable-offset accesses are the
+/// check `var_off > 0`. Variable-offset accesses are the
 /// canonical precision sinks for kernel `mark_chain_precision`.
 fn base_has_variable_offset(state: &State, base: Reg) -> bool {
     use crate::domains::numeric::NumericDomain;
@@ -44,7 +44,7 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
     let base_type = state.types.get(base);
     let pc = state.pc;
 
-    // Bucket F-D: every memory access is a precision sink. Walk the
+    // every memory access is a precision sink. Walk the
     // History backward marking the access's offset lineage precise on
     // every cached state on the path. Mirrors kernel
     // `mark_chain_precision` (verifier.c v6.15 ~L4500-4900). The walker
@@ -236,7 +236,7 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             }
         }
         PtrToAllocMem { mem_size, .. } => {
-            // Bounded allocated memory (W4.2g: surfaced when
+            // Bounded allocated memory (: surfaced when
             // bpf_dynptr_slice's PtrToAllocMemOrNull return is
             // refined to PtrToAllocMem after a null check). Mirrors
             // the store-side bounds check at access.rs:269.
@@ -266,9 +266,9 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             // (`page2 +/- PAGE_SIZE`). Accept any offset; loaded value
             // stays `ScalarValue` via the type-update path.
         }
-        // Phase 7 wrap-up: lax field-access on trusted typed BTF
+        // lax field-access on trusted typed BTF
         // pointers we don't have a `mem_region_model` entry for.
-        // Mirrors the W6.4a-followon `PtrToBtfId{type_name: "unknown"}`
+        // Mirrors the `PtrToBtfId{type_name: "unknown"}`
         // policy — accept any field read; result is `ScalarValue` (or a
         // nested PtrToBtfId if narrower modeling lands later).
         PtrToTask { .. } | PtrToCgroup { .. } => {
@@ -384,8 +384,8 @@ pub fn check_store(
     let base_ty = state.types.get(base);
     let pc = state.pc;
 
-    // Bucket F-D / Option C: variable-offset store is also a precision sink.
-    // Bucket F-D: precision-mark the variable-offset contributor.
+    // variable-offset store is also a precision sink.
+    // precision-mark the variable-offset contributor.
     //
     // When `base` was constructed via `Alu Add base, Reg(scalar)` in
     // `arithmetic::handle_add`, the scalar that supplied the variable
@@ -555,7 +555,7 @@ pub fn check_store(
             // so OOB-looking stores zero-fault rather than reject. The
             // kernel verifier doesn't bound stores against alloc size.
         }
-        // W6.4a-followon: writes through a BTF-typed pointer.
+        // writes through a BTF-typed pointer.
         // Mirror the load-side policy at access.rs::update_load_types:
         //   * `type_name == "unknown"` (no layout) — accept; the BTF
         //     resolver intentionally widens to "unknown" for kernel

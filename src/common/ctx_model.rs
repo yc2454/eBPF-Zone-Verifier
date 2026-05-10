@@ -1971,7 +1971,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
         });
     }
 
-    // W6.4a: struct_ops subprogs receive their args via the BPF_PROG
+    // struct_ops subprogs receive their args via the BPF_PROG
     // wrapper's ctx-array idiom — clang emits each arg access as
     // `r_n = *(u64 *)(r1 + 8*i)` followed by an explicit cast to the
     // declared type. The verifier sees a PtrToCtx load whose result must
@@ -1983,7 +1983,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
     // recognized; this matches the codegen of the BPF_PROG macro and
     // avoids accidentally typing partial-byte reads that would have to
     // come from a different idiom.
-    // Phase 7 wrap-up: extended to fentry/fexit/tp_btf/lsm/tracepoint.
+    // extended to fentry/fexit/tp_btf/lsm/tracepoint.
     // The BPF_PROG() macro generates the same ctx-array idiom in all
     // these prog types; the runner now resolves entry_args from the
     // function's BTF FUNC_PROTO for non-struct_ops kinds via
@@ -2028,7 +2028,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
             use crate::analysis::machine::context::{
                 EntryArg, intern_btf_type_name_strict,
             };
-            use crate::analysis::transfer::types::trusted_field_load;
+            use crate::analysis::transfer::field_tables::trusted_field_load;
             use crate::parsing::btf::BtfFieldKind;
             if let EntryArg::TrustedPtrBtfId { type_name, .. } = arg0 {
                 if size == 8
@@ -2268,12 +2268,12 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                 });
             }
         }
-        // Phase 7 wrap-up: fallback for fentry/LSM/tp_btf where
+        // fallback for fentry/LSM/tp_btf where
         // `resolve_func_args` returns the BPF_PROG-wrapper signature
         // rather than the user-declared args (the kernel resolves these
         // from the attach target's vmlinux BTF, which we don't ship).
         // Surface ctx-array slot loads as a "trusted unknown pointer" —
-        // the W6.4a-followon access path then accepts any field read off
+        // the access path then accepts any field read off
         // it via the `type_name == "unknown"` lax policy. Loose but
         // sound: the kernel accepts everything we'd accept here.
         if !matches!(prog_kind, ProgramKind::StructOps) {
@@ -2337,7 +2337,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
         }
     }
 
-    // Cluster C1: for the BPF_PROG-style ctx prog kinds, the ctx is a
+    // for the BPF_PROG-style ctx prog kinds, the ctx is a
     // BTF arg array. Only 8-byte aligned 8-byte loads are valid; narrow
     // loads, misaligned loads, or negative offsets must reject. Without
     // this guard, those fall through to the SkBuff/etc. fallback below
@@ -2354,7 +2354,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
         return None;
     }
 
-    // Cluster C1: netfilter ctx is `struct bpf_nf_ctx { state; skb; }` —
+    // netfilter ctx is `struct bpf_nf_ctx { state; skb; }` —
     // only 8-byte loads at off 0 (state) and off 8 (skb) are valid.
     if prog_kind == ProgramKind::Netfilter {
         if size == 8 && (off == 0 || off == 8) {
@@ -2383,7 +2383,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
         return None;
     }
 
-    // Cluster C2: cgroup/post_bind4 and cgroup/post_bind6 use the BpfSock
+    // cgroup/post_bind4 and cgroup/post_bind6 use the BpfSock
     // ctx but with stricter per-attach-subtype field restrictions:
     //   - mark (off 16) is not readable in either post_bind4 or post_bind6
     //   - src_ip6 (off 28..44) is not readable in post_bind4 (IPv4-only)

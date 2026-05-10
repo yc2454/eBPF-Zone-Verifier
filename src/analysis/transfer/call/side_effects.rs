@@ -1,12 +1,10 @@
 // src/analysis/transfer/call/side_effects.rs
 //
-// Shared post-call applier (Phase 4 W4.1b).
+// Shared post-call applier.
 //
 // Reads `CallProto.ret`, `CallProto.flags`, and `CallProto.side_effects`
 // to drive R0 typing and ref-tracking. Replaces the per-helper-id arms
-// in `update_call_types` for migrated helpers; once Phase 4 W4.1c is
-// done, kfuncs will plug into the same applier through a parallel
-// proto producer in `signatures::kfuncs`.
+// in `update_call_types` for migrated helpers.
 
 use crate::analysis::machine::frame_stack::FrameLevel;
 use crate::analysis::machine::reg::Reg;

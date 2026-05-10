@@ -1,9 +1,10 @@
 //! Map `SEC("…")` strings to BPF prog_type values.
+#![allow(dead_code)]
 //!
 //! Mirrors libbpf's `section_defs[]` table, scoped to the SECs that
 //! actually appear in `tools/testing/selftests/bpf/progs/verifier_*.c`
 //! and the dynptr/iters/timer/cpumask/rbtree/list/refcount/rcu/arena
-//! corpora we need for Phase 1, 4, and 5 translation.
+//! and the additional corpora it covers.
 //!
 //! Unknown strings return `None` — caller decides whether to skip the
 //! test or surface an error. Add entries as new corpora arrive.
@@ -58,7 +59,7 @@ pub fn lookup(sec: &str) -> Option<SecMatch> {
         "flow_dissector" => constants::BPF_PROG_TYPE_FLOW_DISSECTOR,
         "lsm" | "lsm.s" | "lsm_cgroup" | "lsm_cgroup.s" => constants::BPF_PROG_TYPE_LSM,
         // BPF_PROG_TYPE_SYSCALL (= 32) and iter prog types aren't in
-        // common/constants.rs yet — Phase 6 territory. Add when needed.
+        // common/constants.rs yet — add when needed.
         "iter" | "iter.s" => constants::BPF_PROG_TYPE_TRACING,
 
         _ => return None,
@@ -92,7 +93,6 @@ mod tests {
 
     #[test]
     fn collapses_modern_aliases_to_underlying_type() {
-        // Phase 6 modernization plan calls these out: tcx/ingress, netkit/* etc.
         assert_eq!(
             lookup("tcx/ingress").unwrap().prog_type,
             constants::BPF_PROG_TYPE_SCHED_CLS

@@ -48,24 +48,24 @@ pub struct CallFrame {
     pub caller_domain: NumericDomain,
     pub caller_tnums: HashMap<Reg, Tnum>,
 
-    /// Innermost exception callback entry PC set on this frame (W3.3a).
+    /// Innermost exception callback entry PC set on this frame.
     /// `bpf_throw` unwinds to the nearest enclosing frame with a handler;
     /// if none is set on any frame, the state's program-default handler
     /// is used (see [`State::program_exception_cb`]). Plumbing only in
-    /// W3.3a — transfer semantics land in W3.3b. Read through
+    /// transfer semantics land. Read through
     /// [`CallFrame::exception_cb`] rather than touching the field.
     exception_cb: Option<usize>,
 
     /// True when this frame was entered through a callback-taking helper
     /// (`bpf_loop` / `bpf_for_each_map_elem` / `bpf_timer_set_callback`)
-    /// rather than via a subprog CallRel (W3.4b). On Exit the callback
+    /// rather than via a subprog CallRel. On Exit the callback
     /// path is dropped instead of merging back into the caller — the
     /// helper's post-call state is emitted separately at the call site.
     is_callback: bool,
 
     /// The helper id that entered this callback frame, when `is_callback`.
     /// Used on Exit to tighten the callback's return-value contract
-    /// (e.g. bpf_loop requires R0 ∈ {0, 1}) — W3.4c.
+    /// (e.g. bpf_loop requires R0 ∈ {0, 1}) —.
     callback_helper: Option<u32>,
 
     /// Snapshot of the caller frame's stack at cb-entry time. On clean
@@ -279,7 +279,7 @@ impl FrameStack {
         self.push_inner(return_pc, caller_types, caller_domain, caller_tnums, None)
     }
 
-    /// Push a callback frame (W3.4b). Same as [`push`] but flagged so
+    /// Push a callback frame. Same as [`push`] but flagged so
     /// Exit drops the path instead of merging into the caller; the
     /// originating helper id is stored for return-value tightening.
     pub fn push_callback(

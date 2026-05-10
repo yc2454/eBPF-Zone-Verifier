@@ -59,7 +59,7 @@ pub(crate) fn transfer_alu(
         return vec![];
     }
 
-    // Bucket F-D: clear `var_off_contributor[dst]` before the op runs;
+    // clear `var_off_contributor[dst]` before the op runs;
     // `handle_add` re-sets it for the `ptr += scalar` case. Any other op
     // (Mov, Sub, And, Mul, etc.) invalidates the contributor link.
     state.var_off_contributor.remove(&dst);
@@ -186,7 +186,7 @@ pub(crate) fn transfer_alu(
 
     // 6.5 Scalar ID lifecycle: link on identity copies, clear on value changes.
     // Done after update_alu_types so we see the final destination type.
-    // Also forward-propagate the W2.2 precision mark: any ALU result whose
+    // Also forward-propagate the precision mark: any ALU result whose
     // computation drew on a precise operand is itself precision-critical.
     let dst_prev_precise = state.is_reg_precise(dst);
     let src_precise = match &src {
@@ -231,7 +231,7 @@ pub(crate) fn transfer_alu(
         }
     } else {
         // dst became a pointer — no scalar id, and precision doesn't apply
-        // (we only track scalar precision for W2.3 pruning).
+        // (we only track scalar precision for pruning).
         state.clear_scalar_id(dst);
         state.clear_reg_precise(dst);
     }

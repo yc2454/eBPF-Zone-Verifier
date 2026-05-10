@@ -40,7 +40,7 @@ fn kfunc_callback_arg_reg(name: &str) -> Option<Reg> {
 /// Follows reg-to-reg Mov chains (`Mov cb_reg, R6` → keep scanning for
 /// the PSEUDO_FUNC that fed `R6`). Stops at the first branch/exit/call
 /// we see (simple basic-block walk); if later dataflow proves richer
-/// feeders, W3.4b can revisit.
+/// feeders, can revisit.
 ///
 /// Caught `verifier_private_stack::private_stack_callback`, where the
 /// pattern is `LoadMap R6, PseudoFunc; Mov R2, R6; Call bpf_loop`. R2
@@ -128,7 +128,7 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
             Ok(vec![])
         }
         Instr::Call { kind } => {
-            // W3.4a: callback-taking helpers (bpf_loop, bpf_for_each_map_elem,
+            // callback-taking helpers (bpf_loop, bpf_for_each_map_elem,
             // bpf_timer_set_callback) emit an extra successor edge into the
             // callback subprog so DFS explores it. The callback arg's
             // PSEUDO_FUNC feed is resolved by a backward scan within the
@@ -140,7 +140,6 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
                     .btf
                     .kfunc_name(*btf_id)
                     .and_then(kfunc_callback_arg_reg),
-                _ => None,
             };
             if let Some(cb_reg) = cb_reg
                 && let Some(subprog_pc) = find_pseudo_func_for_call(prog, pc, cb_reg)
@@ -150,7 +149,7 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
                     succs.push(target);
                     init_explored_state(env, target);
                 }
-                // Bucket F-A: sync-callback-calling helpers are force-
+                // sync-callback-calling helpers are force-
                 // checkpoint sites (kernel `mark_force_checkpoint` at
                 // verifier.c L17489). Eviction threshold n=64 here vs
                 // n=3 elsewhere — keeps cb-call checkpoints alive long
@@ -217,7 +216,7 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
             }
             succs.push(*target);
             init_explored_state(env, *target);
-            // Bucket F-A: may_goto is a force-checkpoint site (kernel
+            // may_goto is a force-checkpoint site (kernel
             // `mark_force_checkpoint` at verifier.c L17557).
             if pc < env.insn_aux_data.len() {
                 env.insn_aux_data[pc].force_checkpoint = true;

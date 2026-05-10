@@ -29,7 +29,7 @@ pub(crate) fn handle_add(
             if dst_is_ptr && !src_is_ptr {
                 // ptr += scalar: preserve relational info if possible.
                 //
-                // Bucket F-D: record the scalar contributor in
+                // record the scalar contributor in
                 // `var_off_contributor` so variable-offset access sites can
                 // call `mark_chain_precision_backward` on the scalar
                 // (rather than the base pointer). The walker reaches the

@@ -22,7 +22,7 @@ pub enum KptrAccessOutcome<'a> {
     /// referenced (Ref/Rcu/Percpu).
     Hit(&'a KptrField),
     /// Access overlaps a kptr field with size != 8.
-    BadSize { field_off: u32, size: i64 },
+    BadSize { _field_off: u32, size: i64 },
     /// Access overlaps a kptr field with a misaligned start offset
     /// (i.e., `off != field.offset`, but the access window intersects
     /// the kptr's 8-byte slot).
@@ -49,7 +49,7 @@ pub fn classify_kptr_access(map_def: &BpfMapDef, off: i64, size: i64) -> KptrAcc
         if off == f_off {
             // Right offset, wrong size (e.g., 4-byte read of a kptr).
             return KptrAccessOutcome::BadSize {
-                field_off: f.offset,
+                _field_off: f.offset,
                 size,
             };
         }
@@ -131,12 +131,12 @@ pub fn check_kptr_field_access(
                             // are allowed in the kernel — but the stored
                             // value must be a compatible BTF pointer or
                             // NULL. Source-side typing is enforced in
-                            // Phase 4 alongside `bpf_kptr_xchg`.
+                            // enforced alongside `bpf_kptr_xchg`.
                         }
                     }
                 }
             }
-            KptrAccessOutcome::BadSize { field_off: _, size } => {
+            KptrAccessOutcome::BadSize { _field_off: _, size } => {
                 env.fail(VerificationError::KptrAccessSizeMustBeDW {
                     pc,
                     off: final_off,
@@ -289,7 +289,7 @@ fn interval_check_map_access(
         let min_off = ptr_off.min_offset() + (insn_off as i64);
         let max_off = ptr_off.max_offset() + (insn_off as i64) + size;
 
-        // Cluster A1: enforce value_size bounds even when the map carries a
+        // enforce value_size bounds even when the map carries a
         // BTF value-type. The special-fields check below is additive — a
         // spin_lock overlap is one rejection reason, but plain OOB is another.
         if !(min_off >= 0 && max_off <= map_limit) {
@@ -334,7 +334,7 @@ fn zone_check_map_access(
         let access_start = min_val + (insn_off as i64);
         let access_end = max_val + (insn_off as i64) + size;
 
-        // Cluster A1: enforce value_size first; BTF special-field overlap is
+        // enforce value_size first; BTF special-field overlap is
         // additive, not a substitute.
         if !(access_start >= 0 && access_end <= map_limit) {
             error!(
@@ -399,7 +399,7 @@ pub(crate) fn transfer_map_load(
     // supported by the transfer domain. Fail cleanly here.
     let feature = match kind {
         MapLoadKind::MapPtr | MapLoadKind::MapValue => None,
-        // W3.4a: BPF_PSEUDO_FUNC is now handled below as PtrToCallback.
+        // BPF_PSEUDO_FUNC is now handled below as PtrToCallback.
         MapLoadKind::PseudoFunc { .. } => None,
         // BPF_PSEUDO_BTF_ID: handled below for `__ksym` extern relocations
         // when a `RelocKind::Ksym` reloc is registered for the LDIMM64 PC.
@@ -421,7 +421,7 @@ pub(crate) fn transfer_map_load(
     // BPF_PSEUDO_FUNC: materialize a callback pointer. Target PC was
     // resolved at decode time; no relocation lookup is needed. Consumed
     // by bpf_loop / bpf_for_each_map_elem / bpf_timer_set_callback and
-    // by bpf_set_exception_callback (W3.4).
+    // by bpf_set_exception_callback.
     if let MapLoadKind::PseudoFunc { subprog_pc } = kind {
         state.types.set(dst, RegType::PtrToCallback { subprog_pc });
         state.domain.forget(dst);

@@ -7,6 +7,7 @@ mod alu;
 mod branch;
 pub(crate) mod call;
 mod common;
+pub mod field_tables;
 mod memory;
 pub(crate) mod types;
 
@@ -146,7 +147,7 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
             // iterations once widening (or empty live-regs) makes the
             // body's effect on tracked state stable.
             //
-            // Bucket F-D: also mirror the kernel's static may_goto
+            // also mirror the kernel's static may_goto
             // machinery (`check_cond_jmp_op` BPF_JCOND arm, verifier.c
             // v6.15 ~L16400-16410): on each visit, find a previous
             // explored state at this same insn_idx, run
@@ -341,7 +342,7 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         env.mark_chain_precision_backward(hidx, state.parent_cache_id, Reg::R0);
     }
 
-    // Cluster B: per-attach-type retval range. When a finer rule applies
+    // per-attach-type retval range. When a finer rule applies
     // for the (prog_kind, attach_subtype) pair, prefer it over the coarse
     // `requires_strict_return_code` check below — the kernel's per-hook
     // ranges are tighter (e.g. cgroup/recvmsg* must return exactly 1).
@@ -410,7 +411,7 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     // non-main exits.
 
     // R0 must be readable at the main frame (it's the return value).
-    // W6.4a-followon: void-returning struct_ops methods are exempt — the
+    // void-returning struct_ops methods are exempt — the
     // kernel verifier doesn't require R0 to be set when the matched
     // ops-struct member's FUNC_PROTO declares a void return.
     if state.at_main_frame()
@@ -428,7 +429,7 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         return vec![];
     }
 
-    // W3.2b: open-coded iterators must be destroyed on every exit path.
+    // open-coded iterators must be destroyed on every exit path.
     // An Active or Drained iterator slot anywhere in the frame stack is
     // a leak — parallel to unreleased refs above.
     //
@@ -447,7 +448,7 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         return vec![];
     }
 
-    // W4.2c: ref-bearing dynptr slots (today: ringbuf reservations)
+    // ref-bearing dynptr slots (today: ringbuf reservations)
     // must be submitted or discarded on every exit path. Non-ref
     // dynptrs (Local/Skb/Xdp) are pure metadata over a pointer and
     // need no release. Same per-frame logic as iterators above.
@@ -473,7 +474,7 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         return vec![];
     }
 
-    // Check if any RCU read-side section is still open (W5.2). For
+    // Check if any RCU read-side section is still open. For
     // programs entered with the kernel's implicit RCU CS (kprobe,
     // tracepoint, raw_tp, perf_event), depth=1 at exit is the
     // kernel-supplied baseline — the kernel releases on return — so
@@ -543,11 +544,11 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         return vec![];
     }
 
-    // W3.4b: a callback frame's Exit doesn't merge back into the caller
+    // a callback frame's Exit doesn't merge back into the caller
     // by way of CallRel return semantics — the helper's post-call state
     // is emitted separately at the call site (see
     // `transfer_callback_helper`'s skip_state). What we DO emit here
-    // (bucket E) is a SECOND post-call state at the call site's pc+1
+    // This is a SECOND post-call state at the call site's pc+1
     // that carries the cb's effects on caller-frame stack memory. This
     // mirrors the kernel's iterative cb model (verifier.c v6.15
     // ~L10903+): cb-touched scalar stack slots get widened on the
@@ -566,7 +567,7 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         if let Some(hidx) = state.history_idx {
             env.mark_chain_precision_backward(hidx, state.parent_cache_id, Reg::R0);
         }
-        // W3.4c: bpf_loop / bpf_for_each_map_elem / bpf_user_ringbuf_drain
+        // bpf_loop / bpf_for_each_map_elem / bpf_user_ringbuf_drain
         // callbacks must return 0 (continue) or 1 (break). Timer callbacks
         // are void-returning and not constrained here.
         let cb_helper_id = state.frames.current().callback_helper();
@@ -770,12 +771,12 @@ fn cb_exit_propagate(env: &VerifierEnv, mut state: State) -> Vec<State> {
 
     state.pc = return_pc;
 
-    // Bucket F-D / cb-return widener (kernel verifier.c v6.15 ~L10903-10920):
+    // cb-return widener (kernel verifier.c v6.15 ~L10903-10920):
     //   prev_st = in_callback_fn ? find_prev_entry(env, state, *insn_idx) : NULL;
     //   if (prev_st)
     //       widen_imprecise_scalars(env, prev_st, state);
     //
-    // The snapshot-based widening above (W3.4b cb-effect) widens stack
+    // The snapshot-based widening above widens stack
     // slots the cb wrote during THIS iteration. The kernel additionally
     // runs `widen_imprecise_scalars` between this post-cb state and a
     // PRIOR post-cb visit at the same continuation pc — coarsening

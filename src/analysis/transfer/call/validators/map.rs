@@ -6,7 +6,8 @@ use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg_types::RegType;
 use crate::common::constants;
 
-use super::super::checks::{ValidationContext, validate_readable_mem};
+use super::super::checks::ValidationContext;
+use super::super::mem_checks::validate_readable_mem;
 use super::super::compat::check_map_type_for_helper;
 
 /// Validates ConstMapPtr argument type.
@@ -206,7 +207,7 @@ pub fn validate_ptr_to_map_value(ctx: &mut ValidationContext) -> bool {
     // value. Kernel `sock_map_update_elem` checks ARG_PTR_TO_BTF_ID_SOCK_COMMON
     // — accepts PtrToSocket / PtrToSockCommon / PtrToTcpSock and
     // BTF-typed sock pointers (e.g. `skb->sk` typed as
-    // `PtrToBtfId{sock, TRUSTED}` via the cluster B BTF field-load
+    // `PtrToBtfId{sock, TRUSTED}` via the BTF field-load
     // typing). Closes the seven `verifier_sockmap_mutate.c` FRs.
     let is_sock_map = matches!(
         target_info.map_type,
@@ -316,7 +317,7 @@ pub fn validate_ptr_to_map_value(ctx: &mut ValidationContext) -> bool {
 /// Validates PtrToUninitMapValue argument type.
 /// Used for output buffers that the helper will write to.
 pub fn validate_ptr_to_uninit_map_value(ctx: &mut ValidationContext) -> bool {
-    use super::super::checks::validate_writable_mem;
+    use super::super::mem_checks::validate_writable_mem;
 
     let Some(info) = ctx.map_info else {
         return true;

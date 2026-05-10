@@ -24,7 +24,7 @@ use crate::parsing::elf::{
 };
 use std::path::Path;
 
-/// W6.4c: per-(ops_struct, member, arg_idx) PTR_MAYBE_NULL table.
+/// per-(ops_struct, member, arg_idx) PTR_MAYBE_NULL table.
 /// See doc comment on `Analyzer::struct_ops_entry_args` for sourcing.
 const STRUCT_OPS_MAYBE_NULL_ARGS: &[(&str, &str, u8)] = &[
     ("sched_ext_ops", "dispatch", 1), // prev
@@ -299,7 +299,7 @@ pub(crate) fn out_of_scope_reason_per_func(path: &str, func_name: &str) -> Optio
     }
 }
 
-/// Cluster E: LSM hooks the kernel's `lsm/disabled_hooks_list` rejects at
+/// LSM hooks the kernel's `lsm/disabled_hooks_list` rejects at
 /// attach time. Mirrors `BPF_LSM_DISABLED_HOOKS` in `kernel/bpf/bpf_lsm.c`.
 /// Names match the SEC suffix (`SEC("lsm/<hook>")`).
 fn lsm_hook_is_disabled(hook: &str) -> bool {
@@ -395,7 +395,6 @@ pub fn tracing_attach_arg_tag_flags(
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TracingArgKind {
     Scalar,
-    Pointer,
 }
 
 /// Per-attach-target arg-kind table. The kernel resolves args from the
@@ -621,7 +620,7 @@ pub struct Analyzer {
     pub config: VerifierConfig,
     pub maps: Vec<BpfMapDef>,
     pub btf: BtfContext,
-    /// W6.4a: cached `subprog → (ops_struct, member)` bindings extracted
+    /// cached `subprog → (ops_struct, member)` bindings extracted
     /// from `.struct_ops*` data sections + relocations. Empty for ELFs
     /// without struct_ops content. Used to seed entry-state arg types
     /// for SEC("struct_ops*") subprograms.
@@ -827,7 +826,7 @@ impl Analyzer {
             btf.patch_datasec_offsets(&name_to_offset);
         }
 
-        // W6.4a: extract struct_ops bindings once per ELF. Cheap; we
+        // extract struct_ops bindings once per ELF. Cheap; we
         // already have the BTF parsed and re-parse the ELF here.
         let struct_ops_bindings = match raw_bytes.as_deref() {
             Some(bytes) => match goblin::elf::Elf::parse(bytes) {
@@ -854,7 +853,7 @@ impl Analyzer {
         }
     }
 
-    // (W6.4c) PTR_MAYBE_NULL flags on specific struct_ops callback args.
+    //  PTR_MAYBE_NULL flags on specific struct_ops callback args.
     //
     // The kernel verifier marks a few struct_ops callback arguments as
     // PTR_MAYBE_NULL based on hand-maintained tables in the kernel
@@ -971,16 +970,7 @@ impl Analyzer {
         self.analyze_section_as_single_program(section)
     }
 
-    /// Analyze a single named function within a section. Used by callers
-    /// that need per-function verdicts (e.g. the modern selftest runner,
-    /// where each `SEC()`-tagged program in a `.c` file gets its own
-    /// pass/fail expectation). Returns `LoadError` if the function isn't
-    /// found in the section.
-    pub fn analyze_function(&self, section: &str, func_name: &str) -> AnalysisResult {
-        self.analyze_function_with_flags(section, func_name, 0)
-    }
-
-    /// Variant of [`analyze_function`] that ORs `extra_flags` into the
+    /// Variant of [`analyze_function_with_flags`] that ORs `extra_flags` into the
     /// program's `ExecContext::flags` before analysis. Used by the
     /// modern selftest runner to honor `__flag(...)` annotations such
     /// as `BPF_F_STRICT_ALIGNMENT`.
@@ -1038,7 +1028,7 @@ impl Analyzer {
 
     /// Analyze a specific function within a section, using pre-computed function info.
     ///
-    /// Phase 7 wrap-up: loads `func` as the entry plus every static
+    /// loads `func` as the entry plus every static
     /// `__noinline` subprog it transitively calls. CallRel-typed BPF
     /// calls now resolve to in-program PCs, so the verifier follows
     /// the chain instead of treating them as opaque helper calls.
@@ -1256,7 +1246,7 @@ impl Analyzer {
             raw.ends_with(".s")
         };
 
-        // Cluster E: reject SEC("lsm/<hook>") for hooks the kernel's
+        // reject SEC("lsm/<hook>") for hooks the kernel's
         // BPF_LSM_DISABLED_HOOKS list excludes from BPF attach.
         if ctx.prog_kind == ProgramKind::Lsm
             && let Some(hook) = ctx.attach_subtype.as_deref()
@@ -1307,7 +1297,7 @@ impl Analyzer {
             });
         }
 
-        // W6.4a: for struct_ops subprogs, seed R1..Rn from the resolved
+        // for struct_ops subprogs, seed R1..Rn from the resolved
         // ops-struct member signature. derive_program_kind already
         // matched SEC("struct_ops*") to ProgramKind::StructOps; the
         // bindings cache resolves func_name → (ops_struct, member).
@@ -1375,7 +1365,7 @@ impl Analyzer {
                         .struct_ops_method_returns_void(&b.ops_struct, &b.member)
                 })
                 .unwrap_or(false);
-            // W6.4c: pass the (ops_struct, member) pair into the analysis
+            // pass the (ops_struct, member) pair into the analysis
             // context so transfer_kfunc_proto can enforce per-(ops, member)
             // kfunc-context allowlists.
             ctx.struct_ops_member = binding.map(|b| (b.ops_struct.clone(), b.member.clone()));
@@ -1408,7 +1398,7 @@ impl Analyzer {
                 | ProgramKind::RawTracepointWritable
                 | ProgramKind::SkReuseport
         ) {
-            // Phase 7 wrap-up: extend the W6.4a struct_ops ctx-load idiom
+            // extend the struct_ops ctx-load idiom
             // to fentry/fexit/tp_btf/lsm/tracepoint. clang's BPF_PROG()
             // wrapper unpacks the kernel-passed args via `r1 = *(u64*)(r1 + 8*idx)`;
             // we type each ctx slot from the function's BTF FUNC_PROTO.
@@ -1883,7 +1873,7 @@ impl Analyzer {
             raw.ends_with(".s")
         };
 
-        // Cluster E: reject SEC("lsm/<hook>") for hooks the kernel's
+        // reject SEC("lsm/<hook>") for hooks the kernel's
         // BPF_LSM_DISABLED_HOOKS list excludes from BPF attach.
         if ctx.prog_kind == ProgramKind::Lsm
             && let Some(hook) = ctx.attach_subtype.as_deref()

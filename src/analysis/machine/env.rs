@@ -16,7 +16,7 @@ pub struct InsnAuxData {
     pub live_regs: HashSet<Reg>,
     /// Stack slot offsets (byte-granularity, relative to R10) that are live at this PC.
     pub live_slots: HashSet<i16>,
-    /// Bucket F-A: this pc is a "force checkpoint" — kernel keeps cached
+    /// this pc is a "force checkpoint" — kernel keeps cached
     /// states here longer (eviction threshold n=64 vs default n=3) to
     /// preserve iter/may_goto/cb-call convergence checkpoints. Mirrors
     /// kernel `mark_force_checkpoint` (verifier.c v6.15 L17085) which
@@ -26,7 +26,7 @@ pub struct InsnAuxData {
     pub force_checkpoint: bool,
 }
 
-/// Bucket F-A: per-cached-state hit/miss counters for explored-states
+/// per-cached-state hit/miss counters for explored-states
 /// eviction. Mirrors `bpf_verifier_state_list.{hit_cnt,miss_cnt}`
 /// (verifier.c v6.15 ~L19180-L19233). Indexed identically with
 /// `explored_states[pc]`: when an entry is evicted, both vectors drop
@@ -148,7 +148,7 @@ impl SubsumptionMissReason {
 pub struct VerifierEnv<'a> {
     pub ctx: &'a ExecContext,
     pub explored_states: HashMap<usize, Vec<State>>,
-    /// Bucket F-A: parallel to `explored_states`. `state_metrics[pc][i]`
+    /// parallel to `explored_states`. `state_metrics[pc][i]`
     /// holds the hit/miss counters for `explored_states[pc][i]`. Drop
     /// the same index from both vectors on eviction.
     pub state_metrics: HashMap<usize, Vec<StateMetrics>>,
@@ -302,7 +302,7 @@ impl<'a> VerifierEnv<'a> {
     /// Marks every reg in the frontier precise on every cached state in
     /// `explored_states[step.pc]` at each step.
     ///
-    /// Bucket F-D / Option C: the load-bearing primitive that lets the
+    /// The load-bearing primitive that lets the
     /// may_goto widener (`maybe_widen_reg` analogue) skip regs whose values
     /// matter for downstream variable-offset bounds checks. Without this,
     /// removing the over-aggressive branch precision-marker (which we
