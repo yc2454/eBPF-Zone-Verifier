@@ -5,5 +5,6 @@ pub mod frame_stack;
 pub mod history;
 pub mod reg;
 pub mod reg_types;
+pub mod stack_ops;
 pub mod stack_state;
 pub mod state;
