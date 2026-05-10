@@ -12,7 +12,7 @@
 use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg::Reg;
-use crate::analysis::machine::reg_types::{RegType, new_ptr_id};
+use crate::analysis::machine::reg_types::{RegType, TypeState, new_ptr_id};
 use crate::analysis::machine::stack_state::{IterState, IteratorSlot};
 use crate::analysis::machine::state::State;
 use crate::domains::tnum::Tnum;
@@ -111,53 +111,8 @@ fn transfer_kfunc_proto(
     let pc = state.pc;
     let in_types = state.types.clone();
 
-    // enforce per-kfunc prog-type allowlist before any other
-    // validation. Mirrors the kernel verifier's `KF_PROG_TYPE_*` check.
-    if let Some(allowed) = proto.prog_type_allowlist
-        && !allowed.contains(&env.ctx.prog_kind)
-    {
-        env.fail(crate::analysis::machine::error::VerificationError::KfuncNotAllowedForProgram {
-            pc,
-            btf_id,
-            kind: env.ctx.prog_kind,
-        });
+    if !validate_kfunc_allowlists(env, proto, pc, btf_id) {
         return vec![];
-    }
-
-    // per-(ops_struct, member) allowlist for struct_ops kfuncs.
-    // The kernel sched_ext class gates some kfuncs to specific callbacks
-    // (e.g. `scx_bpf_select_cpu_dfl` only callable from `.select_cpu`).
-    // We only consult the binding when prog_kind is StructOps; for any
-    // other prog kind the prog_type_allowlist above already rejected.
-    if let Some(allowed) = proto.ops_member_allowlist
-        && env.ctx.prog_kind == crate::ast::ProgramKind::StructOps
-    {
-        let ok = match &env.ctx.struct_ops_member {
-            Some((ops, member)) => allowed
-                .iter()
-                .any(|(o, m)| *o == ops.as_str() && *m == member.as_str()),
-            // No binding info: be conservative — reject. The runner is
-            // expected to populate this for any StructOps subprog with
-            // a recovered binding; missing-binding means we can't prove
-            // the call site is allowed.
-            None => false,
-        };
-        if !ok {
-            let (ops_struct, member) = env
-                .ctx
-                .struct_ops_member
-                .clone()
-                .unwrap_or_else(|| ("?".to_string(), "?".to_string()));
-            env.fail(
-                crate::analysis::machine::error::VerificationError::KfuncNotAllowedForOpsMember {
-                    pc,
-                    btf_id,
-                    ops_struct,
-                    member,
-                },
-            );
-            return vec![];
-        }
     }
 
     if !super::mem_checks::check_mem_size_pairs(env, &state, proto, pc) {
@@ -355,141 +310,12 @@ fn transfer_kfunc_proto(
         }
     }
 
-    if proto.flags.contains(CallFlags::RELEASE) {
-        let is_non_own = proto.flags.contains(CallFlags::RELEASE_NON_OWN);
-        for eff in proto.side_effects {
-            if let SideEffect::ReleaseRefFromArg { arg } = *eff {
-                let reg = arg_regs[arg as usize];
-                let actual = in_types.get(reg);
-                if actual.get_ref_id().is_none() {
-                    env.fail(
-                        crate::analysis::machine::error::VerificationError::InvalidArgType {
-                            pc,
-                            reg,
-                        },
-                    );
-                    return vec![];
-                }
-                // Kernel verifier rejects releasing an already-released
-                // ref ("Reference may already be released" — see
-                // struct_ops_refcounted_fail__global_subprog where a
-                // global subprog re-loads the ctx-array task slot after
-                // the parent released it). Without this active_refs
-                // membership check, our typing fix that propagates
-                // ref_id through ctx-array loads accepts the
-                // double-release.
-                if let Some(rid) = actual.get_ref_id()
-                    && !state.active_refs.contains(&rid)
-                {
-                    env.fail(
-                        crate::analysis::machine::error::VerificationError::InvalidArgType {
-                            pc,
-                            reg,
-                        },
-                    );
-                    return vec![];
-                }
-                // Kernel verifier.c v6.15 ~L13242: for a full-release
-                // kfunc (`bpf_obj_drop`, `bpf_kptr_xchg`) the released
-                // pointer must reference the head of the alloc; the
-                // kernel's exact check is `reg->off == 0`. We approximate
-                // by rejecting only positive offsets (`&res->node`-style
-                // forward arithmetic into the alloc). Negative offsets
-                // arise from `container_of(rb_remove_ret, struct, r)`
-                // = `rb - 16`, which the kernel models via BTF-aware
-                // offset tracking we don't replicate; treating negative
-                // offsets as "container-of recovered to head" keeps
-                // refcounted_kptr.c::rbtree_sleepable_rcu* PASSing
-                // while still catching local_kptr_stash_fail::
-                // drop_rb_node_off (offset = +16).
-                if !is_non_own
-                    && let RegType::PtrToOwnedKptr { offset, .. } = actual
-                    && offset > 0
-                {
-                    env.fail(
-                        crate::analysis::machine::error::VerificationError::InvalidArgType {
-                            pc,
-                            reg,
-                        },
-                    );
-                    return vec![];
-                }
-            }
-        }
+    if !handle_kfunc_release(env, &in_types, &state, proto, pc, &arg_regs) {
+        return vec![];
     }
 
-    // KF_TRUSTED_ARGS / KF_RCU enforcement: pointer args' flags must
-    // satisfy the kfunc's trust band. Mirrors the kernel's
-    // `KF_TRUSTED_ARGS` (every pointer must be PTR_TRUSTED or
-    // refcounted/acquire-tracked) and `KF_RCU` (allows PTR_TRUSTED,
-    // PTR_RCU, or acquire-tracked; rejects PTR_UNTRUSTED). Without
-    // this gate, adding the testmod consumer kfuncs
-    // (`bpf_kfunc_trusted_*_test` family) would FA the matching
-    // `__failure` siblings (iter_next_rcu_not_trusted,
-    // iter_next_ptr_mem_not_trusted) where the consumer is
-    // intentionally fed a non-TRUSTED pointer the kernel rejects.
-    let trust_band = if proto.flags.contains(CallFlags::TRUSTED_ARGS) {
-        Some(TrustBand::Trusted)
-    } else if proto.flags.contains(CallFlags::RCU) {
-        Some(TrustBand::Rcu)
-    } else {
-        None
-    };
-    if let Some(band) = trust_band {
-        use super::signatures::ArgKind;
-        for (i, (&arg_kind, &reg)) in proto.args.iter().zip(arg_regs.iter()).enumerate() {
-            if matches!(arg_kind, ArgKind::DontCare) {
-                break;
-            }
-            // KF_TRUSTED_ARGS only constrains BTF-typed pointer args
-            // (kernel `check_kfunc_arg_btf_id` path). Plain memory
-            // buffers (PtrToUninitMem / PtrToMem / PtrToStack), size
-            // scalars, dynptrs, iter handles etc. take the
-            // non-PTR_TO_BTF_ID code path which doesn't apply the trust
-            // check. Without this gate, a kfunc like bpf_path_d_path
-            // (path, buf, sz) would reject the non-trusted buf arg —
-            // verifier_vfs_accept::path_d_path_from_file_argument
-            // passes a map_value buf (no TRUSTED flag).
-            //
-            // Denylist (rather than allowlist) so that ArgKind::Anything
-            // — used for `int *ptr` style args where we don't have a
-            // dedicated typed-int-pointer ArgKind (bpf_kfunc_trusted_num_test)
-            // — still goes through the trust gate. The gate then
-            // rejects untrusted PtrToAllocMem from bpf_iter_num_next.
-            let trust_irrelevant = matches!(
-                arg_kind,
-                ArgKind::PtrToUninitMem
-                    | ArgKind::PtrToUninitMemOrNull
-                    | ArgKind::PtrToMem
-                    | ArgKind::PtrToMemOrNull
-                    | ArgKind::PtrToStack
-                    | ArgKind::PtrToStackOrNull
-                    | ArgKind::ConstSize
-                    | ArgKind::ConstSizeOrZero
-                    | ArgKind::ConstAllocSizeOrZero
-                    | ArgKind::PtrToConstStr
-                    | ArgKind::PtrToLong
-                    | ArgKind::DynptrArg { .. }
-                    | ArgKind::IterArg { .. }
-                    | ArgKind::IrqFlagArg { .. }
-                    | ArgKind::ResSpinLockArg { .. }
-                    | ArgKind::MapValueSpecial { .. }
-            );
-            if trust_irrelevant {
-                continue;
-            }
-            let actual = in_types.get(reg);
-            if actual.is_pointer() && !pointer_arg_meets_trust(&actual, band) {
-                let _ = i;
-                env.fail(
-                    crate::analysis::machine::error::VerificationError::InvalidArgType {
-                        pc,
-                        reg,
-                    },
-                );
-                return vec![];
-            }
-        }
+    if !enforce_kfunc_trust_band(env, &in_types, proto, pc, &arg_regs) {
+        return vec![];
     }
 
     // Forking kfuncs (iter_next): handle the two successors inline so
@@ -612,32 +438,202 @@ fn transfer_kfunc_proto(
     // for it, so the post-call sequence below applies cleanly to
     // bpf_wq_init / bpf_wq_start which are flat-shaped kfuncs.)
 
-    // Populate `pointee_btf_id` on the freshly-minted PtrToOwnedKptr in
-    // R0 for kfuncs that surface a known pointee type:
-    //   - bpf_obj_new_impl: R1 is `local_type_id` (a u64 known scalar
-    //     planted by clang's `bpf_obj_new(typeof(*x))` macro). The kernel
-    //     verifier reads it and stores it on the returned reg's btf_id
-    //     (verifier.c v6.15 ~L13117); we mirror that.
-    //   - bpf_refcount_acquire_impl: copy from R1 (which is itself a
-    //     PtrToOwnedKptr at this site).
-    //   - bpf_list_pop_*/bpf_rbtree_first/remove: copy the head's
-    //     `__contains` struct btf_id from the SpecialField on R1.
-    //
-    // Without this, the `__contains` cross-arg check at the next
-    // graph-add call falls back to offset-only comparison and misses
-    // `rbtree_btf_fail__add_wrong_type` (R2's pointee struct is the
-    // wrong type but its node-member offset coincidentally matches the
-    // declared __contains offset).
+    if !apply_kfunc_name_specific_ret(env, &mut state, btf_id, &in_types) {
+        return vec![];
+    }
+
+    // kfuncs marked `bpf_fastcall` (v6.13) preserve R1..R5 — skip
+    // the caller-saved clobber so clang-emitted no-spill sequences
+    // type-check. Iter-next forks intentionally always clobber (no
+    // fastcall iter_next kfunc exists in the kernel set).
+    if !proto.flags.contains(CallFlags::FASTCALL) {
+        for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+            state.types.set(r, RegType::NotInit);
+            state.domain.forget(r);
+            state.set_tnum(r, Tnum::unknown());
+            state.clear_scalar_id(r);
+        }
+    }
+    state.domain.forget(Reg::R0);
+    state.set_tnum(Reg::R0, Tnum::unknown());
+    state.clear_scalar_id(Reg::R0);
+
+    state.pc += 1;
+    vec![state]
+}
+
+/// Checks the per-kfunc prog-type and ops-member allowlists.
+/// Returns false (and calls env.fail) if the current program kind or
+/// struct_ops binding is not in the proto's allowlist.
+fn validate_kfunc_allowlists(
+    env: &mut VerifierEnv,
+    proto: &super::signatures::CallProto,
+    pc: usize,
+    btf_id: u32,
+) -> bool {
+    if let Some(allowed) = proto.prog_type_allowlist
+        && !allowed.contains(&env.ctx.prog_kind)
+    {
+        env.fail(crate::analysis::machine::error::VerificationError::KfuncNotAllowedForProgram {
+            pc,
+            btf_id,
+            kind: env.ctx.prog_kind,
+        });
+        return false;
+    }
+
+    if let Some(allowed) = proto.ops_member_allowlist
+        && env.ctx.prog_kind == crate::ast::ProgramKind::StructOps
+    {
+        let ok = match &env.ctx.struct_ops_member {
+            Some((ops, member)) => allowed
+                .iter()
+                .any(|(o, m)| *o == ops.as_str() && *m == member.as_str()),
+            None => false,
+        };
+        if !ok {
+            let (ops_struct, member) = env
+                .ctx
+                .struct_ops_member
+                .clone()
+                .unwrap_or_else(|| ("?".to_string(), "?".to_string()));
+            env.fail(
+                crate::analysis::machine::error::VerificationError::KfuncNotAllowedForOpsMember {
+                    pc,
+                    btf_id,
+                    ops_struct,
+                    member,
+                },
+            );
+            return false;
+        }
+    }
+    true
+}
+
+/// Enforces KF_RELEASE preconditions: every `ReleaseRefFromArg{N}` arg
+/// must carry a live ref_id and non-positive offset for full-release kfuncs.
+fn handle_kfunc_release(
+    env: &mut VerifierEnv,
+    in_types: &TypeState,
+    state: &State,
+    proto: &super::signatures::CallProto,
+    pc: usize,
+    arg_regs: &[Reg; 5],
+) -> bool {
+    if !proto.flags.contains(super::signatures::CallFlags::RELEASE) {
+        return true;
+    }
+    let is_non_own = proto.flags.contains(super::signatures::CallFlags::RELEASE_NON_OWN);
+    for eff in proto.side_effects {
+        if let super::signatures::SideEffect::ReleaseRefFromArg { arg } = *eff {
+            let reg = arg_regs[arg as usize];
+            let actual = in_types.get(reg);
+            if actual.get_ref_id().is_none() {
+                env.fail(
+                    crate::analysis::machine::error::VerificationError::InvalidArgType { pc, reg },
+                );
+                return false;
+            }
+            if let Some(rid) = actual.get_ref_id()
+                && !state.active_refs.contains(&rid)
+            {
+                env.fail(
+                    crate::analysis::machine::error::VerificationError::InvalidArgType { pc, reg },
+                );
+                return false;
+            }
+            if !is_non_own
+                && let RegType::PtrToOwnedKptr { offset, .. } = actual
+                && offset > 0
+            {
+                env.fail(
+                    crate::analysis::machine::error::VerificationError::InvalidArgType { pc, reg },
+                );
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Enforces KF_TRUSTED_ARGS / KF_RCU: BTF-typed pointer args must
+/// satisfy the kfunc's trust band. Non-pointer and memory-buffer args
+/// are exempt (they don't go through the kernel's trust-check path).
+fn enforce_kfunc_trust_band(
+    env: &mut VerifierEnv,
+    in_types: &TypeState,
+    proto: &super::signatures::CallProto,
+    pc: usize,
+    arg_regs: &[Reg; 5],
+) -> bool {
+    use super::signatures::{ArgKind, CallFlags};
+
+    let trust_band = if proto.flags.contains(CallFlags::TRUSTED_ARGS) {
+        Some(TrustBand::Trusted)
+    } else if proto.flags.contains(CallFlags::RCU) {
+        Some(TrustBand::Rcu)
+    } else {
+        None
+    };
+    let Some(band) = trust_band else {
+        return true;
+    };
+    for (i, (&arg_kind, &reg)) in proto.args.iter().zip(arg_regs.iter()).enumerate() {
+        if matches!(arg_kind, ArgKind::DontCare) {
+            break;
+        }
+        let trust_irrelevant = matches!(
+            arg_kind,
+            ArgKind::PtrToUninitMem
+                | ArgKind::PtrToUninitMemOrNull
+                | ArgKind::PtrToMem
+                | ArgKind::PtrToMemOrNull
+                | ArgKind::PtrToStack
+                | ArgKind::PtrToStackOrNull
+                | ArgKind::ConstSize
+                | ArgKind::ConstSizeOrZero
+                | ArgKind::ConstAllocSizeOrZero
+                | ArgKind::PtrToConstStr
+                | ArgKind::PtrToLong
+                | ArgKind::DynptrArg { .. }
+                | ArgKind::IterArg { .. }
+                | ArgKind::IrqFlagArg { .. }
+                | ArgKind::ResSpinLockArg { .. }
+                | ArgKind::MapValueSpecial { .. }
+        );
+        if trust_irrelevant {
+            continue;
+        }
+        let actual = in_types.get(reg);
+        if actual.is_pointer() && !pointer_arg_meets_trust(&actual, band) {
+            let _ = i;
+            env.fail(
+                crate::analysis::machine::error::VerificationError::InvalidArgType { pc, reg },
+            );
+            return false;
+        }
+    }
+    true
+}
+
+/// Applies kfunc-name-specific R0 fixups after `apply_call_proto_r0`.
+/// Covers: pointee BTF-id threading for graph-manipulation kfuncs,
+/// bpf_percpu_obj_drop_impl validation, bpf_percpu_obj_new_impl R0,
+/// bpf_cast_to_kern_ctx R0, and bpf_rdonly_cast R0.
+/// Returns false (and calls env.fail) on pre-call validation failure.
+fn apply_kfunc_name_specific_ret(
+    env: &mut VerifierEnv,
+    state: &mut State,
+    btf_id: u32,
+    in_types: &TypeState,
+) -> bool {
+    use crate::analysis::machine::error::VerificationError;
+
+    let pc = state.pc;
+
+    // Pointee BTF-id threading for graph-manipulation kfuncs.
     if let Some(kfunc_name) = env.ctx.btf.kfunc_name(btf_id) {
-        // Resolves (pointee_btf_id, node_offset_override). For graph-pop
-        // kfuncs (bpf_list_pop_*/bpf_rbtree_first/remove), the kernel
-        // models the returned pointer as offset = `node_offset` of the
-        // corresponding bpf_{list,rb}_node field within the parent
-        // struct (kernel verifier.c v6.15: returned reg carries
-        // reg->btf_id = parent struct + reg->off = node_offset). Without
-        // overriding offset, the next graph-add cross-arg check sees
-        // offset=0 and rejects against contains.node_offset (e.g.
-        // linked_list.c::global_list_push_pop pc 92: 0 != 48).
         let (pointee, node_offset_override): (Option<u32>, Option<i32>) = match kfunc_name {
             "bpf_obj_new_impl" => (
                 state
@@ -647,9 +643,7 @@ fn transfer_kfunc_proto(
                 None,
             ),
             "bpf_refcount_acquire_impl" => match in_types.get(Reg::R1) {
-                RegType::PtrToOwnedKptr {
-                    pointee_btf_id, ..
-                } => (pointee_btf_id, None),
+                RegType::PtrToOwnedKptr { pointee_btf_id, .. } => (pointee_btf_id, None),
                 _ => (None, None),
             },
             "bpf_list_pop_front"
@@ -681,21 +675,16 @@ fn transfer_kfunc_proto(
             }
             _ => (None, None),
         };
-        if let Some(btf_id) = pointee {
+        if let Some(new_btf_id) = pointee {
             match state.types.get(Reg::R0) {
-                RegType::PtrToOwnedKptr {
-                    ref_id,
-                    offset,
-                    non_owning,
-                    ..
-                } => {
+                RegType::PtrToOwnedKptr { ref_id, offset, non_owning, .. } => {
                     state.types.set(
                         Reg::R0,
                         RegType::PtrToOwnedKptr {
                             ref_id,
                             offset: node_offset_override.unwrap_or(offset),
                             non_owning,
-                            pointee_btf_id: Some(btf_id),
+                            pointee_btf_id: Some(new_btf_id),
                         },
                     );
                 }
@@ -704,7 +693,7 @@ fn transfer_kfunc_proto(
                         Reg::R0,
                         RegType::PtrToOwnedKptrOrNull {
                             ref_id,
-                            pointee_btf_id: Some(btf_id),
+                            pointee_btf_id: Some(new_btf_id),
                             offset: node_offset_override.unwrap_or(offset),
                         },
                     );
@@ -714,21 +703,12 @@ fn transfer_kfunc_proto(
         }
     }
 
-    // bpf_percpu_obj_drop_impl(p, meta__ign): R1 must be a percpu BTF
-    // id pointer with a live ref. Kernel "arg#0 expected for
-    // bpf_percpu_obj_drop_impl()" rejects regular (non-percpu)
-    // bpf_obj_new pointers passed here. Closes
-    // percpu_alloc_fail::test_array_map_5.
+    // bpf_percpu_obj_drop_impl: R1 must be a percpu pointer with a live ref.
     if let Some(kfunc_name) = env.ctx.btf.kfunc_name(btf_id)
         && kfunc_name == "bpf_percpu_obj_drop_impl"
     {
         use crate::analysis::machine::reg_types::PtrFlags;
         let r1 = in_types.get(Reg::R1);
-        // Accept either:
-        //   - PtrToBtfId/OrNull with PERCPU (from bpf_percpu_obj_new),
-        //   - PtrToMapKptr/OrNull with PERCPU (from a bpf_kptr_xchg
-        //     return out of a `__percpu_kptr` slot).
-        // Both must carry an acquired ref (the source held ownership).
         let percpu_ok = matches!(
             r1,
             RegType::PtrToBtfId { .. }
@@ -739,19 +719,11 @@ fn transfer_kfunc_proto(
             && r1.get_ref_id().is_some();
         if !percpu_ok {
             env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
-            return vec![];
+            return false;
         }
     }
 
-    // bpf_percpu_obj_new_impl(local_type_id, meta__ign):
-    //   R0 = PtrToBtfIdOrNull{local_struct_name, TRUSTED|PERCPU|MEM_ALLOC,
-    //                         ref_id=fresh_acquire}
-    // Kernel `PTR_TO_BTF_ID | MEM_ALLOC | MEM_PERCPU | PTR_TRUSTED |
-    // MAYBE_NULL` (verifier.c v6.15 ~L13117 + KF_ACQUIRE+KF_RET_NULL
-    // post-call wrap). The local_type_id is R1's const value, which
-    // clang plants via `bpf_percpu_obj_new(struct T)` macro. Without
-    // this, R0 stays Scalar after the call and downstream
-    // `bpf_kptr_xchg(&e->pc, p)` rejects p as non-ref.
+    // bpf_percpu_obj_new_impl: validate struct constraints, set R0.
     if let Some(kfunc_name) = env.ctx.btf.kfunc_name(btf_id)
         && kfunc_name == "bpf_percpu_obj_new_impl"
     {
@@ -761,29 +733,18 @@ fn transfer_kfunc_proto(
             .domain
             .get_fixed_value(Reg::R1)
             .and_then(|v| u32::try_from(v).ok());
-        // Pre-call validation against the requested local-BTF struct.
-        // Kernel `bpf_percpu_obj_new_impl` rejects with three distinct
-        // messages (verifier.c v6.15 + helpers.c percpu allocator):
-        //   - "type size (N) is greater than 512" — limit
-        //   - "type ID argument must be of a struct of scalars" — any
-        //     pointer field disqualifies
-        //   - "type ID argument must not contain special fields" —
-        //     bpf_spin_lock / bpf_timer / bpf_list_head / bpf_rb_root
-        //   Closes percpu_alloc_fail::test_array_map_{6,7,8}.
         if let Some(id) = local_type_id {
-            let size = env.ctx.btf.type_size_bytes(id);
-            if size > 512 {
+            if env.ctx.btf.type_size_bytes(id) > 512 {
                 env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
-                return vec![];
+                return false;
             }
             if env.ctx.btf.struct_contains_pointer(id) {
                 env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
-                return vec![];
+                return false;
             }
-            let specials = env.ctx.btf.find_special_fields(id);
-            if !specials.is_empty() {
+            if !env.ctx.btf.find_special_fields(id).is_empty() {
                 env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R1 });
-                return vec![];
+                return false;
             }
         }
         let type_name = local_type_id
@@ -794,7 +755,7 @@ fn transfer_kfunc_proto(
         state.types.set(
             Reg::R0,
             RegType::PtrToBtfIdOrNull {
-                id: crate::analysis::machine::reg_types::new_ptr_id(),
+                id: new_ptr_id(),
                 type_name,
                 flags: PtrFlags::TRUSTED | PtrFlags::PERCPU | PtrFlags::MEM_ALLOC,
                 ref_id: Some(ref_id),
@@ -802,17 +763,12 @@ fn transfer_kfunc_proto(
         );
     }
 
-    // bpf_cast_to_kern_ctx(ctx): R0 = PtrToBtfId{kern_ctx_type_name,
-    // TRUSTED}. The kernel-side struct depends on the calling
-    // program's prog_kind (mirrors `find_kern_ctx_type_id` /
-    // BPF_PROG_TYPE table in kernel/bpf/btf.c). Without this, programs
-    // that cast then deref kern-struct fields (e.g. sa_kern->uaddrlen
-    // on bpf_sock_addr_kern, kskb->len on sk_buff,
-    // kctx->rxq->dev->ifindex on xdp_buff) FR on the field access.
+    // bpf_cast_to_kern_ctx: R0 = PtrToBtfId{kern_ctx_type_name, TRUSTED}.
     if let Some(kfunc_name) = env.ctx.btf.kfunc_name(btf_id)
         && kfunc_name == "bpf_cast_to_kern_ctx"
     {
         use crate::ast::ProgramKind;
+        use crate::analysis::machine::reg_types::PtrFlags;
         let kern_name: Option<&'static str> = match env.ctx.prog_kind {
             ProgramKind::Xdp => Some("xdp_buff"),
             ProgramKind::SchedCls
@@ -838,39 +794,26 @@ fn transfer_kfunc_proto(
             Some(name) => {
                 let interned =
                     crate::analysis::machine::context::intern_btf_type_name_strict(name);
-                let flags = crate::analysis::machine::reg_types::PtrFlags::empty()
-                    | crate::analysis::machine::reg_types::PtrFlags::TRUSTED;
                 state.types.set(
                     Reg::R0,
                     RegType::PtrToBtfId {
                         type_name: interned,
-                        flags,
+                        flags: PtrFlags::TRUSTED,
                         ref_id: None,
                     },
                 );
             }
-            // Unknown / unmapped prog_kind (e.g. `?tc` → Unknown, raw
-            // tracepoint, …): preserve the prior RetKind::Scalar
-            // behavior so we don't regress files that hit
-            // bpf_cast_to_kern_ctx but never deref the result.
             None => {
                 state.types.set(Reg::R0, RegType::ScalarValue);
             }
         }
     }
 
-    // bpf_rdonly_cast(obj, btf_id): R0 = PtrToBtfId{name(btf_id),
-    // TRUSTED|MEM_RDONLY}. R2 holds the BTF id as a const scalar.
-    // Used by `bpf_core_cast(obj, type)` macro across sock_iter_batch,
-    // type_cast, the *_unix_prog family. Without this, programs that
-    // do `sk = bpf_core_cast(sk, struct sock); sk->field` would FR
-    // on the field access (R0 stays whatever apply_call_proto_r0
-    // produced, typically clobbered to NotInit). Sourcing the type
-    // name via `intern_btf_type_name_strict` so a single `&'static
-    // str` round-trips through callers that compare with `==`.
+    // bpf_rdonly_cast: R0 = PtrToBtfId{name(R2_btf_id), TRUSTED|RDONLY}.
     if let Some(kfunc_name) = env.ctx.btf.kfunc_name(btf_id)
         && kfunc_name == "bpf_rdonly_cast"
     {
+        use crate::analysis::machine::reg_types::PtrFlags;
         let r2_id = state
             .domain
             .get_fixed_value(Reg::R2)
@@ -880,39 +823,18 @@ fn transfer_kfunc_proto(
         {
             let interned =
                 crate::analysis::machine::context::intern_btf_type_name_strict(name);
-            let mut flags = crate::analysis::machine::reg_types::PtrFlags::empty();
-            flags = flags
-                | crate::analysis::machine::reg_types::PtrFlags::TRUSTED
-                | crate::analysis::machine::reg_types::PtrFlags::RDONLY;
             state.types.set(
                 Reg::R0,
                 RegType::PtrToBtfId {
                     type_name: interned,
-                    flags,
+                    flags: PtrFlags::TRUSTED | PtrFlags::RDONLY,
                     ref_id: None,
                 },
             );
         }
     }
 
-    // kfuncs marked `bpf_fastcall` (v6.13) preserve R1..R5 — skip
-    // the caller-saved clobber so clang-emitted no-spill sequences
-    // type-check. Iter-next forks intentionally always clobber (no
-    // fastcall iter_next kfunc exists in the kernel set).
-    if !proto.flags.contains(CallFlags::FASTCALL) {
-        for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-            state.types.set(r, RegType::NotInit);
-            state.domain.forget(r);
-            state.set_tnum(r, Tnum::unknown());
-            state.clear_scalar_id(r);
-        }
-    }
-    state.domain.forget(Reg::R0);
-    state.set_tnum(Reg::R0, Tnum::unknown());
-    state.clear_scalar_id(Reg::R0);
-
-    state.pc += 1;
-    vec![state]
+    true
 }
 
 /// Element-shape distinguisher for `iter_next_fork`. The non-NULL
