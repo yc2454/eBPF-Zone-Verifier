@@ -537,6 +537,18 @@ pub fn dump_cache_growth_pc() -> Option<usize> {
         .and_then(|s| s.parse().ok())
 }
 
+/// If set to a numeric PC, `record_state` dumps the env's
+/// `precise_pcs` set (eviction-resistant precision marks written by
+/// `mark_chain_precision_backward`) on every insert at that PC.
+/// Diagnostic for designing pruning-side wideners that consume
+/// `precise_pcs` — surfaces what the walker has actually marked by
+/// the time the cache fires at the target loop head.
+pub fn dump_precise_pcs_pc() -> Option<usize> {
+    std::env::var("ZOVIA_DUMP_PRECISE_PCS_PC")
+        .ok()
+        .and_then(|s| s.parse().ok())
+}
+
 /// Static pre-pass identifying subprog entry PCs whose body is unsafe
 /// to use as a graph-add (`bpf_rbtree_add_impl` / `bpf_list_push_*`)
 /// `less` callback. Kernel verifier.c v6.15 rejects callbacks that
