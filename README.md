@@ -2,6 +2,8 @@
 
 A robust, user-space static analyzer for eBPF (Extended Berkeley Packet Filter) programs. This tool verifies the safety and correctness of BPF bytecode by reconstructing control flow graphs (CFGs), tracking register values with abstract interpretation (Difference Bound Matrices and Tri-state Numbers), and validating memory accesses, context usage, and map operations.
 
+**Status (Linux v6.15 corpus):** 3278 PASS / 0 FA / 0 FR / 0 ERROR — see [CHANGES_v6.15.md](CHANGES_v6.15.md) for the full list of features added in this release.
+
 ## Features
 
 * **Control Flow Reconstruction:** Parses raw BPF bytecode to build a navigable control flow graph.
@@ -13,6 +15,15 @@ A robust, user-space static analyzer for eBPF (Extended Berkeley Packet Filter) 
 * **Kernel Compatibility Mode:** Optional `--kernel-mode` flag simulates kernel verifier behavior for compatibility testing.
 * **Selftest Suite:** Built-in support for running large JSON-based test suites (compatible with Kernel BPF tests).
 * **Benchmarking Suite:** Bulk analysis of BPF datasets with support for custom input lists, filtering, and detailed reporting.
+* **dynptr Tracking:** Models `bpf_dynptr_*` helpers including clone lineage, read-only slice enforcement, and per-source-kind rules (SKB, `user_ringbuf`, `mem`).
+* **kptr / Kernel Pointer Analysis:** Full offset representation, ALU arithmetic, `bpf_kptr_xchg` semantics, and per-CPU kptr support.
+* **RCU Safety:** Detects nested RCU read-lock violations, demotes `MEM_RCU` on unlock, and validates sleepable subprog calls inside RCU critical sections.
+* **Iterator Support:** Synthesises `bpf_iter__<subtype>` entry-arguments and per-subtype payload types from BTF annotations.
+* **BTF CO-RE Foundation:** Parses `.BTF.ext` CO-RE relocation records; resolves `__ksym` externs via `BPF_PSEUDO_BTF_ID`; derives map-of-map inner indices from BTF `__array` annotations.
+* **Struct Ops & Callbacks:** Accurately types `freplace`/`fexit`/`fentry` targets, exception callbacks, timer callbacks, and `for_each_map_elem` callbacks from their BTF signatures.
+* **Arena Support:** Classifies `__arg_arena` parameters, syncs DBM bounds before widening, and correctly types `PtrToAllocMem` in pointer arithmetic.
+* **Loop Widening (v6.15):** Multi-counter, spill-aware, and accumulator-feed widening strategies covering descending counters, branch-only register demotion, and eviction-resistant precise-PC walking.
+* **v6.15 Corpus Verified:** 3278 PASS / 0 FA / 0 FR / 0 ERROR against the Linux v6.15 selftest suite.
 
 ## Installation
 
@@ -345,27 +356,49 @@ if (!d) return 0; // The verifier now knows R0 is a valid pointer here
 ```
 src/
 ├── analysis/
-│   ├── flow/           # CFG, liveness, pruning, subprogram handling
-│   ├── machine/        # Abstract state: registers, stack, frames
-│   └── transfer/       # Transfer functions for each instruction type
-│       ├── alu/        # Arithmetic and bitwise operations
-│       ├── branch/     # Conditional branches and refinement
-│       ├── call/       # BPF helper calls and validation
-│       └── memory/     # Load/store, packet access, map access
-├── ast/                # Typed instruction representation
-├── common/             # Configuration, utilities
-├── parsing/            # ELF loading, instruction decoding, BTF
-│   └── elf/            # ELF-specific: maps, programs, relocations
-├── testing/            # Test runners (see also: scripts/ for the corpus harnesses)
-│   ├── runner.rs           # Core analysis driver (Analyzer)
-│   ├── jsonl.rs            # JSONL corpus emitter (`dev verify-corpus`)
-│   ├── legacy_selftest.rs  # Pre-6.2 JSON test corpus
-│   ├── pcc_test.rs         # PCC certificate workflows
-│   ├── selftest/           # Modern upstream selftest pipeline (clang + attrs)
-│   ├── scanner.rs          # ELF/BTF metadata extractor (`dev benchmark-scan`)
-│   └── logging.rs          # PC-range / register-trace filtering
-└── zone/               # Abstract domains
-    ├── dbm.rs          # Difference Bound Matrix implementation
-    ├── domain.rs       # Domain operations (assume, refine, etc.)
-    └── tnum.rs         # Tri-state number implementation
+│   ├── flow/               # CFG, liveness, merging, subprogram handling
+│   │   └── pruning/        # State subsumption and loop widening
+│   │       ├── subsumption.rs
+│   │       └── widening.rs
+│   ├── machine/            # Abstract state: registers, stack, frames
+│   │   ├── state.rs        # Per-PC abstract state
+│   │   ├── stack_ops.rs    # Stack slot operations (spill/fill/zext)
+│   │   └── reg_types.rs    # Register type lattice
+│   └── transfer/           # Transfer functions for each instruction type
+│       ├── alu/            # Arithmetic and bitwise operations
+│       ├── branch/         # Conditional branches and refinement
+│       ├── call/           # BPF helper and kfunc calls
+│       │   ├── checks.rs       # Argument type validation
+│       │   ├── mem_checks.rs   # Memory-argument validation
+│       │   ├── helper_protos.rs
+│       │   ├── kfunc_protos.rs
+│       │   ├── callback.rs     # Callback subprogram handling
+│       │   └── validators/     # Per-argument-kind validators
+│       ├── memory/         # Load/store, packet access, map access
+│       └── field_tables.rs # BTF field-trust tables (RCU, kptr, etc.)
+├── ast/                    # Typed instruction representation
+├── common/                 # Configuration, utilities
+├── domains/                # Abstract domains
+│   ├── zone/               # Zone domain (DBM-based)
+│   │   ├── dbm.rs          # Difference Bound Matrix
+│   │   └── ops.rs          # Domain operations (assume, widen, etc.)
+│   ├── interval/           # Interval domain (kernel-mode)
+│   └── tnum.rs             # Tri-state numbers (shared)
+├── parsing/                # ELF loading, instruction decoding, BTF
+│   ├── btf/                # BPF Type Format
+│   │   ├── context/        # Querying BTF: fields, kptr, funcs, datasec
+│   │   ├── ext.rs          # .BTF.ext / CO-RE relocation records
+│   │   └── map_defs.rs     # Map-of-maps BTF resolution
+│   └── elf/                # ELF-specific: maps, programs, relocations, struct_ops
+├── pcc/                    # Proof-Carrying Code
+│   ├── generator/          # Zone-mode certificate generation
+│   └── checker/            # Interval-mode certificate checking
+└── testing/                # Test runners (see also: scripts/ for corpus harnesses)
+    ├── runner.rs           # Core analysis driver (Analyzer)
+    ├── jsonl.rs            # JSONL corpus emitter (`dev verify-corpus`)
+    ├── legacy_selftest.rs  # Pre-6.2 JSON test corpus
+    ├── pcc_test.rs         # PCC certificate workflows
+    ├── selftest/           # Modern upstream selftest pipeline (clang + attrs)
+    ├── scanner.rs          # ELF/BTF metadata extractor (`dev benchmark-scan`)
+    └── logging.rs          # PC-range / register-trace filtering
 ```
