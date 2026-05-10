@@ -384,7 +384,7 @@ pub fn check_store(
     let base_ty = state.types.get(base);
     let pc = state.pc;
 
-    // Option C: variable-offset store is also a precision sink.
+    // variable-offset store is also a precision sink.
     // precision-mark the variable-offset contributor.
     //
     // When `base` was constructed via `Alu Add base, Reg(scalar)` in

@@ -11,9 +11,6 @@ pub mod numeric;
 pub mod tnum;
 pub mod zone;
 
-// Re-export the unified domain type
-
-// Re-export zone components at top level for backwards compatibility
-// TODO: Remove these once all code migrates to the new abstraction
+// Stable aliases: zone::dbm and zone::ops are also accessible as domains::dbm / domains::domain.
 pub use zone::dbm;
 pub use zone::ops as domain;

@@ -302,7 +302,7 @@ impl<'a> VerifierEnv<'a> {
     /// Marks every reg in the frontier precise on every cached state in
     /// `explored_states[step.pc]` at each step.
     ///
-    /// Option C: the load-bearing primitive that lets the
+    /// The load-bearing primitive that lets the
     /// may_goto widener (`maybe_widen_reg` analogue) skip regs whose values
     /// matter for downstream variable-offset bounds checks. Without this,
     /// removing the over-aggressive branch precision-marker (which we
