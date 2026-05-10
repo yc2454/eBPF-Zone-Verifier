@@ -1038,7 +1038,7 @@ impl Analyzer {
 
     /// Analyze a specific function within a section, using pre-computed function info.
     ///
-    /// Phase 7 wrap-up: loads `func` as the entry plus every static
+    /// loads `func` as the entry plus every static
     /// `__noinline` subprog it transitively calls. CallRel-typed BPF
     /// calls now resolve to in-program PCs, so the verifier follows
     /// the chain instead of treating them as opaque helper calls.
@@ -1408,7 +1408,7 @@ impl Analyzer {
                 | ProgramKind::RawTracepointWritable
                 | ProgramKind::SkReuseport
         ) {
-            // Phase 7 wrap-up: extend the struct_ops ctx-load idiom
+            // extend the struct_ops ctx-load idiom
             // to fentry/fexit/tp_btf/lsm/tracepoint. clang's BPF_PROG()
             // wrapper unpacks the kernel-passed args via `r1 = *(u64*)(r1 + 8*idx)`;
             // we type each ctx slot from the function's BTF FUNC_PROTO.

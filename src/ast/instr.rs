@@ -68,7 +68,7 @@ pub enum Instr {
     /// may_goto / BPF_JCOND (v6.8). A conditional jump that may transfer
     /// control to `target` or fall through; the kernel models the choice
     /// with an iteration-bounded counter, capping loop iterations at ~8M.
-    /// Phase 1 decodes the instruction but does not implement counter
+    /// Decodes the instruction but does not implement counter
     /// semantics — transfer rejects with UnsupportedModernFeature.
     MayGoto {
         target: usize,

@@ -647,7 +647,7 @@ fn validate_ptr_to_cgroup(ctx: &mut ValidationContext) -> bool {
     true
 }
 
-/// Validate `ArgKind::PtrToTask` (Phase 7 wrap-up). Same shape as
+/// Validate `ArgKind::PtrToTask`. Same shape as
 /// `validate_ptr_to_cgroup`: only non-null `RegType::PtrToTask`
 /// accepted. `bpf_task_acquire`/`_release` consumers require the
 /// program to have null-checked an `OrNull` result first.

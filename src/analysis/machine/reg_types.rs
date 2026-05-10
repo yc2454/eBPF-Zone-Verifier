@@ -213,7 +213,7 @@ pub enum RegType {
     PtrToCgroupOrNull {
         ref_id: Option<u32>,
     },
-    /// Pointer to a `struct task_struct` (Phase 7 wrap-up). Mirrors the
+    /// Pointer to a `struct task_struct`. Mirrors the
     /// cgroup family acquire/release/null-check pattern. Minted by
     /// `bpf_get_current_task_btf` (no acquire — kernel-trusted current
     /// pointer), `bpf_task_acquire`, `bpf_task_from_pid` (the latter
@@ -585,7 +585,7 @@ pub fn new_scalar_id() -> u32 {
     SCALAR_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
-/// Fresh identity token for an open-coded iterator (Phase 3 ).
+/// Fresh identity token for an open-coded iterator.
 /// Minted at `*_new` time and stored on the iterator's stack slot.
 /// Subsumption matches states by this id to recognize "same
 /// iterator loop" across revisits.

@@ -169,7 +169,7 @@ pub enum ArgKind {
     /// passing it to `bpf_cgroup_acquire` / `bpf_cgroup_release`.
     PtrToCgroup,
 
-    // ---- Task (Phase 7 wrap-up) ----
+    // ---- Task ----
     /// `struct task_struct *` argument. Same shape as `PtrToCgroup` —
     /// only the non-null `RegType::PtrToTask` accepted. Program must
     /// have null-checked a `bpf_task_acquire` / `bpf_task_from_pid`
@@ -398,7 +398,7 @@ pub enum RetKind {
     /// and `bpf_cgroup_acquire`. Same applier shape as `PtrToCpumask`:
     /// `ACQUIRE` mints a ref, `RET_NULL` wraps as `PtrToCgroupOrNull`.
     PtrToCgroup,
-    /// `RegType::PtrToTask` (Phase 7 wrap-up). Used by
+    /// `RegType::PtrToTask`. Used by
     /// `bpf_get_current_task_btf` (no acquire), `bpf_task_acquire`,
     /// `bpf_task_from_pid`. Same applier shape as `PtrToCgroup`:
     /// `ACQUIRE` mints a ref, `RET_NULL` wraps as `PtrToTaskOrNull`.

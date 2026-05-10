@@ -614,7 +614,7 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
 
         constants::BPF_TASK_STORAGE_GET => CallProto::with_args([
             ConstMapPtr,            // R1: map
-            PtrToTask,              // R2: task (Phase 7 wrap-up: typed)
+            PtrToTask,              // R2: task
             PtrToMapValueOrNull,    // R3: value (may be NULL)
             Anything,               // R4: flags
             DontCare,
@@ -669,7 +669,7 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar),
 
-        // ---- Phase 7 wrap-up: bpf_get_current_task_btf ----
+        // ---- bpf_get_current_task_btf ----
         // Returns the kernel's current-task pointer, typed as PTR_TO_BTF_ID
         // (task_struct *) with PTR_TRUSTED. Modeled here as PtrToTask (no
         // ACQUIRE — the kernel guarantees the returned pointer is live for

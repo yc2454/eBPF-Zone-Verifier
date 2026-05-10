@@ -34,7 +34,7 @@ const CGROUP_KFUNC_PROG_TYPES: [crate::ast::ProgramKind; 6] = [
     crate::ast::ProgramKind::Lsm,
 ];
 
-/// Task kfunc family allowlist (Phase 7 wrap-up). Mirrors the kernel's
+/// Task kfunc family allowlist. Mirrors the kernel's
 /// `tasks_kfunc_set` registration: tracing (fentry/fexit/tp_btf), LSM,
 /// tracepoint, perf_event, syscall, struct_ops. LSM is added vs the
 /// cpumask/cgroup list because `local_storage.c` exercises
@@ -1218,7 +1218,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .flags(CallFlags::ACQUIRE | CallFlags::RET_NULL)
         .prog_type_allowlist(&CGROUP_KFUNC_PROG_TYPES),
 
-        // ---- Task kfuncs (Phase 7 wrap-up) ----
+        // ---- Task kfuncs ----
         //
         // Mirrors the cgroup family. `RegType::PtrToTask{,OrNull}`
         // tracks the optional ref_id minted by acquire-style getters.

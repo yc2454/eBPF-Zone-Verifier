@@ -266,7 +266,7 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             // (`page2 +/- PAGE_SIZE`). Accept any offset; loaded value
             // stays `ScalarValue` via the type-update path.
         }
-        // Phase 7 wrap-up: lax field-access on trusted typed BTF
+        // lax field-access on trusted typed BTF
         // pointers we don't have a `mem_region_model` entry for.
         // Mirrors the `PtrToBtfId{type_name: "unknown"}`
         // policy — accept any field read; result is `ScalarValue` (or a

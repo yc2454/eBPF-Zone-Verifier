@@ -131,7 +131,7 @@ pub fn check_kptr_field_access(
                             // are allowed in the kernel — but the stored
                             // value must be a compatible BTF pointer or
                             // NULL. Source-side typing is enforced in
-                            // Phase 4 alongside `bpf_kptr_xchg`.
+                            // enforced alongside `bpf_kptr_xchg`.
                         }
                     }
                 }

@@ -3,7 +3,7 @@ use crate::domains::tnum::Tnum;
 use crate::{analysis::machine::reg_types::RegType, ast::MemSize};
 use std::collections::{BTreeMap, HashSet};
 
-/// Open-coded iterator families (Phase 3 ).
+/// Open-coded iterator families.
 ///
 /// Mirrors the four in-tree `bpf_iter_*` structs created by `*_new`,
 /// advanced by `*_next` and released by `*_destroy`. The iterator's
@@ -91,7 +91,7 @@ pub struct IteratorSlot {
     pub untrusted: bool,
 }
 
-/// Dynptr families (Phase 4 ).
+/// Dynptr families.
 ///
 /// Mirrors the kernel's `enum bpf_dynptr_type`. The kind is fixed at
 /// construction by the producer kfunc and constrains which consumer

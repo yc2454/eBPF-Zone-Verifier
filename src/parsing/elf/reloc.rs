@@ -1168,7 +1168,7 @@ pub fn combine_program_with_subprogs<P: AsRef<Path> + Clone>(
     })
 }
 
-/// Phase 7 wrap-up: per-function whole-program loader.
+/// per-function whole-program loader.
 ///
 /// Like `combine_program_with_subprogs`, but scoped to a single
 /// SEC()'d entry function instead of the whole section. Loads

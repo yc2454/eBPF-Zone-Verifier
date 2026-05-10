@@ -156,7 +156,7 @@ pub fn with_selftest_caps_for_file(
 /// Keep this list small and explicit — anything not listed here is
 /// compiled with no extra defines.
 pub const PER_FILE_DEFINES: &[(&str, &[&str])] = &[
-    // Phase 1 ISA gates.
+    // ISA gates.
     ("verifier_gotol.c", &["CAN_USE_GOTOL"]),
     ("verifier_ldsx.c", &["__TARGET_ARCH_x86"]),
     ("verifier_movsx.c", &["__TARGET_ARCH_x86"]),

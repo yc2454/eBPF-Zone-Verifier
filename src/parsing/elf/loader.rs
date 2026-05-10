@@ -142,7 +142,7 @@ pub fn try_load_combined_program_from_elf(
     Ok((prog, combined.pc_to_reloc))
 }
 
-/// Phase 7 wrap-up: load a single SEC()'d entry function plus all
+/// load a single SEC()'d entry function plus all
 /// subprograms it transitively calls.
 ///
 /// Returns `(Program, relocations, func_offsets)` where `func_offsets`

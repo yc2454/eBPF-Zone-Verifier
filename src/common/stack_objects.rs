@@ -8,8 +8,8 @@
 // footprint to reserve and annotate the right span of stack slots.
 //
 // Members so far:
-//   - Open-coded iterators (Phase 3 ): bpf_iter_num/_task/_css/_bits
-//   - Dynamic pointers (Phase 4 ): bpf_dynptr
+//   - Open-coded iterators: bpf_iter_num/_task/_css/_bits
+//   - Dynamic pointers: bpf_dynptr
 //
 // Distinct from `mem_region_model`, which describes pointer-reachable kernel
 // structs whose individual fields the program is allowed to read.

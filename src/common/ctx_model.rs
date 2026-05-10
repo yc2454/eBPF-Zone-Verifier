@@ -1983,7 +1983,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
     // recognized; this matches the codegen of the BPF_PROG macro and
     // avoids accidentally typing partial-byte reads that would have to
     // come from a different idiom.
-    // Phase 7 wrap-up: extended to fentry/fexit/tp_btf/lsm/tracepoint.
+    // extended to fentry/fexit/tp_btf/lsm/tracepoint.
     // The BPF_PROG() macro generates the same ctx-array idiom in all
     // these prog types; the runner now resolves entry_args from the
     // function's BTF FUNC_PROTO for non-struct_ops kinds via
@@ -2268,7 +2268,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
                 });
             }
         }
-        // Phase 7 wrap-up: fallback for fentry/LSM/tp_btf where
+        // fallback for fentry/LSM/tp_btf where
         // `resolve_func_args` returns the BPF_PROG-wrapper signature
         // rather than the user-declared args (the kernel resolves these
         // from the attach target's vmlinux BTF, which we don't ship).
