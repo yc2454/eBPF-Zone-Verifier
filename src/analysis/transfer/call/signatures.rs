@@ -370,6 +370,12 @@ pub enum RetKind {
     /// with `CallFlags::RET_NULL` the applier wraps as
     /// `PtrToAllocMemOrNull`.
     PtrToAllocMemFromArg { size_arg: u8 },
+    /// Same as `PtrToAllocMemFromArg` but stamps `rdonly: true` on the
+    /// returned `PtrToAllocMem*`. Used by `bpf_dynptr_slice` (kernel
+    /// returns `const void *`) so subsequent stores through the slice
+    /// reject with "cannot write into rdonly_mem". `bpf_dynptr_slice_rdwr`
+    /// keeps the non-rdonly variant.
+    PtrToAllocMemFromArgRdonly { size_arg: u8 },
     /// `RegType::PtrToAllocMem` with a const element size baked in
     /// (W4.3). Used by `bpf_iter_*_next` whose returned pointer width
     /// is per-iter-kind, not driven by an arg. Combined with
@@ -466,6 +472,13 @@ pub enum SideEffect {
     /// and drop its ref_id (W4.2). Drives `bpf_ringbuf_submit_dynptr` and
     /// `bpf_ringbuf_discard_dynptr`.
     DynptrReleaseFromArg { arg: u8 },
+    /// Initialize the dynptr at `dst_arg` as a clone of the dynptr at
+    /// `src_arg`: copies the source slot's `kind` / `rdonly` and shares
+    /// its `ref_id` so a subsequent `bpf_ringbuf_submit_dynptr(parent)`
+    /// invalidates both slots (kernel `bpf_dynptr_clone` propagates
+    /// `ref_obj_id`). Mints a fresh `dynptr_id` for the clone (per-instance
+    /// identity for slice tracking). Drives `bpf_dynptr_clone`.
+    DynptrCloneOnArg { src_arg: u8, dst_arg: u8 },
     /// Initialize an iterator slot (W4.3). Validator already accepted
     /// the arg as Uninit; the applier zeros `bpf_iter_size(kind)` bytes
     /// (matching the kernel's STACK_ITER mark) and stamps an `Active`
@@ -1115,6 +1128,22 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         ])
         .mem_size_pairs(&pairs::GET_TASK_STACK),
 
+        // bpf_get_branch_snapshot(void *entries, u32 size, u64 flags) -> long
+        // Writes ≤ size bytes; R0 ∈ [-MAX_ERRNO, R2_max]. The size-arg
+        // bound on R0 is what unblocks `total_entries / 24 ≤ ENTRY_CNT`
+        // for static reasoning over `entries[i]` arrays — without it,
+        // total_entries is unbounded and the `i < total_entries` exit
+        // branch can't refine i's bound.
+        constants::BPF_GET_BRANCH_SNAPSHOT => CallProto::with_args([
+            PtrToUninitMem,
+            ConstSize,
+            Anything,
+            DontCare,
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::GET_BRANCH_SNAPSHOT)
+        .ret(RetKind::Scalar),
+
         // ---- Sockmap operations ----
         constants::BPF_SOCK_MAP_UPDATE => CallProto::with_args([
             PtrToCtx,    // R1: bpf_sock_ops context (SockOps only)
@@ -1749,25 +1778,22 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // int bpf_dynptr_clone(const struct bpf_dynptr *ptr,
         //                      struct bpf_dynptr *clone__init)
         //
-        // Initializes `clone__init` as a fresh dynptr. Kernel propagates
-        // source kind + rdonly onto the clone; we stamp DynptrKind::Local
-        // with rdonly=false because we don't track parent-to-clone
-        // invalidation lineage or propagate Xdp/Skb source kind. Those
-        // are REAL coverage gaps that surface as FAs on
-        // dynptr_fail::clone_invalidate1 + clone_xdp_packet_data —
-        // suppressing the kfunc to mask them would be dishonest about
-        // the verifier's coverage. Keep registered; surface the FAs.
+        // Kernel `bpf_dynptr_clone` propagates source `type`, `rdonly`
+        // bit, and `ref_obj_id` onto the clone slot — sharing
+        // `ref_obj_id` is what lets a `bpf_ringbuf_submit_dynptr(parent)`
+        // sweep both slots (kernel walks every dynptr stack slot whose
+        // `ref_obj_id` matches the released id). The slice-invalidation
+        // path ties on `dynptr_id` instead: each dynptr keeps its own
+        // per-instance id for slices, but `collect_packet_dynptr_ids`
+        // returns ids of *all* Skb/Xdp slots so packet mutators sweep
+        // the clone's slices too via the propagated `kind`.
         "bpf_dynptr_clone" => CallProto::with_args([
             DynptrArg { uninit: false, rdwr_only: false },
             DynptrArg { uninit: true, rdwr_only: false },
             DontCare, DontCare, DontCare,
         ])
         .ret(RetKind::Scalar)
-        .side_effects(&[SideEffect::DynptrInitOnArg {
-            arg: 1,
-            kind: DynptrKind::Local,
-            rdonly: false,
-        }]),
+        .side_effects(&[SideEffect::DynptrCloneOnArg { src_arg: 0, dst_arg: 1 }]),
 
         // int bpf_dynptr_copy(struct bpf_dynptr *dst, u32 dst_off,
         //                     const struct bpf_dynptr *src, u32 src_off,
@@ -2258,7 +2284,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
             ConstSize,            // R4: buffer size
             DontCare,
         ])
-        .ret(RetKind::PtrToAllocMemFromArg { size_arg: 3 })
+        .ret(RetKind::PtrToAllocMemFromArgRdonly { size_arg: 3 })
         .flags(CallFlags::RET_NULL)
         .mem_size_pairs(&pairs::DYNPTR_SLICE),
 
@@ -4230,6 +4256,7 @@ pub(super) mod pairs {
     pub static SK_LOOKUP_UDP: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
     pub static GET_SOCKOPT: [MemSizePair; 1] = [MemSizePair::new(Reg::R4, Reg::R5)];
     pub static GET_TASK_STACK: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    pub static GET_BRANCH_SNAPSHOT: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
     pub static D_PATH: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
     pub static SNPRINTF: [MemSizePair; 2] = [
         MemSizePair::new_nullable(Reg::R1, Reg::R2),

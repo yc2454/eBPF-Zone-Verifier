@@ -442,7 +442,26 @@ fn validate_ptr_to_btf_id_named(
     // `bpf_task_get_cgroup1(...)` result into `bpf_cgrp_storage_get(R2=cgrp)`
     // rejects on a type-equivalence we deliberately model with a narrower
     // representation.
+    // Reject UNTRUSTED PtrToBtfId for the `cgroup` / `task_struct`
+    // local-storage arg slots ONLY in sleepable programs outside an
+    // active RCU read-side CS. Kernel's `bpf_{cgrp,task}_storage_*`
+    // helpers reject "untrusted in sleepable prog outside of RCU CS";
+    // non-sleepable tracing programs hold an implicit RCU CS at entry
+    // and accept the same UNTRUSTED descent (e.g. `tcp_sk->...->cgroup`
+    // in cgroup_skb / sockops, where the tcp_sock chain has no
+    // dedicated trusted-field allowlist entry). Closes
+    // cgrp_ls_sleepable::no_rcu_lock without regressing
+    // cgrp_ls_attach_cgroup::set_cookie / update_cookie_sockops.
+    let sleepable_no_rcu = ctx.env.ctx.is_sleepable && !ctx.state.in_rcu_read_section();
     let matches = match (expected, ctx.actual) {
+        (e, RegType::PtrToBtfId { type_name, flags, .. })
+            if type_name == e
+                && matches!(e, "cgroup" | "task_struct")
+                && flags.contains(crate::analysis::machine::reg_types::PtrFlags::UNTRUSTED)
+                && sleepable_no_rcu =>
+        {
+            false
+        }
         (e, RegType::PtrToBtfId { type_name, .. }) if type_name == e => true,
         ("cgroup", RegType::PtrToCgroup { .. }) => true,
         ("task_struct", RegType::PtrToTask { .. }) => true,
@@ -600,11 +619,15 @@ fn validate_ptr_to_cgroup(ctx: &mut ValidationContext) -> bool {
                 Some("cgroup")
             )
     );
+    // Mirror kernel `btf_ptr_types` (verifier.c v6.15 L9045): accept
+    // anything except PTR_UNTRUSTED. Plain (no-flag) PtrToBtfId from
+    // fentry/fexit/fmod_ret ctx args legitimately reaches
+    // `cgroup_rstat_updated(cgrp, …)` etc.
     if !matches!(ctx.actual, RegType::PtrToCgroup { .. })
         && !matches!(
             ctx.actual,
             RegType::PtrToBtfId { type_name: "cgroup", flags, .. }
-                if flags.contains(crate::analysis::machine::reg_types::PtrFlags::TRUSTED)
+                if !flags.contains(crate::analysis::machine::reg_types::PtrFlags::UNTRUSTED)
         )
         && !is_map_kptr_cgroup
     {
@@ -652,12 +675,16 @@ fn validate_ptr_to_task(ctx: &mut ValidationContext) -> bool {
         RegType::PtrToMapKptr { pointee_btf_id, .. }
             if ctx.env.ctx.btf.struct_name(pointee_btf_id) == Some("task_struct")
     );
+    // Mirror kernel `btf_ptr_types` (verifier.c v6.15 L9045): accept
+    // PTR_TO_BTF_ID, PTR_TO_BTF_ID | PTR_TRUSTED, PTR_TO_BTF_ID |
+    // MEM_RCU — i.e., anything except PTR_UNTRUSTED. Plain
+    // (no-flag) PtrToBtfId from fentry/fexit/fmod_ret ctx args
+    // legitimately reaches `bpf_task_storage_get` etc.
     if !matches!(ctx.actual, RegType::PtrToTask { .. })
         && !matches!(
             ctx.actual,
             RegType::PtrToBtfId { type_name: "task_struct", flags, .. }
-                if flags.contains(crate::analysis::machine::reg_types::PtrFlags::TRUSTED)
-                    || flags.contains(crate::analysis::machine::reg_types::PtrFlags::RCU)
+                if !flags.contains(crate::analysis::machine::reg_types::PtrFlags::UNTRUSTED)
         )
         && !map_kptr_task
     {
@@ -1580,7 +1607,8 @@ pub(crate) fn validate_readable_mem(
         // task_kfunc_success::test_task_from_pid_invalid where
         // bpf_strncmp(task->comm, ...) hands a `task_struct + 1912`
         // pointer into ARG_PTR_TO_MEM.
-        RegType::PtrToBtfId { .. } => {
+        RegType::PtrToBtfId { type_name, flags, .. } => {
+            use crate::analysis::machine::reg_types::PtrFlags;
             use crate::ast::ProgramKind;
             let probe_ok = matches!(
                 env.ctx.prog_kind,
@@ -1600,6 +1628,44 @@ pub(crate) fn validate_readable_mem(
                     pc
                 );
                 return false;
+            }
+            // Mirrors kernel `mem_types` (verifier.c v6.15 L9019): the
+            // ARG_PTR_TO_MEM compatibility table accepts only
+            // `PTR_TO_BTF_ID | PTR_TRUSTED`, not plain PTR_TO_BTF_ID.
+            // `prog_args_trusted()` returns false for fentry / fexit /
+            // fmod_ret, so their ctx args are untrusted and rejected
+            // here. Closes task_kfunc_failure::task_access_comm4
+            // (`bpf_strncmp(task->comm, 16, …)` in fentry).
+            if !flags.contains(PtrFlags::TRUSTED) {
+                error!(
+                    "[Verifier] pc {}: untrusted PtrToBtfId{{{}}} not accepted by ARG_PTR_TO_MEM (kernel mem_types requires PTR_TRUSTED)",
+                    pc, type_name
+                );
+                env.fail(VerificationError::InvalidArgType { pc, reg });
+                return false;
+            }
+            // Bound-check the read against the leaf member size when ALU
+            // resolved a containing field. Closes
+            // task_kfunc_failure::task_access_comm{1,2} (kernel
+            // `btf_struct_access` rejects "access beyond the end of
+            // member comm" for `bpf_strncmp(task->comm, 17, …)` and
+            // `bpf_strncmp(task->comm + 1, 16, …)`). When the field-ref
+            // is absent (no ALU resolved a member, or the entry was
+            // cleared) we keep the existing lax accept — this is a
+            // tightening, not a replacement.
+            if let Some(field) = state.btf_field_refs.get(&reg).cloned()
+                && field.struct_name == type_name
+                && let Some(sz) = size
+            {
+                let remaining = field.field_end.saturating_sub(field.current_offset);
+                if (sz as u64) > remaining as u64 {
+                    error!(
+                        "[Verifier] pc {}: read of {} bytes at offset {} exceeds end of member at [{}, {}) in struct {}",
+                        pc, sz, field.current_offset, field.field_start, field.field_end, field.struct_name
+                    );
+                    env.fail(VerificationError::InvalidArgType { pc, reg });
+                    return false;
+                }
             }
             true
         }
@@ -1644,8 +1710,17 @@ pub(crate) fn validate_writable_mem(
         RegType::PtrToMapValue {
             map_idx,
             offset: map_off,
+            rdonly,
             ..
         } => {
+            if rdonly {
+                // Read-only PTR_TO_MAP_KEY (set on cb's R2 by
+                // bpf_for_each_map_elem). Helper write buffers can't
+                // overwrite the key. Mirrors kernel rejection at the
+                // helper-arg level.
+                env.fail(VerificationError::MapStoreForbidden { pc, map_idx });
+                return false;
+            }
             let writable = env
                 .ctx
                 .map_defs
@@ -2065,7 +2140,8 @@ pub(crate) fn check_ptr_access_size(
         // tracing-class contexts where probe_read semantics apply.
         // Closes task_kfunc_success::test_task_from_pid_invalid where
         // bpf_strncmp(task->comm, ...) routes through MemSizePair.
-        RegType::PtrToBtfId { .. } => {
+        RegType::PtrToBtfId { type_name, flags, .. } => {
+            use crate::analysis::machine::reg_types::PtrFlags;
             use crate::ast::ProgramKind;
             let probe_ok = matches!(
                 env.ctx.prog_kind,
@@ -2085,6 +2161,43 @@ pub(crate) fn check_ptr_access_size(
                     pc
                 );
                 return false;
+            }
+            // Mirrors kernel `mem_types` (verifier.c v6.15 L9019): the
+            // ARG_PTR_TO_MEM compatibility table accepts only
+            // `PTR_TO_BTF_ID | PTR_TRUSTED`. fentry / fexit / fmod_ret
+            // ctx args are untrusted (`prog_args_trusted` returns false)
+            // and rejected here even when they reach this site via a
+            // mem_size_pair-routed helper. Closes
+            // task_kfunc_failure::task_access_comm4.
+            if !flags.contains(PtrFlags::TRUSTED) {
+                error!(
+                    "[Verifier] pc {}: untrusted PtrToBtfId{{{}}} not accepted by ARG_PTR_TO_MEM (kernel mem_types requires PTR_TRUSTED)",
+                    pc, type_name
+                );
+                env.fail(VerificationError::InvalidArgType { pc, reg: ptr_reg });
+                return false;
+            }
+            // Bound-check against the leaf BTF member size when ALU
+            // resolved a containing field. Closes
+            // task_kfunc_failure::task_access_comm{1,2}: kernel
+            // `btf_struct_access` rejects "access beyond the end of
+            // member comm" for `bpf_strncmp(task->comm, 17, …)` and
+            // `bpf_strncmp(task->comm + 1, 16, …)`. Same logic as the
+            // `validate_readable_mem` PtrToBtfId arm — kept in sync
+            // because helpers with `mem_size_pairs` route through
+            // `check_ptr_access_size`, bypassing `validate_readable_mem`.
+            if let Some(field) = state.btf_field_refs.get(&ptr_reg).cloned()
+                && field.struct_name == type_name
+            {
+                let remaining = field.field_end.saturating_sub(field.current_offset);
+                if (size as u64) > remaining as u64 {
+                    error!(
+                        "[Verifier] pc {}: read of {} bytes at offset {} exceeds end of member at [{}, {}) in struct {}",
+                        pc, size, field.current_offset, field.field_start, field.field_end, field.struct_name
+                    );
+                    env.fail(VerificationError::InvalidArgType { pc, reg: ptr_reg });
+                    return false;
+                }
             }
             true
         }

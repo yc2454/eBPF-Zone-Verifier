@@ -187,6 +187,58 @@ impl BtfContext {
         })
     }
 
+    /// Find the struct/union member whose [start, start + size) range
+    /// contains `byte_offset`. Returns `(field_start, field_size)` of the
+    /// containing member.
+    ///
+    /// Distinct from `field_at_offset` (which is exact-match on member
+    /// start): this one is for bounds-checking helper-arg reads on a
+    /// PTR_TO_BTF_ID with a non-zero offset that lands *inside* an array
+    /// or scalar field rather than at its boundary. Closes
+    /// `task_kfunc_failure::task_access_comm{1,2}` where `task->comm + N`
+    /// must reject a read that crosses the 16-byte `comm` array bound.
+    pub fn field_containing_offset(
+        &self,
+        struct_id: u32,
+        byte_offset: u32,
+    ) -> Option<(u32, u32)> {
+        let id = self.peel_modifiers(struct_id);
+        let ty = self.types.get(&id)?;
+        if !matches!(ty.kind(), BTF_KIND_STRUCT | BTF_KIND_UNION) {
+            return None;
+        }
+        let bit_offset = byte_offset.checked_mul(8)?;
+        // Iterate in reverse so a strictly-inner member (e.g. an
+        // anonymous-union nested struct) wins over a same-start outer.
+        let member = ty.members.iter().rev().find(|m| {
+            if m.offset > bit_offset {
+                return false;
+            }
+            let size_bytes = self.type_size_bytes(m.type_id);
+            if size_bytes == 0 {
+                return m.offset == bit_offset;
+            }
+            m.offset + size_bytes * 8 > bit_offset
+        })?;
+        let member_start = member.offset / 8;
+        let member_size = self.type_size_bytes(member.type_id);
+        if member_size == 0 {
+            return None;
+        }
+        // If the member is itself a named struct/union, descend so we
+        // bound-check against the leaf field rather than the whole
+        // enclosing struct (kernel `btf_struct_walk` does the same).
+        let inner_id = self.peel_modifiers(member.type_id);
+        if let Some(inner_ty) = self.types.get(&inner_id)
+            && matches!(inner_ty.kind(), BTF_KIND_STRUCT | BTF_KIND_UNION)
+            && let Some((inner_start, inner_size)) =
+                self.field_containing_offset(inner_id, byte_offset - member_start)
+        {
+            return Some((member_start + inner_start, inner_size));
+        }
+        Some((member_start, member_size))
+    }
+
     /// Walk modifier wrappers from `start_id` and return the first
     /// TYPE_TAG name encountered (kernel `__percpu` / `__user` / `__rcu`
     /// annotations live on the pointee in pahole-emitted BTF). Returns

@@ -225,12 +225,71 @@ pub(crate) fn apply_call_proto_r0(
                 if let Some(slot) = slot
                     && slot.ref_id != 0
                 {
-                    state.release_ref(slot.ref_id);
-                    state.invalidate_ref(slot.ref_id);
+                    let released_ref = slot.ref_id;
+                    state.release_ref(released_ref);
+                    state.invalidate_ref(released_ref);
+                    // Sweep every other dynptr stack slot that shares the
+                    // released `ref_id` (kernel `release_reference`
+                    // walks all stack slots, not just regs). Closes
+                    // dynptr_fail::clone_invalidate1: clone shares the
+                    // parent ringbuf dynptr's `ref_obj_id`, so submitting
+                    // the parent invalidates the clone too.
+                    state.invalidate_dynptr_slots_by_ref(released_ref);
+                    // Also drop slices from the released dynptr's
+                    // per-instance id (slot's own `dynptr_id`, plus any
+                    // sibling slot we just cleared shares this id by
+                    // construction since clones share `ref_id` not
+                    // `dynptr_id`). Sweep both for safety.
+                    state.invalidate_dynptr_slices(slot.dynptr_id);
                 }
                 let stack = state.stack_at_mut(frame);
                 stack.stack_clear_dynptr(base_off);
                 stack.stack_clear_dynptr(base_off + 8);
+            }
+            SideEffect::DynptrCloneOnArg { src_arg, dst_arg } => {
+                let src_reg = arg_reg(src_arg);
+                let dst_reg = arg_reg(dst_arg);
+                let Some((src_frame, src_off)) = resolve_stack_arg(state, src_reg) else {
+                    continue;
+                };
+                let Some((dst_frame, dst_off)) = resolve_stack_arg(state, dst_reg) else {
+                    continue;
+                };
+                // Validator accepted src as initialized first-slot dynptr.
+                let Some(src_slot) = state.stack_at(src_frame).stack_get_dynptr(src_off) else {
+                    continue;
+                };
+                let kind = src_slot.kind;
+                let rdonly = src_slot.rdonly;
+                let ref_id = src_slot.ref_id;
+                // Pre-stamp destroy-and-sweep on dst: invalidate slices
+                // tied to whatever the dst slot used to hold.
+                let mut victim_ids: Vec<u32> = Vec::new();
+                if let Some(slot) = state.stack_at(dst_frame).stack_get_dynptr(dst_off) {
+                    victim_ids.push(slot.dynptr_id);
+                }
+                if let Some(slot) = state.stack_at(dst_frame).stack_get_dynptr(dst_off + 8)
+                    && !victim_ids.contains(&slot.dynptr_id)
+                {
+                    victim_ids.push(slot.dynptr_id);
+                }
+                for vid in &victim_ids {
+                    state.invalidate_dynptr_slices(*vid);
+                }
+                let dynptr_id = crate::analysis::machine::reg_types::new_dynptr_id();
+                let stack = state.stack_at_mut(dst_frame);
+                for i in 0..BPF_DYNPTR_SIZE {
+                    let byte_off = dst_off as i64 + i as i64;
+                    update_store_types(stack, RegType::ScalarValue, MemSize::U8, Some(byte_off));
+                }
+                stack.stack_set_dynptr(
+                    dst_off,
+                    DynptrSlot { kind, ref_id, rdonly, first_slot: true, dynptr_id },
+                );
+                stack.stack_set_dynptr(
+                    dst_off + 8,
+                    DynptrSlot { kind, ref_id, rdonly, first_slot: false, dynptr_id },
+                );
             }
         }
     }
@@ -345,6 +404,7 @@ pub(crate) fn apply_call_proto_r0(
                     mem_size,
                     ref_id: None,
                     dynptr_id: None,
+                    rdonly: false,
                 }
             } else {
                 RegType::PtrToAllocMem {
@@ -352,6 +412,7 @@ pub(crate) fn apply_call_proto_r0(
                     mem_size,
                     ref_id: None,
                     dynptr_id: None,
+                    rdonly: false,
                 }
             };
             state.types.set(Reg::R0, ty);
@@ -419,46 +480,52 @@ pub(crate) fn apply_call_proto_r0(
             true
         }
         RetKind::PtrToAllocMemFromArg { size_arg } => {
-            // Read the size arg's upper bound from the pre-call domain
-            // (apply_call_proto_r0 runs before caller-saved clobber, so
-            // R1..R5 still hold their pre-call values here).
-            let size_reg = arg_reg(size_arg);
-            let (_, max_size) = state.domain.get_interval(size_reg);
-            let mem_size = max_size.max(0) as u64;
-            let id = new_ptr_id();
-            // Inherit the source dynptr's ref_id from R1 so that releasing
-            // the dynptr (`bpf_ringbuf_submit_dynptr` etc.) invalidates the
-            // returned slice pointer too — catches use-after-release.
-            // Also inherit `dynptr_id` (the per-instance identity) so
-            // overwriting the source dynptr with `bpf_dynptr_from_mem`
-            // (etc.) demotes the slice — mirrors kernel verifier.c v6.15
-            // L11701 `regs[BPF_REG_0].dynptr_id = meta.dynptr_id`. All
-            // current `PtrToAllocMemFromArg` users (`bpf_dynptr_data`,
-            // `bpf_dynptr_slice`, `bpf_dynptr_slice_rdwr`) have R1 as
-            // the source dynptr.
-            let src_slot = resolve_stack_arg(state, arg_reg(0))
-                .and_then(|(frame, off)| state.stack_at(frame).stack_get_dynptr(off));
-            let ref_id = src_slot.map(|s| s.ref_id).filter(|id| *id != 0);
-            let dynptr_id = src_slot.map(|s| s.dynptr_id);
-            let ty = if proto.flags.contains(CallFlags::RET_NULL) {
-                RegType::PtrToAllocMemOrNull {
-                    id,
-                    mem_size,
-                    ref_id,
-                    dynptr_id,
-                }
-            } else {
-                RegType::PtrToAllocMem {
-                    id,
-                    mem_size,
-                    ref_id,
-                    dynptr_id,
-                }
-            };
-            state.types.set(Reg::R0, ty);
+            apply_alloc_mem_from_arg(state, proto, size_arg, false);
+            true
+        }
+        RetKind::PtrToAllocMemFromArgRdonly { size_arg } => {
+            apply_alloc_mem_from_arg(state, proto, size_arg, true);
             true
         }
     }
+}
+
+/// Shared body of `RetKind::PtrToAllocMemFromArg{,Rdonly}`. Reads the
+/// size-arg upper bound, resolves the source dynptr slot to inherit
+/// `ref_id` / `dynptr_id`, and stamps the supplied `rdonly` bit on the
+/// returned `PtrToAllocMem*`.
+fn apply_alloc_mem_from_arg(
+    state: &mut State,
+    proto: &CallProto,
+    size_arg: u8,
+    rdonly: bool,
+) {
+    let size_reg = arg_reg(size_arg);
+    let (_, max_size) = state.domain.get_interval(size_reg);
+    let mem_size = max_size.max(0) as u64;
+    let id = new_ptr_id();
+    let src_slot = resolve_stack_arg(state, arg_reg(0))
+        .and_then(|(frame, off)| state.stack_at(frame).stack_get_dynptr(off));
+    let ref_id = src_slot.map(|s| s.ref_id).filter(|id| *id != 0);
+    let dynptr_id = src_slot.map(|s| s.dynptr_id);
+    let ty = if proto.flags.contains(CallFlags::RET_NULL) {
+        RegType::PtrToAllocMemOrNull {
+            id,
+            mem_size,
+            ref_id,
+            dynptr_id,
+            rdonly,
+        }
+    } else {
+        RegType::PtrToAllocMem {
+            id,
+            mem_size,
+            ref_id,
+            dynptr_id,
+            rdonly,
+        }
+    };
+    state.types.set(Reg::R0, ty);
 }
 
 /// True if a dynptr of this kind carries an acquire/release ref

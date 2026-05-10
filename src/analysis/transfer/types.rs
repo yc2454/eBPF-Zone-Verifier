@@ -69,6 +69,7 @@ fn adjust_map_value_offset(ty: RegType, delta: Option<i64>) -> RegType {
             offset,
             map_idx,
             map_uid,
+            rdonly,
         } => {
             let new_offset = match (offset, delta) {
                 (Some(o), Some(d)) => Some(o + d),
@@ -79,6 +80,7 @@ fn adjust_map_value_offset(ty: RegType, delta: Option<i64>) -> RegType {
                 offset: new_offset,
                 map_idx,
                 map_uid,
+                rdonly,
             }
         }
         other => other,
@@ -179,6 +181,7 @@ fn update_ptr_arithmetic_type(
             mem_size,
             ref_id,
             dynptr_id,
+            rdonly,
         } => {
             // Kernel `verifier.c` ~L15170 (v6.15): pointer arithmetic on
             // PTR_TO_MEM (alloc) preserves the type and bumps `reg->off`
@@ -200,6 +203,7 @@ fn update_ptr_arithmetic_type(
                             mem_size: mem_size - d as u64,
                             ref_id: None,
                             dynptr_id,
+                            rdonly,
                         },
                     );
                 }
@@ -399,6 +403,7 @@ pub(crate) fn update_alu_types(
                                         offset: Some(info.offset),
                                         map_idx: info.map_idx,
                                         map_uid: None,
+                                        rdonly: false,
                                     },
                                 );
                             } else {
@@ -516,12 +521,14 @@ pub(crate) fn update_load_types(
                                 mem_size,
                                 ref_id: None,
                                 dynptr_id: None,
+                                rdonly: false,
                             },
                         );
                     }
                     CtxFieldKind::TrustedPtr {
                         type_name,
                         nullable,
+                        trusted,
                         tag_flags,
                     } => {
                         // Compose TRUSTED with attach-target tag flags
@@ -529,7 +536,17 @@ pub(crate) fn update_load_types(
                         // pointers is rejected at the load-site check
                         // in memory/access.rs — programs must go through
                         // bpf_copy_from_user / bpf_per_cpu_ptr first.
-                        let flags = PtrFlags::TRUSTED.union(tag_flags);
+                        // `trusted=false` mirrors kernel
+                        // `prog_args_trusted()` returning false for
+                        // fentry / fexit / fmod_ret: ctx args are plain
+                        // PTR_TO_BTF_ID without PTR_TRUSTED, which makes
+                        // ARG_PTR_TO_MEM helpers reject them.
+                        let base = if trusted {
+                            PtrFlags::TRUSTED
+                        } else {
+                            PtrFlags::empty()
+                        };
+                        let flags = base.union(tag_flags);
                         if nullable {
                             state.types.set(
                                 dst,
@@ -664,6 +681,7 @@ pub(crate) fn update_load_types(
                                 mem_size,
                                 ref_id: None,
                                 dynptr_id: None,
+                                rdonly: false,
                             },
                         );
                         return false;
@@ -760,9 +778,23 @@ pub(crate) fn update_load_types(
                 // the type chain; the FA risk is bounded to consumer
                 // validators that don't enforce TRUSTED — those should
                 // be tightened independently.
+                // `__rcu` field outside an explicit CS still loads as
+                // RCU/TRUSTED in non-sleepable tracing programs because
+                // the kernel runs them with an implicit RCU read-side
+                // CS held (auto_rcu in analysis::mod.rs covers Kprobe/
+                // Tracepoint/RawTP/PerfEvent; Tracing/Lsm are
+                // sometimes-sleepable and not on that list, so we
+                // approximate "non-sleepable program" here). Sleepable
+                // programs (`fentry.s`, `iter.s`, `lsm.s`) MUST enter
+                // an explicit `bpf_rcu_read_lock` to load `__rcu`
+                // fields as trusted; outside the CS the load lands
+                // UNTRUSTED — kernel: "task->cgroups is untrusted in
+                // sleepable prog outside of RCU CS" (closes
+                // cgrp_ls_sleepable::no_rcu_lock).
+                let rcu_implicit = !env.ctx.is_sleepable;
                 let trust_flag = if trusted {
                     PtrFlags::TRUSTED
-                } else if rcu && state.in_rcu_read_section() {
+                } else if rcu && (state.in_rcu_read_section() || rcu_implicit) {
                     PtrFlags::RCU
                 } else {
                     PtrFlags::UNTRUSTED
@@ -891,15 +923,6 @@ pub fn trusted_field_load(struct_name: &str, field_name: &str) -> bool {
         // (`cgrp->kn->id`) — appears in cgroup_hierarchical_stats and
         // cgrp_kfunc_success::test_cgrp_from_id.
         | ("cgroup", "kn")
-        // task_struct.cgroups → css_set. Trusted while the task is
-        // trusted; the standard idiom for any cgroup-storage helper
-        // call from a tracing program is
-        // `bpf_get_current_task_btf()->cgroups->dfl_cgrp`.
-        | ("task_struct", "cgroups")
-        // css_set.dfl_cgrp → cgroup. Pairs with (task_struct, cgroups)
-        // for the bpf_get_current_task_btf-rooted helper-arg path
-        // (percpu_alloc_cgrp_local_storage, cgrp_ls_*).
-        | ("css_set", "dfl_cgrp")
         // sock.<descent-to-sk_cgrp_data.cgroup>. The kernel admits
         // `sk->sk_cgrp_data.cgroup` from any trusted sock pointer.
         // `field_at_offset` descends through the embedded
@@ -945,6 +968,18 @@ pub fn rcu_field_load(struct_name: &str, field_name: &str) -> bool {
         (struct_name, field_name),
         ("task_struct", "real_parent")
         | ("task_struct", "parent")
+        // task_struct.cgroups → css_set, css_set.dfl_cgrp → cgroup
+        // are kernel `__rcu` fields. In non-sleepable tracing programs
+        // the kernel holds an implicit RCU CS at entry (mirrored by
+        // `auto_rcu` in analysis::mod.rs), so the load yields RCU and
+        // downstream `bpf_cgrp_storage_get` accepts. In sleepable
+        // programs (`fentry.s/...`) the program must enter an explicit
+        // `bpf_rcu_read_lock` first; outside the CS the load lands
+        // UNTRUSTED and the storage helper rejects (kernel: "task->
+        // cgroups is untrusted in sleepable prog outside of RCU CS").
+        // Closes cgrp_ls_sleepable::no_rcu_lock.
+        | ("task_struct", "cgroups")
+        | ("css_set", "dfl_cgrp")
     )
 }
 
@@ -1219,6 +1254,7 @@ pub(crate) fn update_call_types(
                                     offset: Some(0),
                                     map_idx,
                                     map_uid,
+                                    rdonly: false,
                                 },
                             );
                             state.domain.init_map_value_ptr(Reg::R0);
@@ -1241,6 +1277,7 @@ pub(crate) fn update_call_types(
                                     offset: Some(0),
                                     map_idx,
                                     map_uid,
+                                    rdonly: false,
                                 },
                             );
                             state.domain.init_map_value_ptr(Reg::R0);
@@ -1471,6 +1508,7 @@ pub(crate) fn update_call_types(
                     mem_size: hi as u64,
                     ref_id: None,
                     dynptr_id: None,
+                    rdonly: false,
                 },
             );
         }
@@ -1585,6 +1623,7 @@ pub(crate) fn update_map_load_types(
             // Direct map decl — no map_uid (the per-instance identity
             // only matters for chained map-of-maps lookups).
             map_uid: None,
+            rdonly: false,
         },
         // Modern kinds are filtered upstream in transfer_map_load; reaching
         // them here would be a bug.

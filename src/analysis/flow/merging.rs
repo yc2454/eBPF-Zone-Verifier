@@ -184,6 +184,35 @@ pub fn record_state(
         }
     }
 
+    if let Some(target_pc) = crate::analysis::machine::env::dump_precise_pcs_pc()
+        && pc == target_pc
+    {
+        let mut entries: Vec<(usize, crate::analysis::machine::reg::Reg)> =
+            env.precise_pcs.iter().copied().collect();
+        entries.sort_by_key(|(p, r)| (*p, format!("{:?}", r)));
+        eprintln!(
+            "[precise_pcs] fired at pc={} | total_entries={}",
+            pc,
+            entries.len()
+        );
+        let mut cur_pc: Option<usize> = None;
+        let mut row: Vec<String> = Vec::new();
+        let flush = |cur_pc: Option<usize>, row: &Vec<String>| {
+            if let Some(p) = cur_pc {
+                eprintln!("  pc={:>4}: {}", p, row.join(", "));
+            }
+        };
+        for (p, r) in entries {
+            if Some(p) != cur_pc {
+                flush(cur_pc, &row);
+                row.clear();
+                cur_pc = Some(p);
+            }
+            row.push(format!("{:?}", r));
+        }
+        flush(cur_pc, &row);
+    }
+
     cache_id
 }
 

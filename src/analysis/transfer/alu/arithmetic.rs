@@ -298,6 +298,15 @@ pub(crate) fn handle_div(state: &mut State, width: Width, dst: Reg, src: &Operan
     // fully known the result is exact; div by 1 is a no-op. Anything
     // else (unknown divisor, unknown dividend, divisor=0) collapses to
     // unknown — the kernel rejects div-by-zero before this point.
+    //
+    // Note: The kernel itself ALWAYS marks DIV-result var_off unknown
+    // via `is_safe_to_compute_dst_reg_range` (verifier.c v6.15 L15089),
+    // independent of operand const-ness. We're more precise here, which
+    // is sound for bound-tracking but may cause divergence at gates
+    // that rely on `tnum_is_const(off_reg->var_off)` being false. The
+    // PtrToFlowKeys gate ([alu/validation.rs:91]) handles this via the
+    // `kernel_unknown_tnum_regs` side channel; see also `tnum_imprecise`
+    // tracking on State.
     let new_tnum = match src {
         Operand::Imm(imm) => {
             let imm_u = if width == Width::W32 {

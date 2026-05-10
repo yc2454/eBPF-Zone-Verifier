@@ -39,6 +39,34 @@ pub enum ResLockReleaseError {
     WrongClass,
 }
 
+/// Tracks the BTF struct field that a `PtrToBtfId` register currently
+/// points into, so helper-arg readers can bound-check the read length
+/// against the leaf member's size. Mirrors the kernel's
+/// `bpf_reg_state.off` + `btf_struct_walk` work, but kept as a sparse
+/// side channel keyed by Reg rather than as a new variant on
+/// `RegType::PtrToBtfId` — propagating an extra field across the 100+
+/// PtrToBtfId construction sites would be invasive (per the
+/// "encapsulate representation changes" guideline).
+///
+/// Set when pointer arithmetic on a PtrToBtfId resolves a known-size
+/// member (`r1 = task; r1 += 1912` → comm at [1912, 1928)). Updated on
+/// further `r1 += k` while staying inside the same field. Cleared
+/// otherwise, and ignored at the read site if the reg's type is no
+/// longer `PtrToBtfId{struct_name}` matching this entry's struct.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BtfFieldRef {
+    /// Containing struct name (must match `PtrToBtfId.type_name`; if
+    /// the reg's type changes, the entry becomes stale and validators
+    /// must filter it out by re-checking).
+    pub struct_name: &'static str,
+    /// Current absolute byte offset of the reg within the struct.
+    pub current_offset: u32,
+    /// Start of the containing leaf field (byte offset within struct).
+    pub field_start: u32,
+    /// End (exclusive) of the containing leaf field.
+    pub field_end: u32,
+}
+
 /// Per-program `may_goto` iteration budget. Mirrors the kernel's
 /// `BPF_MAY_GOTO_LIMIT` (see `kernel/bpf/verifier.c`). Each time the
 /// verifier takes a `may_goto` back-edge it decrements this counter; the
@@ -188,6 +216,29 @@ pub struct State {
     /// matching kernel `maybe_widen_reg` L8752).
     pub var_off_contributor: HashMap<Reg, Reg>,
 
+    /// Sparse map: register → containing-BTF-field info, used by the
+    /// helper-arg validators to bound-check `bpf_strncmp(task->comm, N)`
+    /// style reads against the leaf member's size. See [`BtfFieldRef`].
+    pub btf_field_refs: HashMap<Reg, BtfFieldRef>,
+
+    /// Set of registers whose tnum the *kernel* would have marked
+    /// unknown (`__mark_reg_unknown` via
+    /// `is_safe_to_compute_dst_reg_range` returning false; see
+    /// verifier.c v6.15 L15089). Concretely populated by DIV / MOD
+    /// (always) and non-const shifts. Propagates through subsequent
+    /// ALU ops so the imprecision tag survives chained transforms
+    /// (e.g. `r8 /= 1; r8 &= 8` — kernel sees both as imprecise).
+    /// Cleared on MOV-from-imm, MOV from a clean reg, and on any
+    /// load.
+    ///
+    /// Used at the `PtrToFlowKeys` arithmetic gate
+    /// ([alu/validation.rs]) to reject `flow_keys += off` whenever
+    /// the kernel would observe `tnum_is_const(off.var_off) == false`,
+    /// even if our own tnum stayed const through e.g. our div-by-1
+    /// preservation. Closes
+    /// verifier_value_illegal_alu::flow_keys_illegal_variable_offset_alu.
+    pub kernel_tnum_imprecise: HashSet<Reg>,
+
     /// Program-default exception callback entry PC (W3.3a plumbing).
     /// Used when `bpf_throw` unwinds past every frame without finding a
     /// frame-local `exception_cb` (see [`CallFrame::exception_cb`]). A
@@ -230,6 +281,8 @@ impl State {
             goto_budget: BPF_MAY_GOTO_LIMIT,
             may_goto_depth: 0,
             var_off_contributor: HashMap::new(),
+            btf_field_refs: HashMap::new(),
+            kernel_tnum_imprecise: HashSet::new(),
             program_exception_cb: None,
         }
     }
@@ -490,6 +543,44 @@ impl State {
     /// the iter's `_next` consumer rejects on the untrusted slot in the
     /// next iteration. Called by `transfer_call` after a successful
     /// `state.rcu_read_unlock()` that leaves us outside any RCU CS.
+    /// Demote every reg / spilled slot whose `PtrToBtfId{,OrNull}` is
+    /// flagged `MEM_RCU` to `PTR_UNTRUSTED`. Mirrors kernel verifier.c
+    /// v6.15 ~L13543: on `bpf_rcu_read_unlock` (outermost), every
+    /// MEM_RCU reg/slot is re-flagged UNTRUSTED so subsequent
+    /// helper/kfunc args requiring TRUSTED reject. Iter slots are
+    /// handled separately in `invalidate_rcu_iter_slots`.
+    ///
+    /// Closes rcu_read_lock::{task_untrusted_rcuptr,cross_rcu_region}:
+    /// `task->real_parent` loaded under RCU lands as PtrToBtfId{RCU};
+    /// after unlock it becomes UNTRUSTED, then `bpf_task_storage_get`
+    /// (which expects PtrToTask / TRUSTED PtrToBtfId{task_struct})
+    /// rejects.
+    pub fn demote_rcu_btf_regs_to_untrusted(&mut self) {
+        use crate::analysis::machine::reg_types::PtrFlags;
+        let demote_flags = |flags: PtrFlags| -> PtrFlags {
+            if flags.contains(PtrFlags::RCU) {
+                flags.difference(PtrFlags::RCU | PtrFlags::TRUSTED)
+                    .union(PtrFlags::UNTRUSTED)
+            } else {
+                flags
+            }
+        };
+        let demote_one = |ty: &mut RegType| match ty {
+            RegType::PtrToBtfId { flags, .. } | RegType::PtrToBtfIdOrNull { flags, .. } => {
+                *flags = demote_flags(*flags);
+            }
+            _ => {}
+        };
+        for i in 0..self.types.regs.len() {
+            demote_one(&mut self.types.regs[i]);
+        }
+        for frame in self.frames.iter_mut() {
+            for (_off, spilled) in frame.stack.slots.iter_mut() {
+                demote_one(&mut spilled.reg_type);
+            }
+        }
+    }
+
     pub fn invalidate_rcu_iter_slots(&mut self) {
         for frame in self.frames.iter_mut() {
             let offsets = frame.stack.slot_offsets();
@@ -532,6 +623,41 @@ impl State {
             }
         }
         ids
+    }
+
+    /// Sweep dynptr stack slots whose `ref_id` matches `id`, clear their
+    /// annotation and slot bytes, and invalidate any slices tied to those
+    /// slots' `dynptr_id`. Mirrors kernel `release_reference` walking all
+    /// stack slots in addition to regs (verifier.c v6.15) — needed for
+    /// `bpf_dynptr_clone` lineage where clone and parent share `ref_obj_id`
+    /// but live at different stack offsets.
+    pub fn invalidate_dynptr_slots_by_ref(&mut self, id: u32) {
+        if id == 0 {
+            return;
+        }
+        let mut slice_ids: Vec<u32> = Vec::new();
+        let mut to_clear: Vec<(crate::analysis::machine::frame_stack::FrameLevel, i16)> =
+            Vec::new();
+        for (idx, frame) in self.frames.iter().enumerate() {
+            let frame_level = crate::analysis::machine::frame_stack::FrameLevel::from_index(idx);
+            for off in frame.stack.slot_offsets() {
+                let off_i16 = off as i16;
+                if let Some(slot) = frame.stack.stack_get_dynptr(off_i16)
+                    && slot.ref_id == id
+                {
+                    if slot.first_slot && !slice_ids.contains(&slot.dynptr_id) {
+                        slice_ids.push(slot.dynptr_id);
+                    }
+                    to_clear.push((frame_level, off_i16));
+                }
+            }
+        }
+        for (frame_level, off) in to_clear {
+            self.stack_at_mut(frame_level).stack_clear_dynptr(off);
+        }
+        for did in slice_ids {
+            self.invalidate_dynptr_slices(did);
+        }
     }
 
     pub fn invalidate_dynptr_slices(&mut self, dynptr_id: u32) {

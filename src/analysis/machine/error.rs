@@ -339,6 +339,15 @@ pub enum VerificationError {
         ops_struct: String,
         license: String,
     },
+    /// libbpf rejects a struct_ops program assigned to multiple
+    /// member slots ("invalid reuse of prog <name>"). The kernel
+    /// verifier never runs in this case — the load fails earlier
+    /// in libbpf. Pattern observed in `bad_struct_ops` (prog
+    /// `test_1` wired to both `bpf_testmod_ops::test_1` and
+    /// `bpf_testmod_ops2::test_1`).
+    StructOpsProgReuse {
+        prog: String,
+    },
     GlobalFuncMalformed {
         pc: usize,
         func: String,
@@ -740,6 +749,9 @@ impl VerificationError {
                     "struct_ops {} requires GPL-compatible license, got '{}'",
                     ops_struct, license
                 )
+            }
+            VerificationError::StructOpsProgReuse { prog } => {
+                format!("invalid reuse of prog {}", prog)
             }
             VerificationError::GlobalFuncMalformed { pc, func, reason } => {
                 format!("global function '{}' at pc {} {}", func, pc, reason)

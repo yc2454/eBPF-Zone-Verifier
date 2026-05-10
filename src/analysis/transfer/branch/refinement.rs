@@ -274,6 +274,7 @@ fn maybe_promote_map_val(state: &mut State, reg: Reg) {
                     offset: Some(0),
                     map_idx,
                     map_uid,
+                    rdonly: false,
                 },
             );
             // Initialize PtrOffset tracking for interval domain
@@ -289,6 +290,7 @@ fn maybe_promote_map_val(state: &mut State, reg: Reg) {
                 offset: Some(0),
                 map_idx: *map_idx,
                 map_uid: *map_uid,
+                rdonly: false,
             },
             _ => unreachable!(),
         },
@@ -344,12 +346,12 @@ fn maybe_promote_mem(state: &mut State, reg: Reg) {
         _ => return,
     };
     for r in Reg::ALL {
-        if let RegType::PtrToAllocMemOrNull { id, mem_size, ref_id, dynptr_id } = state.types.get(r)
+        if let RegType::PtrToAllocMemOrNull { id, mem_size, ref_id, dynptr_id, rdonly } = state.types.get(r)
             && id == target_id
         {
             state.types.set(
                 r,
-                RegType::PtrToAllocMem { id, mem_size, ref_id, dynptr_id },
+                RegType::PtrToAllocMem { id, mem_size, ref_id, dynptr_id, rdonly },
             );
         }
     }
@@ -362,11 +364,13 @@ fn maybe_promote_mem(state: &mut State, reg: Reg) {
                 mem_size,
                 ref_id,
                 dynptr_id,
+                rdonly,
             } => RegType::PtrToAllocMem {
                 id: *id,
                 mem_size: *mem_size,
                 ref_id: *ref_id,
                 dynptr_id: *dynptr_id,
+                rdonly: *rdonly,
             },
             _ => unreachable!(),
         },
@@ -486,12 +490,42 @@ fn maybe_refine_acquired_ref(state: &mut State, reg: Reg, is_non_null: bool) {
             let ty = state.types.get(r);
             if same_acquired_pointer(&reg_type, &ty) {
                 state.types.set(r, RegType::ScalarValue);
+                // The pointer was just proved null on this branch.
+                // Tighten the linked register's bounds to [0, 0] so
+                // subsequent null-tests can refute the impossible
+                // non-zero branch. Without this, only the type is
+                // demoted; bounds stay wide (whatever was captured
+                // at acquisition time) and a later `if linked == 0`
+                // fails to prove always-taken.
+                state.domain.assign_imm(r, 0);
+                state.set_tnum(r, crate::domains::tnum::Tnum::constant(0));
             }
         }
-        promote_stack_slots_all_frames(
-            state,
-            |ty| same_acquired_pointer(&reg_type, ty),
-            |_ty| RegType::ScalarValue,
-        );
+        // Stack slots that aliased the acquired ref are now NULL too.
+        // Demote type AND tighten bounds + tnum to constant 0; without
+        // the bounds refinement, a later spill+fill of a slot that
+        // held an `OwnedKptrOrNull` with a wide capture range produces
+        // a wide-interval ScalarValue, and a downstream `if X == 0`
+        // explores an impossible non-zero branch — that's the leak
+        // that caused the FALSE-REJECT in
+        // `rbtree::rbtree_add_and_remove_array` (err_out path from
+        // `pc=23` would reach the `bpf_obj_drop` at pc=184 with R1 as
+        // wide-bound ScalarValue).
+        for frame in state.frames.iter_mut() {
+            let offsets: Vec<i16> = frame.stack.slot_offsets();
+            for k in offsets {
+                let ty = frame.stack.get_slot_type(k);
+                if same_acquired_pointer(&reg_type, &ty) {
+                    if let Some(slot) = frame.stack.get_slot_mut(k) {
+                        slot.reg_type = RegType::ScalarValue;
+                        slot.bounds = crate::analysis::machine::stack_state::ScalarBounds {
+                            min: 0,
+                            max: 0,
+                        };
+                        slot.tnum = crate::domains::tnum::Tnum::constant(0);
+                    }
+                }
+            }
+        }
     }
 }

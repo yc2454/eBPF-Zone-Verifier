@@ -166,6 +166,7 @@ pub const BPF_GET_CURRENT_TASK_BTF: u32 = 158;
 pub const BPF_KTIME_GET_COARSE_NS: u32 = 160;
 pub const BPF_SOCK_FROM_FILE: u32 = 162;
 pub const BPF_TASK_PT_REGS: u32 = 175;
+pub const BPF_GET_BRANCH_SNAPSHOT: u32 = 176;
 pub const BPF_COPY_FROM_USER_TASK: u32 = 191;
 pub const BPF_CHECK_MTU: u32 = 163;
 pub const BPF_COPY_FROM_USER: u32 = 148;

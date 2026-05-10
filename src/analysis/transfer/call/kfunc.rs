@@ -1024,6 +1024,7 @@ fn iter_next_fork(
             mem_size: elem_size,
             ref_id: None,
             dynptr_id: None,
+            rdonly: false,
         },
         IterNextElemKind::BtfId { type_name, flags } => RegType::PtrToBtfId {
             type_name,
@@ -1556,6 +1557,7 @@ fn transfer_kfunc_wq_set_callback(
             offset: Some(0),
             map_idx,
             map_uid: None,
+            rdonly: false,
         },
         None => unknown_btf(),
     };

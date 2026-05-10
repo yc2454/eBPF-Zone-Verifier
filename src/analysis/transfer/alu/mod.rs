@@ -64,6 +64,27 @@ pub(crate) fn transfer_alu(
     // (Mov, Sub, And, Mul, etc.) invalidates the contributor link.
     state.var_off_contributor.remove(&dst);
 
+    // Capture dst's existing BTF field-ref before the op clobbers it.
+    // Used to incrementally update the offset when this op is a `ptr +=
+    // imm` that stays inside the same leaf field; otherwise the entry
+    // is dropped and re-resolved below.
+    let prev_btf_field_ref = state.btf_field_refs.remove(&dst);
+
+    // Capture dst's pre-op kernel-tnum-imprecision flag (kernel would
+    // have marked dst's var_off unknown via __mark_reg_unknown). Used
+    // to propagate imprecision through chained ALU: e.g. `r8 /= 1;
+    // r8 &= 8` keeps r8 imprecise because kernel's tnum_and(unknown,
+    // const(8)) yields a non-const var_off.
+    let dst_was_imprecise = state.kernel_tnum_imprecise.contains(&dst);
+    let src_imprecise = match &src {
+        Operand::Reg(r) => state.kernel_tnum_imprecise.contains(r),
+        Operand::Imm(_) => false,
+    };
+    let src_tnum_is_const = match &src {
+        Operand::Imm(_) => true,
+        Operand::Reg(r) => state.get_tnum(*r).const_value().is_some(),
+    };
+
     // 5. Execute operation
     match op {
         AluOp::Add => arithmetic::handle_add(env, &mut state, &in_types, width, dst, &src),
@@ -98,6 +119,70 @@ pub(crate) fn transfer_alu(
         &src,
         pc,
     );
+
+    // 6.3 Kernel-tnum-imprecision propagation. Mirrors kernel
+    // `is_safe_to_compute_dst_reg_range` (verifier.c v6.15 L15089):
+    // BPF_DIV / BPF_MOD always mark the result var_off unknown; non-
+    // const shifts likewise. Bitwise / arith ops compute precisely, so
+    // their result is imprecise only if a source operand was imprecise.
+    // MOV from imm or from a clean reg clears imprecision. Loads
+    // separately clear it in `transfer_load`.
+    let dst_now_imprecise = match (op, &src) {
+        (AluOp::Div | AluOp::Mod, _) => true,
+        (AluOp::Mov, Operand::Imm(_)) => false,
+        (AluOp::Mov, Operand::Reg(_)) => src_imprecise,
+        (AluOp::Lsh | AluOp::Rsh | AluOp::Arsh, _) => {
+            !src_tnum_is_const || src_imprecise || dst_was_imprecise
+        }
+        _ => src_imprecise || dst_was_imprecise,
+    };
+    if dst_now_imprecise {
+        state.kernel_tnum_imprecise.insert(dst);
+    } else {
+        state.kernel_tnum_imprecise.remove(&dst);
+    }
+
+    // 6.4 BTF field-offset tracking. When dst is a PtrToBtfId after the
+    // op, set `btf_field_refs[dst]` so helper-arg validators can
+    // bound-check downstream reads against the leaf member's size.
+    // Three cases:
+    //   * Mov reg→reg with width=64: copy the source's ref.
+    //   * Add/Sub with imm src: update the offset incrementally if dst
+    //     already had a ref and the new offset is still inside the
+    //     same leaf field; otherwise re-resolve from BTF.
+    //   * Anything else: leave dropped (we cleared at op start).
+    if let RegType::PtrToBtfId { type_name, .. } = state.types.get(dst) {
+        // Resolve a constant signed delta when the op is `dst (Add|Sub)
+        // <const>`. Compilers commonly stage the offset in a scalar reg
+        // (`r2 = 0x778; r1 += r2` for `task->comm`), so accept Reg(r)
+        // when r's tnum is constant — the kernel sees this as a known
+        // offset add.
+        let signed_delta_const = match (op, &src) {
+            (AluOp::Add, Operand::Imm(k)) if width == Width::W64 => Some(*k),
+            (AluOp::Sub, Operand::Imm(k)) if width == Width::W64 => Some(-*k),
+            (AluOp::Add, Operand::Reg(r)) if width == Width::W64 => state
+                .get_tnum(*r)
+                .const_value()
+                .map(|c| c as i64),
+            (AluOp::Sub, Operand::Reg(r)) if width == Width::W64 => state
+                .get_tnum(*r)
+                .const_value()
+                .map(|c| -(c as i64)),
+            _ => None,
+        };
+        let new_ref = match (op, &src) {
+            (AluOp::Mov, Operand::Reg(r)) if width == Width::W64 => {
+                state.btf_field_refs.get(r).cloned()
+            }
+            _ if signed_delta_const.is_some() => {
+                resolve_btf_field_ref(env, type_name, prev_btf_field_ref, signed_delta_const.unwrap())
+            }
+            _ => None,
+        };
+        if let Some(r) = new_ref {
+            state.btf_field_refs.insert(dst, r);
+        }
+    }
 
     // 6.5 Scalar ID lifecycle: link on identity copies, clear on value changes.
     // Done after update_alu_types so we see the final destination type.
@@ -176,6 +261,55 @@ pub(crate) fn transfer_alu(
         state.pc = next_pc;
         vec![state]
     }
+}
+
+/// Compute the new `BtfFieldRef` for `dst` after `dst (PtrToBtfId{type_name})
+/// += signed_delta`. Returns `None` when no leaf field bound can be
+/// resolved at the new offset, in which case the caller drops the entry
+/// and the helper-arg validator falls back to its existing lax accept.
+fn resolve_btf_field_ref(
+    env: &VerifierEnv,
+    type_name: &'static str,
+    prev: Option<crate::analysis::machine::state::BtfFieldRef>,
+    signed_delta: i64,
+) -> Option<crate::analysis::machine::state::BtfFieldRef> {
+    use crate::analysis::machine::state::BtfFieldRef;
+    let base_offset = match prev.as_ref() {
+        Some(p) if p.struct_name == type_name => p.current_offset as i64,
+        _ => 0,
+    };
+    let new_offset = base_offset.checked_add(signed_delta)?;
+    if new_offset < 0 || new_offset > i64::from(i32::MAX) {
+        return None;
+    }
+    let new_offset_u = new_offset as u32;
+    // Stayed inside the previously-resolved leaf field — just update
+    // the position. Saves a BTF lookup and handles the multi-step
+    // `r1 = task + 1912; r1 += 1` case where the second add doesn't
+    // exactly hit a member start.
+    if let Some(p) = prev.as_ref()
+        && p.struct_name == type_name
+        && new_offset_u >= p.field_start
+        && new_offset_u < p.field_end
+    {
+        return Some(BtfFieldRef {
+            struct_name: type_name,
+            current_offset: new_offset_u,
+            field_start: p.field_start,
+            field_end: p.field_end,
+        });
+    }
+    let struct_id = env.ctx.btf.find_struct_by_name(type_name)?;
+    let (field_start, field_size) = env
+        .ctx
+        .btf
+        .field_containing_offset(struct_id, new_offset_u)?;
+    Some(BtfFieldRef {
+        struct_name: type_name,
+        current_offset: new_offset_u,
+        field_start,
+        field_end: field_start.checked_add(field_size)?,
+    })
 }
 
 /// Sign-extending move (MOVSX, v6.6).

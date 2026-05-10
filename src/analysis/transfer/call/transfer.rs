@@ -385,8 +385,23 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
                 RegType::PtrToBtfId { type_name, .. } => Some(type_name),
                 _ => None,
             };
+            // Skip the pointee-name match when r2's name is "unknown"
+            // — that's the sentinel from `intern_btf_type_name_strict`
+            // when the local_type_id couldn't resolve to a registered
+            // mem_region_model name. Mostly arises with
+            // `bpf_percpu_obj_new(struct T)`'s first arg being a load
+            // from `const volatile T_btf_ids[idx]`: libbpf relocates
+            // those entries to concrete btf_ids at load time, but we
+            // read the pre-relocation `.rodata` zero and resolve to
+            // "unknown". Closes test_bpf_ma::test_batch_percpu_alloc_free
+            // and test_percpu_free_through_map_free without weakening
+            // the strict mismatch check for cases where both sides
+            // resolve concretely (still rejects e.g.
+            // local_kptr_stash_fail::stash_rb_nodes' node_data2 vs
+            // expected node_data).
             if let (Some(a), Some(b)) = (kptr_name, r2_name)
                 && a != b
+                && b != "unknown"
             {
                 env.fail(VerificationError::InvalidArgType { pc, reg: Reg::R2 });
                 return vec![];
@@ -474,12 +489,24 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     }
 
     // F: sockmap/sockhash mutation via map_update_elem / map_delete_elem.
-    // Kernel's `may_update_sockmap` (net/core/sock_map.c) accepts every
-    // prog type except RawTracepoint / RawTracepointWritable (the
-    // verifier_sockmap_mutate.c `__failure` corpus pins down only those
-    // two as rejected). Mirror that denylist instead of an allowlist so
-    // SocketFilter / Tracing / Xdp / SkLookup / SkReuseport-mapped-Unknown
-    // / etc. all pass without enumeration.
+    // The two ops have different denylists per the verifier_sockmap_mutate
+    // corpus:
+    //
+    //   update: rejected from RawTracepoint{,Writable} AND SockOps. The
+    //     dedicated `bpf_sock_map_update` / `_hash_update` helpers must be
+    //     used in those contexts (kernel `may_update_sockmap`,
+    //     net/core/sock_map.c v6.15 — covers SOCK_OPS via the
+    //     `case BPF_PROG_TYPE_SOCK_OPS: return false;` arm).
+    //   delete: rejected from RawTracepoint{,Writable} only — SockOps
+    //     accepts (verifier_sockmap_mutate::test_sockops_delete is
+    //     __success). The raw_tp rejection comes from the per-prog-type
+    //     helper-proto allowlist in `raw_tp_prog_func_proto`, not from
+    //     `may_update_sockmap`, but kernel surfaces the same "cannot
+    //     update sockmap in this context" message.
+    //
+    // Closes test_sockmap_invalid_update::bpf_sockmap +
+    // verifier_sockmap_mutate::test_sockops_update; preserves PASS for
+    // test_sockops_delete + the existing raw_tp_delete reject.
     if matches!(
         helper,
         constants::BPF_MAP_UPDATE_ELEM | constants::BPF_MAP_DELETE_ELEM
@@ -494,17 +521,21 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
                 map_def.type_,
                 constants::BPF_MAP_TYPE_SOCKMAP | constants::BPF_MAP_TYPE_SOCKHASH
             )
-            && matches!(
+        {
+            let raw_tp = matches!(
                 env.ctx.prog_kind,
                 ProgramKind::RawTracepoint | ProgramKind::RawTracepointWritable
-            )
-        {
-            env.fail(VerificationError::HelperNotAllowedForProgram {
-                pc,
-                helper,
-                kind: env.ctx.prog_kind,
-            });
-            return vec![];
+            );
+            let sockops_update = helper == constants::BPF_MAP_UPDATE_ELEM
+                && matches!(env.ctx.prog_kind, ProgramKind::SockOps);
+            if raw_tp || sockops_update {
+                env.fail(VerificationError::HelperNotAllowedForProgram {
+                    pc,
+                    helper,
+                    kind: env.ctx.prog_kind,
+                });
+                return vec![];
+            }
         }
     }
 
@@ -777,6 +808,20 @@ fn apply_return_bounds(state: &mut State, helper: u32) {
             let size_reg = pairs[0].size_reg;
             let (_, hi) = state.domain.get_interval(size_reg);
             state.domain.assume_le_imm(Reg::R0, hi);
+            state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
+        }
+        constants::BPF_GET_BRANCH_SNAPSHOT => {
+            // R0 = bytes written into the buffer (success) or -errno.
+            // Bound by the size arg (R2) so consumers like
+            // `total = R0 / sizeof(entry)` and the loop test
+            // `i < total` get a usable upper bound on iterations.
+            let pairs = get_helper_proto(helper).map(|p| p.mem_size_pairs).unwrap_or(&[]);
+            if let Some(p) = pairs.first() {
+                let (_, hi) = state.domain.get_interval(p.size_reg);
+                if hi != i64::MAX {
+                    state.domain.assume_le_imm(Reg::R0, hi);
+                }
+            }
             state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
         }
         // Mirrors kernel's `do_refine_retval_range()` for the str-family
@@ -1143,12 +1188,21 @@ fn transfer_callback_helper(
                     _ => None,
                 };
                 for r in [Reg::R2, Reg::R3] {
+                    // Kernel `set_map_elem_callback_state` stamps R2 as
+                    // PTR_TO_MAP_KEY (read-only) and R3 as
+                    // PTR_TO_MAP_VALUE (writable). We don't track
+                    // PTR_TO_MAP_KEY distinctly — approximate with
+                    // PtrToMapValue but mark `rdonly: true` on R2 so
+                    // helper write-paths reject. Closes
+                    // for_each_map_elem_write_key::test_map_key_write
+                    // (`bpf_get_current_comm(key, sizeof(*key))`).
                     let ty = match caller_map_idx {
                         Some(map_idx) => RegType::PtrToMapValue {
                             id: crate::analysis::machine::reg_types::new_ptr_id(),
                             offset: Some(0),
                             map_idx,
                             map_uid: None,
+                            rdonly: r == Reg::R2,
                         },
                         None => unknown_btf(),
                     };
@@ -1252,6 +1306,7 @@ fn transfer_callback_helper(
                 offset: Some(0),
                 map_idx,
                 map_uid: None,
+                rdonly: false,
             },
             None => unknown_btf(),
         };
@@ -1508,6 +1563,7 @@ pub(crate) fn transfer_call_rel(
                             mem_size: *mem_size as u64,
                             ref_id: None,
                             dynptr_id: None,
+                            rdonly: false,
                         }
                     } else {
                         RegType::PtrToAllocMemOrNull {
@@ -1515,6 +1571,7 @@ pub(crate) fn transfer_call_rel(
                             mem_size: *mem_size as u64,
                             ref_id: None,
                             dynptr_id: None,
+                            rdonly: false,
                         }
                     };
                     state.types.set(*reg, ty);
@@ -1784,6 +1841,14 @@ pub(crate) fn apply_pre_call_lock_flags(
     }
 
     if proto.flags.contains(CallFlags::RCU_READ_LOCK) {
+        // Kernel rejects nested `bpf_rcu_read_lock` at the kfunc-arg
+        // processing path: a second lock while already in an RCU CS
+        // surfaces as "nested rcu_read_lock". Closes
+        // rcu_read_lock::nested_rcu_region.
+        if state.in_rcu_read_section() {
+            env.fail(VerificationError::RcuReadNotHeld { pc });
+            return false;
+        }
         state.rcu_read_lock();
     }
 
@@ -1792,14 +1857,14 @@ pub(crate) fn apply_pre_call_lock_flags(
             env.fail(VerificationError::RcuReadNotHeld { pc });
             return false;
         }
-        // Kernel verifier.c v6.15 ~L13543: on rcu_read_unlock, every
-        // MEM_RCU reg/slot is re-flagged PTR_UNTRUSTED. We mirror this
-        // for iter slots only — the use-after-unlock pattern (lock /
-        // iter_*_new / next / unlock / next or unlock / lock / next)
-        // is what `iters_task_failure::iter_tasks_lock_and_unlock`
-        // exercises. Other reg-type RCU promotions are out of scope.
+        // Kernel verifier.c v6.15 ~L13543: on outermost rcu_read_unlock,
+        // every MEM_RCU reg/slot is re-flagged PTR_UNTRUSTED. Mirrored
+        // for iter slots and (since this session) for typed BTF
+        // pointers, so `bpf_task_storage_get(real_parent)` after
+        // unlock rejects on the UNTRUSTED arg.
         if !state.in_rcu_read_section() {
             state.invalidate_rcu_iter_slots();
+            state.demote_rcu_btf_regs_to_untrusted();
         }
     }
 

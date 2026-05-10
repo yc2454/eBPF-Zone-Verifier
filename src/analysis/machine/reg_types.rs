@@ -96,6 +96,14 @@ pub enum RegType {
         offset: Option<i64>,
         map_idx: usize,
         map_uid: Option<u32>,
+        /// Read-only marker. Set on R2 of a `bpf_for_each_map_elem`
+        /// callback (kernel `set_map_elem_callback_state` stamps
+        /// PTR_TO_MAP_KEY on the key arg, distinct from R3's writable
+        /// PTR_TO_MAP_VALUE) so writes through it reject. Default
+        /// `false` for the standard map-value path; the OrNull /
+        /// non-rdonly map-value cluster all keep the standard
+        /// writable semantics.
+        rdonly: bool,
     },
     PtrToSocket {
         ref_id: Option<u32>,
@@ -153,12 +161,19 @@ pub enum RegType {
         /// sweeps regs + slots demoting matches to `ScalarValue` —
         /// catches use-after-reinit even when `ref_id` is None.
         dynptr_id: Option<u32>,
+        /// Read-only marker for the underlying allocation. Set by
+        /// `bpf_dynptr_slice` (kernel returns `const void *` regardless
+        /// of source-dynptr rdonly bit) so subsequent stores reject
+        /// with "cannot write into rdonly_mem". `bpf_dynptr_slice_rdwr`
+        /// keeps `false`; default `false` for non-slice paths.
+        rdonly: bool,
     },
     PtrToAllocMem {
         id: u32,
         mem_size: u64,
         ref_id: Option<u32>,
         dynptr_id: Option<u32>,
+        rdonly: bool,
     },
     /// Refcounted pointer to a `struct bpf_cpumask` (W5.3). Mirrors
     /// `PtrToSocket` ref-tracking: `bpf_cpumask_create` mints a fresh
@@ -385,6 +400,7 @@ impl RegType {
                     map_idx,
                     id,
                     map_uid,
+                    rdonly: false,
                 })
             }
             RegType::PtrToSocketOrNull { ref_id: id } => Some(RegType::PtrToSocket { ref_id: id }),
