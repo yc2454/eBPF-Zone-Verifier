@@ -1,5 +1,6 @@
 // src/analysis/transfer/call/mod.rs
 
+pub mod callback;
 pub mod checks;
 pub mod compat;
 pub mod helper_protos;
