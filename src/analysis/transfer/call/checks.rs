@@ -8,16 +8,13 @@ use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::{RegType, TypeState};
 use crate::analysis::machine::state::State;
-use crate::analysis::transfer::memory::access::{self, AccessKind};
-use crate::analysis::transfer::memory::{
-    check_kptr_field_access, check_map_access, check_map_rw, check_packet_access,
-    check_stack_access, check_stack_arg_readable,
-};
+use crate::analysis::transfer::memory::access::AccessKind;
+use crate::analysis::transfer::memory::check_stack_access;
 use crate::common::constants;
 use log::{error, info, warn};
 
 use super::compat::is_nullable_arg_type;
-use super::signatures::{ArgKind, CallProto, IterArgExpect, MemSizePair, get_helper_proto};
+use super::signatures::{ArgKind, IterArgExpect, MemSizePair, get_helper_proto};
 use super::validators;
 
 // ============================================================================

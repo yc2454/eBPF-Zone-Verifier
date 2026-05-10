@@ -15,7 +15,7 @@ use crate::analysis::transfer::memory::{
     check_stack_access, check_stack_arg_readable,
 };
 use crate::common::constants;
-use log::{error, warn};
+use log::error;
 
 use super::signatures::{ArgKind, CallProto, MemSizePair};
 
