@@ -422,7 +422,7 @@ impl ProgramKind {
     }
 }
 
-/// Per-attach-type return-value rule (Cluster B).
+/// Per-attach-type return-value rule.
 ///
 /// Mirrors the kernel's `check_return_code` per-prog-type / per-expected-attach-type
 /// table: at program exit, R0 must lie in `[lo, hi]`, and if `require_known` is

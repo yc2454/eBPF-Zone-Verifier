@@ -206,7 +206,7 @@ pub fn validate_ptr_to_map_value(ctx: &mut ValidationContext) -> bool {
     // value. Kernel `sock_map_update_elem` checks ARG_PTR_TO_BTF_ID_SOCK_COMMON
     // — accepts PtrToSocket / PtrToSockCommon / PtrToTcpSock and
     // BTF-typed sock pointers (e.g. `skb->sk` typed as
-    // `PtrToBtfId{sock, TRUSTED}` via the cluster B BTF field-load
+    // `PtrToBtfId{sock, TRUSTED}` via the BTF field-load
     // typing). Closes the seven `verifier_sockmap_mutate.c` FRs.
     let is_sock_map = matches!(
         target_info.map_type,

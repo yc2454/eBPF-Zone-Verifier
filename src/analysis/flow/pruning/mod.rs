@@ -610,7 +610,7 @@ pub fn should_prune(
 
     let live_regs = env.insn_aux_data[pc].live_regs.clone();
 
-    // Bucket F-D: may_goto-specific RANGE_WITHIN prune class.
+    // may_goto-specific RANGE_WITHIN prune class.
     if pc < prog.instrs.len()
         && matches!(prog.instrs[pc], Instr::If { .. } | Instr::MayGoto { .. })
         && let Some(prev_states) = env.explored_states.get(&pc)
@@ -630,7 +630,7 @@ pub fn should_prune(
     pruned
 }
 
-/// Bucket F-A: bump miss_cnt for every `prev_idx` and evict whose
+/// bump miss_cnt for every `prev_idx` and evict whose
 /// `miss_cnt > hit_cnt * n + n` (kernel verifier.c v6.15 L19222-L19233).
 /// `n = 64` at force-checkpoint pcs (iter_next, may_goto, sync-cb-call
 /// helpers); `n = 3` elsewhere. Caller passes the indices of every
@@ -694,7 +694,7 @@ fn record_pruning_misses(env: &mut VerifierEnv, pc: usize, miss_idxs: &[usize]) 
     }
 }
 
-/// Bucket F-A: bump hit_cnt for the cached state at `prev_idx`.
+/// bump hit_cnt for the cached state at `prev_idx`.
 fn record_pruning_hit(env: &mut VerifierEnv, pc: usize, prev_idx: usize) {
     env.pruning_stats.lifetime_hits += 1;
     if let Some(metrics) = env.state_metrics.get_mut(&pc)
@@ -704,7 +704,7 @@ fn record_pruning_hit(env: &mut VerifierEnv, pc: usize, prev_idx: usize) {
     }
 }
 
-/// Bucket F-D: RANGE_WITHIN prune class for may_goto pcs.
+/// RANGE_WITHIN prune class for may_goto pcs.
 ///
 /// Tries to subsume `cur` against any prev state where the
 /// `may_goto_depth` differs (mandatory: same depth would hit the EXACT

@@ -941,7 +941,7 @@ fn iter_next_fork(
     kind: IterNextElemKind,
 ) -> Vec<State> {
     let pc = state.pc;
-    // Bucket F-A: iter_next call sites are force-checkpoint sites
+    // iter_next call sites are force-checkpoint sites
     // (kernel `mark_force_checkpoint` at verifier.c L17523, gated on
     // `is_iter_next_kfunc`). Set the flag lazily on first visit — CFG
     // doesn't have kfunc-name resolution at build time.
@@ -1150,7 +1150,7 @@ fn widen_imprecise_scalars_impl(
 ) {
     use crate::analysis::machine::reg::Reg;
 
-    // Bucket F-D: once the may_goto/iter_next has been visited many
+    // once the may_goto/iter_next has been visited many
     // times on this path (i.e. we've enumerated a lot of iterations
     // without subsumption firing), drop the precision-skip rule and
     // force-widen even precise scalars. Lets bounded-but-long loops

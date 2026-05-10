@@ -44,7 +44,7 @@ pub(super) fn state_subsumed_by(
         return Err(SubsumptionMissReason::Tnum);
     }
 
-    // Cluster: regsafe scalar-id check.
+    // regsafe scalar-id check.
     // If two live registers share a scalar_id in `old` (so a future
     // refinement on one will propagate to the other along the cached
     // continuation), `cur` must also have them linked. Otherwise the
@@ -543,7 +543,7 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
             // we keyed on `new_s.precise` and demanded EXACT — that's
             // stricter than the kernel and blocks may_goto-bounded
             // loops where a body memory access precision-marks the
-            // counter (cond_break1/2/3, bucket F-D).
+            // counter (cond_break1/2/3).
             let old_slot = old_frame.stack.get_slot(offset);
             let new_slot = new_frame.stack.get_slot(offset);
             if let (Some(old_s), Some(new_s)) = (old_slot, new_slot) {

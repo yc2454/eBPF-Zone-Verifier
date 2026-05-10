@@ -146,7 +146,7 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
             // iterations once widening (or empty live-regs) makes the
             // body's effect on tracked state stable.
             //
-            // Bucket F-D: also mirror the kernel's static may_goto
+            // also mirror the kernel's static may_goto
             // machinery (`check_cond_jmp_op` BPF_JCOND arm, verifier.c
             // v6.15 ~L16400-16410): on each visit, find a previous
             // explored state at this same insn_idx, run
@@ -341,7 +341,7 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         env.mark_chain_precision_backward(hidx, state.parent_cache_id, Reg::R0);
     }
 
-    // Cluster B: per-attach-type retval range. When a finer rule applies
+    // per-attach-type retval range. When a finer rule applies
     // for the (prog_kind, attach_subtype) pair, prefer it over the coarse
     // `requires_strict_return_code` check below — the kernel's per-hook
     // ranges are tighter (e.g. cgroup/recvmsg* must return exactly 1).
@@ -547,7 +547,7 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     // by way of CallRel return semantics — the helper's post-call state
     // is emitted separately at the call site (see
     // `transfer_callback_helper`'s skip_state). What we DO emit here
-    // (bucket E) is a SECOND post-call state at the call site's pc+1
+    // This is a SECOND post-call state at the call site's pc+1
     // that carries the cb's effects on caller-frame stack memory. This
     // mirrors the kernel's iterative cb model (verifier.c v6.15
     // ~L10903+): cb-touched scalar stack slots get widened on the
@@ -770,7 +770,7 @@ fn cb_exit_propagate(env: &VerifierEnv, mut state: State) -> Vec<State> {
 
     state.pc = return_pc;
 
-    // Bucket F-D / cb-return widener (kernel verifier.c v6.15 ~L10903-10920):
+    // cb-return widener (kernel verifier.c v6.15 ~L10903-10920):
     //   prev_st = in_callback_fn ? find_prev_entry(env, state, *insn_idx) : NULL;
     //   if (prev_st)
     //       widen_imprecise_scalars(env, prev_st, state);

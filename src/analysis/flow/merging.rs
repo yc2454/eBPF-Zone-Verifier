@@ -102,7 +102,7 @@ pub fn record_state(
     states.push(state);
     env.cache_loc_by_id.insert(cache_id, (pc, idx));
 
-    // Bucket F-A: parallel metrics vector. Same indices as states.
+    // parallel metrics vector. Same indices as states.
     let metrics = env
         .state_metrics
         .entry(pc)

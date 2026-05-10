@@ -426,7 +426,7 @@ fn validate_ptr_to_btf_id(ctx: &mut ValidationContext) -> bool {
 
 /// Strict variant: arg must be `PtrToBtfId{type_name == expected, ..}`.
 /// Drives kfuncs like `bpf_path_d_path` whose first arg is `struct
-/// path *` — closes the cluster B residual FA where the test passes
+/// path *` — closes the residual FA where the test passes
 /// `(struct path *)&file->f_task_work` (an interior pointer of type
 /// `callback_head` after our new field-arithmetic typing) to the
 /// kfunc.

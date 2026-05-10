@@ -2337,7 +2337,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
         }
     }
 
-    // Cluster C1: for the BPF_PROG-style ctx prog kinds, the ctx is a
+    // for the BPF_PROG-style ctx prog kinds, the ctx is a
     // BTF arg array. Only 8-byte aligned 8-byte loads are valid; narrow
     // loads, misaligned loads, or negative offsets must reject. Without
     // this guard, those fall through to the SkBuff/etc. fallback below
@@ -2354,7 +2354,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
         return None;
     }
 
-    // Cluster C1: netfilter ctx is `struct bpf_nf_ctx { state; skb; }` —
+    // netfilter ctx is `struct bpf_nf_ctx { state; skb; }` —
     // only 8-byte loads at off 0 (state) and off 8 (skb) are valid.
     if prog_kind == ProgramKind::Netfilter {
         if size == 8 && (off == 0 || off == 8) {
@@ -2383,7 +2383,7 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
         return None;
     }
 
-    // Cluster C2: cgroup/post_bind4 and cgroup/post_bind6 use the BpfSock
+    // cgroup/post_bind4 and cgroup/post_bind6 use the BpfSock
     // ctx but with stricter per-attach-subtype field restrictions:
     //   - mark (off 16) is not readable in either post_bind4 or post_bind6
     //   - src_ip6 (off 28..44) is not readable in post_bind4 (IPv4-only)

@@ -262,7 +262,7 @@ fn update_ptr_arithmetic_type(
         // validation; for layout-known names the access path enforces
         // bounds via mem_region_model.
         //
-        // Phase 3 cluster B follow-on: when the offset matches an
+        // when the offset matches an
         // *embedded* struct member of `type_name`, retype to that
         // member's struct (e.g. `&task->cpus_mask` →
         // `PtrToBtfId{cpumask, TRUSTED}`). This is what kfunc arg
@@ -700,7 +700,7 @@ pub(crate) fn update_load_types(
                 state.types.set(dst, RegType::ScalarValue);
             }
         }
-        // Phase 3 cluster B follow-on: load `*(u64*)(base + off)` from
+        // load `*(u64*)(base + off)` from
         // `PtrToBtfId{X, flags}` where X.fields[off] is a `PTR -> Y`.
         // The default load yields ScalarValue (preserves the existing
         // FA-safe behavior — kfunc validators reject Scalar where they
@@ -717,7 +717,7 @@ pub(crate) fn update_load_types(
         // it (`test_read_cpumask`'s `cpus_ptr`, which the allowlist
         // covers explicitly). When we ship RCU lock tracking, swap
         // `tags` → `flags` and drop the static allowlist.
-        // Phase 3 cluster B follow-on: BTF field-load typing for
+        // BTF field-load typing for
         // any base whose static BTF type is known. PtrToBtfId
         // carries `type_name` directly. The acquire-tracked
         // specializations (`PtrToTask`, `PtrToCgroup`, `PtrToCpumask`)

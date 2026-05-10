@@ -203,7 +203,7 @@ pub struct State {
     /// env-global — parallel DFS branches have independent depths.
     pub may_goto_depth: u32,
 
-    /// Bucket F-D: maps each pointer register to the scalar register that
+    /// maps each pointer register to the scalar register that
     /// contributed its variable offset, if any. Set at `Alu Add ptr +
     /// Reg(scalar)` (handle_add); cleared on dst-clobbering ops (Mov-from-
     /// imm, Load, Mov-from-other-pointer, Mov-from-different-anchor). At

@@ -289,7 +289,7 @@ fn interval_check_map_access(
         let min_off = ptr_off.min_offset() + (insn_off as i64);
         let max_off = ptr_off.max_offset() + (insn_off as i64) + size;
 
-        // Cluster A1: enforce value_size bounds even when the map carries a
+        // enforce value_size bounds even when the map carries a
         // BTF value-type. The special-fields check below is additive — a
         // spin_lock overlap is one rejection reason, but plain OOB is another.
         if !(min_off >= 0 && max_off <= map_limit) {
@@ -334,7 +334,7 @@ fn zone_check_map_access(
         let access_start = min_val + (insn_off as i64);
         let access_end = max_val + (insn_off as i64) + size;
 
-        // Cluster A1: enforce value_size first; BTF special-field overlap is
+        // enforce value_size first; BTF special-field overlap is
         // additive, not a substitute.
         if !(access_start >= 0 && access_end <= map_limit) {
             error!(

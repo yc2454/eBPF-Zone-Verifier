@@ -308,7 +308,7 @@ pub enum VerificationError {
         field: &'static str,
         kind: ProgramKind,
     },
-    /// Cluster E: LSM attach hook is on the kernel's disabled list
+    /// LSM attach hook is on the kernel's disabled list
     /// (`getprocattr`, `setprocattr`, `ismaclabel`, `module_request`, ...).
     /// Reported at program load — there is no instruction PC.
     NoreturnAttachTarget {

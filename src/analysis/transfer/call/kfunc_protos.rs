@@ -805,7 +805,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .ret(RetKind::Void)
         .side_effects(&[SideEffect::IterDestroyOnArg { arg: 0 }]),
 
-        // ---- testmod_seq iterator family (Phase 3 cluster B) ----
+        // ---- testmod_seq iterator family ----
         //
         // testmod-defined open-coded iterator. The kernel registers all
         // four kfuncs in `bpf_testmod_check_kfunc_call`:
@@ -1275,7 +1275,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         .side_effects(&[SideEffect::ReleaseRefFromArg { arg: 0 }])
         .prog_type_allowlist(&TASK_KFUNC_PROG_TYPES),
 
-        // ---- Cluster B Phase 3 (vfs_accept / nested_acquire / key) ----
+        // ---- vfs_accept / nested_acquire / key kfuncs ----
         //
         // Kernel types without a dedicated `RegType::PtrTo<X>` reg-type
         // specialization (`struct file`, `struct bpf_key`,
@@ -1311,7 +1311,7 @@ pub fn get_kfunc_proto(name: &str) -> Option<CallProto> {
         // kfunc-side `bpf_d_path` analogue. Mem-size pair (R2, R3) so
         // `validate_ptr_to_uninit_mem` enforces the buffer's bounds.
         // LSM-only (kernel `bpf_lsm_kfunc_set`). R1 is strict-named
-        // `struct path *` — the cluster B residual FA
+        // `struct path *` — the residual FA
         // (path_d_path_kfunc_type_mismatch) passes
         // `(struct path *)&file->f_task_work` whose corrected type
         // after the new BTF field-arithmetic is `callback_head`,

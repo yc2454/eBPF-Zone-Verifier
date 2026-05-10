@@ -150,7 +150,7 @@ pub fn is_ptr_to_btf_id_or_null_trusted_or_rcu(t: &RegType) -> bool {
 // ============================================================================
 
 /// Types compatible with PtrToSocket argument.
-/// Phase 3 cluster B follow-on: `is_ptr_to_tcp_sock` accepts the
+/// `is_ptr_to_tcp_sock` accepts the
 /// narrowed-by-`bpf_skc_to_tcp_sock` form so `bpf_sk_release(tcp)`
 /// is allowed (kernel checks ref_id, not the static subclass —
 /// PtrToTcpSock carries the same ref_id as the original socket).

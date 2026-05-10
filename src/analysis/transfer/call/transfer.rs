@@ -126,7 +126,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             state.domain.forget(r);
         }
 
-        // Cluster D4: tail-called program may rewrite packet contents, so
+        // tail-called program may rewrite packet contents, so
         // any packet pointer in callee-saved regs or stack slots is no
         // longer valid afterwards. Invalidate them — accesses through
         // such pointers must be rejected unless re-derived from
@@ -180,7 +180,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     // bpf_sk_release: not allowed in flow_dissector / sockops / tracing
     // / sock-cgroup / lwt-* prog types (kernel's per-prog-type
     // func_proto returns NULL for BPF_FUNC_sk_release in these).
-    // Closes the cluster-A sockmap_mutate FA on
+    // Closes the sockmap_mutate FA on
     // `test_flow_dissector_update` exposed once we widened
     // `bpf_map_update_elem` R3 for SOCKMAP/SOCKHASH — without the
     // widening, the test was rejected at the update site; with it,

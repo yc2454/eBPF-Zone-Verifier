@@ -66,7 +66,7 @@ pub(crate) fn transfer_if(
     // every register and stack slot sharing its scalar id.
     propagate_scalar_links(&mut state_then, &mut state_else, left);
 
-    // Bucket F-D: a back-edge compare-to-imm is a precision sink for
+    // a back-edge compare-to-imm is a precision sink for
     // the compared register. The kernel's `mark_chain_precision` walks
     // backward from such sinks; without it, the loop counter widens at
     // intermediate may_goto sites, the bounds derived from this compare

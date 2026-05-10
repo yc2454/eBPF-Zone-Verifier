@@ -299,7 +299,7 @@ pub(crate) fn out_of_scope_reason_per_func(path: &str, func_name: &str) -> Optio
     }
 }
 
-/// Cluster E: LSM hooks the kernel's `lsm/disabled_hooks_list` rejects at
+/// LSM hooks the kernel's `lsm/disabled_hooks_list` rejects at
 /// attach time. Mirrors `BPF_LSM_DISABLED_HOOKS` in `kernel/bpf/bpf_lsm.c`.
 /// Names match the SEC suffix (`SEC("lsm/<hook>")`).
 fn lsm_hook_is_disabled(hook: &str) -> bool {
@@ -1256,7 +1256,7 @@ impl Analyzer {
             raw.ends_with(".s")
         };
 
-        // Cluster E: reject SEC("lsm/<hook>") for hooks the kernel's
+        // reject SEC("lsm/<hook>") for hooks the kernel's
         // BPF_LSM_DISABLED_HOOKS list excludes from BPF attach.
         if ctx.prog_kind == ProgramKind::Lsm
             && let Some(hook) = ctx.attach_subtype.as_deref()
@@ -1883,7 +1883,7 @@ impl Analyzer {
             raw.ends_with(".s")
         };
 
-        // Cluster E: reject SEC("lsm/<hook>") for hooks the kernel's
+        // reject SEC("lsm/<hook>") for hooks the kernel's
         // BPF_LSM_DISABLED_HOOKS list excludes from BPF attach.
         if ctx.prog_kind == ProgramKind::Lsm
             && let Some(hook) = ctx.attach_subtype.as_deref()
