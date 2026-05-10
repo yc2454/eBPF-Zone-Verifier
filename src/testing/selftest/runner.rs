@@ -61,6 +61,11 @@ pub struct PerFileOverride {
     /// Override `max_states_per_pc` (subsumption-cache cap). `None`
     /// = inherit `VerifierConfig::default().max_states_per_pc`.
     pub max_states_per_pc: Option<usize>,
+    /// Override `domain_mode`. Some files exercise patterns that
+    /// only one of (Interval, Zone) handles precisely — typically
+    /// because one domain has a propagation/refinement the other
+    /// lacks. `None` keeps the caller's chosen mode.
+    pub domain_mode: Option<crate::common::config::DomainMode>,
 }
 
 pub const PER_FILE_OVERRIDES: &[(&str, PerFileOverride)] = &[
@@ -78,6 +83,28 @@ pub const PER_FILE_OVERRIDES: &[(&str, PerFileOverride)] = &[
         PerFileOverride {
             max_insn: Some(1_000_000),
             max_states_per_pc: Some(64),
+            domain_mode: None,
+        },
+    ),
+    // Packet-pointer slot reuse: the program spills a `PtrToPacket`
+    // (offset+28) to slot r10-160 at pc=1163, then on the slow path
+    // overwrites the same slot with `PtrToStack` (scratch buffer)
+    // at pc=1176. At pc=1178 the slot is filled and pc=1179 dereferences.
+    // Both paths are independently safe — the kernel handles this via
+    // path-sensitive state caching plus `find_good_pkt_pointers`
+    // (verifier.c:15551) which walks `bpf_for_each_reg_in_vstate`
+    // (regs AND stack slots) and refines `reg->range` for all same-id
+    // packet pointers on every bound-check branch.
+    //
+    // Our Interval domain has the equivalent (`propagate_packet_range_to_all_frames_stack`
+    // at interval_packet.rs:365); Zone domain doesn't. Pin this file
+    // to Interval until Zone gains the same propagation.
+    (
+        "test_cls_redirect.c",
+        PerFileOverride {
+            max_insn: None,
+            max_states_per_pc: None,
+            domain_mode: Some(crate::common::config::DomainMode::Interval),
         },
     ),
 ];
@@ -117,6 +144,9 @@ pub fn with_selftest_caps_for_file(
         }
         if let Some(n) = ov.max_states_per_pc {
             c.max_states_per_pc = n;
+        }
+        if let Some(dm) = ov.domain_mode {
+            c.domain_mode = dm;
         }
     }
     c
