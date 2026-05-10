@@ -16,7 +16,8 @@ use crate::domains::numeric::NumericDomain;
 use crate::domains::tnum::Tnum;
 use log::{debug, error, trace};
 
-use super::checks::{check_mem_size_pairs, is_valid_helper_id, validate_helper_args};
+use super::checks::validate_helper_args;
+use super::mem_checks::{check_mem_size_pairs, is_valid_helper_id};
 use super::signatures::get_helper_proto;
 
 /// Transfer function for helper Call instructions.

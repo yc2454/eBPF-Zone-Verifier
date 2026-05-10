@@ -160,7 +160,7 @@ fn transfer_kfunc_proto(
         }
     }
 
-    if !super::checks::check_mem_size_pairs(env, &state, proto, pc) {
+    if !super::mem_checks::check_mem_size_pairs(env, &state, proto, pc) {
         return vec![];
     }
 

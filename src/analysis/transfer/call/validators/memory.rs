@@ -5,9 +5,8 @@
 use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg_types::RegType;
 
-use super::super::checks::{
-    ValidationContext, checked_by_mem_size_pairs, validate_readable_mem, validate_writable_mem,
-};
+use super::super::checks::ValidationContext;
+use super::super::mem_checks::{checked_by_mem_size_pairs, validate_readable_mem, validate_writable_mem};
 use super::super::signatures::helper_rejects_packet_for_arg;
 
 /// Validates PtrToMem argument type.

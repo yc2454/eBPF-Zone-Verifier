@@ -2,6 +2,7 @@
 
 pub mod callback;
 pub mod checks;
+pub mod mem_checks;
 pub mod compat;
 pub mod helper_protos;
 pub mod kfunc;

@@ -6,7 +6,8 @@ use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 
-use super::super::checks::{ValidationContext, validate_readable_mem};
+use super::super::checks::ValidationContext;
+use super::super::mem_checks::validate_readable_mem;
 use super::super::compat::{MAP_VALUE_OR_NULL_COMPAT, base_arg_type, is_compatible};
 use super::super::signatures::{ArgKind, get_nullable_ptr_size_pair};
 
