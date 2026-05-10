@@ -42,6 +42,53 @@ impl ProgFilter for RunAll {
 /// parallelism-safe.
 pub const SELFTEST_MAX_INSN: usize = 100_000;
 
+/// Per-file verifier-config overrides applied by `with_selftest_caps`
+/// when the program comes from a known kernel-limits-bound corpus
+/// file. The kernel verifier's actual budget is `max_insn=1_000_000`
+/// and its per-PC state cache is utility-evicted (no fixed cap, see
+/// verifier.c:19222 — `n=3` for default PCs, `n=64` for force-
+/// checkpoint PCs); our default 100k+8 is a sweep-productivity
+/// tightening that strands programs the kernel can verify.
+///
+/// To uphold the "as precise as kernel" claim without paying the
+/// memory cost on every file, list specific basenames that need
+/// kernel-equivalent limits here. Each entry should cite the kernel
+/// pattern it exercises so the precedent is auditable.
+pub struct PerFileOverride {
+    /// Override `max_insn` (verifier complexity limit). `None` =
+    /// inherit `SELFTEST_MAX_INSN`.
+    pub max_insn: Option<usize>,
+    /// Override `max_states_per_pc` (subsumption-cache cap). `None`
+    /// = inherit `VerifierConfig::default().max_states_per_pc`.
+    pub max_states_per_pc: Option<usize>,
+}
+
+pub const PER_FILE_OVERRIDES: &[(&str, PerFileOverride)] = &[
+    // LLVM lowers `for(i=0; i<32; i++) entries[i].field` as a stride-
+    // pointer loop (`r += 24` per iter). With our default cache cap
+    // of 8, the loop-head saturates by iter 8 and LRU eviction
+    // permanently breaks subsumption. With cap=64 the loop runs all
+    // 32 iters cleanly (every iter caches; no eviction); with the
+    // 1M complexity budget the kernel itself uses, total work is
+    // ~381k insns and the loop exits when `i == 32`.
+    // Kernel reference: utility-eviction at verifier.c:19222
+    // (default `n=3` per-state miss/hit ratio, no fixed per-PC cap).
+    (
+        "get_branch_snapshot.c",
+        PerFileOverride {
+            max_insn: Some(1_000_000),
+            max_states_per_pc: Some(64),
+        },
+    ),
+];
+
+fn override_for_file(file_basename: &str) -> Option<&'static PerFileOverride> {
+    PER_FILE_OVERRIDES
+        .iter()
+        .find(|(n, _)| *n == file_basename)
+        .map(|(_, o)| o)
+}
+
 /// Derive a config tuned for selftest sweeps from the caller's config:
 /// keep all user-set knobs, but clamp `max_insn` down so the verifier
 /// terminates promptly on a state-explosion. Caller can opt out of
@@ -50,6 +97,27 @@ pub fn with_selftest_caps(base: &VerifierConfig) -> VerifierConfig {
     let mut c = base.clone();
     if c.max_insn > SELFTEST_MAX_INSN {
         c.max_insn = SELFTEST_MAX_INSN;
+    }
+    c
+}
+
+/// Variant of `with_selftest_caps` that consults `PER_FILE_OVERRIDES`
+/// for the given basename. Files with kernel-limits-bound patterns
+/// (e.g. LLVM stride-pointer loops) get their `max_insn` and
+/// `max_states_per_pc` raised to kernel-equivalent values; other
+/// files behave identically to `with_selftest_caps`.
+pub fn with_selftest_caps_for_file(
+    base: &VerifierConfig,
+    file_basename: &str,
+) -> VerifierConfig {
+    let mut c = with_selftest_caps(base);
+    if let Some(ov) = override_for_file(file_basename) {
+        if let Some(n) = ov.max_insn {
+            c.max_insn = n;
+        }
+        if let Some(n) = ov.max_states_per_pc {
+            c.max_states_per_pc = n;
+        }
     }
     c
 }
@@ -210,11 +278,14 @@ fn run_file_with_dirs_inner(
     )
     .with_context(|| format!("compiling {}", src.display()))?;
 
-    let analyzer = Analyzer::new(obj.to_str().unwrap(), with_selftest_caps(config));
     let basename = src
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
+    let analyzer = Analyzer::new(
+        obj.to_str().unwrap(),
+        with_selftest_caps_for_file(config, &basename),
+    );
 
     // Per-prog parallelism. Each `run_one` already spawns its own
     // worker thread for the wallclock timeout; rayon's pool runs
