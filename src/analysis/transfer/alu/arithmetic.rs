@@ -101,14 +101,21 @@ pub(crate) fn handle_add(
         Operand::Reg(r) => in_types.get(*r).is_pointer(),
     };
 
-    // --- BCF symbolic mirror (Phase 1). Scalar dst only; for pointer dst,
-    // the stack-OOB refinement site reads the scalar contributor's expr
-    // via `var_off_contributor`, so we don't need to track the pointer's
-    // absolute symbolic value here. ---
+    // --- BCF symbolic mirror (β+: unified ptr/scalar symbolic add).
+    // Build dst_new = dst_old + rhs as a BV expression regardless of
+    // whether dst is a pointer. For pointer dsts, materialize_reg64
+    // returns const(0) for R10, so a chain like `r1 = r10; r1 += -16;
+    // r1 += r0` produces `r1.expr = -16 + r0` — the offset-from-r10
+    // that the stack-OOB refinement uses directly (no `var_off_
+    // contributor` reconstruction needed). Skipped only for the rare
+    // ptr+ptr / scalar+ptr cases. ---
     if let Some(d) = dst.bcf_idx() {
         if let Some(bcf) = state.bcf.as_mut() {
-            if dst_is_ptr_post {
-                bcf.clear_reg(d);
+            let skip = src_is_ptr; // ptr+ptr or scalar+ptr — leave alone
+            if skip {
+                if !dst_is_ptr_post {
+                    bcf.clear_reg(d);
+                }
             } else {
                 let dst_idx = bcf.materialize_reg64(d);
                 let rhs_idx = match src {
@@ -118,25 +125,22 @@ pub(crate) fn handle_add(
                         } else {
                             *c as u64
                         };
-                        Some(bcf.add_val64(v))
+                        bcf.add_val64(v)
                     }
                     Operand::Reg(r) => match r.bcf_idx() {
-                        Some(si) => Some(bcf.materialize_reg64(si)),
-                        None => Some(bcf.add_val64(0)),
+                        Some(si) => bcf.materialize_reg64(si),
+                        None => bcf.add_val64(0),
                     },
                 };
-                if let Some(rhs) = rhs_idx {
-                    let new_idx = if width == Width::W32 {
-                        // W32 add: low-32-bit addition, zero-extended.
-                        let lo_d = bcf.extract_lo(32, dst_idx);
-                        let lo_r = bcf.extract_lo(32, rhs);
-                        let sum = bcf.add_alu(crate::refinement::bcf::BPF_ADD, lo_d, lo_r, 32);
-                        bcf.zext_32_to_64(sum)
-                    } else {
-                        bcf.add_alu(crate::refinement::bcf::BPF_ADD, dst_idx, rhs, 64)
-                    };
-                    bcf.bind_reg(d, new_idx);
-                }
+                let new_idx = if width == Width::W32 {
+                    let lo_d = bcf.extract_lo(32, dst_idx);
+                    let lo_r = bcf.extract_lo(32, rhs_idx);
+                    let sum = bcf.add_alu(crate::refinement::bcf::BPF_ADD, lo_d, lo_r, 32);
+                    bcf.zext_32_to_64(sum)
+                } else {
+                    bcf.add_alu(crate::refinement::bcf::BPF_ADD, dst_idx, rhs_idx, 64)
+                };
+                bcf.bind_reg(d, new_idx);
             }
         }
     }
@@ -235,16 +239,15 @@ pub(crate) fn handle_sub(
         Operand::Reg(r) => in_types.get(*r).is_pointer(),
     };
 
-    // --- BCF symbolic mirror (Phase 2 SUB hook). Scalar dst only; pointer
-    // dst is reconstructed at the refinement site via `var_off_contributor`
-    // exactly as handle_add does. Adding this unblocks programs where a
-    // scalar contributor is itself produced via subtraction (e.g.
-    // `r2 = K; r2 -= r0` patterns) — without it, the contributor's bcf
-    // expr is None and the refinement formula can't relate it back to r0. ---
+    // --- BCF symbolic mirror (β+: unified ptr/scalar symbolic sub). See
+    // the matching block in handle_add for rationale. ---
     if let Some(d) = dst.bcf_idx() {
         if let Some(bcf) = state.bcf.as_mut() {
-            if dst_is_ptr_post {
-                bcf.clear_reg(d);
+            let skip = src_is_ptr; // ptr-ptr/scalar-ptr leave alone
+            if skip {
+                if !dst_is_ptr_post {
+                    bcf.clear_reg(d);
+                }
             } else {
                 let dst_idx = bcf.materialize_reg64(d);
                 let rhs_idx = match src {
@@ -254,24 +257,22 @@ pub(crate) fn handle_sub(
                         } else {
                             *c as u64
                         };
-                        Some(bcf.add_val64(v))
+                        bcf.add_val64(v)
                     }
                     Operand::Reg(r) => match r.bcf_idx() {
-                        Some(si) => Some(bcf.materialize_reg64(si)),
-                        None => Some(bcf.add_val64(0)),
+                        Some(si) => bcf.materialize_reg64(si),
+                        None => bcf.add_val64(0),
                     },
                 };
-                if let Some(rhs) = rhs_idx {
-                    let new_idx = if width == Width::W32 {
-                        let lo_d = bcf.extract_lo(32, dst_idx);
-                        let lo_r = bcf.extract_lo(32, rhs);
-                        let diff = bcf.add_alu(crate::refinement::bcf::BPF_SUB, lo_d, lo_r, 32);
-                        bcf.zext_32_to_64(diff)
-                    } else {
-                        bcf.add_alu(crate::refinement::bcf::BPF_SUB, dst_idx, rhs, 64)
-                    };
-                    bcf.bind_reg(d, new_idx);
-                }
+                let new_idx = if width == Width::W32 {
+                    let lo_d = bcf.extract_lo(32, dst_idx);
+                    let lo_r = bcf.extract_lo(32, rhs_idx);
+                    let diff = bcf.add_alu(crate::refinement::bcf::BPF_SUB, lo_d, lo_r, 32);
+                    bcf.zext_32_to_64(diff)
+                } else {
+                    bcf.add_alu(crate::refinement::bcf::BPF_SUB, dst_idx, rhs_idx, 64)
+                };
+                bcf.bind_reg(d, new_idx);
             }
         }
     }

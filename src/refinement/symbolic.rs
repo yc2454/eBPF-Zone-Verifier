@@ -143,14 +143,27 @@ impl SymbolicState {
     /// If already bound, returns the existing index; otherwise allocates a
     /// fresh 64-bit symbolic variable and binds it. Mirrors BCF's
     /// `bcf_reg_expr` entry point — anything that wants `reg` symbolically
-    /// goes through here. Phase 1 simplification: always 64-bit (BCF picks
-    /// 32 or 64 based on `fit_u32/fit_s32`; we'll add the 32-bit fast path
-    /// in Phase 2 if the formula size matters).
+    /// goes through here.
+    ///
+    /// **R10 is special**: it's the frame pointer, and its offset relative
+    /// to itself is the constant 0 — not an unknown symbolic value. This
+    /// lets pointer-arithmetic chains like `r1 = r10; r1 += -16; r1 += r0`
+    /// produce a meaningful symbolic offset expression for r1 (β+ change,
+    /// 2026-05-12). Index 10 is hard-coded to match the `Reg::R10.bcf_idx()`
+    /// convention.
+    ///
+    /// Phase 1 simplification: always 64-bit (BCF picks 32 or 64 based on
+    /// `fit_u32/fit_s32`; we'll add the 32-bit fast path in Phase 2 if the
+    /// formula size matters).
     pub fn materialize_reg64(&mut self, reg: usize) -> u32 {
         if let Some(idx) = self.reg_expr[reg] {
             return idx;
         }
-        let idx = self.add_var(64);
+        let idx = if reg == 10 {
+            self.add_val64(0)
+        } else {
+            self.add_var(64)
+        };
         self.bind_reg(reg, idx);
         idx
     }

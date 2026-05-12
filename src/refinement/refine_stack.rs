@@ -5,12 +5,19 @@
 //! rejection paths (known-offset and unknown-offset). On Unsat from cvc5,
 //! returns the BCF proof bytes — the caller suppresses the rejection.
 //!
-//! Phase 1 scope: handles the case where the offending pointer reg has a
-//! single scalar contributor (`State::var_off_contributor`), and the
-//! pointer's constant displacement from r10 is recoverable as
-//! `distance_lo - contributor.lo`. This is enough for `shift_constraint`;
-//! the four-case template (cheat-sheet §4b) and helper-mem-size case
-//! are Phase 2.
+//! Two strategies, tried in order:
+//!
+//! 1. **Direct symbolic offset** (β+, 2026-05-12). When the base pointer
+//!    itself has a symbolic expression (built by the unified ptr/scalar
+//!    hooks in `handle_add`/`handle_sub`/`handle_mov` with R10 anchored at
+//!    const(0)), the offset-from-r10 is already in the DAG — read it
+//!    straight out. Handles multi-contributor cases (e.g.
+//!    `r1 += r0; r1 += r2`) that the older single-contributor path can't.
+//! 2. **Single-contributor reconstruction** (Phase 1 fallback). When the
+//!    direct expression isn't available, reconstruct `off = K + contrib`
+//!    where K is the constant displacement (`distance.lo - contributor.lo`)
+//!    and `contrib` is the scalar from `state.var_off_contributor`. Bails
+//!    if K is non-constant (multi-contributor) or intervals are unbounded.
 
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
@@ -34,49 +41,60 @@ pub fn try_refine_stack_oob(
     let bcf_ref = state.bcf.as_ref()?;
     let mut sym: SymbolicState = (**bcf_ref).clone();
 
-    let Some(contributor) = state.var_off_contributor.get(&base).copied() else {
-        debug!("[bcf] stack-refine skipped: no var_off_contributor for {:?}", base);
-        return None;
-    };
-    let Some(c_idx) = contributor.bcf_idx() else {
-        debug!("[bcf] stack-refine skipped: contributor {:?} has no bcf idx", contributor);
-        return None;
-    };
-    let Some(contrib_expr) = sym.get_reg(c_idx) else {
-        debug!(
-            "[bcf] stack-refine skipped: contributor {:?} has no symbolic expr",
-            contributor
-        );
-        return None;
-    };
+    // Strategy 1: base has a direct symbolic offset from r10.
+    let direct_off = base
+        .bcf_idx()
+        .and_then(|b_idx| sym.get_reg(b_idx));
 
-    // 2. Recover the constant displacement K of `base` from `r10`.
-    //    For `r2 = r10 + K + contributor`, distance(r2, r10) ranges over
-    //    [K + contributor.lo, K + contributor.hi]; the contributor's own
-    //    interval lets us subtract back out to K.
-    let (d_lo, d_hi) = state.domain.get_distance_interval(base, Reg::R10);
-    let (c_lo, c_hi) = state.domain.get_interval(contributor);
-    if d_lo == i64::MIN || d_hi == i64::MAX || c_lo == i64::MIN || c_hi == i64::MAX {
-        debug!(
-            "[bcf] stack-refine skipped: unbounded interval (d=[{},{}], c=[{},{}])",
-            d_lo, d_hi, c_lo, c_hi
-        );
-        return None;
-    }
-    let k_lo = d_lo.saturating_sub(c_lo);
-    let k_hi = d_hi.saturating_sub(c_hi);
-    if k_lo != k_hi {
-        debug!(
-            "[bcf] stack-refine skipped: K not constant (k_lo={}, k_hi={})",
-            k_lo, k_hi
-        );
-        return None;
-    }
-    let k = k_lo + instruction_offset;
-
-    // 3. Build off_expr = K + contrib_expr (as 64-bit BV).
-    let k_idx = sym.add_val64(k as u64);
-    let off_expr = sym.add_alu(BPF_ADD, k_idx, contrib_expr, 64);
+    let off_expr = if let Some(b_expr) = direct_off {
+        if instruction_offset == 0 {
+            b_expr
+        } else {
+            let k_idx = sym.add_val64(instruction_offset as u64);
+            sym.add_alu(BPF_ADD, b_expr, k_idx, 64)
+        }
+    } else {
+        // Strategy 2: reconstruct from the recorded scalar contributor.
+        let Some(contributor) = state.var_off_contributor.get(&base).copied() else {
+            debug!(
+                "[bcf] stack-refine skipped: no direct expr and no var_off_contributor for {:?}",
+                base
+            );
+            return None;
+        };
+        let Some(c_idx) = contributor.bcf_idx() else {
+            debug!("[bcf] stack-refine skipped: contributor {:?} has no bcf idx", contributor);
+            return None;
+        };
+        let Some(contrib_expr) = sym.get_reg(c_idx) else {
+            debug!(
+                "[bcf] stack-refine skipped: contributor {:?} has no symbolic expr",
+                contributor
+            );
+            return None;
+        };
+        let (d_lo, d_hi) = state.domain.get_distance_interval(base, Reg::R10);
+        let (c_lo, c_hi) = state.domain.get_interval(contributor);
+        if d_lo == i64::MIN || d_hi == i64::MAX || c_lo == i64::MIN || c_hi == i64::MAX {
+            debug!(
+                "[bcf] stack-refine skipped: unbounded interval (d=[{},{}], c=[{},{}])",
+                d_lo, d_hi, c_lo, c_hi
+            );
+            return None;
+        }
+        let k_lo = d_lo.saturating_sub(c_lo);
+        let k_hi = d_hi.saturating_sub(c_hi);
+        if k_lo != k_hi {
+            debug!(
+                "[bcf] stack-refine skipped: K not constant (k_lo={}, k_hi={})",
+                k_lo, k_hi
+            );
+            return None;
+        }
+        let k = k_lo + instruction_offset;
+        let k_idx = sym.add_val64(k as u64);
+        sym.add_alu(BPF_ADD, k_idx, contrib_expr, 64)
+    };
 
     // 4. Build refine_cond per template 4a: the access is in [STACK_MIN, -size],
     //    so OOB is `off > -size` (treated as signed since stack offsets are
