@@ -100,6 +100,51 @@ pub(crate) fn handle_add(
         Operand::Imm(_) => false,
         Operand::Reg(r) => in_types.get(*r).is_pointer(),
     };
+
+    // --- BCF symbolic mirror (β+: unified ptr/scalar symbolic add).
+    // Build dst_new = dst_old + rhs as a BV expression regardless of
+    // whether dst is a pointer. For pointer dsts, materialize_reg64
+    // returns const(0) for R10, so a chain like `r1 = r10; r1 += -16;
+    // r1 += r0` produces `r1.expr = -16 + r0` — the offset-from-r10
+    // that the stack-OOB refinement uses directly (no `var_off_
+    // contributor` reconstruction needed). Skipped only for the rare
+    // ptr+ptr / scalar+ptr cases. ---
+    if let Some(d) = dst.bcf_idx() {
+        if let Some(bcf) = state.bcf.as_mut() {
+            let skip = src_is_ptr; // ptr+ptr or scalar+ptr — leave alone
+            if skip {
+                if !dst_is_ptr_post {
+                    bcf.clear_reg(d);
+                }
+            } else {
+                let dst_idx = bcf.materialize_reg64(d);
+                let rhs_idx = match src {
+                    Operand::Imm(c) => {
+                        let v = if width == Width::W32 {
+                            (*c as u32) as u64
+                        } else {
+                            *c as u64
+                        };
+                        bcf.add_val64(v)
+                    }
+                    Operand::Reg(r) => match r.bcf_idx() {
+                        Some(si) => bcf.materialize_reg64(si),
+                        None => bcf.add_val64(0),
+                    },
+                };
+                let new_idx = if width == Width::W32 {
+                    let lo_d = bcf.extract_lo(32, dst_idx);
+                    let lo_r = bcf.extract_lo(32, rhs_idx);
+                    let sum = bcf.add_alu(crate::refinement::bcf::BPF_ADD, lo_d, lo_r, 32);
+                    bcf.zext_32_to_64(sum)
+                } else {
+                    bcf.add_alu(crate::refinement::bcf::BPF_ADD, dst_idx, rhs_idx, 64)
+                };
+                bcf.bind_reg(d, new_idx);
+            }
+        }
+    }
+
     if dst_is_ptr_post && !src_is_ptr {
         state.set_tnum(dst, Tnum::unknown());
         if width == Width::W32 {
@@ -193,6 +238,45 @@ pub(crate) fn handle_sub(
         Operand::Imm(_) => false,
         Operand::Reg(r) => in_types.get(*r).is_pointer(),
     };
+
+    // --- BCF symbolic mirror (β+: unified ptr/scalar symbolic sub). See
+    // the matching block in handle_add for rationale. ---
+    if let Some(d) = dst.bcf_idx() {
+        if let Some(bcf) = state.bcf.as_mut() {
+            let skip = src_is_ptr; // ptr-ptr/scalar-ptr leave alone
+            if skip {
+                if !dst_is_ptr_post {
+                    bcf.clear_reg(d);
+                }
+            } else {
+                let dst_idx = bcf.materialize_reg64(d);
+                let rhs_idx = match src {
+                    Operand::Imm(c) => {
+                        let v = if width == Width::W32 {
+                            (*c as u32) as u64
+                        } else {
+                            *c as u64
+                        };
+                        bcf.add_val64(v)
+                    }
+                    Operand::Reg(r) => match r.bcf_idx() {
+                        Some(si) => bcf.materialize_reg64(si),
+                        None => bcf.add_val64(0),
+                    },
+                };
+                let new_idx = if width == Width::W32 {
+                    let lo_d = bcf.extract_lo(32, dst_idx);
+                    let lo_r = bcf.extract_lo(32, rhs_idx);
+                    let diff = bcf.add_alu(crate::refinement::bcf::BPF_SUB, lo_d, lo_r, 32);
+                    bcf.zext_32_to_64(diff)
+                } else {
+                    bcf.add_alu(crate::refinement::bcf::BPF_SUB, dst_idx, rhs_idx, 64)
+                };
+                bcf.bind_reg(d, new_idx);
+            }
+        }
+    }
+
     if dst_is_ptr_post && !src_is_ptr {
         state.set_tnum(dst, Tnum::unknown());
         if width == Width::W32 {

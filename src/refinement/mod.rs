@@ -1,0 +1,17 @@
+//! Proof-guided abstraction refinement subsystem.
+//!
+//! Distinct from `crate::pcc` (whole-program proof-carrying code): this module
+//! produces small per-site SMT proofs that refine the verifier's abstraction,
+//! using BCF's binary format and cvc5 as the solver.
+//!
+//! Algorithmic reference: see the memory file
+//! `reference_bcf_symbolic_tracking.md` (distilled from BCF kernel patches
+//! set1 + set2 in `/Users/yalucai/BCF/patches-kernel/`).
+
+pub mod bcf;
+pub mod bundle;
+pub mod refine_map;
+pub mod refine_stack;
+pub mod smtlib;
+pub mod solver;
+pub mod symbolic;

@@ -279,6 +279,18 @@ fn maybe_promote_map_val(state: &mut State, reg: Reg) {
             );
             // Initialize PtrOffset tracking for interval domain
             state.domain.init_map_value_ptr(r);
+            // BCF symbolic anchor (α Step 1): map-value pointers anchor at
+            // offset 0 from the value's start, analogous to R10 anchoring
+            // at 0 in `materialize_reg64`. Subsequent `handle_add`/
+            // `handle_sub` hooks build the symbolic offset incrementally.
+            // The refinement at the map-region rejection site reads this
+            // expression directly.
+            if let Some(bcf) = state.bcf.as_mut() {
+                if let Some(i) = r.bcf_idx() {
+                    let zero = bcf.add_val64(0);
+                    bcf.bind_reg(i, zero);
+                }
+            }
         }
     }
     promote_stack_slots_all_frames(

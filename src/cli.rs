@@ -69,6 +69,14 @@ pub struct GlobalOpts {
     #[arg(long, global = true)]
     pub disable_private_stack: bool,
 
+    /// Enable userspace BCF symbolic-tracking + proof emission (Phase 1).
+    /// When set, the verifier maintains a parallel symbolic DAG per path and
+    /// attempts proof-guided refinement at safety-check rejection sites;
+    /// successful refinements are written as a `.bcf-bundle` sidecar next
+    /// to the input. Default off — zero behavior change for non-BCF runs.
+    #[arg(long = "bcf", global = true)]
+    pub bcf: bool,
+
     #[arg(long, global = true, value_name = "N")]
     pub max_insn: Option<usize>,
     #[arg(long, global = true, value_name = "N")]
@@ -339,6 +347,9 @@ impl GlobalOpts {
         }
         if self.disable_private_stack {
             c.enable_private_stack = false;
+        }
+        if self.bcf {
+            c.bcf_enabled = true;
         }
 
         if let Some(n) = self.max_insn {

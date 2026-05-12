@@ -227,6 +227,23 @@ pub struct VerifierEnv<'a> {
     /// referenced by a `parent_cache_id` chain.
     pub cache_loc_by_id: HashMap<u32, (usize, usize)>,
 
+    /// Collected BCF refinement proofs from this verification run. Each entry
+    /// is `(cond_hash, proof_bytes, kind)` where `kind` is one of the
+    /// `BCF_BUNDLE_KIND_*` constants. Populated by refinement callbacks at
+    /// safety-check sites when `config.bcf_enabled` and cvc5 returns Unsat;
+    /// flushed to the `<input>.bcf-bundle` sidecar at the end of verification.
+    /// See `project_userspace_bcf.md` for the bundle format.
+    pub bcf_proofs: Vec<(u64, Vec<u8>, u32)>,
+
+    /// Transient: the size-arg register of a helper-mem-region check in
+    /// progress, when one applies. Mirrors BCF's `bcf->size_regno`
+    /// (kernel `set1/0014`). Set by `mem_checks.rs` immediately before a
+    /// call into `check_ptr_access_size` whose size came from a register;
+    /// cleared after. Consumed by `refine_map` to build template 4b case
+    /// (iv)'s symbolic-size-aware refine_cond. `None` for accesses with
+    /// a static size (instruction-level loads/stores).
+    pub bcf_size_reg: Option<Reg>,
+
     /// Eviction-resistant precision marks keyed by `(pc, reg)`.
     /// `mark_chain_precision_backward` writes here as it walks the
     /// per-path history, so widening sites can detect "this reg was
@@ -265,6 +282,8 @@ impl<'a> VerifierEnv<'a> {
             next_cache_id: 0,
             cache_loc_by_id: HashMap::new(),
             precise_pcs: HashSet::new(),
+            bcf_proofs: Vec::new(),
+            bcf_size_reg: None,
         }
     }
 

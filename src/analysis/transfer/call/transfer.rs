@@ -448,6 +448,16 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             state.domain.forget(r);
         }
 
+        // BCF symbolic-state caller-saved clear (β+ Step 0): any pre-call
+        // symbolic expression on R0-R5 is stale after a helper call.
+        // Subsequent uses must materialize fresh exprs (e.g. via Step 1's
+        // map-value anchoring) rather than inherit pre-call values.
+        if let Some(bcf) = state.bcf.as_mut() {
+            for i in 0..=5 {
+                bcf.clear_reg(i);
+            }
+        }
+
         state.pc += 1;
         return vec![state];
     }
@@ -641,6 +651,16 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     // Normal helper handling
     // ========================================================================
 
+    // BCF symbolic R0 clear (β+ Step 0, moved here from apply_return_bounds
+    // 2026-05-12): the previous in-callback site ran AFTER update_call_types
+    // and overrode anchor bindings that update_call_types had just set for
+    // direct-PtrToMapValue returns (array-map lookup with const key,
+    // bpf_get_local_storage). Clearing here, before the type update, lets
+    // those anchor calls be the final word.
+    if let Some(bcf) = state.bcf.as_mut() {
+        bcf.clear_reg(0);
+    }
+
     // 1. Update types
     update_call_types(env, &in_types, &mut state, helper);
 
@@ -672,6 +692,17 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             state.domain.forget(r);
             state.set_tnum(r, Tnum::unknown());
             state.clear_scalar_id(r);
+        }
+        // BCF symbolic-state caller-saved clear (β+ Step 0): mirror the
+        // domain/tnum/id clears above. fastcall preserves R1-R5 semantics
+        // so we preserve their symbolic exprs too — the assumption is that
+        // an unchanged value should keep its unchanged symbolic identity.
+        if let Some(bcf) = state.bcf.as_mut() {
+            for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                if let Some(i) = r.bcf_idx() {
+                    bcf.clear_reg(i);
+                }
+            }
         }
     }
 
@@ -759,6 +790,9 @@ pub(crate) fn apply_return_bounds_for_cb_helper(state: &mut State, helper: u32) 
 pub(super) fn apply_return_bounds(state: &mut State, helper: u32) {
     state.domain.forget(Reg::R0);
     state.set_tnum(Reg::R0, Tnum::unknown());
+    // NOTE: the BCF R0 bcf_expr clear was moved to the top of
+    // `transfer_call` (before `update_call_types`) so it doesn't override
+    // anchors set during type assignment. See the matching comment there.
     match helper {
         constants::BPF_REDIRECT => {
             state.domain.assume_ge_imm(Reg::R0, 0);
