@@ -336,6 +336,185 @@ mod tests {
         assert_eq!(buf, expected, "encoded byte stream must match spec §3.3");
     }
 
+    // ---- cross-impl agreement (step 3.2) ----
+    //
+    // Drives the C reference impl in kernel-patches/ and asserts byte-for-byte
+    // identical hash output across the 12 fixtures above. Skips if the C tool
+    // hasn't been built (run `make -C kernel-patches` to enable).
+
+    fn c_tool_path() -> std::path::PathBuf {
+        // CARGO_MANIFEST_DIR points at the crate root.
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("kernel-patches/build/canonical_hash_tool")
+    }
+
+    /// Serialize `(exprs, root)` into the binary stdin format the C tool reads.
+    /// See kernel-patches/canonical_hash_tool.c for the format.
+    fn serialize_for_c_tool(root: u32, exprs: &[BcfExpr]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(64);
+        out.extend_from_slice(&(exprs.len() as u32).to_le_bytes());
+        for e in exprs {
+            out.push(e.code);
+            out.push(e.args.len() as u8);
+            out.extend_from_slice(&e.params.to_le_bytes());
+            for arg in &e.args {
+                out.extend_from_slice(&arg.to_le_bytes());
+            }
+        }
+        out.extend_from_slice(&root.to_le_bytes());
+        out
+    }
+
+    fn run_c_tool(root: u32, exprs: &[BcfExpr]) -> u64 {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        let path = c_tool_path();
+        let mut child = Command::new(&path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|e| panic!("spawn {}: {}", path.display(), e));
+
+        let payload = serialize_for_c_tool(root, exprs);
+        child.stdin.as_mut().unwrap().write_all(&payload).unwrap();
+        drop(child.stdin.take());
+
+        let out = child.wait_with_output().expect("c tool wait");
+        assert!(
+            out.status.success(),
+            "c tool failed: stderr = {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let hex = String::from_utf8(out.stdout).expect("c tool stdout utf8");
+        let hex = hex.trim();
+        u64::from_str_radix(hex, 16)
+            .unwrap_or_else(|e| panic!("parse c hash {:?}: {}", hex, e))
+    }
+
+    #[test]
+    fn cross_impl_agrees() {
+        if !c_tool_path().exists() {
+            eprintln!(
+                "SKIP cross_impl_agrees: build the C reference impl first \
+                 (run `make -C kernel-patches` from the repo root)"
+            );
+            return;
+        }
+
+        // Reuse the same fixture shapes as the property tests above. Each
+        // entry: (label, builder closure returning (root, exprs)).
+        type Fixture = fn() -> (u32, Vec<BcfExpr>);
+        let fixtures: &[(&str, Fixture)] = &[
+            ("identity_addvv", || {
+                let mut e = vec![];
+                let v = bv_var(&mut e, 0);
+                let r = bv_add(&mut e, v, v);
+                (r, e)
+            }),
+            ("var_alone", || {
+                let mut e = vec![];
+                let v = bv_var(&mut e, 0);
+                (v, e)
+            }),
+            ("const_alone", || {
+                let mut e = vec![];
+                let c = bv_val(&mut e, 0xdead_beef);
+                (c, e)
+            }),
+            ("alpha_pair_a", || {
+                let mut e = vec![];
+                let v1 = bv_var(&mut e, 0);
+                let v2 = bv_var(&mut e, 0);
+                let r = bv_add(&mut e, v1, v2);
+                (r, e)
+            }),
+            ("alpha_pair_b_shifted_ids", || {
+                let mut e = vec![];
+                for _ in 0..3 { let _ = bv_val(&mut e, 99); }
+                let v3 = bv_var(&mut e, 0);
+                let v4 = bv_var(&mut e, 0);
+                let r = bv_add(&mut e, v3, v4);
+                (r, e)
+            }),
+            ("collapse_addvv", || {
+                let mut e = vec![];
+                let v = bv_var(&mut e, 0);
+                let r = bv_add(&mut e, v, v);
+                (r, e)
+            }),
+            ("split_addv1v2", || {
+                let mut e = vec![];
+                let v1 = bv_var(&mut e, 0);
+                let v2 = bv_var(&mut e, 0);
+                let r = bv_add(&mut e, v1, v2);
+                (r, e)
+            }),
+            ("mul_vv", || {
+                let mut e = vec![];
+                let v = bv_var(&mut e, 0);
+                let r = bv_mul(&mut e, v, v);
+                (r, e)
+            }),
+            ("var_params_32", || {
+                let mut e = vec![];
+                let v = bv_var(&mut e, 32);
+                (v, e)
+            }),
+            ("var_params_64", || {
+                let mut e = vec![];
+                let v = bv_var(&mut e, 64);
+                (v, e)
+            }),
+            ("const_cafe", || {
+                let mut e = vec![];
+                let c = bv_val(&mut e, 0xcafe_babe);
+                (c, e)
+            }),
+            ("add_c1_c2_ordered", || {
+                let mut e = vec![];
+                let c1 = bv_val(&mut e, 1);
+                let c2 = bv_val(&mut e, 2);
+                let r = bv_add(&mut e, c1, c2);
+                (r, e)
+            }),
+            ("add_c2_c1_ordered", || {
+                let mut e = vec![];
+                let c1 = bv_val(&mut e, 1);
+                let c2 = bv_val(&mut e, 2);
+                let r = bv_add(&mut e, c2, c1);
+                (r, e)
+            }),
+            ("worked_example_add_v1_mul_v2_v1", || {
+                let mut e = vec![];
+                for _ in 0..7 { let _ = bv_val(&mut e, 0); }
+                let v1 = bv_var(&mut e, 0);
+                let _ = bv_val(&mut e, 0);
+                let v2 = bv_var(&mut e, 0);
+                let m = bv_mul(&mut e, v2, v1);
+                let r = bv_add(&mut e, v1, m);
+                (r, e)
+            }),
+            ("bool_var", || {
+                let mut e = vec![];
+                e.push(BcfExpr { code: BCF_VAR | BCF_BOOL, params: 0, args: vec![] });
+                (0, e)
+            }),
+        ];
+
+        for (label, build) in fixtures {
+            let (root, exprs) = build();
+            let rust = hash_expr(root, &exprs);
+            let c = run_c_tool(root, &exprs);
+            assert_eq!(
+                rust, c,
+                "cross-impl mismatch on fixture {}: rust=0x{:016x} c=0x{:016x}",
+                label, rust, c
+            );
+        }
+    }
+
     #[test]
     fn bool_var_treated_as_var() {
         // code = BCF_VAR | BCF_BOOL: still a var, still nullary.
