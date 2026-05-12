@@ -20,12 +20,14 @@ pub(crate) fn handle_shr(state: &mut State, width: Width, dst: Reg, src: &Operan
                 (*k as u32) & 0x3F
             };
             let dst_idx = bcf.materialize_reg64(d);
-            let k_idx = bcf.add_val64(shift_amount as u64);
             let new_idx = if width == Width::W32 {
                 let lo = bcf.extract_lo(32, dst_idx);
-                let shifted = bcf.add_alu(crate::refinement::bcf::BPF_RSH, lo, k_idx, 32);
+                let k_idx = bcf.add_val64(shift_amount as u64);
+                let k_lo = bcf.extract_lo(32, k_idx);
+                let shifted = bcf.add_alu(crate::refinement::bcf::BPF_RSH, lo, k_lo, 32);
                 bcf.zext_32_to_64(shifted)
             } else {
+                let k_idx = bcf.add_val64(shift_amount as u64);
                 bcf.add_alu(crate::refinement::bcf::BPF_RSH, dst_idx, k_idx, 64)
             };
             bcf.bind_reg(d, new_idx);

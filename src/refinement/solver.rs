@@ -154,6 +154,14 @@ pub fn solve(smtlib: &str) -> Result<Vec<u8>> {
         let mut f = std::fs::File::create(&smt_path)?;
         f.write_all(smtlib.as_bytes())?;
     }
+    if let Ok(dump_dir) = std::env::var("ZOVIA_BCF_DUMP_SMT") {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let path = std::path::Path::new(&dump_dir).join(format!("query_{:04}.smt2", n));
+        let _ = std::fs::create_dir_all(&dump_dir);
+        let _ = std::fs::write(&path, smtlib);
+    }
 
     let output = Command::new(&cvc5)
         .arg("--produce-proofs")
