@@ -59,10 +59,24 @@ pub(crate) fn transfer_alu(
         return vec![];
     }
 
-    // clear `var_off_contributor[dst]` before the op runs;
-    // `handle_add` re-sets it for the `ptr += scalar` case. Any other op
-    // (Mov, Sub, And, Mul, etc.) invalidates the contributor link.
-    state.var_off_contributor.remove(&dst);
+    // Maintain `var_off_contributor[dst]` across this op. The link records
+    // which scalar last contributed the variable component of a pointer's
+    // offset (set by `handle_add` on `ptr += scalar`). It's read at access
+    // sites for precision-walk targeting AND by the BCF stack-OOB
+    // refinement to reconstruct the offset symbolically.
+    //
+    // - `Alu Add/Sub Imm`: pure constant shift of the offset, link is
+    //   preserved (e.g. `r1 += r0; r1 += 4` — r0 is still the contributor).
+    // - `Alu Add Reg(scalar)`: `handle_add` re-inserts the new contributor.
+    // - Everything else (Mov, And, Mul, Reg-Sub, ...) breaks the link;
+    //   clear it here so a stale contributor doesn't get read downstream.
+    let preserves_contributor = matches!(
+        (op, &src),
+        (AluOp::Add | AluOp::Sub, Operand::Imm(_))
+    );
+    if !preserves_contributor {
+        state.var_off_contributor.remove(&dst);
+    }
 
     // Capture dst's existing BTF field-ref before the op clobbers it.
     // Used to incrementally update the offset when this op is a `ptr +=

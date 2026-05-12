@@ -34,12 +34,21 @@ pub fn try_refine_stack_oob(
     let bcf_ref = state.bcf.as_ref()?;
     let mut sym: SymbolicState = (**bcf_ref).clone();
 
-    // 1. Find the scalar contributor whose symbolic expr we'll use as the
-    //    variable part of the offset. Without one, we have nothing
-    //    symbolic to feed cvc5 — give up.
-    let contributor = *state.var_off_contributor.get(&base)?;
-    let c_idx = contributor.bcf_idx()?;
-    let contrib_expr = sym.get_reg(c_idx)?;
+    let Some(contributor) = state.var_off_contributor.get(&base).copied() else {
+        debug!("[bcf] stack-refine skipped: no var_off_contributor for {:?}", base);
+        return None;
+    };
+    let Some(c_idx) = contributor.bcf_idx() else {
+        debug!("[bcf] stack-refine skipped: contributor {:?} has no bcf idx", contributor);
+        return None;
+    };
+    let Some(contrib_expr) = sym.get_reg(c_idx) else {
+        debug!(
+            "[bcf] stack-refine skipped: contributor {:?} has no symbolic expr",
+            contributor
+        );
+        return None;
+    };
 
     // 2. Recover the constant displacement K of `base` from `r10`.
     //    For `r2 = r10 + K + contributor`, distance(r2, r10) ranges over
