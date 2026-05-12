@@ -227,13 +227,15 @@ pub struct VerifierEnv<'a> {
     /// referenced by a `parent_cache_id` chain.
     pub cache_loc_by_id: HashMap<u32, (usize, usize)>,
 
-    /// Collected BCF refinement proofs from this verification run. Each entry
-    /// is `(cond_hash, proof_bytes, kind)` where `kind` is one of the
-    /// `BCF_BUNDLE_KIND_*` constants. Populated by refinement callbacks at
+    /// Collected BCF refinement proofs from this verification run. Each
+    /// entry carries the canonical hash of the refinement-condition root,
+    /// the goal-expression table the kernel needs for `expr_equiv` +
+    /// `bcf_check_proof`, the proof bytes, and a kind tag
+    /// (`BCF_BUNDLE_KIND_*`). Populated by refinement callbacks at
     /// safety-check sites when `config.bcf_enabled` and cvc5 returns Unsat;
     /// flushed to the `<input>.bcf-bundle` sidecar at the end of verification.
-    /// See `project_userspace_bcf.md` for the bundle format.
-    pub bcf_proofs: Vec<(u64, Vec<u8>, u32)>,
+    /// Format: see `c-ref/bcf_bundle.h`.
+    pub bcf_proofs: Vec<crate::refinement::bundle::RefineEntry>,
 
     /// Transient: the size-arg register of a helper-mem-region check in
     /// progress, when one applies. Mirrors BCF's `bcf->size_regno`

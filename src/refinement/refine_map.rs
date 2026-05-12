@@ -57,7 +57,7 @@ pub fn try_refine_map_access(
     size: i64,
     map_limit: i64,
     size_reg: Option<Reg>,
-) -> Option<Vec<u8>> {
+) -> Option<super::refine_stack::RefineOk> {
     let bcf_ref = state.bcf.as_ref()?;
     let mut sym: SymbolicState = (**bcf_ref).clone();
 
@@ -147,7 +147,7 @@ pub fn try_refine_map_access(
                 "[bcf] map-OOB refinement: cvc5 accepted ({} bytes)",
                 bytes.len()
             );
-            Some(bytes)
+            Some(super::refine_stack::RefineOk { proof_bytes: bytes, goal_root: oob, sym })
         }
         Err(e) => {
             debug!("[bcf] map-OOB refinement: cvc5 declined ({})", e);

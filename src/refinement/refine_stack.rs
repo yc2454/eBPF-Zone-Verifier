@@ -32,12 +32,20 @@ use log::{debug, warn};
 /// proof bytes on success; `None` if no refinement could be built (no bcf
 /// state, no contributor, missing symbolic info) or cvc5 didn't return
 /// `unsat`.
+/// Returned on success: the goal-root expr-id and the symbolic-state
+/// snapshot whose `exprs` table the goal lives in, plus the proof bytes.
+pub struct RefineOk {
+    pub proof_bytes: Vec<u8>,
+    pub goal_root: u32,
+    pub sym: SymbolicState,
+}
+
 pub fn try_refine_stack_oob(
     state: &State,
     base: Reg,
     instruction_offset: i64,
     size: i64,
-) -> Option<Vec<u8>> {
+) -> Option<RefineOk> {
     let bcf_ref = state.bcf.as_ref()?;
     let mut sym: SymbolicState = (**bcf_ref).clone();
 
@@ -118,7 +126,7 @@ pub fn try_refine_stack_oob(
     match solver::solve(&smt) {
         Ok(bytes) => {
             debug!("[bcf] stack-OOB refinement: cvc5 accepted ({} bytes)", bytes.len());
-            Some(bytes)
+            Some(RefineOk { proof_bytes: bytes, goal_root: oob, sym })
         }
         Err(e) => {
             debug!("[bcf] stack-OOB refinement: cvc5 declined ({})", e);

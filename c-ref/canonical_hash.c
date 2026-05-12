@@ -160,11 +160,65 @@ static void outbuf_push_u32_le(struct outbuf *b, uint32_t v) {
     b->data[b->len++] = (uint8_t)((v >> 24) & 0xff);
 }
 
+/* Slot-offset → array-index lookup. Args in BCF expressions are u32 slot
+ * offsets (each expression occupies 1 + vlen slots); userspace must resolve
+ * to array positions before indexing into `exprs`. See spec §2.
+ *
+ * Linear-probe hash table keyed by slot offset. Capacity sized so load
+ * factor stays ≤ 0.5.
+ */
+struct slot_table {
+    uint32_t *keys;  /* slot offset; UINT32_MAX = empty */
+    uint32_t *vals;  /* array index */
+    size_t    cap;
+};
+
+#define SLOT_EMPTY UINT32_MAX
+
+static int slot_table_build(struct slot_table *t,
+                            const struct zovia_bcf_expr *exprs,
+                            size_t exprs_len) {
+    size_t cap = 16;
+    while (cap < exprs_len * 2 + 1) cap *= 2;
+    t->cap = cap;
+    t->keys = malloc(cap * sizeof(uint32_t));
+    t->vals = malloc(cap * sizeof(uint32_t));
+    if (!t->keys || !t->vals) return -1;
+    for (size_t i = 0; i < cap; i++) t->keys[i] = SLOT_EMPTY;
+
+    uint32_t slot = 0;
+    for (size_t i = 0; i < exprs_len; i++) {
+        size_t j = (size_t)(slot * 2654435761u) & (cap - 1);
+        while (t->keys[j] != SLOT_EMPTY) j = (j + 1) & (cap - 1);
+        t->keys[j] = slot;
+        t->vals[j] = (uint32_t)i;
+        slot += 1u + (uint32_t)exprs[i].vlen;
+    }
+    return 0;
+}
+
+static void slot_table_free(struct slot_table *t) {
+    free(t->keys); free(t->vals);
+    t->keys = NULL; t->vals = NULL;
+}
+
+/* Returns the array index for a slot offset, or SIZE_MAX if not found. */
+static size_t slot_table_get(const struct slot_table *t, uint32_t slot) {
+    size_t j = (size_t)(slot * 2654435761u) & (t->cap - 1);
+    while (t->keys[j] != SLOT_EMPTY) {
+        if (t->keys[j] == slot) return (size_t)t->vals[j];
+        j = (j + 1) & (t->cap - 1);
+    }
+    return (size_t)-1;
+}
+
 /* Recursive post-order encoder. Mirrors `encode()` in canonical_hash.rs. */
 static void encode(uint32_t id, const struct zovia_bcf_expr *exprs,
-                   size_t exprs_len, struct renamer *r, struct outbuf *b) {
-    if (id >= exprs_len) { b->oom = 1; return; } /* misuse → OOM-style poison */
-    const struct zovia_bcf_expr *e = &exprs[id];
+                   const struct slot_table *st,
+                   struct renamer *r, struct outbuf *b) {
+    size_t array_idx = slot_table_get(st, id);
+    if (array_idx == (size_t)-1) { b->oom = 1; return; }
+    const struct zovia_bcf_expr *e = &exprs[array_idx];
 
     if (is_leaf(e)) {
         if (is_var(e->code)) {
@@ -186,7 +240,7 @@ static void encode(uint32_t id, const struct zovia_bcf_expr *exprs,
         }
     } else {
         for (uint8_t i = 0; i < e->vlen; i++) {
-            encode(e->args[i], exprs, exprs_len, r, b);
+            encode(e->args[i], exprs, st, r, b);
             if (b->oom) return;
         }
         outbuf_push_u8(b, TAG_INTERNAL);
@@ -199,18 +253,24 @@ static void encode(uint32_t id, const struct zovia_bcf_expr *exprs,
 uint64_t zovia_canonical_hash(uint32_t root,
                               const struct zovia_bcf_expr *exprs,
                               size_t exprs_len) {
-    struct renamer r;
-    struct outbuf  b;
+    struct renamer    r;
+    struct outbuf     b;
+    struct slot_table st;
     uint64_t h = 0;
 
     if (renamer_init(&r) != 0) return 0;
     if (outbuf_init(&b)  != 0) { renamer_free(&r); return 0; }
+    if (slot_table_build(&st, exprs, exprs_len) != 0) {
+        outbuf_free(&b); renamer_free(&r); return 0;
+    }
 
-    encode(root, exprs, exprs_len, &r, &b);
+    encode(root, exprs, &st, &r, &b);
 
     if (!b.oom) {
         h = siphash24(b.data, b.len, 0, 0);
     }
+
+    slot_table_free(&st);
 
     outbuf_free(&b);
     renamer_free(&r);

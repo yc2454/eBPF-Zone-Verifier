@@ -90,8 +90,15 @@ fn phase1_shift_constraint_accepts_with_bcf() {
     assert_eq!(&bytes[0..4], &BCF_BUNDLE_MAGIC_LE, "bad bundle magic");
     let entry_cnt = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
     assert_eq!(entry_cnt, 1, "expected exactly one refinement entry");
-    let proof_off = u32::from_le_bytes(bytes[24..28].try_into().unwrap()) as usize;
-    let proof_sz = u32::from_le_bytes(bytes[28..32].try_into().unwrap()) as usize;
+    // Entry layout (28 B starting at byte 16):
+    //   0..8   cond_hash
+    //   8..12  goal_off
+    //   12..16 goal_size
+    //   16..20 proof_off
+    //   20..24 proof_size
+    //   24..28 kind
+    let proof_off = u32::from_le_bytes(bytes[32..36].try_into().unwrap()) as usize;
+    let proof_sz = u32::from_le_bytes(bytes[36..40].try_into().unwrap()) as usize;
     assert!(
         proof_off + proof_sz <= bytes.len(),
         "proof slice OOB: off={}, sz={}, total={}",

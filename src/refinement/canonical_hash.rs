@@ -60,24 +60,52 @@ impl VarRenamer {
     }
 }
 
+/// Build a slot-offset → array-index lookup table. Mirrors the kernel's
+/// `id_to_expr()` mapping (see `bcf_checker.c`). An expression with
+/// `vlen = n` consumes `1 + n` u32 slots; its slot offset is the cumulative
+/// slot count of all preceding expressions.
+fn slot_index(exprs: &[BcfExpr]) -> HashMap<u32, usize> {
+    let mut m = HashMap::with_capacity(exprs.len());
+    let mut slot: u32 = 0;
+    for (i, e) in exprs.iter().enumerate() {
+        m.insert(slot, i);
+        slot += 1 + e.args.len() as u32;
+    }
+    m
+}
+
 /// Compute the canonical hash of the expression rooted at `root` in `exprs`.
 ///
-/// `root` is an expr-id (index into `exprs`). Walks the expression as a tree
-/// in post-order; identical sub-DAGs are walked twice — matches BCF's own
-/// recursion in `__expr_equiv`. Resulting hash is invariant under
-/// α-renaming of variables and matches across bundle/kernel boundaries.
+/// `root` and the values in each expression's `args` are **slot offsets**
+/// (BCF's on-disk convention), not array indices into `exprs`. See spec §2
+/// "Expr-id convention".
+///
+/// Walks the expression as a tree in post-order; identical sub-DAGs are
+/// walked twice — matches BCF's own recursion in `__expr_equiv`. Resulting
+/// hash is invariant under α-renaming of variables and matches across
+/// bundle/kernel boundaries.
 pub fn hash_expr(root: u32, exprs: &[BcfExpr]) -> u64 {
     let mut buf: Vec<u8> = Vec::with_capacity(64);
     let mut renamer = VarRenamer::new();
-    encode(root, exprs, &mut renamer, &mut buf);
+    let slot_to_idx = slot_index(exprs);
+    encode(root, exprs, &slot_to_idx, &mut renamer, &mut buf);
 
     let mut hasher = SipHasher24::new_with_keys(0, 0);
     hasher.write(&buf);
     hasher.finish()
 }
 
-fn encode(id: u32, exprs: &[BcfExpr], ren: &mut VarRenamer, buf: &mut Vec<u8>) {
-    let e = &exprs[id as usize];
+fn encode(
+    id: u32,
+    exprs: &[BcfExpr],
+    slot_to_idx: &HashMap<u32, usize>,
+    ren: &mut VarRenamer,
+    buf: &mut Vec<u8>,
+) {
+    let array_idx = *slot_to_idx
+        .get(&id)
+        .unwrap_or_else(|| panic!("canonical_hash: expr-id {} is not a valid slot offset", id));
+    let e = &exprs[array_idx];
 
     if is_leaf(e) {
         if is_var(e.code) {
@@ -101,7 +129,7 @@ fn encode(id: u32, exprs: &[BcfExpr], ren: &mut VarRenamer, buf: &mut Vec<u8>) {
     } else {
         // Internal: post-order — recurse children first, then emit our record.
         for &arg in &e.args {
-            encode(arg, exprs, ren, buf);
+            encode(arg, exprs, slot_to_idx, ren, buf);
         }
         // TAG_INTERNAL: tag(1) + code(1) + vlen(1) + params(2) = 5 bytes
         buf.push(TAG_INTERNAL);
@@ -117,27 +145,35 @@ mod tests {
     use crate::refinement::bcf::{BCF_BOOL, BPF_ADD, BPF_MUL};
 
     // ---- helpers ----
+    //
+    // Returned "ids" are slot offsets (BCF convention), not array indices.
+    // Each helper computes its slot offset as the cumulative slot count of
+    // already-pushed expressions. See spec §2 "Expr-id convention".
+
+    fn next_slot(exprs: &[BcfExpr]) -> u32 {
+        exprs.iter().map(|e| 1 + e.args.len() as u32).sum()
+    }
 
     fn bv_var(exprs: &mut Vec<BcfExpr>, params: u16) -> u32 {
-        let id = exprs.len() as u32;
+        let id = next_slot(exprs);
         exprs.push(BcfExpr { code: BCF_VAR | BCF_BV, params, args: vec![] });
         id
     }
 
     fn bv_val(exprs: &mut Vec<BcfExpr>, value: u32) -> u32 {
-        let id = exprs.len() as u32;
+        let id = next_slot(exprs);
         exprs.push(BcfExpr { code: BCF_VAL | BCF_BV, params: 0, args: vec![value] });
         id
     }
 
     fn bv_add(exprs: &mut Vec<BcfExpr>, a: u32, b: u32) -> u32 {
-        let id = exprs.len() as u32;
+        let id = next_slot(exprs);
         exprs.push(BcfExpr { code: BPF_ADD | BCF_BV, params: 0, args: vec![a, b] });
         id
     }
 
     fn bv_mul(exprs: &mut Vec<BcfExpr>, a: u32, b: u32) -> u32 {
-        let id = exprs.len() as u32;
+        let id = next_slot(exprs);
         exprs.push(BcfExpr { code: BPF_MUL | BCF_BV, params: 0, args: vec![a, b] });
         id
     }
@@ -306,19 +342,20 @@ mod tests {
         // Pad so v1, v2 land at ids 7, 9 per the spec example.
         // ids 0..7: filler vals
         for _ in 0..7 {
-            let _ = bv_val(&mut exprs, 0);
+            let _ = bv_val(&mut exprs, 0); // 7 vals × slot_len 2 = 14 slots
         }
-        let v1 = bv_var(&mut exprs, 0); // id 7
-        assert_eq!(v1, 7);
-        let _ = bv_val(&mut exprs, 0); // id 8 filler
-        let v2 = bv_var(&mut exprs, 0); // id 9
-        assert_eq!(v2, 9);
+        let v1 = bv_var(&mut exprs, 0);
+        assert_eq!(v1, 14);
+        let _ = bv_val(&mut exprs, 0); // val at slot 15 (slot_len 2)
+        let v2 = bv_var(&mut exprs, 0);
+        assert_eq!(v2, 17);
         let mul_id = bv_mul(&mut exprs, v2, v1);
         let add_id = bv_add(&mut exprs, v1, mul_id);
 
         let mut buf = vec![];
         let mut ren = VarRenamer::new();
-        encode(add_id, &exprs, &mut ren, &mut buf);
+        let slot_to_idx = slot_index(&exprs);
+        encode(add_id, &exprs, &slot_to_idx, &mut ren, &mut buf);
 
         // Expected: v1(idx0), v2(idx1), v1(idx0), mul, add
         let expected: Vec<u8> = vec![
@@ -336,20 +373,44 @@ mod tests {
         assert_eq!(buf, expected, "encoded byte stream must match spec §3.3");
     }
 
+    #[test]
+    fn slot_offsets_diverge_from_array_indices() {
+        // Mixed-width regression lock for spec §2 (Expr-id convention).
+        // Build: v (slot_len 1) + val (slot_len 2) + add(v, val) (slot_len 3).
+        // Array indices: 0, 1, 2. Slot offsets: 0, 1, 3.
+        // The add's args MUST be [0, 1] (slot offsets), and root MUST be 3.
+        // If the impl ever silently regresses to array-indexing, root=3
+        // would be out of bounds (only 3 entries: indices 0..2) and this
+        // test panics; if it silently re-resolves args as array indices,
+        // add(0,1) interprets val (array[1]) correctly but mis-locates any
+        // deeper structure — keep the test simple enough to lock at least
+        // the root-resolution path.
+        let mut e = vec![];
+        let v = bv_var(&mut e, 0);
+        assert_eq!(v, 0, "var at slot 0");
+        let c = bv_val(&mut e, 42);
+        assert_eq!(c, 1, "val at slot 1 (after var of slot_len 1)");
+        let root = bv_add(&mut e, v, c);
+        assert_eq!(root, 3, "add at slot 3 (after var=1 + val=2 slots)");
+        // Sanity: hash succeeds (would panic on out-of-bounds resolution).
+        let h = hash_expr(root, &e);
+        assert_ne!(h, 0); // 0 is also a valid hash but extremely unlikely here
+    }
+
     // ---- cross-impl agreement (step 3.2) ----
     //
-    // Drives the C reference impl in kernel-patches/ and asserts byte-for-byte
+    // Drives the C reference impl in c-ref/ and asserts byte-for-byte
     // identical hash output across the 12 fixtures above. Skips if the C tool
-    // hasn't been built (run `make -C kernel-patches` to enable).
+    // hasn't been built (run `make -C c-ref` to enable).
 
     fn c_tool_path() -> std::path::PathBuf {
         // CARGO_MANIFEST_DIR points at the crate root.
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("kernel-patches/build/canonical_hash_tool")
+            .join("c-ref/build/canonical_hash_tool")
     }
 
     /// Serialize `(exprs, root)` into the binary stdin format the C tool reads.
-    /// See kernel-patches/canonical_hash_tool.c for the format.
+    /// See c-ref/canonical_hash_tool.c for the format.
     fn serialize_for_c_tool(root: u32, exprs: &[BcfExpr]) -> Vec<u8> {
         let mut out = Vec::with_capacity(64);
         out.extend_from_slice(&(exprs.len() as u32).to_le_bytes());
@@ -398,7 +459,7 @@ mod tests {
         if !c_tool_path().exists() {
             eprintln!(
                 "SKIP cross_impl_agrees: build the C reference impl first \
-                 (run `make -C kernel-patches` from the repo root)"
+                 (run `make -C c-ref` from the repo root)"
             );
             return;
         }
@@ -526,7 +587,7 @@ mod tests {
         // Two of them should α-rename identically.
         let mut b = vec![];
         let _ = bv_val(&mut b, 1);
-        let idb = b.len() as u32;
+        let idb = next_slot(&b);
         b.push(BcfExpr { code: BCF_VAR | BCF_BOOL, params: 0, args: vec![] });
         assert_eq!(h, hash_expr(idb, &b));
     }

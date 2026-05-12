@@ -414,27 +414,32 @@ fn try_bcf_refine_map(
         return false;
     }
     let size_reg = env.bcf_size_reg;
-    let Some(proof_bytes) = crate::refinement::refine_map::try_refine_map_access(
+    let Some(ok) = crate::refinement::refine_map::try_refine_map_access(
         state, base, insn_off, size, map_limit, size_reg,
     ) else {
         return false;
     };
-    let hash = crate::refinement::bundle::placeholder_cond_hash(&proof_bytes);
+    let entry = crate::refinement::bundle::RefineEntry::new(
+        ok.goal_root,
+        ok.sym.exprs,
+        ok.proof_bytes,
+        crate::refinement::bundle::BCF_BUNDLE_KIND_REFINE,
+    );
     log::info!(
         target: "app",
         "[bcf] refined map-OOB at base={:?} insn_off={} size={} (size_reg={:?}) limit={}: cvc5 proof {} bytes (hash {:016x})",
-        base, insn_off, size, size_reg, map_limit, proof_bytes.len(), hash
+        base, insn_off, size, size_reg, map_limit, entry.proof_bytes.len(), entry.cond_hash
     );
     if let Ok(prefix) = std::env::var("ZOVIA_BCF_DUMP_PROOF") {
         let idx = env.bcf_proofs.len();
         let path = format!("{}.{}.bcf", prefix, idx);
-        if let Err(e) = std::fs::write(&path, &proof_bytes) {
+        if let Err(e) = std::fs::write(&path, &entry.proof_bytes) {
             log::warn!(target: "app", "[bcf] proof dump to {} failed: {}", path, e);
         } else {
             log::info!(target: "app", "[bcf] dumped raw proof to {}", path);
         }
     }
-    env.bcf_proofs.push((hash, proof_bytes, crate::refinement::bundle::BCF_BUNDLE_KIND_REFINE));
+    env.bcf_proofs.push(entry);
     true
 }
 
