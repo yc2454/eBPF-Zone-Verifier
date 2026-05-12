@@ -26,6 +26,10 @@ use std::process::Command;
 const DEFAULT_CVC5_MACOS: &str = "/Users/yalucai/cvc5-bcf/install/bin/cvc5";
 const DEFAULT_CVC5_LINUX: &str = "/users/yc1795/BCF/output/cvc5-libs/bin/cvc5";
 
+// Linux-only: bcf-checker is the kernel-equivalent userspace proof validator
+// (built from the synced kernel `bcf_checker.c`). Used as a soundness oracle.
+const DEFAULT_BCF_CHECKER_LINUX: &str = "/users/yc1795/BCF/bcf-checker/bcf-checker";
+
 #[derive(Debug)]
 pub enum SolverError {
     Io(std::io::Error),
@@ -64,6 +68,51 @@ impl From<std::io::Error> for SolverError {
 }
 
 pub type Result<T> = std::result::Result<T, SolverError>;
+
+/// Locate the BCF-format proof checker binary (Linux-only). Returns `None`
+/// when it's not present — this is the expected case on macOS dev hosts.
+///
+/// Precedence: `$ZOVIA_BCF_CHECKER`, then the Linux default.
+pub fn bcf_checker_path() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("ZOVIA_BCF_CHECKER") {
+        let pb = PathBuf::from(p);
+        return pb.exists().then_some(pb);
+    }
+    let pb = PathBuf::from(DEFAULT_BCF_CHECKER_LINUX);
+    pb.exists().then_some(pb)
+}
+
+/// Pipe `bytes` through the BCF proof checker. Returns `Ok(())` when the
+/// checker accepts the proof. Returns `Ok(())` AND emits no work when the
+/// checker isn't present (e.g., on macOS) — the caller should treat this as
+/// "no oracle available", not "validated".
+///
+/// This is the soundness backstop: even if cvc5 emits a proof that's
+/// syntactically well-formed BCF, the checker is what confirms it actually
+/// establishes the refinement condition under the kernel's rule semantics.
+pub fn validate_proof_bytes(bytes: &[u8]) -> Result<bool> {
+    let Some(checker) = bcf_checker_path() else {
+        return Ok(false); // no oracle available
+    };
+
+    // bcf-checker takes a proof file path as its arg.
+    let tmp = tempdir()?;
+    let proof_path = tmp.path().join("proof.bcf");
+    std::fs::write(&proof_path, bytes)?;
+
+    let output = Command::new(&checker).arg(&proof_path).output()?;
+
+    if !output.status.success() {
+        let stderr = truncate(String::from_utf8_lossy(&output.stderr).into_owned(), 1024);
+        let stdout = truncate(String::from_utf8_lossy(&output.stdout).into_owned(), 1024);
+        return Err(SolverError::SolverFailed {
+            code: output.status.code(),
+            stderr: format!("bcf-checker rejected; stdout: {}; stderr: {}", stdout, stderr),
+        });
+    }
+
+    Ok(true)
+}
 
 /// Locate the BCF-patched cvc5 binary.
 ///

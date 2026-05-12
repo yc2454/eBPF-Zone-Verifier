@@ -427,8 +427,8 @@ mod tests {
     }
 
     /// End-to-end: encode the shift_constraint refinement, hand to cvc5,
-    /// confirm `unsat`. This is the integration test that closes the loop:
-    /// our symbolic state → SMT-LIB → cvc5 → BCF proof bytes.
+    /// confirm `unsat`. When the `bcf-checker` binary is also present
+    /// (Linux), pipe the proof through it for full soundness validation.
     #[test]
     fn shift_constraint_end_to_end_via_cvc5() {
         if solver::cvc5_path().is_err() {
@@ -441,9 +441,18 @@ mod tests {
         assert!(bytes.len() >= 12);
         let magic = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
         assert_eq!(magic, BCF_MAGIC);
-        // Parse the proof to confirm it's structurally valid.
         let proof = BcfProof::from_bytes(&bytes).expect("BCF parse failed");
         assert!(!proof.exprs.is_empty());
         assert!(!proof.steps.is_empty());
+
+        // If bcf-checker is available (Linux only), use it as the canonical
+        // proof oracle. Failing this assertion means cvc5 emitted bytes that
+        // round-trip our parser but don't satisfy the kernel rule system —
+        // i.e., a real bug in our SMT-LIB encoding or formula construction.
+        match solver::validate_proof_bytes(&bytes) {
+            Ok(true) => eprintln!("[bcf-checker] proof accepted"),
+            Ok(false) => eprintln!("[bcf-checker] not present; skipping oracle check"),
+            Err(e) => panic!("bcf-checker rejected proof: {}", e),
+        }
     }
 }
