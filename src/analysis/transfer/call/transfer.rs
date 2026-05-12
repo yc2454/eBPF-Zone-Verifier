@@ -651,6 +651,16 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     // Normal helper handling
     // ========================================================================
 
+    // BCF symbolic R0 clear (β+ Step 0, moved here from apply_return_bounds
+    // 2026-05-12): the previous in-callback site ran AFTER update_call_types
+    // and overrode anchor bindings that update_call_types had just set for
+    // direct-PtrToMapValue returns (array-map lookup with const key,
+    // bpf_get_local_storage). Clearing here, before the type update, lets
+    // those anchor calls be the final word.
+    if let Some(bcf) = state.bcf.as_mut() {
+        bcf.clear_reg(0);
+    }
+
     // 1. Update types
     update_call_types(env, &in_types, &mut state, helper);
 
@@ -780,12 +790,9 @@ pub(crate) fn apply_return_bounds_for_cb_helper(state: &mut State, helper: u32) 
 pub(super) fn apply_return_bounds(state: &mut State, helper: u32) {
     state.domain.forget(Reg::R0);
     state.set_tnum(Reg::R0, Tnum::unknown());
-    // BCF symbolic-state R0 clear (β+ Step 0): every helper return
-    // overwrites R0, so any pre-call symbolic expr is stale. Re-anchored
-    // (e.g. to const(0) for map-value pointers) by Step 1 hooks.
-    if let Some(bcf) = state.bcf.as_mut() {
-        bcf.clear_reg(0);
-    }
+    // NOTE: the BCF R0 bcf_expr clear was moved to the top of
+    // `transfer_call` (before `update_call_types`) so it doesn't override
+    // anchors set during type assignment. See the matching comment there.
     match helper {
         constants::BPF_REDIRECT => {
             state.domain.assume_ge_imm(Reg::R0, 0);

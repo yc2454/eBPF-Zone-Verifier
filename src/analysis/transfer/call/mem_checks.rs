@@ -474,9 +474,15 @@ pub(crate) fn check_single_mem_size_pair(
         return true;
     }
 
-    // Validate pointer can accommodate the access
+    // Validate pointer can accommodate the access.
+    // BCF size-reg stashing (template 4b case iv): pin the size register on
+    // env so the map-region refinement callback can read its symbolic
+    // expression when building refine_cond. Mirrors BCF's `bcf->size_regno`
+    // pattern (kernel set1/0014). Cleared after the access check returns
+    // regardless of outcome.
     let ptr_arg_type = proto.args.get(pair.ptr_reg.idx() - 2).unwrap();
-    check_ptr_access_size(
+    env.bcf_size_reg = Some(pair.size_reg);
+    let ok = check_ptr_access_size(
         env,
         state,
         pair.ptr_reg,
@@ -484,7 +490,9 @@ pub(crate) fn check_single_mem_size_pair(
         *ptr_arg_type,
         max_size as u32,
         pc,
-    )
+    );
+    env.bcf_size_reg = None;
+    ok
 }
 
 pub(crate) fn checked_by_mem_size_pairs(pairs: &[MemSizePair], reg: Reg) -> bool {

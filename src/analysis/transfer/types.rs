@@ -13,6 +13,23 @@ use crate::common::constants;
 use crate::common::ctx_model::{CtxFieldKind, validate_ctx_access};
 use crate::domains::numeric::NumericDomain;
 
+/// Anchor a map-value pointer's BCF symbolic offset at const(0) when the
+/// reg is given `PtrToMapValue` directly (no `OrNull` stage that would go
+/// through `maybe_promote_map_val`). Both array-map lookups with constant
+/// in-bounds keys and `bpf_get_local_storage` take this fast path.
+/// Mirrors the anchor inside `maybe_promote_map_val`; without it, the
+/// map-OOB refinement at access sites sees an unanchored fresh symbolic
+/// variable for the base and can't prove safety even when the access is
+/// provably in-bounds.
+fn bcf_anchor_map_value(state: &mut State, reg: Reg) {
+    if let Some(bcf) = state.bcf.as_mut() {
+        if let Some(i) = reg.bcf_idx() {
+            let zero = bcf.add_val64(0);
+            bcf.bind_reg(i, zero);
+        }
+    }
+}
+
 /// True if R2 (the lookup-elem key pointer) points at a stack slot
 /// whose value is a known constant strictly less than `map_def.max_entries`.
 /// Mirrors kernel's array-map "lookup with const in-bounds key returns
@@ -406,6 +423,14 @@ pub(crate) fn update_alu_types(
                                         rdonly: false,
                                     },
                                 );
+                                // NOTE: this site has only `&mut TypeState`,
+                                // not full `State`, so we can't anchor the
+                                // BCF symbolic offset here directly. None of
+                                // the current target programs hit this path
+                                // (rodata/data/bss are LD_IMM64 forms, not
+                                // map_lookup_elem chains). Track as Phase 2+
+                                // deferred — would need to plumb `state.bcf`
+                                // access through this code path.
                             } else {
                                 types.set(dst, RegType::ScalarValue);
                             }
@@ -1112,6 +1137,7 @@ pub(crate) fn update_call_types(
                                 },
                             );
                             state.domain.init_map_value_ptr(Reg::R0);
+                            bcf_anchor_map_value(state, Reg::R0);
                         } else if helper == constants::BPF_MAP_LOOKUP_ELEM
                             && matches!(
                                 map_def.type_,
@@ -1135,6 +1161,7 @@ pub(crate) fn update_call_types(
                                 },
                             );
                             state.domain.init_map_value_ptr(Reg::R0);
+                            bcf_anchor_map_value(state, Reg::R0);
                         } else {
                             let id = new_ptr_id();
                             state.types.set(
