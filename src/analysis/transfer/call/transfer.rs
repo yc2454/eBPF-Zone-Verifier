@@ -448,6 +448,16 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             state.domain.forget(r);
         }
 
+        // BCF symbolic-state caller-saved clear (β+ Step 0): any pre-call
+        // symbolic expression on R0-R5 is stale after a helper call.
+        // Subsequent uses must materialize fresh exprs (e.g. via Step 1's
+        // map-value anchoring) rather than inherit pre-call values.
+        if let Some(bcf) = state.bcf.as_mut() {
+            for i in 0..=5 {
+                bcf.clear_reg(i);
+            }
+        }
+
         state.pc += 1;
         return vec![state];
     }
@@ -673,6 +683,17 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             state.set_tnum(r, Tnum::unknown());
             state.clear_scalar_id(r);
         }
+        // BCF symbolic-state caller-saved clear (β+ Step 0): mirror the
+        // domain/tnum/id clears above. fastcall preserves R1-R5 semantics
+        // so we preserve their symbolic exprs too — the assumption is that
+        // an unchanged value should keep its unchanged symbolic identity.
+        if let Some(bcf) = state.bcf.as_mut() {
+            for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                if let Some(i) = r.bcf_idx() {
+                    bcf.clear_reg(i);
+                }
+            }
+        }
     }
 
     // 4. Forget packet pointer DBM entries if they were invalidated
@@ -759,6 +780,12 @@ pub(crate) fn apply_return_bounds_for_cb_helper(state: &mut State, helper: u32) 
 pub(super) fn apply_return_bounds(state: &mut State, helper: u32) {
     state.domain.forget(Reg::R0);
     state.set_tnum(Reg::R0, Tnum::unknown());
+    // BCF symbolic-state R0 clear (β+ Step 0): every helper return
+    // overwrites R0, so any pre-call symbolic expr is stale. Re-anchored
+    // (e.g. to const(0) for map-value pointers) by Step 1 hooks.
+    if let Some(bcf) = state.bcf.as_mut() {
+        bcf.clear_reg(0);
+    }
     match helper {
         constants::BPF_REDIRECT => {
             state.domain.assume_ge_imm(Reg::R0, 0);

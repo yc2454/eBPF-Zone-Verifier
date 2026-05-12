@@ -253,7 +253,7 @@ pub fn check_map_access(
     // For interval domain, try to use PtrOffset for bounds checking
     if let NumericDomain::Interval(ref ivl) = state.domain {
         if interval_check_map_access(
-            env, ivl, map_limit, map_idx, base, map_def, insn_off, size, pc,
+            env, state, ivl, map_limit, map_idx, base, map_def, insn_off, size, pc,
         ) {
             return;
         }
@@ -275,6 +275,7 @@ pub fn check_map_access(
 
 fn interval_check_map_access(
     env: &mut VerifierEnv,
+    state: &State,
     ivl: &crate::domains::interval::IntervalState,
     map_limit: i64,
     _map_idx: usize,
@@ -293,6 +294,10 @@ fn interval_check_map_access(
         // BTF value-type. The special-fields check below is additive — a
         // spin_lock overlap is one rejection reason, but plain OOB is another.
         if !(min_off >= 0 && max_off <= map_limit) {
+            // BCF map-region refinement (α template 4b case iii).
+            if try_bcf_refine_map(env, state, base, insn_off as i64, size, map_limit) {
+                return true;
+            }
             error!(
                 "Unsafe variable map access at pc {}: range [{}, {}], limit {}",
                 pc, min_off, max_off, map_limit
@@ -337,6 +342,9 @@ fn zone_check_map_access(
         // enforce value_size first; BTF special-field overlap is
         // additive, not a substitute.
         if !(access_start >= 0 && access_end <= map_limit) {
+            if try_bcf_refine_map(env, state, base, insn_off as i64, size, map_limit) {
+                return;
+            }
             error!(
                 "Unsafe variable map access at pc {}: range [{}, {}], limit {}",
                 pc, access_start, access_end, map_limit
@@ -378,6 +386,9 @@ fn zone_check_map_access(
             check_btf_fields_access(env, pc, final_offset, access_end, size, map_limit, btf_id);
         }
     } else {
+        if try_bcf_refine_map(env, state, base, insn_off as i64, size, map_limit) {
+            return;
+        }
         error!("Unbounded variable map access at pc {}", pc);
         env.fail(VerificationError::UnsafeMapLoad {
             pc,
@@ -386,6 +397,35 @@ fn zone_check_map_access(
             limit: map_limit,
         });
     }
+}
+
+/// Helper: try the BCF map-region refinement and stash the proof on
+/// `env.bcf_proofs` on success. Returns `true` if the rejection should
+/// be suppressed. Mirrors `try_bcf_refine_stack` in [`memory::stack`].
+fn try_bcf_refine_map(
+    env: &mut VerifierEnv,
+    state: &State,
+    base: Reg,
+    insn_off: i64,
+    size: i64,
+    map_limit: i64,
+) -> bool {
+    if state.bcf.is_none() {
+        return false;
+    }
+    let Some(proof_bytes) =
+        crate::refinement::refine_map::try_refine_map_access(state, base, insn_off, size, map_limit)
+    else {
+        return false;
+    };
+    let hash = crate::refinement::bundle::placeholder_cond_hash(&proof_bytes);
+    log::info!(
+        target: "app",
+        "[bcf] refined map-OOB at base={:?} insn_off={} size={} limit={}: cvc5 proof {} bytes (hash {:016x})",
+        base, insn_off, size, map_limit, proof_bytes.len(), hash
+    );
+    env.bcf_proofs.push((hash, proof_bytes, crate::refinement::bundle::BCF_BUNDLE_KIND_REFINE));
+    true
 }
 
 pub(crate) fn transfer_map_load(
