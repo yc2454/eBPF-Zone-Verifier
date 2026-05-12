@@ -755,6 +755,8 @@ mod tests {
             id: 1,
             offset: None,
             map_idx: 0,
+            map_uid: None,
+            rdonly: false,
         }
         .is_trusted());
     }

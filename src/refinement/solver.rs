@@ -1,0 +1,230 @@
+//! cvc5 solver dispatch.
+//!
+//! Drives a BCF-patched cvc5 binary to produce a BCF-format proof from an
+//! SMT-LIB v2 query. Treated as a black-box subprocess — we feed SMT-LIB,
+//! collect the raw proof bytes from a file the solver writes.
+//!
+//! Working invocation (matches Phase 0 manual test):
+//! ```text
+//! cvc5 --produce-proofs --dump-proofs --proof-format=bcf \
+//!      --bcf-proof-out=<output.bcf> <input.smt2>
+//! ```
+//!
+//! Successful run prints `unsat` on stdout and writes the binary proof to the
+//! file named by `--bcf-proof-out`. cvc5 also emits a `(...)` block with
+//! statistics; we ignore stdout entirely.
+//!
+//! ## Environment
+//!
+//! By default we look at `$ZOVIA_CVC5` and then the macOS dev path
+//! `/Users/yalucai/cvc5-bcf/install/bin/cvc5`. Override via the env var.
+
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+const DEFAULT_CVC5_MACOS: &str = "/Users/yalucai/cvc5-bcf/install/bin/cvc5";
+const DEFAULT_CVC5_LINUX: &str = "/users/yc1795/BCF/output/cvc5-libs/bin/cvc5";
+
+#[derive(Debug)]
+pub enum SolverError {
+    Io(std::io::Error),
+    /// cvc5 exited non-zero. `code` is the process exit code (or `None` if killed
+    /// by signal). `stderr` is its stderr output, truncated.
+    SolverFailed { code: Option<i32>, stderr: String },
+    /// cvc5 returned a `sat` or `unknown` answer — proof not produced.
+    NotUnsat(String),
+    /// Configured cvc5 binary doesn't exist or isn't executable.
+    CvcBinaryMissing(PathBuf),
+}
+
+impl std::fmt::Display for SolverError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SolverError::Io(e) => write!(f, "io: {}", e),
+            SolverError::SolverFailed { code, stderr } => write!(
+                f,
+                "cvc5 exited with code {:?}; stderr: {}",
+                code, stderr
+            ),
+            SolverError::NotUnsat(s) => write!(f, "cvc5 did not return unsat: {}", s),
+            SolverError::CvcBinaryMissing(p) => {
+                write!(f, "cvc5 binary not found at {}", p.display())
+            }
+        }
+    }
+}
+
+impl std::error::Error for SolverError {}
+
+impl From<std::io::Error> for SolverError {
+    fn from(e: std::io::Error) -> Self {
+        SolverError::Io(e)
+    }
+}
+
+pub type Result<T> = std::result::Result<T, SolverError>;
+
+/// Locate the BCF-patched cvc5 binary.
+///
+/// Precedence: `$ZOVIA_CVC5`, then platform default (macOS dev path, then Linux
+/// build path). Returns `CvcBinaryMissing` if none exists.
+pub fn cvc5_path() -> Result<PathBuf> {
+    if let Ok(p) = std::env::var("ZOVIA_CVC5") {
+        let pb = PathBuf::from(p);
+        if pb.exists() {
+            return Ok(pb);
+        }
+        return Err(SolverError::CvcBinaryMissing(pb));
+    }
+    for candidate in [DEFAULT_CVC5_MACOS, DEFAULT_CVC5_LINUX] {
+        let pb = PathBuf::from(candidate);
+        if pb.exists() {
+            return Ok(pb);
+        }
+    }
+    Err(SolverError::CvcBinaryMissing(PathBuf::from(DEFAULT_CVC5_MACOS)))
+}
+
+/// Send `smtlib` to cvc5 and return the raw BCF proof bytes.
+///
+/// Internally writes SMT-LIB to a temp file (cvc5's stdin support is fine for
+/// the formula, but we use a file for symmetry with the proof output and to
+/// keep the invocation cacheable later).
+///
+/// Returns `Err(NotUnsat)` if cvc5 reported `sat` or `unknown` — i.e., the
+/// refinement condition isn't unsat, so the program isn't safe.
+pub fn solve(smtlib: &str) -> Result<Vec<u8>> {
+    let cvc5 = cvc5_path()?;
+
+    // Write SMT-LIB and proof bytes to a per-call temp dir we own end-to-end.
+    let tmp = tempdir()?;
+    let smt_path = tmp.path().join("query.smt2");
+    let proof_path = tmp.path().join("proof.bcf");
+    {
+        let mut f = std::fs::File::create(&smt_path)?;
+        f.write_all(smtlib.as_bytes())?;
+    }
+
+    let output = Command::new(&cvc5)
+        .arg("--produce-proofs")
+        .arg("--dump-proofs")
+        .arg("--proof-format=bcf")
+        .arg(format!("--bcf-proof-out={}", proof_path.display()))
+        .arg(&smt_path)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = truncate(String::from_utf8_lossy(&output.stderr).into_owned(), 2048);
+        return Err(SolverError::SolverFailed {
+            code: output.status.code(),
+            stderr,
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // cvc5 prints `unsat` or `sat` or `unknown` on its first stdout line.
+    let first = stdout.lines().next().unwrap_or("").trim();
+    if first != "unsat" {
+        return Err(SolverError::NotUnsat(truncate(stdout.into_owned(), 1024)));
+    }
+
+    let bytes = std::fs::read(&proof_path)?;
+    if bytes.is_empty() {
+        return Err(SolverError::NotUnsat(format!(
+            "cvc5 reported unsat but proof file is empty: {}",
+            proof_path.display()
+        )));
+    }
+    Ok(bytes)
+}
+
+// ---------- small helpers ----------
+
+fn truncate(mut s: String, max: usize) -> String {
+    if s.len() > max {
+        s.truncate(max);
+        s.push_str("…[truncated]");
+    }
+    s
+}
+
+/// Minimal tempdir wrapper: creates `$TMPDIR/zovia-bcf-<rand>/` and removes it
+/// on drop. Avoids pulling in the `tempfile` crate for one use site.
+struct TempDir(PathBuf);
+
+impl TempDir {
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn tempdir() -> std::io::Result<TempDir> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let base = std::env::temp_dir();
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let pid = std::process::id();
+    let dir = base.join(format!("zovia-bcf-{}-{}", pid, stamp));
+    std::fs::create_dir(&dir)?;
+    Ok(TempDir(dir))
+}
+
+// ---------- tests ----------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::refinement::bcf::{BcfProof, BCF_MAGIC};
+
+    /// Smoke test: feed cvc5 a trivially-unsat QF_BV query, confirm we get
+    /// back well-formed BCF bytes. Skipped if cvc5 binary isn't found
+    /// (e.g., on CI without the toolchain).
+    #[test]
+    fn solve_toy_unsat() {
+        if cvc5_path().is_err() {
+            eprintln!("[skip] cvc5 binary not found; set ZOVIA_CVC5 to enable");
+            return;
+        }
+
+        let smtlib = "\
+            (set-logic QF_BV)\n\
+            (declare-const x (_ BitVec 64))\n\
+            (assert (bvugt (bvand x #x000000000000000F) #x000000000000000F))\n\
+            (check-sat)\n";
+
+        let bytes = solve(smtlib).expect("solve failed");
+        assert!(bytes.len() >= 12, "proof must include header");
+        // Confirm BCF magic bytes (little-endian 0x0BCF).
+        let magic = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+        assert_eq!(magic, BCF_MAGIC);
+
+        // Parser must accept it — strongest cross-check of the round-trip.
+        let _proof = BcfProof::from_bytes(&bytes).expect("BCF parse failed on cvc5 output");
+    }
+
+    /// SAT formulas don't produce proofs; we should return `NotUnsat` cleanly.
+    #[test]
+    fn solve_sat_returns_not_unsat() {
+        if cvc5_path().is_err() {
+            return;
+        }
+        let smtlib = "\
+            (set-logic QF_BV)\n\
+            (declare-const x (_ BitVec 8))\n\
+            (assert (= x #x00))\n\
+            (check-sat)\n";
+        match solve(smtlib) {
+            Err(SolverError::NotUnsat(_)) => {} // expected
+            other => panic!("expected NotUnsat, got {:?}", other),
+        }
+    }
+}

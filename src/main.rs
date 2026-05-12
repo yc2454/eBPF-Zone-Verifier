@@ -13,6 +13,7 @@ mod common;
 mod domains;
 mod parsing;
 mod pcc;
+mod refinement;
 mod testing;
 
 use crate::ast::ProgramKind;
