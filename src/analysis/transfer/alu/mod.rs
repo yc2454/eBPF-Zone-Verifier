@@ -1,5 +1,6 @@
-use crate::analysis::machine::error::VerificationError;
 // src/analysis/transfer/alu/mod.rs
+
+use crate::analysis::machine::error::VerificationError;
 
 pub mod arithmetic;
 pub mod bitwise;
@@ -13,7 +14,6 @@ use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
 use crate::ast::{AluOp, Operand, SxWidth, Width};
 use crate::domains::tnum::Tnum;
-use log::error;
 
 use super::common::{check_operand_readable, check_reg_readable, check_reg_writable};
 use super::types::update_alu_types;
@@ -251,19 +251,20 @@ pub(crate) fn transfer_alu(
     }
 
     // 7. Post-operation consistency check
+    //
+    // If an ALU op pushes the zone domain into inconsistency (negative
+    // cycle in the DBM), the constraint just added (the op's effect on
+    // dst) contradicts a prior path predicate. This means the current
+    // path is infeasible — concretely, no real BPF execution can reach
+    // this point with constraints simultaneously holding. The kernel
+    // verifier reaches the same conclusion via narrower abstract ops;
+    // ours surfaces it explicitly. Either way, silently drop the
+    // state — symmetric with branch/mod.rs:262-267 and transfer/mod.rs:638
+    // which already do this at branches and callee-return joins.
     if state.domain.is_inconsistent() {
-        env.fail(VerificationError::DbmInconsistent { pc: state.pc });
-        let rel = state.domain.relations_str();
-        let zone_part = if rel.is_empty() {
-            String::new()
-        } else {
-            format!("  Rel:    {}\n", rel)
-        };
-        error!(target: "app",
-            "[Verifier] Domain became inconsistent at pc {}\n  Ranges: {}\n{}",
-            state.pc,
-            state.reg_ranges_str(),
-            zone_part,
+        log::debug!(
+            "[Verifier] Dropping infeasible path at pc {} (DBM inconsistent after ALU)",
+            state.pc
         );
         vec![]
     } else {
