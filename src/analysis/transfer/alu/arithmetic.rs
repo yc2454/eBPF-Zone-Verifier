@@ -100,6 +100,47 @@ pub(crate) fn handle_add(
         Operand::Imm(_) => false,
         Operand::Reg(r) => in_types.get(*r).is_pointer(),
     };
+
+    // --- BCF symbolic mirror (Phase 1). Scalar dst only; for pointer dst,
+    // the stack-OOB refinement site reads the scalar contributor's expr
+    // via `var_off_contributor`, so we don't need to track the pointer's
+    // absolute symbolic value here. ---
+    if let Some(d) = dst.bcf_idx() {
+        if let Some(bcf) = state.bcf.as_mut() {
+            if dst_is_ptr_post {
+                bcf.clear_reg(d);
+            } else {
+                let dst_idx = bcf.materialize_reg64(d);
+                let rhs_idx = match src {
+                    Operand::Imm(c) => {
+                        let v = if width == Width::W32 {
+                            (*c as u32) as u64
+                        } else {
+                            *c as u64
+                        };
+                        Some(bcf.add_val64(v))
+                    }
+                    Operand::Reg(r) => match r.bcf_idx() {
+                        Some(si) => Some(bcf.materialize_reg64(si)),
+                        None => Some(bcf.add_val64(0)),
+                    },
+                };
+                if let Some(rhs) = rhs_idx {
+                    let new_idx = if width == Width::W32 {
+                        // W32 add: low-32-bit addition, zero-extended.
+                        let lo_d = bcf.extract_lo(32, dst_idx);
+                        let lo_r = bcf.extract_lo(32, rhs);
+                        let sum = bcf.add_alu(crate::refinement::bcf::BPF_ADD, lo_d, lo_r, 32);
+                        bcf.zext_32_to_64(sum)
+                    } else {
+                        bcf.add_alu(crate::refinement::bcf::BPF_ADD, dst_idx, rhs, 64)
+                    };
+                    bcf.bind_reg(d, new_idx);
+                }
+            }
+        }
+    }
+
     if dst_is_ptr_post && !src_is_ptr {
         state.set_tnum(dst, Tnum::unknown());
         if width == Width::W32 {

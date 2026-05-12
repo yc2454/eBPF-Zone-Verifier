@@ -132,6 +132,29 @@ impl SymbolicState {
         self.reg_expr[reg]
     }
 
+    /// Clear the bound expression for `reg` (e.g., before a clobbering write
+    /// whose new expression hasn't been built yet). Mirrors BCF's
+    /// `reg->bcf_expr = -1` clears.
+    pub fn clear_reg(&mut self, reg: usize) {
+        self.reg_expr[reg] = None;
+    }
+
+    /// Lazy-materialize a 64-bit symbolic expression for `reg`.
+    /// If already bound, returns the existing index; otherwise allocates a
+    /// fresh 64-bit symbolic variable and binds it. Mirrors BCF's
+    /// `bcf_reg_expr` entry point — anything that wants `reg` symbolically
+    /// goes through here. Phase 1 simplification: always 64-bit (BCF picks
+    /// 32 or 64 based on `fit_u32/fit_s32`; we'll add the 32-bit fast path
+    /// in Phase 2 if the formula size matters).
+    pub fn materialize_reg64(&mut self, reg: usize) -> u32 {
+        if let Some(idx) = self.reg_expr[reg] {
+            return idx;
+        }
+        let idx = self.add_var(64);
+        self.bind_reg(reg, idx);
+        idx
+    }
+
     // ---------- queries ----------
 
     /// Total expression-table size in u32 slots (matches the on-disk `expr_cnt`).

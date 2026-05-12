@@ -231,8 +231,14 @@ fn run_analyze_all(path: &str, config: VerifierConfig) {
 // `verify` — auto-detect ELF / .c / legacy .json
 // ============================================================
 
-fn run_verify(args: VerifyArgs, config: VerifierConfig) {
+fn run_verify(args: VerifyArgs, mut config: VerifierConfig) {
     let kind = args.kind.unwrap_or_else(|| infer_kind(&args.path));
+    // For ELF inputs with `--bcf`, default the bundle sidecar next to the
+    // input. Other input kinds (`.c`, `.json`) don't yet have a stable
+    // single-file mapping for the artifact.
+    if config.bcf_enabled && matches!(kind, InputKind::Elf) && config.bcf_bundle_out.is_none() {
+        config.bcf_bundle_out = Some(format!("{}.bcf-bundle", args.path));
+    }
     match kind {
         InputKind::Elf => {
             if let Some(section) = args.section {

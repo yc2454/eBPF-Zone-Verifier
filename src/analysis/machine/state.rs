@@ -6,6 +6,7 @@ use crate::analysis::machine::stack_state::StackState;
 use crate::common::config::DomainMode;
 use crate::domains::numeric::NumericDomain;
 use crate::domains::tnum::Tnum;
+use crate::refinement::symbolic::SymbolicState;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -242,6 +243,17 @@ pub struct State {
     /// program with the throw value in R0. Read through
     /// [`State::effective_exception_cb`] rather than touching the field.
     program_exception_cb: Option<usize>,
+
+    /// BCF symbolic-tracking state (userspace BCF, Phase 1+). `None` unless
+    /// the `--bcf` flag enabled symbolic tracking at env init; otherwise a
+    /// per-path DAG of `BcfExpr`s parallel to the numeric/tnum domains.
+    /// Cloned at every branch fork along with the rest of `State`; the
+    /// `Box` keeps the per-clone cost at a pointer copy when the inner
+    /// state is large. Mutated in parallel with `domain` / `tnums` by
+    /// transfer hooks in `transfer/alu/*`. See
+    /// `reference_bcf_symbolic_tracking.md` and
+    /// `project_userspace_bcf.md`.
+    pub bcf: Option<Box<SymbolicState>>,
 }
 
 impl State {
@@ -279,6 +291,7 @@ impl State {
             btf_field_refs: HashMap::new(),
             kernel_tnum_imprecise: HashSet::new(),
             program_exception_cb: None,
+            bcf: None,
         }
     }
 

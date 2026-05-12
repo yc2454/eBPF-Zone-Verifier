@@ -9,6 +9,8 @@
 //! set1 + set2 in `/Users/yalucai/BCF/patches-kernel/`).
 
 pub mod bcf;
+pub mod bundle;
+pub mod refine_stack;
 pub mod smtlib;
 pub mod solver;
 pub mod symbolic;

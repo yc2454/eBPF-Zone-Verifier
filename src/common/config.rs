@@ -79,6 +79,18 @@ pub struct VerifierConfig {
     pub certificate_input: Option<String>,
     /// Parsed certificate payload (loaded in main when certificate-aided analysis is enabled).
     pub certificate: Option<ProgramCertificate>,
+
+    /// Userspace BCF symbolic tracking (Phase 1). When true, the analysis
+    /// seeds a `SymbolicState` on the entry `State` and the per-op transfer
+    /// hooks populate a parallel symbolic DAG. Default false; flipped by
+    /// `--bcf`. See `project_userspace_bcf.md`.
+    pub bcf_enabled: bool,
+
+    /// Output path for the BCF bundle sidecar. Set by `main::run_verify`
+    /// when `--bcf` is on (defaults to `<input>.bcf-bundle`). If
+    /// non-`None` and `env.bcf_proofs` is non-empty at the end of analysis,
+    /// the bundle is written here.
+    pub bcf_bundle_out: Option<String>,
 }
 
 impl Default for VerifierConfig {
@@ -100,6 +112,8 @@ impl Default for VerifierConfig {
             certificate_output: None,
             certificate_input: None,
             certificate: None,
+            bcf_enabled: false,
+            bcf_bundle_out: None,
         }
     }
 }

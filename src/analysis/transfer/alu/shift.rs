@@ -8,6 +8,34 @@ use crate::domains::tnum::Tnum;
 use super::helpers::sync_tnum_to_dbm;
 
 pub(crate) fn handle_shr(state: &mut State, width: Width, dst: Reg, src: &Operand) {
+    // BCF symbolic mirror (Phase 1, imm path). Placed BEFORE the numeric
+    // update because we read the prior reg expression as input. `Shr` is
+    // the live BPF_RSH dispatch target (the parser only emits `AluOp::Shr`,
+    // never `AluOp::Rsh`; the latter exists in the AST but is dead).
+    if let (Some(d), Operand::Imm(k)) = (dst.bcf_idx(), src) {
+        if let Some(bcf) = state.bcf.as_mut() {
+            let shift_amount = if width == Width::W32 {
+                (*k as u32) & 0x1F
+            } else {
+                (*k as u32) & 0x3F
+            };
+            let dst_idx = bcf.materialize_reg64(d);
+            let k_idx = bcf.add_val64(shift_amount as u64);
+            let new_idx = if width == Width::W32 {
+                let lo = bcf.extract_lo(32, dst_idx);
+                let shifted = bcf.add_alu(crate::refinement::bcf::BPF_RSH, lo, k_idx, 32);
+                bcf.zext_32_to_64(shifted)
+            } else {
+                bcf.add_alu(crate::refinement::bcf::BPF_RSH, dst_idx, k_idx, 64)
+            };
+            bcf.bind_reg(d, new_idx);
+        }
+    } else if let Some(d) = dst.bcf_idx() {
+        if let Some(bcf) = state.bcf.as_mut() {
+            bcf.clear_reg(d);
+        }
+    }
+
     match src {
         Operand::Imm(k) => {
             let k = *k as u32;
@@ -302,6 +330,10 @@ pub(crate) fn handle_arsh(state: &mut State, width: Width, dst: Reg, src: &Opera
 }
 
 pub(crate) fn handle_rsh(state: &mut State, width: Width, dst: Reg, src: &Operand) {
+    // NOTE: BCF symbolic mirror lives on `handle_shr` (the live dispatch
+    // target). `AluOp::Rsh` exists in the AST but the parser never emits
+    // it, so this handler is dead in practice and a hook here would never
+    // fire.
     match src {
         Operand::Imm(k) => {
             let k = *k as u32;

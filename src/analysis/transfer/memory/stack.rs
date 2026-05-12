@@ -9,7 +9,48 @@ use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::stack_state::StackState;
 use crate::analysis::machine::state::State;
 use crate::common::constants;
-use log::error;
+use crate::refinement::bundle::{placeholder_cond_hash, BCF_BUNDLE_KIND_REFINE};
+use crate::refinement::refine_stack::try_refine_stack_oob;
+use log::{error, info};
+
+/// Wrap the stack-OOB refinement attempt with env-side bookkeeping. Returns
+/// `true` if cvc5 discharged the OOB claim and the proof was stashed on
+/// `env.bcf_proofs` for later bundle emit; otherwise `false` (caller should
+/// proceed to the normal rejection path).
+fn try_bcf_refine_stack(
+    env: &mut VerifierEnv,
+    state: &State,
+    base: Reg,
+    instruction_offset: i64,
+    size: i64,
+) -> bool {
+    if state.bcf.is_none() {
+        return false;
+    }
+    let Some(proof_bytes) = try_refine_stack_oob(state, base, instruction_offset, size) else {
+        return false;
+    };
+    let hash = placeholder_cond_hash(&proof_bytes);
+    info!(
+        target: "app",
+        "[bcf] refined stack-OOB at base={:?} off={} size={}: cvc5 proof {} bytes (hash {:016x})",
+        base, instruction_offset, size, proof_bytes.len(), hash
+    );
+    // Dev hook: write each raw cvc5 proof to a sidecar `.bcf` file so it can
+    // be scp'd to the Linux box and fed to `bcf-checker` directly without
+    // unpacking the bundle. Set `ZOVIA_BCF_DUMP_PROOF=<path-prefix>`; each
+    // proof writes to `<prefix>.<idx>.bcf` (idx is its position in the run).
+    if let Ok(prefix) = std::env::var("ZOVIA_BCF_DUMP_PROOF") {
+        let idx = env.bcf_proofs.len();
+        let path = format!("{}.{}.bcf", prefix, idx);
+        match std::fs::write(&path, &proof_bytes) {
+            Ok(_) => info!(target: "app", "[bcf] dumped raw proof to {}", path),
+            Err(e) => log::warn!(target: "app", "[bcf] proof dump to {} failed: {}", path, e),
+        }
+    }
+    env.bcf_proofs.push((hash, proof_bytes, BCF_BUNDLE_KIND_REFINE));
+    true
+}
 
 /// Check if a stack access at (base + off) of size bytes is safe.
 /// For reads, also checks that the memory is initialized.
@@ -51,6 +92,9 @@ pub fn check_stack_access(
             }
 
             if actual_offset < constants::BPF_STACK_MIN || access_end > constants::BPF_STACK_MAX {
+                if try_bcf_refine_stack(env, state, base, instruction_offset, size) {
+                    return; // refinement succeeded; this path is provably safe
+                }
                 error!(target: "app", "Stack access out of bounds at pc {}: off {} size {} (Known offset)", pc, actual_offset, size);
                 env.fail(VerificationError::StackOutOfBounds {
                     pc,
@@ -76,6 +120,9 @@ pub fn check_stack_access(
             };
 
             if !safe {
+                if try_bcf_refine_stack(env, state, base, instruction_offset, size) {
+                    return; // refinement succeeded; this path is provably safe
+                }
                 error!(target: "app", "Stack access out of bounds at pc {}: off {} size {} (Unknown offset)", pc, instruction_offset, size);
                 env.fail(VerificationError::StackOutOfBounds {
                     pc,

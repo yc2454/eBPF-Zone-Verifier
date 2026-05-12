@@ -178,6 +178,9 @@ pub fn analyze_program_full(
         },
     );
     initial_state.domain.init_packet_anchors();
+    if config.bcf_enabled {
+        initial_state.bcf = Some(Box::new(crate::refinement::symbolic::SymbolicState::new()));
+    }
 
     // freplace target inheritance: for `SEC("freplace/<target>")`, the
     // EXT program receives its declared args *directly* in R1..Rn (the
@@ -313,6 +316,25 @@ pub fn analyze_program_full(
     // workstream.
     if std::env::var("ZOVIA_DUMP_PRUNING").ok().as_deref() == Some("1") {
         dump_subsumption_miss_histogram(&env);
+    }
+
+    // --- BCF bundle emit ---
+    if let Some(path) = config.bcf_bundle_out.as_deref() {
+        if !env.bcf_proofs.is_empty() && env.error.is_none() {
+            match crate::refinement::bundle::write_bundle(
+                std::path::Path::new(path),
+                &env.bcf_proofs,
+            ) {
+                Ok(bytes) => info!(
+                    target: "app",
+                    "[bcf] wrote bundle: {} ({} entries, {} bytes)",
+                    path,
+                    env.bcf_proofs.len(),
+                    bytes
+                ),
+                Err(e) => error!(target: "app", "[bcf] bundle write failed ({}): {}", path, e),
+            }
+        }
     }
 
     // --- FINAL REPORT ---

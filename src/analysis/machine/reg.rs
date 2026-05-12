@@ -40,6 +40,29 @@ impl Reg {
     /// Total DBM dimension (registers + anchors).
     pub const DBM_DIM: usize = 15;
 
+    /// Map to a 0..=10 register index for the BCF symbolic-state's
+    /// per-register expression array (`SymbolicState::reg_expr`). Returns
+    /// `None` for `Reg::Zero` (a constant, not symbolically tracked — BCF
+    /// short-circuits constants in `bcf_reg_expr`) and for the phantom
+    /// anchor regs (which never appear as instruction operands).
+    #[inline]
+    pub fn bcf_idx(self) -> Option<usize> {
+        match self {
+            Reg::R0 => Some(0),
+            Reg::R1 => Some(1),
+            Reg::R2 => Some(2),
+            Reg::R3 => Some(3),
+            Reg::R4 => Some(4),
+            Reg::R5 => Some(5),
+            Reg::R6 => Some(6),
+            Reg::R7 => Some(7),
+            Reg::R8 => Some(8),
+            Reg::R9 => Some(9),
+            Reg::R10 => Some(10),
+            Reg::Zero | Reg::AnchorDataMeta | Reg::AnchorData | Reg::AnchorDataEnd => None,
+        }
+    }
+
     #[inline]
     pub fn idx(self) -> usize {
         match self {

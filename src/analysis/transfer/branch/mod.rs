@@ -20,6 +20,93 @@ use self::outcome::condition_outcome;
 use self::refinement::{propagate_scalar_links, refine_branch};
 use super::common::{check_operand_readable, check_reg_readable};
 
+/// Map an AST `CmpOp` to the (taken, not-taken) BCF/BPF jump-op byte pair.
+/// Returns `None` for ops we don't yet symbolically model (JSET — encoded
+/// as `(x & y) ≠ 0`, special-cased in BCF; deferred to Phase 2).
+fn cmp_op_to_bcf_pair(op: CmpOp) -> Option<(u8, u8)> {
+    use crate::refinement::bcf::{
+        BPF_JEQ, BPF_JGE, BPF_JGT, BPF_JLE, BPF_JLT, BPF_JNE, BPF_JSGE, BPF_JSGT, BPF_JSLE,
+        BPF_JSLT,
+    };
+    Some(match op {
+        CmpOp::Eq => (BPF_JEQ, BPF_JNE),
+        CmpOp::Ne => (BPF_JNE, BPF_JEQ),
+        CmpOp::UGt => (BPF_JGT, BPF_JLE),
+        CmpOp::UGe => (BPF_JGE, BPF_JLT),
+        CmpOp::ULt => (BPF_JLT, BPF_JGE),
+        CmpOp::ULe => (BPF_JLE, BPF_JGT),
+        CmpOp::SGt => (BPF_JSGT, BPF_JSLE),
+        CmpOp::SGe => (BPF_JSGE, BPF_JSLT),
+        CmpOp::SLt => (BPF_JSLT, BPF_JSGE),
+        CmpOp::SLe => (BPF_JSLE, BPF_JSGT),
+        CmpOp::Test => return None,
+    })
+}
+
+/// Append the taken/not-taken predicates to each side's `path_conds`.
+/// Skips the hook entirely when symbolic tracking is off or when either
+/// side can't be materialized as a tracked register (anchor regs, etc.).
+fn record_branch_path_conds(
+    state_then: &mut State,
+    state_else: &mut State,
+    width: Width,
+    left: Reg,
+    op: CmpOp,
+    right: &Operand,
+) {
+    if state_then.bcf.is_none() {
+        return;
+    }
+    let Some((op_then, op_else)) = cmp_op_to_bcf_pair(op) else {
+        return;
+    };
+    let Some(l_idx) = left.bcf_idx() else {
+        return;
+    };
+    // Both clones share the original DAG up to this point, so we can build
+    // expressions on `state_then`'s `bcf` and copy the resulting indices to
+    // `state_else`'s `bcf` — both DAGs are byte-identical so far. After the
+    // hook runs, the only divergence is the appended path-cond.
+    let then_bcf = state_then.bcf.as_mut().expect("checked above");
+    let lhs = then_bcf.materialize_reg64(l_idx);
+    let rhs = match right {
+        Operand::Imm(c) => {
+            let v = if width == Width::W32 {
+                (*c as u32) as u64
+            } else {
+                *c as u64
+            };
+            then_bcf.add_val64(v)
+        }
+        Operand::Reg(r) => match r.bcf_idx() {
+            Some(ri) => then_bcf.materialize_reg64(ri),
+            None => then_bcf.add_val64(0),
+        },
+    };
+    // For W32 compares, narrow both operands to 32 bits before the predicate.
+    let (cmp_l, cmp_r) = if width == Width::W32 {
+        let l = then_bcf.extract_lo(32, lhs);
+        let r = then_bcf.extract_lo(32, rhs);
+        (l, r)
+    } else {
+        (lhs, rhs)
+    };
+    let pred_then = then_bcf.add_pred(op_then, cmp_l, cmp_r);
+    let pred_else = then_bcf.add_pred(op_else, cmp_l, cmp_r);
+
+    // Now mirror the **whole post-hook DAG** into state_else's bcf. The
+    // pre-hook DAGs were identical (state_else.bcf was cloned from state
+    // before the hook), so a wholesale replace keeps both sides
+    // consistent. Then append only the not-taken pred to state_else's
+    // path_conds (state_then gets the taken pred).
+    let snapshot = (**then_bcf).clone();
+    then_bcf.add_cond(pred_then);
+    if let Some(else_bcf) = state_else.bcf.as_mut() {
+        **else_bcf = snapshot;
+        else_bcf.add_cond(pred_else);
+    }
+}
+
 /// Transfer function for conditional branch instructions.
 pub(crate) fn transfer_if(
     env: &mut VerifierEnv,
@@ -44,6 +131,13 @@ pub(crate) fn transfer_if(
 
     state_then.pc = target;
     state_else.pc = state.pc + 1;
+
+    // --- BCF symbolic mirror: append the branch predicate to each side's
+    // path_conds (taken op on `state_then`, reversed op on `state_else`).
+    // Mirrors BCF's `record_path_cond` (kernel patches set1, cheat-sheet §2).
+    // Test (JSET) is skipped for Phase 1; ALU/JMP comparisons cover
+    // shift_constraint's `if r1 > 4` (UGt) path-cond requirement. ---
+    record_branch_path_conds(&mut state_then, &mut state_else, width, left, op, &right);
 
     // Apply constraints to refine the DBM in the destination states
     match &right {
