@@ -71,20 +71,45 @@ pub fn encode(state: &SymbolicState) -> Result<String> {
     }
 
     // ----- Pass 2: emit the SMT-LIB. -----
+    //
+    // CRITICAL: BCF's userspace `bcf-checker` rejects proofs derived from
+    // multiple top-level `(assert …)` forms with `-EINVAL` (silently in
+    // non-batch mode). Empirically verified on macOS-cvc5 → Linux-checker
+    // round-trip 2026-05-12: identical formula split across two asserts
+    // is rejected, while wrapping the same conjuncts inside one
+    // `(assert (and …))` is accepted. The kernel checker mirrors this
+    // (the on-disk proof format encodes a single goal). So we emit all
+    // path conditions + the refinement condition as ONE assertion via
+    // a top-level `and`.
     let mut out = String::new();
     out.push_str("(set-logic QF_BV)\n");
     for (name, width) in &var_decls {
         writeln!(out, "(declare-const {} (_ BitVec {}))", name, width).unwrap();
     }
-    for &p in &state.path_conds {
-        write!(out, "(assert ").unwrap();
-        render(state, p, &var_names, &mut out)?;
-        out.push_str(")\n");
-    }
+    let mut conjuncts: Vec<u32> = state.path_conds.clone();
     if let Some(rc) = state.refine_cond {
-        write!(out, "(assert ").unwrap();
-        render(state, rc, &var_names, &mut out)?;
-        out.push_str(")\n");
+        conjuncts.push(rc);
+    }
+    match conjuncts.len() {
+        0 => {
+            // No assertions at all — trivial sat. Caller should not be
+            // running the solver in this case, but emit a well-formed
+            // file rather than a malformed one.
+            out.push_str("(assert true)\n");
+        }
+        1 => {
+            write!(out, "(assert ").unwrap();
+            render(state, conjuncts[0], &var_names, &mut out)?;
+            out.push_str(")\n");
+        }
+        _ => {
+            out.push_str("(assert (and");
+            for &c in &conjuncts {
+                out.push(' ');
+                render(state, c, &var_names, &mut out)?;
+            }
+            out.push_str("))\n");
+        }
     }
     out.push_str("(check-sat)\n");
     Ok(out)

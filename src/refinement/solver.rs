@@ -159,6 +159,18 @@ pub fn solve(smtlib: &str) -> Result<Vec<u8>> {
         .arg("--produce-proofs")
         .arg("--dump-proofs")
         .arg("--proof-format=bcf")
+        // CRITICAL for Sound-PASS: the default `--proof-granularity=macro`
+        // produces proof steps that cvc5 emits via `int.pow2` rewrites for
+        // bvand+bvlshr combinations (and other bitwise patterns the kernel
+        // BV solver doesn't model). bcf-checker silently rejects those with
+        // -EINVAL. `theory-rewrite` granularity expands the macros into a
+        // sequence of finer steps — each individual step may still be
+        // emitted as "trusted" (lots of `WARNING: applying trusted step
+        // rewrite` lines at check time), but the overall structure is
+        // shaped so the checker can walk it. Verified end-to-end against
+        // BCF's bcf-checker on Linux 2026-05-12; see
+        // `feedback_pass_definitions.md` for the workflow.
+        .arg("--proof-granularity=theory-rewrite")
         .arg(format!("--bcf-proof-out={}", proof_path.display()))
         .arg(&smt_path)
         .output()?;
