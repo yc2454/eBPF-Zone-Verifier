@@ -123,6 +123,6 @@ struct bcf_bundle_entry {
 	__u32 proof_off;
 	__u32 proof_size;
 	__u32 kind;
-};
+} __attribute__((packed));
 
 #endif /* _UAPI__LINUX_BCF_BUNDLE_H__ */

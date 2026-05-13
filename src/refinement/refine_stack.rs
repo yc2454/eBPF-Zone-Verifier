@@ -25,7 +25,7 @@ use crate::common::constants;
 use crate::refinement::bcf::{BPF_ADD, BPF_JSGT};
 use crate::refinement::smtlib;
 use crate::refinement::solver;
-use crate::refinement::symbolic::SymbolicState;
+use crate::refinement::symbolic::{build_goal_root, SymbolicState};
 use log::{debug, warn};
 
 /// Attempt to discharge a stack-OOB rejection via cvc5. Returns the BCF
@@ -126,7 +126,8 @@ pub fn try_refine_stack_oob(
     match solver::solve(&smt) {
         Ok(bytes) => {
             debug!("[bcf] stack-OOB refinement: cvc5 accepted ({} bytes)", bytes.len());
-            Some(RefineOk { proof_bytes: bytes, goal_root: oob, sym })
+            let goal_root = build_goal_root(&mut sym, oob);
+            Some(RefineOk { proof_bytes: bytes, goal_root, sym })
         }
         Err(e) => {
             debug!("[bcf] stack-OOB refinement: cvc5 declined ({})", e);

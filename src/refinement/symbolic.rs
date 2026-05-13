@@ -79,20 +79,21 @@ impl SymbolicState {
     }
 
     /// Zero-extend a 32-bit value to 64 bits.
-    /// `params = ext_len << 8`. `ext_len = 32` (32 zero bits added).
+    /// `params = (ext_len << 8) | result_width`. ext_len=32 zero bits added,
+    /// result_width=64 (the operand was 32-bit, result is 64-bit).
     pub fn zext_32_to_64(&mut self, arg: u32) -> u32 {
         self.push_expr(BcfExpr {
             code: BCF_ZERO_EXTEND | BCF_BV,
-            params: 32_u16 << 8,
+            params: (32_u16 << 8) | 64,
             args: vec![arg],
         })
     }
 
-    /// Sign-extend a 32-bit value to 64 bits.
+    /// Sign-extend a 32-bit value to 64 bits. Same param layout as zext.
     pub fn sext_32_to_64(&mut self, arg: u32) -> u32 {
         self.push_expr(BcfExpr {
             code: BCF_SIGN_EXTEND | BCF_BV,
-            params: 32_u16 << 8,
+            params: (32_u16 << 8) | 64,
             args: vec![arg],
         })
     }
@@ -119,6 +120,30 @@ impl SymbolicState {
     pub fn set_refine_cond(&mut self, idx: u32) {
         self.refine_cond = Some(idx);
     }
+}
+
+/// Build the per-site refinement goal expression and return its slot.
+///
+/// Matches the kernel-side BCF goal layout (see `bcf_refine` in
+/// kernel/bpf/verifier.c): `CONJ(path_cond_aggregated, refine_cond)` where
+/// `path_cond_aggregated` is the single path-cond when there's one, or a
+/// flat CONJ over all path-conds when there are several. The kernel's
+/// `__expr_equiv` check against the proof's assume-step argument requires
+/// this exact structural shape; pointing `goal_root` at just `refine_cond`
+/// (the previous behaviour) caused -EINVAL at bundle prevalidate.
+pub fn build_goal_root(sym: &mut SymbolicState, refine_cond: u32) -> u32 {
+    match sym.path_conds.len() {
+        0 => refine_cond,
+        1 => sym.add_conj(vec![sym.path_conds[0], refine_cond]),
+        _ => {
+            let pcs = sym.path_conds.clone();
+            let inner = sym.add_conj(pcs);
+            sym.add_conj(vec![inner, refine_cond])
+        }
+    }
+}
+
+impl SymbolicState {
 
     // ---------- per-register bindings ----------
 

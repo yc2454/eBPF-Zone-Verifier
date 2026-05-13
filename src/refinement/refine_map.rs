@@ -147,7 +147,8 @@ pub fn try_refine_map_access(
                 "[bcf] map-OOB refinement: cvc5 accepted ({} bytes)",
                 bytes.len()
             );
-            Some(super::refine_stack::RefineOk { proof_bytes: bytes, goal_root: oob, sym })
+            let goal_root = crate::refinement::symbolic::build_goal_root(&mut sym, oob);
+            Some(super::refine_stack::RefineOk { proof_bytes: bytes, goal_root, sym })
         }
         Err(e) => {
             debug!("[bcf] map-OOB refinement: cvc5 declined ({})", e);
