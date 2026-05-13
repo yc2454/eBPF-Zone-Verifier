@@ -78,35 +78,113 @@ impl SymbolicState {
         self.push_expr(pred_disj(args))
     }
 
-    /// Zero-extend a 32-bit value to 64 bits.
-    /// `params = (ext_len << 8) | result_width`. ext_len=32 zero bits added,
-    /// result_width=64 (the operand was 32-bit, result is 64-bit).
-    pub fn zext_32_to_64(&mut self, arg: u32) -> u32 {
+    /// Unified BV value builder. `bit32 = true` → 32-bit val (vlen=1,
+    /// params=32, args=[lo]); `false` → 64-bit val (vlen=2, params=64,
+    /// args=[lo, hi]). Mirrors kernel's `bcf_val(env, val, bit32)`
+    /// (verifier.c:734).
+    pub fn add_val(&mut self, val: u64, bit32: bool) -> u32 {
+        if bit32 {
+            self.add_val32(val as u32)
+        } else {
+            self.add_val64(val)
+        }
+    }
+
+    /// Unified BV variable builder. Mirrors kernel's `bcf_var(env, bit32)`
+    /// (verifier.c:747). Use when the register-state width is known; the
+    /// width is recorded in `params`.
+    pub fn add_var_bits(&mut self, bit32: bool) -> u32 {
+        self.add_var(if bit32 { 32 } else { 64 })
+    }
+
+    /// General zero/sign-extend builder. Mirrors kernel's `bcf_extend`
+    /// (verifier.c:752). `ext_sz` = bits added, `result_width` =
+    /// operand_width + ext_sz. params = `(ext_sz << 8) | result_width`.
+    /// The kernel's `is_zext_32_to_64` / `is_sext_32_to_64` recognize the
+    /// specific (32, 64) form to enable the `bcf_expr32` peel-optimization.
+    pub fn add_extend(
+        &mut self,
+        sign_ext: bool,
+        ext_sz: u16,
+        result_width: u16,
+        arg: u32,
+    ) -> u32 {
+        let op = if sign_ext { BCF_SIGN_EXTEND } else { BCF_ZERO_EXTEND };
         self.push_expr(BcfExpr {
-            code: BCF_ZERO_EXTEND | BCF_BV,
-            params: (32_u16 << 8) | 64,
+            code: op | BCF_BV,
+            params: (ext_sz << 8) | result_width,
             args: vec![arg],
         })
     }
 
-    /// Sign-extend a 32-bit value to 64 bits. Same param layout as zext.
-    pub fn sext_32_to_64(&mut self, arg: u32) -> u32 {
-        self.push_expr(BcfExpr {
-            code: BCF_SIGN_EXTEND | BCF_BV,
-            params: (32_u16 << 8) | 64,
-            args: vec![arg],
-        })
-    }
-
-    /// Extract the low `size` bits of `arg`. `params = start << 8 | end`,
-    /// where `start = size - 1` (high bit) and `end = 0` (low bit).
-    pub fn extract_lo(&mut self, size: u8, arg: u32) -> u32 {
-        let start = (size as u16).saturating_sub(1);
+    /// Extract low `size` bits. Mirrors kernel's `bcf_extract(env, sz, expr)`
+    /// (verifier.c:761). `params = (size - 1) << 8` (start=size-1, end=0).
+    pub fn add_extract(&mut self, size: u16, arg: u32) -> u32 {
+        let start = size.saturating_sub(1);
         self.push_expr(BcfExpr {
             code: BCF_EXTRACT | BCF_BV,
             params: start << 8,
             args: vec![arg],
         })
+    }
+
+    /// Zero-extend a 32-bit value to 64 bits. Compatibility shim for the
+    /// existing `bcf_alu` mirror code; prefer `add_extend(false, 32, 64, _)`
+    /// in new code.
+    pub fn zext_32_to_64(&mut self, arg: u32) -> u32 {
+        self.add_extend(false, 32, 64, arg)
+    }
+
+    /// Sign-extend a 32-bit value to 64 bits. Compatibility shim.
+    pub fn sext_32_to_64(&mut self, arg: u32) -> u32 {
+        self.add_extend(true, 32, 64, arg)
+    }
+
+    /// Extract the low `size` bits of `arg`. Compatibility shim that wraps
+    /// [`add_extract`]; existing callers may pass `u8` — keep them working.
+    pub fn extract_lo(&mut self, size: u8, arg: u32) -> u32 {
+        self.add_extract(size as u16, arg)
+    }
+
+    /// Return the 32-bit form of the expression at `slot`. Mirrors the
+    /// kernel's `bcf_expr32` (verifier.c:793):
+    ///
+    /// - If the expression is `ZEXT_32_to_64(x)` or `SEXT_32_to_64(x)`,
+    ///   return `x` directly (peel the redundant extend).
+    /// - If it's a 64-bit `BV_VAL(lo, hi)`, build and return a fresh
+    ///   32-bit `BV_VAL(lo)`.
+    /// - Otherwise emit `EXTRACT[31:0]` of `slot`.
+    ///
+    /// This is the central optimization that keeps kernel-side DAGs lean
+    /// and matches the structural shape canonical-hash expects from the
+    /// proof emitter.
+    pub fn expr32(&mut self, slot: u32) -> u32 {
+        // Inspect under immutable borrow first, drop it before mutating.
+        let (code, params, first_arg) = {
+            let e = self
+                .expr_at(slot)
+                .expect("expr32: slot must point at an expr header");
+            (e.code, e.params, e.args.first().copied().unwrap_or(0))
+        };
+
+        let op = code & BCF_OP_MASK;
+        let ty = code & BCF_TYPE_MASK;
+
+        // Peel ZEXT_32_to_64 / SEXT_32_to_64. params = (32<<8)|64 = 0x2040.
+        let is_ext_32_to_64 = ty == BCF_BV
+            && (op == BCF_ZERO_EXTEND || op == BCF_SIGN_EXTEND)
+            && params == ((32u16 << 8) | 64);
+        if is_ext_32_to_64 {
+            return first_arg;
+        }
+
+        // 64-bit BV_VAL → rebuild as 32-bit with the low half.
+        if code == (BCF_VAL | BCF_BV) && params == 64 {
+            return self.add_val32(first_arg);
+        }
+
+        // Generic case: EXTRACT low 32 bits.
+        self.add_extract(32, slot)
     }
 
     // ---------- path conditions / refinement target ----------
@@ -254,6 +332,96 @@ mod tests {
         assert_eq!(s.expr_at(c).unwrap().code, BCF_VAL | BCF_BV);
         assert_eq!(s.expr_at(a).unwrap().code, BPF_ADD | BCF_BV);
         assert!(s.expr_at(99).is_none());
+    }
+
+    /// `add_val(bit32)` should match the explicit 32/64 builders byte-exact.
+    #[test]
+    fn add_val_dispatch() {
+        let mut s = SymbolicState::new();
+        let v32 = s.add_val(0xdead_beef, true);
+        let v64 = s.add_val(0x1234_5678_9abc_def0, false);
+        let v32_ref = s.add_val32(0xdead_beef);
+        let v64_ref = s.add_val64(0x1234_5678_9abc_def0);
+        assert_eq!(s.expr_at(v32).unwrap(), s.expr_at(v32_ref).unwrap());
+        assert_eq!(s.expr_at(v64).unwrap(), s.expr_at(v64_ref).unwrap());
+    }
+
+    /// `add_extend(false, 32, 64, _)` is the canonical "ZEXT 32→64" with
+    /// params=0x2040, matching the kernel's `bcf_extend` (verifier.c:752).
+    #[test]
+    fn add_extend_32_to_64_params() {
+        let mut s = SymbolicState::new();
+        let v = s.add_var(32);
+        let z = s.add_extend(false, 32, 64, v);
+        let e = s.expr_at(z).unwrap();
+        assert_eq!(e.code, BCF_ZERO_EXTEND | BCF_BV);
+        assert_eq!(e.params, 0x2040, "ZEXT 32→64 must encode (ext_sz=32)<<8 | (width=64)");
+        let v2 = s.add_var(32);
+        let sx = s.add_extend(true, 32, 64, v2);
+        let e2 = s.expr_at(sx).unwrap();
+        assert_eq!(e2.code, BCF_SIGN_EXTEND | BCF_BV);
+        assert_eq!(e2.params, 0x2040);
+    }
+
+    /// `expr32` peels `ZEXT_32_to_64(x)` straight to `x` (kernel's
+    /// `is_zext_32_to_64` short-circuit, verifier.c:793).
+    #[test]
+    fn expr32_peels_zext_32_to_64() {
+        let mut s = SymbolicState::new();
+        let v = s.add_var(32);
+        let z = s.add_extend(false, 32, 64, v);
+        let peeled = s.expr32(z);
+        assert_eq!(peeled, v, "expr32 of ZEXT_32_to_64(v) should be v itself");
+    }
+
+    /// `expr32` peels `SEXT_32_to_64(x)` straight to `x` as well.
+    #[test]
+    fn expr32_peels_sext_32_to_64() {
+        let mut s = SymbolicState::new();
+        let v = s.add_var(32);
+        let sx = s.add_extend(true, 32, 64, v);
+        assert_eq!(s.expr32(sx), v);
+    }
+
+    /// `expr32` does NOT peel a non-32→64 extend (e.g., a 16→32 ZEXT). We'd
+    /// have to EXTRACT to get the 32-bit form.
+    #[test]
+    fn expr32_does_not_peel_non_32_to_64_extend() {
+        let mut s = SymbolicState::new();
+        let v = s.add_var(16);
+        let z16_to_32 = s.add_extend(false, 16, 32, v);
+        let result = s.expr32(z16_to_32);
+        // Should NOT equal v (no peel) and should be an EXTRACT of z16_to_32.
+        let e = s.expr_at(result).unwrap();
+        assert_eq!(e.code, BCF_EXTRACT | BCF_BV);
+        assert_eq!(e.args, vec![z16_to_32]);
+    }
+
+    /// `expr32` of a 64-bit BV_VAL rebuilds it as a 32-bit BV_VAL with the
+    /// low 32 bits. Kernel does the same in `bcf_expr32`.
+    #[test]
+    fn expr32_rebuilds_val64_as_val32() {
+        let mut s = SymbolicState::new();
+        let v64 = s.add_val64(0x1234_5678_9abc_def0);
+        let v32_slot = s.expr32(v64);
+        let e = s.expr_at(v32_slot).unwrap();
+        assert_eq!(e.code, BCF_VAL | BCF_BV);
+        assert_eq!(e.params, 32);
+        assert_eq!(e.args, vec![0x9abc_def0]);
+    }
+
+    /// Generic case: `expr32` of a 64-bit AND emits an EXTRACT.
+    #[test]
+    fn expr32_extracts_generic_64bit() {
+        let mut s = SymbolicState::new();
+        let v = s.add_var(64);
+        let c = s.add_val64(0xff);
+        let and64 = s.add_alu(BPF_AND, v, c, 64);
+        let lo32 = s.expr32(and64);
+        let e = s.expr_at(lo32).unwrap();
+        assert_eq!(e.code, BCF_EXTRACT | BCF_BV);
+        assert_eq!(e.params, 0x1f00, "EXTRACT[31:0] params = (start=31)<<8 | end=0");
+        assert_eq!(e.args, vec![and64]);
     }
 
     /// Reconstruct shift_constraint's symbolic state along the unsafe path
