@@ -12,6 +12,7 @@ use log::warn;
 use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
+use crate::analysis::transfer::alu::helpers::bcf_reg_bounds;
 use crate::ast::{CmpOp, Instr, Operand, Width};
 
 use self::constraints::apply_jmp_constraints;
@@ -63,33 +64,28 @@ fn record_branch_path_conds(
     let Some(l_idx) = left.bcf_idx() else {
         return;
     };
-    // Both clones share the original DAG up to this point, so we can build
-    // expressions on `state_then`'s `bcf` and copy the resulting indices to
-    // `state_else`'s `bcf` — both DAGs are byte-identical so far. After the
-    // hook runs, the only divergence is the appended path-cond.
+    // Kernel-shape: when the JMP class is JMP32, both operands are read in
+    // 32-bit form via bcf_reg_expr(reg, true) — which peels a cached
+    // ZEXT_32_to_64 if present. When JMP class is 64-bit, both stay at
+    // 64-bit width (no extra EXTRACT wrapping). Mirrors
+    // do_check_cond_jmp_op at verifier.c:20880-20922.
+    let jmp32 = width == Width::W32;
+    let lhs_bounds = bcf_reg_bounds(state_then, left);
+    let rhs_bounds = match right {
+        Operand::Reg(r) => Some(bcf_reg_bounds(state_then, *r)),
+        _ => None,
+    };
     let then_bcf = state_then.bcf.as_mut().expect("checked above");
-    let lhs = then_bcf.materialize_reg64(l_idx);
-    let rhs = match right {
+    let cmp_l = then_bcf.reg_expr(l_idx, &lhs_bounds, jmp32);
+    let cmp_r = match right {
         Operand::Imm(c) => {
-            let v = if width == Width::W32 {
-                (*c as u32) as u64
-            } else {
-                *c as u64
-            };
-            then_bcf.add_val64(v)
+            let v = if jmp32 { (*c as u32) as u64 } else { *c as u64 };
+            then_bcf.add_val(v, jmp32)
         }
         Operand::Reg(r) => match r.bcf_idx() {
-            Some(ri) => then_bcf.materialize_reg64(ri),
-            None => then_bcf.add_val64(0),
+            Some(ri) => then_bcf.reg_expr(ri, &rhs_bounds.unwrap(), jmp32),
+            None => then_bcf.add_val(0, jmp32),
         },
-    };
-    // For W32 compares, narrow both operands to 32 bits before the predicate.
-    let (cmp_l, cmp_r) = if width == Width::W32 {
-        let l = then_bcf.extract_lo(32, lhs);
-        let r = then_bcf.extract_lo(32, rhs);
-        (l, r)
-    } else {
-        (lhs, rhs)
     };
     let pred_then = then_bcf.add_pred(op_then, cmp_l, cmp_r);
     let pred_else = then_bcf.add_pred(op_else, cmp_l, cmp_r);
