@@ -19,6 +19,71 @@ use super::bcf::*;
 /// Number of BPF registers (R0–R10).
 pub const NUM_REGS: usize = 11;
 
+/// Snapshot of a register's abstract-domain bounds in a form usable by
+/// [`SymbolicState::reg_expr`]. Mirrors the subset of kernel
+/// `struct bpf_reg_state` fields that BCF's `bcf_reg_expr` consults
+/// (verifier.c:882-914).
+///
+/// Field semantics match the kernel:
+/// - `const_val`: `Some(v)` if the abstract value is the singleton {v}.
+/// - `smin` / `smax`: signed 64-bit interval.
+/// - `s32_min` / `s32_max`: signed 32-bit interval (when the value
+///   represents a 32-bit subreg, these are the same as smin/smax cast).
+/// - `u32_min` / `u32_max`: unsigned 32-bit interval.
+///
+/// 64-bit unsigned bounds are not stored explicitly; [`bound_reg64`]
+/// derives them from `smin`/`smax` when the sign is determinate.
+#[derive(Debug, Clone, Copy)]
+pub struct RegBounds {
+    pub const_val: Option<u64>,
+    pub smin: i64,
+    pub smax: i64,
+    pub s32_min: i32,
+    pub s32_max: i32,
+    pub u32_min: u32,
+    pub u32_max: u32,
+}
+
+impl RegBounds {
+    /// Build a "no info" bounds — `[s64::MIN, s64::MAX]`, full s32/u32
+    /// ranges, not constant. The materializer treats this as the 64-bit-
+    /// var fallback (no bound predicates emitted).
+    pub fn unknown() -> Self {
+        Self {
+            const_val: None,
+            smin: i64::MIN,
+            smax: i64::MAX,
+            s32_min: i32::MIN,
+            s32_max: i32::MAX,
+            u32_min: 0,
+            u32_max: u32::MAX,
+        }
+    }
+
+    /// Kernel's `fit_u32(reg)` (verifier.c:822). True when the reg's
+    /// 64-bit u-range exactly equals its 32-bit u-range — i.e., the value
+    /// is provably representable in a u32.
+    pub fn fit_u32(&self) -> bool {
+        // We don't track u64 bounds explicitly; approximate via the signed
+        // interval: when smin >= 0, the u-range equals (smin, smax). It
+        // fits in u32 iff that range is contained in [0, u32::MAX] AND
+        // matches our 32-bit u-bounds.
+        self.smin >= 0
+            && self.smax <= u32::MAX as i64
+            && self.smin as u64 == self.u32_min as u64
+            && self.smax as u64 == self.u32_max as u64
+    }
+
+    /// Kernel's `fit_s32(reg)` (verifier.c:828). True when the reg's
+    /// 64-bit s-range exactly equals its 32-bit s-range.
+    pub fn fit_s32(&self) -> bool {
+        self.smin >= i32::MIN as i64
+            && self.smax <= i32::MAX as i64
+            && self.smin == self.s32_min as i64
+            && self.smax == self.s32_max as i64
+    }
+}
+
 /// Symbolic-tracking state accumulated during BCF refinement.
 #[derive(Debug, Clone, Default)]
 pub struct SymbolicState {
@@ -242,6 +307,136 @@ impl SymbolicState {
         self.reg_expr[reg] = None;
     }
 
+    /// Append a typed predicate `op(lhs, val(imm, bit32))` and register it
+    /// as a path-condition. Mirrors kernel's `__bcf_bound_reg` →
+    /// `bcf_add_cond(bcf_add_pred(...))` chain (verifier.c:834).
+    fn bound_pred(&mut self, op: u8, lhs: u32, imm: u64, bit32: bool) -> u32 {
+        let rhs = self.add_val(imm, bit32);
+        let pred = self.add_pred(op, lhs, rhs);
+        self.path_conds.push(pred);
+        pred
+    }
+
+    /// 32-bit version of `bound_reg`. Emits umin/umax/smin/smax bound
+    /// predicates as path conditions where the reg's known interval is
+    /// tighter than the full u32/s32 range. Mirrors kernel's
+    /// `bcf_bound_reg32` (verifier.c:840).
+    fn bound_reg32(&mut self, expr: u32, bounds: &RegBounds) {
+        let (u32_min, u32_max) = (bounds.u32_min, bounds.u32_max);
+        let (s32_min, s32_max) = (bounds.s32_min, bounds.s32_max);
+        if u32_min != 0 {
+            self.bound_pred(BPF_JGE, expr, u32_min as u64, true);
+        }
+        if u32_max != u32::MAX {
+            self.bound_pred(BPF_JLE, expr, u32_max as u64, true);
+        }
+        if s32_min != i32::MIN && s32_min as u64 != u32_min as u64 {
+            self.bound_pred(BPF_JSGE, expr, s32_min as i64 as u64, true);
+        }
+        if s32_max != i32::MAX && s32_max as u64 != u32_max as u64 {
+            self.bound_pred(BPF_JSLE, expr, s32_max as i64 as u64, true);
+        }
+    }
+
+    /// 64-bit bound predicates. Mirrors kernel's `bcf_bound_reg`
+    /// (verifier.c:861). zovia's Domain doesn't track umin/umax directly
+    /// for 64-bit, so we approximate from the signed interval when it's
+    /// fully non-negative.
+    fn bound_reg64(&mut self, expr: u32, bounds: &RegBounds) {
+        // 64-bit unsigned bounds: derive from signed interval when sign is
+        // determinate. If smin >= 0, the u-range equals the s-range. If
+        // smax < 0, the u-range is [smin as u64, smax as u64] (both above
+        // 2^63). Mixed sign → no useful u-bound.
+        let umin: Option<u64> = if bounds.smin >= 0 {
+            Some(bounds.smin as u64)
+        } else if bounds.smax < 0 {
+            Some(bounds.smin as u64)
+        } else {
+            None
+        };
+        let umax: Option<u64> = if bounds.smin >= 0 {
+            Some(bounds.smax as u64)
+        } else if bounds.smax < 0 {
+            Some(bounds.smax as u64)
+        } else {
+            None
+        };
+        if let Some(umin) = umin {
+            if umin != 0 {
+                self.bound_pred(BPF_JGE, expr, umin, false);
+            }
+        }
+        if let Some(umax) = umax {
+            if umax != u64::MAX {
+                self.bound_pred(BPF_JLE, expr, umax, false);
+            }
+        }
+        if bounds.smin != i64::MIN && umin.map(|u| bounds.smin as u64 != u).unwrap_or(true) {
+            self.bound_pred(BPF_JSGE, expr, bounds.smin as u64, false);
+        }
+        if bounds.smax != i64::MAX && umax.map(|u| bounds.smax as u64 != u).unwrap_or(true) {
+            self.bound_pred(BPF_JSLE, expr, bounds.smax as u64, false);
+        }
+    }
+
+    /// Lazy-materialize a register's BCF expression in **kernel-shape**.
+    /// Mirrors `bcf_reg_expr(env, reg, subreg)` (verifier.c:882):
+    ///
+    /// - Const → `BV_VAL(val, 64)`.
+    /// - Fits in u32 → `ZEXT_32_to_64(BV_VAR(32))`, with 32-bit bound preds.
+    /// - Fits in s32 → `SEXT_32_to_64(BV_VAR(32))`, with 32-bit bound preds.
+    /// - Otherwise → `BV_VAR(64)` with 64-bit bound preds.
+    ///
+    /// **Invariant**: the cached `reg_expr[reg]` slot always holds the
+    /// 64-bit form. When `subreg` is `true` the caller wants the 32-bit
+    /// form — we re-derive it via [`expr32`], which peels ZEXT/SEXT
+    /// trivially when the cache was built via the 32-bit-fits path.
+    pub fn reg_expr(&mut self, reg: usize, bounds: &RegBounds, subreg: bool) -> u32 {
+        // Fetch-or-materialize the cached 64-bit form.
+        let cached = match self.reg_expr[reg] {
+            Some(idx) => idx,
+            None => {
+                let idx = self.materialize_reg(reg, bounds);
+                self.reg_expr[reg] = Some(idx);
+                idx
+            }
+        };
+        if subreg {
+            self.expr32(cached)
+        } else {
+            cached
+        }
+    }
+
+    /// Build the initial 64-bit cached expression for `reg` according to
+    /// the four fit_u32/fit_s32/const cases. Internal helper for
+    /// [`reg_expr`]; not for direct use.
+    fn materialize_reg(&mut self, reg: usize, bounds: &RegBounds) -> u32 {
+        // R10 is the frame pointer with offset 0 from itself — special-case
+        // it to a const 0 so stack-pointer arithmetic chains symbolize.
+        // This is zovia-specific; the kernel handles R10 via the verifier's
+        // ptr-type system instead.
+        if reg == 10 {
+            return self.add_val64(0);
+        }
+        if let Some(v) = bounds.const_val {
+            return self.add_val64(v);
+        }
+        if bounds.fit_u32() {
+            let v32 = self.add_var_bits(true);
+            self.bound_reg32(v32, bounds);
+            return self.add_extend(false, 32, 64, v32);
+        }
+        if bounds.fit_s32() {
+            let v32 = self.add_var_bits(true);
+            self.bound_reg32(v32, bounds);
+            return self.add_extend(true, 32, 64, v32);
+        }
+        let v64 = self.add_var_bits(false);
+        self.bound_reg64(v64, bounds);
+        v64
+    }
+
     /// Lazy-materialize a 64-bit symbolic expression for `reg`.
     /// If already bound, returns the existing index; otherwise allocates a
     /// fresh 64-bit symbolic variable and binds it. Mirrors BCF's
@@ -422,6 +617,154 @@ mod tests {
         assert_eq!(e.code, BCF_EXTRACT | BCF_BV);
         assert_eq!(e.params, 0x1f00, "EXTRACT[31:0] params = (start=31)<<8 | end=0");
         assert_eq!(e.args, vec![and64]);
+    }
+
+    /// `fit_u32` recognises a reg constrained to [0, 0xff] as fitting in u32.
+    #[test]
+    fn fit_u32_for_byte_range() {
+        let b = RegBounds {
+            const_val: None,
+            smin: 0,
+            smax: 0xff,
+            s32_min: 0,
+            s32_max: 0xff,
+            u32_min: 0,
+            u32_max: 0xff,
+        };
+        assert!(b.fit_u32());
+        assert!(b.fit_s32());
+    }
+
+    /// A reg with `smin = -1` is not u32-fitting (negative values escape).
+    #[test]
+    fn fit_u32_rejects_negative() {
+        let b = RegBounds {
+            const_val: None,
+            smin: -1,
+            smax: 100,
+            s32_min: -1,
+            s32_max: 100,
+            u32_min: 0,
+            u32_max: u32::MAX,
+        };
+        assert!(!b.fit_u32());
+        assert!(b.fit_s32());
+    }
+
+    /// `reg_expr` on a constant materializes `BV_VAL(v, 64)` and caches it.
+    #[test]
+    fn reg_expr_const_caches() {
+        let mut s = SymbolicState::new();
+        let b = RegBounds {
+            const_val: Some(0xdead_beef),
+            smin: 0xdead_beef,
+            smax: 0xdead_beef,
+            s32_min: i32::MIN,
+            s32_max: i32::MAX,
+            u32_min: 0,
+            u32_max: u32::MAX,
+        };
+        let e1 = s.reg_expr(0, &b, false);
+        let e2 = s.reg_expr(0, &b, false);
+        assert_eq!(e1, e2, "second call must hit the cache");
+        let exp = s.expr_at(e1).unwrap();
+        assert_eq!(exp.code, BCF_VAL | BCF_BV);
+        assert_eq!(exp.params, 64);
+        assert_eq!(exp.args[0], 0xdead_beef);
+        assert_eq!(exp.args[1], 0);
+    }
+
+    /// `reg_expr` for a u32-fitting reg emits ZEXT(BV_VAR_32) and bound
+    /// predicates. `subreg=true` retrieves the underlying 32-bit form via
+    /// `expr32`'s ZEXT-peel.
+    #[test]
+    fn reg_expr_u32_fits_emits_zext_and_peels_to_var32() {
+        let mut s = SymbolicState::new();
+        let b = RegBounds {
+            const_val: None,
+            smin: 0,
+            smax: 0xff,
+            s32_min: 0,
+            s32_max: 0xff,
+            u32_min: 0,
+            u32_max: 0xff,
+        };
+        let e64 = s.reg_expr(0, &b, false);
+        let e32 = s.reg_expr(0, &b, true);
+        // 64-bit form is the ZEXT.
+        let e = s.expr_at(e64).unwrap();
+        assert_eq!(e.code, BCF_ZERO_EXTEND | BCF_BV);
+        assert_eq!(e.params, 0x2040);
+        // 32-bit form must be the BV_VAR_32 directly (peeled ZEXT).
+        let v32 = s.expr_at(e32).unwrap();
+        assert_eq!(v32.code, BCF_VAR | BCF_BV);
+        assert_eq!(v32.params, 32);
+        // Bound predicates were emitted as path conditions.
+        // smax=0xff means a JLE(_, 0xff, true) predicate.
+        assert!(
+            !s.path_conds.is_empty(),
+            "u32 bounds should emit a JLE path-cond"
+        );
+    }
+
+    /// Two `reg_expr(reg, ..., subreg=true)` calls must return the same
+    /// slot — i.e., `expr32` is also idempotent given the cache.
+    #[test]
+    fn reg_expr_subreg_is_stable() {
+        let mut s = SymbolicState::new();
+        let b = RegBounds {
+            const_val: None,
+            smin: 0,
+            smax: 100,
+            s32_min: 0,
+            s32_max: 100,
+            u32_min: 0,
+            u32_max: 100,
+        };
+        let a = s.reg_expr(1, &b, true);
+        let b2 = s.reg_expr(1, &b, true);
+        assert_eq!(
+            a, b2,
+            "subreg retrieval should re-peel from cached ZEXT to same slot"
+        );
+    }
+
+    /// R10 is special: always materializes as BV_VAL(0, 64) regardless of
+    /// the bounds passed in. Mirrors zovia's existing `materialize_reg64`.
+    #[test]
+    fn reg_expr_r10_is_const_zero() {
+        let mut s = SymbolicState::new();
+        let b = RegBounds::unknown();
+        let r10 = s.reg_expr(10, &b, false);
+        let e = s.expr_at(r10).unwrap();
+        assert_eq!(e.code, BCF_VAL | BCF_BV);
+        assert_eq!(e.params, 64);
+        assert_eq!(e.args, vec![0, 0]);
+    }
+
+    /// Bound predicates: a tight u32 range produces exactly two bound
+    /// preds (JGE for umin, JLE for umax) when both differ from defaults.
+    #[test]
+    fn bound_reg32_emits_expected_preds() {
+        let mut s = SymbolicState::new();
+        let b = RegBounds {
+            const_val: None,
+            smin: 5,
+            smax: 100,
+            s32_min: 5,
+            s32_max: 100,
+            u32_min: 5,
+            u32_max: 100,
+        };
+        s.reg_expr(0, &b, false);
+        // Expected: JGE(_, 5, true), JLE(_, 100, true) — 2 preds.
+        // smin/smax preds skipped because they coincide with umin/umax.
+        assert_eq!(s.path_conds.len(), 2);
+        let p0 = s.expr_at(s.path_conds[0]).unwrap();
+        let p1 = s.expr_at(s.path_conds[1]).unwrap();
+        // First should be JGE (BPF_JGE), second JLE.
+        assert_eq!(p0.code, BPF_JGE | BCF_BOOL);
+        assert_eq!(p1.code, BPF_JLE | BCF_BOOL);
     }
 
     /// Reconstruct shift_constraint's symbolic state along the unsafe path
