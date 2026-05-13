@@ -4,6 +4,32 @@ use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
 use crate::common::constants;
+use crate::refinement::symbolic::RegBounds;
+
+/// Build a [`RegBounds`] snapshot for `reg` from the current numeric
+/// domain. Used by BCF transfer-function mirrors to materialize register
+/// expressions in kernel-shape (with the right `fit_u32` / `fit_s32`
+/// fast-paths).
+///
+/// Callers typically snapshot **before** the abstract-domain op runs (for
+/// the dst/src expressions that go INTO the ALU op) and then take a
+/// second snapshot **after** the op (for the post-narrowness flags
+/// `op_u32` / `op_s32`). Mirrors kernel's pattern at verifier.c:16178-16181.
+pub(crate) fn bcf_reg_bounds(state: &State, reg: Reg) -> RegBounds {
+    let (smin, smax) = state.domain.get_interval(reg);
+    let (s32_min, s32_max) = state.domain.get_s32_bounds(reg);
+    let (u32_min, u32_max) = state.domain.get_u32_bounds(reg);
+    let const_val = state.domain.get_fixed_value(reg).map(|v| v as u64);
+    RegBounds {
+        const_val,
+        smin,
+        smax,
+        s32_min,
+        s32_max,
+        u32_min,
+        u32_max,
+    }
+}
 
 /// Tightens DBM bounds using information from Tnum.
 pub(crate) fn sync_tnum_to_dbm(state: &mut State, reg: Reg) {

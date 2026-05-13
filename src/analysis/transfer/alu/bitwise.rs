@@ -6,7 +6,7 @@ use crate::ast::{Operand, Width};
 use crate::domains::tnum::Tnum;
 use crate::refinement::bcf::BPF_AND;
 
-use super::helpers::sync_tnum_to_dbm;
+use super::helpers::{bcf_reg_bounds, sync_tnum_to_dbm};
 
 pub(crate) fn handle_mov(state: &mut State, width: Width, dst: Reg, src: &Operand) {
     match src {
@@ -90,7 +90,12 @@ pub(crate) fn handle_mov(state: &mut State, width: Width, dst: Reg, src: &Operan
         }
     }
 
-    // --- BCF symbolic mirror (Phase 1). No-op unless `--bcf` is on. ---
+    // --- BCF symbolic mirror. Mirrors kernel `bcf_mov32` / `bcf_mov`
+    //     (verifier.c:16325-16374) with the kernel-shape DAG layout. ---
+    let src_bounds = match src {
+        Operand::Reg(r) => Some(bcf_reg_bounds(state, *r)),
+        _ => None,
+    };
     if let (Some(bcf), Some(d)) = (state.bcf.as_mut(), dst.bcf_idx()) {
         match src {
             Operand::Imm(c) => {
@@ -103,18 +108,20 @@ pub(crate) fn handle_mov(state: &mut State, width: Width, dst: Reg, src: &Operan
                 bcf.bind_reg(d, idx);
             }
             Operand::Reg(r) => {
-                // Zero source is just a 64-bit constant 0; otherwise lazy-
-                // materialize the source reg as a fresh 64-bit symbolic var.
-                let src_idx = match r.bcf_idx() {
-                    Some(si) => bcf.materialize_reg64(si),
+                let new_idx = match r.bcf_idx() {
+                    Some(si) => {
+                        let sb = src_bounds.unwrap();
+                        let alu32 = width == Width::W32;
+                        // 32-bit form for MOV32, 64-bit form for MOV64.
+                        let src_expr = bcf.reg_expr(si, &sb, alu32);
+                        if alu32 {
+                            // MOV32 zero-extends low 32 bits into 64-bit dst.
+                            bcf.add_extend(false, 32, 64, src_expr)
+                        } else {
+                            src_expr
+                        }
+                    }
                     None => bcf.add_val64(0),
-                };
-                let new_idx = if width == Width::W32 {
-                    // W32 mov: low 32 bits copied, high 32 bits zeroed.
-                    let lo = bcf.extract_lo(32, src_idx);
-                    bcf.zext_32_to_64(lo)
-                } else {
-                    src_idx
                 };
                 bcf.bind_reg(d, new_idx);
             }
@@ -127,6 +134,13 @@ pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operan
     let input_nonnegative = min_op >= 0;
 
     let (old_s32_min, old_s32_max) = state.domain.get_s32_bounds(dst);
+
+    // Pre-op snapshot for BCF: capture dst's BCF bounds BEFORE the
+    // abstract op modifies them. Mirrors the kernel's call ordering at
+    // verifier.c:16178 (bcf_alu reads pre-op `dst_reg->bcf_expr` after the
+    // abstract op runs, but the operands' bounds are pre-op via the
+    // already-materialized cached values).
+    let dst_bounds_pre = bcf_reg_bounds(state, dst);
 
     state.domain.forget(dst);
 
@@ -182,25 +196,41 @@ pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operan
         }
     }
 
-    // --- BCF symbolic mirror (Phase 1, imm path only). ---
-    // For W32: `r &= mask_u32` zero-extends, but since mask_u32 has high
-    // bits zero, `and(r_full, mask_u32 as u64, 64)` correctly zeroes the
-    // high bits of `r` regardless of prior content. So a single 64-bit
-    // AND models both widths soundly when the mask is the W32-coerced imm.
+    // --- BCF symbolic mirror. Mirrors kernel `bcf_alu` (verifier.c:15139)
+    //     with the kernel-shape width discipline. For W32 AND with an
+    //     immediate, emits AND_32(reg_expr32, val_32) then ZEXT to 64.
+    //     For W64 AND where the post-op result fits in u32, the kernel
+    //     STILL uses 32-bit BCF ops as a precision optimization. ---
+    let dst_bounds_post = bcf_reg_bounds(state, dst);
+    let op_u32 = dst_bounds_post.fit_u32();
+    let op_s32 = dst_bounds_post.fit_s32();
+    let alu32_class = width == Width::W32;
+    let alu32 = alu32_class || op_u32 || op_s32;
+    let bits: u16 = if alu32 { 32 } else { 64 };
+
     if let Some(d) = dst.bcf_idx() {
         if let (Some(bcf), Operand::Imm(mask)) = (state.bcf.as_mut(), src) {
-            let mask64 = if width == Width::W32 {
+            let dst_expr = bcf.reg_expr(d, &dst_bounds_pre, alu32);
+            let mask_val = if width == Width::W32 {
                 (*mask as u32) as u64
             } else {
                 *mask as u64
             };
-            let dst_idx = bcf.materialize_reg64(d);
-            let mask_idx = bcf.add_val64(mask64);
-            let new_idx = bcf.add_alu(BPF_AND, dst_idx, mask_idx, 64);
-            bcf.bind_reg(d, new_idx);
+            let mask_expr = bcf.add_val(mask_val, alu32);
+            let alu_result = bcf.add_alu(BPF_AND, dst_expr, mask_expr, bits);
+            // Extend back to 64-bit for the cached reg slot. ZEXT for
+            // alu32 or op_u32 cases; SEXT for op_s32; no-op for true 64-bit.
+            let final_idx = if alu32 || op_u32 {
+                bcf.add_extend(false, 32, 64, alu_result)
+            } else if op_s32 {
+                bcf.add_extend(true, 32, 64, alu_result)
+            } else {
+                alu_result
+            };
+            bcf.bind_reg(d, final_idx);
         } else if let Some(bcf) = state.bcf.as_mut() {
-            // AND with a register: conservative — drop the symbolic expr
-            // (Phase 2 will widen).
+            // AND with a register: conservative — drop the symbolic expr.
+            // (TODO Phase 4: support reg-reg AND via reg_expr on both.)
             bcf.clear_reg(d);
         }
     }

@@ -5,38 +5,15 @@ use crate::analysis::machine::state::State;
 use crate::ast::{Operand, Width};
 use crate::domains::tnum::Tnum;
 
-use super::helpers::sync_tnum_to_dbm;
+use super::helpers::{bcf_reg_bounds, sync_tnum_to_dbm};
 
 pub(crate) fn handle_shr(state: &mut State, width: Width, dst: Reg, src: &Operand) {
-    // BCF symbolic mirror (Phase 1, imm path). Placed BEFORE the numeric
-    // update because we read the prior reg expression as input. `Shr` is
-    // the live BPF_RSH dispatch target (the parser only emits `AluOp::Shr`,
-    // never `AluOp::Rsh`; the latter exists in the AST but is dead).
-    if let (Some(d), Operand::Imm(k)) = (dst.bcf_idx(), src) {
-        if let Some(bcf) = state.bcf.as_mut() {
-            let shift_amount = if width == Width::W32 {
-                (*k as u32) & 0x1F
-            } else {
-                (*k as u32) & 0x3F
-            };
-            let dst_idx = bcf.materialize_reg64(d);
-            let new_idx = if width == Width::W32 {
-                let lo = bcf.extract_lo(32, dst_idx);
-                let k_idx = bcf.add_val64(shift_amount as u64);
-                let k_lo = bcf.extract_lo(32, k_idx);
-                let shifted = bcf.add_alu(crate::refinement::bcf::BPF_RSH, lo, k_lo, 32);
-                bcf.zext_32_to_64(shifted)
-            } else {
-                let k_idx = bcf.add_val64(shift_amount as u64);
-                bcf.add_alu(crate::refinement::bcf::BPF_RSH, dst_idx, k_idx, 64)
-            };
-            bcf.bind_reg(d, new_idx);
-        }
-    } else if let Some(d) = dst.bcf_idx() {
-        if let Some(bcf) = state.bcf.as_mut() {
-            bcf.clear_reg(d);
-        }
-    }
+    // Snapshot dst's BCF bounds before the abstract op runs. Right shifts
+    // only narrow, so fit_u32/fit_s32 from pre-op bounds is a safe
+    // (sometimes-overly-conservative) approximation of the post-op
+    // narrowness the kernel uses at verifier.c:16179-16180. The previously-
+    // cached dst BCF expression (if any) is used directly via reg_expr.
+    let dst_bounds_pre = bcf_reg_bounds(state, dst);
 
     match src {
         Operand::Imm(k) => {
@@ -111,6 +88,43 @@ pub(crate) fn handle_shr(state: &mut State, width: Width, dst: Reg, src: &Operan
     }
 
     sync_tnum_to_dbm(state, dst);
+
+    // --- BCF symbolic mirror. Mirrors kernel `bcf_alu` (verifier.c:15139)
+    //     with kernel-shape width discipline. For W32 RSH or for W64 RSH
+    //     where dst fits in u32, emits RSH_32(reg_expr32, k_32) then ZEXT
+    //     to 64. Reg-source path stays conservative (clear) for now. ---
+    if let (Some(d), Operand::Imm(k)) = (dst.bcf_idx(), src) {
+        if let Some(bcf) = state.bcf.as_mut() {
+            let shift_amount = if width == Width::W32 {
+                (*k as u32) & 0x1F
+            } else {
+                (*k as u32) & 0x3F
+            };
+            let op_u32 = dst_bounds_pre.fit_u32();
+            let op_s32 = dst_bounds_pre.fit_s32();
+            let alu32_class = width == Width::W32;
+            let alu32 = alu32_class || op_u32 || op_s32;
+            let bits: u16 = if alu32 { 32 } else { 64 };
+
+            let dst_expr = bcf.reg_expr(d, &dst_bounds_pre, alu32);
+            let k_expr = bcf.add_val(shift_amount as u64, alu32);
+            let alu_result =
+                bcf.add_alu(crate::refinement::bcf::BPF_RSH, dst_expr, k_expr, bits);
+
+            let final_idx = if alu32 || op_u32 {
+                bcf.add_extend(false, 32, 64, alu_result)
+            } else if op_s32 {
+                bcf.add_extend(true, 32, 64, alu_result)
+            } else {
+                alu_result
+            };
+            bcf.bind_reg(d, final_idx);
+        }
+    } else if let Some(d) = dst.bcf_idx() {
+        if let Some(bcf) = state.bcf.as_mut() {
+            bcf.clear_reg(d);
+        }
+    }
 }
 
 pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operand) {
