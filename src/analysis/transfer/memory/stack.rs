@@ -9,7 +9,7 @@ use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::stack_state::StackState;
 use crate::analysis::machine::state::State;
 use crate::common::constants;
-use crate::refinement::bundle::{placeholder_cond_hash, BCF_BUNDLE_KIND_REFINE};
+use crate::refinement::bundle::{RefineEntry, BCF_BUNDLE_KIND_REFINE};
 use crate::refinement::refine_stack::try_refine_stack_oob;
 use log::{error, info};
 
@@ -27,14 +27,14 @@ fn try_bcf_refine_stack(
     if state.bcf.is_none() {
         return false;
     }
-    let Some(proof_bytes) = try_refine_stack_oob(state, base, instruction_offset, size) else {
+    let Some(ok) = try_refine_stack_oob(state, base, instruction_offset, size) else {
         return false;
     };
-    let hash = placeholder_cond_hash(&proof_bytes);
+    let entry = RefineEntry::new(ok.goal_root, ok.sym.exprs, ok.proof_bytes, BCF_BUNDLE_KIND_REFINE);
     info!(
         target: "app",
         "[bcf] refined stack-OOB at base={:?} off={} size={}: cvc5 proof {} bytes (hash {:016x})",
-        base, instruction_offset, size, proof_bytes.len(), hash
+        base, instruction_offset, size, entry.proof_bytes.len(), entry.cond_hash
     );
     // Dev hook: write each raw cvc5 proof to a sidecar `.bcf` file so it can
     // be scp'd to the Linux box and fed to `bcf-checker` directly without
@@ -43,12 +43,12 @@ fn try_bcf_refine_stack(
     if let Ok(prefix) = std::env::var("ZOVIA_BCF_DUMP_PROOF") {
         let idx = env.bcf_proofs.len();
         let path = format!("{}.{}.bcf", prefix, idx);
-        match std::fs::write(&path, &proof_bytes) {
+        match std::fs::write(&path, &entry.proof_bytes) {
             Ok(_) => info!(target: "app", "[bcf] dumped raw proof to {}", path),
             Err(e) => log::warn!(target: "app", "[bcf] proof dump to {} failed: {}", path, e),
         }
     }
-    env.bcf_proofs.push((hash, proof_bytes, BCF_BUNDLE_KIND_REFINE));
+    env.bcf_proofs.push(entry);
     true
 }
 

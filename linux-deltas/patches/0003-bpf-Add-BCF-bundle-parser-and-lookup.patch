@@ -1,0 +1,340 @@
+From 295a290d439780de646648042d0761af856766ba Mon Sep 17 00:00:00 2001
+From: Yalu Cai <yalucai1998@gmail.com>
+Date: Tue, 12 May 2026 19:42:25 -0600
+Subject: [PATCH 3/4] bpf: Add BCF bundle parser and lookup
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adds the kernel-side reader for the userspace BCF bundle that
+BPF_PROG_LOAD now accepts via bpf_attr.bcf_bundle. This is the
+single-pass replacement for BCF set1 patch 0016 (the resume/check_proof
+half of suspend/resume).
+
+New surface:
+
+  int  bcf_bundle_load(env, ubuf, size) — copy_from_user + validate
+  void bcf_bundle_free(env)             — kvfree (safe on NULL)
+  const bcf_bundle_entry *
+       bcf_bundle_lookup(env, cond_hash) — linear scan, NULL on miss
+
+Storage on env->bcf (struct bcf_refine_state): bundle_blob (void*) and
+bundle_size (u32).
+
+bpf_check() loads the bundle right after env allocation (if present)
+and frees it on every teardown path. Free is also harmlessly invoked
+in bcf_release (the anon-fd suspend cleanup) since bundle_blob is NULL
+in that path.
+
+Validation rejects malformed bundles: bad magic, unknown kind,
+out-of-range offsets, unaligned payload offsets. Bundle size capped
+at 64 MB to bound kernel allocations.
+
+Lookup wiring (refinement-site call into bcf_check_proof on hit) is
+the next patch.
+---
+ include/linux/bcf_bundle.h   |  58 ++++++++++++++
+ include/linux/bpf_verifier.h |   5 ++
+ kernel/bpf/Makefile          |   2 +-
+ kernel/bpf/bcf_bundle.c      | 150 +++++++++++++++++++++++++++++++++++
+ kernel/bpf/verifier.c        |  12 +++
+ 5 files changed, 226 insertions(+), 1 deletion(-)
+ create mode 100644 include/linux/bcf_bundle.h
+ create mode 100644 kernel/bpf/bcf_bundle.c
+
+diff --git a/include/linux/bcf_bundle.h b/include/linux/bcf_bundle.h
+new file mode 100644
+index 000000000000..ed71cbf6358f
+--- /dev/null
++++ b/include/linux/bcf_bundle.h
+@@ -0,0 +1,58 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef _LINUX_BCF_BUNDLE_H
++#define _LINUX_BCF_BUNDLE_H
++
++#include <linux/bpfptr.h>
++#include <linux/types.h>
++#include <uapi/linux/bcf.h>
++
++struct bpf_verifier_env;
++
++/*
++ * Cap on bundle size to avoid runaway allocations from a malformed
++ * BPF_PROG_LOAD. Typical bundles are < 1 MB. 64 MB is a generous ceiling.
++ */
++#define BCF_BUNDLE_MAX_SIZE (64u * 1024u * 1024u)
++
++/*
++ * Copy a userspace bundle into kernel memory, validate its structure,
++ * and attach it to the verifier env. Releases ownership of the input
++ * buffer if validation fails.
++ *
++ * Returns 0 on success; -errno on failure (-ENOMEM, -EFAULT, -EINVAL).
++ */
++int bcf_bundle_load(struct bpf_verifier_env *env, bpfptr_t ubuf, u32 size);
++
++/*
++ * Free any bundle attached to env. Safe to call when no bundle is
++ * attached (no-op).
++ */
++void bcf_bundle_free(struct bpf_verifier_env *env);
++
++/*
++ * Look up the bundle entry whose cond_hash matches @cond_hash.
++ * Returns NULL on miss or if no bundle is attached.
++ *
++ * Hash collisions are possible (64-bit fingerprint, see canonical-hash
++ * spec); the caller MUST confirm structural equivalence via
++ * __expr_equiv() before trusting the entry.
++ */
++const struct bcf_bundle_entry *bcf_bundle_lookup(struct bpf_verifier_env *env,
++						  u64 cond_hash);
++
++/* Accessors for an entry's payloads inside the bundle blob. */
++static inline const void *
++bcf_bundle_entry_goal(const void *bundle_blob,
++		      const struct bcf_bundle_entry *e)
++{
++	return (const u8 *)bundle_blob + e->goal_off;
++}
++
++static inline const void *
++bcf_bundle_entry_proof(const void *bundle_blob,
++		       const struct bcf_bundle_entry *e)
++{
++	return (const u8 *)bundle_blob + e->proof_off;
++}
++
++#endif /* _LINUX_BCF_BUNDLE_H */
+diff --git a/include/linux/bpf_verifier.h b/include/linux/bpf_verifier.h
+index d37f57a648e9..a382c2d57fe4 100644
+--- a/include/linux/bpf_verifier.h
++++ b/include/linux/bpf_verifier.h
+@@ -760,6 +760,11 @@ struct bcf_refine_state {
+ 	int checked_sz;
+ 	bool access_checked;
+ 	bool path_unreachable;
++
++	/* Userspace-supplied bundle of canonical-hash-keyed proofs.
++	 * NULL if no bundle was passed via bpf_attr.bcf_bundle. */
++	void *bundle_blob;
++	u32 bundle_size;
+ };
+ 
+ /* single container for all structs
+diff --git a/kernel/bpf/Makefile b/kernel/bpf/Makefile
+index 28b494b4c31c..3112252736ab 100644
+--- a/kernel/bpf/Makefile
++++ b/kernel/bpf/Makefile
+@@ -6,7 +6,7 @@ cflags-nogcse-$(CONFIG_X86)$(CONFIG_CC_IS_GCC) := -fno-gcse
+ endif
+ CFLAGS_core.o += -Wno-override-init $(cflags-nogcse-yy)
+ 
+-obj-$(CONFIG_BPF_SYSCALL) += syscall.o verifier.o inode.o helpers.o tnum.o log.o token.o liveness.o bcf_checker.o canonical_hash.o
++obj-$(CONFIG_BPF_SYSCALL) += syscall.o verifier.o inode.o helpers.o tnum.o log.o token.o liveness.o bcf_checker.o canonical_hash.o bcf_bundle.o
+ obj-$(CONFIG_BPF_SYSCALL) += bpf_iter.o map_iter.o task_iter.o prog_iter.o link_iter.o
+ obj-$(CONFIG_BPF_SYSCALL) += hashtab.o arraymap.o percpu_freelist.o bpf_lru_list.o lpm_trie.o map_in_map.o bloom_filter.o
+ obj-$(CONFIG_BPF_SYSCALL) += local_storage.o queue_stack_maps.o ringbuf.o
+diff --git a/kernel/bpf/bcf_bundle.c b/kernel/bpf/bcf_bundle.c
+new file mode 100644
+index 000000000000..7128e97798a4
+--- /dev/null
++++ b/kernel/bpf/bcf_bundle.c
+@@ -0,0 +1,150 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * BCF bundle parser + lookup.
++ *
++ * A "bundle" is a userspace-supplied blob containing pre-validated proofs
++ * for refinement sites the verifier expects to encounter. Each entry is
++ * keyed by the canonical hash of the goal expression; at refinement time
++ * the kernel hashes its own kernel-side goal, looks up the entry, and
++ * runs bcf_check_proof() inline. This replaces BCF's suspend/resume
++ * round-trip with a single-pass load.
++ *
++ * Wire format: uapi/linux/bcf.h struct bcf_bundle_{header,entry}.
++ * Spec: docs/userspace-bcf/canonical-hash-spec.md (userspace project).
++ *
++ * Threat model: bundles come from BPF_PROG_LOAD's `bcf_bundle` field.
++ * The caller is whoever can already load BPF programs; we don't widen
++ * privilege. Untrusted-input validation still applies because a confused
++ * loader (or fuzzer) might supply a malformed bundle, and a kernel OOPS
++ * on malformed input is unacceptable.
++ */
++
++#include <linux/bcf_bundle.h>
++#include <linux/bpf.h>
++#include <linux/bpf_verifier.h>
++#include <linux/bpfptr.h>
++#include <linux/slab.h>
++#include <linux/types.h>
++#include <linux/errno.h>
++#include <linux/mm.h>
++#include <uapi/linux/bcf.h>
++
++/*
++ * Validate a freshly-copied-in bundle blob. The blob is already in
++ * kernel memory, size-bounded by the caller. Walks header + entries
++ * checking magic, kinds, payload offset/size ranges, and alignment.
++ *
++ * Returns 0 if the structure checks out, -EINVAL otherwise.
++ */
++static int bcf_bundle_validate(const void *blob, u32 size)
++{
++	const struct bcf_bundle_header *hdr = blob;
++	const struct bcf_bundle_entry *entries;
++	u32 payload_start;
++	u64 entries_end;
++	u32 i;
++
++	if (hdr->magic != BCF_BUNDLE_MAGIC)
++		return -EINVAL;
++	if (hdr->reserved != 0)
++		return -EINVAL;
++	if (hdr->total_size > size)
++		return -EINVAL;
++
++	entries_end = (u64)sizeof(*hdr) +
++		      (u64)hdr->entry_cnt * sizeof(*entries);
++	if (entries_end > hdr->total_size)
++		return -EINVAL;
++
++	payload_start = (u32)entries_end;
++	entries = (const struct bcf_bundle_entry *)((const u8 *)blob +
++						    sizeof(*hdr));
++
++	for (i = 0; i < hdr->entry_cnt; i++) {
++		const struct bcf_bundle_entry *e = &entries[i];
++		u64 goal_end  = (u64)e->goal_off  + e->goal_size;
++		u64 proof_end = (u64)e->proof_off + e->proof_size;
++
++		if (e->kind != BCF_BUNDLE_KIND_REFINE &&
++		    e->kind != BCF_BUNDLE_KIND_UNREACHABLE)
++			return -EINVAL;
++
++		if (e->goal_off < payload_start || goal_end > hdr->total_size)
++			return -EINVAL;
++		if (e->proof_off < payload_start || proof_end > hdr->total_size)
++			return -EINVAL;
++
++		/* Payloads must be u32-aligned (wire format invariant). */
++		if ((e->goal_off & 3) || (e->proof_off & 3))
++			return -EINVAL;
++	}
++	return 0;
++}
++
++int bcf_bundle_load(struct bpf_verifier_env *env, bpfptr_t ubuf, u32 size)
++{
++	void *blob;
++	int err;
++
++	if (size < sizeof(struct bcf_bundle_header))
++		return -EINVAL;
++	if (size > BCF_BUNDLE_MAX_SIZE)
++		return -E2BIG;
++
++	blob = kvmalloc(size, GFP_KERNEL);
++	if (!blob)
++		return -ENOMEM;
++
++	if (copy_from_bpfptr(blob, ubuf, size)) {
++		err = -EFAULT;
++		goto err_free;
++	}
++
++	err = bcf_bundle_validate(blob, size);
++	if (err)
++		goto err_free;
++
++	env->bcf.bundle_blob = blob;
++	env->bcf.bundle_size = size;
++	return 0;
++
++err_free:
++	kvfree(blob);
++	return err;
++}
++
++void bcf_bundle_free(struct bpf_verifier_env *env)
++{
++	if (!env->bcf.bundle_blob)
++		return;
++	kvfree(env->bcf.bundle_blob);
++	env->bcf.bundle_blob = NULL;
++	env->bcf.bundle_size = 0;
++}
++
++const struct bcf_bundle_entry *
++bcf_bundle_lookup(struct bpf_verifier_env *env, u64 cond_hash)
++{
++	const struct bcf_bundle_header *hdr;
++	const struct bcf_bundle_entry *entries;
++	u32 i;
++
++	if (!env->bcf.bundle_blob)
++		return NULL;
++
++	hdr = env->bcf.bundle_blob;
++	entries = (const struct bcf_bundle_entry *)((const u8 *)hdr +
++						    sizeof(*hdr));
++
++	/*
++	 * Linear scan. Bundles in practice contain low hundreds of entries;
++	 * a hashtable optimisation can come later if profiling shows this
++	 * is hot. The trade-off is keeping the structure self-describing in
++	 * the kernel without an extra build step.
++	 */
++	for (i = 0; i < hdr->entry_cnt; i++) {
++		if (entries[i].cond_hash == cond_hash)
++			return &entries[i];
++	}
++	return NULL;
++}
+diff --git a/kernel/bpf/verifier.c b/kernel/bpf/verifier.c
+index 27b01e1a186b..b5eeabd37e00 100644
+--- a/kernel/bpf/verifier.c
++++ b/kernel/bpf/verifier.c
+@@ -12,6 +12,7 @@
+ #include <linux/bpf.h>
+ #include <linux/btf.h>
+ #include <linux/bpf_verifier.h>
++#include <linux/bcf_bundle.h>
+ #include <linux/filter.h>
+ #include <net/netlink.h>
+ #include <linux/file.h>
+@@ -25796,6 +25797,7 @@ static int bcf_release(struct inode *inode, struct file *filp)
+ 	kvfree(env->scc_info);
+ 	kvfree(env->succ);
+ 	kvfree(env->bcf.exprs);
++	bcf_bundle_free(env);
+ 	kvfree(env);
+ 	filp->private_data = NULL;
+ 	return 0;
+@@ -25875,6 +25877,15 @@ int bpf_check(struct bpf_prog **prog, union bpf_attr *attr, bpfptr_t uattr, __u3
+ 
+ 	env->bt.env = env;
+ 
++	/* Userspace-BCF bundle load (single-pass refinement proofs).
++	 * Optional: only if BPF_PROG_LOAD provided a bundle. */
++	if (attr->bcf_bundle && attr->bcf_bundle_size) {
++		bpfptr_t bundle = make_bpfptr(attr->bcf_bundle, uattr.is_kernel);
++		ret = bcf_bundle_load(env, bundle, attr->bcf_bundle_size);
++		if (ret)
++			goto err_free_env;
++	}
++
+ 	len = (*prog)->len;
+ 	env->insn_aux_data =
+ 		vzalloc(array_size(sizeof(struct bpf_insn_aux_data), len));
+@@ -26152,6 +26163,7 @@ int bpf_check(struct bpf_prog **prog, union bpf_attr *attr, bpfptr_t uattr, __u3
+ 	kvfree(env->scc_info);
+ 	kvfree(env->succ);
+ 	kvfree(env->bcf.exprs);
++	bcf_bundle_free(env);
+ 	kvfree(env);
+ 	return ret;
+ }
+-- 
+2.50.1 (Apple Git-155)
+

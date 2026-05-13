@@ -8,7 +8,7 @@ use crate::ast::{Operand, Width};
 use crate::domains::tnum::Tnum;
 use log::debug;
 
-use super::helpers::{check_ptr_bounds, sync_tnum_to_dbm};
+use super::helpers::{bcf_reg_bounds, check_ptr_bounds, sync_tnum_to_dbm};
 
 pub(crate) fn handle_add(
     _env: &mut VerifierEnv,
@@ -101,46 +101,83 @@ pub(crate) fn handle_add(
         Operand::Reg(r) => in_types.get(*r).is_pointer(),
     };
 
-    // --- BCF symbolic mirror (β+: unified ptr/scalar symbolic add).
-    // Build dst_new = dst_old + rhs as a BV expression regardless of
-    // whether dst is a pointer. For pointer dsts, materialize_reg64
-    // returns const(0) for R10, so a chain like `r1 = r10; r1 += -16;
-    // r1 += r0` produces `r1.expr = -16 + r0` — the offset-from-r10
-    // that the stack-OOB refinement uses directly (no `var_off_
-    // contributor` reconstruction needed). Skipped only for the rare
-    // ptr+ptr / scalar+ptr cases. ---
+    // --- BCF symbolic mirror. Mirrors kernel `bcf_alu` (verifier.c:15139)
+    //     with kernel-shape width discipline. For W32 ADD or for W64 ADD
+    //     where dst fits in u32 post-op, emits ADD_32(reg32, rhs32) then
+    //     ZEXT.
+    //
+    //     **Pointer+imm is skipped**: kernel doesn't update the pointer
+    //     reg's BCF expr for pure const offset bookkeeping — only the
+    //     variable contribution flows through `bcf_expr`. This mirrors
+    //     kernel behavior at adjust_ptr_min_max_vals (verifier.c:15185).
+    //     Without this, zovia would embed the -16 of `r2 += -16` into
+    //     the symbolic expression, diverging structurally from kernel. ---
+    let dst_bounds_pre = bcf_reg_bounds(state, dst);
+    let src_bounds_pre = match src {
+        Operand::Reg(r) => Some(bcf_reg_bounds(state, *r)),
+        _ => None,
+    };
+    // Hoisted outside the &mut state.bcf borrow.
+    let dst_bounds_post = bcf_reg_bounds(state, dst);
     if let Some(d) = dst.bcf_idx() {
         if let Some(bcf) = state.bcf.as_mut() {
-            let skip = src_is_ptr; // ptr+ptr or scalar+ptr — leave alone
+            // **Pointer + immediate is skipped** — kernel handles `ptr += K`
+            // by accumulating K into the pointer reg's `off` bookkeeping
+            // field (verifier.c:15296-15308), leaving `bcf_expr` alone.
+            // refine_stack.rs / refine_map.rs reconstruct the const offset
+            // from the abstract-domain distance interval.
+            let skip_ptr_imm = dst_is_ptr_post && matches!(src, Operand::Imm(_));
+            let skip = src_is_ptr || skip_ptr_imm;
             if skip {
                 if !dst_is_ptr_post {
                     bcf.clear_reg(d);
                 }
+                // Pointer + imm: leave dst.bcf_expr at its current value
+                // (the variable contributor only).
             } else {
-                let dst_idx = bcf.materialize_reg64(d);
-                let rhs_idx = match src {
+                let op_u32 = dst_bounds_post.fit_u32();
+                let op_s32 = dst_bounds_post.fit_s32();
+                let alu32_class = width == Width::W32;
+                // **Pointer ALU forces 64-bit BCF ops.** Kernel calls
+                // `__mark_reg32_unbounded(dst_reg)` for ptr arithmetic
+                // (verifier.c:15282), which makes fit_u32/fit_s32 false
+                // and forces `bcf_alu` into its 64-bit arm. We mirror
+                // that by short-circuiting `alu32` here.
+                let alu32 = if dst_is_ptr_post {
+                    false
+                } else {
+                    alu32_class || op_u32 || op_s32
+                };
+                let bits: u16 = if alu32 { 32 } else { 64 };
+
+                let dst_expr = bcf.reg_expr(d, &dst_bounds_pre, alu32);
+                let rhs_expr = match src {
                     Operand::Imm(c) => {
                         let v = if width == Width::W32 {
                             (*c as u32) as u64
                         } else {
                             *c as u64
                         };
-                        bcf.add_val64(v)
+                        bcf.add_val(v, alu32)
                     }
                     Operand::Reg(r) => match r.bcf_idx() {
-                        Some(si) => bcf.materialize_reg64(si),
-                        None => bcf.add_val64(0),
+                        Some(si) => bcf.reg_expr(si, &src_bounds_pre.unwrap(), alu32),
+                        None => bcf.add_val(0, alu32),
                     },
                 };
-                let new_idx = if width == Width::W32 {
-                    let lo_d = bcf.extract_lo(32, dst_idx);
-                    let lo_r = bcf.extract_lo(32, rhs_idx);
-                    let sum = bcf.add_alu(crate::refinement::bcf::BPF_ADD, lo_d, lo_r, 32);
-                    bcf.zext_32_to_64(sum)
+                let alu_result =
+                    bcf.add_alu(crate::refinement::bcf::BPF_ADD, dst_expr, rhs_expr, bits);
+                // Force-64 path (ptr arithmetic) skips extension entirely.
+                let final_idx = if dst_is_ptr_post {
+                    alu_result
+                } else if alu32 || op_u32 {
+                    bcf.add_extend(false, 32, 64, alu_result)
+                } else if op_s32 {
+                    bcf.add_extend(true, 32, 64, alu_result)
                 } else {
-                    bcf.add_alu(crate::refinement::bcf::BPF_ADD, dst_idx, rhs_idx, 64)
+                    alu_result
                 };
-                bcf.bind_reg(d, new_idx);
+                bcf.bind_reg(d, final_idx);
             }
         }
     }

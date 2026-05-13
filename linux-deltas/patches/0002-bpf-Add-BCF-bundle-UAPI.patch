@@ -1,0 +1,127 @@
+From 45655d1fb6dfa17d8dfa0d183622344dc6142d1d Mon Sep 17 00:00:00 2001
+From: Yalu Cai <yalucai1998@gmail.com>
+Date: Tue, 12 May 2026 19:26:26 -0600
+Subject: [PATCH 2/4] bpf: Add BCF bundle UAPI
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Extends BPF_PROG_LOAD with two new attr fields:
+
+  __aligned_u64 bcf_bundle;       /* userptr to bcf_bundle_header */
+  __u32         bcf_bundle_size;  /* 0 disables BCF bundle */
+
+And adds the on-disk bundle format definitions to <uapi/linux/bcf.h>:
+
+  struct bcf_bundle_header — magic, entry count, total size.
+  struct bcf_bundle_entry  — per-entry cond_hash + goal/proof offsets.
+
+Validation enforces that bcf_bundle and bcf_bundle_size are both set or
+both unset. Full structural validation (magic, offsets in range) lands
+with the bundle parser in a subsequent patch.
+
+This is the userspace-BCF replacement for BCF set1 patch 0003 — which
+added 5 fields for the suspend/resume protocol. Our deltas keep BCF s
+0003 fields untouched (they coexist; the bcf_buf/bcf_fd/bcf_flags path
+is unused once bundles are present) but add these 2 new ones for the
+single-pass flow. Cleanup to remove the now-dead 0003 fields can come
+as a separate patch before upstream submission.
+---
+ include/uapi/linux/bcf.h       | 28 ++++++++++++++++++++++++++++
+ include/uapi/linux/bpf.h       |  3 +++
+ kernel/bpf/syscall.c           |  6 +++++-
+ tools/include/uapi/linux/bpf.h |  3 +++
+ 4 files changed, 39 insertions(+), 1 deletion(-)
+
+diff --git a/include/uapi/linux/bcf.h b/include/uapi/linux/bcf.h
+index 8e93a46898aa..92e930042395 100644
+--- a/include/uapi/linux/bcf.h
++++ b/include/uapi/linux/bcf.h
+@@ -357,4 +357,32 @@ enum bcf_rewrite_id {
+ };
+ #undef BCF_REWRITE_ENUM_VARIANT
+ 
++
++/* ---- bundle UAPI (userspace-BCF Phase 3) ----
++ *
++ * Per-program bundle of canonical-hash-keyed proofs. Pointed to by
++ * bpf_attr.bcf_bundle (userptr) with size bpf_attr.bcf_bundle_size.
++ */
++
++#define BCF_BUNDLE_MAGIC 0x42464342u /* 'BCFB' little-endian */
++
++#define BCF_BUNDLE_KIND_REFINE      1u
++#define BCF_BUNDLE_KIND_UNREACHABLE 2u
++
++struct bcf_bundle_header {
++	__u32 magic;
++	__u32 entry_cnt;
++	__u32 total_size;
++	__u32 reserved;
++};
++
++struct bcf_bundle_entry {
++	__u64 cond_hash;
++	__u32 goal_off;
++	__u32 goal_size;
++	__u32 proof_off;
++	__u32 proof_size;
++	__u32 kind;
++};
++
+ #endif /* _UAPI__LINUX_BCF_H__ */
+diff --git a/include/uapi/linux/bpf.h b/include/uapi/linux/bpf.h
+index fbe99fbc39ab..4cbcd58c39c2 100644
+--- a/include/uapi/linux/bpf.h
++++ b/include/uapi/linux/bpf.h
+@@ -1645,6 +1645,9 @@ union bpf_attr {
+ 		__u32		bcf_fd;
+ 		/* input/output: proof requested or provided. */
+ 		__u32		bcf_flags;
++		/* bundle of canonical-hash-keyed proofs (userspace-BCF). */
++		__aligned_u64	bcf_bundle;
++		__u32		bcf_bundle_size;
+ 	};
+ 
+ 	struct { /* anonymous struct used by BPF_OBJ_* commands */
+diff --git a/kernel/bpf/syscall.c b/kernel/bpf/syscall.c
+index 97914494bd18..8e779e3ea8c6 100644
+--- a/kernel/bpf/syscall.c
++++ b/kernel/bpf/syscall.c
+@@ -2854,7 +2854,7 @@ static int bpf_prog_verify_signature(struct bpf_prog *prog, union bpf_attr *attr
+ }
+ 
+ /* last field in 'union bpf_attr' used by this command */
+-#define BPF_PROG_LOAD_LAST_FIELD bcf_flags
++#define BPF_PROG_LOAD_LAST_FIELD bcf_bundle_size
+ 
+ static int bpf_prog_load(union bpf_attr *attr, bpfptr_t uattr, u32 uattr_size)
+ {
+@@ -2874,6 +2874,10 @@ static int bpf_prog_load(union bpf_attr *attr, bpfptr_t uattr, u32 uattr_size)
+ 				 BCF_F_PROOF_PATH_UNREACHABLE)))
+ 		return -EINVAL;
+ 
++	/* bundle: both pointer and size must be set or both unset */
++	if (!!attr->bcf_bundle != !!attr->bcf_bundle_size)
++		return -EINVAL;
++
+ 	/* Check proof and resume the last analysis. */
+ 	if (attr->bcf_flags & BCF_F_PROOF_PROVIDED) {
+ 		if (attr->bcf_buf_true_size > attr->bcf_buf_size ||
+diff --git a/tools/include/uapi/linux/bpf.h b/tools/include/uapi/linux/bpf.h
+index fbe99fbc39ab..4cbcd58c39c2 100644
+--- a/tools/include/uapi/linux/bpf.h
++++ b/tools/include/uapi/linux/bpf.h
+@@ -1645,6 +1645,9 @@ union bpf_attr {
+ 		__u32		bcf_fd;
+ 		/* input/output: proof requested or provided. */
+ 		__u32		bcf_flags;
++		/* bundle of canonical-hash-keyed proofs (userspace-BCF). */
++		__aligned_u64	bcf_bundle;
++		__u32		bcf_bundle_size;
+ 	};
+ 
+ 	struct { /* anonymous struct used by BPF_OBJ_* commands */
+-- 
+2.50.1 (Apple Git-155)
+
