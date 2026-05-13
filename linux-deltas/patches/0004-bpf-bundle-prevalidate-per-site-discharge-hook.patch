@@ -1,0 +1,233 @@
+From 36945b666c200a4bd648d5303125013d61bedac5 Mon Sep 17 00:00:00 2001
+From: Yalu Cai <yalucai1998@gmail.com>
+Date: Wed, 13 May 2026 09:06:16 -0400
+Subject: [PATCH 4/4] bpf: bundle prevalidate + per-site discharge hook
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adds the kernel-side bundle consultation that turns BCF's suspend/resume
+round-trip into a single-pass load. This is the load-bearing replacement
+for the patches we deliberately skipped (set1 0016, the resume half).
+
+Two new functions in kernel/bpf/bcf_bundle.c:
+
+  bcf_bundle_prevalidate(env)
+    Called once after bcf_bundle_load() in bpf_check(). Walks every
+    bundle entry, parses its (goal_exprs, goal_root) + proof bytes,
+    and runs bcf_check_proof() on each. A single invalid entry fails
+    the whole BPF_PROG_LOAD with -EINVAL — single-pass means we want
+    no surprises mid-verification.
+
+  bcf_bundle_try_discharge(env, refine_cond)
+    Called from bcf_refine() right before mark_bcf_requested. Computes
+    bcf_canonical_hash(refine_cond, env->bcf.exprs), looks it up in the
+    bundle, returns 0 on hit. The caller (bcf_refine) then skips
+    mark_bcf_requested entirely, so the verifier proceeds with the
+    optimistic register-state update that the per-site refine_cb
+    already applied — equivalent to BCF's resume-with-proof semantics.
+
+TODO before upstreaming: structural equivalence check (kernel_goal vs
+bundle_goal) on hit, to guard against 64-bit hash collisions. Spec §6
+mandates it; prototype currently trusts the hash alone.
+---
+ include/linux/bcf_bundle.h |  15 +++++
+ kernel/bpf/bcf_bundle.c    | 110 +++++++++++++++++++++++++++++++++++++
+ kernel/bpf/verifier.c      |  23 +++++++-
+ 3 files changed, 146 insertions(+), 2 deletions(-)
+
+diff --git a/include/linux/bcf_bundle.h b/include/linux/bcf_bundle.h
+index ed71cbf6358f..5747ce4bdb10 100644
+--- a/include/linux/bcf_bundle.h
++++ b/include/linux/bcf_bundle.h
+@@ -40,6 +40,21 @@ void bcf_bundle_free(struct bpf_verifier_env *env);
+ const struct bcf_bundle_entry *bcf_bundle_lookup(struct bpf_verifier_env *env,
+ 						  u64 cond_hash);
+ 
++/*
++ * After load, validate every entry's proof against its own goal. Called
++ * once before the verifier runs. Returns 0 if all proofs check out, or
++ * -errno from bcf_check_proof on the first invalid entry.
++ */
++int bcf_bundle_prevalidate(struct bpf_verifier_env *env);
++
++/*
++ * At a per-site refinement, try to discharge the current refinement
++ * obligation (env->bcf.refine_cond) via the bundle. Returns 0 if the
++ * bundle covers it (caller should skip mark_bcf_requested), -ENOENT on
++ * miss / no bundle.
++ */
++int bcf_bundle_try_discharge(struct bpf_verifier_env *env, u32 refine_cond);
++
+ /* Accessors for an entry's payloads inside the bundle blob. */
+ static inline const void *
+ bcf_bundle_entry_goal(const void *bundle_blob,
+diff --git a/kernel/bpf/bcf_bundle.c b/kernel/bpf/bcf_bundle.c
+index 7128e97798a4..0521d6f76408 100644
+--- a/kernel/bpf/bcf_bundle.c
++++ b/kernel/bpf/bcf_bundle.c
+@@ -20,6 +20,7 @@
+  */
+ 
+ #include <linux/bcf_bundle.h>
++#include <linux/bcf_checker.h>
+ #include <linux/bpf.h>
+ #include <linux/bpf_verifier.h>
+ #include <linux/bpfptr.h>
+@@ -148,3 +149,112 @@ bcf_bundle_lookup(struct bpf_verifier_env *env, u64 cond_hash)
+ 	}
+ 	return NULL;
+ }
++
++/*
++ * Per-entry goal payload accessor. The payload starts with a u32 root and
++ * a u32 expr_cnt header, followed by the flat expression table. Returns
++ * a pointer to the expression table (suitable as bcf_check_proof's
++ * goal_exprs argument) and writes the root slot offset to *root_out.
++ *
++ * Returns -EINVAL on a malformed payload (too short to contain header).
++ */
++static int bundle_entry_goal_table(const void *blob,
++				   const struct bcf_bundle_entry *e,
++				   const struct bcf_expr **table_out,
++				   u32 *root_out)
++{
++	const u32 *p;
++
++	if (e->goal_size < 2 * sizeof(u32))
++		return -EINVAL;
++
++	p = (const u32 *)bcf_bundle_entry_goal(blob, e);
++	*root_out = p[0];
++	/* p[1] is expr_cnt; not needed since bcf_check_proof scans the
++	 * proof's structural shape against the goal table on its own. */
++	*table_out = (const struct bcf_expr *)&p[2];
++	return 0;
++}
++
++/*
++ * Validate every entry's proof against its own goal upfront. Called once
++ * after bcf_bundle_load() succeeds. On any invalid proof, returns -EINVAL
++ * and the load is failed.
++ *
++ * After successful prevalidation, a hash hit during verification implies
++ * the entry's proof is good — we still need to confirm structural
++ * equivalence between the kernel-side goal and the bundle-side goal
++ * (see bcf_bundle_try_discharge), but the proof itself is trusted.
++ */
++int bcf_bundle_prevalidate(struct bpf_verifier_env *env)
++{
++	const struct bcf_bundle_header *hdr;
++	const struct bcf_bundle_entry *entries;
++	u32 i;
++
++	if (!env->bcf.bundle_blob)
++		return 0;
++
++	hdr = env->bcf.bundle_blob;
++	entries = (const struct bcf_bundle_entry *)((const u8 *)hdr +
++						    sizeof(*hdr));
++
++	for (i = 0; i < hdr->entry_cnt; i++) {
++		const struct bcf_bundle_entry *e = &entries[i];
++		const struct bcf_expr *goal_exprs;
++		bpfptr_t proof_ptr;
++		u32 root;
++		int ret;
++
++		ret = bundle_entry_goal_table(env->bcf.bundle_blob, e,
++					      &goal_exprs, &root);
++		if (ret)
++			return ret;
++
++		/* bcf_check_proof wants a bpfptr_t for the proof bytes; ours
++		 * are in kernel memory (the bundle blob), so wrap as kernel. */
++		proof_ptr = KERNEL_BPFPTR((void *)bcf_bundle_entry_proof(
++					env->bcf.bundle_blob, e));
++
++		ret = bcf_check_proof((struct bcf_expr *)goal_exprs, root,
++				      proof_ptr, e->proof_size,
++				      NULL, 0, NULL);
++		if (ret)
++			return ret;
++	}
++	return 0;
++}
++
++/*
++ * At a refinement site, try to discharge env->bcf.refine_cond via the
++ * bundle. Returns 0 if the bundle covers this site (verifier should
++ * skip mark_bcf_requested and continue), -ENOENT on miss / no bundle /
++ * structural mismatch.
++ *
++ * The structural equivalence check (kernel_goal ≡ bundle_goal) is a TODO
++ * — for the prototype we rely on the hash alone. Hash collisions are
++ * possible (64-bit fingerprint, see canonical-hash-spec §6); the lookup
++ * MUST be confirmed by __expr_equiv before this is upstream-ready.
++ */
++int bcf_bundle_try_discharge(struct bpf_verifier_env *env, u32 refine_cond)
++{
++	const struct bcf_bundle_entry *entry;
++	u64 hash;
++	int ret;
++
++	if (!env->bcf.bundle_blob)
++		return -ENOENT;
++
++	ret = bcf_canonical_hash(refine_cond, env->bcf.exprs,
++				 env->bcf.expr_cnt, &hash);
++	if (ret)
++		return ret;
++
++	entry = bcf_bundle_lookup(env, hash);
++	if (!entry)
++		return -ENOENT;
++
++	/* TODO: structural equiv check against entry's goal table here.
++	 * For the prototype we trust the hash match. */
++	return 0;
++}
+diff --git a/kernel/bpf/verifier.c b/kernel/bpf/verifier.c
+index b5eeabd37e00..bb7c8e0b165c 100644
+--- a/kernel/bpf/verifier.c
++++ b/kernel/bpf/verifier.c
+@@ -24516,8 +24516,21 @@ static int bcf_refine(struct bpf_verifier_env *env,
+ 			err = bcf->refine_cond;
+ 	}
+ 
+-	if (!err && (env->bcf.refine_cond >= 0 || env->bcf.path_cond >= 0))
+-		mark_bcf_requested(env);
++	if (!err && (env->bcf.refine_cond >= 0 || env->bcf.path_cond >= 0)) {
++		/*
++		 * Userspace-BCF bundle hook: try to discharge this site's
++		 * refinement obligation from the precomputed bundle. If the
++		 * bundle covers it, skip the request — the verifier already
++		 * has optimistically refined register state from refine_cb,
++		 * so it can continue past this site without further fuss.
++		 */
++		if (env->bcf.bundle_blob &&
++		    bcf_bundle_try_discharge(env, env->bcf.refine_cond) == 0) {
++			/* Discharged. Don't mark_bcf_requested. */
++		} else {
++			mark_bcf_requested(env);
++		}
++	}
+ 
+ 	for (i = 0; i < MAX_BPF_REG; i++)
+ 		regs[i].bcf_expr = -1;
+@@ -25884,6 +25897,12 @@ int bpf_check(struct bpf_prog **prog, union bpf_attr *attr, bpfptr_t uattr, __u3
+ 		ret = bcf_bundle_load(env, bundle, attr->bcf_bundle_size);
+ 		if (ret)
+ 			goto err_free_env;
++		/* Validate every entry's proof upfront. Single-pass means we
++		 * commit to "all good" before the verifier consults the bundle
++		 * at refinement sites. */
++		ret = bcf_bundle_prevalidate(env);
++		if (ret)
++			goto err_free_env;
+ 	}
+ 
+ 	len = (*prog)->len;
+-- 
+2.50.1 (Apple Git-155)
+
