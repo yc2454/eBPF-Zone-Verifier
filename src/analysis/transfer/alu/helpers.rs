@@ -17,9 +17,30 @@ use crate::refinement::symbolic::RegBounds;
 /// `op_u32` / `op_s32`). Mirrors kernel's pattern at verifier.c:16178-16181.
 pub(crate) fn bcf_reg_bounds(state: &State, reg: Reg) -> RegBounds {
     let (smin, smax) = state.domain.get_interval(reg);
-    let (s32_min, s32_max) = state.domain.get_s32_bounds(reg);
-    let (u32_min, u32_max) = state.domain.get_u32_bounds(reg);
+    let (mut s32_min, mut s32_max) = state.domain.get_s32_bounds(reg);
+    let (mut u32_min, mut u32_max) = state.domain.get_u32_bounds(reg);
     let const_val = state.domain.get_fixed_value(reg).map(|v| v as u64);
+    // Tighten the 32-bit bounds from the 64-bit interval when the
+    // abstract domain hasn't propagated them itself (Zone mode doesn't
+    // always sync s32/u32 fields for pointer regs). The kernel's
+    // bcf_reg_expr cares about fit_u32/fit_s32 to choose 32- vs 64-bit
+    // BCF ops; failing to tighten here forces us into 64-bit ops even
+    // when the value provably fits, which causes structural divergence
+    // from the kernel's DAG.
+    if (s32_min, s32_max) == (i32::MIN, i32::MAX)
+        && smin >= i32::MIN as i64
+        && smax <= i32::MAX as i64
+    {
+        s32_min = smin as i32;
+        s32_max = smax as i32;
+    }
+    if (u32_min, u32_max) == (0, u32::MAX)
+        && smin >= 0
+        && smax <= u32::MAX as i64
+    {
+        u32_min = smin as u32;
+        u32_max = smax as u32;
+    }
     RegBounds {
         const_val,
         smin,

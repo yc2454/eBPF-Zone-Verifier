@@ -121,20 +121,33 @@ pub(crate) fn handle_add(
     let dst_bounds_post = bcf_reg_bounds(state, dst);
     if let Some(d) = dst.bcf_idx() {
         if let Some(bcf) = state.bcf.as_mut() {
-            // Note: ptr+imm currently NOT skipped — refine_stack.rs walks
-            // the embedded const-add chain to extract the offset. Step 5
-            // (kernel-shape refine_cond formulation) will let us drop the
-            // ptr+imm BCF update entirely.
-            let skip = src_is_ptr;
+            // **Pointer + immediate is skipped** — kernel handles `ptr += K`
+            // by accumulating K into the pointer reg's `off` bookkeeping
+            // field (verifier.c:15296-15308), leaving `bcf_expr` alone.
+            // refine_stack.rs / refine_map.rs reconstruct the const offset
+            // from the abstract-domain distance interval.
+            let skip_ptr_imm = dst_is_ptr_post && matches!(src, Operand::Imm(_));
+            let skip = src_is_ptr || skip_ptr_imm;
             if skip {
                 if !dst_is_ptr_post {
                     bcf.clear_reg(d);
                 }
+                // Pointer + imm: leave dst.bcf_expr at its current value
+                // (the variable contributor only).
             } else {
                 let op_u32 = dst_bounds_post.fit_u32();
                 let op_s32 = dst_bounds_post.fit_s32();
                 let alu32_class = width == Width::W32;
-                let alu32 = alu32_class || op_u32 || op_s32;
+                // **Pointer ALU forces 64-bit BCF ops.** Kernel calls
+                // `__mark_reg32_unbounded(dst_reg)` for ptr arithmetic
+                // (verifier.c:15282), which makes fit_u32/fit_s32 false
+                // and forces `bcf_alu` into its 64-bit arm. We mirror
+                // that by short-circuiting `alu32` here.
+                let alu32 = if dst_is_ptr_post {
+                    false
+                } else {
+                    alu32_class || op_u32 || op_s32
+                };
                 let bits: u16 = if alu32 { 32 } else { 64 };
 
                 let dst_expr = bcf.reg_expr(d, &dst_bounds_pre, alu32);
@@ -154,7 +167,10 @@ pub(crate) fn handle_add(
                 };
                 let alu_result =
                     bcf.add_alu(crate::refinement::bcf::BPF_ADD, dst_expr, rhs_expr, bits);
-                let final_idx = if alu32 || op_u32 {
+                // Force-64 path (ptr arithmetic) skips extension entirely.
+                let final_idx = if dst_is_ptr_post {
+                    alu_result
+                } else if alu32 || op_u32 {
                     bcf.add_extend(false, 32, 64, alu_result)
                 } else if op_s32 {
                     bcf.add_extend(true, 32, 64, alu_result)

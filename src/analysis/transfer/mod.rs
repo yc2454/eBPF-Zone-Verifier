@@ -3,7 +3,7 @@
 // Transfer function for BPF instruction abstract interpretation.
 // This module dispatches to specialized handlers for each instruction type.
 
-mod alu;
+pub(crate) mod alu;
 mod branch;
 pub(crate) mod call;
 mod common;

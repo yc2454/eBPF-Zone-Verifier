@@ -142,7 +142,78 @@ fn encode(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::refinement::bcf::{BCF_BOOL, BPF_ADD, BPF_MUL};
+    use crate::refinement::bcf::{
+        BCF_BOOL, BCF_CONJ, BCF_EXTRACT, BCF_ZERO_EXTEND, BPF_ADD, BPF_AND, BPF_JLE, BPF_JSGT,
+        BPF_MUL, BPF_RSH,
+    };
+
+    /// Regression test: byte-for-byte the kernel-side canonical_hash agrees
+    /// with zovia's on the shift_constraint goal layout. Locks the hash to
+    /// the value the kernel produced after the slot_map fix
+    /// (kernel/bpf/canonical_hash.c, see also feedback_kernel_canonical_hash_layout.md).
+    /// If either impl changes its encoding, this asserts loudly before the
+    /// next end-to-end test would silently miss the bundle entry.
+    #[test]
+    fn shift_constraint_kernel_layout_hash() {
+        // Replicate kernel's expression table per kexpr[] dump from VM
+        // run on 2026-05-13 (see feedback_kernel_vs_zovia_divergence.md).
+        let mut e: Vec<BcfExpr> = Vec::new();
+        let mut slot: u32 = 0;
+        let mut push = |exprs: &mut Vec<BcfExpr>, slot: &mut u32, expr: BcfExpr| -> u32 {
+            let s = *slot;
+            *slot += 1 + expr.args.len() as u32;
+            exprs.push(expr);
+            s
+        };
+        // [0] VAR_64
+        let s0 = push(&mut e, &mut slot, BcfExpr { code: BCF_VAR | BCF_BV, params: 0x40, args: vec![] });
+        // [1] EXTRACT_32(s0), params=0x1f00
+        let s1 = push(&mut e, &mut slot, BcfExpr { code: BCF_EXTRACT | BCF_BV, params: 0x1f00, args: vec![s0] });
+        // [3] ZEXT(s1) params=0x2040
+        let _s3 = push(&mut e, &mut slot, BcfExpr { code: BCF_ZERO_EXTEND | BCF_BV, params: 0x2040, args: vec![s1] });
+        // [5] VAL_64(0xff)  args=[0xff, 0] — unused in goal subtree but present in kernel table
+        let _s5 = push(&mut e, &mut slot, BcfExpr { code: BCF_VAL | BCF_BV, params: 0x40, args: vec![0xff, 0] });
+        // [8] VAL_32(0xff) args=[0xff], params=0x20
+        let s8 = push(&mut e, &mut slot, BcfExpr { code: BCF_VAL | BCF_BV, params: 0x20, args: vec![0xff] });
+        // [10] AND_32(s1, s8), params=0x20
+        let s10 = push(&mut e, &mut slot, BcfExpr { code: BPF_AND | BCF_BV, params: 0x20, args: vec![s1, s8] });
+        // [13] ZEXT(s10) params=0x2040
+        let s13 = push(&mut e, &mut slot, BcfExpr { code: BCF_ZERO_EXTEND | BCF_BV, params: 0x2040, args: vec![s10] });
+        // [15] VAL_64(0)
+        let s15 = push(&mut e, &mut slot, BcfExpr { code: BCF_VAL | BCF_BV, params: 0x40, args: vec![0, 0] });
+        // [18] ADD_64(s15, s13), params=0x40 — r2's bcf_expr
+        let s18 = push(&mut e, &mut slot, BcfExpr { code: BPF_ADD | BCF_BV, params: 0x40, args: vec![s15, s13] });
+        // [21] VAL_64(1) — present in kernel but unused in goal subtree
+        let _s21 = push(&mut e, &mut slot, BcfExpr { code: BCF_VAL | BCF_BV, params: 0x40, args: vec![1, 0] });
+        // [24] VAL_32(1)
+        let s24 = push(&mut e, &mut slot, BcfExpr { code: BCF_VAL | BCF_BV, params: 0x20, args: vec![1] });
+        // [26] RSH_32(s10, s24)
+        let s26 = push(&mut e, &mut slot, BcfExpr { code: BPF_RSH | BCF_BV, params: 0x20, args: vec![s10, s24] });
+        // [29] ZEXT(s26) params=0x2040
+        let s29 = push(&mut e, &mut slot, BcfExpr { code: BCF_ZERO_EXTEND | BCF_BV, params: 0x2040, args: vec![s26] });
+        // [31] VAL_64(4)
+        let s31 = push(&mut e, &mut slot, BcfExpr { code: BCF_VAL | BCF_BV, params: 0x40, args: vec![4, 0] });
+        // [34] ule(s29, s31) — path_cond
+        let s34 = push(&mut e, &mut slot, BcfExpr { code: BPF_JLE | BCF_BOOL, params: 0, args: vec![s29, s31] });
+        // [37] EXTRACT_32(s18) params=0x1f00
+        let s37 = push(&mut e, &mut slot, BcfExpr { code: BCF_EXTRACT | BCF_BV, params: 0x1f00, args: vec![s18] });
+        // [39] VAL_32(15)
+        let s39 = push(&mut e, &mut slot, BcfExpr { code: BCF_VAL | BCF_BV, params: 0x20, args: vec![15] });
+        // [41] sgt(s37, s39) — refine_cond
+        let s41 = push(&mut e, &mut slot, BcfExpr { code: BPF_JSGT | BCF_BOOL, params: 0, args: vec![s37, s39] });
+        // [44] CONJ(s34, s41) — goal_root
+        let s44 = push(&mut e, &mut slot, BcfExpr { code: BCF_CONJ | BCF_BOOL, params: 0, args: vec![s34, s41] });
+
+        let h = hash_expr(s44, &e);
+        // The kernel emits the same 140 encoded bytes for this layout
+        // after the slot_map fix (see kernel/bpf/canonical_hash.c). Lock
+        // the hash here so future encoding changes break loudly on either
+        // side.
+        assert_eq!(
+            h, 0x53bad2296570f686,
+            "canonical_hash on shift_constraint kernel layout regressed"
+        );
+    }
 
     // ---- helpers ----
     //
