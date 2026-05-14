@@ -791,22 +791,39 @@ pub(super) fn apply_return_bounds(state: &mut State, helper: u32) {
     state.domain.forget(Reg::R0);
     state.set_tnum(Reg::R0, Tnum::unknown());
     // Pre-materialize R0's BCF cache with **kernel-view** bounds
-    // (unbounded scalar) before the return-type narrowing below applies
-    // zovia-only precision (e.g. BPF_GET_PRANDOM_U32 → [0, u32::MAX]).
-    // The kernel verifier prints `R0=scalar()` post-call — no DBM range,
-    // so its `bcf_reg_expr` caches R0 as `VAR_64`. If we let
-    // `bcf_reg_bounds` see zovia's tighter range, the next ALU op
-    // would cache R0 as `ZEXT(VAR_32)` instead, and the runtime CONJ
-    // would diverge structurally from the kernel's (no `EXTRACT_32(VAR_64)`
-    // node). The bcf_expr clear at transfer_call's top has already
-    // wiped the slot, so reg_expr will run materialize_reg fresh.
-    if let Some(bcf) = state.bcf.as_mut() {
-        if let Some(d) = Reg::R0.bcf_idx() {
-            let _ = bcf.reg_expr(
-                d,
-                &crate::refinement::symbolic::RegBounds::unknown(),
-                false,
-            );
+    // (unbounded scalar) — ONLY when zovia's domain would narrow R0
+    // tighter than the kernel's `do_refine_retval_range`. The kernel's
+    // helper proto dictates which helpers narrow R0; for helpers
+    // whose proto returns an unbounded scalar (e.g.
+    // `bpf_get_prandom_u32` / `bpf_get_smp_processor_id`), the kernel's
+    // `bcf_reg_expr` caches R0 as `VAR_64`. zovia's `apply_return_bounds`
+    // below tightens R0 to `[0, u32::MAX]` for those (zovia-only
+    // precision), which would otherwise drive `materialize_reg` into
+    // the `fit_u32` branch and cache R0 as `ZEXT(VAR_32)` — diverging
+    // from the kernel's runtime CONJ. Pre-caching with unknown bounds
+    // forces VAR_64 to match.
+    //
+    // For helpers where the kernel ALSO narrows (the `do_refine_retval_range`
+    // set — error-return helpers, `bpf_probe_read_str` family, etc.),
+    // zovia and the kernel agree on bounds. Skipping the pre-cache here
+    // lets `materialize_reg` fire lazily with the narrowed bounds, which
+    // matches the kernel's `bcf_reg_expr` choice of SEXT(VAR_32) +
+    // `bcf_bound_reg` preds at the first symbolic use.
+    let zovia_narrower_than_kernel = matches!(
+        helper,
+        constants::BPF_GET_PRANDOM_U32
+            | constants::BPF_GET_CGROUP_CLASS_ID
+            | constants::BPF_GET_HASH_RECALC
+    );
+    if zovia_narrower_than_kernel {
+        if let Some(bcf) = state.bcf.as_mut() {
+            if let Some(d) = Reg::R0.bcf_idx() {
+                let _ = bcf.reg_expr(
+                    d,
+                    &crate::refinement::symbolic::RegBounds::unknown(),
+                    false,
+                );
+            }
         }
     }
     // NOTE: the BCF R0 bcf_expr clear was moved to the top of
