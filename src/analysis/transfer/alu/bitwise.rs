@@ -8,6 +8,24 @@ use crate::refinement::bcf::BPF_AND;
 
 use super::helpers::{bcf_reg_bounds, sync_tnum_to_dbm};
 
+// BCF symbolic mirror for `mov32 dst, src` (W32 Reg→Reg). Mirrors kernel
+// `bcf_alu` (verifier.c:15139)'s mov32 shape: reads src in 32-bit form,
+// wraps with ZEXT to 64 for the cached form. Without this hook,
+// downstream ALU ops (handle_arsh, handle_and, ...) materialize a fresh
+// VAR for dst from its current abstract bounds instead of chaining
+// through the kernel's `ZEXT(EXTRACT_LO_32(...))` shape, and the
+// canonical hash of any later path_cond involving dst diverges from
+// the kernel's runtime hash.
+fn emit_bcf_mov_w32_reg(state: &mut State, dst: Reg, src: Reg) {
+    let (Some(d), Some(s)) = (dst.bcf_idx(), src.bcf_idx()) else { return };
+    let src_bounds = bcf_reg_bounds(state, src);
+    if let Some(bcf) = state.bcf.as_mut() {
+        let src_expr32 = bcf.reg_expr(s, &src_bounds, true);
+        let final_idx = bcf.add_extend(false, 32, 64, src_expr32);
+        bcf.bind_reg(d, final_idx);
+    }
+}
+
 pub(crate) fn handle_mov(state: &mut State, width: Width, dst: Reg, src: &Operand) {
     match src {
         Operand::Imm(c) => {
@@ -25,6 +43,24 @@ pub(crate) fn handle_mov(state: &mut State, width: Width, dst: Reg, src: &Operan
                 state.get_tnum(*r)
             };
             state.set_tnum(dst, t);
+            // BCF symbolic mirror — W32 mov needs to chain ZEXT(EXTRACT_LO_32(src))
+            // for downstream ALU/branch ops to see the kernel-shape expression.
+            // W64 mov shares src's full cached expr (handled by the catch-all
+            // below via ptr_const_off propagation pathways; for scalars the
+            // tnum is already copied).
+            if width == Width::W32 && dst != *r {
+                emit_bcf_mov_w32_reg(state, dst, *r);
+            } else if width == Width::W64 && dst != *r {
+                // W64 mov: dst.cache = src.cache. Pull src's cached 64-bit
+                // expr and bind it to dst so the chain stays intact.
+                if let (Some(d), Some(s)) = (dst.bcf_idx(), r.bcf_idx()) {
+                    let src_bounds = bcf_reg_bounds(state, *r);
+                    if let Some(bcf) = state.bcf.as_mut() {
+                        let src_expr = bcf.reg_expr(s, &src_bounds, false);
+                        bcf.bind_reg(d, src_expr);
+                    }
+                }
+            }
         }
     }
 

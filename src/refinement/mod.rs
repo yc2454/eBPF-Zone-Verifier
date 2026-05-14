@@ -13,6 +13,7 @@ pub mod bundle;
 pub mod canonical_hash;
 pub mod refine_map;
 pub mod refine_stack;
+pub mod refine_unreachable;
 pub mod smtlib;
 pub mod solver;
 pub mod symbolic;

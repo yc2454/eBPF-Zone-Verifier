@@ -279,6 +279,14 @@ pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operan
 }
 
 pub(crate) fn handle_arsh(state: &mut State, width: Width, dst: Reg, src: &Operand) {
+    // Pre-op BCF bounds snapshot — same convention as handle_shr above.
+    // BCF emission at bottom of the Imm-src branch chains the kernel-shape
+    // `ARSH_32(reg_expr32, shift_amount)` + ZEXT to 64 onto dst's cache.
+    // Without this hook, programs like `unreachable_arsh.bpf.o` produce
+    // path_conds with a freshly-materialized VAR for dst instead of the
+    // kernel's ARSH chain, and the canonical hash diverges.
+    let dst_bounds_pre_bcf = bcf_reg_bounds(state, dst);
+
     match src {
         Operand::Imm(k) => {
             let k = *k as u32;
@@ -399,6 +407,49 @@ pub(crate) fn handle_arsh(state: &mut State, width: Width, dst: Reg, src: &Opera
 
             state.set_tnum(dst, Tnum::unknown());
             sync_tnum_to_dbm(state, dst);
+        }
+    }
+
+    // --- BCF symbolic mirror for ARSH-imm. Mirrors kernel `bcf_alu`
+    //     (verifier.c:15139) with the kernel-shape width discipline:
+    //     for W32 ARSH (or W64 ARSH where dst fits in u32/s32), emits
+    //     `ARSH_32(reg_expr32, shift_amount)` and wraps the result with
+    //     ZEXT (or SEXT for s32) to 64 for the cached form. Reg-source
+    //     ARSH stays conservative (clear) for now. ---
+    if let (Some(d), Operand::Imm(k)) = (dst.bcf_idx(), src) {
+        if let Some(bcf) = state.bcf.as_mut() {
+            let shift_amount = if width == Width::W32 {
+                (*k as u32) & 0x1F
+            } else {
+                (*k as u32) & 0x3F
+            };
+            let op_u32 = dst_bounds_pre_bcf.fit_u32();
+            let op_s32 = dst_bounds_pre_bcf.fit_s32();
+            let alu32_class = width == Width::W32;
+            let alu32 = alu32_class || op_u32 || op_s32;
+            let bits: u16 = if alu32 { 32 } else { 64 };
+
+            let dst_expr = bcf.reg_expr(d, &dst_bounds_pre_bcf, alu32);
+            let k_expr = bcf.add_val(shift_amount as u64, alu32);
+            let alu_result = bcf.add_alu(
+                crate::refinement::bcf::BPF_ARSH,
+                dst_expr,
+                k_expr,
+                bits,
+            );
+
+            let final_idx = if alu32 || op_u32 {
+                bcf.add_extend(false, 32, 64, alu_result)
+            } else if op_s32 {
+                bcf.add_extend(true, 32, 64, alu_result)
+            } else {
+                alu_result
+            };
+            bcf.bind_reg(d, final_idx);
+        }
+    } else if let Some(d) = dst.bcf_idx() {
+        if let Some(bcf) = state.bcf.as_mut() {
+            bcf.clear_reg(d);
         }
     }
 }

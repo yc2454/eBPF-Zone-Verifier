@@ -254,8 +254,25 @@ pub(crate) fn transfer_if(
 
     // Check for statically determined branches
     if let Some(outcome) = condition_outcome(&state, width, left, op, &right) {
+        // The dead side is unreachable in zovia's view. If the kernel
+        // would explore that side and reject (e.g. unreachable_arsh's
+        // PC 5: zovia statically rules out "w1 == 0xffffff78" but the
+        // kernel's tnum loses precision on the ARSH+AND chain and
+        // still explores it, hitting R2 !read_ok at PC 6), speculate
+        // by attempting cvc5 unsat of the dead side's path_cond and
+        // emitting a kind=UNREACHABLE bundle entry. This is the
+        // matching half of kernel commit 39f5104ed029
+        // (bcf_bundle_try_discharge's refine_cond=-1 → path_cond
+        // fallback).
+        // Pre-compute backward_jump check (uses env immutably via closure)
+        // before the speculation call (uses env mutably).
+        let then_backward_forbidden = outcome && backward_jump_forbidden(&state_then);
+        // Drop the closure before mutably borrowing env.
+        drop(backward_jump_forbidden);
+        let dead_state = if outcome { &state_else } else { &state_then };
+        try_emit_path_unreachable_entry(env, dead_state);
         return if outcome {
-            if backward_jump_forbidden(&state_then) {
+            if then_backward_forbidden {
                 env.fail(VerificationError::BackEdge {
                     pc: state.pc,
                     target,
@@ -277,17 +294,71 @@ pub(crate) fn transfer_if(
         return vec![];
     }
 
+    // Speculatively emit a path-unreachable BCF bundle entry for any
+    // branch state that zovia's abstract domain proves infeasible but
+    // the kernel would explore (typically because the kernel's tnum
+    // tracking loses precision across the ALU chain — see
+    // `unreachable_arsh` for the ARSH+AND example). The kernel
+    // ultimately rejects the dead path via `bcf_prove_unreachable` and
+    // attempts a bundle discharge keyed on the path_cond's canonical
+    // hash (verifier.c:24561 → bcf_bundle_try_discharge → path_cond
+    // fallback, commit 39f5104ed029). If cvc5 can prove our path_cond
+    // unsat, the resulting kind=UNREACHABLE entry will match the
+    // kernel's hash and the kernel discharge succeeds.
+    if state_else.domain.is_inconsistent() {
+        warn!("Else branch is inconsistent");
+        try_emit_path_unreachable_entry(env, &state_else);
+    }
+    if state_then.domain.is_inconsistent() {
+        warn!("Then branch is inconsistent");
+        try_emit_path_unreachable_entry(env, &state_then);
+    }
+
     // Return only consistent states
     let mut out = Vec::new();
     if !state_else.domain.is_inconsistent() {
         out.push(state_else);
-    } else {
-        warn!("Else branch is inconsistent")
     }
     if !state_then.domain.is_inconsistent() {
         out.push(state_then);
-    } else {
-        warn!("Then branch is inconsistent")
     }
     out
+}
+
+/// Attempt path-unreachable speculation on an infeasible-by-zovia branch
+/// state and push the resulting bundle entry on success. Mirrors the
+/// pattern in `try_bcf_refine_stack` / `try_bcf_refine_map` but uses
+/// `kind=BCF_BUNDLE_KIND_UNREACHABLE`.
+fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &State) {
+    use crate::refinement::bundle::{RefineEntry, BCF_BUNDLE_KIND_UNREACHABLE};
+    use crate::refinement::refine_unreachable::try_prove_unreachable;
+    use log::info;
+
+    if state.bcf.is_none() {
+        return;
+    }
+    let Some(ok) = try_prove_unreachable(state, None) else {
+        return;
+    };
+    let entry = RefineEntry::new(
+        ok.goal_root,
+        ok.sym.exprs,
+        ok.proof_bytes,
+        BCF_BUNDLE_KIND_UNREACHABLE,
+    );
+    info!(
+        target: "app",
+        "[bcf] path-unreachable speculation: cvc5 proof {} bytes (hash {:016x})",
+        entry.proof_bytes.len(),
+        entry.cond_hash
+    );
+    if let Ok(prefix) = std::env::var("ZOVIA_BCF_DUMP_PROOF") {
+        let idx = env.bcf_proofs.len();
+        let path = format!("{}.{}.bcf", prefix, idx);
+        match std::fs::write(&path, &entry.proof_bytes) {
+            Ok(_) => info!(target: "app", "[bcf] dumped raw proof to {}", path),
+            Err(e) => log::warn!(target: "app", "[bcf] proof dump to {} failed: {}", path, e),
+        }
+    }
+    env.bcf_proofs.push(entry);
 }
