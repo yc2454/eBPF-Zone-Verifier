@@ -28,6 +28,30 @@ pub(crate) fn handle_mov(state: &mut State, width: Width, dst: Reg, src: &Operan
         }
     }
 
+    // Carry the kernel's `ptr_reg->off` (`ptr_const_off`) across a
+    // pointer-to-pointer mov. The `transfer_alu` catch-all already
+    // cleared `ptr_const_off[dst]` (mov isn't Add/Sub on a pointer);
+    // re-insert here when the source is a pointer-typed register so the
+    // copy carries the offset. W32 mov truncates to low 32 bits — if
+    // the source is a pointer, treat it the same as W64 (the kernel
+    // does W64 type-preservation for ptr-mov; W32 ptr-to-scalar
+    // demotion happens later in update_alu_types). `mov dst, R10` has
+    // no `ptr_const_off` entry for R10; that means K_dst = 0 (fresh
+    // anchor at r10), which matches the kernel's initialization.
+    if let Operand::Reg(r) = src {
+        if state.types.get(*r).is_pointer() && dst != *r {
+            match state.ptr_const_off.get(r).copied() {
+                Some(k) => {
+                    state.ptr_const_off.insert(dst, k);
+                }
+                None => {
+                    // R10 (or other fresh anchor): K starts at 0.
+                    state.ptr_const_off.insert(dst, 0);
+                }
+            }
+        }
+    }
+
     match src {
         Operand::Reg(r) => {
             if width == Width::W32 {

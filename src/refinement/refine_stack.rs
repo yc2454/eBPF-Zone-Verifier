@@ -5,19 +5,13 @@
 //! rejection paths (known-offset and unknown-offset). On Unsat from cvc5,
 //! returns the BCF proof bytes — the caller suppresses the rejection.
 //!
-//! Two strategies, tried in order:
-//!
-//! 1. **Direct symbolic offset** (β+, 2026-05-12). When the base pointer
-//!    itself has a symbolic expression (built by the unified ptr/scalar
-//!    hooks in `handle_add`/`handle_sub`/`handle_mov` with R10 anchored at
-//!    const(0)), the offset-from-r10 is already in the DAG — read it
-//!    straight out. Handles multi-contributor cases (e.g.
-//!    `r1 += r0; r1 += r2`) that the older single-contributor path can't.
-//! 2. **Single-contributor reconstruction** (Phase 1 fallback). When the
-//!    direct expression isn't available, reconstruct `off = K + contrib`
-//!    where K is the constant displacement (`distance.lo - contributor.lo`)
-//!    and `contrib` is the scalar from `state.var_off_contributor`. Bails
-//!    if K is non-constant (multi-contributor) or intervals are unbounded.
+//! Reads the variable part of the offset directly from `bcf_expr` and the
+//! constant part `K` from `state.ptr_const_off` (kernel `ptr_reg->off`,
+//! verifier.c:14383-14471). Builds the kernel-shape refine_cond
+//! `JSGT(var_off_expr, higher_bound - sz - (insn_off + K))` and asks
+//! cvc5 to prove it unsatisfiable under the accumulated path conditions.
+//! Multi-variable-contributor chains (`r1 += r0; r1 += r2`) work because
+//! K is tracked explicitly, not reconstructed from interval algebra.
 
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
@@ -56,38 +50,13 @@ pub fn try_refine_stack_oob(
     let b_idx = base.bcf_idx()?;
     let var_off_expr = sym.get_reg(b_idx)?;
 
-    // Step 2: compute the constant offset K from r10 to base via the
-    // abstract domain (distance interval minus variable contribution).
-    // Mirrors the kernel's `ptr_reg->off` bookkeeping. For programs with
-    // a single variable contributor, K = distance.lo - contributor.lo.
-    let const_off = match state.var_off_contributor.get(&base).copied() {
-        Some(contributor) => {
-            let (d_lo, d_hi) = state.domain.get_distance_interval(base, Reg::R10);
-            let (c_lo, c_hi) = state.domain.get_interval(contributor);
-            if d_lo == i64::MIN || d_hi == i64::MAX || c_lo == i64::MIN || c_hi == i64::MAX {
-                debug!(
-                    "[bcf] stack-refine skipped: unbounded interval (d=[{},{}], c=[{},{}])",
-                    d_lo, d_hi, c_lo, c_hi
-                );
-                return None;
-            }
-            let k_lo = d_lo.saturating_sub(c_lo);
-            let k_hi = d_hi.saturating_sub(c_hi);
-            if k_lo != k_hi {
-                debug!(
-                    "[bcf] stack-refine skipped: K not constant (k_lo={}, k_hi={})",
-                    k_lo, k_hi
-                );
-                return None;
-            }
-            k_lo
-        }
-        None => {
-            // No recorded contributor — assume zero const offset. Sound
-            // when base = r10 directly (no `+= K` between mov and access).
-            0
-        }
-    };
+    // Step 2: read the constant offset K straight out of `ptr_const_off`,
+    // which mirrors the kernel's `ptr_reg->off` (verifier.c:14383-14471).
+    // Defaults to 0 — sound when `base = r10` (no `+= K` since mov), and
+    // also when the entry was lost across a non-managed op (in which case
+    // the K=0 assumption is the same one the abstract domain made when
+    // it forgot, so an out-of-band rejection would have triggered first).
+    let const_off = state.ptr_const_off.get(&base).copied().unwrap_or(0);
 
     // Step 3: build refine_cond per kernel `__bcf_refine_access_bound`
     // (verifier.c:5291). For stack accesses, `size` is always known

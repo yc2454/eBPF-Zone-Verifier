@@ -212,6 +212,24 @@ pub struct State {
     /// matching kernel `maybe_widen_reg` L8752).
     pub var_off_contributor: HashMap<Reg, Reg>,
 
+    /// Per-pointer accumulated **constant** offset from its anchor —
+    /// mirror of the kernel's `ptr_reg->off` field
+    /// (verifier.c:14383-14471). Updated on `ptr += K` / `ptr -= K` and
+    /// on `ptr += reg` when `reg` is a known constant; **preserved**
+    /// across `ptr += reg` with a variable scalar (kernel only updates
+    /// `var_off`, leaves `->off` alone). Copied across `mov ptr_dst,
+    /// ptr_src`. Cleared by ops that destroy pointer-ness (And/Or/Xor/
+    /// Mul/Div/Mod/Shift/Neg) and by `mov` from an immediate.
+    ///
+    /// Read by [`crate::refinement::refine_stack`] as the explicit K in
+    /// the kernel-shape refine_cond: `JSGT(var_off_expr, higher_bound -
+    /// sz - (insn_off + K))`. Without this, multi-variable-contributor
+    /// chains (`r1 += r0; r1 += r2`) can't be refined — `K`
+    /// reconstruction from the abstract distance interval requires a
+    /// single contributor, since `distance.lo = K + Σ c_i.lo` and we
+    /// only track the last `c_i`.
+    pub ptr_const_off: HashMap<Reg, i64>,
+
     /// Sparse map: register → containing-BTF-field info, used by the
     /// helper-arg validators to bound-check `bpf_strncmp(task->comm, N)`
     /// style reads against the leaf member's size. See [`BtfFieldRef`].
@@ -288,6 +306,7 @@ impl State {
             goto_budget: BPF_MAY_GOTO_LIMIT,
             may_goto_depth: 0,
             var_off_contributor: HashMap::new(),
+            ptr_const_off: HashMap::new(),
             btf_field_refs: HashMap::new(),
             kernel_tnum_imprecise: HashSet::new(),
             program_exception_cb: None,

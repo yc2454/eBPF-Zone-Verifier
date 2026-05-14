@@ -21,6 +21,16 @@ pub(crate) fn handle_add(
     match src {
         Operand::Imm(c) => {
             state.domain.apply_add_imm(dst, *c);
+            // Mirror kernel `ptr_reg->off += smin_val` (verifier.c:14391)
+            // for the `ptr += K` const-shift case. Only meaningful when
+            // dst is currently a pointer; otherwise the entry was already
+            // cleared in transfer_alu's catch-all.
+            if in_types.get(dst).is_pointer() {
+                let prior = state.ptr_const_off.get(&dst).copied().unwrap_or(0);
+                state
+                    .ptr_const_off
+                    .insert(dst, prior.wrapping_add(*c as i64));
+            }
         }
         Operand::Reg(r) => {
             let src_is_ptr = in_types.get(*r).is_pointer();
@@ -40,7 +50,16 @@ pub(crate) fn handle_add(
                 state.var_off_contributor.insert(dst, *r);
 
                 let (lo, hi) = state.domain.get_interval(*r);
+                // Kernel `ptr_reg->off`: if the scalar is a known
+                // constant accumulate it into K (verifier.c:14383-14393);
+                // otherwise it's the variable-add case and K is preserved
+                // as-is (verifier.c:14414-14415). The catch-all in
+                // `transfer_alu` already preserved `ptr_const_off[dst]`
+                // for Add-on-pointer, so the variable-add branch needs no
+                // explicit update.
                 if lo == hi && lo != i64::MIN && lo != i64::MAX {
+                    let prior = state.ptr_const_off.get(&dst).copied().unwrap_or(0);
+                    state.ptr_const_off.insert(dst, prior.wrapping_add(lo));
                     // Known constant: shift all relations exactly
                     state.domain.apply_add_imm(dst, lo);
                 } else {
@@ -221,6 +240,14 @@ pub(crate) fn handle_sub(
     match src {
         Operand::Imm(c) => {
             state.domain.apply_add_imm(dst, -c);
+            // Mirror kernel `ptr_reg->off -= smin_val` (verifier.c:14448)
+            // for the `ptr -= K` const-shift case.
+            if in_types.get(dst).is_pointer() {
+                let prior = state.ptr_const_off.get(&dst).copied().unwrap_or(0);
+                state
+                    .ptr_const_off
+                    .insert(dst, prior.wrapping_sub(*c as i64));
+            }
         }
         Operand::Reg(r) => {
             let dst_type = in_types.get(dst);
@@ -234,7 +261,14 @@ pub(crate) fn handle_sub(
 
                 if const_value.is_some() {
                     // Scalar is a known constant: exact relational shift
-                    state.domain.apply_add_imm(dst, -const_value.unwrap());
+                    let c = const_value.unwrap();
+                    state.domain.apply_add_imm(dst, -c);
+                    // Mirror `ptr_reg->off -= smin_val` for const-reg case
+                    // (verifier.c:14439-14450). Variable-scalar case: K is
+                    // preserved by the transfer_alu catch-all and we add
+                    // nothing here.
+                    let prior = state.ptr_const_off.get(&dst).copied().unwrap_or(0);
+                    state.ptr_const_off.insert(dst, prior.wrapping_sub(c));
                 } else {
                     // Bounded but not constant: fall back to interval
                     state.domain.apply_sub_reg(dst, *r);
