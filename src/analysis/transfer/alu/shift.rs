@@ -128,6 +128,15 @@ pub(crate) fn handle_shr(state: &mut State, width: Width, dst: Reg, src: &Operan
 }
 
 pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operand) {
+    // Snapshot dst's BCF bounds before the abstract op runs. The kernel
+    // (verifier.c:16096 + 16179) computes op_u32/op_s32 as the AND of
+    // pre- and post-op fit_*, because LSH can widen a u32-bounded value
+    // out of u32 range (e.g. `r3 <<= 32` for r3 ∈ [5, 4095] yields
+    // r3 ∈ [5<<32, 4095<<32] which no longer fits u32). Capture pre-op
+    // bounds here; we'll snapshot post-op bounds after the domain
+    // update.
+    let dst_bounds_pre = bcf_reg_bounds(state, dst);
+
     match src {
         Operand::Imm(k) => {
             let k = *k as u32;
@@ -216,6 +225,55 @@ pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operan
             }
 
             sync_tnum_to_dbm(state, dst);
+        }
+    }
+
+    // --- BCF symbolic mirror. Mirrors kernel `bcf_alu` (verifier.c:15139)
+    //     with the kernel's pre+post fit_* width-discipline for shifts
+    //     (verifier.c:16096 + 16179). For W64 SHL where the dst was bounded
+    //     within u32 pre-op but pushed beyond u32 post-op (e.g. the
+    //     `r3 <<= 32; r3 >>= 32` clang `(u32)x` idiom), op_u32 ends up
+    //     false → 64-bit SHL — which is what cvc5's QF_BV rewriter
+    //     recognizes as `(bvlshr (bvshl X N) N)` and folds via a
+    //     fast-path rule, sidestepping the SAT bit-blast that otherwise
+    //     produces a wide FACTORING step exceeding BCF's u8 clause-width.
+    if let (Some(d), Operand::Imm(k)) = (dst.bcf_idx(), src) {
+        // Snapshot post-op bounds before borrowing state.bcf mutably —
+        // the kernel uses these to override op_u32/op_s32 when LSH
+        // widens the value out of u32 range.
+        let dst_bounds_post = bcf_reg_bounds(state, dst);
+        if let Some(bcf) = state.bcf.as_mut() {
+            let shift_amount = if width == Width::W32 {
+                (*k as u32) & 0x1F
+            } else {
+                (*k as u32) & 0x3F
+            };
+            // Kernel `op_u32 = fit_u32(dst_pre) && fit_u32(src); ...
+            // op_u32 &= fit_u32(dst_post)` — the source operand is an
+            // immediate-from-fake_reg constant, which trivially fits.
+            let op_u32 = dst_bounds_pre.fit_u32() && dst_bounds_post.fit_u32();
+            let op_s32 = dst_bounds_pre.fit_s32() && dst_bounds_post.fit_s32();
+            let alu32_class = width == Width::W32;
+            let alu32 = alu32_class || op_u32 || op_s32;
+            let bits: u16 = if alu32 { 32 } else { 64 };
+
+            let dst_expr = bcf.reg_expr(d, &dst_bounds_pre, alu32);
+            let k_expr = bcf.add_val(shift_amount as u64, alu32);
+            let alu_result =
+                bcf.add_alu(crate::refinement::bcf::BPF_LSH, dst_expr, k_expr, bits);
+
+            let final_idx = if alu32 || op_u32 {
+                bcf.add_extend(false, 32, 64, alu_result)
+            } else if op_s32 {
+                bcf.add_extend(true, 32, 64, alu_result)
+            } else {
+                alu_result
+            };
+            bcf.bind_reg(d, final_idx);
+        }
+    } else if let Some(d) = dst.bcf_idx() {
+        if let Some(bcf) = state.bcf.as_mut() {
+            bcf.clear_reg(d);
         }
     }
 }
