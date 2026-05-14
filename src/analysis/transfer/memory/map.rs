@@ -414,8 +414,21 @@ fn try_bcf_refine_map(
         return false;
     }
     let size_reg = env.bcf_size_reg;
+    // Mirror kernel `bcf_refine_access_bound` (verifier.c:5393):
+    // reg_masks = bit for ptr_reg (always set when ptr is variable;
+    // ptr-const case routes through bcf_prove_unreachable) plus bit for
+    // size_reg when non-const. Pass to `bcf_suffix_base_pc` to find the
+    // PC at which both target regs' definition chains have bottomed
+    // out.
+    let mut target_regs: Vec<Reg> = vec![base];
+    if let Some(sr) = size_reg {
+        target_regs.push(sr);
+    }
+    let base_pc = state
+        .history_idx
+        .and_then(|hidx| env.bcf_suffix_base_pc(hidx, state.parent_cache_id, &target_regs));
     let Some(ok) = crate::refinement::refine_map::try_refine_map_access(
-        state, base, insn_off, size, map_limit, size_reg,
+        state, base, insn_off, size, map_limit, size_reg, base_pc,
     ) else {
         return false;
     };

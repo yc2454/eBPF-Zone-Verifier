@@ -45,9 +45,30 @@ pub fn try_refine_map_access(
     size: i64,
     map_limit: i64,
     size_reg: Option<Reg>,
+    base_pc: Option<usize>,
 ) -> Option<super::refine_stack::RefineOk> {
     let bcf_ref = state.bcf.as_ref()?;
     let mut sym: SymbolicState = (**bcf_ref).clone();
+    // Mirror the kernel's `bcf_track` suffix-only br_cond emission
+    // (verifier.c `bcf_track` / `backtrack_states`). Drop path_conds
+    // emitted at PCs before the refine target's definition chain
+    // bottoms out so the bundle's canonical_hash matches what the
+    // kernel computes on its runtime CONJ.
+    let pre_count = sym.path_conds.len();
+    if let Some(bp) = base_pc {
+        sym.filter_path_conds_from_pc(bp);
+    }
+    if std::env::var("ZOVIA_BCF_TRACK_DEBUG").is_ok() {
+        eprintln!(
+            "[bcf-track] map-refine base={:?} size_reg={:?} base_pc={:?} path_conds {}->{} pcs={:?}",
+            base,
+            size_reg,
+            base_pc,
+            pre_count,
+            sym.path_conds.len(),
+            sym.path_cond_pcs,
+        );
+    }
 
     // Pointer's variable-part expression. After the ptr+imm BCF skip, the
     // cached `bcf_expr` carries only the symbolic variable contribution;

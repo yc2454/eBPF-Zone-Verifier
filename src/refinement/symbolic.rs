@@ -95,8 +95,27 @@ pub struct SymbolicState {
     pub reg_expr: [Option<u32>; NUM_REGS],
     /// Path-condition predicates (each a u32 idx into `exprs`).
     pub path_conds: Vec<u32>,
+    /// Parallel to `path_conds`: the source PC at which each predicate was
+    /// emitted. Branch path_conds carry the JMP insn's PC. Bound preds
+    /// emitted by `bound_reg*` carry the PC at which the reg was first
+    /// materialized symbolically. Used by [`filter_path_conds_from_pc`]
+    /// at refine time to mirror the kernel's `bcf_track` suffix-only
+    /// br_cond emission (verifier.c:24308).
+    pub path_cond_pcs: Vec<usize>,
     /// Final refinement condition (set by a site-specific callback).
     pub refine_cond: Option<u32>,
+    /// Transient: the PC currently being processed by symbolic-tracking
+    /// callbacks. Set by the transfer layer immediately before any
+    /// operation that may materialize a register's `bcf_expr` (and
+    /// therefore emit bound preds via [`bound_reg32`] / [`bound_reg64`]).
+    /// Read by `bound_pred` so bound preds get tagged with the PC at
+    /// which lazy materialization happens — mirrors the kernel's
+    /// `init_bcf_state` emitting bound preds at the suffix's base PC.
+    /// `0` means "untagged" — bound preds with PC=0 are kept regardless
+    /// of the filter cutoff, preserving the existing unit-test
+    /// behaviour where `SymbolicState` is constructed without PC
+    /// context.
+    pub current_pc: usize,
 }
 
 impl SymbolicState {
@@ -255,8 +274,51 @@ impl SymbolicState {
     // ---------- path conditions / refinement target ----------
 
     /// Append a path condition (an expression that must hold on the current path).
+    /// PC defaults to `self.current_pc` — callers that have explicit source-PC
+    /// context should call [`add_cond_at`] instead.
     pub fn add_cond(&mut self, pred_idx: u32) {
+        let pc = self.current_pc;
+        self.add_cond_at(pred_idx, pc);
+    }
+
+    /// Append a path condition tagged with the source PC. Branch transfer
+    /// passes the JMP insn's PC; the [`filter_path_conds_from_pc`] cutoff
+    /// drops entries strictly below `base_pc` to mirror the kernel's
+    /// `bcf_track` suffix-only br_cond emission.
+    pub fn add_cond_at(&mut self, pred_idx: u32, pc: usize) {
         self.path_conds.push(pred_idx);
+        self.path_cond_pcs.push(pc);
+    }
+
+    /// Drop path_conds whose source PC is strictly less than `base_pc`,
+    /// matching the kernel's `bcf_track` rule: br_conds are emitted only
+    /// during the forward replay of the suffix from base→cur. Entries
+    /// with `pc == 0` are treated as "untagged / always present" and are
+    /// kept regardless of the cutoff — this preserves unit-test
+    /// behaviour for [`SymbolicState`]s constructed without PC context.
+    pub fn filter_path_conds_from_pc(&mut self, base_pc: usize) {
+        if base_pc == 0 {
+            return;
+        }
+        debug_assert_eq!(self.path_conds.len(), self.path_cond_pcs.len());
+        let mut kept_exprs = Vec::with_capacity(self.path_conds.len());
+        let mut kept_pcs = Vec::with_capacity(self.path_cond_pcs.len());
+        for (idx, &pc) in self.path_cond_pcs.iter().enumerate() {
+            if pc == 0 || pc >= base_pc {
+                kept_exprs.push(self.path_conds[idx]);
+                kept_pcs.push(pc);
+            }
+        }
+        self.path_conds = kept_exprs;
+        self.path_cond_pcs = kept_pcs;
+    }
+
+    /// Set the PC tag for subsequently-emitted bound preds via
+    /// [`bound_pred`]. Transfer-layer code that triggers lazy register
+    /// materialization calls this before the materialization happens, so
+    /// bound preds get tagged with the materialization PC.
+    pub fn set_current_pc(&mut self, pc: usize) {
+        self.current_pc = pc;
     }
 
     /// Set the refinement condition target.
@@ -309,11 +371,16 @@ impl SymbolicState {
 
     /// Append a typed predicate `op(lhs, val(imm, bit32))` and register it
     /// as a path-condition. Mirrors kernel's `__bcf_bound_reg` →
-    /// `bcf_add_cond(bcf_add_pred(...))` chain (verifier.c:834).
+    /// `bcf_add_cond(bcf_add_pred(...))` chain (verifier.c:834). Tags the
+    /// emitted path_cond with `current_pc` so the bcf_track filter at
+    /// refine time can decide whether this reg's bound preds are in the
+    /// suffix the kernel re-replays.
     fn bound_pred(&mut self, op: u8, lhs: u32, imm: u64, bit32: bool) -> u32 {
         let rhs = self.add_val(imm, bit32);
         let pred = self.add_pred(op, lhs, rhs);
+        let pc = self.current_pc;
         self.path_conds.push(pred);
+        self.path_cond_pcs.push(pc);
         pred
     }
 

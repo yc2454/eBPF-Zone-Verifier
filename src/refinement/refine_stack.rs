@@ -40,9 +40,18 @@ pub fn try_refine_stack_oob(
     base: Reg,
     instruction_offset: i64,
     size: i64,
+    base_pc: Option<usize>,
 ) -> Option<RefineOk> {
     let bcf_ref = state.bcf.as_ref()?;
     let mut sym: SymbolicState = (**bcf_ref).clone();
+    // Mirror the kernel's `bcf_track` suffix-only br_cond emission:
+    // drop path_conds emitted at PCs strictly before the suffix's base
+    // PC (the point at which the refine target reg's definition chain
+    // has bottomed out). `None` ⇒ keep all path_conds (sound, just not
+    // as tight as the kernel's runtime CONJ).
+    if let Some(bp) = base_pc {
+        sym.filter_path_conds_from_pc(bp);
+    }
 
     // Step 1: get the variable part of base's offset from r10. After the
     // handle_add ptr+imm skip, base.bcf_expr no longer embeds the const

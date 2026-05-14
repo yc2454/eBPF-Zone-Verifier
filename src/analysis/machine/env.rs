@@ -460,6 +460,142 @@ impl<'a> VerifierEnv<'a> {
             self.mark_chain_precision_backward(history_idx, cur.parent_cache_id, r);
         }
     }
+
+    /// Compute the PC at which all `target_regs`' definition chains have
+    /// bottomed out (the kernel's "base state" PC). Query-only mirror of
+    /// `backtrack_states` (vendor verifier.c bcf_track callers; in
+    /// `/Users/yalucai/bpf-next-zovia/kernel/bpf/verifier.c` at the
+    /// `backtrack_states` definition): walks backward through the linear
+    /// breadcrumb history starting from `history_idx`, applying the
+    /// per-insn frontier propagation rule
+    /// (`update_frontier`, same one used by
+    /// `mark_chain_precision_backward`), and returns the PC at which the
+    /// frontier first becomes empty. Used by BCF refinement sites to
+    /// filter eager `SymbolicState::path_conds` down to the suffix the
+    /// kernel's `bcf_track` would emit.
+    ///
+    /// Semantics — mirrors `backtrack_states` step-by-step:
+    /// * Initial frontier = `target_regs`.
+    /// * Walk back through breadcrumbs; the **first** breadcrumb (the
+    ///   refine site's own insn) is skipped (`skip_first = true`),
+    ///   matching the kernel.
+    /// * On each prior step, apply `update_frontier`. When it empties,
+    ///   that step's PC is the kernel's base PC — return it.
+    /// * If the walk runs out of history without emptying the frontier,
+    ///   the kernel returns `-EFAULT`; we return `None` (callers treat
+    ///   that as "keep all path_conds" — sound, just not tighter than
+    ///   today).
+    ///
+    /// Returns `None` for empty `target_regs` (kernel returns
+    /// `-EFAULT` in that case too) or when the walk runs out.
+    pub fn bcf_suffix_base_pc(
+        &self,
+        history_idx: usize,
+        parent_cache_id: Option<u32>,
+        target_regs: &[Reg],
+    ) -> Option<usize> {
+        let debug = std::env::var("ZOVIA_BCF_TRACK_DEBUG").is_ok();
+        let mut frontier: HashSet<Reg> = target_regs.iter().copied().collect();
+        if debug {
+            eprintln!(
+                "[bcf-track] walk start: targets={:?} history_idx={} parent_cache_id={:?}",
+                target_regs, history_idx, parent_cache_id
+            );
+        }
+        if frontier.is_empty() {
+            return None;
+        }
+
+        let caller_saved = [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
+        let mut current_history: Option<usize> = Some(history_idx);
+        let mut current_parent_id: Option<u32> = parent_cache_id;
+        let mut budget: usize = 16_384;
+        let mut skip_first = true;
+
+        'outer: loop {
+            let parent_loc = current_parent_id
+                .and_then(|id| self.cache_loc_by_id.get(&id).copied());
+            let (parent_history_stop, parent_grandparent_id) =
+                if let Some((pc, idx)) = parent_loc {
+                    let s = self
+                        .explored_states
+                        .get(&pc)
+                        .and_then(|v| v.get(idx));
+                    (
+                        s.and_then(|s| s.history_idx),
+                        s.and_then(|s| s.parent_cache_id),
+                    )
+                } else {
+                    (None, None)
+                };
+
+            while let Some(idx) = current_history {
+                if budget == 0 {
+                    break 'outer;
+                }
+                budget -= 1;
+
+                if let Some(stop) = parent_history_stop
+                    && idx <= stop
+                {
+                    break;
+                }
+
+                let Some(step) = self.history.get(idx) else {
+                    break;
+                };
+                let parent_idx = step.parent_idx;
+                let instr_copy = step.instr.clone();
+                let step_pc = step.pc;
+
+                if !skip_first {
+                    let pre: Vec<Reg> = {
+                        let mut v: Vec<Reg> = frontier.iter().copied().collect();
+                        v.sort_by_key(|r| *r as u8);
+                        v
+                    };
+                    update_frontier(&mut frontier, &instr_copy, &caller_saved);
+                    if debug {
+                        let post: Vec<Reg> = {
+                            let mut v: Vec<Reg> = frontier.iter().copied().collect();
+                            v.sort_by_key(|r| *r as u8);
+                            v
+                        };
+                        eprintln!(
+                            "[bcf-track]   pc={:>3} {:?} frontier {:?} -> {:?}",
+                            step_pc, instr_copy, pre, post
+                        );
+                    }
+                    if frontier.is_empty() {
+                        if debug {
+                            eprintln!("[bcf-track] frontier empty at pc={}", step_pc);
+                        }
+                        // Base reached. The kernel's `bcf_track` re-runs
+                        // the suffix starting at the parent state — i.e.
+                        // from `step_pc` forward. Branches emitted in
+                        // the suffix get tagged with their JMP PC, all
+                        // ≥ `step_pc`. Return that as the cutoff.
+                        return Some(step_pc);
+                    }
+                } else if debug {
+                    eprintln!(
+                        "[bcf-track]   pc={:>3} (skipped first: {:?})",
+                        step_pc, instr_copy
+                    );
+                }
+                skip_first = false;
+                current_history = parent_idx;
+            }
+
+            if parent_grandparent_id.is_none() {
+                break;
+            }
+            current_parent_id = parent_grandparent_id;
+            current_history = parent_history_stop;
+        }
+
+        None
+    }
 }
 
 /// Update `frontier` (the set of registers whose precision must

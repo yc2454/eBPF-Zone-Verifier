@@ -47,6 +47,12 @@ fn cmp_op_to_bcf_pair(op: CmpOp) -> Option<(u8, u8)> {
 /// Append the taken/not-taken predicates to each side's `path_conds`.
 /// Skips the hook entirely when symbolic tracking is off or when either
 /// side can't be materialized as a tracked register (anchor regs, etc.).
+///
+/// `src_pc` is the PC of the JMP insn — used to tag each emitted
+/// path_cond (and any bound preds emitted by `reg_expr`'s lazy
+/// materialization). The refine-time filter
+/// (`SymbolicState::filter_path_conds_from_pc`) keeps path_conds with
+/// `pc >= base_pc` (the kernel's bcf_track suffix-only emission rule).
 fn record_branch_path_conds(
     state_then: &mut State,
     state_else: &mut State,
@@ -54,6 +60,7 @@ fn record_branch_path_conds(
     left: Reg,
     op: CmpOp,
     right: &Operand,
+    src_pc: usize,
 ) {
     if state_then.bcf.is_none() {
         return;
@@ -64,6 +71,20 @@ fn record_branch_path_conds(
     let Some(l_idx) = left.bcf_idx() else {
         return;
     };
+    // Mirror kernel `record_path_cond` (verifier.c:20893): skip
+    // emission when either operand isn't a SCALAR_VALUE. Pointer
+    // comparisons (`if r1 == NULL` after a map_lookup, etc.) don't
+    // produce a br_cond on the kernel side, so zovia must skip them
+    // too — otherwise the bundle's canonical_hash carries spurious
+    // path_conds the kernel never emits, missing the bundle lookup.
+    if !state_then.types.get(left).is_scalar() {
+        return;
+    }
+    if let Operand::Reg(r) = right
+        && !state_then.types.get(*r).is_scalar()
+    {
+        return;
+    }
     // Kernel-shape: when the JMP class is JMP32, both operands are read in
     // 32-bit form via bcf_reg_expr(reg, true) — which peels a cached
     // ZEXT_32_to_64 if present. When JMP class is 64-bit, both stay at
@@ -76,6 +97,9 @@ fn record_branch_path_conds(
         _ => None,
     };
     let then_bcf = state_then.bcf.as_mut().expect("checked above");
+    // Set current_pc *before* reg_expr to tag any bound preds emitted
+    // during lazy materialization with this JMP's source PC.
+    then_bcf.set_current_pc(src_pc);
     let cmp_l = then_bcf.reg_expr(l_idx, &lhs_bounds, jmp32);
     let cmp_r = match right {
         Operand::Imm(c) => {
@@ -96,10 +120,10 @@ fn record_branch_path_conds(
     // consistent. Then append only the not-taken pred to state_else's
     // path_conds (state_then gets the taken pred).
     let snapshot = (**then_bcf).clone();
-    then_bcf.add_cond(pred_then);
+    then_bcf.add_cond_at(pred_then, src_pc);
     if let Some(else_bcf) = state_else.bcf.as_mut() {
         **else_bcf = snapshot;
-        else_bcf.add_cond(pred_else);
+        else_bcf.add_cond_at(pred_else, src_pc);
     }
 }
 
@@ -133,7 +157,7 @@ pub(crate) fn transfer_if(
     // Mirrors BCF's `record_path_cond` (kernel patches set1, cheat-sheet §2).
     // Test (JSET) is skipped for Phase 1; ALU/JMP comparisons cover
     // shift_constraint's `if r1 > 4` (UGt) path-cond requirement. ---
-    record_branch_path_conds(&mut state_then, &mut state_else, width, left, op, &right);
+    record_branch_path_conds(&mut state_then, &mut state_else, width, left, op, &right, state.pc);
 
     // Apply constraints to refine the DBM in the destination states
     match &right {
