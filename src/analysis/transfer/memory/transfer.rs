@@ -37,6 +37,18 @@ pub(crate) fn transfer_load(
     // value is fresh from memory, with whatever bounds we infer from
     // the access width, not from any prior chain through DIV/MOD.
     state.kernel_tnum_imprecise.remove(&dst);
+    // BCF: a load is a full register write; clear any prior `bcf_expr`
+    // so future uses lazy-materialize against the post-load bounds
+    // rather than dragging in a stale pre-load expression (e.g. an
+    // earlier `Mov r8, 0` cache hit). Mirrors kernel BCF's
+    // `reg->bcf_expr = -1` on clobbering writes
+    // (reference_bcf_symbolic_tracking.md §6.1; verifier.c `bcf_mov32`
+    // analog at the post-load reset point).
+    if let Some(idx) = dst.bcf_idx()
+        && let Some(bcf) = state.bcf.as_mut()
+    {
+        bcf.clear_reg(idx);
+    }
 
     let access_size = size.bytes() as i64;
     access::check_load(env, &state, base, access_size, off);
