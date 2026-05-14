@@ -790,6 +790,25 @@ pub(crate) fn apply_return_bounds_for_cb_helper(state: &mut State, helper: u32) 
 pub(super) fn apply_return_bounds(state: &mut State, helper: u32) {
     state.domain.forget(Reg::R0);
     state.set_tnum(Reg::R0, Tnum::unknown());
+    // Pre-materialize R0's BCF cache with **kernel-view** bounds
+    // (unbounded scalar) before the return-type narrowing below applies
+    // zovia-only precision (e.g. BPF_GET_PRANDOM_U32 → [0, u32::MAX]).
+    // The kernel verifier prints `R0=scalar()` post-call — no DBM range,
+    // so its `bcf_reg_expr` caches R0 as `VAR_64`. If we let
+    // `bcf_reg_bounds` see zovia's tighter range, the next ALU op
+    // would cache R0 as `ZEXT(VAR_32)` instead, and the runtime CONJ
+    // would diverge structurally from the kernel's (no `EXTRACT_32(VAR_64)`
+    // node). The bcf_expr clear at transfer_call's top has already
+    // wiped the slot, so reg_expr will run materialize_reg fresh.
+    if let Some(bcf) = state.bcf.as_mut() {
+        if let Some(d) = Reg::R0.bcf_idx() {
+            let _ = bcf.reg_expr(
+                d,
+                &crate::refinement::symbolic::RegBounds::unknown(),
+                false,
+            );
+        }
+    }
     // NOTE: the BCF R0 bcf_expr clear was moved to the top of
     // `transfer_call` (before `update_call_types`) so it doesn't override
     // anchors set during type assignment. See the matching comment there.

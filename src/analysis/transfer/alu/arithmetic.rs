@@ -310,40 +310,71 @@ pub(crate) fn handle_sub(
         Operand::Reg(r) => in_types.get(*r).is_pointer(),
     };
 
-    // --- BCF symbolic mirror (β+: unified ptr/scalar symbolic sub). See
-    // the matching block in handle_add for rationale. ---
+    // --- BCF symbolic mirror. Mirrors kernel `bcf_alu` (verifier.c:15139)
+    //     with kernel-shape width discipline, analogous to `handle_add`.
+    //     For W32 SUB or for W64 SUB where dst fits in u32/s32 post-op,
+    //     emits SUB_32(reg32, rhs32) then ZEXT/SEXT back to 64.
+    //
+    //     **Pointer−immediate is skipped** (same rationale as ptr+imm in
+    //     handle_add): kernel handles `ptr -= K` by decrementing the
+    //     pointer reg's `off` (verifier.c:14439-14450); `bcf_expr` stays
+    //     untouched. The const offset is reconstructed at refine time
+    //     from `state.ptr_const_off`. ---
+    let dst_bounds_pre = bcf_reg_bounds(state, dst);
+    let src_bounds_pre = match src {
+        Operand::Reg(r) => Some(bcf_reg_bounds(state, *r)),
+        _ => None,
+    };
+    let dst_bounds_post = bcf_reg_bounds(state, dst);
     if let Some(d) = dst.bcf_idx() {
         if let Some(bcf) = state.bcf.as_mut() {
-            let skip = src_is_ptr; // ptr-ptr/scalar-ptr leave alone
+            let skip_ptr_imm = dst_is_ptr_post && matches!(src, Operand::Imm(_));
+            let skip = src_is_ptr || skip_ptr_imm;
             if skip {
                 if !dst_is_ptr_post {
                     bcf.clear_reg(d);
                 }
+                // Pointer − imm: leave dst.bcf_expr at its current value.
             } else {
-                let dst_idx = bcf.materialize_reg64(d);
-                let rhs_idx = match src {
+                let op_u32 = dst_bounds_post.fit_u32();
+                let op_s32 = dst_bounds_post.fit_s32();
+                let alu32_class = width == Width::W32;
+                // Pointer ALU forces 64-bit BCF ops (kernel
+                // `__mark_reg32_unbounded` at verifier.c:15282).
+                let alu32 = if dst_is_ptr_post {
+                    false
+                } else {
+                    alu32_class || op_u32 || op_s32
+                };
+                let bits: u16 = if alu32 { 32 } else { 64 };
+
+                let dst_expr = bcf.reg_expr(d, &dst_bounds_pre, alu32);
+                let rhs_expr = match src {
                     Operand::Imm(c) => {
                         let v = if width == Width::W32 {
                             (*c as u32) as u64
                         } else {
                             *c as u64
                         };
-                        bcf.add_val64(v)
+                        bcf.add_val(v, alu32)
                     }
                     Operand::Reg(r) => match r.bcf_idx() {
-                        Some(si) => bcf.materialize_reg64(si),
-                        None => bcf.add_val64(0),
+                        Some(si) => bcf.reg_expr(si, &src_bounds_pre.unwrap(), alu32),
+                        None => bcf.add_val(0, alu32),
                     },
                 };
-                let new_idx = if width == Width::W32 {
-                    let lo_d = bcf.extract_lo(32, dst_idx);
-                    let lo_r = bcf.extract_lo(32, rhs_idx);
-                    let diff = bcf.add_alu(crate::refinement::bcf::BPF_SUB, lo_d, lo_r, 32);
-                    bcf.zext_32_to_64(diff)
+                let alu_result =
+                    bcf.add_alu(crate::refinement::bcf::BPF_SUB, dst_expr, rhs_expr, bits);
+                let final_idx = if dst_is_ptr_post {
+                    alu_result
+                } else if alu32 || op_u32 {
+                    bcf.add_extend(false, 32, 64, alu_result)
+                } else if op_s32 {
+                    bcf.add_extend(true, 32, 64, alu_result)
                 } else {
-                    bcf.add_alu(crate::refinement::bcf::BPF_SUB, dst_idx, rhs_idx, 64)
+                    alu_result
                 };
-                bcf.bind_reg(d, new_idx);
+                bcf.bind_reg(d, final_idx);
             }
         }
     }
