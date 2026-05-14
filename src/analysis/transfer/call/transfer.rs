@@ -19,6 +19,7 @@ use log::{debug, error, trace};
 use super::checks::validate_helper_args;
 use super::mem_checks::{check_mem_size_pairs, is_valid_helper_id};
 use super::signatures::get_helper_proto;
+use crate::analysis::transfer::alu::helpers::bcf_reg_bounds;
 
 /// Transfer function for helper Call instructions.
 pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32) -> Vec<State> {
@@ -927,6 +928,39 @@ pub(super) fn apply_return_bounds(state: &mut State, helper: u32) {
             );
         }
         _ => {}
+    }
+
+    // Eagerly materialize R0's BCF symbolic expression for helpers whose
+    // kernel-side `do_refine_retval_range` narrows R0 to `[-MAX_ERRNO,
+    // size_max]`. Without this, R0's symbolic var + bound preds only get
+    // emitted on R0's first symbolic use — but the next helper call may
+    // overwrite R0 first (via `clear_reg(0)` at transfer_call entry),
+    // dropping the bounds from the path_cond entirely. The kernel's
+    // `bcf_track` suffix walk catches this via `check_reg_arg`'s eager
+    // `bcf_reg_expr` call (verifier.c:4086) — every reg read materializes.
+    // We mirror at the helper-return narrow point: each call's fresh R0 gets
+    // its own SEXT(VAR_32) + 2 bound preds, even if R0 is overwritten before
+    // a symbolic use.
+    //
+    // Concrete repro this fixes: test_get_stack_rawtp has 4 bpf_get_stack
+    // calls before the refine site at PC 61. Kernel's CONJ at PC 61 has 4
+    // VAR_32s (one per call) × 2 bound preds = 8 preds. Pre-fix zovia
+    // emitted just 1 (last call's R0). Now matches.
+    let kernel_narrows_r0_via_do_refine = matches!(
+        helper,
+        constants::BPF_GET_STACK
+            | constants::BPF_GET_TASK_STACK
+            | constants::BPF_PROBE_READ_STR
+            | constants::BPF_PROBE_READ_USER_STR
+            | constants::BPF_PROBE_READ_KERNEL_STR
+    );
+    if kernel_narrows_r0_via_do_refine {
+        let bounds = bcf_reg_bounds(state, Reg::R0);
+        if let Some(bcf) = state.bcf.as_mut() {
+            if let Some(d) = Reg::R0.bcf_idx() {
+                let _ = bcf.reg_expr(d, &bounds, false);
+            }
+        }
     }
 }
 
