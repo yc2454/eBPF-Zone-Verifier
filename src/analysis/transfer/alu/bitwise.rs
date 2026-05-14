@@ -49,6 +49,23 @@ pub(crate) fn handle_mov(state: &mut State, width: Width, dst: Reg, src: &Operan
                     state.ptr_const_off.insert(dst, 0);
                 }
             }
+            // Carry `var_off_contributor` alongside `ptr_const_off`. A
+            // ptr→ptr mov copies the variable-offset chain: if the src
+            // pointer had a scalar contributor recorded (from an earlier
+            // `ptr += scalar`), the dst pointer inherits it. Without this,
+            // refine_map's case classification at a later helper-mem
+            // access misreads dst as a constant-offset pointer (`ptr_is_var
+            // = false`) and falls into case (i), producing a refine_cond
+            // that uses the size reg directly instead of building
+            // `ADD(off_expr, size_expr)` for case (iii). cvc5's proof for
+            // the case-(i) shape on the trace_sys_enter_execve / similar
+            // `r6 += (r0 << 32 >> 32); r1 = r6` flow hits a 338-child
+            // FACTORING resolution step (the case-(iii) shape produces a
+            // narrow proof). transfer_alu's catch-all already removed
+            // dst's entry for !Add/Sub-Imm; re-insert here from src.
+            if let Some(&contributor) = state.var_off_contributor.get(r) {
+                state.var_off_contributor.insert(dst, contributor);
+            }
         }
     }
 
