@@ -104,6 +104,15 @@ pub struct SymbolicState {
     pub path_cond_pcs: Vec<usize>,
     /// Final refinement condition (set by a site-specific callback).
     pub refine_cond: Option<u32>,
+    /// Transient — the BCF set6 `bcf->path_unreachable` analog. Set by
+    /// `record_branch_path_conds` when this side's new `reg eq/neq const`
+    /// branch predicate is the reversed JEQ/JNE opcode of an
+    /// already-accumulated path_cond on the same operands (a syntactic
+    /// contradiction the interval/zone domain can't represent). Consumed
+    /// by `transfer_if` to drop the side — the analog of the kernel's
+    /// `goto process_bpf_exit`. Recomputed every branch; never the basis
+    /// for a solver call or bundle entry.
+    pub path_conflict_unreachable: bool,
     /// Transient: the PC currently being processed by symbolic-tracking
     /// callbacks. Set by the transfer layer immediately before any
     /// operation that may materialize a register's `bcf_expr` (and
@@ -550,6 +559,72 @@ impl SymbolicState {
             cur += e.slot_len();
         }
         None
+    }
+
+    /// Port of the kernel's BCF set6 `detect_conflict_eq`
+    /// (`bpf-Detecting-unreachable-path-with-conflict-conditi.patch`).
+    ///
+    /// Returns true iff `pred_idx` — a `reg eq/neq const` predicate just
+    /// built for one branch side — is the *reversed* JEQ/JNE opcode of an
+    /// already-recorded path_cond on structurally-equal operands. That
+    /// pair (`r == K` ∧ `r != K`) is a syntactic contradiction, so the
+    /// path is unreachable. Pure structural check: no solver, no bundle
+    /// entry — exactly BCF's design (the kernel recognizes this natively
+    /// and `goto process_bpf_exit`s; an emitted UNREACHABLE entry would be
+    /// dead weight it never looks up).
+    ///
+    /// Scope matches set6 exactly: `reg eq/neq const` only (the immediate
+    /// operand must be a `BCF_VAL | BCF_BV` node).
+    pub fn conflicts_with_path(&self, pred_idx: u32) -> bool {
+        let Some(cond) = self.expr_at(pred_idx) else {
+            return false;
+        };
+        let op = expr_op(cond.code);
+        if (op != BPF_JEQ && op != BPF_JNE) || cond.args.len() != 2 {
+            return false;
+        }
+        let (lhs, imm) = (cond.args[0], cond.args[1]);
+        // reg eq/neq *const* only — kernel restricts the imm operand to
+        // BCF_VAL | BCF_BV. A reg-vs-reg compare is out of scope (skip).
+        match self.expr_at(imm) {
+            Some(e) if e.code == (BCF_VAL | BCF_BV) => {}
+            _ => return false,
+        }
+        let conflict_op = if op == BPF_JEQ { BPF_JNE } else { BPF_JEQ };
+        for &old_idx in self.path_conds.iter().rev() {
+            let Some(old) = self.expr_at(old_idx) else {
+                continue;
+            };
+            if expr_op(old.code) != conflict_op || old.args.len() != 2 {
+                continue;
+            }
+            if self.operand_node_eq(lhs, old.args[0])
+                && self.operand_node_eq(imm, old.args[1])
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// One-level operand-node equality — the analog of set6's
+    /// `memcmp(expr, e0, struct_size_t(struct bcf_expr, args, vlen))`.
+    /// Same node (index identity) or identical `(code, params, args)`
+    /// header+arg-words. Deliberately *not* recursive: the kernel does a
+    /// flat memcmp relying on expr interning, and a verbatim arg compare
+    /// is correct for leaf nodes (VAL/VAR args are literal value/id words,
+    /// not child indices). A structural near-miss is a safe non-detection
+    /// (we just don't drop), never an unsound false drop.
+    fn operand_node_eq(&self, a: u32, b: u32) -> bool {
+        if a == b {
+            return true;
+        }
+        match (self.expr_at(a), self.expr_at(b)) {
+            (Some(ea), Some(eb)) => {
+                ea.code == eb.code && ea.params == eb.params && ea.args == eb.args
+            }
+            _ => false,
+        }
     }
 
     /// Build a [`BcfProof`] artifact whose `exprs` is the current DAG and whose
