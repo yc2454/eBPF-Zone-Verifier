@@ -20,11 +20,26 @@ use crate::ast::{CallKind, EndianOp, Instr, Operand, Width};
 use log::warn;
 
 /// Main transfer function - dispatches to appropriate handler based on instruction type.
-pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<State> {
+pub fn transfer(env: &mut VerifierEnv, state: State, instr: &Instr) -> Vec<State> {
     if state.pc < env.insn_aux_data.len() {
         env.insn_aux_data[state.pc].seen = true;
     }
 
+    let result = transfer_inner(env, state, instr);
+    // Safety-net for memory-access-site path-unreachable speculation:
+    // if any nested call into access::check_load/check_store discharged
+    // an unsat path_cond and the inner handler didn't already consume
+    // the flag (e.g. helper-arg validation in call/mem_checks.rs), drop
+    // the path here so it doesn't continue exploring an unreachable
+    // suffix and cascade further cvc5 calls
+    // (project_future_improvements.md §0; 2026-05-14 calico runaway).
+    if env.take_bcf_path_drop_requested() {
+        return vec![];
+    }
+    result
+}
+
+fn transfer_inner(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<State> {
     match instr {
         Instr::Alu {
             width,

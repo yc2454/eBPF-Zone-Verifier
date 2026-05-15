@@ -5,11 +5,31 @@ use crate::analysis::machine::error::VerificationError;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
+use crate::analysis::transfer::branch::try_emit_path_unreachable_entry;
 use crate::common::constants;
 use crate::common::ctx_model;
 use crate::common::mem_region_model;
 use RegType::*;
-use log::error;
+use log::{error, info};
+
+/// At a memory-access rejection site, try to prove the accumulated
+/// path_conds unsat (kind=UNREACHABLE bundle entry). On success, set
+/// `env.bcf_path_drop_requested` so the caller drops the path and
+/// return `true` to short-circuit the `env.fail(...)` below. Without
+/// the drop, the speculated-unreachable path keeps exploring and
+/// cascades cvc5 calls (project_future_improvements.md §0).
+fn try_speculate_access_unreachable(env: &mut VerifierEnv, state: &State) -> bool {
+    if !try_emit_path_unreachable_entry(env, state) {
+        return false;
+    }
+    info!(
+        target: "app",
+        "[bcf] memory-access path-unreachable discharged at pc {} (dropping path)",
+        state.pc
+    );
+    env.bcf_path_drop_requested = true;
+    true
+}
 
 use super::map::{check_kptr_field_access, check_map_access};
 use super::packet::{check_packet_access, check_packet_meta_access};
@@ -168,6 +188,9 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             }
         }
         PtrToSocketOrNull { .. } | PtrToSockCommonOrNull { .. } | PtrToTcpSockOrNull { .. } => {
+            if try_speculate_access_unreachable(env, state) {
+                return;
+            }
             error!(
                 "Load from nullable socket at pc {}: base {:?}+{} requires null check",
                 pc, base, off
@@ -197,6 +220,9 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             use crate::analysis::machine::reg_types::PtrFlags;
             let tags = base_type.ptr_flags();
             if tags.contains(PtrFlags::USER) || tags.contains(PtrFlags::PERCPU) {
+                if try_speculate_access_unreachable(env, state) {
+                    return;
+                }
                 error!(
                     "Direct deref of __user/__percpu PtrToBtfId at pc {}: {:?}",
                     pc, base_type
@@ -332,6 +358,9 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
                     .struct_name(pointee_btf_id)
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| format!("btf_id_{pointee_btf_id}"));
+                if try_speculate_access_unreachable(env, state) {
+                    return;
+                }
                 error!(
                     "[Verifier] pc {}: access beyond struct {} at off {} size {}",
                     pc, name, eff_off, size
@@ -345,6 +374,17 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             }
         }
         ScalarValue | NotInit => {
+            // Memory-access-site path-unreachable speculation. zovia
+            // statically rejects loads through a scalar/uninit base,
+            // but if the path that reached here has contradictory
+            // accumulated path_conds (e.g. {r1!=K, r1==K}), the
+            // disequality the interval domain can't represent leaves
+            // the path looking feasible until cvc5 sees the unsat
+            // CONJ. Empirical dominant gap: calico PC 1987 R4=
+            // ScalarValue (project_future_improvements.md §0).
+            if try_speculate_access_unreachable(env, state) {
+                return;
+            }
             error!(
                 "Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})",
                 pc, base, off, base_type
@@ -357,6 +397,9 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             });
         }
         _ => {
+            if try_speculate_access_unreachable(env, state) {
+                return;
+            }
             error!(
                 "Non-stack, non-ctx load at pc {} from base {:?}+{}",
                 pc, base, off
@@ -488,6 +531,9 @@ pub fn check_store(
             }
         }
         PtrToSocket { .. } | PtrToSockCommon { .. } | PtrToTcpSock { .. } => {
+            if try_speculate_access_unreachable(env, state) {
+                return;
+            }
             error!("Cannot write to socket struct at pc {}", pc);
             env.fail(VerificationError::UnsafeGenericStore {
                 pc,
@@ -497,6 +543,9 @@ pub fn check_store(
             });
         }
         PtrToSocketOrNull { .. } | PtrToSockCommonOrNull { .. } | PtrToTcpSockOrNull { .. } => {
+            if try_speculate_access_unreachable(env, state) {
+                return;
+            }
             error!("Cannot write to nullable socket at pc {}", pc);
             env.fail(VerificationError::UnsafeGenericStore {
                 pc,
@@ -613,6 +662,12 @@ pub fn check_store(
             }
         }
         _ => {
+            // Stores through a scalar/non-pointer base — symmetric with
+            // the load-side ScalarValue arm. Try path-unreachable
+            // speculation before failing.
+            if try_speculate_access_unreachable(env, state) {
+                return;
+            }
             error!(
                 "Unsafe store at pc {}: base {:?}+{} has non-pointer type {:?}",
                 pc, base, off, base_ty

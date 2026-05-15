@@ -329,16 +329,21 @@ pub(crate) fn transfer_if(
 /// state and push the resulting bundle entry on success. Mirrors the
 /// pattern in `try_bcf_refine_stack` / `try_bcf_refine_map` but uses
 /// `kind=BCF_BUNDLE_KIND_UNREACHABLE`.
-fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &State) {
+///
+/// Returns `true` iff cvc5 discharged the path_cond as unsat and a
+/// bundle entry was pushed. Memory-access-site callers (memory/access.rs)
+/// use the return value to set `env.bcf_path_drop_requested`; branch
+/// callers in this file ignore it.
+pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &State) -> bool {
     use crate::refinement::bundle::{RefineEntry, BCF_BUNDLE_KIND_UNREACHABLE};
     use crate::refinement::refine_unreachable::try_prove_unreachable;
     use log::info;
 
     if state.bcf.is_none() {
-        return;
+        return false;
     }
     let Some(ok) = try_prove_unreachable(state, None) else {
-        return;
+        return false;
     };
     let entry = RefineEntry::new(
         ok.goal_root,
@@ -361,4 +366,5 @@ fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &State) {
         }
     }
     env.bcf_proofs.push(entry);
+    true
 }
