@@ -552,6 +552,83 @@ impl SymbolicState {
         None
     }
 
+    /// One-level operand-node equality — the analog of BCF set6's
+    /// `memcmp(expr, e0, struct_size_t(struct bcf_expr, args, vlen))`.
+    /// Same node (index identity) or identical `(code, params, args)`.
+    /// Deliberately non-recursive: the kernel does a flat memcmp relying
+    /// on expr interning; a verbatim arg compare is correct for leaf
+    /// nodes (VAL/VAR args are literal value/id words). A structural
+    /// near-miss is a safe non-detection (no drop), never an unsound
+    /// false drop.
+    fn operand_node_eq(&self, a: u32, b: u32) -> bool {
+        if a == b {
+            return true;
+        }
+        match (self.expr_at(a), self.expr_at(b)) {
+            (Some(ea), Some(eb)) => {
+                ea.code == eb.code && ea.params == eb.params && ea.args == eb.args
+            }
+            _ => false,
+        }
+    }
+
+    /// Port of the kernel's BCF set6 `detect_conflict_eq`
+    /// (`bpf-Detecting-unreachable-path-with-conflict-conditi.patch`),
+    /// evaluated over the accumulated `path_conds` as a whole.
+    ///
+    /// Returns true iff the path contains a `reg eq const` and a
+    /// `reg neq const` predicate (reversed JEQ/JNE opcode) on
+    /// structurally-equal operands — a syntactic contradiction the
+    /// interval/tnum domain can't represent, so the path is unreachable.
+    /// Pure structural check: no solver, no bundle entry — exactly BCF's
+    /// design (the target kernel recognizes this natively via
+    /// `bcf_prove_unreachable` → `bcf_track` → `detect_conflict_eq` and
+    /// `goto process_bpf_exit`s; an emitted UNREACHABLE entry would be
+    /// dead weight it never looks up).
+    ///
+    /// Scope matches the kernel's path-unreachable request exactly:
+    /// `bcf_prove_unreachable` calls `bcf_refine(env, cur_state, 0,
+    /// NULL, NULL)` → `bcf_track` with `base == NULL` → replay from
+    /// subprog start (`do_check_common`), i.e. the **full path** — NOT a
+    /// `bcf_suffix_base_pc` window (suffix scoping is for bound-refine
+    /// sites, which pass a real base). So this scans all `path_conds`.
+    /// The cross-loop-iteration / pre-merge false-conflict risk is
+    /// gated empirically (xdp_synproxy_kern must still reject).
+    pub fn has_conflict_eq(&self) -> bool {
+        let n = self.path_conds.len();
+        for i in 0..n {
+            let Some(ci) = self.expr_at(self.path_conds[i]) else {
+                continue;
+            };
+            let op = expr_op(ci.code);
+            if (op != BPF_JEQ && op != BPF_JNE) || ci.args.len() != 2 {
+                continue;
+            }
+            let (lhs, imm) = (ci.args[0], ci.args[1]);
+            // `reg eq/neq const` only — kernel restricts the imm operand
+            // to BCF_VAL | BCF_BV. reg-vs-reg compares are out of scope.
+            match self.expr_at(imm) {
+                Some(e) if e.code == (BCF_VAL | BCF_BV) => {}
+                _ => continue,
+            }
+            let conflict_op = if op == BPF_JEQ { BPF_JNE } else { BPF_JEQ };
+            for j in (i + 1)..n {
+                let Some(cj) = self.expr_at(self.path_conds[j]) else {
+                    continue;
+                };
+                if expr_op(cj.code) != conflict_op || cj.args.len() != 2 {
+                    continue;
+                }
+                if self.operand_node_eq(lhs, cj.args[0])
+                    && self.operand_node_eq(imm, cj.args[1])
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Build a [`BcfProof`] artifact whose `exprs` is the current DAG and whose
     /// `steps` is empty. Useful for serializing the formula (without a proof
     /// yet) — e.g., to hash it canonically or feed it to an SMT-LIB encoder.

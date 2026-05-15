@@ -9,7 +9,7 @@ use crate::common::constants;
 use crate::common::ctx_model;
 use crate::common::mem_region_model;
 use RegType::*;
-use log::error;
+use log::{error, info};
 
 use super::map::{check_kptr_field_access, check_map_access};
 use super::packet::{check_packet_access, check_packet_meta_access};
@@ -345,6 +345,27 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             }
         }
         ScalarValue | NotInit => {
+            // BCF set6 `detect_conflict_eq` (path-unreachable): the
+            // kernel reaches this same invalid scalar load, then
+            // `check_reg_arg`'s -EACCES triggers `bcf_prove_unreachable`
+            // → `bcf_track(base=NULL)` (full-path replay) →
+            // `detect_conflict_eq` finds the path's accumulated
+            // `reg==K ∧ reg!=K` and `goto process_bpf_exit`s. Mirror it
+            // here: if the path's path_conds are syntactically
+            // contradictory, this path is dead — discharge the
+            // rejection with NO solver, NO bundle entry, and let the
+            // load transfer drop the path.
+            if let Some(bcf) = state.bcf.as_ref()
+                && bcf.has_conflict_eq()
+            {
+                info!(
+                    target: "app",
+                    "[bcf] detect_conflict_eq: reversed-opcode path conflict at pc {} — path unreachable, dropping (no cvc5, no bundle)",
+                    pc
+                );
+                env.bcf_path_unreachable = true;
+                return;
+            }
             error!(
                 "Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})",
                 pc, base, off, base_type

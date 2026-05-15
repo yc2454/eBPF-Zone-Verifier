@@ -558,6 +558,11 @@ fn run_worklist(
     let mut diag_arrivals: HashMap<usize, usize> = HashMap::new();
 
     while let Some(mut state) = worklist.pop_back() {
+        // Per-instruction scope for the BCF `detect_conflict_eq`
+        // path-unreachable flag: only the instruction that set it (its
+        // own transfer) consumes it. Reset here so a set from a
+        // helper-arg `check_load` (mem_checks) can't leak forward.
+        env.bcf_path_unreachable = false;
         let diag_hit = diag_pcs
             .as_ref()
             .map(|s| s.contains(&state.pc))

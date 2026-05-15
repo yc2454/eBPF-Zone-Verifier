@@ -246,6 +246,15 @@ pub struct VerifierEnv<'a> {
     /// a static size (instruction-level loads/stores).
     pub bcf_size_reg: Option<Reg>,
 
+    /// Transient mirror of the kernel's `bcf->path_unreachable`. Set by
+    /// the generic-load rejection site when `SymbolicState::has_conflict_eq`
+    /// proves the current path's accumulated `path_conds` syntactically
+    /// contradictory (BCF set6 `detect_conflict_eq`). The load transfer
+    /// consumes it: it resets the flag and drops the path (no
+    /// successors), the analog of the kernel's `goto process_bpf_exit`.
+    /// No solver call, no bundle entry.
+    pub bcf_path_unreachable: bool,
+
     /// Eviction-resistant precision marks keyed by `(pc, reg)`.
     /// `mark_chain_precision_backward` writes here as it walks the
     /// per-path history, so widening sites can detect "this reg was
@@ -286,6 +295,7 @@ impl<'a> VerifierEnv<'a> {
             precise_pcs: HashSet::new(),
             bcf_proofs: Vec::new(),
             bcf_size_reg: None,
+            bcf_path_unreachable: false,
         }
     }
 

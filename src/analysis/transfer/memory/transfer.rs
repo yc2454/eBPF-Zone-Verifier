@@ -53,6 +53,15 @@ pub(crate) fn transfer_load(
     let access_size = size.bytes() as i64;
     access::check_load(env, &state, base, access_size, off);
 
+    // BCF set6 `detect_conflict_eq`: `check_load` proved this path's
+    // path_conds syntactically contradictory. Drop the path with no
+    // successors — the analog of the kernel's `goto process_bpf_exit`
+    // after `bcf->path_unreachable`.
+    if env.bcf_path_unreachable {
+        env.bcf_path_unreachable = false;
+        return vec![];
+    }
+
     if try_load_from_rodata(env, &mut state, dst, base, off, size) {
         state.pc += 1;
         return vec![state];
@@ -403,6 +412,10 @@ pub(crate) fn transfer_atomic(
 
     let access_size = size.bytes() as i64;
     access::check_load(env, &state, base, access_size, off);
+    if env.bcf_path_unreachable {
+        env.bcf_path_unreachable = false;
+        return vec![];
+    }
     access::check_store(env, &state, base, access_size, off, state.types.get(src));
     if env.failed() {
         return vec![];
