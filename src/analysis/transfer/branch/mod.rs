@@ -270,7 +270,20 @@ pub(crate) fn transfer_if(
         // Drop the closure before mutably borrowing env.
         drop(backward_jump_forbidden);
         let dead_state = if outcome { &state_else } else { &state_then };
-        try_emit_path_unreachable_entry(env, dead_state);
+        // Eager path-unreachable speculation is NOT a BCF mechanism:
+        // every `bcf_prove_unreachable` call site in BCF (set1/0014) is
+        // reactive — at a real mem-access / check_reg_arg rejection,
+        // never on a statically-dead branch side. This site exists only
+        // because zone/DBM makes zovia more precise than the kernel
+        // (ruling out branches the kernel explores), so the single-pass
+        // design pre-emitted proofs "in case". In kernel mode zovia
+        // hits the *same* rejections as the kernel, so path-unreachable
+        // is handled reactively (conflict-eq at the load/!read_ok sites
+        // + refine_*). Restrict eager speculation to zone mode (legacy,
+        // unchanged); kernel mode is reactive-only, faithful to BCF.
+        if dead_state.domain.is_zone() {
+            try_emit_path_unreachable_entry(env, dead_state);
+        }
         return if outcome {
             if then_backward_forbidden {
                 env.fail(VerificationError::BackEdge {
@@ -305,11 +318,19 @@ pub(crate) fn transfer_if(
     // fallback, commit 39f5104ed029). If cvc5 can prove our path_cond
     // unsat, the resulting kind=UNREACHABLE entry will match the
     // kernel's hash and the kernel discharge succeeds.
-    if state_else.domain.is_inconsistent() {
+    // Zone-only (same rationale as the condition_outcome site above):
+    // `is_inconsistent()`-gated speculation is a DBM-ism — zone
+    // manufactures branch-side contradictions the kernel smears, so
+    // this is not faithful to BCF (which never speculates on
+    // domain-inconsistent sides; it refines reactively at rejections).
+    // Kernel mode = reactive-only. The inconsistent side is still
+    // dropped below (consistent-only filter) regardless of mode.
+    let zone_mode = state_then.domain.is_zone();
+    if zone_mode && state_else.domain.is_inconsistent() {
         warn!("Else branch is inconsistent");
         try_emit_path_unreachable_entry(env, &state_else);
     }
-    if state_then.domain.is_inconsistent() {
+    if zone_mode && state_then.domain.is_inconsistent() {
         warn!("Then branch is inconsistent");
         try_emit_path_unreachable_entry(env, &state_then);
     }

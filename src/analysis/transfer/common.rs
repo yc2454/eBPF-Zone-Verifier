@@ -21,6 +21,27 @@ pub(crate) fn check_reg_readable(env: &mut VerifierEnv, state: &State, reg: Reg)
 
     match reg_type {
         RegType::NotInit => {
+            // BCF set1/0014: the kernel's `check_reg_arg` on `-EACCES`
+            // (the `!read_ok` rejection) calls `bcf_prove_unreachable`
+            // → `bcf_track(base=NULL)` → `detect_conflict_eq`. Same
+            // path-unreachable mechanism as the generic-load site
+            // (commit f274132), different rejection site. If the path's
+            // accumulated branch conditions are syntactically
+            // contradictory, this uninit-reg path is dead — discharge
+            // it (no solver, no bundle) by returning unreadable WITHOUT
+            // env.fail. Every caller bails `return vec![]` on false, so
+            // the path is dropped (the kernel's `goto process_bpf_exit`).
+            if let Some(bcf) = state.bcf.as_ref()
+                && bcf.has_conflict_eq()
+            {
+                log::info!(
+                    target: "app",
+                    "[bcf] detect_conflict_eq: reversed-opcode path conflict at pc {} ({:?} !read_ok) — path unreachable, dropping (no cvc5, no bundle)",
+                    state.pc, reg
+                );
+                env.bcf_path_unreachable = true;
+                return false;
+            }
             env.fail(VerificationError::RegisterNotReadable { pc: state.pc, reg });
             false
         }
