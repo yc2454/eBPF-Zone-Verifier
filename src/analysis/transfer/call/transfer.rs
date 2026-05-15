@@ -789,8 +789,22 @@ pub(crate) fn apply_return_bounds_for_cb_helper(state: &mut State, helper: u32) 
 }
 
 pub(super) fn apply_return_bounds(state: &mut State, helper: u32) {
-    state.domain.forget(Reg::R0);
-    state.set_tnum(Reg::R0, Tnum::unknown());
+    // `update_call_types` (run just before this) sets up domain offset
+    // tracking for map-value-returning helpers via `init_map_value_ptr`
+    // (R0.bounds = offset [0,0], R0.ptr_offset = Some). An unconditional
+    // `forget(R0)` here wipes that, so the offset never reaches the reg
+    // it is copied into (`r6 = r0`), and the map-region refinement reads
+    // min_off = i64::MIN -> "Unbounded variable map access". Preserve
+    // the offset tracking for map-value R0; the generic scalar-return
+    // reset still applies to every other helper.
+    let r0_is_map_value_ptr = matches!(
+        state.types.get(Reg::R0),
+        RegType::PtrToMapValue { .. } | RegType::PtrToMapValueOrNull { .. }
+    );
+    if !r0_is_map_value_ptr {
+        state.domain.forget(Reg::R0);
+        state.set_tnum(Reg::R0, Tnum::unknown());
+    }
     // Pre-materialize R0's BCF cache with **kernel-view** bounds
     // (unbounded scalar) — ONLY when zovia's domain would narrow R0
     // tighter than the kernel's `do_refine_retval_range`. The kernel's
