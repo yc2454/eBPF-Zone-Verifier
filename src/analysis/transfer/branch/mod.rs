@@ -7,7 +7,7 @@ pub mod outcome;
 pub mod refinement;
 
 use either::Either::{Left, Right};
-use log::{info, warn};
+use log::warn;
 
 use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg::Reg;
@@ -114,14 +114,6 @@ fn record_branch_path_conds(
     let pred_then = then_bcf.add_pred(op_then, cmp_l, cmp_r);
     let pred_else = then_bcf.add_pred(op_else, cmp_l, cmp_r);
 
-    // BCF set6 `detect_conflict_eq`: check each side's *new* `reg eq/neq
-    // const` predicate against the path_conds accumulated *before* this
-    // branch (the kernel checks the new cond against previously-added
-    // br_conds, not including itself). path_conds is still pre-branch
-    // here — `add_cond_at` below is what extends it.
-    let then_conflict = then_bcf.conflicts_with_path(pred_then);
-    let else_conflict = then_bcf.conflicts_with_path(pred_else);
-
     // Now mirror the **whole post-hook DAG** into state_else's bcf. The
     // pre-hook DAGs were identical (state_else.bcf was cloned from state
     // before the hook), so a wholesale replace keeps both sides
@@ -129,11 +121,9 @@ fn record_branch_path_conds(
     // path_conds (state_then gets the taken pred).
     let snapshot = (**then_bcf).clone();
     then_bcf.add_cond_at(pred_then, src_pc);
-    then_bcf.path_conflict_unreachable = then_conflict;
     if let Some(else_bcf) = state_else.bcf.as_mut() {
         **else_bcf = snapshot;
         else_bcf.add_cond_at(pred_else, src_pc);
-        else_bcf.path_conflict_unreachable = else_conflict;
     }
 }
 
@@ -315,50 +305,21 @@ pub(crate) fn transfer_if(
     // fallback, commit 39f5104ed029). If cvc5 can prove our path_cond
     // unsat, the resulting kind=UNREACHABLE entry will match the
     // kernel's hash and the kernel discharge succeeds.
-    // BCF set6 `detect_conflict_eq`: a side whose new `reg eq/neq const`
-    // predicate reverses an earlier path_cond on the same operands is
-    // unreachable. Drop it like the kernel's `goto process_bpf_exit` —
-    // crucially with NO solver call and NO bundle entry. The interval/
-    // zone domain can't represent the disequality, so this side is
-    // *not* `is_inconsistent()`; without this it would walk on and
-    // (pre-revert behavior) cascade cvc5 at the downstream bad access.
-    let else_conflict = state_else
-        .bcf
-        .as_ref()
-        .is_some_and(|b| b.path_conflict_unreachable);
-    let then_conflict = state_then
-        .bcf
-        .as_ref()
-        .is_some_and(|b| b.path_conflict_unreachable);
-    if else_conflict || then_conflict {
-        info!(
-            target: "app",
-            "[bcf] detect_conflict_eq: reversed-opcode path conflict at pc {} ({}{}{} side) — dropping path (no cvc5, no bundle)",
-            state.pc,
-            if then_conflict { "then" } else { "" },
-            if then_conflict && else_conflict { "+" } else { "" },
-            if else_conflict { "else" } else { "" },
-        );
-    }
-
-    // Speculation is only for sides zovia's *domain* proves dead but the
-    // kernel would explore (unreachable_arsh). A syntactic conflict is
-    // handled natively by the kernel's set6, so never emit for it.
-    if state_else.domain.is_inconsistent() && !else_conflict {
+    if state_else.domain.is_inconsistent() {
         warn!("Else branch is inconsistent");
         try_emit_path_unreachable_entry(env, &state_else);
     }
-    if state_then.domain.is_inconsistent() && !then_conflict {
+    if state_then.domain.is_inconsistent() {
         warn!("Then branch is inconsistent");
         try_emit_path_unreachable_entry(env, &state_then);
     }
 
-    // Return only consistent, non-conflicting states.
+    // Return only consistent states
     let mut out = Vec::new();
-    if !state_else.domain.is_inconsistent() && !else_conflict {
+    if !state_else.domain.is_inconsistent() {
         out.push(state_else);
     }
-    if !state_then.domain.is_inconsistent() && !then_conflict {
+    if !state_then.domain.is_inconsistent() {
         out.push(state_then);
     }
     out
@@ -371,6 +332,7 @@ pub(crate) fn transfer_if(
 fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &State) {
     use crate::refinement::bundle::{RefineEntry, BCF_BUNDLE_KIND_UNREACHABLE};
     use crate::refinement::refine_unreachable::try_prove_unreachable;
+    use log::info;
 
     if state.bcf.is_none() {
         return;
