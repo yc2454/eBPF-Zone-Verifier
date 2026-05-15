@@ -694,6 +694,21 @@ pub fn dump_cache_growth_pc() -> Option<usize> {
         .and_then(|s| s.parse().ok())
 }
 
+/// Comma-separated list of PCs (e.g. `ZOVIA_DIAG_PCS=1972,1974,1976,1986,1987`).
+/// run_worklist emits a compact per-arrival diagnostic at each: register
+/// types + ranges + tnums before/after type-conflict resolution, the
+/// prune decision, and successor PCs. Distinguishes the three calico
+/// type-collapse loss mechanisms (merge-demote vs precision-strip vs
+/// subsumption) in a single run.
+pub fn diag_pcs() -> Option<std::collections::HashSet<usize>> {
+    let raw = std::env::var("ZOVIA_DIAG_PCS").ok()?;
+    let set: std::collections::HashSet<usize> = raw
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect();
+    if set.is_empty() { None } else { Some(set) }
+}
+
 /// If set to a numeric PC, `record_state` dumps the env's
 /// `precise_pcs` set (eviction-resistant precision marks written by
 /// `mark_chain_precision_backward`) on every insert at that PC.

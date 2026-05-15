@@ -554,7 +554,34 @@ fn run_worklist(
 
     let mut prune_count: usize = 0;
 
+    let diag_pcs = crate::analysis::machine::env::diag_pcs();
+    let mut diag_arrivals: HashMap<usize, usize> = HashMap::new();
+
     while let Some(mut state) = worklist.pop_back() {
+        let diag_hit = diag_pcs
+            .as_ref()
+            .map(|s| s.contains(&state.pc))
+            .unwrap_or(false);
+        let (diag_r4_pre, diag_r6_pre) = if diag_hit {
+            (
+                Some(format!("{:?}", state.types.get(Reg::R4))),
+                Some(format!("{:?}", state.types.get(Reg::R6))),
+            )
+        } else {
+            (None, None)
+        };
+        if diag_hit {
+            let n = diag_arrivals.entry(state.pc).or_insert(0);
+            *n += 1;
+            eprintln!(
+                "[DIAG ENTER] pc={} arrival#{} frames={} parent_cache={:?}\n  R4={} R6={}\n  Ranges: {}\n  Tnums:  {}",
+                state.pc, n, state.num_frames(), state.parent_cache_id,
+                diag_r4_pre.as_deref().unwrap_or("?"),
+                diag_r6_pre.as_deref().unwrap_or("?"),
+                state.reg_ranges_str(),
+                state.reg_tnums_compact_str(),
+            );
+        }
         if env.failed() {
             error!(target: "app", "[Analysis] Aborted due to previous errors.");
             break;
@@ -573,11 +600,32 @@ fn run_worklist(
             merging::resolve_type_conflicts(&env, &mut state);
         }
 
+        if diag_hit {
+            let r4_post = format!("{:?}", state.types.get(Reg::R4));
+            let r6_post = format!("{:?}", state.types.get(Reg::R6));
+            if Some(&r4_post) != diag_r4_pre.as_ref()
+                || Some(&r6_post) != diag_r6_pre.as_ref()
+            {
+                eprintln!(
+                    "[DIAG DEMOTE] pc={} R4: {} -> {}  R6: {} -> {}",
+                    state.pc,
+                    diag_r4_pre.as_deref().unwrap_or("?"), r4_post,
+                    diag_r6_pre.as_deref().unwrap_or("?"), r6_post,
+                );
+            }
+        }
+
         // A.b PRUNING CHECK
         if pruning::should_prune(env, &mut state, config, prog) {
+            if diag_hit {
+                eprintln!("[DIAG PRUNE] pc={} pruned=true", state.pc);
+            }
             info!("Pruned state at pc {}", state.pc);
             prune_count += 1;
             continue;
+        }
+        if diag_hit {
+            eprintln!("[DIAG PRUNE] pc={} pruned=false (recorded)", state.pc);
         }
 
         // A.c RECORD STATE
@@ -658,8 +706,27 @@ fn run_worklist(
         }
 
         // F. Transfer Function
+        let diag_cur_pc = state.pc;
         state.domain.set_current_pc(state.pc);
         let mut successors = transfer::transfer(env, state, instr);
+        if diag_hit {
+            let succ_dump: Vec<String> = successors
+                .iter()
+                .map(|s| {
+                    format!(
+                        "pc{}[R4={:?} R6={:?}]",
+                        s.pc,
+                        s.types.get(Reg::R4),
+                        s.types.get(Reg::R6)
+                    )
+                })
+                .collect();
+            eprintln!(
+                "[DIAG SUCC] pc={} -> [{}]",
+                diag_cur_pc,
+                succ_dump.join(", ")
+            );
+        }
         // F.1 Certificate-Aided Refinement (optional)
         // Replay-verify proof chains for each successor PC using explored_states.
         if let Some(ref cert) = env.certificate {
