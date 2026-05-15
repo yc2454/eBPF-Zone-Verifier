@@ -52,13 +52,6 @@ pub(crate) fn transfer_load(
 
     let access_size = size.bytes() as i64;
     access::check_load(env, &state, base, access_size, off);
-    if env.take_bcf_path_drop_requested() {
-        // The path's accumulated path_conds were proven unsat by cvc5
-        // at this load (memory-access-site path-unreachable speculation
-        // in memory/access.rs). Drop the path so it doesn't continue
-        // exploring instructions that won't be reached at runtime.
-        return vec![];
-    }
 
     if try_load_from_rodata(env, &mut state, dst, base, off, size) {
         state.pc += 1;
@@ -199,11 +192,6 @@ pub(crate) fn transfer_store(
     };
 
     access::check_store(env, &state, base, access_size, off, src_type);
-    if env.take_bcf_path_drop_requested() {
-        // Symmetric with the load path: cvc5 proved the accumulated
-        // path_conds unsat at this store; drop the path.
-        return vec![];
-    }
 
     // Stores to an Unref kptr slot accept only NULL (proven zero) or a
     // fresh acquired pointer (PtrToBtfId / PtrToMapKptr / PtrToOwnedKptr).
@@ -416,7 +404,7 @@ pub(crate) fn transfer_atomic(
     let access_size = size.bytes() as i64;
     access::check_load(env, &state, base, access_size, off);
     access::check_store(env, &state, base, access_size, off, state.types.get(src));
-    if env.failed() || env.take_bcf_path_drop_requested() {
+    if env.failed() {
         return vec![];
     }
 

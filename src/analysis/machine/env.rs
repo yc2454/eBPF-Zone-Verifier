@@ -246,20 +246,6 @@ pub struct VerifierEnv<'a> {
     /// a static size (instruction-level loads/stores).
     pub bcf_size_reg: Option<Reg>,
 
-    /// Set by access-site path-unreachable speculation when cvc5 proves
-    /// the accumulated path_conds unsat at a memory-access rejection
-    /// (memory/access.rs). The caller of `check_load`/`check_store`
-    /// reads-and-clears this via `take_bcf_path_drop_requested()` and
-    /// returns `vec![]` to drop the path. Without the drop, the
-    /// speculated-unreachable path continues exploring, hits more
-    /// rejections, and cascades cvc5 calls (the 2026-05-14 calico
-    /// runaway). This is the access-site analogue of branch/mod.rs's
-    /// `is_inconsistent() → vec![]` flow; we use an env flag instead of
-    /// mutating `state.domain` because `check_load`/`check_store` take
-    /// `&State` and several mem-check call paths can't easily provide
-    /// `&mut State` without a wider refactor.
-    pub bcf_path_drop_requested: bool,
-
     /// Eviction-resistant precision marks keyed by `(pc, reg)`.
     /// `mark_chain_precision_backward` writes here as it walks the
     /// per-path history, so widening sites can detect "this reg was
@@ -300,15 +286,7 @@ impl<'a> VerifierEnv<'a> {
             precise_pcs: HashSet::new(),
             bcf_proofs: Vec::new(),
             bcf_size_reg: None,
-            bcf_path_drop_requested: false,
         }
-    }
-
-    /// Read-and-clear `bcf_path_drop_requested`. Called by `check_load`/
-    /// `check_store` callers right after the access check; on `true`,
-    /// the caller drops the current path (`return vec![]`).
-    pub fn take_bcf_path_drop_requested(&mut self) -> bool {
-        std::mem::take(&mut self.bcf_path_drop_requested)
     }
 
     /// Report a failure. Only the first failure is recorded.

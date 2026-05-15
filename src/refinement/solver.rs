@@ -179,19 +179,6 @@ pub fn solve(smtlib: &str) -> Result<Vec<u8>> {
         // BCF's bcf-checker on Linux 2026-05-12; see
         // `feedback_pass_definitions.md` for the workflow.
         .arg("--proof-granularity=theory-rewrite")
-        // Per-query wall-clock cap. Without it, a speculation site that
-        // expands to a hard formula can stall the verifier for minutes
-        // (the 2026-05-14 calico runaway). 1s is plenty for the
-        // path_cond proofs we emit (sub-ms in practice) and bounds the
-        // cost of a misbehaving trigger to (cap × #sites). Override via
-        // ZOVIA_CVC5_TLIMIT_MS for paper-evaluation deep dives.
-        .arg(format!(
-            "--tlimit-per={}",
-            std::env::var("ZOVIA_CVC5_TLIMIT_MS")
-                .ok()
-                .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(1000)
-        ))
         .arg(format!("--bcf-proof-out={}", proof_path.display()))
         .arg(&smt_path)
         .output()?;
