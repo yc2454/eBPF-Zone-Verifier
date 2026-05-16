@@ -15,7 +15,6 @@
 
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
-use crate::analysis::transfer::alu::helpers::bcf_reg_bounds;
 use crate::common::constants;
 use crate::refinement::bcf::BPF_JSGT;
 use crate::refinement::smtlib;
@@ -76,12 +75,18 @@ pub fn try_refine_stack_oob(
     //   low_pred  = JSLT(off_expr, lower_bound - off)   (only if needed)
     //   refine_cond = high_pred  OR  DISJ(low_pred, high_pred)
     //
-    // The kernel uses 32-bit BCF operations when both ptr_reg and
-    // size_reg fit in s32 (verifier.c:5306-5310). For stack pointers
-    // size_reg is always a constant within s32, so the deciding factor
-    // is whether `base`'s 64-bit interval fits in s32.
-    let ptr_bounds = bcf_reg_bounds(state, base);
-    let bit32 = ptr_bounds.fit_s32();
+    // Kernel `__bcf_refine_access_bound` (verifier.c:5306-5310) reasons
+    // about `ptr_reg->smin/smax` — the FRAME-RELATIVE variable-offset
+    // range, not the absolute pointer value. In interval mode `base`
+    // (the materialized stack pointer) has no scalar interval (⊤), so
+    // `bcf_reg_bounds(base)` / `get_interval(base)` are useless here.
+    // zovia's faithful equivalent of the kernel's `reg->off + var_off`
+    // is the pointer-offset-to-frame-anchor distance R10→base.
+    let (dist_lo, dist_hi) = state.domain.get_distance_interval(base, Reg::R10);
+
+    // 32-bit when the ptr offset fits s32 (size_reg is always a const
+    // within s32 for stack). Mirrors kernel `fit_s32(ptr_reg)`.
+    let bit32 = dist_lo >= i32::MIN as i64 && dist_hi <= i32::MAX as i64;
     let off_expr_use = if bit32 {
         sym.expr32(var_off_expr)
     } else {
@@ -97,11 +102,13 @@ pub fn try_refine_stack_oob(
     let high_thresh_expr = sym.add_val(high_thresh as u64, bit32);
     let high_pred = sym.add_pred(BPF_JSGT, off_expr_use, high_thresh_expr);
 
-    // Low-side check: only when the abstract domain hasn't already proven
-    // safe (min_off < lower_bound). For shift_constraint this is false
-    // (min_off = -16 > lower_bound = -512), so we just use high_pred.
-    let (smin_base, _) = state.domain.get_interval(base);
-    let min_off = smin_base + instruction_offset;
+    // Low-side check: kernel adds the low predicate only when it has
+    // NOT already proven the lower bound safe — `if (min_off <
+    // lower_bound)` (verifier.c:5339), `min_off = ptr_reg->smin_value
+    // + off`. zovia's `ptr_reg->smin_value` = the frame-relative
+    // offset min (`dist_lo`); `off` = the access insn offset. For
+    // shift_constraint min_off = -16 ≥ -512 ⇒ single-sided high_pred.
+    let min_off = dist_lo + instruction_offset;
     let oob = if min_off < lower_bound {
         let low_thresh = lower_bound - total_off;
         let low_thresh_expr = sym.add_val(low_thresh as u64, bit32);
