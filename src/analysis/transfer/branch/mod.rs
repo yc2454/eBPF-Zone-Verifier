@@ -155,7 +155,7 @@ fn record_branch_path_conds(
 /// Transfer function for conditional branch instructions.
 pub(crate) fn transfer_if(
     env: &mut VerifierEnv,
-    state: State,
+    mut state: State,
     width: Width,
     left: Reg,
     op: CmpOp,
@@ -163,10 +163,10 @@ pub(crate) fn transfer_if(
     target: usize,
 ) -> Vec<State> {
     // Check operand readability
-    if !check_reg_readable(env, &state, left) {
+    if !check_reg_readable(env, &mut state, left) {
         return vec![];
     }
-    if !check_operand_readable(env, &state, &right) {
+    if !check_operand_readable(env, &mut state, &right) {
         return vec![];
     }
 

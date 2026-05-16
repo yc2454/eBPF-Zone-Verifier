@@ -27,10 +27,10 @@ pub(crate) fn transfer_alu(
     src: Operand,
 ) -> Vec<State> {
     // 1. Check readability
-    if op != AluOp::Mov && !check_reg_readable(env, &state, dst) {
+    if op != AluOp::Mov && !check_reg_readable(env, &mut state, dst) {
         return vec![];
     }
-    if !check_operand_readable(env, &state, &src) {
+    if !check_operand_readable(env, &mut state, &src) {
         return vec![];
     }
 
@@ -363,7 +363,7 @@ pub(crate) fn transfer_mov_sx(
     dst: Reg,
     src: Operand,
 ) -> Vec<State> {
-    if !check_operand_readable(env, &state, &src) {
+    if !check_operand_readable(env, &mut state, &src) {
         return vec![];
     }
     if !check_reg_writable(env, &state, dst) {

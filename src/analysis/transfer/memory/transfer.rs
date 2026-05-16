@@ -22,7 +22,7 @@ pub(crate) fn transfer_load(
     base: Reg,
     off: i16,
 ) -> Vec<State> {
-    if !check_reg_readable(env, &state, base) {
+    if !check_reg_readable(env, &mut state, base) {
         return vec![];
     }
     if !check_reg_writable(env, &state, dst) {
@@ -187,10 +187,10 @@ pub(crate) fn transfer_store(
     off: i16,
     src: &Operand,
 ) -> Vec<State> {
-    if !check_reg_readable(env, &state, base) {
+    if !check_reg_readable(env, &mut state, base) {
         return vec![];
     }
-    if !check_operand_readable(env, &state, src) {
+    if !check_operand_readable(env, &mut state, src) {
         return vec![];
     }
 
@@ -383,13 +383,13 @@ pub(crate) fn transfer_atomic(
         return vec![];
     }
 
-    if !check_reg_readable(env, &state, base) {
+    if !check_reg_readable(env, &mut state, base) {
         return vec![];
     }
-    if !check_reg_readable(env, &state, src) {
+    if !check_reg_readable(env, &mut state, src) {
         return vec![];
     }
-    if op == AtomicOp::CmpXchg && !check_reg_readable(env, &state, Reg::R0) {
+    if op == AtomicOp::CmpXchg && !check_reg_readable(env, &mut state, Reg::R0) {
         return vec![];
     }
 
