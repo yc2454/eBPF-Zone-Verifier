@@ -247,6 +247,21 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             DontCare, DontCare, DontCare,
         ]),
 
+        // bpf_clone_redirect(skb, ifindex, flags) -> int. Real
+        // SCHED_CLS/ACT helper (id 13): clones the skb and redirects
+        // the clone. Kernel proto = [ARG_PTR_TO_CTX, ARG_ANYTHING,
+        // ARG_ANYTHING], RET_INTEGER. In bpf_helper_changes_pkt_data
+        // (net/core/filter.c) — invalidation handled by id in
+        // helper_invalidates_packets (sound). Was unregistered →
+        // backstop false-rejected the kernel-accepted cilium overlay
+        // tail_mcast_ep_delivery (the for_each_map_elem cb calls it).
+        constants::BPF_CLONE_REDIRECT => CallProto::with_args([
+            PtrToCtx, // R1: skb
+            Anything, // R2: ifindex
+            Anything, // R3: flags
+            DontCare, DontCare,
+        ]),
+
         // ---- XDP helpers ----
         constants::BPF_XDP_ADJUST_HEAD
         | constants::BPF_XDP_ADJUST_TAIL
