@@ -571,6 +571,10 @@ pub fn should_prune(
 ) -> bool {
     let pc = state.pc;
 
+    if std::env::var("ZOVIA_NO_PRUNE").is_ok() {
+        return false;
+    }
+
     env.pruning_stats.should_prune_calls += 1;
 
     if !is_prune_point(env, pc) {
