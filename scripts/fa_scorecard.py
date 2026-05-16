@@ -37,13 +37,24 @@ from collections import defaultdict
 
 ZOVIA = "target/release/zovia"
 SEC_RE = re.compile(r"^Section '(.+?)'\.\.\. (PASS|FAIL)\s*$", re.M)
-PP_RE = re.compile(r"^PERPROG (OK|FAIL)\s+\[\d+\] sec=(\S+) (\S+)(?: errno=(\d+))?",
-                   re.M)
+PP_RE = re.compile(
+    r"^PERPROG (OK|FAIL)\s+\[\d+\] sec=(\S+) (\S+)"
+    r"(?: errno=(\d+))?(?: kind=(\S+))?",
+    re.M)
 HDR_RE = re.compile(r"^=== .*?/([^/ ]+) ===\s*$", re.M)
 
 
 def parse_oracle(path: str) -> dict:
-    """obj basename -> {section: [(name, ok_bool, errno)]}"""
+    """obj basename -> {section: [(name, ok_bool, errno, kind)]}.
+
+    `kind` (test_loader, per failing program):
+      "POSTVERIF" — the kernel VERIFIER accepted the program; the load
+        failed only at a post-verifier pass (do_misc_fixups /
+        fixup_call_args / JIT, -EINVAL). zovia is a *verifier* mirror,
+        so accepting such a program is faithful, NOT a false-accept.
+      "VREJECT"   — a genuine verifier-core reject (the soundness gate).
+      ""          — OK programs / older oracle without kind=.
+    """
     txt = Path(path).read_text(errors="replace")
     out: dict = {}
     cur = None
@@ -58,8 +69,16 @@ def parse_oracle(path: str) -> dict:
             ok = m.group(1) == "OK"
             sec, name = m.group(2), m.group(3)
             errno = int(m.group(4)) if m.group(4) else 0
-            out[cur].setdefault(sec, []).append((name, ok, errno))
+            kind = m.group(5) or ""
+            out[cur].setdefault(sec, []).append((name, ok, errno, kind))
     return out
+
+
+def _verifier_ok(p) -> bool:
+    """Kernel *verifier* verdict for one program: accepted iff it
+    loaded, or it failed only post-verification (POSTVERIF)."""
+    name, ok, errno, kind = p
+    return ok or kind == "POSTVERIF"
 
 
 def run_zovia(zov: str, obj: Path, timeout: float) -> dict:
@@ -98,7 +117,7 @@ def main() -> int:
     oracle = parse_oracle(a.oracle)
     objs = [Path(l.strip()) for l in open(a.list) if l.strip()]
     agg = defaultdict(int)
-    fa_list, fr_list, rows = [], [], []
+    fa_list, fr_list, postverif_list, rows = [], [], [], []
 
     for obj in objs:
         base = obj.name
@@ -112,7 +131,17 @@ def main() -> int:
             continue
         for sec, progs in ksec.items():
             multi = len(progs) > 1
-            kernel_ok = all(p[1] for p in progs)
+            # zovia mirrors the kernel *verifier*; compare against the
+            # verifier verdict, not the load verdict. A section "passes
+            # the verifier" iff every program in it is verifier-ok
+            # (loaded, or POSTVERIF = verifier-accepted, post-verifier
+            # load -EINVAL). load_ok is the stricter actual-load verdict
+            # — when verifier-ok but not load-ok, the divergence is a
+            # non-verifier kernel stage (JIT/fixups), tracked as
+            # POSTVERIF, NOT a verifier false-accept.
+            kernel_ok = all(_verifier_ok(p) for p in progs)
+            load_ok = all(p[1] for p in progs)
+            postverif = kernel_ok and not load_ok
             if sec not in zsec:
                 agg["unmatched_oracle"] += 1
                 continue
@@ -131,7 +160,15 @@ def main() -> int:
                 fr_list.append((base, sec, [p[0] for p in progs], zreason))
             agg[f"{cls}_{tag}"] += 1
             agg[cls] += 1
-            rows.append((base, sec, tag, cls))
+            if postverif:
+                # verifier-faithful but kernel won't load it (JIT/fixup
+                # -EINVAL). Surface separately for full transparency.
+                agg["POSTVERIF"] += 1
+                agg[f"POSTVERIF_{cls}"] += 1
+                postverif_list.append(
+                    (base, sec, [p[0] for p in progs],
+                     [p[2] for p in progs if not p[1]], cls))
+            rows.append((base, sec, tag, cls, "PV" if postverif else ""))
         for sec in zsec:
             if sec not in ksec:
                 agg["unmatched_zovia"] += 1
@@ -155,9 +192,19 @@ def main() -> int:
         print("\n  *** ZERO FALSE ACCEPTS in scored set ***")
     print(f"\n  false-rejects: {len(fr_list)} "
           f"(kernel OK, zovia FAIL — faithfulness-of-reason gap)")
+    if postverif_list:
+        print(f"\n  POSTVERIF: {len(postverif_list)} sections — kernel "
+              f"VERIFIER accepts, load fails at a post-verifier pass "
+              f"(JIT/fixup -EINVAL). zovia-as-verifier is faithful here; "
+              f"NOT counted as FA. Breakdown by zovia class: "
+              f"CA={agg['POSTVERIF_CA']} FR={agg['POSTVERIF_FR']}.")
+        for base, sec, names, errnos, cls in postverif_list:
+            print(f"   {base} sec={sec} progs={names} "
+                  f"kernel_errno={errnos} zovia={cls}")
     if a.out:
         json.dump({"agg": dict(agg), "fa": fa_list, "fr": fr_list,
-                   "rows": rows}, open(a.out, "w"), indent=1)
+                   "postverif": postverif_list, "rows": rows},
+                  open(a.out, "w"), indent=1)
         print(f"  wrote {a.out}")
     return 0
 

@@ -423,7 +423,16 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
             .collect();
         // Snapshot just the resolved live indices first to avoid the
         // outer mutable borrow of `maps` while we look up by name.
+        // `to_append` collects BTF-synthesized inline inner-map
+        // templates (cilium maglev / mcast): they have no ELF symbol so
+        // no live `maps` entry exists — append them and point the outer
+        // at the appended index. Without this the outer keeps
+        // value_size 4 (the of-maps fd slot) and indexed inner-value
+        // loads `value[hash % N]` are rejected as OOB.
         let mut updates: Vec<(usize, usize)> = Vec::new();
+        let mut to_append: Vec<BpfMapDef> = Vec::new();
+        let mut appended_by_name: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
         for (i, m) in maps.iter().enumerate() {
             if !matches!(
                 m.type_,
@@ -437,14 +446,21 @@ pub fn load_maps<P: AsRef<Path>>(path: P) -> Result<Vec<BpfMapDef>> {
             let Some(btf_inner_idx) = btf_m.inner_map_idx else {
                 continue;
             };
-            let Some(btf_inner_name) = btf_maps.get(btf_inner_idx).map(|bm| bm.name.as_str())
-            else {
+            let Some(btf_inner) = btf_maps.get(btf_inner_idx) else {
                 continue;
             };
-            if let Some(&live_idx) = live_index_by_name.get(btf_inner_name) {
+            if let Some(&live_idx) = live_index_by_name.get(btf_inner.name.as_str()) {
                 updates.push((i, live_idx));
+            } else if let Some(&aidx) = appended_by_name.get(&btf_inner.name) {
+                updates.push((i, aidx));
+            } else {
+                let new_idx = maps.len() + to_append.len();
+                appended_by_name.insert(btf_inner.name.clone(), new_idx);
+                to_append.push(btf_inner.clone());
+                updates.push((i, new_idx));
             }
         }
+        maps.extend(to_append);
         for (outer, inner) in updates {
             maps[outer].inner_map_idx = Some(inner);
         }
