@@ -526,6 +526,25 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         ])
         .ret(RetKind::Scalar),
 
+        // bpf_for_each_map_elem(map, callback_fn, callback_ctx, flags)
+        // -> long. Real kernel helper id 164, mirrors
+        // `bpf_for_each_map_elem_proto` (ARG_CONST_MAP_PTR,
+        // ARG_PTR_TO_FUNC, ARG_PTR_TO_STACK_OR_NULL, ARG_ANYTHING).
+        // Already wired in is_callback_helper / callback_arg_reg(R2);
+        // only the proto was missing, so the unknown-helper backstop
+        // rejected it → 7 false rejects (`tail_mcast_ep_delivery`,
+        // overlay, all clang variants — kernel ACCEPTS per the
+        // per-program oracle). callback_ctx as `Anything` matches the
+        // sibling USER_RINGBUF_DRAIN convention.
+        constants::BPF_FOR_EACH_MAP_ELEM => CallProto::with_args([
+            ConstMapPtr,   // R1: map
+            PtrToCallback, // R2: callback_fn
+            Anything,      // R3: callback_ctx (stack-or-null)
+            Anything,      // R4: flags
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
         // ---- Information helpers ----
         constants::BPF_KTIME_GET_NS => {
             CallProto::with_args([DontCare, DontCare, DontCare, DontCare, DontCare])
