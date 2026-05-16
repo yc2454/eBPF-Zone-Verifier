@@ -236,6 +236,17 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             DontCare, DontCare, DontCare,
         ]),
 
+        // bpf_redirect_peer(ifindex, flags) -> int. Real SCHED_CLS/ACT
+        // helper (id 155); same shape as bpf_redirect (both scalars, no
+        // ctx, no packet modification → not in helper_invalidates_packets,
+        // correctly). Was unregistered → backstop false-rejected the
+        // kernel-accepted cilium lxc programs that call it.
+        constants::BPF_REDIRECT_PEER => CallProto::with_args([
+            Anything, // R1: ifindex
+            Anything, // R2: flags
+            DontCare, DontCare, DontCare,
+        ]),
+
         // ---- XDP helpers ----
         constants::BPF_XDP_ADJUST_HEAD
         | constants::BPF_XDP_ADJUST_TAIL
