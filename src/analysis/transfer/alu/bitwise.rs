@@ -216,8 +216,14 @@ pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operan
     // abstract op modifies them. Mirrors the kernel's call ordering at
     // verifier.c:16178 (bcf_alu reads pre-op `dst_reg->bcf_expr` after the
     // abstract op runs, but the operands' bounds are pre-op via the
-    // already-materialized cached values).
+    // already-materialized cached values). For the reg-source case also
+    // snapshot the src reg's bounds (the abstract op only mutates dst, so
+    // src is stable, but we must capture before borrowing `state.bcf`).
     let dst_bounds_pre = bcf_reg_bounds(state, dst);
+    let src_bounds_pre = match src {
+        Operand::Reg(r) => Some(bcf_reg_bounds(state, *r)),
+        _ => None,
+    };
 
     state.domain.forget(dst);
 
@@ -286,29 +292,62 @@ pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operan
     let bits: u16 = if alu32 { 32 } else { 64 };
 
     if let Some(d) = dst.bcf_idx() {
-        if let (Some(bcf), Operand::Imm(mask)) = (state.bcf.as_mut(), src) {
-            let dst_expr = bcf.reg_expr(d, &dst_bounds_pre, alu32);
-            let mask_val = if width == Width::W32 {
-                (*mask as u32) as u64
-            } else {
-                *mask as u64
-            };
-            let mask_expr = bcf.add_val(mask_val, alu32);
-            let alu_result = bcf.add_alu(BPF_AND, dst_expr, mask_expr, bits);
-            // Extend back to 64-bit for the cached reg slot. ZEXT for
-            // alu32 or op_u32 cases; SEXT for op_s32; no-op for true 64-bit.
-            let final_idx = if alu32 || op_u32 {
+        // Extend the AND result back to the 64-bit cached reg slot. ZEXT
+        // for alu32/op_u32 cases; SEXT for op_s32; no-op for true 64-bit.
+        let extend_back = |bcf: &mut crate::refinement::symbolic::SymbolicState,
+                           alu_result: u32|
+         -> u32 {
+            if alu32 || op_u32 {
                 bcf.add_extend(false, 32, 64, alu_result)
             } else if op_s32 {
                 bcf.add_extend(true, 32, 64, alu_result)
             } else {
                 alu_result
-            };
-            bcf.bind_reg(d, final_idx);
-        } else if let Some(bcf) = state.bcf.as_mut() {
-            // AND with a register: conservative — drop the symbolic expr.
-            // (TODO Phase 4: support reg-reg AND via reg_expr on both.)
-            bcf.clear_reg(d);
+            }
+        };
+        match src {
+            Operand::Imm(mask) => {
+                if let Some(bcf) = state.bcf.as_mut() {
+                    let dst_expr = bcf.reg_expr(d, &dst_bounds_pre, alu32);
+                    let mask_val = if width == Width::W32 {
+                        (*mask as u32) as u64
+                    } else {
+                        *mask as u64
+                    };
+                    let mask_expr = bcf.add_val(mask_val, alu32);
+                    let alu_result = bcf.add_alu(BPF_AND, dst_expr, mask_expr, bits);
+                    let final_idx = extend_back(bcf, alu_result);
+                    bcf.bind_reg(d, final_idx);
+                }
+            }
+            Operand::Reg(r) => {
+                // Reg-source AND: mirror kernel `bcf_alu` (verifier.c:15139)
+                // reg-reg handling — `AND(reg_expr(dst), reg_expr(src))`.
+                // The faithful analog of handle_add's reg-reg path. When
+                // src is a known constant (e.g. an ld_imm64 mask register),
+                // `reg_expr` materializes it via its const_val branch as
+                // `VAL_64(c)`, so the result is `AND(dst_expr, VAL_64(c))`
+                // — exactly the kernel's `r1 &= r3` (r3=ld_imm64) DAG.
+                // Without this the expr was dropped and any later branch on
+                // dst materialized a bare fresh var, losing the AND that
+                // the kernel keeps (cilium path_cond #2 divergence).
+                let si = r.bcf_idx();
+                if let (Some(bcf), Some(si)) = (state.bcf.as_mut(), si) {
+                    let dst_expr = bcf.reg_expr(d, &dst_bounds_pre, alu32);
+                    let src_expr = bcf.reg_expr(
+                        si,
+                        src_bounds_pre.as_ref().unwrap(),
+                        alu32,
+                    );
+                    let alu_result = bcf.add_alu(BPF_AND, dst_expr, src_expr, bits);
+                    let final_idx = extend_back(bcf, alu_result);
+                    bcf.bind_reg(d, final_idx);
+                } else if let Some(bcf) = state.bcf.as_mut() {
+                    // src reg has no BCF slot (shouldn't happen for R0–R10);
+                    // stay conservative and drop the expr.
+                    bcf.clear_reg(d);
+                }
+            }
         }
     }
 }
