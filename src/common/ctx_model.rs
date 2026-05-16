@@ -1231,6 +1231,32 @@ const BPF_SOCK_FIELDS: &[CtxField] = &[
         readable: true,
         narrow_access: true,
     },
+    // Remaining `struct bpf_sock` fields (uapi linux/bpf.h), mirroring
+    // the kernel's `bpf_sock_is_valid_access`: the IP/port/state/
+    // rx_queue_mapping fields are in the narrow-access switch
+    // (1/2/4-byte reads ok); `mark`/`priority` are not (4-byte only).
+    // All modeled read-only (conservative; bpf_sock write-validity is
+    // attach-type dependent — keeping writes strict only risks a
+    // false-reject on a write, never a false-accept, and matches the
+    // 0/4/8/12 entries above). Closes the 16 cilium post_bind4/6 FRs
+    // (`src_ip4`@24, `src_port`@44 were unmodeled → "Unsafe ctx
+    // access" though the kernel permits these reads).
+    CtxField { offset: 16, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false }, // mark
+    CtxField { offset: 20, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: false }, // priority
+    CtxField { offset: 24, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },  // src_ip4
+    CtxField { offset: 28, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },  // src_ip6[0]
+    CtxField { offset: 32, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },  // src_ip6[1]
+    CtxField { offset: 36, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },  // src_ip6[2]
+    CtxField { offset: 40, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },  // src_ip6[3]
+    CtxField { offset: 44, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },  // src_port (host byte order)
+    CtxField { offset: 48, size: MemSize::U16, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },  // dst_port (__be16; 50..52 = zero pad)
+    CtxField { offset: 52, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },  // dst_ip4
+    CtxField { offset: 56, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },  // dst_ip6[0]
+    CtxField { offset: 60, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },  // dst_ip6[1]
+    CtxField { offset: 64, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },  // dst_ip6[2]
+    CtxField { offset: 68, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },  // dst_ip6[3]
+    CtxField { offset: 72, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },  // state
+    CtxField { offset: 76, size: MemSize::U32, kind: CtxFieldKind::Scalar, writable: false, readable: true, narrow_access: true },  // rx_queue_mapping (s32)
 ];
 
 /// struct sk_msg_md (SK_MSG context)
