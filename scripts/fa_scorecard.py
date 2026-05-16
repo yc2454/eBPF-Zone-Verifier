@@ -23,12 +23,31 @@ Per ELF section S of an object:
 Classification (the honest faithfulness table):
   CA correct-accept  kernel OK   & zovia PASS
   CR correct-reject  kernel FAIL & zovia FAIL
-  FA FALSE ACCEPT    kernel FAIL & zovia PASS   <-- the number we want
+  FA FALSE ACCEPT    kernel FAIL & zovia PASS & zovia produced NO bundle
+                       <-- the soundness gate (must be 0). zovia claims
+                       a kernel-rejected program safe with NOTHING
+                       backing it.
+  BP bundle-producer kernel FAIL & zovia PASS & zovia DID emit a bundle.
+                       The bundle's existence proves bare zovia rejected;
+                       zovia emitted a proof obligation the kernel
+                       independently re-checks. NOT a soundness defect —
+                       an L3-convergence question (does it discharge on
+                       the VM?). Same status shift_constraint had before
+                       its #1 fix. See feedback_fa_definition_no_bundle.
   FR false-reject    kernel OK   & zovia FAIL
   plus: unmatched-zovia (section zovia verified, no libbpf program),
         unmatched-oracle (libbpf program's section zovia didn't report).
 `multi`-tagged rows are counted but reported separately (one zovia
 verdict vs several kernel programs — inherently coarser).
+
+Bundle attribution is OBJECT-level (`<obj>.bcf-bundle` existence after a
+clean run with the stale file pre-deleted), not per-section: zovia
+writes one object-level bundle and prints `Section …` only in the final
+SUMMARY, so there is no reliable per-section interleaving to parse. In
+the BCF-rejected corpus this is sound by construction — the
+kernel-rejected program is the one needing the bundle; sibling sections
+are natively kernel-OK and trigger no refinement. The same coarseness
+the section-keyed join already accepts.
 """
 from __future__ import annotations
 import argparse, json, re, subprocess, sys, time
@@ -81,11 +100,28 @@ def _verifier_ok(p) -> bool:
     return ok or kind == "POSTVERIF"
 
 
+BUNDLE_RE = re.compile(r"wrote bundle: \S+ \((\d+) entries, \d+ bytes\)")
+
+
 def run_zovia(zov: str, obj: Path, timeout: float) -> dict:
-    """section -> (passed_bool, reason_or_None)"""
+    """Returns {"secs": {section: (passed_bool, reason_or_None)},
+                "bundle": bool, "entries": int}.
+
+    `bundle`/`entries`: did this run emit a `<obj>.bcf-bundle` (a proof
+    obligation the kernel re-checks)? The stale file is deleted first so
+    the post-run signal is reliable; `-q` is dropped so the
+    `[bcf] wrote bundle: … (N entries, …)` line is captured (the bundle
+    file write itself is verbosity-independent, so existence is also
+    cross-checked on disk)."""
+    bundle_path = Path(str(obj) + ".bcf-bundle")
+    try:
+        if bundle_path.exists():
+            bundle_path.unlink()
+    except OSError:
+        pass
     try:
         r = subprocess.run(
-            ["gtimeout", str(int(timeout)), zov, "-q", "--bcf",
+            ["gtimeout", str(int(timeout)), zov, "--bcf",
              "--kernel-mode", "verify", str(obj)],
             capture_output=True, text=True, timeout=timeout + 10)
     except subprocess.TimeoutExpired:
@@ -102,7 +138,11 @@ def run_zovia(zov: str, obj: Path, timeout: float) -> dict:
             m = re.match(r"^\s+(\S+):\s*(.+)$", ln)
             if m:
                 reasons[m.group(1)] = m.group(2)
-    return {s: (p, reasons.get(s)) for s, p in verd.items()}
+    m = BUNDLE_RE.search(out)
+    entries = int(m.group(1)) if m else 0
+    bundle = bundle_path.exists() or entries > 0
+    return {"secs": {s: (p, reasons.get(s)) for s, p in verd.items()},
+            "bundle": bundle, "entries": entries}
 
 
 def main() -> int:
@@ -117,7 +157,7 @@ def main() -> int:
     oracle = parse_oracle(a.oracle)
     objs = [Path(l.strip()) for l in open(a.list) if l.strip()]
     agg = defaultdict(int)
-    fa_list, fr_list, postverif_list, rows = [], [], [], []
+    fa_list, bp_list, fr_list, postverif_list, rows = [], [], [], [], []
 
     for obj in objs:
         base = obj.name
@@ -125,10 +165,13 @@ def main() -> int:
             print(f"[skip] {base} (no oracle or file)")
             continue
         ksec = oracle[base]
-        zsec = run_zovia(a.zovia, obj, a.timeout)
-        if not zsec:
+        zres = run_zovia(a.zovia, obj, a.timeout)
+        if not zres or not zres.get("secs"):
             print(f"[skip] {base} (zovia no output / timeout)")
             continue
+        zsec = zres["secs"]
+        z_bundle = zres["bundle"]
+        z_entries = zres["entries"]
         for sec, progs in ksec.items():
             multi = len(progs) > 1
             # zovia mirrors the kernel *verifier*; compare against the
@@ -152,9 +195,21 @@ def main() -> int:
             elif (not kernel_ok) and (not zpass):
                 cls = "CR"
             elif (not kernel_ok) and zpass:
-                cls = "FA"
-                fa_list.append((base, sec, [p[0] for p in progs],
-                                [p[2] for p in progs if not p[1]]))
+                # zovia accepts a kernel-rejected program. Soundness gate:
+                # real FALSE-ACCEPT only if zovia produced NO bundle (no
+                # proof obligation — claims safe with nothing backing it).
+                # If a bundle WAS emitted, bare zovia rejected and emitted
+                # a proof the kernel re-checks ⇒ BP (L3-pending), not a
+                # soundness defect. See feedback_fa_definition_no_bundle.
+                if z_bundle:
+                    cls = "BP"
+                    bp_list.append((base, sec, [p[0] for p in progs],
+                                    [p[2] for p in progs if not p[1]],
+                                    z_entries))
+                else:
+                    cls = "FA"
+                    fa_list.append((base, sec, [p[0] for p in progs],
+                                    [p[2] for p in progs if not p[1]]))
             else:
                 cls = "FR"
                 fr_list.append((base, sec, [p[0] for p in progs], zreason))
@@ -177,7 +232,7 @@ def main() -> int:
               f" (running totals)")
 
     print("\n==== FAITHFULNESS SCORECARD ====")
-    for k in ("CA", "CR", "FA", "FR"):
+    for k in ("CA", "CR", "FA", "BP", "FR"):
         print(f"  {k}: {agg[k]}  "
               f"(1:1={agg[f'{k}_1:1']}, multi={agg[f'{k}_multi']})")
     print(f"  unmatched_oracle(libbpf prog, zovia silent): "
@@ -185,11 +240,22 @@ def main() -> int:
     print(f"  unmatched_zovia(zovia sec, no libbpf prog): "
           f"{agg['unmatched_zovia']}")
     if fa_list:
-        print("\n  *** FALSE ACCEPTS (kernel REJECT, zovia PASS) ***")
+        print("\n  *** FALSE ACCEPTS (kernel REJECT, zovia PASS, "
+              "NO bundle — soundness gate) ***")
         for base, sec, names, errnos in fa_list:
             print(f"   {base} sec={sec} progs={names} kernel_errno={errnos}")
     else:
-        print("\n  *** ZERO FALSE ACCEPTS in scored set ***")
+        print("\n  *** ZERO no-bundle FALSE ACCEPTS in scored set "
+              "(soundness gate held) ***")
+    if bp_list:
+        print(f"\n  BUNDLE-PRODUCERS: {len(bp_list)} sections — kernel "
+              f"REJECT, zovia PASS but EMITTED a bundle (bare zovia "
+              f"rejected; proof obligation the kernel re-checks). NOT a "
+              f"soundness FA — L3-convergence question (validate discharge "
+              f"on the VM). Pre-#1-fix shift_constraint had this status.")
+        for base, sec, names, errnos, ent in bp_list:
+            print(f"   {base} sec={sec} progs={names} "
+                  f"kernel_errno={errnos} bundle_entries={ent}")
     print(f"\n  false-rejects: {len(fr_list)} "
           f"(kernel OK, zovia FAIL — faithfulness-of-reason gap)")
     if postverif_list:
@@ -202,8 +268,9 @@ def main() -> int:
             print(f"   {base} sec={sec} progs={names} "
                   f"kernel_errno={errnos} zovia={cls}")
     if a.out:
-        json.dump({"agg": dict(agg), "fa": fa_list, "fr": fr_list,
-                   "postverif": postverif_list, "rows": rows},
+        json.dump({"agg": dict(agg), "fa": fa_list, "bp": bp_list,
+                   "fr": fr_list, "postverif": postverif_list,
+                   "rows": rows},
                   open(a.out, "w"), indent=1)
         print(f"  wrote {a.out}")
     return 0
