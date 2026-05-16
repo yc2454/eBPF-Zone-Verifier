@@ -21,27 +21,23 @@ pub(crate) fn check_reg_readable(env: &mut VerifierEnv, state: &State, reg: Reg)
 
     match reg_type {
         RegType::NotInit => {
-            // BCF set1/0014: the kernel's `check_reg_arg` on `-EACCES`
-            // (the `!read_ok` rejection) calls `bcf_prove_unreachable`
-            // → `bcf_track(base=NULL)` → `detect_conflict_eq`. Same
-            // path-unreachable mechanism as the generic-load site
-            // (commit f274132), different rejection site. If the path's
-            // accumulated branch conditions are syntactically
-            // contradictory, this uninit-reg path is dead — discharge
-            // it (no solver, no bundle) by returning unreadable WITHOUT
-            // env.fail. Every caller bails `return vec![]` on false, so
-            // the path is dropped (the kernel's `goto process_bpf_exit`).
-            if let Some(bcf) = state.bcf.as_ref()
-                && bcf.has_conflict_eq()
-            {
-                log::info!(
-                    target: "app",
-                    "[bcf] detect_conflict_eq: reversed-opcode path conflict at pc {} ({:?} !read_ok) — path unreachable, dropping (no cvc5, no bundle)",
-                    state.pc, reg
-                );
-                env.bcf_path_unreachable = true;
-                return false;
-            }
+            // The kernel's `check_reg_arg` rejects an uninitialized
+            // register read with `-EACCES` ("R%d !read_ok")
+            // unconditionally. A `has_conflict_eq()` path-unreachable
+            // discharge was tried here (BCF set1/0014 framing) but it
+            // is UNSOUND for this corpus: `has_conflict_eq` over the
+            // full `path_conds` false-positives (structurally-equal
+            // but semantically-distinct operands → a fake `r==c ∧ r!=c`
+            // contradiction), declaring KERNEL-REACHABLE `!read_ok`
+            // paths "unreachable" and silently dropping them →
+            // 24 measured false accepts across cilium (sock_addr
+            // connect/sendmsg `R1 !read_ok`, overlay `R5 !read_ok`);
+            // per-program kernel oracle confirms the kernel REJECTS
+            // these. A faithfulness defect outranks the speculative
+            // discharge — `!read_ok` ⇒ reject, mirroring the kernel.
+            // (`access_path_unreach` discharges via the generic-load
+            // site (`access.rs`, commit f274132), NOT here, so it is
+            // unaffected.)
             env.fail(VerificationError::RegisterNotReadable { pc: state.pc, reg });
             false
         }
