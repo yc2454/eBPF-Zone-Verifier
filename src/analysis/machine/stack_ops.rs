@@ -245,6 +245,7 @@ impl State {
         let is_aligned = (offset % 8) == 0;
         let sizes_match = spilled.source_reg.is_some() && spilled.size == size;
 
+
         // Try to extract a precise (sub-)value when reading a narrower
         // (or unaligned) slice of a wider spill whose enclosing tnum
         // pins enough bits. Walk back up to 7 bytes to find the slot
@@ -450,6 +451,30 @@ impl State {
         trace!("Restoring anchor info for {}", reg.name());
         trace!("{:?}, ", spilled);
 
+        // Map-value pointers are self-anchored at the synthetic
+        // `Reg::Zero` (interval_ops::init_map_value_ptr) and ALWAYS
+        // have a defined in-value offset (0 for a fresh lookup). A
+        // spill taken BEFORE the `OrNull → Value` null-check carries
+        // no captured `ptr_bounds` — `PtrToMapValueOrNull` never gets
+        // `init_map_value_ptr`, so `save_interval_ptr_offset` returned
+        // None. The null-check propagates the slot's *type*
+        // OrNull→Value, but without re-establishing the offset the
+        // filled pointer had none and `interval_check_map_access` fell
+        // back to the (unbounded) scalar bounds → an in-bounds
+        // `value[k]` load was rejected "Unsafe variable map access
+        // range [1, 2^32+1]" (cilium lb4/6_reverse_nat, ct/snat —
+        // ~23 FR). Default the offset to 0 here (the kernel preserves
+        // PTR_TO_MAP_VALUE off/var_off/range across spill/fill, and a
+        // fresh value pointer is off 0); the `Interval` arm below
+        // overrides with the precise captured offset when a spill was
+        // taken after pointer arithmetic.
+        if matches!(
+            spilled.reg_type,
+            RegType::PtrToMapValue { .. } | RegType::PtrToMapValueOrNull { .. }
+        ) {
+            self.domain.init_map_value_ptr(reg);
+        }
+
         use crate::analysis::machine::stack_state::PointerBounds;
         match &spilled.ptr_bounds {
             Some(PointerBounds::Zone {
@@ -494,6 +519,13 @@ impl State {
                     RegType::PtrToPacketMeta => Some(Reg::AnchorDataMeta),
                     RegType::PtrToPacketEnd => Some(Reg::AnchorDataEnd),
                     RegType::PtrToStack { .. } => Some(Reg::R10),
+                    // Map-value pointers self-anchor at Reg::Zero
+                    // (init_map_value_ptr). Restoring the captured
+                    // off/var_off/range here overrides the off=0
+                    // default set above for spills taken after
+                    // in-value pointer arithmetic.
+                    RegType::PtrToMapValue { .. }
+                    | RegType::PtrToMapValueOrNull { .. } => Some(Reg::Zero),
                     _ => None, // fallback is None
                 };
 
