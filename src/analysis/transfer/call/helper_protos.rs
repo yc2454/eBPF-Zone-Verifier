@@ -465,6 +465,19 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         }
 
         // ---- Process info helpers ----
+
+        // bpf_get_current_pid_tgid() -> u64 (no args). Real kernel
+        // helper (BPF_FUNC id 14) that was previously unregistered, so
+        // validate_helper_args skipped it. Registering it is the
+        // faithful model (no pointer args to validate, scalar return)
+        // and is the prerequisite for the unknown-helper-REJECT
+        // backstop: test_get_stack_rawtp (a real bundle-producer) calls
+        // this helper, so without a proto the backstop would
+        // false-reject it.
+        constants::BPF_GET_CURRENT_PID_TGID => {
+            CallProto::with_args([DontCare, DontCare, DontCare, DontCare, DontCare])
+        }
+
         constants::BPF_GET_TASK_STACK => CallProto::with_args([
             PtrToBtfId,
             PtrToUninitMem,
