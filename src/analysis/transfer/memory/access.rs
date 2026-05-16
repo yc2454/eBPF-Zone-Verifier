@@ -366,6 +366,22 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
                 env.bcf_path_unreachable = true;
                 return;
             }
+            // detect_conflict_eq's structural fast-path missed. The
+            // kernel still calls `bcf_prove_unreachable` here
+            // (verifier.c:8224 `R%d invalid mem access` → :8255), which
+            // builds the full path_cond and proves it unsatisfiable via
+            // the solver. Mirror that reactively: if cvc5 proves the
+            // accumulated path_cond unsat, this path is dead — emit a
+            // kind=UNREACHABLE bundle and drop the path (no env.fail).
+            if crate::analysis::transfer::branch::try_emit_path_unreachable_entry(env, state) {
+                info!(
+                    target: "app",
+                    "[bcf] reactive path-unreachable: discharged generic-load reject at pc {} (cvc5 proof, kind=UNREACHABLE)",
+                    pc
+                );
+                env.bcf_path_unreachable = true;
+                return;
+            }
             error!(
                 "Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})",
                 pc, base, off, base_type

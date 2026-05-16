@@ -346,20 +346,55 @@ pub(crate) fn transfer_if(
     out
 }
 
-/// Attempt path-unreachable speculation on an infeasible-by-zovia branch
-/// state and push the resulting bundle entry on success. Mirrors the
-/// pattern in `try_bcf_refine_stack` / `try_bcf_refine_map` but uses
-/// `kind=BCF_BUNDLE_KIND_UNREACHABLE`.
-fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &State) {
+/// Mirror the kernel's `bcf_refine` reg_masks=0 auto-fill for
+/// `bcf_prove_unreachable` (verifier.c:24525-24534): every R0..R9 that
+/// is not NOT_INIT and not a const non-scalar, then the backtrack
+/// suffix base PC over that set. The kernel's `bcf_track` emits
+/// br_conds only for that suffix; without this filter zovia's
+/// path_cond goal carries spurious leading conditions (from its full
+/// abstract-interpretation path) and its canonical hash misses the
+/// kernel's bundle lookup. `None` ⇒ keep all (sound, just not as tight).
+fn unreachable_base_pc(env: &VerifierEnv, state: &State) -> Option<usize> {
+    use crate::analysis::machine::reg_types::RegType;
+    const VARREGS: [Reg; 10] = [
+        Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4,
+        Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9,
+    ];
+    let mut targets: Vec<Reg> = Vec::new();
+    for &r in &VARREGS {
+        let ty = state.types.get(r);
+        if matches!(ty, RegType::NotInit) {
+            continue;
+        }
+        if !matches!(ty, RegType::ScalarValue) && state.get_tnum(r).is_const() {
+            continue;
+        }
+        targets.push(r);
+    }
+    let hidx = state.history_idx?;
+    env.bcf_suffix_base_pc(hidx, state.parent_cache_id, &targets)
+}
+
+/// Attempt path-unreachable speculation on a zovia-infeasible state and
+/// push the resulting `kind=BCF_BUNDLE_KIND_UNREACHABLE` bundle entry on
+/// success. Returns `true` iff an entry was emitted. Mirrors the pattern
+/// in `try_bcf_refine_stack` / `try_bcf_refine_map`.
+///
+/// Called from two places: (a) the zone-only branch-side eager
+/// speculation here, and (b) reactively from the generic-load (scalar)
+/// rejection site (`memory::access`), mirroring the kernel's
+/// `bcf_prove_unreachable` at verifier.c:8224→8255.
+pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &State) -> bool {
     use crate::refinement::bundle::{RefineEntry, BCF_BUNDLE_KIND_UNREACHABLE};
     use crate::refinement::refine_unreachable::try_prove_unreachable;
     use log::info;
 
     if state.bcf.is_none() {
-        return;
+        return false;
     }
-    let Some(ok) = try_prove_unreachable(state, None) else {
-        return;
+    let base_pc = unreachable_base_pc(env, state);
+    let Some(ok) = try_prove_unreachable(state, base_pc) else {
+        return false;
     };
     let entry = RefineEntry::new(
         ok.goal_root,
@@ -382,4 +417,5 @@ fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &State) {
         }
     }
     env.bcf_proofs.push(entry);
+    true
 }
