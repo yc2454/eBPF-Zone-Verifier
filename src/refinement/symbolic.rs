@@ -421,7 +421,14 @@ impl SymbolicState {
         } else {
             None
         };
-        let umax: Option<u64> = if bounds.smin >= 0 {
+        // When smin >= 0 the unsigned upper bound equals the signed upper bound —
+        // BUT only when smax < i64::MAX.  If smax == i64::MAX the register's
+        // actual u64 upper bound may be u64::MAX (unbounded); emitting
+        // JLE(v, 0x7fff...ffff) would be a spurious vacuous predicate not
+        // present in the kernel's bcf_bound_reg output.  The kernel's
+        // umax_value field tracks the true u64 bound; zovia derives it from
+        // the signed interval, so cap at i64::MAX-exclusive to stay faithful.
+        let umax: Option<u64> = if bounds.smin >= 0 && bounds.smax != i64::MAX {
             Some(bounds.smax as u64)
         } else if bounds.smax < 0 {
             Some(bounds.smax as u64)

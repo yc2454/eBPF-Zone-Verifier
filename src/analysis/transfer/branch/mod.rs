@@ -14,6 +14,7 @@ use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
 use crate::analysis::transfer::alu::helpers::bcf_reg_bounds;
 use crate::ast::{CmpOp, Instr, Operand, Width};
+use crate::refinement::bcf::{BPF_AND, BPF_JEQ, BPF_JNE};
 
 use self::constraints::apply_jmp_constraints;
 use self::interval_packet::refine_packet_bounds_on_branch;
@@ -26,8 +27,8 @@ use super::common::{check_operand_readable, check_reg_readable};
 /// as `(x & y) ≠ 0`, special-cased in BCF; deferred to Phase 2).
 fn cmp_op_to_bcf_pair(op: CmpOp) -> Option<(u8, u8)> {
     use crate::refinement::bcf::{
-        BPF_JEQ, BPF_JGE, BPF_JGT, BPF_JLE, BPF_JLT, BPF_JNE, BPF_JSGE, BPF_JSGT, BPF_JSLE,
-        BPF_JSLT,
+        BPF_JEQ, BPF_JGE, BPF_JGT, BPF_JLE, BPF_JLT, BPF_JNE, BPF_JSGE, BPF_JSGT,
+        BPF_JSLE, BPF_JSLT,
     };
     Some(match op {
         CmpOp::Eq => (BPF_JEQ, BPF_JNE),
@@ -65,8 +66,17 @@ fn record_branch_path_conds(
     if state_then.bcf.is_none() {
         return;
     }
-    let Some((op_then, op_else)) = cmp_op_to_bcf_pair(op) else {
-        return;
+    // For standard ops look up the taken/not-taken pair early so we can
+    // bail before doing any work.  JSET (CmpOp::Test) is handled specially
+    // below: it decomposes to AND(dst,src) JNE/JEQ 0, mirroring the kernel's
+    // record_path_cond JSET path (verifier.c:20917-20927).
+    let std_ops: Option<(u8, u8)> = if op != CmpOp::Test {
+        let Some(pair) = cmp_op_to_bcf_pair(op) else {
+            return;
+        };
+        Some(pair)
+    } else {
+        None
     };
     let Some(l_idx) = left.bcf_idx() else {
         return;
@@ -111,8 +121,23 @@ fn record_branch_path_conds(
             None => then_bcf.add_val(0, jmp32),
         },
     };
-    let pred_then = then_bcf.add_pred(op_then, cmp_l, cmp_r);
-    let pred_else = then_bcf.add_pred(op_else, cmp_l, cmp_r);
+    let (pred_then, pred_else) = if let Some((op_then, op_else)) = std_ops {
+        (
+            then_bcf.add_pred(op_then, cmp_l, cmp_r),
+            then_bcf.add_pred(op_else, cmp_l, cmp_r),
+        )
+    } else {
+        // JSET: mirror kernel record_path_cond (verifier.c:20917-20927).
+        // Taken  side: (dst & src) != 0
+        // Not-taken side: (dst & src) == 0
+        let bits: u16 = if jmp32 { 32 } else { 64 };
+        let and_expr = then_bcf.add_alu(BPF_AND, cmp_l, cmp_r, bits);
+        let zero_expr = then_bcf.add_val(0, jmp32);
+        (
+            then_bcf.add_pred(BPF_JNE, and_expr, zero_expr),
+            then_bcf.add_pred(BPF_JEQ, and_expr, zero_expr),
+        )
+    };
 
     // Now mirror the **whole post-hook DAG** into state_else's bcf. The
     // pre-hook DAGs were identical (state_else.bcf was cloned from state

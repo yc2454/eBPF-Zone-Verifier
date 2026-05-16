@@ -48,6 +48,17 @@ pub fn try_prove_unreachable(
         sym.filter_path_conds_from_pc(bp);
     }
 
+    if std::env::var("ZOVIA_BCF_DUMP_PATH_COND_PCS").is_ok() {
+        eprintln!(
+            "[bcf] path-unreachable: {} path_conds (base_pc={:?})",
+            sym.path_conds.len(),
+            base_pc
+        );
+        for (i, (&cond, &pc)) in sym.path_conds.iter().zip(sym.path_cond_pcs.iter()).enumerate() {
+            eprintln!("  [{i}] expr_slot={cond} source_pc={pc}");
+        }
+    }
+
     if sym.path_conds.is_empty() {
         debug!("[bcf] path-unreachable: no path_conds accumulated, nothing to prove");
         return None;
