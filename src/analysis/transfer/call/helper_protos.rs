@@ -170,6 +170,65 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         ])
         .mem_size_pairs(&pairs::SKB_STORE_BYTES),
 
+        // ---- skb-modifying helpers (real kernel SCHED_CLS/ACT
+        // helpers; ctx + scalar args, RET_INTEGER). Previously
+        // unregistered → validate_helper_args skipped them; with the
+        // unknown-helper⇒REJECT backstop that became a false-reject for
+        // the many kernel-ACCEPTED cilium programs that call them (per
+        // the per-program kernel oracle). Faithful protos: R1=ctx,
+        // remaining = scalars. Packet-pointer invalidation is already
+        // modeled by id in helper_invalidates_packets() — independent
+        // of this proto — so registering them is sound (no stale-pkt FA
+        // re-introduced). Mirrors the existing skb_store_bytes /
+        // vlan_push idiom (RET_INTEGER → default per-helper R0). ----
+        constants::BPF_SKB_CHANGE_PROTO => CallProto::with_args([
+            PtrToCtx, // R1: skb
+            Anything, // R2: proto
+            Anything, // R3: flags
+            DontCare, DontCare,
+        ]),
+
+        constants::BPF_SKB_CHANGE_TYPE => CallProto::with_args([
+            PtrToCtx, // R1: skb
+            Anything, // R2: type
+            DontCare, DontCare, DontCare,
+        ]),
+
+        constants::BPF_SKB_PULL_DATA => CallProto::with_args([
+            PtrToCtx, // R1: skb
+            Anything, // R2: len
+            DontCare, DontCare, DontCare,
+        ]),
+
+        constants::BPF_SKB_CHANGE_HEAD => CallProto::with_args([
+            PtrToCtx, // R1: skb
+            Anything, // R2: head_room
+            Anything, // R3: flags
+            DontCare, DontCare,
+        ]),
+
+        constants::BPF_SKB_ADJUST_ROOM => CallProto::with_args([
+            PtrToCtx, // R1: skb
+            Anything, // R2: len_diff
+            Anything, // R3: mode
+            Anything, // R4: flags
+            DontCare,
+        ]),
+
+        // bpf_sk_assign(skb, sk, flags): R2 = ARG_PTR_TO_BTF_ID_SOCK_COMMON.
+        constants::BPF_SK_ASSIGN => CallProto::with_args([
+            PtrToCtx,             // R1: skb
+            PtrToBTFIdSockCommon, // R2: sk
+            Anything,             // R3: flags
+            DontCare, DontCare,
+        ]),
+
+        // bpf_get_current_task() -> u64 (RET_INTEGER, no args). Real
+        // kernel helper id 35 (distinct from *_TASK_BTF 158).
+        constants::BPF_GET_CURRENT_TASK => {
+            CallProto::with_args([DontCare, DontCare, DontCare, DontCare, DontCare])
+        }
+
         // ---- Redirect ----
         constants::BPF_REDIRECT => CallProto::with_args([
             Anything, // R1: ifindex
