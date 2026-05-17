@@ -476,6 +476,18 @@ pub(crate) fn handle_mod(state: &mut State, width: Width, dst: Reg, src: &Operan
     }
 
     state.set_tnum(dst, Tnum::unknown());
+
+    // BCF: mirror kernel `is_safe_to_compute_dst_reg_range`
+    // (verifier.c:16050) — BPF_MOD is not in the safe set, so the
+    // kernel takes the `__mark_reg_unknown` path which clears
+    // `bcf_expr = -1`. Without clearing here, dst keeps a STALE
+    // pre-op expr and a later branch builds its path_cond from the
+    // wrong value (faithfulness + latent soundness bug).
+    if let Some(d) = dst.bcf_idx()
+        && let Some(bcf) = state.bcf.as_mut()
+    {
+        bcf.clear_reg(d);
+    }
 }
 
 pub(crate) fn handle_div(state: &mut State, width: Width, dst: Reg, src: &Operand) {
@@ -535,6 +547,19 @@ pub(crate) fn handle_div(state: &mut State, width: Width, dst: Reg, src: &Operan
     state.set_tnum(dst, new_tnum.unwrap_or_else(Tnum::unknown));
     if let Some(c) = state.get_tnum(dst).const_value() {
         state.domain.assume_eq_imm(dst, c as i64);
+    }
+
+    // BCF: mirror kernel `is_safe_to_compute_dst_reg_range`
+    // (verifier.c:16050) — BPF_DIV is not in the safe set, so the
+    // kernel takes the `__mark_reg_unknown` path which clears
+    // `bcf_expr = -1`. zovia may keep a more precise tnum (sound for
+    // bounds) but the symbolic expr MUST match the kernel: clear it
+    // so a later branch materializes a fresh VAR exactly as the
+    // kernel does. Stale expr = faithfulness + latent soundness bug.
+    if let Some(d) = dst.bcf_idx()
+        && let Some(bcf) = state.bcf.as_mut()
+    {
+        bcf.clear_reg(d);
     }
 }
 
