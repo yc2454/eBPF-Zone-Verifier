@@ -8,7 +8,9 @@ use crate::ast::{Operand, Width};
 use crate::domains::tnum::Tnum;
 use log::debug;
 
-use super::helpers::{bcf_reg_bounds, check_ptr_bounds, emit_bcf_alu_binop, sync_tnum_to_dbm};
+use super::helpers::{
+    bcf_reg_bounds, check_ptr_bounds, emit_bcf_alu_binop, emit_bcf_alu_unary, sync_tnum_to_dbm,
+};
 
 pub(crate) fn handle_add(
     _env: &mut VerifierEnv,
@@ -415,6 +417,9 @@ pub(crate) fn handle_sub(
 }
 
 pub(crate) fn handle_neg(state: &mut State, width: Width, dst: Reg) {
+    // Pre-op BCF snapshot (before the abstract op), mirroring handle_and.
+    let dst_bounds_pre = bcf_reg_bounds(state, dst);
+
     state.domain.apply_neg(dst);
 
     if width == Width::W32 {
@@ -428,6 +433,17 @@ pub(crate) fn handle_neg(state: &mut State, width: Width, dst: Reg) {
         Tnum::unknown()
     };
     state.set_tnum(dst, new_t);
+
+    // BCF: kernel routes BPF_NEG through bcf_alu's unary path (NEG is
+    // in is_safe set) — build NEG(reg_expr(dst)). Was a STALE-bcf_expr
+    // gap (no build, no clear).
+    emit_bcf_alu_unary(
+        state,
+        crate::refinement::bcf::BPF_NEG,
+        width,
+        dst,
+        &dst_bounds_pre,
+    );
 }
 
 pub(crate) fn handle_mul(state: &mut State, width: Width, dst: Reg, src: &Operand) {

@@ -149,6 +149,16 @@ impl SymbolicState {
     pub fn add_alu(&mut self, op: u8, a: u32, b: u32, bits: u16) -> u32 {
         self.push_expr(bv_alu(op, a, b, bits))
     }
+    /// Unary BV ALU expression (vlen=1) at `bits` bitwidth. Mirrors
+    /// kernel `bcf_alu`'s `unary` form (verifier.c:15171/15191:
+    /// `vlen = unary ? 1 : 2`), used for BPF_NEG.
+    pub fn add_unary(&mut self, op: u8, a: u32, bits: u16) -> u32 {
+        self.push_expr(BcfExpr {
+            code: op | BCF_BV,
+            params: bits,
+            args: vec![a],
+        })
+    }
     /// Binary BV predicate (comparison). Result type is Bool.
     pub fn add_pred(&mut self, op: u8, a: u32, b: u32) -> u32 {
         self.push_expr(bv_pred(op, a, b))

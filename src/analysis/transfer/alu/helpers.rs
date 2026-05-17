@@ -125,6 +125,41 @@ pub(crate) fn emit_bcf_alu_binop(
     }
 }
 
+/// Unary variant of [`emit_bcf_alu_binop`] for BPF_NEG (the only
+/// unary ALU op the kernel routes through `bcf_alu`; NEG is in
+/// `is_safe_to_compute_dst_reg_range`'s safe set). Mirrors the
+/// kernel's `unary` path: `code = BCF_BV | op`, vlen=1, args=[dst],
+/// + kernel-shape zext/sext. Caller snapshots `dst_bounds_pre`
+/// before the abstract op.
+pub(crate) fn emit_bcf_alu_unary(
+    state: &mut State,
+    op: u8,
+    width: Width,
+    dst: Reg,
+    dst_bounds_pre: &RegBounds,
+) {
+    let dst_bounds_post = bcf_reg_bounds(state, dst);
+    let op_u32 = dst_bounds_post.fit_u32();
+    let op_s32 = dst_bounds_post.fit_s32();
+    let alu32_class = width == Width::W32;
+    let alu32 = alu32_class || op_u32 || op_s32;
+    let bits: u16 = if alu32 { 32 } else { 64 };
+
+    let Some(d) = dst.bcf_idx() else { return };
+    if let Some(bcf) = state.bcf.as_mut() {
+        let dst_expr = bcf.reg_expr(d, dst_bounds_pre, alu32);
+        let alu_result = bcf.add_unary(op, dst_expr, bits);
+        let final_idx = if alu32 || op_u32 {
+            bcf.add_extend(false, 32, 64, alu_result)
+        } else if op_s32 {
+            bcf.add_extend(true, 32, 64, alu_result)
+        } else {
+            alu_result
+        };
+        bcf.bind_reg(d, final_idx);
+    }
+}
+
 /// Tightens DBM bounds using information from Tnum.
 pub(crate) fn sync_tnum_to_dbm(state: &mut State, reg: Reg) {
     let tnum = state.get_tnum(reg);
