@@ -345,34 +345,21 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             }
         }
         ScalarValue | NotInit => {
-            // BCF set6 `detect_conflict_eq` (path-unreachable): the
-            // kernel reaches this same invalid scalar load, then
-            // `check_reg_arg`'s -EACCES triggers `bcf_prove_unreachable`
-            // → `bcf_track(base=NULL)` (full-path replay) →
-            // `detect_conflict_eq` finds the path's accumulated
-            // `reg==K ∧ reg!=K` and `goto process_bpf_exit`s. Mirror it
-            // here: if the path's path_conds are syntactically
-            // contradictory, this path is dead — discharge the
-            // rejection with NO solver, NO bundle entry, and let the
-            // load transfer drop the path.
-            if let Some(bcf) = state.bcf.as_ref()
-                && bcf.has_conflict_eq()
-            {
-                info!(
-                    target: "app",
-                    "[bcf] detect_conflict_eq: reversed-opcode path conflict at pc {} — path unreachable, dropping (no cvc5, no bundle)",
-                    pc
-                );
-                env.bcf_path_unreachable = true;
-                return;
-            }
-            // detect_conflict_eq's structural fast-path missed. The
-            // kernel still calls `bcf_prove_unreachable` here
-            // (verifier.c:8224 `R%d invalid mem access` → :8255), which
-            // builds the full path_cond and proves it unsatisfiable via
-            // the solver. Mirror that reactively: if cvc5 proves the
-            // accumulated path_cond unsat, this path is dead — emit a
-            // kind=UNREACHABLE bundle and drop the path (no env.fail).
+            // The single-pass userspace-BCF kernel is a bundle proof
+            // CHECKER only: no in-kernel prover, no solver, and — unlike
+            // two-pass BCF's set6 `detect_conflict_eq`, which is NOT
+            // applied to the built kernel — no trusted syntactic
+            // dead-path rule. On this invalid scalar load it computes
+            // the path_cond's canonical hash and looks it up in the
+            // precomputed bundle; a `kind=UNREACHABLE` entry discharges
+            // it (`bcf_take_discharge` → `PROCESS_BPF_EXIT`). So a
+            // syntactically-dead path still needs a *checkable* bundle
+            // entry: a silent structural drop emits no entry, so the
+            // kernel hashes the path, misses the bundle, and -EACCES.
+            // Mirror the checker faithfully — prove the accumulated
+            // path_cond unsat via the solver and emit a
+            // `kind=UNREACHABLE` bundle entry; drop the path only on a
+            // successful, checkable proof.
             if crate::analysis::transfer::branch::try_emit_path_unreachable_entry(env, state) {
                 info!(
                     target: "app",

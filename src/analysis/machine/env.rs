@@ -247,12 +247,11 @@ pub struct VerifierEnv<'a> {
     pub bcf_size_reg: Option<Reg>,
 
     /// Transient mirror of the kernel's `bcf->path_unreachable`. Set by
-    /// the generic-load rejection site when `SymbolicState::has_conflict_eq`
-    /// proves the current path's accumulated `path_conds` syntactically
-    /// contradictory (BCF set6 `detect_conflict_eq`). The load transfer
-    /// consumes it: it resets the flag and drops the path (no
-    /// successors), the analog of the kernel's `goto process_bpf_exit`.
-    /// No solver call, no bundle entry.
+    /// the generic-load rejection site when a `kind=UNREACHABLE` bundle
+    /// entry is emitted (cvc5 proved the accumulated `path_cond` unsat).
+    /// The load transfer consumes it: it resets the flag and drops the
+    /// path (no successors), the analog of the single-pass kernel's
+    /// bundle discharge → `PROCESS_BPF_EXIT`.
     pub bcf_path_unreachable: bool,
 
     /// Eviction-resistant precision marks keyed by `(pc, reg)`.

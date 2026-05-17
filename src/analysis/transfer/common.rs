@@ -69,21 +69,19 @@ pub(crate) fn check_reg_readable(env: &mut VerifierEnv, state: &mut State, reg: 
         RegType::NotInit => {
             // The kernel's `check_reg_arg` rejects an uninitialized
             // register read with `-EACCES` ("R%d !read_ok")
-            // unconditionally. A `has_conflict_eq()` path-unreachable
-            // discharge was tried here (BCF set1/0014 framing) but it
-            // is UNSOUND for this corpus: `has_conflict_eq` over the
-            // full `path_conds` false-positives (structurally-equal
-            // but semantically-distinct operands → a fake `r==c ∧ r!=c`
-            // contradiction), declaring KERNEL-REACHABLE `!read_ok`
-            // paths "unreachable" and silently dropping them →
-            // 24 measured false accepts across cilium (sock_addr
-            // connect/sendmsg `R1 !read_ok`, overlay `R5 !read_ok`);
-            // per-program kernel oracle confirms the kernel REJECTS
-            // these. A faithfulness defect outranks the speculative
-            // discharge — `!read_ok` ⇒ reject, mirroring the kernel.
-            // (`access_path_unreach` discharges via the generic-load
-            // site (`access.rs`, commit f274132), NOT here, so it is
-            // unaffected.)
+            // unconditionally — mirror that: `!read_ok` ⇒ reject. A
+            // structural path-conflict discharge was once tried here
+            // (BCF set1/0014 framing) but a syntactic
+            // `reg==c ∧ reg!=c` check over the full `path_conds`
+            // false-positives (structurally-equal but semantically-
+            // distinct operands), declaring KERNEL-REACHABLE
+            // `!read_ok` paths "unreachable" → 24 measured false
+            // accepts across cilium (sock_addr connect/sendmsg
+            // `R1 !read_ok`, overlay `R5 !read_ok`); the per-program
+            // kernel oracle confirms the kernel REJECTS these. The
+            // generic-load site (`access.rs`) discharges genuine
+            // path-unreachability via a checked cvc5 bundle entry, not
+            // a structural shortcut, so it is unaffected.
             env.fail(VerificationError::RegisterNotReadable { pc: state.pc, reg });
             false
         }
