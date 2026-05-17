@@ -471,6 +471,64 @@ impl<'a> VerifierEnv<'a> {
         }
     }
 
+    /// Mirror of kernel `bcf_refine`'s parent-marking
+    /// (verifier.c:24580-81: `for i in 0..vstate_cnt-1:
+    /// parents[i]->children_unsafe = true`). After a path-unreachable
+    /// refinement at `cur`'s reject site, walk `cur`'s
+    /// `parent_cache_id` lineage and mark every cached ancestor
+    /// `children_unsafe` so it can no longer prune a later arrival.
+    /// Without this, zovia subsumes the kernel's *second* route to
+    /// the same reject against the first route's cached ancestor and
+    /// never emits the second route's distinct path-unreachable
+    /// bundle entry (cilium bpf_wireguard pc246 route-B:
+    /// 448B/0xf4f14bfbef845f45). The chain (not all-states-at-pc) is
+    /// the faithful analog — only this path's ancestors, like the
+    /// kernel's `parents[]` vstate chain.
+    ///
+    /// `base_pc` bounds the walk to the kernel's backtrack SUFFIX
+    /// (`bcf->parents[0..vstate_cnt-1]`, same suffix
+    /// `bcf_suffix_base_pc` feeds the path_cond filter): only
+    /// ancestors with `pc >= base_pc` are marked. The kernel does
+    /// NOT mark to program entry; full-lineage marking over-
+    /// suppresses pruning and explodes route enumeration. `None`
+    /// (kernel `backtrack_states` -EFAULT keep-all) means no lower
+    /// bound — mark the whole lineage (conservative).
+    pub fn mark_path_children_unsafe(&mut self, cur: &State, base_pc: Option<usize>) {
+        let mut id = cur.parent_cache_id;
+        let mut budget: usize = 16_384;
+        while let Some(cid) = id {
+            if budget == 0 {
+                break;
+            }
+            budget -= 1;
+            let Some(&(pc, idx)) = self.cache_loc_by_id.get(&cid) else {
+                break;
+            };
+            if let Some(bp) = base_pc
+                && pc < bp
+            {
+                // Past the backtrack suffix base — kernel parents[]
+                // span only the suffix; stop here.
+                break;
+            }
+            let Some(s) = self
+                .explored_states
+                .get_mut(&pc)
+                .and_then(|v| v.get_mut(idx))
+            else {
+                break;
+            };
+            if s.children_unsafe {
+                // Already marked: this prefix (and its ancestors) was
+                // marked by an earlier path-unreachable on the same
+                // lineage — stop, the rest is already done.
+                break;
+            }
+            s.children_unsafe = true;
+            id = s.parent_cache_id;
+        }
+    }
+
     /// Compute the PC at which all `target_regs`' definition chains have
     /// bottomed out (the kernel's "base state" PC). Query-only mirror of
     /// `backtrack_states` (vendor verifier.c bcf_track callers; in

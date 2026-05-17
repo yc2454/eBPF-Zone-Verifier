@@ -108,6 +108,16 @@ pub struct State {
     /// before they're cached.
     pub cache_id: Option<u32>,
 
+    /// Mirrors kernel `bpf_verifier_state.children_unsafe` set by
+    /// `bcf_refine` (verifier.c:24580-81). After a path-unreachable
+    /// refinement, the cached ancestor states on that path are no
+    /// longer safe to prune *against*: a later arrival subsumed by
+    /// one of them may reach the same reject via a *different* path
+    /// whose path_cond — and hence the bundle entry the kernel needs
+    /// — differs. Skipped as a subsumption candidate in
+    /// `handle_*_pruning`. Set by `mark_path_children_unsafe`.
+    pub children_unsafe: bool,
+
     pub tnums: HashMap<Reg, Tnum>, // tnum info for R0-R10
 
     /// Identity tokens for scalar values. Two registers (or a register and
@@ -291,6 +301,7 @@ impl State {
             history_idx: None,
             parent_cache_id: None,
             cache_id: None,
+            children_unsafe: false,
             tnums: tnums.clone(),
             scalar_ids: HashMap::new(),
             precise_regs: HashSet::new(),

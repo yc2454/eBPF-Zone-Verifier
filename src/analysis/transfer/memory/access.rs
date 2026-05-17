@@ -379,6 +379,9 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
                     "[bcf] reactive path-unreachable: discharged generic-load reject at pc {} (cvc5 proof, kind=UNREACHABLE)",
                     pc
                 );
+                // (children_unsafe marking happens inside
+                // try_emit_path_unreachable_entry, mirroring the
+                // kernel where bcf_refine itself marks parents[].)
                 env.bcf_path_unreachable = true;
                 return;
             }

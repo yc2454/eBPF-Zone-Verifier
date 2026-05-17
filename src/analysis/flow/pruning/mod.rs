@@ -77,6 +77,10 @@ fn handle_loop_pruning(
         // first that subsumes (kernel `is_state_visited` walks the
         // explored_state list, verifier.c v6.15 ~L19018).
         for (i, prev) in prev_states.iter().enumerate() {
+            // Kernel children_unsafe (bcf_refine, verifier.c:24580-81).
+            if prev.children_unsafe {
+                continue;
+            }
             match state_subsumed_by(state, prev, live_regs, config) {
                 Ok(()) => {
                     h = Some(i);
@@ -513,6 +517,12 @@ fn handle_standard_pruning(
     let mut miss_reasons: Vec<SubsumptionMissReason> = Vec::new();
     if let Some(prev_states) = env.explored_states.get(&pc) {
         for (i, prev) in prev_states.iter().enumerate() {
+            // Kernel children_unsafe (bcf_refine, verifier.c:24580-81):
+            // a path-unreachable refinement marked this cached ancestor
+            // not-prune-safe. Don't let it subsume a later arrival.
+            if prev.children_unsafe {
+                continue;
+            }
             match state_subsumed_by(state, prev, live_regs, config) {
                 Ok(()) => {
                     hit_idx = Some(i);
