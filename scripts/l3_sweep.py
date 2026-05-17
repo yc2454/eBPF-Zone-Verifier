@@ -237,11 +237,33 @@ def main() -> int:
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--l2-jobs", type=int, default=4,
                     help="parallel zovia jobs (default 4)")
-    ap.add_argument("--timeout-l2", type=int, default=60)
-    ap.add_argument("--timeout-l3", type=int, default=60)
+    # Defaults are intentionally LARGE: a small wall-clock cap is a
+    # harness artifact, not a kernel-faithfulness limit (the kernel
+    # bounds verification by insn-count, which zovia models
+    # separately). A too-small cap silently loses real wins by
+    # turning slow-but-valid analyses into spurious TIMEOUT/REJECT
+    # (measured: 60s undercounted cilium L3 by 3). So by default we
+    # let analysis run to completion; pass --timeout to go fast.
+    ap.add_argument("--timeout", type=int, default=None, metavar="SECONDS",
+                    help="shortcut to cap BOTH phases at SECONDS each "
+                         "(e.g. --timeout 120 for a fast test run). "
+                         "Omit to use the large defaults so no valid "
+                         "result is lost to an arbitrary cap.")
+    ap.add_argument("--timeout-l2", type=int, default=600, metavar="SECONDS",
+                    help="max seconds for the L2 phase per object "
+                         "(zovia analysis on the Mac; default 600). "
+                         "Overridden by --timeout if given.")
+    ap.add_argument("--timeout-l3", type=int, default=600, metavar="SECONDS",
+                    help="max seconds for the L3 phase per object "
+                         "(kernel load in the VM; default 600). "
+                         "Overridden by --timeout if given.")
     ap.add_argument("--skip-l3", action="store_true",
                     help="L2 only (don't ship/test on kernel)")
     args = ap.parse_args()
+    # --timeout is the simple knob: one number caps both phases.
+    if args.timeout is not None:
+        args.timeout_l2 = args.timeout
+        args.timeout_l3 = args.timeout
 
     with args.input_list.open() as f:
         progs = [Path(line.strip()) for line in f if line.strip() and not line.startswith("#")]
