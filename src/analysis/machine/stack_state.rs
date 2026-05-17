@@ -233,6 +233,14 @@ pub struct SpilledReg {
     /// matching `_restore`. Private — go through
     /// `stack_{get,set,clear}_irq_flag`.
     pub(crate) irq_flag: Option<IrqFlagSlot>,
+    /// BCF symbolic expression carried across spill/fill. Mirrors the
+    /// kernel's `state->stack[spi].spilled_ptr.bcf_expr` set by
+    /// `save_register_state` (verifier.c:5478 — `copy_register_state`
+    /// verbatim for 8-byte spills, `bcf_mov` ZEXT(EXTRACT) narrowing
+    /// for sub-64 non-const spills) and restored verbatim by
+    /// `check_stack_read_fixed_off` (`copy_register_state`,
+    /// verifier.c:5889/5934). `None` == kernel `-1`.
+    pub bcf_expr: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -313,6 +321,7 @@ impl StackState {
                     iterator: None,
                     dynptr: None,
                     irq_flag: None,
+                    bcf_expr: None,
                 },
             );
         }
@@ -348,6 +357,7 @@ impl StackState {
                 iterator: None,
                 dynptr: None,
                     irq_flag: None,
+                bcf_expr: None,
             },
         );
     }
@@ -386,6 +396,10 @@ impl StackState {
         }
         cur.precise = false;
         cur.ptr_bounds = None;
+        // A slot whose value diverges across loop iterations no longer
+        // has a single symbolic form — clear the carried expr (kernel
+        // widening goes through __mark_reg_unknown, bcf_expr = -1).
+        cur.bcf_expr = None;
     }
 
     /// Demote a stack slot's type to ScalarValue while preserving bounds/tnum.

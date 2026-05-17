@@ -9,6 +9,7 @@ use crate::analysis::machine::frame_stack::FrameLevel;
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::stack_state::{ScalarBounds, SpilledReg};
+use crate::analysis::transfer::alu::helpers::bcf_reg_bounds;
 use crate::ast::MemSize;
 use crate::domains::dbm::INF;
 use crate::domains::numeric::NumericDomain;
@@ -97,6 +98,45 @@ impl State {
             None
         };
 
+        // BCF symbolic carry. Mirrors kernel `save_register_state`
+        // (verifier.c:5478): `copy_register_state` copies `bcf_expr`
+        // verbatim, then for a sub-64 spill of a non-const scalar
+        // `bcf_mov(env, &spilled_ptr, reg, size*8, false, false)`
+        // (verifier.c:16352) rewrites it to
+        // `ZEXT_64( EXTRACT_{size*8}( bcf_reg_expr(reg, sz==32) ) )`.
+        // Gate matches `check_stack_write_fixed_off` (verifier.c:5598):
+        // an 8-byte-aligned scalar spill only.
+        let slot_bcf_expr: Option<u32> = if is_aligned
+            && size.bytes() <= 8
+            && matches!(preserved_type, RegType::ScalarValue)
+        {
+            if let Some(src_idx) = reg.bcf_idx() {
+                let src_tnum =
+                    self.tnums.get(&reg).cloned().unwrap_or(Tnum::unknown());
+                if size == MemSize::U64 || src_tnum.is_const() {
+                    // size == BPF_REG_SIZE → bcf_mov not called; const
+                    // var_off → kernel `!tnum_is_const` gate skips
+                    // bcf_mov. Either way: verbatim copy_register_state.
+                    self.bcf.as_ref().and_then(|b| b.get_reg(src_idx))
+                } else {
+                    let sz_bits = (size.bytes() as u16) * 8;
+                    let subreg = sz_bits == 32;
+                    let src_bounds = bcf_reg_bounds(self, reg);
+                    self.bcf.as_mut().map(|b| {
+                        let mut e = b.reg_expr(src_idx, &src_bounds, subreg);
+                        if sz_bits != 32 {
+                            e = b.add_extract(sz_bits, e);
+                        }
+                        b.add_extend(false, 64 - sz_bits, 64, e)
+                    })
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let spilled = SpilledReg {
             source_reg,
             reg_type: preserved_type,
@@ -109,6 +149,7 @@ impl State {
             iterator: None,
             dynptr: None,
                     irq_flag: None,
+            bcf_expr: slot_bcf_expr,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -134,6 +175,7 @@ impl State {
                         iterator: None,
                         dynptr: None,
                     irq_flag: None,
+                        bcf_expr: None,
                     },
                 );
             }
@@ -181,6 +223,11 @@ impl State {
             iterator: None,
             dynptr: None,
                     irq_flag: None,
+            // Const-imm store: kernel `is_bpf_st_mem` path builds a
+            // known-const fake_reg whose `var_off` is const, so the
+            // `bcf_mov` gate is skipped and no variable expr is carried.
+            // The constant lazy-materializes as `BV_VAL` on fill.
+            bcf_expr: None,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -206,6 +253,7 @@ impl State {
                         iterator: None,
                         dynptr: None,
                     irq_flag: None,
+                        bcf_expr: None,
                     },
                 );
             }
@@ -327,6 +375,12 @@ impl State {
             } else {
                 self.precise_regs.remove(&dst);
             }
+            // Kernel narrowing-fill (`size <= spill_size`,
+            // `bpf_stack_narrow_access_ok`) copies the slot's reg state
+            // verbatim — including `bcf_expr` — then only breaks the
+            // scalar `id` (check_stack_read_fixed_off:5889/5896). The
+            // carried symbolic value is the full spilled expr.
+            restore_slot_bcf_expr(self, dst, spilled.bcf_expr);
             return true;
         }
 
@@ -357,6 +411,11 @@ impl State {
             if size == MemSize::U64 {
                 self.restore_anchor_info(dst, &spilled);
             }
+            // Kernel `copy_register_state(&regs[dst], reg)` restores the
+            // slot's `bcf_expr` verbatim on a same-size aligned fill
+            // (check_stack_read_fixed_off:5934). `None` (== kernel -1)
+            // clears, so the next use lazy-materializes a fresh expr.
+            restore_slot_bcf_expr(self, dst, spilled.bcf_expr);
         } else if let Some(tn) = narrowed_tnum {
             // Narrowing read of a wider spill whose tnum pins (some of)
             // the bits we're loading (any byte offset within the wider
@@ -374,6 +433,10 @@ impl State {
             self.domain.assign_interval(dst, lo, hi);
             self.scalar_ids.remove(&dst);
             self.precise_regs.remove(&dst);
+            // zovia-only tnum sub-slice precision; the kernel reaches
+            // these states via __mark_reg_unknown (bcf_expr = -1). Clear
+            // so we never carry a false whole-slot expr for a sub-read.
+            restore_slot_bcf_expr(self, dst, None);
         } else {
             // Size mismatch or unaligned - return unbounded scalar for the load size
             self.types.set(dst, RegType::ScalarValue);
@@ -382,6 +445,8 @@ impl State {
             self.domain.assign_interval(dst, min, max);
             self.scalar_ids.remove(&dst);
             self.precise_regs.remove(&dst);
+            // Kernel mark_reg_unknown path → bcf_expr = -1.
+            restore_slot_bcf_expr(self, dst, None);
         }
 
         true
@@ -557,6 +622,27 @@ impl State {
         if off < 0 && off > i16::MIN {
             let depth = (-off) as u16;
             self.frame_depth = self.frame_depth.max(depth);
+        }
+    }
+}
+
+/// Restore (or clear) a filled register's BCF symbolic expression from
+/// the stack slot it was reloaded from. Mirrors the kernel's
+/// `copy_register_state(&regs[dst], reg)` on fill
+/// (check_stack_read_fixed_off, verifier.c:5889/5934): `bcf_expr` is
+/// copied verbatim from the slot; `None` means kernel `-1`, i.e. no
+/// carried expr, so the register lazy-materializes a fresh one on next
+/// use. `transfer_load` clears `dst.bcf_expr` before calling `fill_at`,
+/// so this re-bind on the spill-restore paths is what carries a spilled
+/// scalar's expr (e.g. an `LSH` shift result) across spill/reload into a
+/// later path-condition clause.
+fn restore_slot_bcf_expr(state: &mut State, dst: Reg, slot_bcf: Option<u32>) {
+    if let Some(idx) = dst.bcf_idx()
+        && let Some(bcf) = state.bcf.as_mut()
+    {
+        match slot_bcf {
+            Some(e) => bcf.bind_reg(idx, e),
+            None => bcf.clear_reg(idx),
         }
     }
 }
