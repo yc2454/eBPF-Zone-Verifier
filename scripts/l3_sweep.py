@@ -97,7 +97,7 @@ def run_l2(prog: Path, timeout: int) -> dict:
     start = time.time()
     try:
         r = subprocess.run(
-            [str(ZOVIA), "--bcf", "verify", str(prog)],
+            [str(ZOVIA), "--bcf", "--kernel-mode", "verify", str(prog)],
             capture_output=True, text=True, timeout=timeout,
         )
         out = r.stdout + "\n" + r.stderr
@@ -157,9 +157,9 @@ def run_l3(prog_relpath: Path, has_bundle: bool, timeout: int) -> dict:
     type_str = lookup_prog_type(prog_relpath)
     type_arg = f"--type {type_str} " if type_str else ""
     if has_bundle:
-        loader_cmd = f"./test_loader {type_arg}{vm_prog} {vm_prog}.bcf-bundle"
+        loader_cmd = f"./build/test_loader {type_arg}{vm_prog} {vm_prog}.bcf-bundle"
     else:
-        loader_cmd = f"./test_loader {type_arg}{vm_prog}"
+        loader_cmd = f"./build/test_loader {type_arg}{vm_prog}"
     inner = (
         f"cd /root/bcf && dmesg -c >/dev/null 2>&1; "
         f"{loader_cmd} 2>&1 | tail -8; "
