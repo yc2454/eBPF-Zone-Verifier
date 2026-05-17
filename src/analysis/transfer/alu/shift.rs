@@ -164,6 +164,82 @@ pub(crate) fn handle_shr(state: &mut State, width: Width, dst: Reg, src: &Operan
     }
 }
 
+/// Abstract-domain (interval + tnum) update for a left shift by a *known*
+/// amount. Mirrors the kernel `scalar_min_max_lsh` / `scalar32_min_max_lsh`
+/// (verifier.c:15871/15919). The kernel reaches this same code for both an
+/// immediate shift and a `BPF_X` shift whose amount register holds a known
+/// constant (it constructs a fake src_reg with umin==umax==imm), so the two
+/// cases must produce identical bounds. `shift_amount` is already masked to
+/// the operation width (`& 0x1F` for W32, `& 0x3F` for W64).
+fn lsh_domain_known(state: &mut State, width: Width, dst: Reg, shift_amount: u32) {
+    let (old_lo, old_hi) = state.domain.get_interval(dst);
+    let old_tnum = state.get_tnum(dst);
+    state.domain.forget(dst);
+
+    if width == Width::W32 {
+        let truncated_tnum = old_tnum.trunc32();
+        let dbm_lo = if old_lo >= 0 && old_hi <= u32::MAX as i64 {
+            old_lo as u64
+        } else {
+            0
+        };
+        let dbm_hi = if old_lo >= 0 && old_hi <= u32::MAX as i64 {
+            old_hi as u64
+        } else {
+            u32::MAX as u64
+        };
+
+        let trunc_lo = truncated_tnum.min_value().max(dbm_lo);
+        let trunc_hi = truncated_tnum.max_value().min(dbm_hi);
+
+        if shift_amount < 32 {
+            let max_safe = u32::MAX as u64 >> shift_amount;
+            if trunc_hi <= max_safe {
+                let new_lo = ((trunc_lo << shift_amount) & 0xFFFFFFFF) as i64;
+                let new_hi = ((trunc_hi << shift_amount) & 0xFFFFFFFF) as i64;
+                state.domain.assume_ge_imm(dst, new_lo);
+                state.domain.assume_le_imm(dst, new_hi);
+            } else {
+                state.domain.assume_ge_imm(dst, 0);
+                state.domain.assume_le_imm(dst, u32::MAX as i64);
+            }
+        } else {
+            state.domain.assume_eq_imm(dst, 0);
+        }
+
+        let new_tnum = truncated_tnum.shl_imm(shift_amount as u64).trunc32();
+        state.set_tnum(dst, new_tnum);
+    } else {
+        if shift_amount == 32 {
+            if old_lo != i64::MIN && old_hi != i64::MAX {
+                let (lo, hi) = (old_lo, old_hi);
+                if lo >= i32::MIN as i64 && hi <= i32::MAX as i64 {
+                    state.domain.assume_ge_imm(dst, lo << 32);
+                    state.domain.assume_le_imm(dst, hi << 32);
+                }
+            }
+        } else if old_lo != i64::MIN && old_hi != i64::MAX {
+            let (lo, hi) = (old_lo, old_hi);
+            if lo >= 0 && shift_amount < 64 {
+                let max_safe: i64 = if shift_amount == 63 {
+                    0
+                } else {
+                    i64::MAX >> shift_amount
+                };
+                if hi <= max_safe {
+                    state.domain.assume_ge_imm(dst, lo << shift_amount);
+                    state.domain.assume_le_imm(dst, hi << shift_amount);
+                }
+            }
+        }
+
+        let new_tnum = old_tnum.shl_imm(shift_amount as u64);
+        state.set_tnum(dst, new_tnum);
+    }
+
+    sync_tnum_to_dbm(state, dst);
+}
+
 pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operand) {
     // Snapshot dst's BCF bounds before the abstract op runs. The kernel
     // (verifier.c:16096 + 16179) computes op_u32/op_s32 as the AND of
@@ -182,86 +258,39 @@ pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operan
             } else {
                 k & 0x3F
             };
-
-            let (old_lo, old_hi) = state.domain.get_interval(dst);
-            let old_tnum = state.get_tnum(dst);
-            state.domain.forget(dst);
-
-            if width == Width::W32 {
-                let truncated_tnum = old_tnum.trunc32();
-                let dbm_lo = if old_lo >= 0 && old_hi <= u32::MAX as i64 {
-                    old_lo as u64
-                } else {
-                    0
-                };
-                let dbm_hi = if old_lo >= 0 && old_hi <= u32::MAX as i64 {
-                    old_hi as u64
-                } else {
-                    u32::MAX as u64
-                };
-
-                let trunc_lo = truncated_tnum.min_value().max(dbm_lo);
-                let trunc_hi = truncated_tnum.max_value().min(dbm_hi);
-
-                if shift_amount < 32 {
-                    let max_safe = u32::MAX as u64 >> shift_amount;
-                    if trunc_hi <= max_safe {
-                        let new_lo = ((trunc_lo << shift_amount) & 0xFFFFFFFF) as i64;
-                        let new_hi = ((trunc_hi << shift_amount) & 0xFFFFFFFF) as i64;
-                        state.domain.assume_ge_imm(dst, new_lo);
-                        state.domain.assume_le_imm(dst, new_hi);
-                    } else {
-                        state.domain.assume_ge_imm(dst, 0);
-                        state.domain.assume_le_imm(dst, u32::MAX as i64);
-                    }
-                } else {
-                    state.domain.assume_eq_imm(dst, 0);
-                }
-
-                let new_tnum = truncated_tnum.shl_imm(shift_amount as u64).trunc32();
-                state.set_tnum(dst, new_tnum);
-            } else {
-                if shift_amount == 32 {
-                    if old_lo != i64::MIN && old_hi != i64::MAX {
-                        let (lo, hi) = (old_lo, old_hi);
-                        if lo >= i32::MIN as i64 && hi <= i32::MAX as i64 {
-                            state.domain.assume_ge_imm(dst, lo << 32);
-                            state.domain.assume_le_imm(dst, hi << 32);
-                        }
-                    }
-                } else if old_lo != i64::MIN && old_hi != i64::MAX {
-                    let (lo, hi) = (old_lo, old_hi);
-                    if lo >= 0 && shift_amount < 64 {
-                        let max_safe: i64 = if shift_amount == 63 {
-                            0
-                        } else {
-                            i64::MAX >> shift_amount
-                        };
-                        if hi <= max_safe {
-                            state.domain.assume_ge_imm(dst, lo << shift_amount);
-                            state.domain.assume_le_imm(dst, hi << shift_amount);
-                        }
-                    }
-                }
-
-                let new_tnum = old_tnum.shl_imm(shift_amount as u64);
-                state.set_tnum(dst, new_tnum);
-            }
-
-            sync_tnum_to_dbm(state, dst);
+            lsh_domain_known(state, width, dst, shift_amount);
         }
-        Operand::Reg(_) => {
-            state.domain.forget(dst);
-
-            if width == Width::W32 {
-                state.domain.assume_ge_imm(dst, 0);
-                state.domain.assume_le_imm(dst, u32::MAX as i64);
-                state.set_tnum(dst, Tnum::u32_unknown());
+        Operand::Reg(sr) => {
+            // Kernel `scalar*_min_max_lsh` takes the shift register's
+            // umin/umax. When that register holds a known constant the
+            // kernel produces umin==umax==c, i.e. the *identical* bounds
+            // as an immediate shift by c (verifier.c:15871/15919 via the
+            // fake src_reg in adjust_scalar_min_max_vals). Mirror that:
+            // const amount reg ⇒ same bounded math as the Imm path.
+            // A variable (non-const) amount stays conservative — the
+            // BCF symbolic mirror below also clears the expr there, and
+            // narrowing the const-only gate matches the prior shift
+            // commits (1b7ed62 / 71fbb43).
+            if let Some(c) = state.get_tnum(*sr).const_value() {
+                let shift_amount = if width == Width::W32 {
+                    (c as u32) & 0x1F
+                } else {
+                    (c as u32) & 0x3F
+                };
+                lsh_domain_known(state, width, dst, shift_amount);
             } else {
-                state.set_tnum(dst, Tnum::unknown());
-            }
+                state.domain.forget(dst);
 
-            sync_tnum_to_dbm(state, dst);
+                if width == Width::W32 {
+                    state.domain.assume_ge_imm(dst, 0);
+                    state.domain.assume_le_imm(dst, u32::MAX as i64);
+                    state.set_tnum(dst, Tnum::u32_unknown());
+                } else {
+                    state.set_tnum(dst, Tnum::unknown());
+                }
+
+                sync_tnum_to_dbm(state, dst);
+            }
         }
     }
 
