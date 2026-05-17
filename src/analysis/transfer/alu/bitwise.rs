@@ -4,9 +4,9 @@ use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
 use crate::ast::{Operand, Width};
 use crate::domains::tnum::Tnum;
-use crate::refinement::bcf::BPF_AND;
+use crate::refinement::bcf::{BPF_AND, BPF_OR, BPF_XOR};
 
-use super::helpers::{bcf_reg_bounds, sync_tnum_to_dbm};
+use super::helpers::{bcf_reg_bounds, emit_bcf_alu_binop, sync_tnum_to_dbm};
 
 // BCF symbolic mirror for `mov32 dst, src` (W32 Reg→Reg). Mirrors kernel
 // `bcf_alu` (verifier.c:15139)'s mov32 shape: reads src in 32-bit form,
@@ -353,6 +353,13 @@ pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operan
 }
 
 pub(crate) fn handle_or(state: &mut State, width: Width, dst: Reg, src: &Operand) {
+    // Pre-op BCF snapshots (before forget), mirroring handle_and.
+    let dst_bounds_pre = bcf_reg_bounds(state, dst);
+    let src_bounds_pre = match src {
+        Operand::Reg(r) => Some(bcf_reg_bounds(state, *r)),
+        _ => None,
+    };
+
     state.domain.forget(dst);
 
     let t = state.get_tnum(dst);
@@ -373,9 +380,29 @@ pub(crate) fn handle_or(state: &mut State, width: Width, dst: Reg, src: &Operand
     state.set_tnum(dst, new_t);
 
     sync_tnum_to_dbm(state, dst);
+
+    // BCF: kernel routes BPF_OR through bcf_alu (in is_safe set) —
+    // build OR(reg_expr(dst), reg_expr(src)) unless dropped. Was a
+    // STALE-bcf_expr gap (no build, no clear).
+    emit_bcf_alu_binop(
+        state,
+        BPF_OR,
+        width,
+        dst,
+        src,
+        &dst_bounds_pre,
+        src_bounds_pre.as_ref(),
+    );
 }
 
 pub(crate) fn handle_xor(state: &mut State, width: Width, dst: Reg, src: &Operand) {
+    // Pre-op BCF snapshots (before forget), mirroring handle_and.
+    let dst_bounds_pre = bcf_reg_bounds(state, dst);
+    let src_bounds_pre = match src {
+        Operand::Reg(r) => Some(bcf_reg_bounds(state, *r)),
+        _ => None,
+    };
+
     state.domain.forget(dst);
 
     let t = state.get_tnum(dst);
@@ -396,4 +423,16 @@ pub(crate) fn handle_xor(state: &mut State, width: Width, dst: Reg, src: &Operan
     state.set_tnum(dst, new_t);
 
     sync_tnum_to_dbm(state, dst);
+
+    // BCF: kernel routes BPF_XOR through bcf_alu (in is_safe set).
+    // Was a STALE-bcf_expr gap (no build, no clear).
+    emit_bcf_alu_binop(
+        state,
+        BPF_XOR,
+        width,
+        dst,
+        src,
+        &dst_bounds_pre,
+        src_bounds_pre.as_ref(),
+    );
 }

@@ -8,7 +8,7 @@ use crate::ast::{Operand, Width};
 use crate::domains::tnum::Tnum;
 use log::debug;
 
-use super::helpers::{bcf_reg_bounds, check_ptr_bounds, sync_tnum_to_dbm};
+use super::helpers::{bcf_reg_bounds, check_ptr_bounds, emit_bcf_alu_binop, sync_tnum_to_dbm};
 
 pub(crate) fn handle_add(
     _env: &mut VerifierEnv,
@@ -431,6 +431,13 @@ pub(crate) fn handle_neg(state: &mut State, width: Width, dst: Reg) {
 }
 
 pub(crate) fn handle_mul(state: &mut State, width: Width, dst: Reg, src: &Operand) {
+    // Pre-op BCF snapshots (before forget), mirroring handle_and.
+    let dst_bounds_pre = bcf_reg_bounds(state, dst);
+    let src_bounds_pre = match src {
+        Operand::Reg(r) => Some(bcf_reg_bounds(state, *r)),
+        _ => None,
+    };
+
     match src {
         Operand::Imm(c) => {
             state.domain.apply_mul_imm(dst, *c);
@@ -445,6 +452,20 @@ pub(crate) fn handle_mul(state: &mut State, width: Width, dst: Reg, src: &Operan
     }
 
     state.set_tnum(dst, Tnum::unknown());
+
+    // BCF: kernel routes BPF_MUL through bcf_alu (in is_safe set) —
+    // build MUL(reg_expr(dst), reg_expr(src)). Was a STALE-bcf_expr
+    // gap (no build, no clear): zovia widens the tnum to unknown but
+    // the symbolic expr must still mirror the kernel exactly.
+    emit_bcf_alu_binop(
+        state,
+        crate::refinement::bcf::BPF_MUL,
+        width,
+        dst,
+        src,
+        &dst_bounds_pre,
+        src_bounds_pre.as_ref(),
+    );
 }
 
 pub(crate) fn handle_mod(state: &mut State, width: Width, dst: Reg, src: &Operand) {
