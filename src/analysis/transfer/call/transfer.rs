@@ -760,6 +760,26 @@ fn initialize_uninit_mem_args(
                                             MemSize::U8,
                                             Some(slot as i64),
                                         );
+                                        // Destroy the spilled VALUE, not just
+                                        // the type. The kernel's
+                                        // check_helper_call marks an
+                                        // ARG_PTR_TO_UNINIT_MEM output buffer
+                                        // STACK_MISC + __mark_reg_unknown
+                                        // (verifier.c:8606 / :12094 byte-wise
+                                        // BPF_WRITE). Without this, a constant
+                                        // a caller spilled into the buffer
+                                        // before the call (e.g. cilium
+                                        // wireguard pc154 `*(u32*)(r10-0x60)=0`
+                                        // then `skb_load_bytes` writes it)
+                                        // survives in zovia's slot model, so
+                                        // zovia "proves" a downstream branch
+                                        // (pc171 `if w2==0`) the kernel can't
+                                        // — pruning the path BCF explores and
+                                        // bundles (cilium D2; also a latent
+                                        // soundness hole: reading a helper's
+                                        // uninitialized output as a known
+                                        // value).
+                                        stack.invalidate_slot(slot);
                                     }
                                 }
                             }
