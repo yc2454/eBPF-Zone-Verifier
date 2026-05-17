@@ -849,6 +849,31 @@ pub(super) fn apply_return_bounds(state: &mut State, helper: u32) {
         constants::BPF_GET_PRANDOM_U32
             | constants::BPF_GET_CGROUP_CLASS_ID
             | constants::BPF_GET_HASH_RECALC
+            // "0 on success / -errno" group below: zovia narrows R0 to
+            // [-MAX_ERRNO, 0], but the kernel's `do_refine_retval_range`
+            // (verifier.c) refines ONLY get_stack / get_task_stack /
+            // probe_read{,_kernel,_user}_str / get_smp_processor_id —
+            // every other RET_INTEGER helper (incl. these) stays a
+            // fully-unbounded scalar (`mark_reg_unknown`). So zovia must
+            // pre-cache R0's bcf_expr as the kernel-shape unbounded
+            // VAR_64; otherwise materialize_reg takes the fit_s32 path
+            // (32-bit var + spurious bcf_bound_reg32 preds), diverging
+            // from the kernel CONJ (cilium wireguard D3/D4: pc167
+            // `if w0 s<0` on a skb_load_bytes return — kernel emits a
+            // single `JSGE(EXTRACT32(v64),0)`, zovia emitted 3 clauses).
+            // The abstract-domain bound below is kept (zovia-only
+            // verification precision); only the BCF goal is made faithful.
+            | constants::BPF_MAP_UPDATE_ELEM
+            | constants::BPF_MAP_DELETE_ELEM
+            | constants::BPF_SKB_STORE_BYTES
+            | constants::BPF_SKB_LOAD_BYTES
+            | constants::BPF_XDP_ADJUST_HEAD
+            | constants::BPF_L3_CSUM_REPLACE
+            | constants::BPF_L4_CSUM_REPLACE
+            | constants::BPF_GET_CURRENT_COMM
+            | constants::BPF_SKB_VLAN_PUSH
+            | constants::BPF_SKB_VLAN_POP
+            | constants::BPF_SOCK_MAP_UPDATE
     );
     if zovia_narrower_than_kernel {
         if let Some(bcf) = state.bcf.as_mut() {
