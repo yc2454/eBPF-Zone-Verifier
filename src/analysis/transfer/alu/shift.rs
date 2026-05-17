@@ -271,6 +271,50 @@ pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operan
             };
             bcf.bind_reg(d, final_idx);
         }
+    } else if let (Some(d), Operand::Reg(sr)) = (dst.bcf_idx(), src) {
+        // Reg-source SHL. Kernel-faithful (evidence: kernel route-A
+        // 513B has ZERO LSH nodes despite `pc45 r1<<=r7` with r7
+        // *variable*; kernel route-C 706B has exactly one LSH for
+        // `pc68 w2<<=w9` with w9 *const 3*). So mirror the kernel
+        // ONLY when the shift-amount reg is a known constant — then
+        // it is semantically an immediate shift, build
+        // `LSH(reg_expr(dst), VAL(c))` exactly like the Imm path
+        // (this is what produced kernel route-C's `LSH(v4,3)`). A
+        // variable shift amount clears the expr (the prior behavior,
+        // which kept routes A/B converged — the kernel emits no LSH
+        // there either).
+        let src_const = state.get_tnum(*sr).const_value();
+        if let Some(c) = src_const {
+            let shift_amount = if width == Width::W32 {
+                (c as u32) & 0x1F
+            } else {
+                (c as u32) & 0x3F
+            };
+            let dst_bounds_post = bcf_reg_bounds(state, dst);
+            if let Some(bcf) = state.bcf.as_mut() {
+                let op_u32 = dst_bounds_pre.fit_u32() && dst_bounds_post.fit_u32();
+                let op_s32 = dst_bounds_pre.fit_s32() && dst_bounds_post.fit_s32();
+                let alu32_class = width == Width::W32;
+                let alu32 = alu32_class || op_u32 || op_s32;
+                let bits: u16 = if alu32 { 32 } else { 64 };
+
+                let dst_expr = bcf.reg_expr(d, &dst_bounds_pre, alu32);
+                let k_expr = bcf.add_val(shift_amount as u64, alu32);
+                let alu_result =
+                    bcf.add_alu(crate::refinement::bcf::BPF_LSH, dst_expr, k_expr, bits);
+                let final_idx = if alu32 || op_u32 {
+                    bcf.add_extend(false, 32, 64, alu_result)
+                } else if op_s32 {
+                    bcf.add_extend(true, 32, 64, alu_result)
+                } else {
+                    alu_result
+                };
+                bcf.bind_reg(d, final_idx);
+            }
+        } else if let Some(bcf) = state.bcf.as_mut() {
+            // Variable shift amount — kernel emits no LSH expr here.
+            bcf.clear_reg(d);
+        }
     } else if let Some(d) = dst.bcf_idx() {
         if let Some(bcf) = state.bcf.as_mut() {
             bcf.clear_reg(d);
