@@ -11,7 +11,7 @@ use crate::analysis::machine::state::State;
 use crate::analysis::transfer::memory::access::AccessKind;
 use crate::analysis::transfer::memory::check_stack_access;
 use crate::common::constants;
-use log::{error, info, warn};
+use log::{error, info};
 
 use super::compat::is_nullable_arg_type;
 use super::signatures::{ArgKind, IterArgExpect, MemSizePair, get_helper_proto};
@@ -128,10 +128,18 @@ pub(crate) fn validate_helper_args(
     pc: usize,
 ) {
     let Some(sig) = get_helper_proto(helper) else {
-        warn!(
-            "[Verifier] Unknown helper {} at pc {}, skipping arg validation",
+        // Faithful mirror of the kernel: check_helper_call rejects with
+        // -EINVAL when get_func_proto(func_id) returns NULL (unknown
+        // helper id, or a helper not available to this program type).
+        // zovia previously skipped (warn + return, no env.fail) and let
+        // analysis continue, accepting programs the kernel rejects — the
+        // systemic BCF-corpus false-accept root mechanism. An
+        // unknown/unmodeled helper id ⇒ REJECT.
+        error!(
+            "[Verifier] Unknown/unmodeled helper {} at pc {}: rejecting (kernel -EINVAL: get_func_proto==NULL)",
             helper, pc
         );
+        env.fail(VerificationError::InvalidHelperId { pc, helper });
         return;
     };
 

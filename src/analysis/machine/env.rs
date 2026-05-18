@@ -246,6 +246,14 @@ pub struct VerifierEnv<'a> {
     /// a static size (instruction-level loads/stores).
     pub bcf_size_reg: Option<Reg>,
 
+    /// Transient mirror of the kernel's `bcf->path_unreachable`. Set by
+    /// the generic-load rejection site when a `kind=UNREACHABLE` bundle
+    /// entry is emitted (cvc5 proved the accumulated `path_cond` unsat).
+    /// The load transfer consumes it: it resets the flag and drops the
+    /// path (no successors), the analog of the single-pass kernel's
+    /// bundle discharge → `PROCESS_BPF_EXIT`.
+    pub bcf_path_unreachable: bool,
+
     /// Eviction-resistant precision marks keyed by `(pc, reg)`.
     /// `mark_chain_precision_backward` writes here as it walks the
     /// per-path history, so widening sites can detect "this reg was
@@ -286,6 +294,7 @@ impl<'a> VerifierEnv<'a> {
             precise_pcs: HashSet::new(),
             bcf_proofs: Vec::new(),
             bcf_size_reg: None,
+            bcf_path_unreachable: false,
         }
     }
 
@@ -460,6 +469,200 @@ impl<'a> VerifierEnv<'a> {
             self.mark_chain_precision_backward(history_idx, cur.parent_cache_id, r);
         }
     }
+
+    /// Mirror of kernel `bcf_refine`'s parent-marking
+    /// (verifier.c:24580-81: `for i in 0..vstate_cnt-1:
+    /// parents[i]->children_unsafe = true`). After a path-unreachable
+    /// refinement at `cur`'s reject site, walk `cur`'s
+    /// `parent_cache_id` lineage and mark every cached ancestor
+    /// `children_unsafe` so it can no longer prune a later arrival.
+    /// Without this, zovia subsumes the kernel's *second* route to
+    /// the same reject against the first route's cached ancestor and
+    /// never emits the second route's distinct path-unreachable
+    /// bundle entry (cilium bpf_wireguard pc246 route-B:
+    /// 448B/0xf4f14bfbef845f45). The chain (not all-states-at-pc) is
+    /// the faithful analog — only this path's ancestors, like the
+    /// kernel's `parents[]` vstate chain.
+    ///
+    /// `base_pc` bounds the walk to the kernel's backtrack SUFFIX
+    /// (`bcf->parents[0..vstate_cnt-1]`, same suffix
+    /// `bcf_suffix_base_pc` feeds the path_cond filter): only
+    /// ancestors with `pc >= base_pc` are marked. The kernel does
+    /// NOT mark to program entry; full-lineage marking over-
+    /// suppresses pruning and explodes route enumeration. `None`
+    /// (kernel `backtrack_states` -EFAULT keep-all) means no lower
+    /// bound — mark the whole lineage (conservative).
+    pub fn mark_path_children_unsafe(&mut self, cur: &State, base_pc: Option<usize>) {
+        let mut id = cur.parent_cache_id;
+        let mut budget: usize = 16_384;
+        while let Some(cid) = id {
+            if budget == 0 {
+                break;
+            }
+            budget -= 1;
+            let Some(&(pc, idx)) = self.cache_loc_by_id.get(&cid) else {
+                break;
+            };
+            if let Some(bp) = base_pc
+                && pc < bp
+            {
+                // Past the backtrack suffix base — kernel parents[]
+                // span only the suffix; stop here.
+                break;
+            }
+            let Some(s) = self
+                .explored_states
+                .get_mut(&pc)
+                .and_then(|v| v.get_mut(idx))
+            else {
+                break;
+            };
+            if s.children_unsafe {
+                // Already marked: this prefix (and its ancestors) was
+                // marked by an earlier path-unreachable on the same
+                // lineage — stop, the rest is already done.
+                break;
+            }
+            s.children_unsafe = true;
+            id = s.parent_cache_id;
+        }
+    }
+
+    /// Compute the PC at which all `target_regs`' definition chains have
+    /// bottomed out (the kernel's "base state" PC). Query-only mirror of
+    /// `backtrack_states` (vendor verifier.c bcf_track callers; in
+    /// `/Users/yalucai/bpf-next-zovia/kernel/bpf/verifier.c` at the
+    /// `backtrack_states` definition): walks backward through the linear
+    /// breadcrumb history starting from `history_idx`, applying the
+    /// per-insn frontier propagation rule
+    /// (`update_frontier`, same one used by
+    /// `mark_chain_precision_backward`), and returns the PC at which the
+    /// frontier first becomes empty. Used by BCF refinement sites to
+    /// filter eager `SymbolicState::path_conds` down to the suffix the
+    /// kernel's `bcf_track` would emit.
+    ///
+    /// Semantics — mirrors `backtrack_states` step-by-step:
+    /// * Initial frontier = `target_regs`.
+    /// * Walk back through breadcrumbs; the **first** breadcrumb (the
+    ///   refine site's own insn) is skipped (`skip_first = true`),
+    ///   matching the kernel.
+    /// * On each prior step, apply `update_frontier`. When it empties,
+    ///   that step's PC is the kernel's base PC — return it.
+    /// * If the walk runs out of history without emptying the frontier,
+    ///   the kernel returns `-EFAULT`; we return `None` (callers treat
+    ///   that as "keep all path_conds" — sound, just not tighter than
+    ///   today).
+    ///
+    /// Returns `None` for empty `target_regs` (kernel returns
+    /// `-EFAULT` in that case too) or when the walk runs out.
+    pub fn bcf_suffix_base_pc(
+        &self,
+        history_idx: usize,
+        parent_cache_id: Option<u32>,
+        target_regs: &[Reg],
+    ) -> Option<usize> {
+        let debug = std::env::var("ZOVIA_BCF_TRACK_DEBUG").is_ok();
+        let mut frontier: HashSet<Reg> = target_regs.iter().copied().collect();
+        if debug {
+            eprintln!(
+                "[bcf-track] walk start: targets={:?} history_idx={} parent_cache_id={:?}",
+                target_regs, history_idx, parent_cache_id
+            );
+        }
+        if frontier.is_empty() {
+            return None;
+        }
+
+        let caller_saved = [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
+        let mut current_history: Option<usize> = Some(history_idx);
+        let mut current_parent_id: Option<u32> = parent_cache_id;
+        let mut budget: usize = 16_384;
+        let mut skip_first = true;
+
+        'outer: loop {
+            let parent_loc = current_parent_id
+                .and_then(|id| self.cache_loc_by_id.get(&id).copied());
+            let (parent_history_stop, parent_grandparent_id) =
+                if let Some((pc, idx)) = parent_loc {
+                    let s = self
+                        .explored_states
+                        .get(&pc)
+                        .and_then(|v| v.get(idx));
+                    (
+                        s.and_then(|s| s.history_idx),
+                        s.and_then(|s| s.parent_cache_id),
+                    )
+                } else {
+                    (None, None)
+                };
+
+            while let Some(idx) = current_history {
+                if budget == 0 {
+                    break 'outer;
+                }
+                budget -= 1;
+
+                if let Some(stop) = parent_history_stop
+                    && idx <= stop
+                {
+                    break;
+                }
+
+                let Some(step) = self.history.get(idx) else {
+                    break;
+                };
+                let parent_idx = step.parent_idx;
+                let instr_copy = step.instr.clone();
+                let step_pc = step.pc;
+
+                if !skip_first {
+                    let pre: Vec<Reg> = {
+                        let mut v: Vec<Reg> = frontier.iter().copied().collect();
+                        v.sort_by_key(|r| *r as u8);
+                        v
+                    };
+                    update_frontier(&mut frontier, &instr_copy, &caller_saved);
+                    if debug {
+                        let post: Vec<Reg> = {
+                            let mut v: Vec<Reg> = frontier.iter().copied().collect();
+                            v.sort_by_key(|r| *r as u8);
+                            v
+                        };
+                        eprintln!(
+                            "[bcf-track]   pc={:>3} {:?} frontier {:?} -> {:?}",
+                            step_pc, instr_copy, pre, post
+                        );
+                    }
+                    if frontier.is_empty() {
+                        if debug {
+                            eprintln!("[bcf-track] frontier empty at pc={}", step_pc);
+                        }
+                        // Base reached. The kernel's `bcf_track` re-runs
+                        // the suffix starting at the parent state — i.e.
+                        // from `step_pc` forward. Branches emitted in
+                        // the suffix get tagged with their JMP PC, all
+                        // ≥ `step_pc`. Return that as the cutoff.
+                        return Some(step_pc);
+                    }
+                } else if debug {
+                    eprintln!(
+                        "[bcf-track]   pc={:>3} (skipped first: {:?})",
+                        step_pc, instr_copy
+                    );
+                }
+                skip_first = false;
+                current_history = parent_idx;
+            }
+
+            if parent_grandparent_id.is_none() {
+                break;
+            }
+            current_parent_id = parent_grandparent_id;
+            current_history = parent_history_stop;
+        }
+
+        None
+    }
 }
 
 /// Update `frontier` (the set of registers whose precision must
@@ -556,6 +759,21 @@ pub fn dump_cache_growth_pc() -> Option<usize> {
     std::env::var("ZOVIA_DUMP_CACHE_GROWTH_PC")
         .ok()
         .and_then(|s| s.parse().ok())
+}
+
+/// Comma-separated list of PCs (e.g. `ZOVIA_DIAG_PCS=1972,1974,1976,1986,1987`).
+/// run_worklist emits a compact per-arrival diagnostic at each: register
+/// types + ranges + tnums before/after type-conflict resolution, the
+/// prune decision, and successor PCs. Distinguishes the three calico
+/// type-collapse loss mechanisms (merge-demote vs precision-strip vs
+/// subsumption) in a single run.
+pub fn diag_pcs() -> Option<std::collections::HashSet<usize>> {
+    let raw = std::env::var("ZOVIA_DIAG_PCS").ok()?;
+    let set: std::collections::HashSet<usize> = raw
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect();
+    if set.is_empty() { None } else { Some(set) }
 }
 
 /// If set to a numeric PC, `record_state` dumps the env's

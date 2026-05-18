@@ -19,6 +19,7 @@ use log::{debug, error, trace};
 use super::checks::validate_helper_args;
 use super::mem_checks::{check_mem_size_pairs, is_valid_helper_id};
 use super::signatures::get_helper_proto;
+use crate::analysis::transfer::alu::helpers::bcf_reg_bounds;
 
 /// Transfer function for helper Call instructions.
 pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32) -> Vec<State> {
@@ -759,6 +760,26 @@ fn initialize_uninit_mem_args(
                                             MemSize::U8,
                                             Some(slot as i64),
                                         );
+                                        // Destroy the spilled VALUE, not just
+                                        // the type. The kernel's
+                                        // check_helper_call marks an
+                                        // ARG_PTR_TO_UNINIT_MEM output buffer
+                                        // STACK_MISC + __mark_reg_unknown
+                                        // (verifier.c:8606 / :12094 byte-wise
+                                        // BPF_WRITE). Without this, a constant
+                                        // a caller spilled into the buffer
+                                        // before the call (e.g. cilium
+                                        // wireguard pc154 `*(u32*)(r10-0x60)=0`
+                                        // then `skb_load_bytes` writes it)
+                                        // survives in zovia's slot model, so
+                                        // zovia "proves" a downstream branch
+                                        // (pc171 `if w2==0`) the kernel can't
+                                        // — pruning the path BCF explores and
+                                        // bundles (cilium D2; also a latent
+                                        // soundness hole: reading a helper's
+                                        // uninitialized output as a known
+                                        // value).
+                                        stack.invalidate_slot(slot);
                                     }
                                 }
                             }
@@ -788,8 +809,83 @@ pub(crate) fn apply_return_bounds_for_cb_helper(state: &mut State, helper: u32) 
 }
 
 pub(super) fn apply_return_bounds(state: &mut State, helper: u32) {
-    state.domain.forget(Reg::R0);
-    state.set_tnum(Reg::R0, Tnum::unknown());
+    // `update_call_types` (run just before this) sets up domain offset
+    // tracking for map-value-returning helpers via `init_map_value_ptr`
+    // (R0.bounds = offset [0,0], R0.ptr_offset = Some). An unconditional
+    // `forget(R0)` here wipes that, so the offset never reaches the reg
+    // it is copied into (`r6 = r0`), and the map-region refinement reads
+    // min_off = i64::MIN -> "Unbounded variable map access". Preserve
+    // the offset tracking for map-value R0; the generic scalar-return
+    // reset still applies to every other helper.
+    let r0_is_map_value_ptr = matches!(
+        state.types.get(Reg::R0),
+        RegType::PtrToMapValue { .. } | RegType::PtrToMapValueOrNull { .. }
+    );
+    if !r0_is_map_value_ptr {
+        state.domain.forget(Reg::R0);
+        state.set_tnum(Reg::R0, Tnum::unknown());
+    }
+    // Pre-materialize R0's BCF cache with **kernel-view** bounds
+    // (unbounded scalar) — ONLY when zovia's domain would narrow R0
+    // tighter than the kernel's `do_refine_retval_range`. The kernel's
+    // helper proto dictates which helpers narrow R0; for helpers
+    // whose proto returns an unbounded scalar (e.g.
+    // `bpf_get_prandom_u32` / `bpf_get_smp_processor_id`), the kernel's
+    // `bcf_reg_expr` caches R0 as `VAR_64`. zovia's `apply_return_bounds`
+    // below tightens R0 to `[0, u32::MAX]` for those (zovia-only
+    // precision), which would otherwise drive `materialize_reg` into
+    // the `fit_u32` branch and cache R0 as `ZEXT(VAR_32)` — diverging
+    // from the kernel's runtime CONJ. Pre-caching with unknown bounds
+    // forces VAR_64 to match.
+    //
+    // For helpers where the kernel ALSO narrows (the `do_refine_retval_range`
+    // set — error-return helpers, `bpf_probe_read_str` family, etc.),
+    // zovia and the kernel agree on bounds. Skipping the pre-cache here
+    // lets `materialize_reg` fire lazily with the narrowed bounds, which
+    // matches the kernel's `bcf_reg_expr` choice of SEXT(VAR_32) +
+    // `bcf_bound_reg` preds at the first symbolic use.
+    let zovia_narrower_than_kernel = matches!(
+        helper,
+        constants::BPF_GET_PRANDOM_U32
+            | constants::BPF_GET_CGROUP_CLASS_ID
+            | constants::BPF_GET_HASH_RECALC
+            // "0 on success / -errno" group below: zovia narrows R0 to
+            // [-MAX_ERRNO, 0], but the kernel's `do_refine_retval_range`
+            // (verifier.c) refines ONLY get_stack / get_task_stack /
+            // probe_read{,_kernel,_user}_str / get_smp_processor_id —
+            // every other RET_INTEGER helper (incl. these) stays a
+            // fully-unbounded scalar (`mark_reg_unknown`). So zovia must
+            // pre-cache R0's bcf_expr as the kernel-shape unbounded
+            // VAR_64; otherwise materialize_reg takes the fit_s32 path
+            // (32-bit var + spurious bcf_bound_reg32 preds), diverging
+            // from the kernel CONJ (cilium wireguard D3/D4: pc167
+            // `if w0 s<0` on a skb_load_bytes return — kernel emits a
+            // single `JSGE(EXTRACT32(v64),0)`, zovia emitted 3 clauses).
+            // The abstract-domain bound below is kept (zovia-only
+            // verification precision); only the BCF goal is made faithful.
+            | constants::BPF_MAP_UPDATE_ELEM
+            | constants::BPF_MAP_DELETE_ELEM
+            | constants::BPF_SKB_STORE_BYTES
+            | constants::BPF_SKB_LOAD_BYTES
+            | constants::BPF_XDP_ADJUST_HEAD
+            | constants::BPF_L3_CSUM_REPLACE
+            | constants::BPF_L4_CSUM_REPLACE
+            | constants::BPF_GET_CURRENT_COMM
+            | constants::BPF_SKB_VLAN_PUSH
+            | constants::BPF_SKB_VLAN_POP
+            | constants::BPF_SOCK_MAP_UPDATE
+    );
+    if zovia_narrower_than_kernel {
+        if let Some(bcf) = state.bcf.as_mut() {
+            if let Some(d) = Reg::R0.bcf_idx() {
+                let _ = bcf.reg_expr(
+                    d,
+                    &crate::refinement::symbolic::RegBounds::unknown(),
+                    false,
+                );
+            }
+        }
+    }
     // NOTE: the BCF R0 bcf_expr clear was moved to the top of
     // `transfer_call` (before `update_call_types`) so it doesn't override
     // anchors set during type assignment. See the matching comment there.
@@ -891,6 +987,39 @@ pub(super) fn apply_return_bounds(state: &mut State, helper: u32) {
             );
         }
         _ => {}
+    }
+
+    // Eagerly materialize R0's BCF symbolic expression for helpers whose
+    // kernel-side `do_refine_retval_range` narrows R0 to `[-MAX_ERRNO,
+    // size_max]`. Without this, R0's symbolic var + bound preds only get
+    // emitted on R0's first symbolic use — but the next helper call may
+    // overwrite R0 first (via `clear_reg(0)` at transfer_call entry),
+    // dropping the bounds from the path_cond entirely. The kernel's
+    // `bcf_track` suffix walk catches this via `check_reg_arg`'s eager
+    // `bcf_reg_expr` call (verifier.c:4086) — every reg read materializes.
+    // We mirror at the helper-return narrow point: each call's fresh R0 gets
+    // its own SEXT(VAR_32) + 2 bound preds, even if R0 is overwritten before
+    // a symbolic use.
+    //
+    // Concrete repro this fixes: test_get_stack_rawtp has 4 bpf_get_stack
+    // calls before the refine site at PC 61. Kernel's CONJ at PC 61 has 4
+    // VAR_32s (one per call) × 2 bound preds = 8 preds. Pre-fix zovia
+    // emitted just 1 (last call's R0). Now matches.
+    let kernel_narrows_r0_via_do_refine = matches!(
+        helper,
+        constants::BPF_GET_STACK
+            | constants::BPF_GET_TASK_STACK
+            | constants::BPF_PROBE_READ_STR
+            | constants::BPF_PROBE_READ_USER_STR
+            | constants::BPF_PROBE_READ_KERNEL_STR
+    );
+    if kernel_narrows_r0_via_do_refine {
+        let bounds = bcf_reg_bounds(state, Reg::R0);
+        if let Some(bcf) = state.bcf.as_mut() {
+            if let Some(d) = Reg::R0.bcf_idx() {
+                let _ = bcf.reg_expr(d, &bounds, false);
+            }
+        }
     }
 }
 

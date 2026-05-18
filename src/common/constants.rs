@@ -160,6 +160,7 @@ pub const BPF_GET_TASK_STACK: u32 = 141;
 pub const BPF_INODE_STORAGE_GET: u32 = 145;
 pub const BPF_INODE_STORAGE_DELETE: u32 = 146;
 pub const BPF_D_PATH: u32 = 147;
+pub const BPF_REDIRECT_PEER: u32 = 155;
 pub const BPF_TASK_STORAGE_GET: u32 = 156;
 pub const BPF_TASK_STORAGE_DELETE: u32 = 157;
 pub const BPF_GET_CURRENT_TASK_BTF: u32 = 158;

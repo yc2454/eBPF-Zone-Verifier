@@ -92,25 +92,84 @@ fn align4(n: usize) -> usize {
     (n + 3) & !3
 }
 
-/// Write a bundle to `path`. Returns total bytes written.
+/// Parse an existing bundle into raw `(cond_hash, kind, goal_bytes,
+/// proof_bytes)` tuples. Tolerant: any structural problem yields an
+/// empty list (the caller treats it as "no prior entries" and just
+/// overwrites — never worse than the pre-merge behaviour).
+fn read_bundle_raw(path: &Path) -> Vec<(u64, u32, Vec<u8>, Vec<u8>)> {
+    let Ok(b) = std::fs::read(path) else { return Vec::new() };
+    let rd_u32 = |o: usize| -> Option<u32> {
+        b.get(o..o + 4).map(|s| u32::from_le_bytes(s.try_into().unwrap()))
+    };
+    if b.len() < BUNDLE_HEADER_SIZE || rd_u32(0) != Some(BCF_BUNDLE_MAGIC) {
+        return Vec::new();
+    }
+    let Some(cnt) = rd_u32(4) else { return Vec::new() };
+    let mut out = Vec::new();
+    for i in 0..cnt as usize {
+        let e = BUNDLE_HEADER_SIZE + i * BUNDLE_ENTRY_SIZE;
+        if e + BUNDLE_ENTRY_SIZE > b.len() {
+            return out;
+        }
+        let cond_hash =
+            u64::from_le_bytes(b[e..e + 8].try_into().unwrap());
+        let goal_off = rd_u32(e + 8).unwrap_or(0) as usize;
+        let goal_len = rd_u32(e + 12).unwrap_or(0) as usize;
+        let proof_off = rd_u32(e + 16).unwrap_or(0) as usize;
+        let proof_len = rd_u32(e + 20).unwrap_or(0) as usize;
+        let kind = rd_u32(e + 24).unwrap_or(0);
+        let (Some(goal), Some(proof)) = (
+            b.get(goal_off..goal_off + goal_len),
+            b.get(proof_off..proof_off + proof_len),
+        ) else {
+            return out;
+        };
+        out.push((cond_hash, kind, goal.to_vec(), proof.to_vec()));
+    }
+    out
+}
+
+/// Write a bundle to `path`, MERGING with any entries already present in
+/// the file (dedup by `cond_hash`). The verifier analyzes one ELF
+/// section at a time and calls this per section against the same
+/// per-object sidecar path; without the merge the last section's write
+/// clobbers earlier sections' entries, so a reject in section A whose
+/// proof converged is lost once section B (with its own proof) is
+/// analyzed. `main` clears the sidecar once per object before analysis,
+/// so cross-run staleness is not a concern. Returns total bytes written.
 pub fn write_bundle(path: &Path, entries: &[RefineEntry]) -> io::Result<usize> {
     // First pass: serialize per-entry payloads (held in memory; bundles are
     // small — single-digit MB at most — so no streaming concerns).
-    struct Serialized<'a> {
+    struct Serialized {
         cond_hash: u64,
         kind: u32,
         goal: Vec<u8>,
-        proof: &'a [u8],
+        proof: Vec<u8>,
     }
-    let serialized: Vec<Serialized> = entries
-        .iter()
-        .map(|e| Serialized {
+    // Pre-existing entries from earlier sections of this same object.
+    let mut serialized: Vec<Serialized> = read_bundle_raw(path)
+        .into_iter()
+        .map(|(cond_hash, kind, goal, proof)| Serialized {
+            cond_hash,
+            kind,
+            goal,
+            proof,
+        })
+        .collect();
+    let mut seen: std::collections::HashSet<u64> =
+        serialized.iter().map(|s| s.cond_hash).collect();
+    for e in entries {
+        if !seen.insert(e.cond_hash) {
+            continue; // already have this exact goal — skip duplicate
+        }
+        serialized.push(Serialized {
             cond_hash: e.cond_hash,
             kind: e.kind,
             goal: serialize_goal(e.goal_root, &e.goal_exprs),
-            proof: &e.proof_bytes,
-        })
-        .collect();
+            proof: e.proof_bytes.clone(),
+        });
+    }
+    let entries_len = serialized.len();
 
     // Layout: header | entries | concatenated (goal | proof) per entry,
     // each padded to u32. Interleaving goal and proof per entry keeps the
@@ -121,18 +180,18 @@ pub fn write_bundle(path: &Path, entries: &[RefineEntry]) -> io::Result<usize> {
         payload_total += align4(s.goal.len()) + align4(s.proof.len());
     }
     let total_size =
-        BUNDLE_HEADER_SIZE + BUNDLE_ENTRY_SIZE * entries.len() + payload_total;
+        BUNDLE_HEADER_SIZE + BUNDLE_ENTRY_SIZE * entries_len + payload_total;
 
     let mut buf = Vec::with_capacity(total_size);
 
     // --- header ---
     buf.extend_from_slice(&BCF_BUNDLE_MAGIC.to_le_bytes());
-    buf.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&(entries_len as u32).to_le_bytes());
     buf.extend_from_slice(&(total_size as u32).to_le_bytes());
     buf.extend_from_slice(&0u32.to_le_bytes()); // reserved
 
     // --- entries (precompute offsets) ---
-    let payload_base = BUNDLE_HEADER_SIZE + BUNDLE_ENTRY_SIZE * entries.len();
+    let payload_base = BUNDLE_HEADER_SIZE + BUNDLE_ENTRY_SIZE * entries_len;
     let mut cur = payload_base;
     for s in &serialized {
         let goal_off = cur;
@@ -156,7 +215,7 @@ pub fn write_bundle(path: &Path, entries: &[RefineEntry]) -> io::Result<usize> {
         let pad = align4(s.goal.len()) - s.goal.len();
         buf.resize(buf.len() + pad, 0);
 
-        buf.extend_from_slice(s.proof);
+        buf.extend_from_slice(&s.proof);
         let pad = align4(s.proof.len()) - s.proof.len();
         buf.resize(buf.len() + pad, 0);
     }

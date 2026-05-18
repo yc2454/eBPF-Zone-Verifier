@@ -380,8 +380,16 @@ pub(crate) fn check_single_mem_size_pair(
 ) -> bool {
     let ptr_type = state.types.get(pair.ptr_reg);
 
-    // Handle NULL pointer case
-    if state.domain.proven_zero(pair.ptr_reg) {
+    // Handle NULL pointer case. NULL-ness is a *type* property (a scalar
+    // proven zero passed where a mem-or-null arg is expected), NOT a
+    // domain-value property. A concrete non-null pointer type
+    // (PtrToMapValue/PtrToStack/...) is never NULL even when its domain
+    // bounds read 0 — which is now the norm since map-value pointers
+    // track their *offset* (0 for a fresh lookup) in those bounds. Without
+    // the `!is_pointer()` guard, a valid map-value ptr at offset 0 is
+    // misread as NULL and the helper's "size must be 0 when ptr NULL"
+    // rule spuriously rejects the size arg.
+    if state.domain.proven_zero(pair.ptr_reg) && !ptr_type.is_pointer() {
         if pair.null_skips_size_check {
             // `__opt` semantics: NULL ptr means no buffer access, any
             // size is fine. Helper returns NULL on the slow path; caller

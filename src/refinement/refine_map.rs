@@ -1,55 +1,43 @@
 //! Refinement callback for the map-region OOB rejection sites.
 //!
-//! Mirrors BCF's `bcf_refine_access_bound` (kernel `set1/0014`, cheat-sheet
-//! §4b). Three sub-cases dispatched on which operand is variable; the size
-//! register comes in via `env.bcf_size_reg` (BCF stashes `bcf->size_regno`
-//! in the analogous transient slot in their kernel state).
+//! Mirrors the kernel's `__bcf_refine_access_bound` (verifier.c:5291) for
+//! the map / helper-mem-region case. Three sub-cases dispatched on which
+//! operand carries the variable part:
 //!
-//! Sub-cases:
+//! * **(i) `ptr_const`** — pointer has no variable contribution; size is
+//!   variable. Refine the size's upper bound by claiming
+//!   `JGT(size_expr, higher_bound - off)` is unsat.
 //!
-//! * **(iii) `size_const` (variable ptr, constant size)** — most common in
-//!   our corpus. Refine the pointer's offset: claim `off > limit - size`
-//!   (high-side OOB) is unsat, optionally disjoined with `off < 0`
-//!   (low-side OOB) when the verifier's interval suggests the low side is
-//!   reachable.
+//! * **(ii) `size_const`** — size is a known constant; pointer offset is
+//!   variable. Refine the offset's range by claiming
+//!   `JSGT(off_expr, higher_bound - sz - off)` is unsat, optionally
+//!   disjoined with `JSLT(off_expr, lower_bound - off)` when the verifier
+//!   can't already prove the low side.
 //!
-//! * **(iv) both variable** — both pointer offset and size are
-//!   symbolically tracked. Claim `off + size > limit` ∨ `off < 0` unsat.
-//!   This is what unlocks programs like `test_get_stack_rawtp` where
-//!   `size = max_len - usize` is a derived expression. We don't replicate
-//!   BCF's `bcf->access_checked` two-stage defer — our verifier already
-//!   has the full picture at the rejection site.
+//! * **(iii) `both_var`** — both vary. Build `ADD(off_expr, size_expr)`
+//!   then `JSGT(sum, higher_bound - off)`; optional low-side DISJ as above.
 //!
-//! * **(ii) `ptr_const` (constant ptr, variable size)** — refine the size
-//!   reg's upper bound: claim `size > limit - off` unsat. Less common
-//!   shape; included for completeness.
+//! All predicates use bit-width 32 when **both** `ptr_reg` and `size_reg`
+//! fit in s32 (kernel verifier.c:5306-5310), and 64 otherwise. The
+//! constant K (= `ptr_reg->off`, the accumulated pointer const offset
+//! after `ptr += imm` ops) comes from `state.ptr_const_off`, mirroring
+//! the refine_stack treatment landed for the multi-contributor case.
 //!
-//! The pointer's symbolic offset comes from `state.bcf.get_reg(base)` (β+
-//! tracking, anchor at 0 from `maybe_promote_map_val`). The size's
-//! symbolic expression comes from `state.bcf.get_reg(size_reg)` when one
-//! is provided; otherwise the static `size: i64` is used as a 64-bit BV
-//! constant.
+//! This shape is critical for `bcf_bundle_try_discharge`: the kernel
+//! computes `canonical_hash` on its runtime CONJ and looks the bundle up
+//! by that hash. Any structural divergence (operand width, conditional-
+//! DISJ vs unconditional, extra path_conds beyond what the kernel
+//! generates) → hash miss → -EACCES at the refine site.
 
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
-use crate::refinement::bcf::{BPF_ADD, BPF_JSGT, BPF_JSLT};
+use crate::analysis::transfer::alu::helpers::bcf_reg_bounds;
+use crate::refinement::bcf::{BPF_ADD, BPF_JGT, BPF_JSGT, BPF_JSLT};
 use crate::refinement::smtlib;
 use crate::refinement::solver;
-use crate::refinement::symbolic::SymbolicState;
+use crate::refinement::symbolic::{build_goal_root, SymbolicState};
 use log::{debug, warn};
 
-/// Attempt to discharge a map-region OOB rejection via cvc5.
-///
-/// `base` — the pointer reg whose offset is being checked.
-/// `insn_off` — the load/store instruction's static offset.
-/// `size` — the access size in bytes (the verifier's static upper bound,
-/// already collapsed to a concrete `i64`). Used as the literal access
-/// size when `size_reg` is `None`; ignored when `size_reg` is `Some` and
-/// has a symbolic expression.
-/// `map_limit` — the map value's total size.
-/// `size_reg` — the helper-arg size register, when this access came via a
-/// helper-mem-region check. The refinement reads its symbolic expression
-/// (case iv) or detects a const size from interval+tnum (case iii).
 pub fn try_refine_map_access(
     state: &State,
     base: Reg,
@@ -57,79 +45,143 @@ pub fn try_refine_map_access(
     size: i64,
     map_limit: i64,
     size_reg: Option<Reg>,
+    base_pc: Option<usize>,
 ) -> Option<super::refine_stack::RefineOk> {
     let bcf_ref = state.bcf.as_ref()?;
     let mut sym: SymbolicState = (**bcf_ref).clone();
-
-    // Pointer offset expression. Bail if missing (e.g., the base reg
-    // wasn't anchored — possibly arrived via stack spill/reload).
-    let b_idx = base.bcf_idx()?;
-    let Some(off_expr) = sym.get_reg(b_idx) else {
-        debug!(
-            "[bcf] map-refine skipped: base {:?} has no symbolic expr (anchor missing?)",
-            base
+    // Mirror the kernel's `bcf_track` suffix-only br_cond emission
+    // (verifier.c `bcf_track` / `backtrack_states`). Drop path_conds
+    // emitted at PCs before the refine target's definition chain
+    // bottoms out so the bundle's canonical_hash matches what the
+    // kernel computes on its runtime CONJ.
+    let pre_count = sym.path_conds.len();
+    if let Some(bp) = base_pc {
+        sym.filter_path_conds_from_pc(bp);
+    }
+    if std::env::var("ZOVIA_BCF_TRACK_DEBUG").is_ok() {
+        eprintln!(
+            "[bcf-track] map-refine base={:?} size_reg={:?} base_pc={:?} path_conds {}->{} pcs={:?}",
+            base,
+            size_reg,
+            base_pc,
+            pre_count,
+            sym.path_conds.len(),
+            sym.path_cond_pcs,
         );
+    }
+
+    // Pointer's variable-part expression. After the ptr+imm BCF skip, the
+    // cached `bcf_expr` carries only the symbolic variable contribution;
+    // the constant K lives separately in `state.ptr_const_off`.
+    let b_idx = base.bcf_idx()?;
+    let var_off_expr = sym.get_reg(b_idx);
+
+    // Kernel `ptr_reg->off` analog. Combined with the load/store
+    // instruction's static `insn_off`, this gives the total const offset
+    // the refine_cond threshold subtracts from `higher_bound`.
+    let const_off = state.ptr_const_off.get(&base).copied().unwrap_or(0);
+    let total_off = const_off + insn_off;
+
+    let higher_bound: i64 = map_limit;
+    let lower_bound: i64 = 0;
+
+    // Decide case classification (mirrors kernel's `tnum_is_const` checks
+    // at verifier.c:5315, 5328). `ptr_is_var` iff the pointer has any
+    // variable contributor; `size_is_var` iff the size register isn't a
+    // statically-pinned constant.
+    let ptr_is_var = var_off_expr.is_some()
+        && state.var_off_contributor.get(&base).is_some();
+    let (size_const_val, size_expr_cached) = match size_reg {
+        Some(sz_reg) => {
+            let c = state.domain.get_fixed_value(sz_reg);
+            let cached = sz_reg.bcf_idx().and_then(|si| sym.get_reg(si));
+            (c, cached)
+        }
+        None => (Some(size), None),
+    };
+    let size_is_var = size_const_val.is_none();
+
+    // Width discipline: kernel uses 32-bit ops when both regs fit_s32
+    // (verifier.c:5306-5310). For zovia, default to fit_s32 of ptr alone
+    // when there's no size_reg.
+    let ptr_bounds = bcf_reg_bounds(state, base);
+    let bit32 = if let Some(sz_reg) = size_reg {
+        let size_bounds = bcf_reg_bounds(state, sz_reg);
+        ptr_bounds.fit_s32() && size_bounds.fit_s32()
+    } else {
+        ptr_bounds.fit_s32()
+    };
+    let bitsz: u16 = if bit32 { 32 } else { 64 };
+
+    // Compute min_off for the conditional-DISJ check (kernel verifier.c:
+    // 5339, 5360). zovia tracks the pointer's signed lower bound directly.
+    let (smin, _smax) = state.domain.get_interval(base);
+    let min_off = smin.saturating_add(insn_off);
+
+    // Helper to peel the cached 64-bit expression to its 32-bit form when
+    // bit32, matching kernel `bcf_expr32`.
+    let peel = |sym: &mut SymbolicState, idx: u32| -> u32 {
+        if bit32 {
+            sym.expr32(idx)
+        } else {
+            idx
+        }
+    };
+
+    let oob = if !ptr_is_var && size_is_var {
+        // Case (i): ptr const, refine size. Kernel verifier.c:5315-5326.
+        // refine_cond = JGT(size_expr, higher_bound - off)   (UNSIGNED JGT)
+        let size_expr = size_expr_cached?;
+        let size_use = peel(&mut sym, size_expr);
+        let thresh = higher_bound.wrapping_sub(total_off);
+        let thresh_expr = sym.add_val(thresh as u64, bit32);
+        sym.add_pred(BPF_JGT, size_use, thresh_expr)
+    } else if ptr_is_var && !size_is_var {
+        // Case (ii): size const, refine ptr off. Kernel verifier.c:5328-5345.
+        // high_pred = JSGT(off_expr, higher_bound - sz - off)
+        // optional DISJ with JSLT(off_expr, lower_bound - off)
+        let off_idx = var_off_expr?;
+        let off_use = peel(&mut sym, off_idx);
+        let sz = size_const_val.unwrap();
+        let high_thresh = higher_bound.wrapping_sub(sz).wrapping_sub(total_off);
+        let high_thresh_expr = sym.add_val(high_thresh as u64, bit32);
+        let high_pred = sym.add_pred(BPF_JSGT, off_use, high_thresh_expr);
+        if min_off < lower_bound {
+            let low_thresh = lower_bound.wrapping_sub(total_off);
+            let low_thresh_expr = sym.add_val(low_thresh as u64, bit32);
+            let low_pred = sym.add_pred(BPF_JSLT, off_use, low_thresh_expr);
+            sym.add_disj(vec![low_pred, high_pred])
+        } else {
+            high_pred
+        }
+    } else if ptr_is_var && size_is_var {
+        // Case (iii): both var. Kernel verifier.c:5352-5388.
+        // high_pred = JSGT(ADD(off_expr, size_expr), higher_bound - off)
+        // optional DISJ with JSLT(off_expr, lower_bound - off)
+        let off_idx = var_off_expr?;
+        let size_expr = size_expr_cached?;
+        let off_use = peel(&mut sym, off_idx);
+        let size_use = peel(&mut sym, size_expr);
+        let sum_expr = sym.add_alu(BPF_ADD, off_use, size_use, bitsz);
+        let high_thresh = higher_bound.wrapping_sub(total_off);
+        let high_thresh_expr = sym.add_val(high_thresh as u64, bit32);
+        let high_pred = sym.add_pred(BPF_JSGT, sum_expr, high_thresh_expr);
+        if min_off < lower_bound {
+            let low_thresh = lower_bound.wrapping_sub(total_off);
+            let low_thresh_expr = sym.add_val(low_thresh as u64, bit32);
+            let low_pred = sym.add_pred(BPF_JSLT, off_use, low_thresh_expr);
+            sym.add_disj(vec![low_pred, high_pred])
+        } else {
+            high_pred
+        }
+    } else {
+        // Both const: there's nothing to refine — the verifier should have
+        // proven the bounds itself. Bail.
+        debug!("[bcf] map-refine skipped: both ptr and size are const");
         return None;
     };
 
-    // Compose `access_off = off + insn_off` as a 64-bit BV expression.
-    let access_off_expr = if insn_off == 0 {
-        off_expr
-    } else {
-        let k = sym.add_val64(insn_off as u64);
-        sym.add_alu(BPF_ADD, off_expr, k, 64)
-    };
-
-    // Decide which size expression to use. If `size_reg` is provided AND
-    // it has a symbolic expression, prefer that (case iv). Otherwise use
-    // the static `size` (case iii). When we use the symbolic size, we
-    // don't have a separate const fallback — but we record the verifier's
-    // umax bound as an optional path-cond to keep the formula tight.
-    let (size_expr, size_is_symbolic) = if let Some(sz_reg) = size_reg {
-        sz_reg
-            .bcf_idx()
-            .and_then(|si| sym.get_reg(si))
-            .map(|e| (e, true))
-            .unwrap_or_else(|| (sym.add_val64(size as u64), false))
-    } else {
-        (sym.add_val64(size as u64), false)
-    };
-
-    // High-side: access_off + size_expr > map_limit
-    let access_end_expr = sym.add_alu(BPF_ADD, access_off_expr, size_expr, 64);
-    let limit_idx = sym.add_val64(map_limit as u64);
-    let high_pred = sym.add_pred(BPF_JSGT, access_end_expr, limit_idx);
-
-    // Low-side: access_off < 0
-    let zero_idx = sym.add_val64(0);
-    let low_pred = sym.add_pred(BPF_JSLT, access_off_expr, zero_idx);
-
-    // Always emit the disjunction. cvc5 prunes trivially-unreachable
-    // sides cheaply and the unconditional shape keeps the encoder simple.
-    let oob = sym.add_disj(vec![high_pred, low_pred]);
     sym.set_refine_cond(oob);
-
-    // When using a symbolic size, also pin the verifier's interval-known
-    // upper bound on the size as a path-cond — this lets cvc5 use what
-    // the abstract domain already proved (e.g., from earlier `if size <
-    // X` branches) without re-deriving it. BCF's analog: `bcf_bound_reg`
-    // seeds interval-known bounds when transitioning into tracking mode.
-    if size_is_symbolic {
-        if let Some(sz_reg) = size_reg {
-            let (smin, smax) = state.domain.get_interval(sz_reg);
-            if smin >= 0 {
-                // size ≥ smin (unsigned-safe when smin ≥ 0)
-                let lo_const = sym.add_val64(smin as u64);
-                let p = sym.add_pred(crate::refinement::bcf::BPF_JSGE, size_expr, lo_const);
-                sym.add_cond(p);
-            }
-            if smax != i64::MAX {
-                let hi_const = sym.add_val64(smax as u64);
-                let p = sym.add_pred(crate::refinement::bcf::BPF_JSLE, size_expr, hi_const);
-                sym.add_cond(p);
-            }
-        }
-    }
 
     let smt = match smtlib::encode(&sym) {
         Ok(s) => s,
@@ -147,7 +199,7 @@ pub fn try_refine_map_access(
                 "[bcf] map-OOB refinement: cvc5 accepted ({} bytes)",
                 bytes.len()
             );
-            let goal_root = crate::refinement::symbolic::build_goal_root(&mut sym, oob);
+            let goal_root = build_goal_root(&mut sym, oob);
             Some(super::refine_stack::RefineOk { proof_bytes: bytes, goal_root, sym })
         }
         Err(e) => {

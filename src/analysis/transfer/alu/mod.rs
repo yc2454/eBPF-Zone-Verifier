@@ -27,10 +27,10 @@ pub(crate) fn transfer_alu(
     src: Operand,
 ) -> Vec<State> {
     // 1. Check readability
-    if op != AluOp::Mov && !check_reg_readable(env, &state, dst) {
+    if op != AluOp::Mov && !check_reg_readable(env, &mut state, dst) {
         return vec![];
     }
-    if !check_operand_readable(env, &state, &src) {
+    if !check_operand_readable(env, &mut state, &src) {
         return vec![];
     }
 
@@ -76,6 +76,21 @@ pub(crate) fn transfer_alu(
     );
     if !preserves_contributor {
         state.var_off_contributor.remove(&dst);
+    }
+
+    // Manage `ptr_const_off[dst]` (kernel's `ptr_reg->off`). Preserved
+    // across any Add/Sub when `dst` is currently a pointer — Add/Sub on
+    // a pointer keeps it a pointer (handlers below update K for Imm and
+    // known-const Reg ops; variable-Reg ops preserve K with no action).
+    // For all other ops the result is no longer a pointer (Mov-from-
+    // imm, bitwise/shift/mul/div/mod/neg/etc.), so any prior K is stale
+    // and must be cleared. `handle_mov` re-inserts when the src is a
+    // pointer-typed register so the copy carries K with it.
+    let dst_was_ptr = in_types.get(dst).is_pointer();
+    let preserves_ptr_const_off =
+        matches!(op, AluOp::Add | AluOp::Sub) && dst_was_ptr;
+    if !preserves_ptr_const_off {
+        state.ptr_const_off.remove(&dst);
     }
 
     // Capture dst's existing BTF field-ref before the op clobbers it.
@@ -348,7 +363,7 @@ pub(crate) fn transfer_mov_sx(
     dst: Reg,
     src: Operand,
 ) -> Vec<State> {
-    if !check_operand_readable(env, &state, &src) {
+    if !check_operand_readable(env, &mut state, &src) {
         return vec![];
     }
     if !check_reg_writable(env, &state, dst) {

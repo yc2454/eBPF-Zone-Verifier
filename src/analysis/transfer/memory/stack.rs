@@ -27,7 +27,15 @@ fn try_bcf_refine_stack(
     if state.bcf.is_none() {
         return false;
     }
-    let Some(ok) = try_refine_stack_oob(state, base, instruction_offset, size) else {
+    // Mirror kernel `bcf_refine_access_bound` (verifier.c:5393):
+    // reg_masks = bit for `regno` when ptr is variable. For stack
+    // refinements the size is always constant (instruction-encoded), so
+    // no size-reg bit. Pass to the env-side `bcf_suffix_base_pc` walker
+    // which mirrors `backtrack_states` and returns the kernel's base PC.
+    let base_pc = state
+        .history_idx
+        .and_then(|hidx| env.bcf_suffix_base_pc(hidx, state.parent_cache_id, &[base]));
+    let Some(ok) = try_refine_stack_oob(state, base, instruction_offset, size, base_pc) else {
         return false;
     };
     let entry = RefineEntry::new(ok.goal_root, ok.sym.exprs, ok.proof_bytes, BCF_BUNDLE_KIND_REFINE);

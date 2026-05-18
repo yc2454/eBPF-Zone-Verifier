@@ -153,7 +153,7 @@ pub(crate) fn transfer_packet_load(
     }
 
     if let Some(reg) = src
-        && !check_reg_readable(env, &state, reg)
+        && !check_reg_readable(env, &mut state, reg)
     {
         return vec![];
     }

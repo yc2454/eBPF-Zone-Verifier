@@ -8,7 +8,9 @@ use crate::ast::{Operand, Width};
 use crate::domains::tnum::Tnum;
 use log::debug;
 
-use super::helpers::{bcf_reg_bounds, check_ptr_bounds, sync_tnum_to_dbm};
+use super::helpers::{
+    bcf_reg_bounds, check_ptr_bounds, emit_bcf_alu_binop, emit_bcf_alu_unary, sync_tnum_to_dbm,
+};
 
 pub(crate) fn handle_add(
     _env: &mut VerifierEnv,
@@ -21,6 +23,16 @@ pub(crate) fn handle_add(
     match src {
         Operand::Imm(c) => {
             state.domain.apply_add_imm(dst, *c);
+            // Mirror kernel `ptr_reg->off += smin_val` (verifier.c:14391)
+            // for the `ptr += K` const-shift case. Only meaningful when
+            // dst is currently a pointer; otherwise the entry was already
+            // cleared in transfer_alu's catch-all.
+            if in_types.get(dst).is_pointer() {
+                let prior = state.ptr_const_off.get(&dst).copied().unwrap_or(0);
+                state
+                    .ptr_const_off
+                    .insert(dst, prior.wrapping_add(*c as i64));
+            }
         }
         Operand::Reg(r) => {
             let src_is_ptr = in_types.get(*r).is_pointer();
@@ -40,7 +52,16 @@ pub(crate) fn handle_add(
                 state.var_off_contributor.insert(dst, *r);
 
                 let (lo, hi) = state.domain.get_interval(*r);
+                // Kernel `ptr_reg->off`: if the scalar is a known
+                // constant accumulate it into K (verifier.c:14383-14393);
+                // otherwise it's the variable-add case and K is preserved
+                // as-is (verifier.c:14414-14415). The catch-all in
+                // `transfer_alu` already preserved `ptr_const_off[dst]`
+                // for Add-on-pointer, so the variable-add branch needs no
+                // explicit update.
                 if lo == hi && lo != i64::MIN && lo != i64::MAX {
+                    let prior = state.ptr_const_off.get(&dst).copied().unwrap_or(0);
+                    state.ptr_const_off.insert(dst, prior.wrapping_add(lo));
                     // Known constant: shift all relations exactly
                     state.domain.apply_add_imm(dst, lo);
                 } else {
@@ -221,6 +242,14 @@ pub(crate) fn handle_sub(
     match src {
         Operand::Imm(c) => {
             state.domain.apply_add_imm(dst, -c);
+            // Mirror kernel `ptr_reg->off -= smin_val` (verifier.c:14448)
+            // for the `ptr -= K` const-shift case.
+            if in_types.get(dst).is_pointer() {
+                let prior = state.ptr_const_off.get(&dst).copied().unwrap_or(0);
+                state
+                    .ptr_const_off
+                    .insert(dst, prior.wrapping_sub(*c as i64));
+            }
         }
         Operand::Reg(r) => {
             let dst_type = in_types.get(dst);
@@ -234,7 +263,14 @@ pub(crate) fn handle_sub(
 
                 if const_value.is_some() {
                     // Scalar is a known constant: exact relational shift
-                    state.domain.apply_add_imm(dst, -const_value.unwrap());
+                    let c = const_value.unwrap();
+                    state.domain.apply_add_imm(dst, -c);
+                    // Mirror `ptr_reg->off -= smin_val` for const-reg case
+                    // (verifier.c:14439-14450). Variable-scalar case: K is
+                    // preserved by the transfer_alu catch-all and we add
+                    // nothing here.
+                    let prior = state.ptr_const_off.get(&dst).copied().unwrap_or(0);
+                    state.ptr_const_off.insert(dst, prior.wrapping_sub(c));
                 } else {
                     // Bounded but not constant: fall back to interval
                     state.domain.apply_sub_reg(dst, *r);
@@ -276,40 +312,71 @@ pub(crate) fn handle_sub(
         Operand::Reg(r) => in_types.get(*r).is_pointer(),
     };
 
-    // --- BCF symbolic mirror (β+: unified ptr/scalar symbolic sub). See
-    // the matching block in handle_add for rationale. ---
+    // --- BCF symbolic mirror. Mirrors kernel `bcf_alu` (verifier.c:15139)
+    //     with kernel-shape width discipline, analogous to `handle_add`.
+    //     For W32 SUB or for W64 SUB where dst fits in u32/s32 post-op,
+    //     emits SUB_32(reg32, rhs32) then ZEXT/SEXT back to 64.
+    //
+    //     **Pointer−immediate is skipped** (same rationale as ptr+imm in
+    //     handle_add): kernel handles `ptr -= K` by decrementing the
+    //     pointer reg's `off` (verifier.c:14439-14450); `bcf_expr` stays
+    //     untouched. The const offset is reconstructed at refine time
+    //     from `state.ptr_const_off`. ---
+    let dst_bounds_pre = bcf_reg_bounds(state, dst);
+    let src_bounds_pre = match src {
+        Operand::Reg(r) => Some(bcf_reg_bounds(state, *r)),
+        _ => None,
+    };
+    let dst_bounds_post = bcf_reg_bounds(state, dst);
     if let Some(d) = dst.bcf_idx() {
         if let Some(bcf) = state.bcf.as_mut() {
-            let skip = src_is_ptr; // ptr-ptr/scalar-ptr leave alone
+            let skip_ptr_imm = dst_is_ptr_post && matches!(src, Operand::Imm(_));
+            let skip = src_is_ptr || skip_ptr_imm;
             if skip {
                 if !dst_is_ptr_post {
                     bcf.clear_reg(d);
                 }
+                // Pointer − imm: leave dst.bcf_expr at its current value.
             } else {
-                let dst_idx = bcf.materialize_reg64(d);
-                let rhs_idx = match src {
+                let op_u32 = dst_bounds_post.fit_u32();
+                let op_s32 = dst_bounds_post.fit_s32();
+                let alu32_class = width == Width::W32;
+                // Pointer ALU forces 64-bit BCF ops (kernel
+                // `__mark_reg32_unbounded` at verifier.c:15282).
+                let alu32 = if dst_is_ptr_post {
+                    false
+                } else {
+                    alu32_class || op_u32 || op_s32
+                };
+                let bits: u16 = if alu32 { 32 } else { 64 };
+
+                let dst_expr = bcf.reg_expr(d, &dst_bounds_pre, alu32);
+                let rhs_expr = match src {
                     Operand::Imm(c) => {
                         let v = if width == Width::W32 {
                             (*c as u32) as u64
                         } else {
                             *c as u64
                         };
-                        bcf.add_val64(v)
+                        bcf.add_val(v, alu32)
                     }
                     Operand::Reg(r) => match r.bcf_idx() {
-                        Some(si) => bcf.materialize_reg64(si),
-                        None => bcf.add_val64(0),
+                        Some(si) => bcf.reg_expr(si, &src_bounds_pre.unwrap(), alu32),
+                        None => bcf.add_val(0, alu32),
                     },
                 };
-                let new_idx = if width == Width::W32 {
-                    let lo_d = bcf.extract_lo(32, dst_idx);
-                    let lo_r = bcf.extract_lo(32, rhs_idx);
-                    let diff = bcf.add_alu(crate::refinement::bcf::BPF_SUB, lo_d, lo_r, 32);
-                    bcf.zext_32_to_64(diff)
+                let alu_result =
+                    bcf.add_alu(crate::refinement::bcf::BPF_SUB, dst_expr, rhs_expr, bits);
+                let final_idx = if dst_is_ptr_post {
+                    alu_result
+                } else if alu32 || op_u32 {
+                    bcf.add_extend(false, 32, 64, alu_result)
+                } else if op_s32 {
+                    bcf.add_extend(true, 32, 64, alu_result)
                 } else {
-                    bcf.add_alu(crate::refinement::bcf::BPF_SUB, dst_idx, rhs_idx, 64)
+                    alu_result
                 };
-                bcf.bind_reg(d, new_idx);
+                bcf.bind_reg(d, final_idx);
             }
         }
     }
@@ -350,6 +417,9 @@ pub(crate) fn handle_sub(
 }
 
 pub(crate) fn handle_neg(state: &mut State, width: Width, dst: Reg) {
+    // Pre-op BCF snapshot (before the abstract op), mirroring handle_and.
+    let dst_bounds_pre = bcf_reg_bounds(state, dst);
+
     state.domain.apply_neg(dst);
 
     if width == Width::W32 {
@@ -363,9 +433,27 @@ pub(crate) fn handle_neg(state: &mut State, width: Width, dst: Reg) {
         Tnum::unknown()
     };
     state.set_tnum(dst, new_t);
+
+    // BCF: kernel routes BPF_NEG through bcf_alu's unary path (NEG is
+    // in is_safe set) — build NEG(reg_expr(dst)). Was a STALE-bcf_expr
+    // gap (no build, no clear).
+    emit_bcf_alu_unary(
+        state,
+        crate::refinement::bcf::BPF_NEG,
+        width,
+        dst,
+        &dst_bounds_pre,
+    );
 }
 
 pub(crate) fn handle_mul(state: &mut State, width: Width, dst: Reg, src: &Operand) {
+    // Pre-op BCF snapshots (before forget), mirroring handle_and.
+    let dst_bounds_pre = bcf_reg_bounds(state, dst);
+    let src_bounds_pre = match src {
+        Operand::Reg(r) => Some(bcf_reg_bounds(state, *r)),
+        _ => None,
+    };
+
     match src {
         Operand::Imm(c) => {
             state.domain.apply_mul_imm(dst, *c);
@@ -380,6 +468,20 @@ pub(crate) fn handle_mul(state: &mut State, width: Width, dst: Reg, src: &Operan
     }
 
     state.set_tnum(dst, Tnum::unknown());
+
+    // BCF: kernel routes BPF_MUL through bcf_alu (in is_safe set) —
+    // build MUL(reg_expr(dst), reg_expr(src)). Was a STALE-bcf_expr
+    // gap (no build, no clear): zovia widens the tnum to unknown but
+    // the symbolic expr must still mirror the kernel exactly.
+    emit_bcf_alu_binop(
+        state,
+        crate::refinement::bcf::BPF_MUL,
+        width,
+        dst,
+        src,
+        &dst_bounds_pre,
+        src_bounds_pre.as_ref(),
+    );
 }
 
 pub(crate) fn handle_mod(state: &mut State, width: Width, dst: Reg, src: &Operand) {
@@ -411,6 +513,18 @@ pub(crate) fn handle_mod(state: &mut State, width: Width, dst: Reg, src: &Operan
     }
 
     state.set_tnum(dst, Tnum::unknown());
+
+    // BCF: mirror kernel `is_safe_to_compute_dst_reg_range`
+    // (verifier.c:16050) — BPF_MOD is not in the safe set, so the
+    // kernel takes the `__mark_reg_unknown` path which clears
+    // `bcf_expr = -1`. Without clearing here, dst keeps a STALE
+    // pre-op expr and a later branch builds its path_cond from the
+    // wrong value (faithfulness + latent soundness bug).
+    if let Some(d) = dst.bcf_idx()
+        && let Some(bcf) = state.bcf.as_mut()
+    {
+        bcf.clear_reg(d);
+    }
 }
 
 pub(crate) fn handle_div(state: &mut State, width: Width, dst: Reg, src: &Operand) {
@@ -470,6 +584,19 @@ pub(crate) fn handle_div(state: &mut State, width: Width, dst: Reg, src: &Operan
     state.set_tnum(dst, new_tnum.unwrap_or_else(Tnum::unknown));
     if let Some(c) = state.get_tnum(dst).const_value() {
         state.domain.assume_eq_imm(dst, c as i64);
+    }
+
+    // BCF: mirror kernel `is_safe_to_compute_dst_reg_range`
+    // (verifier.c:16050) — BPF_DIV is not in the safe set, so the
+    // kernel takes the `__mark_reg_unknown` path which clears
+    // `bcf_expr = -1`. zovia may keep a more precise tnum (sound for
+    // bounds) but the symbolic expr MUST match the kernel: clear it
+    // so a later branch materializes a fresh VAR exactly as the
+    // kernel does. Stale expr = faithfulness + latent soundness bug.
+    if let Some(d) = dst.bcf_idx()
+        && let Some(bcf) = state.bcf.as_mut()
+    {
+        bcf.clear_reg(d);
     }
 }
 

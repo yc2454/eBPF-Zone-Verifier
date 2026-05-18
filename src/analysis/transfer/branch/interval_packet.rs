@@ -430,8 +430,16 @@ fn propagate_meta_range(state: &mut State, checked_reg: Reg, proven_size: i64) {
                     continue;
                 }
                 let in_family = match (checked_id, ptr_off.id) {
+                    // Variable-offset chain: only same-id members refine.
                     (Some(a), Some(b)) => a == b,
-                    (None, _) => reg == checked_reg,
+                    // No-id family (kernel `reg->id == 0`): all meta
+                    // pointers without an id alias the single
+                    // AnchorDataMeta — they were never separated by
+                    // variable arithmetic. Mirrors the data-region
+                    // `propagate_packet_range` gate (same kernel
+                    // `find_good_pkt_pointers` mechanism, with `data`
+                    // as the region boundary instead of `data_end`).
+                    (None, None) => true,
                     _ => false,
                 };
                 if !in_family {

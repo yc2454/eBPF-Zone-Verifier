@@ -1017,9 +1017,26 @@ pub fn discover_bpf_call_targets<P: AsRef<Path>>(
             continue;
         }
 
+        let host_sh_offset = elf.section_headers[target_sec_idx].sh_offset as usize;
         for reloc in section_relocs {
-            if reloc.r_type != R_BPF_64_32 {
-                continue;
+            // Mirror load_relocations' r_type inference: many cilium
+            // relocs carry r_type 0 and the relocated insn's opcode
+            // decides (0x85 = call → R_BPF_64_32; 0x18 = LD_IMM64 →
+            // R_BPF_64_64). Without this, BPF_PSEUDO_FUNC callback
+            // ld_imm64s (which are R_BPF_64_64, NOT R_BPF_64_32) were
+            // skipped entirely, so a cilium `2/N` program whose only
+            // cross-section dependency is a `bpf_for_each_map_elem` /
+            // `bpf_loop` callback subprog (in `.text`) took the
+            // single-section path and never appended the callback —
+            // R2 stayed ScalarValue ⇒ "expected PTR_TO_CALLBACK".
+            let mut r_type = reloc.r_type;
+            let insn_file_offset = host_sh_offset + reloc.r_offset as usize;
+            if r_type == 0 && insn_file_offset < buf.len() {
+                match buf[insn_file_offset] {
+                    0x85 => r_type = R_BPF_64_32,
+                    0x18 => r_type = R_BPF_64_64,
+                    _ => {}
+                }
             }
 
             let sym = match elf.syms.get(reloc.r_sym) {
@@ -1033,14 +1050,35 @@ pub fn discover_bpf_call_targets<P: AsRef<Path>>(
                 continue;
             }
 
-            // Try to resolve as BPF function
-            if let Some((sec_name, offset, size)) = resolve_symbol_location(&elf, &buf, name) {
-                // Check if this is a cross-section call (target is in a different section)
-                if sec_name != target_section_name {
+            if r_type == R_BPF_64_32 {
+                // Cross-section BPF-to-BPF call (unchanged behavior).
+                if let Some((sec_name, offset, size)) =
+                    resolve_symbol_location(&elf, &buf, name)
+                    && sec_name != target_section_name
+                {
                     targets.push(BpfCallTarget {
                         func_name: name.to_string(),
                         section: sec_name,
                         offset_in_section: offset,
+                        size,
+                    });
+                }
+            } else if r_type == R_BPF_64_64 {
+                // ADDITIVE: BPF_PSEUDO_FUNC callback subprog pointer
+                // baked into an LD_IMM64. resolve_pseudo_func_target
+                // returns Some only when the symbol points at a
+                // function in an executable section (handles the
+                // STT_SECTION `.text`+offset shape clang emits) — map
+                // / ksym ld_imm64s resolve to non-exec sections / UND
+                // and yield None, so this stays precise.
+                if let Some((fn_name, sec_name, off, size)) =
+                    resolve_pseudo_func_target(&elf, &buf, &sym, name, insn_file_offset)
+                    && sec_name != target_section_name
+                {
+                    targets.push(BpfCallTarget {
+                        func_name: fn_name,
+                        section: sec_name,
+                        offset_in_section: off,
                         size,
                     });
                 }

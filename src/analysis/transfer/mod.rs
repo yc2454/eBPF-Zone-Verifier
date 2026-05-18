@@ -301,6 +301,31 @@ fn transfer_endian(
         state.domain.apply_and_imm(dst, 0xFFFF_FFFF);
     }
 
+    // BCF symbolic mirror. Kernel `check_alu_op` BPF_END
+    // (verifier.c:16396) does `check_reg_arg(dst, SRC_OP)` then
+    // `check_reg_arg(dst, DST_OP)` — DST_OP `mark_reg_unknown`s the
+    // byteswap result (fully-unbounded 64-bit scalar), and clears its
+    // `bcf_expr`. So the kernel's next `bcf_reg_expr(result)` is a
+    // bare `VAR_64` (+ EXTRACT32 for a JMP32 use, no bound preds).
+    // zovia keeps a tighter domain bound here (e.g. be16 → [0,0xffff],
+    // intentional verification precision — see the apply_and_imm
+    // above), which would drive `materialize_reg` into the fit_u32
+    // path → a 32-bit var, diverging from the kernel CONJ (cilium
+    // wireguard D3: pc173 `r2 = be16 r2` then pc179 `if w2 < 0xfa23`
+    // — kernel `EXTRACT32(v5_64)`, zovia bare `v5_32`). Pre-cache the
+    // result's bcf_expr as the kernel-shape unbounded VAR_64; the
+    // abstract-domain bound is left intact (zovia-only precision).
+    if let Some(d) = dst.bcf_idx() {
+        if let Some(bcf) = state.bcf.as_mut() {
+            bcf.clear_reg(d);
+            let _ = bcf.reg_expr(
+                d,
+                &crate::refinement::symbolic::RegBounds::unknown(),
+                false,
+            );
+        }
+    }
+
     state.pc += 1;
     vec![state]
 }

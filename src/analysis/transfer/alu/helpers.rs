@@ -3,8 +3,9 @@
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
+use crate::ast::{Operand, Width};
 use crate::common::constants;
-use crate::refinement::symbolic::RegBounds;
+use crate::refinement::symbolic::{RegBounds, SymbolicState};
 
 /// Build a [`RegBounds`] snapshot for `reg` from the current numeric
 /// domain. Used by BCF transfer-function mirrors to materialize register
@@ -49,6 +50,113 @@ pub(crate) fn bcf_reg_bounds(state: &State, reg: Reg) -> RegBounds {
         s32_max,
         u32_min,
         u32_max,
+    }
+}
+
+/// Shared BCF mirror for binary scalar ALU ops the kernel routes
+/// through `bcf_alu` (verifier.c:15166) — currently OR/XOR/MUL, all of
+/// which are in `is_safe_to_compute_dst_reg_range`'s safe set so the
+/// kernel always builds `BCF_BV | op` over `[reg_expr(dst),
+/// reg_expr(src)]` (+ kernel-shape zext/sext). Byte-for-byte the same
+/// block `handle_and` uses (the b35e055-proven template); factored so
+/// the missing-build handlers don't each re-derive it. Callers MUST
+/// snapshot `dst_bounds_pre` (and `src_bounds_pre` for the reg case)
+/// BEFORE the abstract-domain op runs, exactly like `handle_and`.
+///
+/// Faithful to the proven template, this does NOT add an explicit
+/// post-op `tnum_is_const(dst)` clear (handle_and/add/sub/shl don't
+/// either, and they converged the cilium routes); if a future route
+/// shows a post-const divergence, address it instrument-driven.
+pub(crate) fn emit_bcf_alu_binop(
+    state: &mut State,
+    op: u8,
+    width: Width,
+    dst: Reg,
+    src: &Operand,
+    dst_bounds_pre: &RegBounds,
+    src_bounds_pre: Option<&RegBounds>,
+) {
+    let dst_bounds_post = bcf_reg_bounds(state, dst);
+    let op_u32 = dst_bounds_post.fit_u32();
+    let op_s32 = dst_bounds_post.fit_s32();
+    let alu32_class = width == Width::W32;
+    let alu32 = alu32_class || op_u32 || op_s32;
+    let bits: u16 = if alu32 { 32 } else { 64 };
+
+    let Some(d) = dst.bcf_idx() else { return };
+    let extend_back = |bcf: &mut SymbolicState, alu_result: u32| -> u32 {
+        if alu32 || op_u32 {
+            bcf.add_extend(false, 32, 64, alu_result)
+        } else if op_s32 {
+            bcf.add_extend(true, 32, 64, alu_result)
+        } else {
+            alu_result
+        }
+    };
+    match src {
+        Operand::Imm(c) => {
+            if let Some(bcf) = state.bcf.as_mut() {
+                let dst_expr = bcf.reg_expr(d, dst_bounds_pre, alu32);
+                let c_val = if width == Width::W32 {
+                    (*c as u32) as u64
+                } else {
+                    *c as u64
+                };
+                let c_expr = bcf.add_val(c_val, alu32);
+                let alu_result = bcf.add_alu(op, dst_expr, c_expr, bits);
+                let final_idx = extend_back(bcf, alu_result);
+                bcf.bind_reg(d, final_idx);
+            }
+        }
+        Operand::Reg(r) => {
+            let si = r.bcf_idx();
+            if let (Some(bcf), Some(si), Some(sb)) =
+                (state.bcf.as_mut(), si, src_bounds_pre)
+            {
+                let dst_expr = bcf.reg_expr(d, dst_bounds_pre, alu32);
+                let src_expr = bcf.reg_expr(si, sb, alu32);
+                let alu_result = bcf.add_alu(op, dst_expr, src_expr, bits);
+                let final_idx = extend_back(bcf, alu_result);
+                bcf.bind_reg(d, final_idx);
+            } else if let Some(bcf) = state.bcf.as_mut() {
+                bcf.clear_reg(d);
+            }
+        }
+    }
+}
+
+/// Unary variant of [`emit_bcf_alu_binop`] for BPF_NEG (the only
+/// unary ALU op the kernel routes through `bcf_alu`; NEG is in
+/// `is_safe_to_compute_dst_reg_range`'s safe set). Mirrors the
+/// kernel's `unary` path: `code = BCF_BV | op`, vlen=1, args=[dst],
+/// + kernel-shape zext/sext. Caller snapshots `dst_bounds_pre`
+/// before the abstract op.
+pub(crate) fn emit_bcf_alu_unary(
+    state: &mut State,
+    op: u8,
+    width: Width,
+    dst: Reg,
+    dst_bounds_pre: &RegBounds,
+) {
+    let dst_bounds_post = bcf_reg_bounds(state, dst);
+    let op_u32 = dst_bounds_post.fit_u32();
+    let op_s32 = dst_bounds_post.fit_s32();
+    let alu32_class = width == Width::W32;
+    let alu32 = alu32_class || op_u32 || op_s32;
+    let bits: u16 = if alu32 { 32 } else { 64 };
+
+    let Some(d) = dst.bcf_idx() else { return };
+    if let Some(bcf) = state.bcf.as_mut() {
+        let dst_expr = bcf.reg_expr(d, dst_bounds_pre, alu32);
+        let alu_result = bcf.add_unary(op, dst_expr, bits);
+        let final_idx = if alu32 || op_u32 {
+            bcf.add_extend(false, 32, 64, alu_result)
+        } else if op_s32 {
+            bcf.add_extend(true, 32, 64, alu_result)
+        } else {
+            alu_result
+        };
+        bcf.bind_reg(d, final_idx);
     }
 }
 

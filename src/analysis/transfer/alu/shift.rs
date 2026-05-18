@@ -120,6 +120,43 @@ pub(crate) fn handle_shr(state: &mut State, width: Width, dst: Reg, src: &Operan
             };
             bcf.bind_reg(d, final_idx);
         }
+    } else if let (Some(d), Operand::Reg(sr)) = (dst.bcf_idx(), src) {
+        // Const-valued register shift == immediate shift. Kernel
+        // is_safe_to_compute_dst_reg_range (verifier.c:16050): shift
+        // is safe (→ bcf_alu builds the expr) iff the amount reg is
+        // const and < bitness; otherwise __mark_reg_unknown clears.
+        // Mirrors handle_shl's 71fbb43 gate.
+        let src_const = state.get_tnum(*sr).const_value();
+        if let Some(c) = src_const {
+            let shift_amount = if width == Width::W32 {
+                (c as u32) & 0x1F
+            } else {
+                (c as u32) & 0x3F
+            };
+            if let Some(bcf) = state.bcf.as_mut() {
+                let op_u32 = dst_bounds_pre.fit_u32();
+                let op_s32 = dst_bounds_pre.fit_s32();
+                let alu32_class = width == Width::W32;
+                let alu32 = alu32_class || op_u32 || op_s32;
+                let bits: u16 = if alu32 { 32 } else { 64 };
+
+                let dst_expr = bcf.reg_expr(d, &dst_bounds_pre, alu32);
+                let k_expr = bcf.add_val(shift_amount as u64, alu32);
+                let alu_result =
+                    bcf.add_alu(crate::refinement::bcf::BPF_RSH, dst_expr, k_expr, bits);
+                let final_idx = if alu32 || op_u32 {
+                    bcf.add_extend(false, 32, 64, alu_result)
+                } else if op_s32 {
+                    bcf.add_extend(true, 32, 64, alu_result)
+                } else {
+                    alu_result
+                };
+                bcf.bind_reg(d, final_idx);
+            }
+        } else if let Some(bcf) = state.bcf.as_mut() {
+            // Variable shift amount — kernel emits no RSH expr here.
+            bcf.clear_reg(d);
+        }
     } else if let Some(d) = dst.bcf_idx() {
         if let Some(bcf) = state.bcf.as_mut() {
             bcf.clear_reg(d);
@@ -127,7 +164,92 @@ pub(crate) fn handle_shr(state: &mut State, width: Width, dst: Reg, src: &Operan
     }
 }
 
+/// Abstract-domain (interval + tnum) update for a left shift by a *known*
+/// amount. Mirrors the kernel `scalar_min_max_lsh` / `scalar32_min_max_lsh`
+/// (verifier.c:15871/15919). The kernel reaches this same code for both an
+/// immediate shift and a `BPF_X` shift whose amount register holds a known
+/// constant (it constructs a fake src_reg with umin==umax==imm), so the two
+/// cases must produce identical bounds. `shift_amount` is already masked to
+/// the operation width (`& 0x1F` for W32, `& 0x3F` for W64).
+fn lsh_domain_known(state: &mut State, width: Width, dst: Reg, shift_amount: u32) {
+    let (old_lo, old_hi) = state.domain.get_interval(dst);
+    let old_tnum = state.get_tnum(dst);
+    state.domain.forget(dst);
+
+    if width == Width::W32 {
+        let truncated_tnum = old_tnum.trunc32();
+        let dbm_lo = if old_lo >= 0 && old_hi <= u32::MAX as i64 {
+            old_lo as u64
+        } else {
+            0
+        };
+        let dbm_hi = if old_lo >= 0 && old_hi <= u32::MAX as i64 {
+            old_hi as u64
+        } else {
+            u32::MAX as u64
+        };
+
+        let trunc_lo = truncated_tnum.min_value().max(dbm_lo);
+        let trunc_hi = truncated_tnum.max_value().min(dbm_hi);
+
+        if shift_amount < 32 {
+            let max_safe = u32::MAX as u64 >> shift_amount;
+            if trunc_hi <= max_safe {
+                let new_lo = ((trunc_lo << shift_amount) & 0xFFFFFFFF) as i64;
+                let new_hi = ((trunc_hi << shift_amount) & 0xFFFFFFFF) as i64;
+                state.domain.assume_ge_imm(dst, new_lo);
+                state.domain.assume_le_imm(dst, new_hi);
+            } else {
+                state.domain.assume_ge_imm(dst, 0);
+                state.domain.assume_le_imm(dst, u32::MAX as i64);
+            }
+        } else {
+            state.domain.assume_eq_imm(dst, 0);
+        }
+
+        let new_tnum = truncated_tnum.shl_imm(shift_amount as u64).trunc32();
+        state.set_tnum(dst, new_tnum);
+    } else {
+        if shift_amount == 32 {
+            if old_lo != i64::MIN && old_hi != i64::MAX {
+                let (lo, hi) = (old_lo, old_hi);
+                if lo >= i32::MIN as i64 && hi <= i32::MAX as i64 {
+                    state.domain.assume_ge_imm(dst, lo << 32);
+                    state.domain.assume_le_imm(dst, hi << 32);
+                }
+            }
+        } else if old_lo != i64::MIN && old_hi != i64::MAX {
+            let (lo, hi) = (old_lo, old_hi);
+            if lo >= 0 && shift_amount < 64 {
+                let max_safe: i64 = if shift_amount == 63 {
+                    0
+                } else {
+                    i64::MAX >> shift_amount
+                };
+                if hi <= max_safe {
+                    state.domain.assume_ge_imm(dst, lo << shift_amount);
+                    state.domain.assume_le_imm(dst, hi << shift_amount);
+                }
+            }
+        }
+
+        let new_tnum = old_tnum.shl_imm(shift_amount as u64);
+        state.set_tnum(dst, new_tnum);
+    }
+
+    sync_tnum_to_dbm(state, dst);
+}
+
 pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operand) {
+    // Snapshot dst's BCF bounds before the abstract op runs. The kernel
+    // (verifier.c:16096 + 16179) computes op_u32/op_s32 as the AND of
+    // pre- and post-op fit_*, because LSH can widen a u32-bounded value
+    // out of u32 range (e.g. `r3 <<= 32` for r3 ∈ [5, 4095] yields
+    // r3 ∈ [5<<32, 4095<<32] which no longer fits u32). Capture pre-op
+    // bounds here; we'll snapshot post-op bounds after the domain
+    // update.
+    let dst_bounds_pre = bcf_reg_bounds(state, dst);
+
     match src {
         Operand::Imm(k) => {
             let k = *k as u32;
@@ -136,91 +258,145 @@ pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operan
             } else {
                 k & 0x3F
             };
-
-            let (old_lo, old_hi) = state.domain.get_interval(dst);
-            let old_tnum = state.get_tnum(dst);
-            state.domain.forget(dst);
-
-            if width == Width::W32 {
-                let truncated_tnum = old_tnum.trunc32();
-                let dbm_lo = if old_lo >= 0 && old_hi <= u32::MAX as i64 {
-                    old_lo as u64
-                } else {
-                    0
-                };
-                let dbm_hi = if old_lo >= 0 && old_hi <= u32::MAX as i64 {
-                    old_hi as u64
-                } else {
-                    u32::MAX as u64
-                };
-
-                let trunc_lo = truncated_tnum.min_value().max(dbm_lo);
-                let trunc_hi = truncated_tnum.max_value().min(dbm_hi);
-
-                if shift_amount < 32 {
-                    let max_safe = u32::MAX as u64 >> shift_amount;
-                    if trunc_hi <= max_safe {
-                        let new_lo = ((trunc_lo << shift_amount) & 0xFFFFFFFF) as i64;
-                        let new_hi = ((trunc_hi << shift_amount) & 0xFFFFFFFF) as i64;
-                        state.domain.assume_ge_imm(dst, new_lo);
-                        state.domain.assume_le_imm(dst, new_hi);
-                    } else {
-                        state.domain.assume_ge_imm(dst, 0);
-                        state.domain.assume_le_imm(dst, u32::MAX as i64);
-                    }
-                } else {
-                    state.domain.assume_eq_imm(dst, 0);
-                }
-
-                let new_tnum = truncated_tnum.shl_imm(shift_amount as u64).trunc32();
-                state.set_tnum(dst, new_tnum);
-            } else {
-                if shift_amount == 32 {
-                    if old_lo != i64::MIN && old_hi != i64::MAX {
-                        let (lo, hi) = (old_lo, old_hi);
-                        if lo >= i32::MIN as i64 && hi <= i32::MAX as i64 {
-                            state.domain.assume_ge_imm(dst, lo << 32);
-                            state.domain.assume_le_imm(dst, hi << 32);
-                        }
-                    }
-                } else if old_lo != i64::MIN && old_hi != i64::MAX {
-                    let (lo, hi) = (old_lo, old_hi);
-                    if lo >= 0 && shift_amount < 64 {
-                        let max_safe: i64 = if shift_amount == 63 {
-                            0
-                        } else {
-                            i64::MAX >> shift_amount
-                        };
-                        if hi <= max_safe {
-                            state.domain.assume_ge_imm(dst, lo << shift_amount);
-                            state.domain.assume_le_imm(dst, hi << shift_amount);
-                        }
-                    }
-                }
-
-                let new_tnum = old_tnum.shl_imm(shift_amount as u64);
-                state.set_tnum(dst, new_tnum);
-            }
-
-            sync_tnum_to_dbm(state, dst);
+            lsh_domain_known(state, width, dst, shift_amount);
         }
-        Operand::Reg(_) => {
-            state.domain.forget(dst);
-
-            if width == Width::W32 {
-                state.domain.assume_ge_imm(dst, 0);
-                state.domain.assume_le_imm(dst, u32::MAX as i64);
-                state.set_tnum(dst, Tnum::u32_unknown());
+        Operand::Reg(sr) => {
+            // Kernel `scalar*_min_max_lsh` takes the shift register's
+            // umin/umax. When that register holds a known constant the
+            // kernel produces umin==umax==c, i.e. the *identical* bounds
+            // as an immediate shift by c (verifier.c:15871/15919 via the
+            // fake src_reg in adjust_scalar_min_max_vals). Mirror that:
+            // const amount reg ⇒ same bounded math as the Imm path.
+            // A variable (non-const) amount stays conservative — the
+            // BCF symbolic mirror below also clears the expr there, and
+            // narrowing the const-only gate matches the prior shift
+            // commits (1b7ed62 / 71fbb43).
+            if let Some(c) = state.get_tnum(*sr).const_value() {
+                let shift_amount = if width == Width::W32 {
+                    (c as u32) & 0x1F
+                } else {
+                    (c as u32) & 0x3F
+                };
+                lsh_domain_known(state, width, dst, shift_amount);
             } else {
-                state.set_tnum(dst, Tnum::unknown());
-            }
+                state.domain.forget(dst);
 
-            sync_tnum_to_dbm(state, dst);
+                if width == Width::W32 {
+                    state.domain.assume_ge_imm(dst, 0);
+                    state.domain.assume_le_imm(dst, u32::MAX as i64);
+                    state.set_tnum(dst, Tnum::u32_unknown());
+                } else {
+                    state.set_tnum(dst, Tnum::unknown());
+                }
+
+                sync_tnum_to_dbm(state, dst);
+            }
+        }
+    }
+
+    // --- BCF symbolic mirror. Mirrors kernel `bcf_alu` (verifier.c:15139)
+    //     with the kernel's pre+post fit_* width-discipline for shifts
+    //     (verifier.c:16096 + 16179). For W64 SHL where the dst was bounded
+    //     within u32 pre-op but pushed beyond u32 post-op (e.g. the
+    //     `r3 <<= 32; r3 >>= 32` clang `(u32)x` idiom), op_u32 ends up
+    //     false → 64-bit SHL — which is what cvc5's QF_BV rewriter
+    //     recognizes as `(bvlshr (bvshl X N) N)` and folds via a
+    //     fast-path rule, sidestepping the SAT bit-blast that otherwise
+    //     produces a wide FACTORING step exceeding BCF's u8 clause-width.
+    if let (Some(d), Operand::Imm(k)) = (dst.bcf_idx(), src) {
+        // Snapshot post-op bounds before borrowing state.bcf mutably —
+        // the kernel uses these to override op_u32/op_s32 when LSH
+        // widens the value out of u32 range.
+        let dst_bounds_post = bcf_reg_bounds(state, dst);
+        if let Some(bcf) = state.bcf.as_mut() {
+            let shift_amount = if width == Width::W32 {
+                (*k as u32) & 0x1F
+            } else {
+                (*k as u32) & 0x3F
+            };
+            // Kernel `op_u32 = fit_u32(dst_pre) && fit_u32(src); ...
+            // op_u32 &= fit_u32(dst_post)` — the source operand is an
+            // immediate-from-fake_reg constant, which trivially fits.
+            let op_u32 = dst_bounds_pre.fit_u32() && dst_bounds_post.fit_u32();
+            let op_s32 = dst_bounds_pre.fit_s32() && dst_bounds_post.fit_s32();
+            let alu32_class = width == Width::W32;
+            let alu32 = alu32_class || op_u32 || op_s32;
+            let bits: u16 = if alu32 { 32 } else { 64 };
+
+            let dst_expr = bcf.reg_expr(d, &dst_bounds_pre, alu32);
+            let k_expr = bcf.add_val(shift_amount as u64, alu32);
+            let alu_result =
+                bcf.add_alu(crate::refinement::bcf::BPF_LSH, dst_expr, k_expr, bits);
+
+            let final_idx = if alu32 || op_u32 {
+                bcf.add_extend(false, 32, 64, alu_result)
+            } else if op_s32 {
+                bcf.add_extend(true, 32, 64, alu_result)
+            } else {
+                alu_result
+            };
+            bcf.bind_reg(d, final_idx);
+        }
+    } else if let (Some(d), Operand::Reg(sr)) = (dst.bcf_idx(), src) {
+        // Reg-source SHL. Kernel-faithful (evidence: kernel route-A
+        // 513B has ZERO LSH nodes despite `pc45 r1<<=r7` with r7
+        // *variable*; kernel route-C 706B has exactly one LSH for
+        // `pc68 w2<<=w9` with w9 *const 3*). So mirror the kernel
+        // ONLY when the shift-amount reg is a known constant — then
+        // it is semantically an immediate shift, build
+        // `LSH(reg_expr(dst), VAL(c))` exactly like the Imm path
+        // (this is what produced kernel route-C's `LSH(v4,3)`). A
+        // variable shift amount clears the expr (the prior behavior,
+        // which kept routes A/B converged — the kernel emits no LSH
+        // there either).
+        let src_const = state.get_tnum(*sr).const_value();
+        if let Some(c) = src_const {
+            let shift_amount = if width == Width::W32 {
+                (c as u32) & 0x1F
+            } else {
+                (c as u32) & 0x3F
+            };
+            let dst_bounds_post = bcf_reg_bounds(state, dst);
+            if let Some(bcf) = state.bcf.as_mut() {
+                let op_u32 = dst_bounds_pre.fit_u32() && dst_bounds_post.fit_u32();
+                let op_s32 = dst_bounds_pre.fit_s32() && dst_bounds_post.fit_s32();
+                let alu32_class = width == Width::W32;
+                let alu32 = alu32_class || op_u32 || op_s32;
+                let bits: u16 = if alu32 { 32 } else { 64 };
+
+                let dst_expr = bcf.reg_expr(d, &dst_bounds_pre, alu32);
+                let k_expr = bcf.add_val(shift_amount as u64, alu32);
+                let alu_result =
+                    bcf.add_alu(crate::refinement::bcf::BPF_LSH, dst_expr, k_expr, bits);
+                let final_idx = if alu32 || op_u32 {
+                    bcf.add_extend(false, 32, 64, alu_result)
+                } else if op_s32 {
+                    bcf.add_extend(true, 32, 64, alu_result)
+                } else {
+                    alu_result
+                };
+                bcf.bind_reg(d, final_idx);
+            }
+        } else if let Some(bcf) = state.bcf.as_mut() {
+            // Variable shift amount — kernel emits no LSH expr here.
+            bcf.clear_reg(d);
+        }
+    } else if let Some(d) = dst.bcf_idx() {
+        if let Some(bcf) = state.bcf.as_mut() {
+            bcf.clear_reg(d);
         }
     }
 }
 
 pub(crate) fn handle_arsh(state: &mut State, width: Width, dst: Reg, src: &Operand) {
+    // Pre-op BCF bounds snapshot — same convention as handle_shr above.
+    // BCF emission at bottom of the Imm-src branch chains the kernel-shape
+    // `ARSH_32(reg_expr32, shift_amount)` + ZEXT to 64 onto dst's cache.
+    // Without this hook, programs like `unreachable_arsh.bpf.o` produce
+    // path_conds with a freshly-materialized VAR for dst instead of the
+    // kernel's ARSH chain, and the canonical hash diverges.
+    let dst_bounds_pre_bcf = bcf_reg_bounds(state, dst);
+
     match src {
         Operand::Imm(k) => {
             let k = *k as u32;
@@ -341,6 +517,88 @@ pub(crate) fn handle_arsh(state: &mut State, width: Width, dst: Reg, src: &Opera
 
             state.set_tnum(dst, Tnum::unknown());
             sync_tnum_to_dbm(state, dst);
+        }
+    }
+
+    // --- BCF symbolic mirror for ARSH-imm. Mirrors kernel `bcf_alu`
+    //     (verifier.c:15139) with the kernel-shape width discipline:
+    //     for W32 ARSH (or W64 ARSH where dst fits in u32/s32), emits
+    //     `ARSH_32(reg_expr32, shift_amount)` and wraps the result with
+    //     ZEXT (or SEXT for s32) to 64 for the cached form. Reg-source
+    //     ARSH stays conservative (clear) for now. ---
+    if let (Some(d), Operand::Imm(k)) = (dst.bcf_idx(), src) {
+        if let Some(bcf) = state.bcf.as_mut() {
+            let shift_amount = if width == Width::W32 {
+                (*k as u32) & 0x1F
+            } else {
+                (*k as u32) & 0x3F
+            };
+            let op_u32 = dst_bounds_pre_bcf.fit_u32();
+            let op_s32 = dst_bounds_pre_bcf.fit_s32();
+            let alu32_class = width == Width::W32;
+            let alu32 = alu32_class || op_u32 || op_s32;
+            let bits: u16 = if alu32 { 32 } else { 64 };
+
+            let dst_expr = bcf.reg_expr(d, &dst_bounds_pre_bcf, alu32);
+            let k_expr = bcf.add_val(shift_amount as u64, alu32);
+            let alu_result = bcf.add_alu(
+                crate::refinement::bcf::BPF_ARSH,
+                dst_expr,
+                k_expr,
+                bits,
+            );
+
+            let final_idx = if alu32 || op_u32 {
+                bcf.add_extend(false, 32, 64, alu_result)
+            } else if op_s32 {
+                bcf.add_extend(true, 32, 64, alu_result)
+            } else {
+                alu_result
+            };
+            bcf.bind_reg(d, final_idx);
+        }
+    } else if let (Some(d), Operand::Reg(sr)) = (dst.bcf_idx(), src) {
+        // Const-valued register ARSH == immediate ARSH (kernel
+        // is_safe_to_compute_dst_reg_range shift clause). Mirrors
+        // handle_shl/handle_shr's const-reg gate.
+        let src_const = state.get_tnum(*sr).const_value();
+        if let Some(c) = src_const {
+            let shift_amount = if width == Width::W32 {
+                (c as u32) & 0x1F
+            } else {
+                (c as u32) & 0x3F
+            };
+            if let Some(bcf) = state.bcf.as_mut() {
+                let op_u32 = dst_bounds_pre_bcf.fit_u32();
+                let op_s32 = dst_bounds_pre_bcf.fit_s32();
+                let alu32_class = width == Width::W32;
+                let alu32 = alu32_class || op_u32 || op_s32;
+                let bits: u16 = if alu32 { 32 } else { 64 };
+
+                let dst_expr = bcf.reg_expr(d, &dst_bounds_pre_bcf, alu32);
+                let k_expr = bcf.add_val(shift_amount as u64, alu32);
+                let alu_result = bcf.add_alu(
+                    crate::refinement::bcf::BPF_ARSH,
+                    dst_expr,
+                    k_expr,
+                    bits,
+                );
+                let final_idx = if alu32 || op_u32 {
+                    bcf.add_extend(false, 32, 64, alu_result)
+                } else if op_s32 {
+                    bcf.add_extend(true, 32, 64, alu_result)
+                } else {
+                    alu_result
+                };
+                bcf.bind_reg(d, final_idx);
+            }
+        } else if let Some(bcf) = state.bcf.as_mut() {
+            // Variable shift amount — kernel emits no ARSH expr here.
+            bcf.clear_reg(d);
+        }
+    } else if let Some(d) = dst.bcf_idx() {
+        if let Some(bcf) = state.bcf.as_mut() {
+            bcf.clear_reg(d);
         }
     }
 }

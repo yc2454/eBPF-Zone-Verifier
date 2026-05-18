@@ -22,7 +22,7 @@ pub(crate) fn transfer_load(
     base: Reg,
     off: i16,
 ) -> Vec<State> {
-    if !check_reg_readable(env, &state, base) {
+    if !check_reg_readable(env, &mut state, base) {
         return vec![];
     }
     if !check_reg_writable(env, &state, dst) {
@@ -37,9 +37,30 @@ pub(crate) fn transfer_load(
     // value is fresh from memory, with whatever bounds we infer from
     // the access width, not from any prior chain through DIV/MOD.
     state.kernel_tnum_imprecise.remove(&dst);
+    // BCF: a load is a full register write; clear any prior `bcf_expr`
+    // so future uses lazy-materialize against the post-load bounds
+    // rather than dragging in a stale pre-load expression (e.g. an
+    // earlier `Mov r8, 0` cache hit). Mirrors kernel BCF's
+    // `reg->bcf_expr = -1` on clobbering writes
+    // (reference_bcf_symbolic_tracking.md §6.1; verifier.c `bcf_mov32`
+    // analog at the post-load reset point).
+    if let Some(idx) = dst.bcf_idx()
+        && let Some(bcf) = state.bcf.as_mut()
+    {
+        bcf.clear_reg(idx);
+    }
 
     let access_size = size.bytes() as i64;
     access::check_load(env, &state, base, access_size, off);
+
+    // BCF set6 `detect_conflict_eq`: `check_load` proved this path's
+    // path_conds syntactically contradictory. Drop the path with no
+    // successors — the analog of the kernel's `goto process_bpf_exit`
+    // after `bcf->path_unreachable`.
+    if env.bcf_path_unreachable {
+        env.bcf_path_unreachable = false;
+        return vec![];
+    }
 
     if try_load_from_rodata(env, &mut state, dst, base, off, size) {
         state.pc += 1;
@@ -166,10 +187,10 @@ pub(crate) fn transfer_store(
     off: i16,
     src: &Operand,
 ) -> Vec<State> {
-    if !check_reg_readable(env, &state, base) {
+    if !check_reg_readable(env, &mut state, base) {
         return vec![];
     }
-    if !check_operand_readable(env, &state, src) {
+    if !check_operand_readable(env, &mut state, src) {
         return vec![];
     }
 
@@ -362,13 +383,13 @@ pub(crate) fn transfer_atomic(
         return vec![];
     }
 
-    if !check_reg_readable(env, &state, base) {
+    if !check_reg_readable(env, &mut state, base) {
         return vec![];
     }
-    if !check_reg_readable(env, &state, src) {
+    if !check_reg_readable(env, &mut state, src) {
         return vec![];
     }
-    if op == AtomicOp::CmpXchg && !check_reg_readable(env, &state, Reg::R0) {
+    if op == AtomicOp::CmpXchg && !check_reg_readable(env, &mut state, Reg::R0) {
         return vec![];
     }
 
@@ -391,6 +412,10 @@ pub(crate) fn transfer_atomic(
 
     let access_size = size.bytes() as i64;
     access::check_load(env, &state, base, access_size, off);
+    if env.bcf_path_unreachable {
+        env.bcf_path_unreachable = false;
+        return vec![];
+    }
     access::check_store(env, &state, base, access_size, off, state.types.get(src));
     if env.failed() {
         return vec![];

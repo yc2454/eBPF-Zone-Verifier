@@ -181,7 +181,14 @@ pub fn init_map_value_ptr(state: &mut IntervalState, reg: Reg) {
     state.set(
         reg,
         RegInterval {
-            bounds: ScalarBounds::unknown(), // Absolute address unknown
+            // Kernel model (verifier.c adjust_ptr_min_max_vals /
+            // reg_bounds_sync): a map-value pointer reg's
+            // smin/smax/umin/umax track its *offset*, which is 0 for a
+            // fresh lookup result. refine_map reads
+            // get_interval(base).smin as min_off; leaving this unknown()
+            // gave min_off=i64::MIN -> spurious low-side disjunct ->
+            // cvc5 declines -> "Unbounded variable map access".
+            bounds: ScalarBounds::constant(0),
             ptr_offset: Some(PtrOffset {
                 anchor: Reg::Zero, // Synthetic anchor for map values
                 off: 0,

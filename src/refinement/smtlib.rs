@@ -86,28 +86,60 @@ pub fn encode(state: &SymbolicState) -> Result<String> {
     for (name, width) in &var_decls {
         writeln!(out, "(declare-const {} (_ BitVec {}))", name, width).unwrap();
     }
-    let mut conjuncts: Vec<u32> = state.path_conds.clone();
-    if let Some(rc) = state.refine_cond {
-        conjuncts.push(rc);
-    }
-    match conjuncts.len() {
-        0 => {
-            // No assertions at all — trivial sat. Caller should not be
-            // running the solver in this case, but emit a well-formed
-            // file rather than a malformed one.
+    // Emit the assertion in the **nested** kernel-shape used by
+    // `build_goal_root` and the kernel's `bcf_refine` (verifier.c:24533).
+    // For N >= 2 path conds, kernel produces
+    // `CONJ(CONJ(pc0, pc1, ..., pcN), refine_cond)` — 2-arg outer wrapping
+    // an N-arg inner CONJ. cvc5's proof's `assume` step preserves the
+    // input AST structure; emitting flat `(and pc0 ... pcN rc)` would
+    // cause `bcf_check_proof` to reject the proof against `goal_root`
+    // because the structures don't match.
+    let rc = state.refine_cond;
+    let pcs = &state.path_conds;
+    match (pcs.len(), rc) {
+        (0, None) => {
+            // No assertions — trivial sat. Emit a well-formed file.
             out.push_str("(assert true)\n");
         }
-        1 => {
+        (0, Some(rc)) => {
+            // Bare refine_cond.
             write!(out, "(assert ").unwrap();
-            render(state, conjuncts[0], &var_names, &mut out)?;
+            render(state, rc, &var_names, &mut out)?;
             out.push_str(")\n");
         }
-        _ => {
+        (1, None) => {
+            // One path_cond, no refine_cond — bare.
+            write!(out, "(assert ").unwrap();
+            render(state, pcs[0], &var_names, &mut out)?;
+            out.push_str(")\n");
+        }
+        (1, Some(rc)) => {
+            // 2-arg CONJ(pc0, rc).
+            out.push_str("(assert (and ");
+            render(state, pcs[0], &var_names, &mut out)?;
+            out.push(' ');
+            render(state, rc, &var_names, &mut out)?;
+            out.push_str("))\n");
+        }
+        (_, None) => {
+            // N >= 2 path_conds, no refine_cond — flat N-arg CONJ.
             out.push_str("(assert (and");
-            for &c in &conjuncts {
+            for &c in pcs {
                 out.push(' ');
                 render(state, c, &var_names, &mut out)?;
             }
+            out.push_str("))\n");
+        }
+        (_, Some(rc)) => {
+            // N >= 2 path_conds + refine_cond — nested
+            // CONJ(CONJ(pc0..pcN), rc) matching kernel `bcf_refine`.
+            out.push_str("(assert (and (and");
+            for &c in pcs {
+                out.push(' ');
+                render(state, c, &var_names, &mut out)?;
+            }
+            out.push_str(") ");
+            render(state, rc, &var_names, &mut out)?;
             out.push_str("))\n");
         }
     }

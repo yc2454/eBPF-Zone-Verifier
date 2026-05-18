@@ -9,7 +9,7 @@ use crate::common::constants;
 use crate::common::ctx_model;
 use crate::common::mem_region_model;
 use RegType::*;
-use log::error;
+use log::{error, info};
 
 use super::map::{check_kptr_field_access, check_map_access};
 use super::packet::{check_packet_access, check_packet_meta_access};
@@ -345,6 +345,33 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             }
         }
         ScalarValue | NotInit => {
+            // The single-pass userspace-BCF kernel is a bundle proof
+            // CHECKER only: no in-kernel prover, no solver, and — unlike
+            // two-pass BCF's set6 `detect_conflict_eq`, which is NOT
+            // applied to the built kernel — no trusted syntactic
+            // dead-path rule. On this invalid scalar load it computes
+            // the path_cond's canonical hash and looks it up in the
+            // precomputed bundle; a `kind=UNREACHABLE` entry discharges
+            // it (`bcf_take_discharge` → `PROCESS_BPF_EXIT`). So a
+            // syntactically-dead path still needs a *checkable* bundle
+            // entry: a silent structural drop emits no entry, so the
+            // kernel hashes the path, misses the bundle, and -EACCES.
+            // Mirror the checker faithfully — prove the accumulated
+            // path_cond unsat via the solver and emit a
+            // `kind=UNREACHABLE` bundle entry; drop the path only on a
+            // successful, checkable proof.
+            if crate::analysis::transfer::branch::try_emit_path_unreachable_entry(env, state) {
+                info!(
+                    target: "app",
+                    "[bcf] reactive path-unreachable: discharged generic-load reject at pc {} (cvc5 proof, kind=UNREACHABLE)",
+                    pc
+                );
+                // (children_unsafe marking happens inside
+                // try_emit_path_unreachable_entry, mirroring the
+                // kernel where bcf_refine itself marks parents[].)
+                env.bcf_path_unreachable = true;
+                return;
+            }
             error!(
                 "Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})",
                 pc, base, off, base_type

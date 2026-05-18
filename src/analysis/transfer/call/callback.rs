@@ -172,12 +172,21 @@ pub(super) fn transfer_callback_helper(
     // (`set_loop_callback_state` etc., verifier.c v6.15 ~L10685+).
     // Without this, the cb body's first read of ctx hits "R2 !read_ok".
     // Build the full caller→cb propagation list. Each entry is
-    // `(cb_dst, caller_src_type, caller_src_tnum, caller_src_bounds)`.
-    // Mirrors kernel `set_*_callback_state` (verifier.c v6.15 ~L10685+).
-    // Without typed propagation the cb body's first read of the arg
-    // hits "R2/R3 !read_ok".
-    let mut ctx_propagations: Vec<(Reg, RegType, Tnum, (i64, i64))> = Vec::new();
-    let snap = |st: &State, r: Reg| (st.types.get(r), st.get_tnum(r), st.domain.get_interval(r));
+    // `(cb_dst, caller_src_reg, caller_src_type, caller_src_tnum)`.
+    // Mirrors kernel `set_*_callback_state` (verifier.c v6.15 ~L10685+):
+    // the cb arg IS the caller's pointer/value, unchanged. The domain
+    // half is copied via `assign_reg(cb_dst, caller_src_reg)` BEFORE the
+    // generic clear (sources still intact in the freshly-cloned cb
+    // domain) so a `PtrToStack`/`PtrToMapValue`/… ctx arg keeps its
+    // frame-relative offset — exactly what the static-subprog
+    // `push_frame` path already does (it never clobbers arg regs).
+    // The old `forget`+scalar `assign_interval` dropped the offset, so
+    // a cb deref of a caller-stack ctx pointer (cilium
+    // `tail_mcast_ep_delivery` `*(u64*)(r4+0)`) became "Stack out of
+    // bounds (Unknown offset)". `snap`'s scalar interval is unused now
+    // (assign_reg supersedes it); type+tnum still carried explicitly.
+    let mut ctx_propagations: Vec<(Reg, Reg, RegType, Tnum)> = Vec::new();
+    let snap = |st: &State, r: Reg| (st.types.get(r), st.get_tnum(r));
 
     // bpf_timer_set_callback: caller's R1 = `&map_value->timer`
     // (PtrToMapValue carrying the timer's owning map_idx). Captured here
@@ -198,26 +207,26 @@ pub(super) fn transfer_callback_helper(
         constants::BPF_LOOP
         // bpf_user_ringbuf_drain(map, cb, ctx, flags) → cb(dynptr, ctx); R1=dynptr (left NotInit; few tests deref), ctx → R2.
         | constants::BPF_USER_RINGBUF_DRAIN => {
-            let (ty, tn, b) = snap(&state, Reg::R3);
-            ctx_propagations.push((Reg::R2, ty, tn, b));
+            let (ty, tn) = snap(&state, Reg::R3);
+            ctx_propagations.push((Reg::R2, Reg::R3, ty, tn));
         }
         // bpf_for_each_map_elem(map, cb, ctx, flags) → cb(map, key, val, ctx);
         // R1=caller's R1 (the map ptr); R2=PTR_TO_MAP_KEY, R3=PTR_TO_MAP_VALUE
         // (we don't track those distinctly — use a lax BTF-typed pointer that
         // permits generic loads, mirroring the timer-cb fallback); R4=ctx.
         constants::BPF_FOR_EACH_MAP_ELEM => {
-            let (ty1, tn1, b1) = snap(&state, Reg::R1);
-            ctx_propagations.push((Reg::R1, ty1, tn1, b1));
-            let (ty3, tn3, b3) = snap(&state, Reg::R3);
-            ctx_propagations.push((Reg::R4, ty3, tn3, b3));
+            let (ty1, tn1) = snap(&state, Reg::R1);
+            ctx_propagations.push((Reg::R1, Reg::R1, ty1, tn1));
+            let (ty3, tn3) = snap(&state, Reg::R3);
+            ctx_propagations.push((Reg::R4, Reg::R3, ty3, tn3));
         }
         // bpf_find_vma(task, addr, cb, ctx, flags) → cb(task, vma, ctx);
         // R1=caller's R1 (task), R2=PTR_TO_BTF_ID{vm_area_struct}, R3=ctx.
         constants::BPF_FIND_VMA => {
-            let (ty1, tn1, b1) = snap(&state, Reg::R1);
-            ctx_propagations.push((Reg::R1, ty1, tn1, b1));
-            let (ty4, tn4, b4) = snap(&state, Reg::R4);
-            ctx_propagations.push((Reg::R3, ty4, tn4, b4));
+            let (ty1, tn1) = snap(&state, Reg::R1);
+            ctx_propagations.push((Reg::R1, Reg::R1, ty1, tn1));
+            let (ty4, tn4) = snap(&state, Reg::R4);
+            ctx_propagations.push((Reg::R3, Reg::R4, ty4, tn4));
         }
         _ => {}
     }
@@ -271,12 +280,31 @@ pub(super) fn transfer_callback_helper(
     update_call_rel_types(&mut cb_state);
     cb_state.domain.clear_packet_size_bounds();
 
-    // Minimal arg typing: clear R1..R5, then re-install per-helper. R1
-    // for bpf_loop is the iteration index (scalar). Other helpers' R1
-    // and additional pointer args are installed via `ctx_propagations`
-    // and the static-typed table below; remaining regs stay NotInit so
-    // callbacks that dereference them REJECT.
+    // Domain half of caller→cb propagation. Copy the FULL per-reg
+    // domain state (scalar bounds + ptr_offset) caller_src → cb_dst
+    // BEFORE the generic clear, while the sources are still intact in
+    // the freshly-cloned cb domain. This is exactly what the
+    // static-subprog `push_frame` path does implicitly (it never
+    // clobbers arg regs), and is required for a `PtrToStack` /
+    // `PtrToMapValue` ctx arg to keep its frame-relative offset so the
+    // cb body can dereference it (`check_stack_access` resolves it via
+    // the carried `frame_level`).
+    let prop_dsts: std::collections::HashSet<Reg> =
+        ctx_propagations.iter().map(|&(d, ..)| d).collect();
+    for &(dst, src, ..) in ctx_propagations.iter() {
+        cb_state.domain.assign_reg(dst, src);
+    }
+
+    // Minimal arg typing: clear R1..R5 EXCEPT the propagation dsts
+    // (whose domain state was just copied above), then re-install
+    // per-helper. R1 for bpf_loop is the iteration index (scalar).
+    // Other helpers' R1 and additional pointer args are installed via
+    // `ctx_propagations` and the static-typed table below; remaining
+    // regs stay NotInit so callbacks that dereference them REJECT.
     for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+        if prop_dsts.contains(&r) {
+            continue;
+        }
         cb_state.types.set(r, RegType::NotInit);
         cb_state.domain.forget(r);
         cb_state.set_tnum(r, Tnum::unknown());
@@ -291,12 +319,11 @@ pub(super) fn transfer_callback_helper(
         cb_state.alloc_scalar_id(Reg::R1);
     }
 
-    // Install propagated args after the generic clear.
-    for (dst, ty, tnum, (lo, hi)) in ctx_propagations.drain(..) {
+    // Install propagated arg TYPES + tnums (the domain half was
+    // already copied via `assign_reg` above, preserving ptr_offset).
+    for (dst, _src, ty, tnum) in ctx_propagations.drain(..) {
         cb_state.types.set(dst, ty);
         cb_state.set_tnum(dst, tnum);
-        cb_state.domain.forget(dst);
-        cb_state.domain.assign_interval(dst, lo, hi);
         cb_state.clear_scalar_id(dst);
     }
 

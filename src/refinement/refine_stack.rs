@@ -5,23 +5,16 @@
 //! rejection paths (known-offset and unknown-offset). On Unsat from cvc5,
 //! returns the BCF proof bytes — the caller suppresses the rejection.
 //!
-//! Two strategies, tried in order:
-//!
-//! 1. **Direct symbolic offset** (β+, 2026-05-12). When the base pointer
-//!    itself has a symbolic expression (built by the unified ptr/scalar
-//!    hooks in `handle_add`/`handle_sub`/`handle_mov` with R10 anchored at
-//!    const(0)), the offset-from-r10 is already in the DAG — read it
-//!    straight out. Handles multi-contributor cases (e.g.
-//!    `r1 += r0; r1 += r2`) that the older single-contributor path can't.
-//! 2. **Single-contributor reconstruction** (Phase 1 fallback). When the
-//!    direct expression isn't available, reconstruct `off = K + contrib`
-//!    where K is the constant displacement (`distance.lo - contributor.lo`)
-//!    and `contrib` is the scalar from `state.var_off_contributor`. Bails
-//!    if K is non-constant (multi-contributor) or intervals are unbounded.
+//! Reads the variable part of the offset directly from `bcf_expr` and the
+//! constant part `K` from `state.ptr_const_off` (kernel `ptr_reg->off`,
+//! verifier.c:14383-14471). Builds the kernel-shape refine_cond
+//! `JSGT(var_off_expr, higher_bound - sz - (insn_off + K))` and asks
+//! cvc5 to prove it unsatisfiable under the accumulated path conditions.
+//! Multi-variable-contributor chains (`r1 += r0; r1 += r2`) work because
+//! K is tracked explicitly, not reconstructed from interval algebra.
 
 use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
-use crate::analysis::transfer::alu::helpers::bcf_reg_bounds;
 use crate::common::constants;
 use crate::refinement::bcf::BPF_JSGT;
 use crate::refinement::smtlib;
@@ -46,9 +39,18 @@ pub fn try_refine_stack_oob(
     base: Reg,
     instruction_offset: i64,
     size: i64,
+    base_pc: Option<usize>,
 ) -> Option<RefineOk> {
     let bcf_ref = state.bcf.as_ref()?;
     let mut sym: SymbolicState = (**bcf_ref).clone();
+    // Mirror the kernel's `bcf_track` suffix-only br_cond emission:
+    // drop path_conds emitted at PCs strictly before the suffix's base
+    // PC (the point at which the refine target reg's definition chain
+    // has bottomed out). `None` ⇒ keep all path_conds (sound, just not
+    // as tight as the kernel's runtime CONJ).
+    if let Some(bp) = base_pc {
+        sym.filter_path_conds_from_pc(bp);
+    }
 
     // Step 1: get the variable part of base's offset from r10. After the
     // handle_add ptr+imm skip, base.bcf_expr no longer embeds the const
@@ -56,38 +58,13 @@ pub fn try_refine_stack_oob(
     let b_idx = base.bcf_idx()?;
     let var_off_expr = sym.get_reg(b_idx)?;
 
-    // Step 2: compute the constant offset K from r10 to base via the
-    // abstract domain (distance interval minus variable contribution).
-    // Mirrors the kernel's `ptr_reg->off` bookkeeping. For programs with
-    // a single variable contributor, K = distance.lo - contributor.lo.
-    let const_off = match state.var_off_contributor.get(&base).copied() {
-        Some(contributor) => {
-            let (d_lo, d_hi) = state.domain.get_distance_interval(base, Reg::R10);
-            let (c_lo, c_hi) = state.domain.get_interval(contributor);
-            if d_lo == i64::MIN || d_hi == i64::MAX || c_lo == i64::MIN || c_hi == i64::MAX {
-                debug!(
-                    "[bcf] stack-refine skipped: unbounded interval (d=[{},{}], c=[{},{}])",
-                    d_lo, d_hi, c_lo, c_hi
-                );
-                return None;
-            }
-            let k_lo = d_lo.saturating_sub(c_lo);
-            let k_hi = d_hi.saturating_sub(c_hi);
-            if k_lo != k_hi {
-                debug!(
-                    "[bcf] stack-refine skipped: K not constant (k_lo={}, k_hi={})",
-                    k_lo, k_hi
-                );
-                return None;
-            }
-            k_lo
-        }
-        None => {
-            // No recorded contributor — assume zero const offset. Sound
-            // when base = r10 directly (no `+= K` between mov and access).
-            0
-        }
-    };
+    // Step 2: read the constant offset K straight out of `ptr_const_off`,
+    // which mirrors the kernel's `ptr_reg->off` (verifier.c:14383-14471).
+    // Defaults to 0 — sound when `base = r10` (no `+= K` since mov), and
+    // also when the entry was lost across a non-managed op (in which case
+    // the K=0 assumption is the same one the abstract domain made when
+    // it forgot, so an out-of-band rejection would have triggered first).
+    let const_off = state.ptr_const_off.get(&base).copied().unwrap_or(0);
 
     // Step 3: build refine_cond per kernel `__bcf_refine_access_bound`
     // (verifier.c:5291). For stack accesses, `size` is always known
@@ -98,12 +75,18 @@ pub fn try_refine_stack_oob(
     //   low_pred  = JSLT(off_expr, lower_bound - off)   (only if needed)
     //   refine_cond = high_pred  OR  DISJ(low_pred, high_pred)
     //
-    // The kernel uses 32-bit BCF operations when both ptr_reg and
-    // size_reg fit in s32 (verifier.c:5306-5310). For stack pointers
-    // size_reg is always a constant within s32, so the deciding factor
-    // is whether `base`'s 64-bit interval fits in s32.
-    let ptr_bounds = bcf_reg_bounds(state, base);
-    let bit32 = ptr_bounds.fit_s32();
+    // Kernel `__bcf_refine_access_bound` (verifier.c:5306-5310) reasons
+    // about `ptr_reg->smin/smax` — the FRAME-RELATIVE variable-offset
+    // range, not the absolute pointer value. In interval mode `base`
+    // (the materialized stack pointer) has no scalar interval (⊤), so
+    // `bcf_reg_bounds(base)` / `get_interval(base)` are useless here.
+    // zovia's faithful equivalent of the kernel's `reg->off + var_off`
+    // is the pointer-offset-to-frame-anchor distance R10→base.
+    let (dist_lo, dist_hi) = state.domain.get_distance_interval(base, Reg::R10);
+
+    // 32-bit when the ptr offset fits s32 (size_reg is always a const
+    // within s32 for stack). Mirrors kernel `fit_s32(ptr_reg)`.
+    let bit32 = dist_lo >= i32::MIN as i64 && dist_hi <= i32::MAX as i64;
     let off_expr_use = if bit32 {
         sym.expr32(var_off_expr)
     } else {
@@ -119,11 +102,13 @@ pub fn try_refine_stack_oob(
     let high_thresh_expr = sym.add_val(high_thresh as u64, bit32);
     let high_pred = sym.add_pred(BPF_JSGT, off_expr_use, high_thresh_expr);
 
-    // Low-side check: only when the abstract domain hasn't already proven
-    // safe (min_off < lower_bound). For shift_constraint this is false
-    // (min_off = -16 > lower_bound = -512), so we just use high_pred.
-    let (smin_base, _) = state.domain.get_interval(base);
-    let min_off = smin_base + instruction_offset;
+    // Low-side check: kernel adds the low predicate only when it has
+    // NOT already proven the lower bound safe — `if (min_off <
+    // lower_bound)` (verifier.c:5339), `min_off = ptr_reg->smin_value
+    // + off`. zovia's `ptr_reg->smin_value` = the frame-relative
+    // offset min (`dist_lo`); `off` = the access insn offset. For
+    // shift_constraint min_off = -16 ≥ -512 ⇒ single-sided high_pred.
+    let min_off = dist_lo + instruction_offset;
     let oob = if min_off < lower_bound {
         let low_thresh = lower_bound - total_off;
         let low_thresh_expr = sym.add_val(low_thresh as u64, bit32);

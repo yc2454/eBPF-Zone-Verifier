@@ -237,7 +237,14 @@ fn run_verify(args: VerifyArgs, mut config: VerifierConfig) {
     // input. Other input kinds (`.c`, `.json`) don't yet have a stable
     // single-file mapping for the artifact.
     if config.bcf_enabled && matches!(kind, InputKind::Elf) && config.bcf_bundle_out.is_none() {
-        config.bcf_bundle_out = Some(format!("{}.bcf-bundle", args.path));
+        let bundle_path = format!("{}.bcf-bundle", args.path);
+        // Clear any stale sidecar once per object. write_bundle merges
+        // per-section (the ELF is analyzed one section at a time, all
+        // writing this same path); the merge must start from empty each
+        // run so re-verifying an object is idempotent rather than
+        // accumulating prior runs' entries.
+        let _ = std::fs::remove_file(&bundle_path);
+        config.bcf_bundle_out = Some(bundle_path);
     }
     match kind {
         InputKind::Elf => {
