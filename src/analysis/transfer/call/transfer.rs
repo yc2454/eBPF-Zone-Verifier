@@ -128,18 +128,34 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             state.domain.forget(r);
         }
 
-        // tail-called program may rewrite packet contents, so
-        // any packet pointer in callee-saved regs or stack slots is no
-        // longer valid afterwards. Invalidate them — accesses through
-        // such pointers must be rejected unless re-derived from
-        // skb->data after the tail call.
+        // tail-called program may rewrite packet contents, so any packet
+        // pointer in callee-saved regs or stack slots is no longer valid
+        // afterwards. Mirror kernel `clear_all_pkt_pointers` →
+        // `mark_reg_invalid` (verifier.c): privileged loads
+        // (`allow_ptr_leaks`, i.e. CAP_BPF) `__mark_reg_unknown` →
+        // SCALAR_VALUE (the reg is readable/spillable, just no longer a
+        // pointer — a later deref still rejects as "invalid mem access
+        // 'scalar'"); only unprivileged loads `__mark_reg_not_init` →
+        // NOT_INIT. The BCF corpus loads privileged, so using NOT_INIT
+        // unconditionally produced spurious `Rn !read_ok` on benign
+        // post-tail-call spills/reads of an invalidated former-pkt reg
+        // (calico_tc_main: R6 pkt-ptr → tail_call → spill → false reject,
+        // ~800 insns before the real kernel reject).
+        let pkt_invalid_priv = env.ctx.is_privileged();
+        let pkt_invalid_ty = || {
+            if pkt_invalid_priv {
+                RegType::ScalarValue
+            } else {
+                RegType::NotInit
+            }
+        };
         for r in Reg::ALL {
             if r == Reg::R10 {
                 continue;
             }
             match state.types.get(r) {
                 RegType::PtrToPacket | RegType::PtrToPacketEnd | RegType::PtrToPacketMeta => {
-                    state.types.set(r, RegType::NotInit);
+                    state.types.set(r, pkt_invalid_ty());
                     state.domain.forget(r);
                 }
                 _ => {}
@@ -152,7 +168,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
                     ty,
                     RegType::PtrToPacket | RegType::PtrToPacketEnd | RegType::PtrToPacketMeta
                 ) {
-                    frame.stack.set_slot_type(offset, RegType::NotInit, None);
+                    frame.stack.set_slot_type(offset, pkt_invalid_ty(), None);
                 }
             }
             // Caller-saved register snapshots (r6-r9) restored on subprog
@@ -164,7 +180,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
                     frame.caller_types.get(r),
                     RegType::PtrToPacket | RegType::PtrToPacketEnd | RegType::PtrToPacketMeta
                 ) {
-                    frame.caller_types.set(r, RegType::NotInit);
+                    frame.caller_types.set(r, pkt_invalid_ty());
                 }
             }
         }
