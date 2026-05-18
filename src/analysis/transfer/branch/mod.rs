@@ -391,7 +391,26 @@ fn unreachable_base_pc(env: &VerifierEnv, state: &State) -> Option<usize> {
         if matches!(ty, RegType::NotInit) {
             continue;
         }
-        if !matches!(ty, RegType::ScalarValue) && state.get_tnum(r).is_const() {
+        // Kernel `bcf_refine` auto-fill (verifier.c): skip every reg with
+        // `type != SCALAR_VALUE && tnum_is_const(reg->var_off)` — i.e. a
+        // non-scalar whose *offset* has no variable component. The kernel
+        // models that offset uniformly in `reg->var_off`; zovia splits it
+        // across the `RegType` enum, so the faithful mirror is
+        // per-representation: most pointer offsets ride the value-tnum
+        // (`get_tnum().is_const()` already captures them), but a
+        // `PtrToMapValue` carries its constant offset in the *type*
+        // (`offset: Some(k)`, with `None` = unknown/variable), and a
+        // `*OrNull` map pointer is offset-0 by construction — neither is
+        // reflected in the value-tnum. Without these, a constant-offset
+        // map_value pointer (kernel-excluded) is wrongly backtracked,
+        // exploding the precision suffix (calico_tc_main R7 = map_value
+        // +0x4c → ~115-clause over-walk vs the kernel's 9). This is
+        // additive: it only ever *excludes* more, tightening toward the
+        // kernel's reg_masks — never widens the tracked set.
+        let const_offset = state.get_tnum(r).is_const()
+            || matches!(ty, RegType::PtrToMapValue { offset: Some(_), .. })
+            || matches!(ty, RegType::PtrToMapValueOrNull { .. });
+        if !matches!(ty, RegType::ScalarValue) && const_offset {
             continue;
         }
         targets.push(r);
