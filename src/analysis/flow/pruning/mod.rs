@@ -34,6 +34,7 @@ fn handle_loop_pruning(
     pc: usize,
     prog: &Program,
     live_regs: &HashSet<Reg>,
+    live_slots: &HashSet<i16>,
     config: &VerifierConfig,
 ) -> bool {
     // Loops without conditional exits are infinite - let complexity limit catch them
@@ -81,7 +82,7 @@ fn handle_loop_pruning(
             if prev.children_unsafe {
                 continue;
             }
-            match state_subsumed_by(state, prev, live_regs, config) {
+            match state_subsumed_by(state, prev, live_regs, live_slots, config) {
                 Ok(()) => {
                     h = Some(i);
                     break;
@@ -510,6 +511,7 @@ fn handle_standard_pruning(
     state: &State,
     pc: usize,
     live_regs: &HashSet<Reg>,
+    live_slots: &HashSet<i16>,
     config: &VerifierConfig,
 ) -> bool {
     let mut hit_idx: Option<usize> = None;
@@ -523,7 +525,7 @@ fn handle_standard_pruning(
             if prev.children_unsafe {
                 continue;
             }
-            match state_subsumed_by(state, prev, live_regs, config) {
+            match state_subsumed_by(state, prev, live_regs, live_slots, config) {
                 Ok(()) => {
                     hit_idx = Some(i);
                     break;
@@ -623,6 +625,13 @@ pub fn should_prune(
     }
 
     let live_regs = env.insn_aux_data[pc].live_regs.clone();
+    // clean_verifier_state analog: the kernel zeroes dead stack slots
+    // (clean_func_state → STACK_INVALID) so stacksafe never compares
+    // them. zovia's static `live_slots` (sound over-approx MAY-liveness)
+    // is the equivalent; threaded into `stack_subsumed_by` so a dead
+    // scratch slot can't block a prune (mirrors the existing
+    // `live_regs` filtering in types/domain subsumption).
+    let live_slots = env.insn_aux_data[pc].live_slots.clone();
 
     // may_goto-specific RANGE_WITHIN prune class.
     if pc < prog.instrs.len()
@@ -630,16 +639,18 @@ pub fn should_prune(
         && let Some(prev_states) = env.explored_states.get(&pc)
     {
         let is_may_goto = matches!(prog.instrs[pc], Instr::MayGoto { .. });
-        if is_may_goto && may_goto_range_within_prune(state, prev_states, &live_regs, config) {
+        if is_may_goto
+            && may_goto_range_within_prune(state, prev_states, &live_regs, &live_slots, config)
+        {
             env.pruning_stats.may_goto_range_within_hits += 1;
             return true;
         }
     }
 
     let pruned = if in_loop {
-        handle_loop_pruning(env, state, pc, prog, &live_regs, config)
+        handle_loop_pruning(env, state, pc, prog, &live_regs, &live_slots, config)
     } else {
-        handle_standard_pruning(env, state, pc, &live_regs, config)
+        handle_standard_pruning(env, state, pc, &live_regs, &live_slots, config)
     };
     pruned
 }
@@ -731,6 +742,7 @@ fn may_goto_range_within_prune(
     cur: &State,
     prev_states: &[State],
     live_regs: &HashSet<Reg>,
+    live_slots: &HashSet<i16>,
     config: &VerifierConfig,
 ) -> bool {
     // Build a precision-stripped clone of `cur` once. State carries
@@ -758,7 +770,7 @@ fn may_goto_range_within_prune(
         // they would inflate the "stack" / "tnum" buckets with the
         // precision-stripped clone's behaviour, which isn't the same
         // as the standard subsumption pipeline we're trying to measure.
-        if state_subsumed_by(&relaxed, prev, live_regs, config).is_ok() {
+        if state_subsumed_by(&relaxed, prev, live_regs, live_slots, config).is_ok() {
             return true;
         }
     }

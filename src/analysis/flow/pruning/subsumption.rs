@@ -24,12 +24,33 @@ pub(super) fn state_subsumed_by(
     cur: &State,
     old: &State,
     live_regs: &HashSet<Reg>,
+    live_slots: &HashSet<i16>,
     config: &VerifierConfig,
 ) -> Result<(), SubsumptionMissReason> {
     // Order matters for instrumentation: the *first* rejecting check
     // is what we record, so cheaper / more-fundamental checks come
     // first to keep the histogram readable.
     if !types_subsumed_by(&cur.types, &old.types, live_regs) {
+        // Measurement hatch (mirror ZOVIA_DUMP_DOMAIN_MISS): on a Types
+        // miss, re-scan to report the first offending live reg + its
+        // (cur, old) RegType at this pc. Runs ONLY when the env var is
+        // set AND we already know the check failed — zero hot-path /
+        // behavioral effect otherwise. Used to localize the
+        // clean_verifier_state / liveness-fidelity gap (skb_drop = 100%
+        // types misses).
+        if std::env::var("ZOVIA_DUMP_TYPES_MISS").ok().as_deref() == Some("1") {
+            for &r in live_regs {
+                let ct = cur.types.get(r);
+                let ot = old.types.get(r);
+                if !type_subsumed_by(&ct, &ot) {
+                    eprintln!(
+                        "[types_miss] pc={} reg={:?} cur={:?} old={:?}",
+                        cur.pc, r, ct, ot
+                    );
+                    break;
+                }
+            }
+        }
         return Err(SubsumptionMissReason::Types);
     }
     if !config.skip_dbm_check
@@ -37,7 +58,7 @@ pub(super) fn state_subsumed_by(
     {
         return Err(SubsumptionMissReason::Domain);
     }
-    if !stack_subsumed_by(cur, old) {
+    if !stack_subsumed_by(cur, old, live_slots) {
         return Err(SubsumptionMissReason::Stack);
     }
     if !tnum_subsumed_by(cur, old, live_regs) {
@@ -494,7 +515,24 @@ fn stack_slot_type_subsumed_by(new_ty: &RegType, old_ty: &RegType) -> bool {
     }
 }
 
-fn stack_subsumed_by(cur: &State, old: &State) -> bool {
+fn stack_subsumed_by(cur: &State, old: &State, live_slots: &HashSet<i16>) -> bool {
+    // clean_verifier_state analog (kernel clean_func_state,
+    // verifier.c:19424): a stack slot the kernel proves dead is set to
+    // STACK_INVALID so `stacksafe` skips it — only LIVE slots are ever
+    // compared. zovia previously compared the *union* of all slot
+    // offsets with NO liveness filter (the divergence-map gap), so a
+    // dead scratch slot differing across states blocked every prune.
+    // `live_slots` (sound static MAY-liveness, per-byte offsets) is the
+    // faithful analog. Scoped to the CURRENT (innermost) frame: its pc
+    // is `cur.pc`, so `live_slots == insn_aux_data[cur.pc].live_slots`.
+    // Caller frames keep the full comparison (we lack their per-frame
+    // live sets here — not filtering there is the sound direction).
+    let last_idx = old
+        .frames
+        .iter()
+        .count()
+        .min(cur.frames.iter().count())
+        .saturating_sub(1);
     // Kernel-aligned idmap (verifier.c v6.15 `check_ids` in regsafe at
     // STACK_ITER L18583): iter ids are minted fresh by every
     // `bpf_iter_*_new` call, so literal `old.id == cur.id` always fails
@@ -504,7 +542,9 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
     // for consistency: a given old id may map to exactly one cur id
     // across the comparison.
     let mut iter_idmap: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
-    for (old_frame, new_frame) in old.frames.iter().zip(cur.frames.iter()) {
+    for (frame_i, (old_frame, new_frame)) in
+        old.frames.iter().zip(cur.frames.iter()).enumerate()
+    {
         let all_offsets: HashSet<i16> = old_frame
             .stack
             .slot_offsets()
@@ -513,6 +553,30 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
             .collect();
 
         for offset in all_offsets {
+            // Dead-slot skip (current frame only): if no byte in this
+            // 8-byte slot is live at `cur.pc`, the kernel would have
+            // STACK_INVALID'd it — skip, mirroring stacksafe. ITER /
+            // DYNPTR / IRQ slots are semantically live regardless of
+            // byte-liveness (kernel `bpf_stack_slot_alive` keeps them
+            // alive), so never skip those. Conservative 8-byte span:
+            // any live byte → keep (fewer skips = sound direction).
+            if frame_i == last_idx
+                && !(offset..offset.saturating_add(8)).any(|b| live_slots.contains(&b))
+            {
+                let structural = |fr: &crate::analysis::machine::frame_stack::CallFrame| {
+                    fr.stack
+                        .get_slot(offset)
+                        .map(|s| {
+                            s.iterator.is_some()
+                                || s.dynptr.is_some()
+                                || s.irq_flag.is_some()
+                        })
+                        .unwrap_or(false)
+                };
+                if !structural(old_frame) && !structural(new_frame) {
+                    continue;
+                }
+            }
             let old_ty = old_frame.stack.get_slot_type(offset);
             let new_ty = new_frame.stack.get_slot_type(offset);
             // Stack-specific subsumption is STRICTER than register
