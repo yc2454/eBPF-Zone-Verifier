@@ -135,24 +135,33 @@ pub const PER_FILE_OVERRIDES: &[(&str, PerFileOverride)] = &[
         },
     ),
     // loop4.c: a *pruning* case (20-iter loop, per-iter `if(skb->len)`
-    // branch ⇒ 2^20 fan-out the kernel collapses by keeping the
-    // imprecise accumulator a wildcard — kernel 524 insns/18 states).
-    // The precision-fidelity fixes (no forward ALU precision prop;
-    // exit-R0 sink gated to retval-enforcing prog types like the kernel)
-    // make R0/R3 imprecise so the fan-out collapses — but the loop head
-    // then legitimately holds ~20 distinct states (one per precise
-    // counter value 0..19, exactly as the kernel does). zovia's default
-    // max_states_per_pc=8 evicts them (LRU) before the fan-out collapses
-    // onto a surviving R2=k state. The kernel has NO fixed per-PC cap
-    // (verifier.c:19222 utility eviction). Pin cap=64 (get_branch_snapshot
-    // precedent); NO budget bump — with the precision fixes it converges
-    // in ~hundreds of insns like the kernel, well under the sweep cap.
+    // branch => 2^20 fan-out the kernel collapses to 524 insns/18
+    // states by keeping the accumulator imprecise). Three faithful
+    // pieces make zovia match the kernel here:
+    //   1. precision fidelity (commits e7ec278/557968c: no forward ALU
+    //      precision prop; exit-R0 sink gated to retval-enforcing prog
+    //      types like the kernel) => R0/R3 imprecise so the branch
+    //      fan-out can collapse.
+    //   2. Interval domain. The kernel has NO relational domain (tnum +
+    //      scalar bounds only). zovia's default Zone-DBM tracks
+    //      counter<->accumulator relational cells UNCONDITIONALLY for
+    //      live regs (not precision-gated) — extra precision the kernel
+    //      lacks, which diverges every iteration and blocks the
+    //      same-counter subsumption the kernel performs. Interval mode
+    //      is the kernel-faithful non-relational tracker here (the
+    //      test_cls_redirect precedent for a per-file domain pin).
+    //      Empirically: Zone => timeout; Interval => PASS like kernel.
+    //   3. cap=64: with (1)+(2) the loop head legitimately holds ~20
+    //      states (one per precise counter 0..19, exactly as the
+    //      kernel); default cap=8 LRU-evicts them. Kernel has no fixed
+    //      per-PC cap (verifier.c:19222 utility eviction);
+    //      get_branch_snapshot precedent. NO budget bump.
     (
         "loop4.c",
         PerFileOverride {
             max_insn: None,
             max_states_per_pc: Some(64),
-            domain_mode: None,
+            domain_mode: Some(crate::common::config::DomainMode::Interval),
         },
     ),
     (
