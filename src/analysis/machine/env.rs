@@ -437,12 +437,29 @@ impl<'a> VerifierEnv<'a> {
             // frontier we've evolved back to its perspective. Per-path:
             // only this cached state, not all states at its PC.
             if let Some((pc, idx)) = parent_loc {
+                // Linked-scalar precision propagation: marking a scalar
+                // precise also marks every reg sharing its scalar id IN
+                // THIS cached state precise. Mirrors kernel
+                // `mark_chain_precision`'s linked-regs handling (Eduard
+                // Zingerman, "bpf: propagate precision in
+                // mark_chain_precision for linked scalars") — the exact
+                // mechanism verifier_scalar_ids.c::check_ids_in_regsafe*
+                // / linked_regs_* exercise. Without it, regsafe's
+                // `scalar_ids_subsumed_by` only checks the directly-marked
+                // reg's id and misses the id-linkage inconsistency between
+                // a checkpoint where two scalars share an id and a sibling
+                // path where they do not, wrongly subsuming the unsafe
+                // path. `State::mark_reg_precise` performs the in-state
+                // id-class propagation; collect the resulting set so the
+                // eviction-resistant `precise_pcs` mirror stays consistent.
+                let mut marked: Vec<Reg> = Vec::new();
                 if let Some(states) = self.explored_states.get_mut(&pc)
                     && let Some(s) = states.get_mut(idx)
                 {
                     for &r in &frontier {
-                        s.precise_regs.insert(r);
+                        s.mark_reg_precise(r);
                     }
+                    marked = s.precise_regs.iter().copied().collect();
                 }
                 // Mirror the marks into the eviction-resistant
                 // `precise_pcs` set. Cache eviction
@@ -452,6 +469,9 @@ impl<'a> VerifierEnv<'a> {
                 // still consult them, even after the specific cached
                 // state that recorded the mark is gone.
                 for &r in &frontier {
+                    self.precise_pcs.insert((pc, r));
+                }
+                for r in marked {
                     self.precise_pcs.insert((pc, r));
                 }
             }

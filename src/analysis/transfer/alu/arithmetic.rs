@@ -13,7 +13,7 @@ use super::helpers::{
 };
 
 pub(crate) fn handle_add(
-    _env: &mut VerifierEnv,
+    env: &mut VerifierEnv,
     state: &mut State,
     in_types: &TypeState,
     width: Width,
@@ -50,6 +50,25 @@ pub(crate) fn handle_add(
                 // (which can trip MOV-handling along the chain when the
                 // base is a fresh LoadMap/MapValue load).
                 state.var_off_contributor.insert(dst, *r);
+
+                // Precision sink at the `ptr += scalar` op itself, mirroring
+                // kernel `adjust_ptr_min_max_vals` → `mark_chain_precision`
+                // on the offset scalar (verifier.c v6.15 ~L15185; the LL2
+                // trace shows `mark_precise: last_idx <ptr+=scalar pc>` for
+                // exactly this insn). Deferring this to the downstream
+                // access site (memory/access.rs) reaches the same lineage
+                // but only *after* the access pc is popped — in the
+                // forward-worklist that can be later than a sibling path's
+                // prune check at an ancestor pc, leaving the scalar
+                // imprecise in the cached ancestor so regsafe treats it as
+                // a wildcard and a check_ids-distinguishable unsafe path is
+                // wrongly subsumed (verifier_scalar_ids.c::
+                // check_ids_in_regsafe family). Marking here matches the
+                // kernel's sink location and closes that ordering gap.
+                if let Some(hidx) = state.history_idx {
+                    let pcid = state.parent_cache_id;
+                    env.mark_chain_precision_backward(hidx, pcid, *r);
+                }
 
                 let (lo, hi) = state.domain.get_interval(*r);
                 // Kernel `ptr_reg->off`: if the scalar is a known
