@@ -2372,14 +2372,27 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
         return None;
     }
 
-    // cgroup/post_bind4 and cgroup/post_bind6 use the BpfSock
-    // ctx but with stricter per-attach-subtype field restrictions:
-    //   - mark (off 16) is not readable in either post_bind4 or post_bind6
-    //   - src_ip6 (off 28..44) is not readable in post_bind4 (IPv4-only)
-    //   - src_ip4 (off 24) is not readable in post_bind6 (IPv6-only)
+    // CGROUP_SOCK shares the BpfSock ctx but the kernel gates each
+    // `struct bpf_sock` field on the program's expected_attach_type
+    // (`__sock_filter_check_attach_type`, net/core/filter.c). The flat
+    // BPF_SOCK_FIELDS table can't express that, so deny here the
+    // offsets the kernel rejects for this attach subtype:
+    //   - sock_create / sock_release: src_ip4(24)/src_ip6(28..44)/
+    //     src_port(44..48) are NOT accessible (only bound_dev_if/mark/
+    //     priority full-access + the unrestricted read-only fields are).
+    //     Without this, `*(u16*)(bpf_sock + 44)` under
+    //     SEC("cgroup/sock_create") was wrongly accepted (FALSE-ACCEPT:
+    //     verifier_sock::sock_create_read_src_port — the kernel rejects
+    //     it, src_port is only readable under INET4/6_POST_BIND).
+    //   - post_bind4: mark(16) + src_ip6(28..44) [IPv4-only].
+    //   - post_bind6: mark(16) + src_ip4(24) [IPv6-only].
+    // (The kernel additionally denies bound_dev_if(0)/priority(20) under
+    // post_bind*; left as-is here — pre-existing, verdict-neutral on the
+    // cilium gate, and not the reported regression.)
     if prog_kind == ProgramKind::CgroupSock {
         if let Some(sub) = env.ctx.attach_subtype.as_deref() {
             let denied = match sub {
+                "sock_create" | "sock_release" => (24..48).contains(&off),
                 "post_bind4" => off == 16 || (28..44).contains(&off),
                 "post_bind6" => off == 16 || off == 24,
                 _ => false,
