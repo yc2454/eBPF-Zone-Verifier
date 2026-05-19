@@ -1001,16 +1001,31 @@ impl Analyzer {
             return self.analyze_function_with_info_flags(section, &func, extra_flags);
         }
 
-        // Fallback: clang sometimes emits a program under a section name
-        // that doesn't match the scraped `SEC("…")` literal — modern SEC
-        // aliases (`tcx/ingress` → `classifier`-ish), libbpf's optional
-        // `?` prefix handling, multi-section-per-file files, etc. Walk
-        // every section and dispatch on the first match. If we find the
-        // function under a different section, that's not a bug — the
-        // verdict is what matters.
+        // The hinted section didn't contain it — clang sometimes emits a
+        // program under a section name that doesn't match the scraped
+        // `SEC("…")` literal (SEC aliases, libbpf `?` prefix,
+        // multi-section files). Defer to the section-agnostic
+        // by-name verifier, which scans every code section.
+        self.analyze_function(func_name, extra_flags)
+    }
+
+    /// Verify exactly the named function — its body plus every static
+    /// subprog it transitively calls — and nothing else. The function
+    /// is the verification unit, not its enclosing section: we locate
+    /// the function by name across all code sections purely so the ELF
+    /// loader knows where its bytes live. This is the entry point for
+    /// `verify --func`; it never falls back to verifying a whole
+    /// multi-function section.
+    pub fn analyze_function(&self, func_name: &str, extra_flags: u32) -> AnalysisResult {
+        if let Some(reason) = out_of_scope_reason(&self.path) {
+            return AnalysisResult::OutOfScope(reason.into());
+        }
+        if let Some(reason) = out_of_scope_reason_per_func(&self.path, func_name) {
+            return AnalysisResult::OutOfScope(reason.into());
+        }
         let all_sections = list_section_names(&self.path).unwrap_or_default();
         for s in &all_sections {
-            if !is_code_section(s) || s == section {
+            if !is_code_section(s) {
                 continue;
             }
             let funcs = get_functions_in_section(&self.path, s).unwrap_or_default();
@@ -1019,9 +1034,8 @@ impl Analyzer {
                 return self.analyze_function_with_info_flags(s, &func, extra_flags);
             }
         }
-
         AnalysisResult::LoadError(format!(
-            "function '{func_name}' not found (looked in '{section}' and {} other sections)",
+            "function '{func_name}' not found in any of {} code sections",
             all_sections.len()
         ))
     }

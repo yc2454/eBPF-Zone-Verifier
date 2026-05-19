@@ -674,6 +674,16 @@ pub(crate) mod pairs {
         MemSizePair::new_nullable(Reg::R1, Reg::R2),
         MemSizePair::new_nullable(Reg::R4, Reg::R5),
     ];
+    // bpf_redirect_neigh(ifindex, params, plen, flags): R2=params
+    // (ARG_PTR_TO_MEM|PTR_MAYBE_NULL|MEM_RDONLY) paired with R3=plen
+    // (ARG_CONST_SIZE_OR_ZERO). NULL params => plen must be 0.
+    pub static REDIRECT_NEIGH: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R2, Reg::R3)];
+    // bpf_trace_vprintk(fmt, fmt_size, data, data_len): R3=data
+    // (ARG_PTR_TO_MEM|PTR_MAYBE_NULL|MEM_RDONLY) paired with R4=data_len
+    // (ARG_CONST_SIZE_OR_ZERO). fmt/fmt_size (R1=ARG_PTR_TO_MEM|MEM_RDONLY,
+    // R2=ARG_CONST_SIZE) are bounded by the ConstSize arg kind, exactly
+    // like bpf_trace_printk (no explicit pair).
+    pub static TRACE_VPRINTK: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R3, Reg::R4)];
     pub static STRNCMP: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
     // ARG_CONST_SIZE_OR_ZERO: kernel admits size=0 (no buffer access),
     // mirrors `bpf_get_stack`'s `ARG_CONST_SIZE_OR_ZERO` flag at the

@@ -247,6 +247,26 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             DontCare, DontCare, DontCare,
         ]),
 
+        // bpf_redirect_neigh(ifindex, params, plen, flags) -> int. Real
+        // SCHED_CLS/ACT helper (id 152). Kernel proto (net/core/filter.c
+        // bpf_redirect_neigh_proto): arg1=ARG_ANYTHING ifindex,
+        // arg2=ARG_PTR_TO_MEM|PTR_MAYBE_NULL|MEM_RDONLY params,
+        // arg3=ARG_CONST_SIZE_OR_ZERO plen, arg4=ARG_ANYTHING flags,
+        // RET_INTEGER. Was unregistered → get_helper_proto returned None
+        // → zovia false-rejected the kernel-accepted calico tc programs
+        // that call it ("Invalid helper ID 152"). Additive frontend
+        // coverage; the kernel returns this proto for SCHED_CLS, so the
+        // prior reject was a zovia-only false positive (≤-BCF preserved).
+        constants::BPF_REDIRECT_NEIGH => CallProto::with_args([
+            Anything,             // R1: ifindex
+            PtrToMemOrNull,       // R2: params (nullable, rdonly)
+            ConstSizeOrZero,      // R3: plen
+            Anything,             // R4: flags
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::REDIRECT_NEIGH)
+        .ret(RetKind::Scalar),
+
         // bpf_clone_redirect(skb, ifindex, flags) -> int. Real
         // SCHED_CLS/ACT helper (id 13): clones the skb and redirects
         // the clone. Kernel proto = [ARG_PTR_TO_CTX, ARG_ANYTHING,
@@ -629,6 +649,27 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             Anything,  // R5: arg3
         ]),
 
+        // bpf_trace_vprintk(fmt, fmt_size, data, data_len) -> int. Real
+        // helper (id 177), gpl_only. Kernel proto (kernel/trace/
+        // bpf_trace.c bpf_trace_vprintk_proto): arg1=ARG_PTR_TO_MEM|
+        // MEM_RDONLY fmt, arg2=ARG_CONST_SIZE fmt_size, arg3=ARG_PTR_TO_
+        // MEM|PTR_MAYBE_NULL|MEM_RDONLY data, arg4=ARG_CONST_SIZE_OR_ZERO
+        // data_len, RET_INTEGER. Returned from bpf_base_func_proto
+        // (kernel/bpf/helpers.c) → available to ~all prog types, so the
+        // prior "Invalid helper ID 177" reject was a zovia-only false
+        // positive (≤-BCF preserved). fmt/fmt_size mirror bpf_trace_printk
+        // (ConstSize-bounded, no explicit pair); data/data_len mirror the
+        // nullable tail of bpf_snprintf.
+        constants::BPF_TRACE_VPRINTK => CallProto::with_args([
+            PtrToMem,        // R1: fmt string (rdonly)
+            ConstSize,       // R2: fmt_size (MUST BE > 0)
+            PtrToMemOrNull,  // R3: data (u64 array; may be NULL if len=0)
+            ConstSizeOrZero, // R4: data_len
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::TRACE_VPRINTK)
+        .ret(RetKind::Scalar),
+
         constants::BPF_STRTOUL => {
             CallProto::with_args([PtrToMem, ConstSize, Anything, PtrToLong, DontCare])
         }
@@ -910,6 +951,18 @@ pub(crate) fn get_nullable_ptr_size_pair(helper: u32, ptr_arg_index: usize) -> O
         constants::BPF_SNPRINTF => match ptr_arg_index {
             0 => Some(1),
             3 => Some(4),
+            _ => None,
+        },
+        // bpf_redirect_neigh: R2=params (MEM|MAYBE_NULL) paired with
+        // R3=plen (CONST_SIZE_OR_ZERO).
+        constants::BPF_REDIRECT_NEIGH => match ptr_arg_index {
+            1 => Some(2),
+            _ => None,
+        },
+        // bpf_trace_vprintk: R3=data (MEM|MAYBE_NULL) paired with
+        // R4=data_len (CONST_SIZE_OR_ZERO).
+        constants::BPF_TRACE_VPRINTK => match ptr_arg_index {
+            2 => Some(3),
             _ => None,
         },
         // Add other helpers with PTR_OR_NULL + SIZE_OR_ZERO pairs

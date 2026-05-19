@@ -1435,6 +1435,22 @@ pub(crate) fn update_call_types(
         for did in packet_dids {
             state.invalidate_dynptr_slices(did);
         }
+        // The helper changed packet geometry (data / data_end / length —
+        // e.g. bpf_skb_pull_data extends the linear region, xdp_adjust_*
+        // move the boundaries). Any previously-proven packet/meta size
+        // bounds describe the OLD packet and no longer hold; the kernel
+        // re-derives extent fresh from the post-helper pkt regs (which is
+        // why a later `if pkt+N <= pkt_end` is feasible again). Without
+        // this, a stale `packet_size < K` from a pre-helper "too small"
+        // check makes the post-helper `pkt+N <= pkt_end` (N >= K) edge
+        // domain-inconsistent and zovia drops the kernel's real path
+        // (calico_tc_main: stale `pkt in [102,114)` across
+        // bpf_skb_pull_data killed the pc1644 goto). Mirrors the
+        // function-entry `clear_packet_size_bounds` "start fresh"
+        // rationale — same reason, different geometry-change trigger.
+        if let crate::domains::numeric::NumericDomain::Interval(ref mut ivl) = state.domain {
+            ivl.clear_packet_size_bounds();
+        }
     }
 
     // bpf_dynptr_write: kernel only invalidates slices when the target

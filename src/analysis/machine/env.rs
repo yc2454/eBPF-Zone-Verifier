@@ -254,6 +254,21 @@ pub struct VerifierEnv<'a> {
     /// bundle discharge → `PROCESS_BPF_EXIT`.
     pub bcf_path_unreachable: bool,
 
+    /// Breadcrumb index of the instruction currently being transferred
+    /// (the just-recorded step in `history`). Set by `run_worklist`
+    /// immediately after `history.record`, before the transfer. The
+    /// in-flight `State` still carries its *parent* `history_idx`
+    /// (`current_step_idx` is only assigned to *successors*), so a
+    /// reactive path-unreachable discharge fired from inside a transfer
+    /// must use THIS — the rejecting insn's own breadcrumb — as the
+    /// `bcf_suffix_base_pc` walk start, mirroring the kernel's
+    /// `backtrack_states` `last_idx = cur->insn_idx` (verifier.c
+    /// ~24434) with `skip_first=true`. Starting from the parent
+    /// breadcrumb skips one insn too early — benign for a load reject,
+    /// fatal for a helper-call reject whose skipped predecessor is an
+    /// argument's only definition.
+    pub current_step_idx: Option<usize>,
+
     /// Eviction-resistant precision marks keyed by `(pc, reg)`.
     /// `mark_chain_precision_backward` writes here as it walks the
     /// per-path history, so widening sites can detect "this reg was
@@ -295,6 +310,7 @@ impl<'a> VerifierEnv<'a> {
             bcf_proofs: Vec::new(),
             bcf_size_reg: None,
             bcf_path_unreachable: false,
+            current_step_idx: None,
         }
     }
 
@@ -530,28 +546,36 @@ impl<'a> VerifierEnv<'a> {
 
     /// Compute the PC at which all `target_regs`' definition chains have
     /// bottomed out (the kernel's "base state" PC). Query-only mirror of
-    /// `backtrack_states` (vendor verifier.c bcf_track callers; in
+    /// `backtrack_states` (vendor verifier.c; in
     /// `/Users/yalucai/bpf-next-zovia/kernel/bpf/verifier.c` at the
     /// `backtrack_states` definition): walks backward through the linear
-    /// breadcrumb history starting from `history_idx`, applying the
-    /// per-insn frontier propagation rule
-    /// (`update_frontier`, same one used by
-    /// `mark_chain_precision_backward`), and returns the PC at which the
-    /// frontier first becomes empty. Used by BCF refinement sites to
-    /// filter eager `SymbolicState::path_conds` down to the suffix the
-    /// kernel's `bcf_track` would emit.
+    /// breadcrumb history starting from `history_idx`, applying a
+    /// **faithful port of the kernel's `backtrack_insn`**
+    /// ([`backtrack_insn_step`] over a per-frame [`BacktrackState`]:
+    /// register + stack-slot masks, exact per-opcode data-flow, the
+    /// kernel's `INSN_F_STACK_ACCESS` register-spill/fill gate, precise
+    /// `bt_empty` termination), and returns the PC at which `bt` first
+    /// becomes empty. Used by BCF refinement sites to filter eager
+    /// `SymbolicState::path_conds` down to the suffix the kernel's
+    /// `bcf_track` would emit.
+    ///
+    /// (`mark_chain_precision_backward` is a *separate* mechanism — the
+    /// kernel `__mark_chain_precision` precision-marking heuristic — and
+    /// keeps the older flat-frontier `update_frontier`; do not conflate
+    /// the two.)
     ///
     /// Semantics — mirrors `backtrack_states` step-by-step:
-    /// * Initial frontier = `target_regs`.
+    /// * Initial `bt` = `target_regs` set in the reject state's frame
+    ///   (the breadcrumb's call depth = kernel `bt_init(st->curframe)`).
     /// * Walk back through breadcrumbs; the **first** breadcrumb (the
     ///   refine site's own insn) is skipped (`skip_first = true`),
     ///   matching the kernel.
-    /// * On each prior step, apply `update_frontier`. When it empties,
+    /// * Apply `backtrack_insn_step` per prior step. When `bt` empties,
     ///   that step's PC is the kernel's base PC — return it.
-    /// * If the walk runs out of history without emptying the frontier,
-    ///   the kernel returns `-EFAULT`; we return `None` (callers treat
-    ///   that as "keep all path_conds" — sound, just not tighter than
-    ///   today).
+    /// * If a step hits the kernel's -ENOTSUPP/-EFAULT path, or the walk
+    ///   runs out of history without emptying, the kernel aborts with
+    ///   `base = NULL`; we return `None` (callers treat that as "keep
+    ///   all path_conds" — sound, just not a tighter suffix).
     ///
     /// Returns `None` for empty `target_regs` (kernel returns
     /// `-EFAULT` in that case too) or when the walk runs out.
@@ -562,18 +586,28 @@ impl<'a> VerifierEnv<'a> {
         target_regs: &[Reg],
     ) -> Option<usize> {
         let debug = std::env::var("ZOVIA_BCF_TRACK_DEBUG").is_ok();
-        let mut frontier: HashSet<Reg> = target_regs.iter().copied().collect();
-        if debug {
-            eprintln!(
-                "[bcf-track] walk start: targets={:?} history_idx={} parent_cache_id={:?}",
-                target_regs, history_idx, parent_cache_id
-            );
-        }
-        if frontier.is_empty() {
+        if target_regs.is_empty() {
             return None;
         }
+        // Initial precision lives in the reject state's call frame. zovia
+        // records the call depth on every breadcrumb forward, so it is the
+        // authoritative analogue of the kernel's `bt->frame`
+        // (`bt_init(bt, st->curframe)` in `backtrack_states`).
+        let start_depth = self.history.get(history_idx).map(|s| s.depth).unwrap_or(0);
+        let mut bt = BacktrackState::new();
+        for &r in target_regs {
+            bt.set_reg(start_depth, r);
+        }
+        if bt.is_empty() {
+            return None;
+        }
+        if debug {
+            eprintln!(
+                "[bcf-track] walk start: targets={:?} start_frame={} history_idx={} parent_cache_id={:?}",
+                target_regs, start_depth, history_idx, parent_cache_id
+            );
+        }
 
-        let caller_saved = [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
         let mut current_history: Option<usize> = Some(history_idx);
         let mut current_parent_id: Option<u32> = parent_cache_id;
         let mut budget: usize = 16_384;
@@ -614,28 +648,33 @@ impl<'a> VerifierEnv<'a> {
                 let parent_idx = step.parent_idx;
                 let instr_copy = step.instr.clone();
                 let step_pc = step.pc;
+                let step_depth = step.depth;
+                let step_stack_access = step.stack_access;
 
                 if !skip_first {
-                    let pre: Vec<Reg> = {
-                        let mut v: Vec<Reg> = frontier.iter().copied().collect();
-                        v.sort_by_key(|r| *r as u8);
-                        v
-                    };
-                    update_frontier(&mut frontier, &instr_copy, &caller_saved);
+                    if backtrack_insn_step(&mut bt, &instr_copy, step_depth, step_stack_access).is_err() {
+                        // Kernel `backtrack_insn` returned a negative errno
+                        // (-ENOTSUPP / -EFAULT): `backtrack_states` aborts
+                        // with `base = NULL`, which on the zovia side means
+                        // "keep all accumulated path_conds" — sound, just
+                        // not a tighter suffix.
+                        if debug {
+                            eprintln!(
+                                "[bcf-track]   pc={:>3} {:?} -> ERR (keep all path_conds)",
+                                step_pc, instr_copy
+                            );
+                        }
+                        return None;
+                    }
                     if debug {
-                        let post: Vec<Reg> = {
-                            let mut v: Vec<Reg> = frontier.iter().copied().collect();
-                            v.sort_by_key(|r| *r as u8);
-                            v
-                        };
                         eprintln!(
-                            "[bcf-track]   pc={:>3} {:?} frontier {:?} -> {:?}",
-                            step_pc, instr_copy, pre, post
+                            "[bcf-track]   pc={:>3} d={} {:?} regs={:?} stack={:?}",
+                            step_pc, step_depth, instr_copy, bt.reg_masks, bt.stack_masks
                         );
                     }
-                    if frontier.is_empty() {
+                    if bt.is_empty() {
                         if debug {
-                            eprintln!("[bcf-track] frontier empty at pc={}", step_pc);
+                            eprintln!("[bcf-track] bt empty at pc={}", step_pc);
                         }
                         // Base reached. The kernel's `bcf_track` re-runs
                         // the suffix starting at the parent state — i.e.
@@ -741,6 +780,328 @@ fn update_frontier(
         }
         _ => {}
     }
+}
+
+/// Per-frame register + stack-slot precision masks — a faithful mirror
+/// of the kernel's `struct backtrack_state` (vendor verifier.c). For
+/// frame `f`: `reg_masks[f]` bit `i` (`Reg::bcf_idx`, 0..=10 where 10 =
+/// `BPF_REG_FP`/R10) tracks a register that needs precision; and
+/// `stack_masks[f]` bit `spi` tracks a spilled-scalar stack slot. Frames
+/// are indexed by the breadcrumb's call depth (zovia records this
+/// forward — the authoritative analogue of the kernel's `bt->frame`).
+struct BacktrackState {
+    reg_masks: Vec<u16>,
+    stack_masks: Vec<u64>,
+}
+
+impl BacktrackState {
+    fn new() -> Self {
+        Self { reg_masks: Vec::new(), stack_masks: Vec::new() }
+    }
+
+    #[inline]
+    fn ensure(&mut self, frame: usize) {
+        if self.reg_masks.len() <= frame {
+            self.reg_masks.resize(frame + 1, 0);
+            self.stack_masks.resize(frame + 1, 0);
+        }
+    }
+
+    #[inline]
+    fn set_reg(&mut self, frame: usize, reg: Reg) {
+        if let Some(b) = reg.bcf_idx() {
+            self.ensure(frame);
+            self.reg_masks[frame] |= 1u16 << b;
+        }
+    }
+
+    #[inline]
+    fn clear_reg(&mut self, frame: usize, reg: Reg) {
+        if let Some(b) = reg.bcf_idx()
+            && frame < self.reg_masks.len()
+        {
+            self.reg_masks[frame] &= !(1u16 << b);
+        }
+    }
+
+    #[inline]
+    fn is_reg_set(&self, frame: usize, reg: Reg) -> bool {
+        reg.bcf_idx().is_some_and(|b| {
+            frame < self.reg_masks.len() && self.reg_masks[frame] & (1u16 << b) != 0
+        })
+    }
+
+    #[inline]
+    fn set_slot(&mut self, frame: usize, spi: u32) {
+        self.ensure(frame);
+        self.stack_masks[frame] |= 1u64 << spi;
+    }
+
+    #[inline]
+    fn clear_slot(&mut self, frame: usize, spi: u32) {
+        if frame < self.stack_masks.len() {
+            self.stack_masks[frame] &= !(1u64 << spi);
+        }
+    }
+
+    #[inline]
+    fn is_slot_set(&self, frame: usize, spi: u32) -> bool {
+        frame < self.stack_masks.len() && self.stack_masks[frame] & (1u64 << spi) != 0
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.reg_masks.iter().all(|&m| m == 0) && self.stack_masks.iter().all(|&m| m == 0)
+    }
+
+    /// Any of R1..R5 (the BPF arg registers) still set in `frame`. Mirror
+    /// of kernel `bt_reg_mask(bt) & BPF_REGMASK_ARGS`.
+    #[inline]
+    fn args_set(&self, frame: usize) -> bool {
+        // bcf_idx: R1=1 .. R5=5 ⇒ bits 1..=5.
+        frame < self.reg_masks.len() && self.reg_masks[frame] & 0b0011_1110 != 0
+    }
+}
+
+/// Kernel stack-slot index for a frame-pointer-relative register
+/// spill/fill, or `None` if this access is *not* a tracked register
+/// spill/fill (so the kernel records `insn_flags = 0` and
+/// `backtrack_insn` does not follow it into the slot).
+///
+/// The kernel records `INSN_F_STACK_ACCESS` only for an 8-byte-aligned,
+/// `BPF_REG_SIZE`-sized access (`!(off % BPF_REG_SIZE) && size ==
+/// BPF_REG_SIZE` in `check_stack_{read,write}_fixed_off`); partial /
+/// unaligned writes and non-restoring fills are plain stack data
+/// (STACK_MISC/ZERO), `insn_flags = 0`. Mirroring that gate is what
+/// keeps the precision suffix from running away through every buffer
+/// write. `spi = (-off - 1) / BPF_REG_SIZE`; slots ≥ 64 (beyond
+/// `MAX_BPF_STACK / 8`) are out of mask range.
+#[inline]
+fn spi_of(off: i16) -> Option<u32> {
+    if off >= 0 {
+        return None;
+    }
+    let slot = (-(off as i32)) - 1;
+    if slot < 0 {
+        return None;
+    }
+    let spi = (slot / 8) as u32;
+    if spi >= 64 { None } else { Some(spi) }
+}
+
+/// Whether a stack-relative LDX/STX continues the precision chain into
+/// its slot is no longer guessed structurally (the old `fill_slot` /
+/// `store_slot` `off % 8` heuristic over-followed every slot-aligned
+/// access). It is now read from the breadcrumb's `stack_access` flag —
+/// zovia's analog of the kernel's `hist->flags & INSN_F_STACK_ACCESS`,
+/// set forward only for a genuine register spill/fill (see
+/// [`crate::analysis::machine::history::Breadcrumb::stack_access`] and
+/// the forward marking in the memory transfer). The slot index is still
+/// recovered from the insn's own fixed offset via [`spi_of`], exactly as
+/// the kernel recovers it from `insn_stack_access_spi(hist->flags)`.
+
+/// Faithful port of the kernel's `backtrack_insn` (vendor verifier.c) for
+/// one linear-history step: mutate the per-frame precision masks `bt`
+/// given that we are *un-doing* `instr`, which executed in call `frame`.
+///
+/// `Err(())` mirrors the kernel returning a negative errno (-ENOTSUPP /
+/// -EFAULT) from `backtrack_insn`: `backtrack_states` then aborts with
+/// `base = NULL`, which on the zovia side means "keep all accumulated
+/// path_conds" (sound, just not as tight a suffix).
+fn backtrack_insn_step(
+    bt: &mut BacktrackState,
+    instr: &crate::ast::Instr,
+    frame: usize,
+    stack_access: bool,
+) -> Result<(), ()> {
+    use crate::ast::{AluOp, Instr, Operand};
+    match instr {
+        // ── BPF_ALU / BPF_ALU64 ──────────────────────────────────────
+        Instr::Alu { op, dst, src, .. } => {
+            if !bt.is_reg_set(frame, *dst) {
+                return Ok(());
+            }
+            match op {
+                // BPF_NEG: sreg reserved/unused; dreg still needs
+                // precision before this insn — nothing new.
+                AluOp::Neg => {}
+                AluOp::Mov => {
+                    bt.clear_reg(frame, *dst);
+                    if let Operand::Reg(s) = src
+                        && *s != Reg::R10
+                    {
+                        // dreg = sreg: sreg needs precision before.
+                        bt.set_reg(frame, *s);
+                    }
+                }
+                _ => {
+                    // dreg = dreg <op> src: dreg stays precise; a reg
+                    // src also needs precision before this insn.
+                    if let Operand::Reg(s) = src
+                        && *s != Reg::R10
+                    {
+                        bt.set_reg(frame, *s);
+                    }
+                }
+            }
+        }
+        // BPF_MOV with sign-extend (BPF_X form): dreg = (sN)sreg.
+        Instr::MovSx { dst, src, .. } => {
+            if !bt.is_reg_set(frame, *dst) {
+                return Ok(());
+            }
+            bt.clear_reg(frame, *dst);
+            if let Operand::Reg(s) = src
+                && *s != Reg::R10
+            {
+                bt.set_reg(frame, *s);
+            }
+        }
+        // BPF_END: like BPF_NEG — dreg stays precise, nothing new.
+        Instr::Endian { .. } => {}
+        // ── BPF_LDX (incl. atomic load-acquire) ──────────────────────
+        Instr::Load { size, dst, base, off }
+        | Instr::LoadSx { size, dst, base, off }
+        | Instr::LoadAcq { size, dst, base, off } => {
+            if !bt.is_reg_set(frame, *dst) {
+                return Ok(());
+            }
+            let _ = (size, base);
+            bt.clear_reg(frame, *dst);
+            // Kernel `backtrack_insn` BPF_LDX clause: a load from
+            // non-stack memory can be zero-extended — precision is
+            // already on `dst`, nothing further. Only a *register fill*
+            // continues the chain into the slot, and the kernel gates
+            // that solely on `hist->flags & INSN_F_STACK_ACCESS`
+            // (verifier.c:4612). zovia's `stack_access` breadcrumb flag
+            // is that bit; the slot index comes from the insn's fixed
+            // offset (kernel `insn_stack_access_spi`).
+            if stack_access
+                && let Some(spi) = spi_of(*off)
+            {
+                bt.set_slot(frame, spi);
+            }
+        }
+        // ld_imm64 / map-ptr load: clear dst; no further tracking.
+        Instr::LoadMap { dst, .. } => {
+            if !bt.is_reg_set(frame, *dst) {
+                return Ok(());
+            }
+            bt.clear_reg(frame, *dst);
+        }
+        // ld_abs / ld_ind: kernel returns -ENOTSUPP ("to be analyzed").
+        Instr::LoadPacket { .. } => return Err(()),
+        // ── BPF_STX / BPF_ST (incl. atomics) ─────────────────────────
+        // ── BPF_STX / BPF_ST ─────────────────────────────────────────
+        // Kernel `backtrack_insn` STX/ST clause (verifier.c:4621):
+        //  * a precise *scalar* mem-base ⇒ pointer subtraction ⇒
+        //    -ENOTSUPP;
+        //  * `!(hist->flags & INSN_F_STACK_ACCESS)` ⇒ `return 0` —
+        //    a plain data store does **not** clear the slot (the old
+        //    `store_slot` cleared it unconditionally, which severed the
+        //    chain a step early when a data write aliased a tracked
+        //    spi);
+        //  * else clear the slot; for class==BPF_STX propagate precision
+        //    to the spilled source reg (BPF_ST const propagates nothing).
+        Instr::Store { off, base, src, .. } => {
+            if bt.is_reg_set(frame, *base) {
+                return Err(());
+            }
+            if !stack_access {
+                return Ok(());
+            }
+            let Some(spi) = spi_of(*off) else {
+                return Ok(());
+            };
+            if !bt.is_slot_set(frame, spi) {
+                return Ok(());
+            }
+            bt.clear_slot(frame, spi);
+            if let Operand::Reg(s) = src {
+                bt.set_reg(frame, *s);
+            }
+        }
+        Instr::StoreRel { off, base, src, .. } => {
+            if bt.is_reg_set(frame, *base) {
+                return Err(());
+            }
+            if !stack_access {
+                return Ok(());
+            }
+            let Some(spi) = spi_of(*off) else {
+                return Ok(());
+            };
+            if !bt.is_slot_set(frame, spi) {
+                return Ok(());
+            }
+            bt.clear_slot(frame, spi);
+            bt.set_reg(frame, *src);
+        }
+        Instr::Atomic { off, base, src, .. } => {
+            if bt.is_reg_set(frame, *base) {
+                return Err(());
+            }
+            if !stack_access {
+                return Ok(());
+            }
+            let Some(spi) = spi_of(*off) else {
+                return Ok(());
+            };
+            if !bt.is_slot_set(frame, spi) {
+                return Ok(());
+            }
+            bt.clear_slot(frame, spi);
+            bt.set_reg(frame, *src);
+        }
+        // ── BPF_JMP / BPF_JMP32 ──────────────────────────────────────
+        // Static BPF-to-BPF subprog call. Backtracking *past* it exits
+        // the callee back into the caller: r1-r5 (the args) propagate
+        // from the callee frame to the caller frame.
+        Instr::CallRel { .. } => {
+            let callee = frame + 1;
+            for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                if bt.is_reg_set(callee, r) {
+                    bt.clear_reg(callee, r);
+                    bt.set_reg(frame, r);
+                }
+            }
+        }
+        // Helper / kfunc call: sets R0; r1-r5 are clobbered and should
+        // have been resolved already (kernel treats leftover args as a
+        // verifier bug → -EFAULT → keep-all).
+        Instr::Call { .. } => {
+            bt.clear_reg(frame, Reg::R0);
+            if bt.args_set(frame) {
+                return Err(());
+            }
+        }
+        // Subprog/callback return. Backtracking past EXIT enters the
+        // callee frame; propagate R0 (the return value) if the caller
+        // still needs it precise.
+        Instr::Exit => {
+            if frame >= 1 {
+                let caller = frame - 1;
+                let r0_precise = bt.is_reg_set(caller, Reg::R0);
+                bt.clear_reg(caller, Reg::R0);
+                if r0_precise {
+                    bt.set_reg(frame, Reg::R0);
+                }
+            }
+        }
+        // Conditional jump. BPF_X: if either operand was precise after,
+        // both need precision before. BPF_K / JA: nothing new.
+        Instr::If { left, right, .. } => {
+            if let Operand::Reg(r) = right {
+                if !bt.is_reg_set(frame, *left) && !bt.is_reg_set(frame, *r) {
+                    return Ok(());
+                }
+                bt.set_reg(frame, *r);
+                bt.set_reg(frame, *left);
+            }
+        }
+        Instr::Jmp { .. } | Instr::MayGoto { .. } => {}
+    }
+    Ok(())
 }
 
 /// Cache-growth instrumentation flag. When set, `record_state` prints

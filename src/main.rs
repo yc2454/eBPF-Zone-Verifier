@@ -27,7 +27,7 @@ use crate::pcc::ProgramCertificate;
 use crate::testing::legacy_selftest::{selftest_list, selftest_run, selftest_single, selftest_suite};
 use crate::testing::logging;
 use crate::testing::pcc_test::{pcc_cert_run, pcc_test_single};
-use crate::testing::runner::{AnalysisResult, Analyzer, find_section_for_func, is_code_section};
+use crate::testing::runner::{AnalysisResult, Analyzer, is_code_section};
 use clap::Parser;
 use std::path::Path;
 
@@ -141,12 +141,8 @@ fn run_analyze_section(path: &str, section: &str, config: VerifierConfig) {
 
 fn run_analyze_func(path: &str, func: &str, config: VerifierConfig) {
     println!("=== Analyzing function: '{}' in '{}' ===", func, path);
-    let Some(section_name) = find_section_for_func(path, func) else {
-        eprintln!("Function '{}' not found or section lookup failed.", func);
-        return;
-    };
     let analyzer = Analyzer::new(path, config);
-    print_analysis_result(analyzer.analyze_section(&section_name));
+    print_analysis_result(analyzer.analyze_function(func, 0));
 }
 
 fn print_analysis_result(result: AnalysisResult) {

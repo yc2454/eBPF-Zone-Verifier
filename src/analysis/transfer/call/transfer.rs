@@ -21,6 +21,40 @@ use super::mem_checks::{check_mem_size_pairs, is_valid_helper_id};
 use super::signatures::get_helper_proto;
 use crate::analysis::transfer::alu::helpers::bcf_reg_bounds;
 
+/// Reactive path-unreachable discharge for a helper-argument rejection.
+///
+/// Mirrors the kernel's CALL dispatch (verifier.c:20761): when
+/// `check_helper_call` returns `-EACCES` — which includes
+/// `check_func_arg`→`check_reg_type`'s "R%d type=%s expected=<ptr>"
+/// reject and the `check_helper_mem_access` size/pointer rejects — the
+/// kernel runs `bcf_prove_unreachable`; a matching `kind=UNREACHABLE`
+/// bundle entry then discharges the dead path (`bcf_take_discharge` →
+/// `return 0`). zovia already mirrors the generic-load hook
+/// (verifier.c:8259 → `memory::access`) but not this helper-arg one, so
+/// a path the kernel proves unreachable via the bundle was a hard
+/// reject here (e.g. `calico_tc_skb_accepted_entrypoint` pc723:
+/// `bpf_csum_diff` R1 scalar). Reactive and solver-gated:
+/// `try_emit_path_unreachable_entry` only drops the path on a checkable
+/// cvc5 unsat proof of the accumulated `path_cond`, so a genuinely
+/// unsafe program is still rejected. Scoped to the arg-validation
+/// reject class (`InvalidArgType`, zovia's `check_func_arg` /
+/// `check_helper_mem_access` analog).
+fn try_discharge_helper_arg_reject(env: &mut VerifierEnv, state: &State, pc: usize) -> bool {
+    if matches!(env.error, Some(VerificationError::InvalidArgType { .. }))
+        && crate::analysis::transfer::branch::try_emit_path_unreachable_entry(env, state)
+    {
+        log::info!(
+            target: "app",
+            "[bcf] reactive path-unreachable: discharged helper-arg reject at pc {pc} (cvc5 proof, kind=UNREACHABLE)"
+        );
+        env.error = None;
+        env.bcf_path_unreachable = true;
+        true
+    } else {
+        false
+    }
+}
+
 /// Transfer function for helper Call instructions.
 pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32) -> Vec<State> {
     let in_types = state.types.clone();
@@ -49,6 +83,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     if let Some(p) = get_helper_proto(helper)
         && !check_mem_size_pairs(env, &state, &p, pc)
     {
+        try_discharge_helper_arg_reject(env, &state, pc);
         return vec![];
     }
 
@@ -57,6 +92,9 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     // ========================================================================
     debug!("[Verifier] pc {}: validating helper arguments", pc);
     validate_helper_args(env, &state, helper, &in_types, pc);
+    if env.failed() && try_discharge_helper_arg_reject(env, &state, pc) {
+        return vec![];
+    }
 
     // ========================================================================
     // SPECIAL CASES
@@ -128,18 +166,34 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             state.domain.forget(r);
         }
 
-        // tail-called program may rewrite packet contents, so
-        // any packet pointer in callee-saved regs or stack slots is no
-        // longer valid afterwards. Invalidate them — accesses through
-        // such pointers must be rejected unless re-derived from
-        // skb->data after the tail call.
+        // tail-called program may rewrite packet contents, so any packet
+        // pointer in callee-saved regs or stack slots is no longer valid
+        // afterwards. Mirror kernel `clear_all_pkt_pointers` →
+        // `mark_reg_invalid` (verifier.c): privileged loads
+        // (`allow_ptr_leaks`, i.e. CAP_BPF) `__mark_reg_unknown` →
+        // SCALAR_VALUE (the reg is readable/spillable, just no longer a
+        // pointer — a later deref still rejects as "invalid mem access
+        // 'scalar'"); only unprivileged loads `__mark_reg_not_init` →
+        // NOT_INIT. The BCF corpus loads privileged, so using NOT_INIT
+        // unconditionally produced spurious `Rn !read_ok` on benign
+        // post-tail-call spills/reads of an invalidated former-pkt reg
+        // (calico_tc_main: R6 pkt-ptr → tail_call → spill → false reject,
+        // ~800 insns before the real kernel reject).
+        let pkt_invalid_priv = env.ctx.is_privileged();
+        let pkt_invalid_ty = || {
+            if pkt_invalid_priv {
+                RegType::ScalarValue
+            } else {
+                RegType::NotInit
+            }
+        };
         for r in Reg::ALL {
             if r == Reg::R10 {
                 continue;
             }
             match state.types.get(r) {
                 RegType::PtrToPacket | RegType::PtrToPacketEnd | RegType::PtrToPacketMeta => {
-                    state.types.set(r, RegType::NotInit);
+                    state.types.set(r, pkt_invalid_ty());
                     state.domain.forget(r);
                 }
                 _ => {}
@@ -152,7 +206,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
                     ty,
                     RegType::PtrToPacket | RegType::PtrToPacketEnd | RegType::PtrToPacketMeta
                 ) {
-                    frame.stack.set_slot_type(offset, RegType::NotInit, None);
+                    frame.stack.set_slot_type(offset, pkt_invalid_ty(), None);
                 }
             }
             // Caller-saved register snapshots (r6-r9) restored on subprog
@@ -164,7 +218,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
                     frame.caller_types.get(r),
                     RegType::PtrToPacket | RegType::PtrToPacketEnd | RegType::PtrToPacketMeta
                 ) {
-                    frame.caller_types.set(r, RegType::NotInit);
+                    frame.caller_types.set(r, pkt_invalid_ty());
                 }
             }
         }
