@@ -142,15 +142,12 @@ pub const PER_FILE_OVERRIDES: &[(&str, PerFileOverride)] = &[
     //      precision prop; exit-R0 sink gated to retval-enforcing prog
     //      types like the kernel) => R0/R3 imprecise so the branch
     //      fan-out can collapse.
-    //   2. Interval domain. The kernel has NO relational domain (tnum +
-    //      scalar bounds only). zovia's default Zone-DBM tracks
-    //      counter<->accumulator relational cells UNCONDITIONALLY for
-    //      live regs (not precision-gated) — extra precision the kernel
-    //      lacks, which diverges every iteration and blocks the
-    //      same-counter subsumption the kernel performs. Interval mode
-    //      is the kernel-faithful non-relational tracker here (the
-    //      test_cls_redirect precedent for a per-file domain pin).
-    //      Empirically: Zone => timeout; Interval => PASS like kernel.
+    //   2. Interval domain (NOT Zone-DBM). The sweep now runs
+    //      `--kernel-mode` (Interval) so this is inherited, not pinned:
+    //      `domain_mode: None`. The kernel has NO relational domain;
+    //      Zone-DBM tracked counter<->accumulator cells unconditionally
+    //      for live regs and blocked the same-counter subsumption the
+    //      kernel performs.
     //   3. cap=64: with (1)+(2) the loop head legitimately holds ~20
     //      states (one per precise counter 0..19, exactly as the
     //      kernel); default cap=8 LRU-evicts them. Kernel has no fixed
@@ -161,7 +158,7 @@ pub const PER_FILE_OVERRIDES: &[(&str, PerFileOverride)] = &[
         PerFileOverride {
             max_insn: None,
             max_states_per_pc: Some(64),
-            domain_mode: Some(crate::common::config::DomainMode::Interval),
+            domain_mode: None,
         },
     ),
     (

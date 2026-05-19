@@ -58,7 +58,15 @@ def classify(tag: str) -> str:
 def run_one(args) -> tuple[str, list[tuple[str, str]], str | None]:
     zovia, upstream, path, timeout = args
     fname = os.path.basename(path)
-    cmd = [zovia, "-q", "dev", "selftest-file", path, "--upstream", upstream]
+    # --kernel-mode (Interval domain + no bounded-loop detection + single
+    # loop entry) is the FAITHFUL lens and matches how the cilium-42 gate
+    # (fa_scorecard.py) already runs zovia. Zone-DBM is a kernel-absent
+    # relational domain; running the sweep under it MASKED real soundness
+    # FALSE_ACCEPTs (zovia's kernel-faithful logic wrongly accepting progs
+    # the kernel rejects — the DBM happened to catch them). We do NOT want
+    # that crutch: kernel-mode is the ground truth and the exposed FAs are
+    # real verifier-fidelity bugs to FIX, not patch over.
+    cmd = [zovia, "-q", "--kernel-mode", "dev", "selftest-file", path, "--upstream", upstream]
     try:
         p = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout, errors="replace"
