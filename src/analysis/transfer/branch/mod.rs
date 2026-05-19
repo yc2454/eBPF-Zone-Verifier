@@ -170,6 +170,40 @@ pub(crate) fn transfer_if(
         return vec![];
     }
 
+    // Kernel `collect_linked_regs` + `push_insn_history(...,
+    // linked_regs_pack(...))` (verifier.c check_cond_jmp_op L16497-16505):
+    // record, on THIS conditional jump's breadcrumb, the scalar registers
+    // sharing the compared register's scalar id, so the backward precision
+    // walk's `bt_sync_linked_regs` can propagate precision across the
+    // class. Kernel collects for src->id (BPF_X) and dst->id, and only
+    // records when the class has > 1 member. Done from the pre-refinement
+    // incoming `state` (kernel collects from `this_branch` before
+    // `push_stack`/`reg_set_min_max`).
+    if let Some(hidx) = env.current_step_idx {
+        use crate::analysis::machine::reg_types::RegType;
+        let mut linked: Vec<Reg> = Vec::new();
+        let mut class_regs: Vec<Reg> = Vec::new();
+        if let Operand::Reg(r) = right
+            && state.types.get(r) == RegType::ScalarValue
+            && let Some(id) = state.scalar_id(r)
+        {
+            class_regs.extend(state.regs_with_scalar_id(id));
+        }
+        if state.types.get(left) == RegType::ScalarValue
+            && let Some(id) = state.scalar_id(left)
+        {
+            class_regs.extend(state.regs_with_scalar_id(id));
+        }
+        for lr in class_regs {
+            if !linked.contains(&lr) {
+                linked.push(lr);
+            }
+        }
+        if linked.len() > 1 {
+            env.history.set_linked_regs(hidx, linked);
+        }
+    }
+
     // --- STEP 1: Abstract Interpretation (Constraint Refinement) ---
     let mut state_then = state.clone();
     let mut state_else = state.clone();

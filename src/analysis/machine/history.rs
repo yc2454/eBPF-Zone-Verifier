@@ -1,4 +1,5 @@
 use crate::ast::Instr;
+use crate::analysis::machine::reg::Reg;
 
 /// A lightweight record of a single step in the execution path.
 pub struct Breadcrumb {
@@ -32,6 +33,15 @@ pub struct Breadcrumb {
     /// inflating the path-unreachable suffix and the non-prunable
     /// ancestor span).
     pub stack_access: bool,
+    /// zovia's analog of the kernel's per-jmp-history `linked_regs`
+    /// (verifier.c `push_insn_history(..., linked_regs_pack(...))` in
+    /// `check_cond_jmp_op`). At a conditional jump, the set of scalar
+    /// registers sharing the compared register's scalar id (kernel
+    /// `collect_linked_regs`, recorded only when more than one reg is in
+    /// the class). `bt_sync_linked_regs` in the backward precision walk
+    /// reads it: if any member is precise, all become precise. Empty for
+    /// non-conditional insns or a singleton class.
+    pub linked_regs: Vec<Reg>,
 }
 
 pub struct History {
@@ -66,8 +76,20 @@ impl History {
             depth,
             parent_idx,
             stack_access: false,
+            linked_regs: Vec::new(),
         });
         idx
+    }
+
+    /// Back-patch the kernel-style `linked_regs` set onto an
+    /// already-recorded breadcrumb. Called by the forward conditional-jump
+    /// transfer once it has collected the id-linked scalar class (the
+    /// kernel records this via `push_insn_history` in `check_cond_jmp_op`,
+    /// only when the class has more than one member).
+    pub fn set_linked_regs(&mut self, idx: usize, regs: Vec<Reg>) {
+        if let Some(b) = self.steps.get_mut(idx) {
+            b.linked_regs = regs;
+        }
     }
 
     /// Back-patch the kernel-style `INSN_F_STACK_ACCESS` flag onto an

@@ -413,7 +413,19 @@ impl<'a> VerifierEnv<'a> {
                 let parent_idx = step.parent_idx;
                 let instr_copy = step.instr;
                 let step_pc = step.pc;
+                let step_linked = step.linked_regs.clone();
+                // Kernel `bt_sync_linked_regs` (verifier.c L4116-4147),
+                // called BEFORE the per-insn backtrack (L4187): if any reg
+                // in this conditional's recorded id-linked class is
+                // already precise, all become precise. Mirrors the
+                // forward `collect_linked_regs`/`push_insn_history`.
+                bt_sync_linked_regs(&mut frontier, &step_linked);
                 update_frontier(&mut frontier, &instr_copy, &caller_saved);
+                // Kernel `bt_sync_linked_regs` is invoked AGAIN after
+                // `backtrack_insn` (L4440) — the conditional-jump BPF_X
+                // arm may have just added the other operand, which must
+                // also propagate across the linked class.
+                bt_sync_linked_regs(&mut frontier, &step_linked);
                 // Mirror frontier marks into `precise_pcs` at every
                 // history step the walker traverses. The widening site
                 // checks (pc, scalar_id) regardless of whether a
@@ -724,6 +736,23 @@ impl<'a> VerifierEnv<'a> {
     }
 }
 
+/// Kernel `bt_sync_linked_regs` (verifier.c L4116-4147): the breadcrumb
+/// for a conditional jump records the scalar registers that shared the
+/// compared register's scalar id (`collect_linked_regs`). If ANY of them
+/// is currently in the precision frontier, ALL of them must be — the
+/// kernel propagates a refined range across the whole id class, so a
+/// precision requirement on one is a precision requirement on all.
+fn bt_sync_linked_regs(frontier: &mut HashSet<Reg>, linked: &[Reg]) {
+    if linked.len() < 2 {
+        return;
+    }
+    if linked.iter().any(|r| frontier.contains(r)) {
+        for &r in linked {
+            frontier.insert(r);
+        }
+    }
+}
+
 /// Update `frontier` (the set of registers whose precision must
 /// propagate further back) given that we are *un-doing* `instr`.
 /// Pure free function so the walker can call it without re-borrowing
@@ -797,6 +826,23 @@ fn update_frontier(
             // kernel's per-frame `mark_chain_precision` but matches
             // our linear-history walker's structure.
             frontier.remove(&Reg::R0);
+        }
+        Instr::If { left, right, .. } => {
+            // Kernel `backtrack_insn` conditional-jump arm
+            // (verifier.c L4407-4424):
+            //   BPF_X (`dreg <cond> sreg`): if NEITHER operand needs
+            //     precision, the jump is irrelevant — no change. If
+            //     EITHER does, BOTH operands needed precision before
+            //     this insn (the branch outcome depended on both), so
+            //     add both.
+            //   BPF_K (`dreg <cond> K`): only dreg still needs
+            //     precision, which is already reflected — nothing new.
+            if let Operand::Reg(s) = right
+                && (frontier.contains(left) || frontier.contains(s))
+            {
+                frontier.insert(*left);
+                frontier.insert(*s);
+            }
         }
         _ => {}
     }
