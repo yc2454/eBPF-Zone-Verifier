@@ -279,14 +279,44 @@ pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operan
         }
     }
 
-    // --- BCF symbolic mirror. Mirrors kernel `bcf_alu` (verifier.c:15139)
-    //     with the kernel-shape width discipline. For W32 AND with an
-    //     immediate, emits AND_32(reg_expr32, val_32) then ZEXT to 64.
-    //     For W64 AND where the post-op result fits in u32, the kernel
-    //     STILL uses 32-bit BCF ops as a precision optimization. ---
+    // --- BCF symbolic mirror. Mirrors kernel `bcf_alu` (verifier.c:15166)
+    //     with the kernel-shape width discipline. ---
+    //
+    // Width selection mirrors `adjust_scalar_min_max_vals`
+    // (verifier.c:16123-16124, 16209-16210):
+    //
+    //     op_u32 = fit_u32(dst_reg) && fit_u32(&src_reg);  // PRE-op dst + src
+    //     ... op runs ...
+    //     op_u32 &= fit_u32(dst_reg);                       // AND POST-op dst
+    //
+    // i.e. `op_u32 = fit_u32(dst_pre) && fit_u32(src) && fit_u32(dst_post)`
+    // (and likewise op_s32). Checking only `dst_post` (the previous
+    // behaviour) wrongly narrowed a W64 op whose operand was a full u64
+    // — `r9 &= 2` after `r9 = *(u64*)(r6+0x168)` — into the 32-bit
+    // EXTRACT+ZEXT form; the kernel keeps it plain 64-bit because the
+    // pre-op `r9` does not fit u32 (calico_tc_skb_accepted_entrypoint
+    // pc723 K5 — the 6-byte / canonical-hash gap vs kernel
+    // 0x1c0a558f34021ac3). For an immediate source the kernel builds a
+    // const `src_reg` from the width-extended imm; a constant always
+    // fits s32/u32 except a W64 imm outside the u32 / s32 range.
     let dst_bounds_post = bcf_reg_bounds(state, dst);
-    let op_u32 = dst_bounds_post.fit_u32();
-    let op_s32 = dst_bounds_post.fit_s32();
+    let (src_fits_u32, src_fits_s32) = match (src, &src_bounds_pre) {
+        (_, Some(sb)) => (sb.fit_u32(), sb.fit_s32()),
+        (Operand::Imm(m), None) => {
+            let v = if width == Width::W32 {
+                (*m as u32) as i64
+            } else {
+                *m
+            };
+            (
+                (0..=u32::MAX as i64).contains(&v),
+                (i32::MIN as i64..=i32::MAX as i64).contains(&v),
+            )
+        }
+        (Operand::Reg(_), None) => (false, false),
+    };
+    let op_u32 = dst_bounds_pre.fit_u32() && src_fits_u32 && dst_bounds_post.fit_u32();
+    let op_s32 = dst_bounds_pre.fit_s32() && src_fits_s32 && dst_bounds_post.fit_s32();
     let alu32_class = width == Width::W32;
     let alu32 = alu32_class || op_u32 || op_s32;
     let bits: u16 = if alu32 { 32 } else { 64 };

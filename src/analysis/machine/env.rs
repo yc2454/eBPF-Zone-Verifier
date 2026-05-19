@@ -889,33 +889,49 @@ fn spi_of(off: i16) -> Option<u32> {
 }
 
 /// `Some(spi)` iff this fp-relative load is a *register fill* the kernel
-/// would record `INSN_F_STACK_ACCESS` for: an 8-byte-aligned,
-/// `BPF_REG_SIZE`-sized read of a spilled register. Narrower / unaligned
-/// fills of plain stack data are `insn_flags = 0` (not followed).
+/// would record `INSN_F_STACK_ACCESS` for. The kernel keeps that flag for
+/// any **slot-aligned scalar fill**, not just the full 8-byte form:
+/// `check_stack_read_fixed_off` (verifier.c) restores the spilled reg and
+/// keeps `insn_flags` both for the full fill (`size == spill_size == 8`,
+/// ~5932) and the *narrow* fill `size <= spill_size && off % 8 == 0`
+/// (~5882, gated by `bpf_stack_narrow_access_ok` which on LE is exactly
+/// `!(off % BPF_REG_SIZE)`). Only non-slot-aligned / whole-slot
+/// STACK_ZERO / oversized reads zero `insn_flags`. The previous
+/// `size == U64` gate truncated the precision suffix at the first u32
+/// spill/fill pair (calico_tc_skb_accepted_entrypoint pc601
+/// `r8 = *(u32*)(r10-296)`), dropping every path_cond the kernel derives
+/// from the spilled value's pre-fill history.
 #[inline]
 fn fill_slot(base: Reg, off: i16, size: crate::ast::MemSize) -> Option<u32> {
-    if base != Reg::R10 || size != crate::ast::MemSize::U64 || off % 8 != 0 {
+    let _ = size;
+    if base != Reg::R10 || off % 8 != 0 {
         return None;
     }
     spi_of(off)
 }
 
 /// The stack slot a store *touches* (any size), and whether that store
-/// is a full 8-byte-aligned register spill. Walking backward, the first
-/// store reaching a tracked slot is the slot's most-recent prior write —
-/// it decides whether the fill that set the slot was a real register
-/// fill (kernel `is_spilled_reg` at `check_stack_read_fixed_off`): an
-/// 8-byte register spill continues the chain into its source; any
-/// narrower / unaligned write means the slot held plain data, so the
-/// kernel never recorded `INSN_F_STACK_ACCESS` for the fill and the
-/// chain ends there (clear the slot, propagate nothing).
+/// is a register spill the kernel records `INSN_F_STACK_ACCESS` for.
+/// Walking backward, the first store reaching a tracked slot is the
+/// slot's most-recent prior write — it decides whether the chain
+/// continues into the spilled source register. The kernel
+/// (`check_stack_write_fixed_off`, verifier.c ~5598/5617) treats a
+/// **slot-aligned scalar register spill of any width** (`reg`,
+/// `!(off % 8)`, `SCALAR_VALUE`; size ∈ {1,2,4,8}) and a slot-aligned
+/// pointer spill (size == 8) as a real register spill — symmetric with
+/// the narrow-fill rule in [`fill_slot`]. Only a non-slot-aligned write
+/// is plain stack data (`insn_flags = 0`); the chain ends there. The
+/// previous `size == U64` gate misclassified the u32 scalar spill that
+/// pairs with the u32 fill above, severing the precision chain one step
+/// after the fill.
 #[inline]
 fn store_slot(base: Reg, off: i16, size: crate::ast::MemSize) -> Option<(u32, bool)> {
+    let _ = size;
     if base != Reg::R10 {
         return None;
     }
     let spi = spi_of(off)?;
-    let is_reg_spill = size == crate::ast::MemSize::U64 && off % 8 == 0;
+    let is_reg_spill = off % 8 == 0;
     Some((spi, is_reg_spill))
 }
 
