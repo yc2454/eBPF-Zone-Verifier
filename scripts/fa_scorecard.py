@@ -151,7 +151,21 @@ def main() -> int:
     ap.add_argument("--list", required=True)
     ap.add_argument("--zovia", default=ZOVIA)
     ap.add_argument("--timeout", type=float, default=150)
+    ap.add_argument("--jobs", type=int, default=8,
+                    help="parallel zovia workers (default 8 = P-cores; "
+                         "machine is 8P+4E). Only the independent zovia "
+                         "subprocess runs are parallelized; classification/"
+                         "aggregation stays serial & deterministic.")
     ap.add_argument("--out")
+    ap.add_argument("--checkpoint", default=None,
+                    help="resumable cache of the EXPENSIVE per-object zovia "
+                         "results. Default /tmp/fa_scorecard_<oracle-stem>"
+                         ".cache.json. Auto-resumes (skips done objects); an "
+                         "interrupt loses only in-flight workers. Cache is "
+                         "keyed on the zovia binary fingerprint and ignored "
+                         "if the binary changed (rebuild => fresh).")
+    ap.add_argument("--fresh", action="store_true",
+                    help="ignore any existing checkpoint and recompute all.")
     a = ap.parse_args()
 
     oracle = parse_oracle(a.oracle)
@@ -159,13 +173,60 @@ def main() -> int:
     agg = defaultdict(int)
     fa_list, bp_list, fr_list, postverif_list, rows = [], [], [], [], []
 
-    for obj in objs:
+    # Phase 1 (PARALLEL): run the expensive, independent zovia subprocess
+    # per object. zovia is single-threaded so --jobs workers ~= --jobs
+    # P-cores of throughput. Nothing here touches shared scorecard state.
+    runnable = [o for o in objs if o.exists() and o.name in oracle]
+    for o in objs:
+        if o not in runnable:
+            print(f"[skip] {o.name} (no oracle or file)")
+
+    # Resumable checkpoint of zovia results (the 30-45min cost). The
+    # cheap classification (Phase 2) is always recomputed deterministically
+    # from these — so we only ever checkpoint the expensive intermediate.
+    zp = Path(a.zovia)
+    try:
+        st = zp.stat()
+        zfp = f"{zp.resolve()}:{st.st_mtime_ns}:{st.st_size}"
+    except OSError:
+        zfp = str(zp)
+    ckpt = Path(a.checkpoint or f"/tmp/fa_scorecard_{Path(a.oracle).stem}.cache.json")
+    zcache: dict[str, dict] = {}
+    if ckpt.exists() and not a.fresh:
+        try:
+            blob = json.loads(ckpt.read_text())
+            if blob.get("_zovia_fp") == zfp:
+                zcache = blob.get("results", {})
+                print(f"[resume] {len(zcache)} objects from {ckpt} "
+                      f"(zovia binary unchanged)")
+            else:
+                print(f"[fresh] {ckpt} is from a different zovia binary — ignoring")
+        except (json.JSONDecodeError, OSError):
+            print(f"[fresh] {ckpt} unreadable — ignoring")
+
+    def _flush():
+        tmp = ckpt.with_suffix(ckpt.suffix + ".tmp")
+        tmp.write_text(json.dumps({"_zovia_fp": zfp, "results": zcache}))
+        tmp.replace(ckpt)  # atomic
+
+    todo = [o for o in runnable if str(o) not in zcache]
+    print(f"[phase1] {len(zcache)} cached, {len(todo)} to run "
+          f"(--jobs {a.jobs}); checkpoint -> {ckpt}")
+    import concurrent.futures
+    if todo:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as ex:
+            fut = {ex.submit(run_zovia, a.zovia, o, a.timeout): o for o in todo}
+            for i, f in enumerate(concurrent.futures.as_completed(fut), 1):
+                zcache[str(fut[f])] = f.result()
+                _flush()  # after every object: interrupt loses only in-flight
+                if i % 10 == 0 or i == len(todo):
+                    print(f"[phase1] {i}/{len(todo)} done, checkpointed", flush=True)
+
+    # Phase 2 (SERIAL, unchanged logic): classify/aggregate deterministically.
+    for obj in runnable:
         base = obj.name
-        if not obj.exists() or base not in oracle:
-            print(f"[skip] {base} (no oracle or file)")
-            continue
         ksec = oracle[base]
-        zres = run_zovia(a.zovia, obj, a.timeout)
+        zres = zcache.get(str(obj))
         if not zres or not zres.get("secs"):
             print(f"[skip] {base} (zovia no output / timeout)")
             continue
