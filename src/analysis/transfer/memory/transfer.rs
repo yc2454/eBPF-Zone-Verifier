@@ -69,10 +69,30 @@ pub(crate) fn transfer_load(
 
     if let RegType::PtrToStack { frame_level } = state.types.get(base)
         && let Some(base_off) = state.domain.get_distance_fixed(base, Reg::R10)
-        && state.fill_at(frame_level, dst, off + base_off as i16, size)
     {
-        state.pc += 1;
-        return vec![state];
+        let slot_off = off + base_off as i16;
+        // Kernel `INSN_F_STACK_ACCESS` for a fill
+        // (`check_stack_read_fixed_off`): kept only when the slot
+        // `is_spilled_reg` — it actually held a spilled register.
+        // zovia's `SpilledReg.source_reg.is_some()` is that exact
+        // predicate (symmetric with the spill side above), so a read of
+        // plain stack data (no spilled reg in the slot) is *not* tagged
+        // and the backtrack stops there — the kernel's behaviour, vs the
+        // old `off % 8` guess that followed every slot-aligned load and
+        // blew up the path-unreachable suffix.
+        let slot_is_spilled_reg = state
+            .stack_at(frame_level)
+            .get_slot(slot_off)
+            .is_some_and(|s| s.source_reg.is_some());
+        if state.fill_at(frame_level, dst, slot_off, size) {
+            if let Some(idx) = env.current_step_idx
+                && slot_is_spilled_reg
+            {
+                env.history.set_stack_access(idx);
+            }
+            state.pc += 1;
+            return vec![state];
+        }
     }
 
     let bounds_set =
@@ -339,6 +359,24 @@ pub(crate) fn transfer_store(
                 Operand::Imm(k) => {
                     state.store_imm_to_stack_at(frame_level, *k, full_offset as i16, size);
                 }
+            }
+            // Kernel `INSN_F_STACK_ACCESS` for a spill
+            // (`check_stack_write_fixed_off`): a slot-aligned scalar /
+            // BPF_ST-const / 8-byte-pointer register spill. zovia's
+            // `spill_at`/`store_imm_to_stack_at` already encode exactly
+            // that gate as `SpilledReg.source_reg.is_some()` (set iff
+            // `off % 8 == 0`; see stack_ops.rs comments citing
+            // verifier.c:5598). Back-patch the breadcrumb so the
+            // backtrack walk follows this slot the same way the kernel's
+            // `backtrack_insn` does on `hist->flags & INSN_F_STACK_ACCESS`
+            // — and *only* this slot, not every slot-aligned data write.
+            if let Some(idx) = env.current_step_idx
+                && state
+                    .stack_at(frame_level)
+                    .get_slot(full_offset as i16)
+                    .is_some_and(|s| s.source_reg.is_some())
+            {
+                env.history.set_stack_access(idx);
             }
             state.update_frame_depth(off);
             update_store_types(

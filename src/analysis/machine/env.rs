@@ -649,9 +649,10 @@ impl<'a> VerifierEnv<'a> {
                 let instr_copy = step.instr.clone();
                 let step_pc = step.pc;
                 let step_depth = step.depth;
+                let step_stack_access = step.stack_access;
 
                 if !skip_first {
-                    if backtrack_insn_step(&mut bt, &instr_copy, step_depth).is_err() {
+                    if backtrack_insn_step(&mut bt, &instr_copy, step_depth, step_stack_access).is_err() {
                         // Kernel `backtrack_insn` returned a negative errno
                         // (-ENOTSUPP / -EFAULT): `backtrack_states` aborts
                         // with `base = NULL`, which on the zovia side means
@@ -888,52 +889,16 @@ fn spi_of(off: i16) -> Option<u32> {
     if spi >= 64 { None } else { Some(spi) }
 }
 
-/// `Some(spi)` iff this fp-relative load is a *register fill* the kernel
-/// would record `INSN_F_STACK_ACCESS` for. The kernel keeps that flag for
-/// any **slot-aligned scalar fill**, not just the full 8-byte form:
-/// `check_stack_read_fixed_off` (verifier.c) restores the spilled reg and
-/// keeps `insn_flags` both for the full fill (`size == spill_size == 8`,
-/// ~5932) and the *narrow* fill `size <= spill_size && off % 8 == 0`
-/// (~5882, gated by `bpf_stack_narrow_access_ok` which on LE is exactly
-/// `!(off % BPF_REG_SIZE)`). Only non-slot-aligned / whole-slot
-/// STACK_ZERO / oversized reads zero `insn_flags`. The previous
-/// `size == U64` gate truncated the precision suffix at the first u32
-/// spill/fill pair (calico_tc_skb_accepted_entrypoint pc601
-/// `r8 = *(u32*)(r10-296)`), dropping every path_cond the kernel derives
-/// from the spilled value's pre-fill history.
-#[inline]
-fn fill_slot(base: Reg, off: i16, size: crate::ast::MemSize) -> Option<u32> {
-    let _ = size;
-    if base != Reg::R10 || off % 8 != 0 {
-        return None;
-    }
-    spi_of(off)
-}
-
-/// The stack slot a store *touches* (any size), and whether that store
-/// is a register spill the kernel records `INSN_F_STACK_ACCESS` for.
-/// Walking backward, the first store reaching a tracked slot is the
-/// slot's most-recent prior write — it decides whether the chain
-/// continues into the spilled source register. The kernel
-/// (`check_stack_write_fixed_off`, verifier.c ~5598/5617) treats a
-/// **slot-aligned scalar register spill of any width** (`reg`,
-/// `!(off % 8)`, `SCALAR_VALUE`; size ∈ {1,2,4,8}) and a slot-aligned
-/// pointer spill (size == 8) as a real register spill — symmetric with
-/// the narrow-fill rule in [`fill_slot`]. Only a non-slot-aligned write
-/// is plain stack data (`insn_flags = 0`); the chain ends there. The
-/// previous `size == U64` gate misclassified the u32 scalar spill that
-/// pairs with the u32 fill above, severing the precision chain one step
-/// after the fill.
-#[inline]
-fn store_slot(base: Reg, off: i16, size: crate::ast::MemSize) -> Option<(u32, bool)> {
-    let _ = size;
-    if base != Reg::R10 {
-        return None;
-    }
-    let spi = spi_of(off)?;
-    let is_reg_spill = off % 8 == 0;
-    Some((spi, is_reg_spill))
-}
+/// Whether a stack-relative LDX/STX continues the precision chain into
+/// its slot is no longer guessed structurally (the old `fill_slot` /
+/// `store_slot` `off % 8` heuristic over-followed every slot-aligned
+/// access). It is now read from the breadcrumb's `stack_access` flag —
+/// zovia's analog of the kernel's `hist->flags & INSN_F_STACK_ACCESS`,
+/// set forward only for a genuine register spill/fill (see
+/// [`crate::analysis::machine::history::Breadcrumb::stack_access`] and
+/// the forward marking in the memory transfer). The slot index is still
+/// recovered from the insn's own fixed offset via [`spi_of`], exactly as
+/// the kernel recovers it from `insn_stack_access_spi(hist->flags)`.
 
 /// Faithful port of the kernel's `backtrack_insn` (vendor verifier.c) for
 /// one linear-history step: mutate the per-frame precision masks `bt`
@@ -947,6 +912,7 @@ fn backtrack_insn_step(
     bt: &mut BacktrackState,
     instr: &crate::ast::Instr,
     frame: usize,
+    stack_access: bool,
 ) -> Result<(), ()> {
     use crate::ast::{AluOp, Instr, Operand};
     match instr {
@@ -1000,12 +966,19 @@ fn backtrack_insn_step(
             if !bt.is_reg_set(frame, *dst) {
                 return Ok(());
             }
+            let _ = (size, base);
             bt.clear_reg(frame, *dst);
-            // A load from non-stack memory can be zero-extended; the
-            // desire to keep precision is already on this state's dst
-            // reg, no further tracking. Only a register fill from the
-            // stack continues the chain into the spilled slot.
-            if let Some(spi) = fill_slot(*base, *off, *size) {
+            // Kernel `backtrack_insn` BPF_LDX clause: a load from
+            // non-stack memory can be zero-extended — precision is
+            // already on `dst`, nothing further. Only a *register fill*
+            // continues the chain into the slot, and the kernel gates
+            // that solely on `hist->flags & INSN_F_STACK_ACCESS`
+            // (verifier.c:4612). zovia's `stack_access` breadcrumb flag
+            // is that bit; the slot index comes from the insn's fixed
+            // offset (kernel `insn_stack_access_spi`).
+            if stack_access
+                && let Some(spi) = spi_of(*off)
+            {
                 bt.set_slot(frame, spi);
             }
         }
@@ -1019,59 +992,66 @@ fn backtrack_insn_step(
         // ld_abs / ld_ind: kernel returns -ENOTSUPP ("to be analyzed").
         Instr::LoadPacket { .. } => return Err(()),
         // ── BPF_STX / BPF_ST (incl. atomics) ─────────────────────────
-        Instr::Store { size, base, off, src } => {
-            // stx/st must not use a precise *scalar* dst (the mem base)
-            // — that means pointer subtraction; kernel: -ENOTSUPP.
+        // ── BPF_STX / BPF_ST ─────────────────────────────────────────
+        // Kernel `backtrack_insn` STX/ST clause (verifier.c:4621):
+        //  * a precise *scalar* mem-base ⇒ pointer subtraction ⇒
+        //    -ENOTSUPP;
+        //  * `!(hist->flags & INSN_F_STACK_ACCESS)` ⇒ `return 0` —
+        //    a plain data store does **not** clear the slot (the old
+        //    `store_slot` cleared it unconditionally, which severed the
+        //    chain a step early when a data write aliased a tracked
+        //    spi);
+        //  * else clear the slot; for class==BPF_STX propagate precision
+        //    to the spilled source reg (BPF_ST const propagates nothing).
+        Instr::Store { off, base, src, .. } => {
             if bt.is_reg_set(frame, *base) {
                 return Err(());
             }
-            let Some((spi, is_reg_spill)) = store_slot(*base, *off, *size) else {
+            if !stack_access {
+                return Ok(());
+            }
+            let Some(spi) = spi_of(*off) else {
                 return Ok(());
             };
             if !bt.is_slot_set(frame, spi) {
                 return Ok(());
             }
             bt.clear_slot(frame, spi);
-            // Only a true 8-byte register spill propagates precision to
-            // its source (BPF_STX). A BPF_ST constant spill resolves the
-            // slot with nothing further; a partial/unaligned write means
-            // the slot held plain data — the fill that set it was not a
-            // register fill, so the chain ends here.
-            if is_reg_spill
-                && let Operand::Reg(s) = src
-            {
+            if let Operand::Reg(s) = src {
                 bt.set_reg(frame, *s);
             }
         }
-        Instr::StoreRel { size, base, off, src } => {
+        Instr::StoreRel { off, base, src, .. } => {
             if bt.is_reg_set(frame, *base) {
                 return Err(());
             }
-            let Some((spi, is_reg_spill)) = store_slot(*base, *off, *size) else {
+            if !stack_access {
+                return Ok(());
+            }
+            let Some(spi) = spi_of(*off) else {
                 return Ok(());
             };
             if !bt.is_slot_set(frame, spi) {
                 return Ok(());
             }
             bt.clear_slot(frame, spi);
-            if is_reg_spill {
-                bt.set_reg(frame, *src);
-            }
+            bt.set_reg(frame, *src);
         }
-        Instr::Atomic { size, base, off, src, .. } => {
+        Instr::Atomic { off, base, src, .. } => {
             if bt.is_reg_set(frame, *base) {
                 return Err(());
             }
-            let Some((spi, is_reg_spill)) = store_slot(*base, *off, *size) else {
+            if !stack_access {
+                return Ok(());
+            }
+            let Some(spi) = spi_of(*off) else {
                 return Ok(());
             };
             if !bt.is_slot_set(frame, spi) {
                 return Ok(());
             }
             bt.clear_slot(frame, spi);
-            if is_reg_spill {
-                bt.set_reg(frame, *src);
-            }
+            bt.set_reg(frame, *src);
         }
         // ── BPF_JMP / BPF_JMP32 ──────────────────────────────────────
         // Static BPF-to-BPF subprog call. Backtracking *past* it exits

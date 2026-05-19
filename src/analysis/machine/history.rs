@@ -17,6 +17,21 @@ pub struct Breadcrumb {
     /// Formatted by `State::reg_ranges_str()`.
     pub reg_ranges_str: String,
     pub depth: usize,
+    /// zovia's analog of the kernel's `INSN_F_STACK_ACCESS` jmp-history
+    /// flag. Set during the forward transfer (back-patched onto the
+    /// just-recorded breadcrumb) iff this insn performed a *register
+    /// spill or fill* the kernel records `INSN_F_STACK_ACCESS` for:
+    /// a slot-aligned scalar/const/ptr spill (`check_stack_write_fixed_off`)
+    /// or a fill from a slot that `is_spilled_reg`
+    /// (`check_stack_read_fixed_off`). `backtrack_insn_step` reads it to
+    /// decide whether a stack LDX/STX continues the precision chain into
+    /// the slot — exactly the kernel's `hist->flags & INSN_F_STACK_ACCESS`
+    /// gate in `backtrack_insn`. A plain stack data write/read leaves it
+    /// `false`, so the backtrack does not over-follow it (the previous
+    /// `off % 8` structural guess followed every slot-aligned access,
+    /// inflating the path-unreachable suffix and the non-prunable
+    /// ancestor span).
+    pub stack_access: bool,
 }
 
 pub struct History {
@@ -50,8 +65,21 @@ impl History {
             reg_ranges_str,
             depth,
             parent_idx,
+            stack_access: false,
         });
         idx
+    }
+
+    /// Back-patch the kernel-style `INSN_F_STACK_ACCESS` flag onto an
+    /// already-recorded breadcrumb. Called by the forward stack
+    /// store/load transfer once it has decided this insn is a real
+    /// register spill/fill (the kernel sets the equivalent flag at the
+    /// tail of `check_stack_{read,write}_fixed_off` via
+    /// `push_jmp_history`, *after* the spill/fill classification).
+    pub fn set_stack_access(&mut self, idx: usize) {
+        if let Some(b) = self.steps.get_mut(idx) {
+            b.stack_access = true;
+        }
     }
 
     /// Walk backwards from the crash point to the start to reconstruct the trace.
