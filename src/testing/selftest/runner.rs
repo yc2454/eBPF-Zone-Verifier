@@ -107,6 +107,56 @@ pub const PER_FILE_OVERRIDES: &[(&str, PerFileOverride)] = &[
             domain_mode: Some(crate::common::config::DomainMode::Interval),
         },
     ),
+    // Bounded counting loops the kernel verifies by UNROLLING within its
+    // real 1M insn budget — NOT by state pruning. Empirically confirmed
+    // via the running bpf-next-zovia kernel's log_level=2 trace of
+    // `loop1::nested_loops` (2026-05-19): the kernel does ZERO pruning
+    // (no `: safe`, no `from N to M`), tracks the loop counter as a
+    // PRECISE incrementing constant (`R3=206,207,208,...` — identical to
+    // zovia), and `processed 361349 insns (limit 1000000)` continuing to
+    // unroll the ~44850-iteration `for j<300 { for i<j }`. So the kernel
+    // accepts these purely because `for(...)` is bounded and fits the 1M
+    // budget; there is no convergence mechanism to mirror. zovia matches
+    // the kernel when given the same 1M budget + kernel-equivalent
+    // per-PC cache (verifier.c:19222 utility eviction, no fixed cap;
+    // 64 like `get_branch_snapshot.c`). Without these, the 100k
+    // sweep-productivity tightening strands them — previously masked by
+    // the (now-removed) widening.rs domain-only counter-widen block,
+    // which force-converged bounded loops the kernel never converges.
+    // loop1/loop2/loop4 are `test_verif_scale_*` (should_fail=false =
+    // kernel-ACCEPT); parse_tcp_hdr_opt(_dynptr) are real parsers loaded
+    // via `__open_and_load` (kernel-ACCEPT).
+    (
+        "loop1.c",
+        PerFileOverride {
+            max_insn: Some(1_000_000),
+            max_states_per_pc: Some(64),
+            domain_mode: None,
+        },
+    ),
+    // NOTE: loop4.c is intentionally NOT here. It is a *pruning* case
+    // (20-iter loop, per-iter `if(skb->len)` branch ⇒ 2^20 fan-out the
+    // kernel collapses by keeping the imprecise accumulator a wildcard,
+    // 524 insns/18 states). A budget bump does NOT help it (verified at
+    // 1M+cap64 it still timed out). It is fixed by the lazy-precision
+    // change in transfer/alu/mod.rs (no forward precision propagation),
+    // and converges within the normal sweep budget like the kernel.
+    (
+        "test_parse_tcp_hdr_opt.c",
+        PerFileOverride {
+            max_insn: Some(1_000_000),
+            max_states_per_pc: Some(64),
+            domain_mode: None,
+        },
+    ),
+    (
+        "test_parse_tcp_hdr_opt_dynptr.c",
+        PerFileOverride {
+            max_insn: Some(1_000_000),
+            max_states_per_pc: Some(64),
+            domain_mode: None,
+        },
+    ),
 ];
 
 fn override_for_file(file_basename: &str) -> Option<&'static PerFileOverride> {
