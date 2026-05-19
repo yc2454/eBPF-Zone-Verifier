@@ -874,6 +874,11 @@ fn iter_next_fork(
     let Some((frame, base_off)) = resolve_stack_arg(&state, reg) else {
         return vec![];
     };
+    // Record (pc → iter slot) so the back-edge-target prune-defer in
+    // `handle_loop_pruning` can find THIS iter_next's iter slot rather
+    // than scanning all active iters (which over-defers under nested
+    // iters when an unrelated freshly-allocated iter is still at depth<2).
+    env.iter_pc_slot.insert(pc, (frame.index(), base_off));
 
     // Kernel `is_iter_reg_valid_init` (verifier.c v6.15 ~L1135) returns
     // -EPROTO when the iter slot has PTR_UNTRUSTED; `process_iter_arg`

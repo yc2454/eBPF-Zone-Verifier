@@ -1,16 +1,31 @@
 // src/analysis/flow/pruning/widening.rs
 //
-// Loop detection, widening machinery, and counter analysis helpers.
-// All pub(super) items are called from mod.rs (the orchestration layer).
-
-use std::collections::HashSet;
+// Kernel-faithful loop-detection / iter-next widening helpers ONLY.
+//
+// The kernel-absent (A) layer of widening — per-shape detectors,
+// general-loop scalar widening, force_widen_for_may_goto,
+// counter_widen_set, demote_set, check_loop_convergence — has been
+// DELETED. The kernel converges loops by:
+//   (i) imprecise scalars acting as wildcards in `regsafe` ⇒ loop
+//       counters that don't feed safety decisions subsume immediately;
+//  (ii) the `widen_imprecise_scalars` call in `process_iter_next_call`
+//       (kernel verifier.c L8765) — narrowly scoped to bpf_iter_*_next
+//       call sites, fired only when a previous iteration's checkpoint
+//       exists with `prev.depth + 2 == cur.depth`; AND
+// (iii) explicit DFS back-edge handling with `init_explored_state`
+//      checkpoints.
+//
+// (ii) lives in `kfunc.rs::iter_next_fork →
+// widen_imprecise_scalars_at_iter_next_call` — a kernel-faithful
+// implementation already in zovia. The helpers below support (iii) by
+// identifying back-edges, loop heads, and iter-loop convergence
+// conditions so `handle_loop_pruning` knows when to defer the back-
+// edge target prune so the looped-back state can re-reach iter_next
+// for widening.
 
 use crate::analysis::machine::env::VerifierEnv;
-use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
-use crate::ast::{CmpOp, Instr, Operand, Program};
-use crate::common::config::VerifierConfig;
-use crate::domains::tnum::Tnum;
+use crate::ast::{Instr, Program};
 
 /// Does this loop have at least one `Instr::If` exit? Used to distinguish
 /// "natural" loops with comparison-based exits (where domain refinement on
@@ -50,8 +65,7 @@ pub(super) fn loop_has_conditional_exit(env: &VerifierEnv, state: &State, pc: us
     }
     // Also check the loop head itself. `MayGoto` is a budget-bounded
     // conditional exit (BPF_JCOND v6.8): the kernel inlines a hidden
-    // counter check that eventually short-circuits the back-edge, so the
-    // exit is guaranteed to be reachable.
+    // counter check that eventually short-circuits the back-edge.
     if pc < prog.instrs.len()
         && matches!(
             prog.instrs[pc],
@@ -63,111 +77,7 @@ pub(super) fn loop_has_conditional_exit(env: &VerifierEnv, state: &State, pc: us
     false
 }
 
-/// Extract loop bound from a `!= K` condition.
-///
-/// This is called when we detect a back-edge to infer an upper bound for the loop.
-/// For bounded loops (e.g. `for (i = 0; i < 40; i++)`), the compiler emits:
-///   `if r != 40 goto loop_head`
-///
-/// Since the loop continues only when `r != K`, an incrementing counter yields `r < K`.
-/// There are two back-edge detection cases handled here:
-/// 1. We're at the branch instruction itself (`if r1 != 40 goto 20`).
-/// 2. We're at the loop head and arrived via a backward jump (`goto 20` where PC=20).
-/// Returns `(reg, upper_bound)` if a bounded loop pattern is detected.
-pub(super) fn detect_loop_bound(
-    env: &VerifierEnv,
-    state: &State,
-    current_pc: usize,
-    prog: &Program,
-) -> Option<(Reg, i64)> {
-    // Case 1: Check if the CURRENT instruction is a `!= K` branch (back-edge at branch site)
-    if current_pc < prog.instrs.len()
-        && let Instr::If {
-            op: CmpOp::Ne,
-            left,
-            right: Operand::Imm(k),
-            ..
-        } = &prog.instrs[current_pc]
-    {
-        let (lo, _hi) = state.domain.get_interval(*left);
-        if lo >= 0 && *k > 0 {
-            return Some((*left, *k - 1));
-        }
-    }
-
-    // Case 2: Check if we arrived via a `!= K` branch (back-edge at loop head)
-    let history_idx = state.history_idx?;
-    let branch_step = env.history.get(history_idx)?;
-    let branch_pc = branch_step.pc;
-
-    if branch_pc < prog.instrs.len()
-        && let Instr::If {
-            op: CmpOp::Ne,
-            left,
-            right: Operand::Imm(k),
-            target,
-            ..
-        } = &prog.instrs[branch_pc]
-        && *target == current_pc
-    {
-        let (lo, _hi) = state.domain.get_interval(*left);
-        if lo >= 0 && *k > 0 {
-            return Some((*left, *k - 1));
-        }
-    }
-
-    None
-}
-
-/// Check if any conditional branch in the loop body has had its exit path
-/// actually explored (i.e., the exit PC has explored states). This detects
-/// cases where a conditional exit exists syntactically but is never feasible.
-///
-/// Only considers instructions at the same call depth as the loop head,
-/// so BPF-to-BPF calls within the loop don't pollute the loop body set.
-fn loop_exit_was_explored(env: &VerifierEnv, state: &State, pc: usize, prog: &Program) -> bool {
-    // Collect loop body PCs at the same frame depth (excludes callee instructions)
-    let frame_depth = state.num_frames();
-    let mut body_pc_set: HashSet<usize> = HashSet::new();
-    body_pc_set.insert(pc); // loop head
-    if let Some(idx) = state.history_idx {
-        for body_pc in env.history.loop_body_pcs(idx, pc, Some(frame_depth)) {
-            body_pc_set.insert(body_pc);
-        }
-    }
-
-    // For each conditional-exit instruction in the loop body (If or
-    // MayGoto), check if its exit successor (the one that leaves the
-    // loop) has been explored. MayGoto behaves the same way for this
-    // analysis: budget exhaustion guarantees one of its successors is
-    // an exit.
-    for &body_pc in &body_pc_set {
-        if body_pc >= prog.instrs.len() {
-            continue;
-        }
-        let target_opt = match &prog.instrs[body_pc] {
-            Instr::If { target, .. } => Some(*target),
-            Instr::MayGoto { target } => Some(*target),
-            _ => None,
-        };
-        if let Some(target) = target_opt {
-            let fall_through = body_pc + 1;
-            // Check if fall-through exits the loop
-            if !body_pc_set.contains(&fall_through)
-                && env.explored_states.contains_key(&fall_through)
-            {
-                return true;
-            }
-            // Check if target exits the loop
-            if !body_pc_set.contains(&target) && env.explored_states.contains_key(&target) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Check if current PC is a designated prune point.
+/// Check if current PC is a designated prune point (set by CFG init).
 pub(super) fn is_prune_point(env: &VerifierEnv, pc: usize) -> bool {
     env.insn_aux_data
         .get(pc)
@@ -187,7 +97,7 @@ fn is_backward_branch(pc: usize, prog: &Program) -> bool {
 }
 
 /// Check if we arrived at current PC via a backward jump (loop head detection).
-fn arrived_via_back_edge(env: &VerifierEnv, state: &State, pc: usize, prog: &Program) -> bool {
+pub(super) fn arrived_via_back_edge(env: &VerifierEnv, state: &State, pc: usize, prog: &Program) -> bool {
     state
         .history_idx
         .and_then(|idx| {
@@ -226,101 +136,17 @@ pub(super) fn is_at_loop_point(env: &VerifierEnv, state: &State, pc: usize, prog
     is_back_edge_pc && (is_backward_branch(pc, prog) || arrived_via_back_edge(env, state, pc, prog))
 }
 
-pub(super) fn apply_loop_bound(state: &mut State, loop_bound: Option<(Reg, i64)>) -> bool {
-    if let Some((reg, upper_bound)) = loop_bound {
-        let (cur_lo, _) = state.domain.get_interval(reg);
-        if cur_lo <= upper_bound {
-            state.domain.assume_le_imm(reg, upper_bound);
-            state.domain.assume_ge_imm(reg, 0);
-            // Use a tnum tight to the [0, upper_bound] interval rather
-            // than blanket UNKNOWN. UNKNOWN destroys stack-offset
-            // resolution downstream — `locks[i]` style stack stores
-            // need the tnum to keep the low bits known so the verifier
-            // can prove `r10 + offset + i*8` is a valid stack slot.
-            // Pattern observed in
-            // `res_spin_lock::res_spin_lock_test_held_lock_max`.
-            // `Tnum::from_range` mirrors the kernel's `tnum_range`
-            // (see kernel/bpf/tnum.c).
-            state.set_tnum(reg, Tnum::from_range(0, upper_bound as u64));
-            return true;
-        }
-    }
-    false
-}
-
-/// Check if widening was effective (bounds expanded compared to first visit).
-fn widening_was_effective(first: &State, last: &State, live_regs: &HashSet<Reg>) -> bool {
-    live_regs.iter().any(|&r| {
-        // Interval widening: last covers strictly more values than first.
-        let (first_min, first_max) = first.domain.get_interval(r);
-        let (last_min, last_max) = last.domain.get_interval(r);
-        if last_min < first_min || last_max > first_max {
-            return true;
-        }
-        // Tnum widening: last has more unknown bits than first. Without
-        // this, scalar-counter loops where the interval was already
-        // maximally wide (e.g. [S64_MIN, S64_MAX] propagated from a
-        // boundary-crossing add) but the tnum was per-iteration precise
-        // can never converge — widening is happening on tnum each
-        // iteration but `widening_was_effective` only sees intervals.
-        // Pattern observed in
-        // verifier_bounds.c::crossing_64_bit_signed_boundary_2.
-        let first_tn = first.get_tnum(r);
-        let last_tn = last.get_tnum(r);
-        // last has *more* unknown bits than first iff (last.mask | first.mask) != first.mask.
-        if (last_tn.mask | first_tn.mask) != first_tn.mask {
-            return true;
-        }
-        false
-    })
-}
-
-/// Check if loop has converged and can be pruned.
-/// Precondition: state is already subsumed by prev_states.last().
-pub(super) fn check_loop_convergence(
+/// True iff the loop body rooted at `pc` contains a force-checkpoint
+/// PC (iter_next kfunc / may_goto / sync-cb-call helper) — i.e. this
+/// is an iterator-style loop whose convergence the kernel guarantees
+/// via `process_iter_next_call` at the force-checkpoint site rather
+/// than at arbitrary back-edge targets.
+pub(super) fn loop_body_has_force_checkpoint(
     env: &VerifierEnv,
     state: &State,
     pc: usize,
-    prog: &Program,
-    prev_states: &[State],
-    live_regs: &HashSet<Reg>,
-    loop_bound: Option<(Reg, i64)>,
-    config: &VerifierConfig,
 ) -> bool {
-    // Only converge if:
-    // 1. Widening was applied (prev_states >= 2)
-    // 2. Either widening was effective (live regs' bounds expanded), or
-    //    the loop is may_goto-bounded (the runtime counter on its own
-    //    proves termination — no scalar needs to widen). Loop body
-    //    effects on live regs are still subsumption-checked by the
-    //    caller; this just controls when we *trust* the subsumption to
-    //    let us prune.
-    // 3. Exit path exists (bounded loop or exit was explored)
-    // Force-checkpoint PCs (iter_next kfuncs, may_goto, sync-cb-call
-    // helpers) carry their own convergence guarantee: the kernel's
-    // `is_state_visited` at these PCs treats subsumption alone as
-    // sufficient because the iter-id / budget / cb-state mechanics in
-    // the verifier semantics force termination independent of any
-    // scalar widening on body-live regs. Without this exception, our
-    // gates below (widening-effective + may_goto-progress) reject
-    // valid prunes for iter-based loops where the loop variable lives
-    // on the stack as an iter handle (not in a live register), and
-    // the body's effects on the iter handle aren't visible as
-    // "widening" in the live-reg sense. Audit on v6.15 corpus showed
-    // this single missing case accounted for ~6 timeouts (clean_live_
-    // states, widen_spill, iter_bpf_for_each_macro,
-    // iter_nested_deeply_iters, triple_continue, bad_words: all had
-    // many subsumption hits but `check_loop_convergence` returned
-    // false on every one, so the iter just kept iterating until cap).
-    // Iter-based convergence (kernel `is_state_visited` at iter_next):
-    // if the loop body contains a force-checkpoint PC (iter_next /
-    // may_goto / sync-cb-call helper), the iter-id mechanics in the
-    // kernel guarantee termination — subsumption at the loop head is
-    // sufficient, no scalar widening needed. Without this, our gates
-    // below (widening-effective + may_goto-progress) reject every
-    // valid prune for iter-based loops where the iter handle lives on
-    // the stack and the "loop variable" never appears as a live reg.
-    let body_has_force_checkpoint = state
+    state
         .history_idx
         .map(|idx| {
             env.history
@@ -333,56 +159,67 @@ pub(super) fn check_loop_convergence(
                         .unwrap_or(false)
                 })
         })
-        .unwrap_or(false);
-    if body_has_force_checkpoint {
-        return true;
-    }
-
-    if prev_states.len() < 2 {
-        return false;
-    }
-
-    let first = &prev_states[0];
-    let last = prev_states.last().unwrap();
-
-    // may_goto loops decrement `goto_budget` on every iteration; once
-    // we're observably making progress on the budget the runtime is
-    // guaranteed to exit, so subsumption alone is sufficient. This is
-    // what `verifier_iterating_callbacks::cond_break5` needs — the
-    // body's `cnt1++` doesn't widen because cnt1 isn't live across
-    // the loop head, but the budget counts iterations down regardless.
-    let may_goto_bounded = first.goto_budget > last.goto_budget;
-
-    if !may_goto_bounded
-        && !live_regs.is_empty()
-        && !widening_was_effective(first, last, live_regs)
-    {
-        return false;
-    }
-
-    // Bounded loops don't need exit exploration; bound proves exit exists
-    // (only if detect_bounded_loops is enabled)
-    let bounded_loop_detected = config.detect_bounded_loops && loop_bound.is_some();
-    bounded_loop_detected || loop_exit_was_explored(env, state, pc, prog)
+        .unwrap_or(false)
 }
 
-/// Apply widening to state based on previous exploration.
-pub(super) fn apply_widening(
-    state: &mut State,
-    old: &State,
-    live_regs: &HashSet<Reg>,
-    loop_bound: Option<(Reg, i64)>,
-) {
-    // Widen numeric domain
-    state.domain = old.domain.widen(&state.domain);
-
-    // Re-apply loop bound after widening
-    apply_loop_bound(state, loop_bound);
-
-    // Widen Tnums: if changed, set to UNKNOWN for fast convergence
-    for &r in live_regs {
-        if old.get_tnum(r) != state.get_tnum(r) {
-            state.set_tnum(r, Tnum::UNKNOWN);
-        }
+/// True iff this loop's OWN iter_next (the force-checkpoint closest to
+/// the loop head on the back-walk through the body) operates on an iter
+/// slot still on its very first iter_next call (`depth < 2`, where
+/// depth bumps at each iter_next). The kernel's
+/// `process_iter_next_call` `widen_imprecise_scalars` only fires
+/// starting at depth=2 (`prev_slot.depth + 2 == cur_iter_depth`);
+/// before that, no widening has happened yet on this path and pruning
+/// at non-checkpoint back-edge targets in this loop body MUST be
+/// deferred — else the looped-back state is discarded before re-
+/// reaching iter_next where widening would catch the FA.
+///
+/// Look at THIS LOOP's iter slot (via `env.iter_pc_slot` from the
+/// body's iter_next pc nearest the loop head), not all active iters —
+/// otherwise nested iter loops (`loop_state_deps1` outer+inner,
+/// `clean_live_states` 7 levels) misbehave: a freshly-allocated inner
+/// iter would permanently defer outer pruning, or a widened outer
+/// iter would prematurely re-enable pruning at the inner back-edge
+/// before the inner had widened.
+pub(super) fn this_loop_iter_pre_widening(
+    env: &VerifierEnv,
+    state: &State,
+    pc: usize,
+) -> bool {
+    use crate::analysis::machine::frame_stack::FrameLevel;
+    use crate::analysis::machine::stack_state::IterState;
+    let Some(idx) = state.history_idx else {
+        return false;
+    };
+    // `loop_body_pcs` walks `parent_idx` BACKWARD from the latest step
+    // (back-edge source) until it hits `pc` (target = loop head). The
+    // LAST force-checkpoint encountered along that walk is the one
+    // closest to the loop head — i.e. THIS loop's own iter_next, not
+    // a nested loop's iter_next.
+    let body_pcs = env.history.loop_body_pcs(idx, pc, Some(state.num_frames()));
+    let own_iter_next_pc = body_pcs.iter().copied().rev().find(|&body_pc| {
+        env.insn_aux_data
+            .get(body_pc)
+            .map(|a| a.force_checkpoint)
+            .unwrap_or(false)
+    });
+    let Some(body_pc) = own_iter_next_pc else {
+        return false;
+    };
+    let Some(&(frame_idx, off)) = env.iter_pc_slot.get(&body_pc) else {
+        // First-ever visit to this loop's iter_next on this path:
+        // the kfunc widening hasn't recorded a slot yet ⇒ definitely
+        // pre-widening. Defer.
+        return true;
+    };
+    if frame_idx >= state.num_frames() {
+        return false;
     }
+    let frame = state.frames.get(FrameLevel::from_index(frame_idx));
+    let Some(slot) = frame.stack.stack_get_iterator(off) else {
+        return true;
+    };
+    if slot.state != IterState::Active {
+        return false;
+    }
+    slot.depth < 2
 }

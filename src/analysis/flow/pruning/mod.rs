@@ -17,8 +17,8 @@ use crate::ast::{Instr, Program};
 use crate::common::config::VerifierConfig;
 use subsumption::state_subsumed_by;
 use widening::{
-    apply_loop_bound, apply_widening, check_loop_convergence, detect_loop_bound, is_at_loop_point,
-    is_prune_point, loop_has_conditional_exit, loop_has_if_exit,
+    arrived_via_back_edge, is_at_loop_point, is_prune_point, loop_body_has_force_checkpoint,
+    loop_has_conditional_exit, loop_has_if_exit, this_loop_iter_pre_widening,
 };
 
 /// Handle pruning decision at a loop point.
@@ -39,28 +39,63 @@ fn handle_loop_pruning(
     }
     env.pruning_stats.loop_walks_attempted += 1;
 
-    let loop_bound = detect_loop_bound(env, state, pc, prog);
+    // Kernel-faithful iter-loop convergence: in an iterator-style loop
+    // (body contains a force-checkpoint), the kernel converges at the
+    // iter_next pc itself via `process_iter_next_call` →
+    // `widen_imprecise_scalars`. zovia's kfunc-site widening
+    // (kfunc.rs::iter_next_fork) is the analog. BUT zovia's
+    // `is_at_loop_point` makes EVERY back-edge target a pruning point —
+    // a strict superset of kernel's `init_explored_state`'d pcs. If we
+    // prune at a non-checkpoint back-edge target before the looped-back
+    // state can re-reach the iter_next pc, the kfunc widening never
+    // sees a second iter_next visit (`prev_found=false`) and the
+    // delayed_precision_mark / loop_state_deps FAs slip through.
+    //
+    // Defer pruning at non-force-checkpoint pcs INSIDE iter bodies
+    // ONLY while iter_next widening hasn't yet fired on at least one
+    // active iter slot (depth<2: still on the very first iter_next
+    // call). Once widening has fired (depth>=2 on every active iter),
+    // resume normal pruning so legitimate iter loops still converge
+    // (iter_while_loop / clean_live_states / widen_spill rely on
+    // back-edge target subsumption AFTER the widened state stabilises).
+    // Unconditional skip breaks those legitimate loops; conditional
+    // skip only opens the gate long enough for widening to fire.
+    let pc_is_force_checkpoint = env
+        .insn_aux_data
+        .get(pc)
+        .map(|a| a.force_checkpoint)
+        .unwrap_or(false);
+    // Defer only at an actual back-edge TARGET (kernel-style:
+    // `init_explored_state`'d loop head), not at every in-loop body
+    // pc — otherwise the body's paths can't prune and the worklist
+    // explodes (clean_live_states / iter_nested_deeply_iters with 7
+    // nested levels saw 10k+ widening events without convergence).
+    if !pc_is_force_checkpoint
+        && arrived_via_back_edge(env, state, pc, prog)
+        && loop_body_has_force_checkpoint(env, state, pc)
+        && this_loop_iter_pre_widening(env, state, pc)
+    {
+        return false;
+    }
 
-    // Apply bound before subsumption check
-    apply_loop_bound(state, loop_bound);
-
-    // Walk prev_states once, recording the first hit (if any) and all
-    // walked-past indices. We hold the borrow only inside this scope so
-    // the metrics-update at the end can take `&mut env` cleanly.
-    let (hit_idx, miss_idxs, miss_reasons, prev_first_budget, prev_last_budget, prev_states_len): (
+    // Pure-subsumption loop pruning: walk prev_states, prune on first
+    // hit (kernel `is_state_visited` analog at the loop head). The
+    // kernel-absent general-loop widening (per-shape detectors,
+    // counter-widening, force_widen_for_may_goto, tnum-only widening,
+    // check_loop_convergence) is DELETED — the kernel converges loops
+    // via imprecise-scalar-as-wildcard in regsafe + iter-next widening
+    // (kfunc.rs::iter_next_fork). For non-iter loops without a
+    // wildcard fixpoint, complexity-limit terminates them — matching
+    // the kernel's actual behavior (e.g. test_verif_scale_loop3
+    // is `should_fail`).
+    let (hit_idx, miss_idxs, miss_reasons): (
         Option<usize>,
         Vec<usize>,
         Vec<SubsumptionMissReason>,
-        Option<u32>,
-        Option<u32>,
-        usize,
     ) = if let Some(prev_states) = env.explored_states.get(&pc) {
         let mut h = None;
         let mut m: Vec<usize> = Vec::new();
         let mut r: Vec<SubsumptionMissReason> = Vec::new();
-        // Branchy loop tops can hold multiple cached states; match the
-        // first that subsumes (kernel `is_state_visited` walks the
-        // explored_state list, verifier.c v6.15 ~L19018).
         for (i, prev) in prev_states.iter().enumerate() {
             // Kernel children_unsafe (bcf_refine, verifier.c:24580-81).
             if prev.children_unsafe {
@@ -77,9 +112,7 @@ fn handle_loop_pruning(
                 }
             }
         }
-        let f = prev_states.first().map(|s| s.goto_budget);
-        let l = prev_states.last().map(|s| s.goto_budget);
-        (h, m, r, f, l, prev_states.len())
+        (h, m, r)
     } else {
         env.pruning_stats.loop_walks_no_prev += 1;
         return false;
@@ -87,8 +120,6 @@ fn handle_loop_pruning(
 
     if let Some(idx) = hit_idx {
         env.pruning_stats.loop_walks_hit += 1;
-        // Record hit BEFORE check_loop_convergence — eviction won't
-        // touch the just-hit entry, but cleaner ordering.
         record_pruning_hit(env, pc, idx);
         // Kernel-aligned propagate_precision (verifier.c v6.15 L18828):
         // pull cached's precise-mark set into cur's parent-cache lineage
@@ -96,78 +127,13 @@ fn handle_loop_pruning(
         if let Some(prev) = env.explored_states.get(&pc).and_then(|v| v.get(idx)).cloned() {
             env.propagate_precision(state, &prev);
         }
-        // For convergence we still need the full prev_states list.
-        let prev_states = env
-            .explored_states
-            .get(&pc)
-            .cloned()
-            .unwrap_or_default();
-        if check_loop_convergence(
-            env,
-            state,
-            pc,
-            prog,
-            &prev_states,
-            live_regs,
-            loop_bound,
-            config,
-        ) {
-            env.pruning_stats.loop_walks_pruned_via_convergence += 1;
-            return true;
-        }
-        // Subsumed but convergence not yet provable (widening not
-        // effective on live regs OR exit path not yet explored). Apply
-        // widening against the cached state we just hit so the next
-        // iteration's cached entry covers a strictly wider scalar
-        // range than this one — eventually widening_was_effective
-        // fires and the loop converges. Without this, tight scalar
-        // loops where every iteration subsumes via `!precise → accept`
-        // (e.g. `verifier_bounds.c::crossing_64_bit_signed_boundary_2`)
-        // never converge: subsumption succeeds but widening only fires
-        // on misses, so the cached state never widens.
-        if let Some(prev_states) = env.explored_states.get(&pc)
-            && let Some(old) = prev_states.get(idx).cloned().as_ref()
-        {
-            apply_widening(state, old, live_regs, loop_bound);
-        }
-        return false;
+        env.pruning_stats.loop_walks_pruned_via_convergence += 1;
+        return true;
     }
 
     env.pruning_stats.loop_walks_miss += 1;
-    // Not subsumed: record misses + maybe evict, then apply widening.
     record_pruning_misses(env, pc, &miss_idxs);
     record_subsumption_miss_reasons(env, pc, &miss_reasons);
-
-    let only_may_goto_exit = !loop_has_if_exit(env, state, pc, prog);
-    let may_goto_progress = prev_first_budget
-        .zip(prev_last_budget)
-        .map(|(f, l)| f > l)
-        .unwrap_or(false);
-    let force_widen_for_may_goto =
-        only_may_goto_exit && loop_bound.is_none() && may_goto_progress;
-    // Tnum-only divergence at a back-edge: a counter scalar incrementing
-    // each iteration produces tnum-precise values that never subsume,
-    // even though the *interval* domain happily widens. Apply tnum
-    // widening here so non-iter / non-may_goto goto-loops with scalar
-    // counters can converge — without affecting tests that miss for
-    // other reasons (stack/types/domain). Pattern observed in
-    // verifier_bounds.c::crossing_64_bit_signed_boundary_2 (counter r0
-    // incrementing in [S64_MIN, ...] until SLt branch exits).
-    let only_tnum_misses = !miss_reasons.is_empty()
-        && miss_reasons
-            .iter()
-            .all(|r| *r == SubsumptionMissReason::Tnum);
-    if (config.use_widening || force_widen_for_may_goto || only_tnum_misses)
-        && prev_states_len > 0
-    {
-        // Re-fetch the last cached state for widening (after eviction
-        // it may have shifted; take the last surviving one).
-        if let Some(prev_states) = env.explored_states.get(&pc)
-            && let Some(old) = prev_states.last().cloned().as_ref()
-        {
-            apply_widening(state, old, live_regs, loop_bound);
-        }
-    }
 
     false
 }

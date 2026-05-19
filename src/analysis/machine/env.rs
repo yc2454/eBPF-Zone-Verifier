@@ -148,6 +148,15 @@ impl SubsumptionMissReason {
 pub struct VerifierEnv<'a> {
     pub ctx: &'a ExecContext,
     pub explored_states: HashMap<usize, Vec<State>>,
+    /// Mapping from an iter_next kfunc call pc to the iter slot it
+    /// operates on `(frame_idx, stack_offset)`. Populated lazily by
+    /// `iter_next_fork` on first visit. Read by iter-loop pruning
+    /// (`handle_loop_pruning`) to identify which iter slot's
+    /// `iter.depth` to inspect when deciding whether to defer the
+    /// back-edge target prune in an iter loop body — the iter slot
+    /// belonging to THIS loop's iter_next, not unrelated iters that
+    /// happen to be active in some outer/inner nesting.
+    pub iter_pc_slot: HashMap<usize, (usize, i16)>,
     /// parallel to `explored_states`. `state_metrics[pc][i]`
     /// holds the hit/miss counters for `explored_states[pc][i]`. Drop
     /// the same index from both vectors on eviction.
@@ -290,6 +299,7 @@ impl<'a> VerifierEnv<'a> {
         VerifierEnv {
             ctx,
             explored_states: HashMap::new(),
+            iter_pc_slot: HashMap::new(),
             state_metrics: HashMap::new(),
             subsumption_misses: HashMap::new(),
             pruning_stats: PruningStats::default(),
