@@ -21,6 +21,40 @@ use super::mem_checks::{check_mem_size_pairs, is_valid_helper_id};
 use super::signatures::get_helper_proto;
 use crate::analysis::transfer::alu::helpers::bcf_reg_bounds;
 
+/// Reactive path-unreachable discharge for a helper-argument rejection.
+///
+/// Mirrors the kernel's CALL dispatch (verifier.c:20761): when
+/// `check_helper_call` returns `-EACCES` — which includes
+/// `check_func_arg`→`check_reg_type`'s "R%d type=%s expected=<ptr>"
+/// reject and the `check_helper_mem_access` size/pointer rejects — the
+/// kernel runs `bcf_prove_unreachable`; a matching `kind=UNREACHABLE`
+/// bundle entry then discharges the dead path (`bcf_take_discharge` →
+/// `return 0`). zovia already mirrors the generic-load hook
+/// (verifier.c:8259 → `memory::access`) but not this helper-arg one, so
+/// a path the kernel proves unreachable via the bundle was a hard
+/// reject here (e.g. `calico_tc_skb_accepted_entrypoint` pc723:
+/// `bpf_csum_diff` R1 scalar). Reactive and solver-gated:
+/// `try_emit_path_unreachable_entry` only drops the path on a checkable
+/// cvc5 unsat proof of the accumulated `path_cond`, so a genuinely
+/// unsafe program is still rejected. Scoped to the arg-validation
+/// reject class (`InvalidArgType`, zovia's `check_func_arg` /
+/// `check_helper_mem_access` analog).
+fn try_discharge_helper_arg_reject(env: &mut VerifierEnv, state: &State, pc: usize) -> bool {
+    if matches!(env.error, Some(VerificationError::InvalidArgType { .. }))
+        && crate::analysis::transfer::branch::try_emit_path_unreachable_entry(env, state)
+    {
+        log::info!(
+            target: "app",
+            "[bcf] reactive path-unreachable: discharged helper-arg reject at pc {pc} (cvc5 proof, kind=UNREACHABLE)"
+        );
+        env.error = None;
+        env.bcf_path_unreachable = true;
+        true
+    } else {
+        false
+    }
+}
+
 /// Transfer function for helper Call instructions.
 pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32) -> Vec<State> {
     let in_types = state.types.clone();
@@ -49,6 +83,7 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     if let Some(p) = get_helper_proto(helper)
         && !check_mem_size_pairs(env, &state, &p, pc)
     {
+        try_discharge_helper_arg_reject(env, &state, pc);
         return vec![];
     }
 
@@ -57,6 +92,9 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     // ========================================================================
     debug!("[Verifier] pc {}: validating helper arguments", pc);
     validate_helper_args(env, &state, helper, &in_types, pc);
+    if env.failed() && try_discharge_helper_arg_reject(env, &state, pc) {
+        return vec![];
+    }
 
     // ========================================================================
     // SPECIAL CASES
