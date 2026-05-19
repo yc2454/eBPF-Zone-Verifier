@@ -34,7 +34,7 @@ fn handle_loop_pruning(
     pc: usize,
     prog: &Program,
     live_regs: &HashSet<Reg>,
-    live_slots: &HashSet<i16>,
+    frame_live_slots: &[Option<HashSet<i16>>],
     config: &VerifierConfig,
 ) -> bool {
     // Loops without conditional exits are infinite - let complexity limit catch them
@@ -82,7 +82,7 @@ fn handle_loop_pruning(
             if prev.children_unsafe {
                 continue;
             }
-            match state_subsumed_by(state, prev, live_regs, live_slots, config) {
+            match state_subsumed_by(state, prev, live_regs, frame_live_slots, config) {
                 Ok(()) => {
                     h = Some(i);
                     break;
@@ -511,7 +511,7 @@ fn handle_standard_pruning(
     state: &State,
     pc: usize,
     live_regs: &HashSet<Reg>,
-    live_slots: &HashSet<i16>,
+    frame_live_slots: &[Option<HashSet<i16>>],
     config: &VerifierConfig,
 ) -> bool {
     let mut hit_idx: Option<usize> = None;
@@ -525,7 +525,7 @@ fn handle_standard_pruning(
             if prev.children_unsafe {
                 continue;
             }
-            match state_subsumed_by(state, prev, live_regs, live_slots, config) {
+            match state_subsumed_by(state, prev, live_regs, frame_live_slots, config) {
                 Ok(()) => {
                     hit_idx = Some(i);
                     break;
@@ -631,7 +631,28 @@ pub fn should_prune(
     // is the equivalent; threaded into `stack_subsumed_by` so a dead
     // scratch slot can't block a prune (mirrors the existing
     // `live_regs` filtering in types/domain subsumption).
-    let live_slots = env.insn_aux_data[pc].live_slots.clone();
+    // Per-frame clean_verifier_state: the kernel cleans EVERY frame at
+    // its own ip (clean_func_state via frame_insn_idx, verifier.c:19463),
+    // not just the innermost. The innermost frame's ip is `pc`; a caller
+    // frame i is paused at its call and resumes at frame[i+1].return_pc,
+    // so its slots are dead iff unread from there. `None` = liveness
+    // unknown for that frame ⇒ DON'T skip (full compare — the sound
+    // direction). Built once (cur's frame shape is fixed; old zips 1:1
+    // by callsite).
+    let nframes = state.frames.depth();
+    let frame_live_slots: Vec<Option<HashSet<i16>>> = (0..nframes)
+        .map(|i| {
+            let fpc = if i + 1 == nframes {
+                pc
+            } else {
+                state
+                    .frames
+                    .get(crate::analysis::machine::frame_stack::FrameLevel::from_index(i + 1))
+                    .return_pc
+            };
+            env.insn_aux_data.get(fpc).map(|a| a.live_slots.clone())
+        })
+        .collect();
 
     // may_goto-specific RANGE_WITHIN prune class.
     if pc < prog.instrs.len()
@@ -640,7 +661,7 @@ pub fn should_prune(
     {
         let is_may_goto = matches!(prog.instrs[pc], Instr::MayGoto { .. });
         if is_may_goto
-            && may_goto_range_within_prune(state, prev_states, &live_regs, &live_slots, config)
+            && may_goto_range_within_prune(state, prev_states, &live_regs, &frame_live_slots, config)
         {
             env.pruning_stats.may_goto_range_within_hits += 1;
             return true;
@@ -648,9 +669,9 @@ pub fn should_prune(
     }
 
     let pruned = if in_loop {
-        handle_loop_pruning(env, state, pc, prog, &live_regs, &live_slots, config)
+        handle_loop_pruning(env, state, pc, prog, &live_regs, &frame_live_slots, config)
     } else {
-        handle_standard_pruning(env, state, pc, &live_regs, &live_slots, config)
+        handle_standard_pruning(env, state, pc, &live_regs, &frame_live_slots, config)
     };
     pruned
 }
@@ -742,7 +763,7 @@ fn may_goto_range_within_prune(
     cur: &State,
     prev_states: &[State],
     live_regs: &HashSet<Reg>,
-    live_slots: &HashSet<i16>,
+    frame_live_slots: &[Option<HashSet<i16>>],
     config: &VerifierConfig,
 ) -> bool {
     // Build a precision-stripped clone of `cur` once. State carries
@@ -770,7 +791,7 @@ fn may_goto_range_within_prune(
         // they would inflate the "stack" / "tnum" buckets with the
         // precision-stripped clone's behaviour, which isn't the same
         // as the standard subsumption pipeline we're trying to measure.
-        if state_subsumed_by(&relaxed, prev, live_regs, live_slots, config).is_ok() {
+        if state_subsumed_by(&relaxed, prev, live_regs, frame_live_slots, config).is_ok() {
             return true;
         }
     }

@@ -24,7 +24,7 @@ pub(super) fn state_subsumed_by(
     cur: &State,
     old: &State,
     live_regs: &HashSet<Reg>,
-    live_slots: &HashSet<i16>,
+    frame_live_slots: &[Option<HashSet<i16>>],
     config: &VerifierConfig,
 ) -> Result<(), SubsumptionMissReason> {
     // Order matters for instrumentation: the *first* rejecting check
@@ -58,7 +58,7 @@ pub(super) fn state_subsumed_by(
     {
         return Err(SubsumptionMissReason::Domain);
     }
-    if !stack_subsumed_by(cur, old, live_slots) {
+    if !stack_subsumed_by(cur, old, frame_live_slots) {
         return Err(SubsumptionMissReason::Stack);
     }
     if !tnum_subsumed_by(cur, old, live_regs) {
@@ -515,24 +515,21 @@ fn stack_slot_type_subsumed_by(new_ty: &RegType, old_ty: &RegType) -> bool {
     }
 }
 
-fn stack_subsumed_by(cur: &State, old: &State, live_slots: &HashSet<i16>) -> bool {
+fn stack_subsumed_by(
+    cur: &State,
+    old: &State,
+    frame_live_slots: &[Option<HashSet<i16>>],
+) -> bool {
     // clean_verifier_state analog (kernel clean_func_state,
     // verifier.c:19424): a stack slot the kernel proves dead is set to
     // STACK_INVALID so `stacksafe` skips it — only LIVE slots are ever
     // compared. zovia previously compared the *union* of all slot
     // offsets with NO liveness filter (the divergence-map gap), so a
     // dead scratch slot differing across states blocked every prune.
-    // `live_slots` (sound static MAY-liveness, per-byte offsets) is the
-    // faithful analog. Scoped to the CURRENT (innermost) frame: its pc
-    // is `cur.pc`, so `live_slots == insn_aux_data[cur.pc].live_slots`.
-    // Caller frames keep the full comparison (we lack their per-frame
-    // live sets here — not filtering there is the sound direction).
-    let last_idx = old
-        .frames
-        .iter()
-        .count()
-        .min(cur.frames.iter().count())
-        .saturating_sub(1);
+    // The kernel cleans EVERY frame at its own ip; `frame_live_slots[i]`
+    // is frame i's sound static MAY-liveness (per-byte offsets) at that
+    // frame's resume pc, or `None` when unknown (⇒ don't skip — full
+    // compare, the sound direction). Built in `should_prune`.
     // Kernel-aligned idmap (verifier.c v6.15 `check_ids` in regsafe at
     // STACK_ITER L18583): iter ids are minted fresh by every
     // `bpf_iter_*_new` call, so literal `old.id == cur.id` always fails
@@ -552,16 +549,21 @@ fn stack_subsumed_by(cur: &State, old: &State, live_slots: &HashSet<i16>) -> boo
             .chain(new_frame.stack.slot_offsets())
             .collect();
 
+        // Per-frame liveness for the clean_verifier_state skip. `None`
+        // (frame liveness unknown) ⇒ no skip for this frame (full
+        // compare — the sound direction).
+        let frame_ls = frame_live_slots.get(frame_i).and_then(|o| o.as_ref());
+
         for offset in all_offsets {
-            // Dead-slot skip (current frame only): if no byte in this
-            // 8-byte slot is live at `cur.pc`, the kernel would have
-            // STACK_INVALID'd it — skip, mirroring stacksafe. ITER /
-            // DYNPTR / IRQ slots are semantically live regardless of
-            // byte-liveness (kernel `bpf_stack_slot_alive` keeps them
-            // alive), so never skip those. Conservative 8-byte span:
-            // any live byte → keep (fewer skips = sound direction).
-            if frame_i == last_idx
-                && !(offset..offset.saturating_add(8)).any(|b| live_slots.contains(&b))
+            // Dead-slot skip: if no byte in this 8-byte slot is live at
+            // frame i's resume pc, the kernel would have STACK_INVALID'd
+            // it — skip, mirroring stacksafe. ITER / DYNPTR / IRQ slots
+            // are semantically live regardless of byte-liveness (kernel
+            // `bpf_stack_slot_alive` keeps them alive), so never skip
+            // those. Conservative 8-byte span: any live byte → keep
+            // (fewer skips = sound direction).
+            if let Some(ls) = frame_ls
+                && !(offset..offset.saturating_add(8)).any(|b| ls.contains(&b))
             {
                 let structural = |fr: &crate::analysis::machine::frame_stack::CallFrame| {
                     fr.stack
