@@ -134,13 +134,27 @@ pub const PER_FILE_OVERRIDES: &[(&str, PerFileOverride)] = &[
             domain_mode: None,
         },
     ),
-    // NOTE: loop4.c is intentionally NOT here. It is a *pruning* case
-    // (20-iter loop, per-iter `if(skb->len)` branch ⇒ 2^20 fan-out the
-    // kernel collapses by keeping the imprecise accumulator a wildcard,
-    // 524 insns/18 states). A budget bump does NOT help it (verified at
-    // 1M+cap64 it still timed out). It is fixed by the lazy-precision
-    // change in transfer/alu/mod.rs (no forward precision propagation),
-    // and converges within the normal sweep budget like the kernel.
+    // loop4.c: a *pruning* case (20-iter loop, per-iter `if(skb->len)`
+    // branch ⇒ 2^20 fan-out the kernel collapses by keeping the
+    // imprecise accumulator a wildcard — kernel 524 insns/18 states).
+    // The precision-fidelity fixes (no forward ALU precision prop;
+    // exit-R0 sink gated to retval-enforcing prog types like the kernel)
+    // make R0/R3 imprecise so the fan-out collapses — but the loop head
+    // then legitimately holds ~20 distinct states (one per precise
+    // counter value 0..19, exactly as the kernel does). zovia's default
+    // max_states_per_pc=8 evicts them (LRU) before the fan-out collapses
+    // onto a surviving R2=k state. The kernel has NO fixed per-PC cap
+    // (verifier.c:19222 utility eviction). Pin cap=64 (get_branch_snapshot
+    // precedent); NO budget bump — with the precision fixes it converges
+    // in ~hundreds of insns like the kernel, well under the sweep cap.
+    (
+        "loop4.c",
+        PerFileOverride {
+            max_insn: None,
+            max_states_per_pc: Some(64),
+            domain_mode: None,
+        },
+    ),
     (
         "test_parse_tcp_hdr_opt.c",
         PerFileOverride {
