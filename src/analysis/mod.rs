@@ -675,6 +675,12 @@ fn run_worklist(
             state.num_frames(),
             state.history_idx,
         ));
+        // The reject insn's own breadcrumb — the reactive
+        // path-unreachable discharge's `bcf_suffix_base_pc` walk must
+        // start here (kernel `backtrack_states` `last_idx =
+        // cur->insn_idx`, skip_first), not from the in-flight state's
+        // parent `history_idx`.
+        env.current_step_idx = current_step_idx;
 
         // E. Logging
         if config.verbosity >= 3 {

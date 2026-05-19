@@ -415,7 +415,12 @@ fn unreachable_base_pc(env: &VerifierEnv, state: &State) -> Option<usize> {
         }
         targets.push(r);
     }
-    let hidx = state.history_idx?;
+    // Start the backtrack at the *rejecting* insn's breadcrumb (kernel
+    // `backtrack_states` `last_idx = cur->insn_idx` with skip_first),
+    // not the in-flight state's parent `history_idx` — the latter skips
+    // one insn too early (fatal when the skipped predecessor is a
+    // helper-call argument's only definition).
+    let hidx = env.current_step_idx.or(state.history_idx)?;
     env.bcf_suffix_base_pc(hidx, state.parent_cache_id, &targets)
 }
 

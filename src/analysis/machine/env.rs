@@ -254,6 +254,21 @@ pub struct VerifierEnv<'a> {
     /// bundle discharge → `PROCESS_BPF_EXIT`.
     pub bcf_path_unreachable: bool,
 
+    /// Breadcrumb index of the instruction currently being transferred
+    /// (the just-recorded step in `history`). Set by `run_worklist`
+    /// immediately after `history.record`, before the transfer. The
+    /// in-flight `State` still carries its *parent* `history_idx`
+    /// (`current_step_idx` is only assigned to *successors*), so a
+    /// reactive path-unreachable discharge fired from inside a transfer
+    /// must use THIS — the rejecting insn's own breadcrumb — as the
+    /// `bcf_suffix_base_pc` walk start, mirroring the kernel's
+    /// `backtrack_states` `last_idx = cur->insn_idx` (verifier.c
+    /// ~24434) with `skip_first=true`. Starting from the parent
+    /// breadcrumb skips one insn too early — benign for a load reject,
+    /// fatal for a helper-call reject whose skipped predecessor is an
+    /// argument's only definition.
+    pub current_step_idx: Option<usize>,
+
     /// Eviction-resistant precision marks keyed by `(pc, reg)`.
     /// `mark_chain_precision_backward` writes here as it walks the
     /// per-path history, so widening sites can detect "this reg was
@@ -295,6 +310,7 @@ impl<'a> VerifierEnv<'a> {
             bcf_proofs: Vec::new(),
             bcf_size_reg: None,
             bcf_path_unreachable: false,
+            current_step_idx: None,
         }
     }
 
