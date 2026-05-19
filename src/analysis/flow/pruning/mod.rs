@@ -18,9 +18,9 @@ use crate::common::config::VerifierConfig;
 use crate::domains::tnum::Tnum;
 use subsumption::state_subsumed_by;
 use widening::{
-    apply_loop_bound, apply_slot_loop_bound, apply_widening, body_feeds_other_live_reg_from,
+    apply_loop_bound, apply_widening, body_feeds_other_live_reg_from,
     body_uses_reg_only_in_branches, check_loop_convergence, CounterDirection, dbm_diverging_regs,
-    demote_body_written_scalar_slots, detect_loop_bound, detect_slot_counter,
+    detect_loop_bound,
     find_counter_fed_regs, is_at_loop_point, is_prune_point, is_pure_accumulator,
     loop_body_implied_bound, loop_body_tests_reg, loop_has_conditional_exit, loop_has_if_exit,
     precise_domain_diverging_regs, singleton_strict_direction,
@@ -48,17 +48,6 @@ fn handle_loop_pruning(
 
     // Apply bound before subsumption check
     apply_loop_bound(state, loop_bound);
-
-    // Stack-spilled counter widening: covers `volatile __u64 i` patterns
-    // (loop3::while_true) where the counter lives entirely on the stack
-    // and never gets a persistent register at the loop top. The detector
-    // requires a load-add-store triple targeting the same slot —
-    // structurally distinct from the register-only oscillating /
-    // constant counterexamples (`infinite_loop_three_jump_trick` etc).
-    if let Some(slot_info) = detect_slot_counter(env, state, pc, prog) {
-        apply_slot_loop_bound(state, slot_info);
-        demote_body_written_scalar_slots(env, state, pc, prog, slot_info.slot_offset);
-    }
 
     // Walk prev_states once, recording the first hit (if any) and all
     // walked-past indices. We hold the borrow only inside this scope so
