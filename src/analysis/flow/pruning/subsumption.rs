@@ -72,6 +72,13 @@ pub(super) fn state_subsumed_by(
     // cur-state's continuation would refine them independently — pruning
     // it against `old` hides paths where the unlinked register stays
     // unbounded. Mirrors upstream `check_ids` in `regsafe`.
+    // Scalar ids: kernel-faithful single bijective idmap, precision-
+    // gated (regsafe SCALAR). Pointer/packet linkage: the existing
+    // pairwise relation (separate, unchanged). Both attribute to the
+    // ScalarIdLinks miss bucket.
+    if !scalar_ids_subsumed_by(cur, old, live_regs) {
+        return Err(SubsumptionMissReason::ScalarIdLinks);
+    }
     if !scalar_id_links_subsumed_by(cur, old, live_regs) {
         return Err(SubsumptionMissReason::ScalarIdLinks);
     }
@@ -221,6 +228,87 @@ fn active_lock_subsumed_by(cur: &State, old: &State, live_regs: &HashSet<Reg>) -
     true
 }
 
+/// Kernel `check_ids` (verifier.c:19383): a per-comparison consistent
+/// bijection `old_id ↔ cur_id`. Both zero ⇒ ok; exactly one zero ⇒
+/// mismatch; else old_id must map to exactly one cur_id and a cur_id
+/// may be claimed by only one old_id. `map` holds the recorded pairs
+/// (zovia live-reg count is tiny, so the linear scan is trivial vs the
+/// kernel's fixed BPF_ID_MAP_SIZE array).
+fn check_ids(old_id: u32, cur_id: u32, map: &mut Vec<(u32, u32)>) -> bool {
+    if (old_id != 0) != (cur_id != 0) {
+        return false;
+    }
+    if old_id == 0 {
+        return true;
+    }
+    for &(o, c) in map.iter() {
+        if o == old_id {
+            return c == cur_id;
+        }
+        if c == cur_id {
+            return false;
+        }
+    }
+    map.push((old_id, cur_id));
+    true
+}
+
+/// Kernel `check_scalar_ids` (verifier.c:19416): like `check_ids` but a
+/// zero id gets a fresh unique temp so `0 vs ID` / `ID vs 0` are valid
+/// (but still consistently bijective). `tmp` is a per-comparison
+/// generator seeded high (disjoint from real low-valued zovia ids).
+fn check_scalar_ids(
+    old_id: u32,
+    cur_id: u32,
+    map: &mut Vec<(u32, u32)>,
+    tmp: &mut u32,
+) -> bool {
+    let o = if old_id != 0 {
+        old_id
+    } else {
+        *tmp -= 1;
+        *tmp
+    };
+    let c = if cur_id != 0 {
+        cur_id
+    } else {
+        *tmp -= 1;
+        *tmp
+    };
+    check_ids(o, c, map)
+}
+
+/// Kernel-faithful scalar-id check (regsafe SCALAR, verifier.c:19560):
+/// scalar id is compared ONLY for a *precise* old scalar — an imprecise
+/// old scalar is a wildcard (`if (!rold->precise && exact==NOT_EXACT)
+/// return true`), so its id is never checked. All precise live scalars
+/// are run through ONE bijective `check_scalar_ids` map, exactly as the
+/// kernel threads `env->idmap_scratch` through every `regsafe`. This
+/// replaces the scalar half of the old piecemeal pairwise
+/// `scalar_id_links_subsumed_by` (pointer/packet linkage stays there):
+/// the single bijection preserves linkage (same old id ⇒ same cur id)
+/// AND is more permissive than exact-equality (remappable), while the
+/// precision gate drops the over-conservative imprecise-scalar links
+/// the kernel never checks.
+fn scalar_ids_subsumed_by(cur: &State, old: &State, live_regs: &HashSet<Reg>) -> bool {
+    let mut map: Vec<(u32, u32)> = Vec::new();
+    let mut tmp: u32 = u32::MAX;
+    for &r in live_regs {
+        if old.types.get(r) != RegType::ScalarValue {
+            continue;
+        }
+        if !old.is_reg_precise(r) {
+            continue; // imprecise old scalar = wildcard (kernel)
+        }
+        let oid = old.scalar_id(r).unwrap_or(0);
+        let cid = cur.scalar_id(r).unwrap_or(0);
+        if !check_scalar_ids(oid, cid, &mut map, &mut tmp) {
+            return false;
+        }
+    }
+    true
+}
+
 /// Conservative id-equivalence check used by `state_subsumed_by`.
 ///
 /// Returns true iff every pair `(r1, r2)` of live regs in the same
@@ -240,15 +328,18 @@ fn scalar_id_links_subsumed_by(
         for j in (i + 1)..live.len() {
             let r1 = live[i];
             let r2 = live[j];
+            // Scalar linkage now goes through the kernel-faithful
+            // bijective `scalar_ids_subsumed_by`; this pairwise check
+            // covers ONLY the pointer/packet linkage kinds.
             let old_link = match (linkage_key(old, r1), linkage_key(old, r2)) {
-                (Some(a), Some(b)) if a == b => true,
+                (Some(a), Some(b)) if a == b && a.0 != LinkageKind::Scalar => true,
                 _ => false,
             };
             if !old_link {
                 continue;
             }
             let cur_link = match (linkage_key(cur, r1), linkage_key(cur, r2)) {
-                (Some(a), Some(b)) if a == b => true,
+                (Some(a), Some(b)) if a == b && a.0 != LinkageKind::Scalar => true,
                 _ => false,
             };
             if !cur_link {
