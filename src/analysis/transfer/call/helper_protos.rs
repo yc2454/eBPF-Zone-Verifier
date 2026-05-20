@@ -1533,6 +1533,59 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         .mem_size_pairs(&pairs::TCP_RAW_GEN_SYNCOOKIE_IPV4)
         .ret(RetKind::Scalar),
 
+        // ============================================================
+        // Helper proto enumeration batch 3 (FR triage 2026-05-19):
+        // callback helpers (bpf_loop, bpf_find_vma) and kptr_xchg.
+        //
+        // bpf_loop / bpf_find_vma are already recognized by
+        // `is_callback_helper`; the helper dispatcher routes through
+        // `transfer_callback_helper` which forks the call into an
+        // enter-callback successor (the subprog gets a fresh frame
+        // with typed args) and a skip-callback successor. The proto
+        // here is required so `validate_helper_args` admits the call
+        // shape before the dispatcher runs. R3 callback_ctx is modeled
+        // as `Anything` to match the existing FOR_EACH_MAP_ELEM /
+        // USER_RINGBUF_DRAIN convention (kernel
+        // ARG_PTR_TO_STACK_OR_NULL is verified by the cb-frame typer).
+        //
+        // bpf_kptr_xchg has bespoke arg + R0 handling in
+        // `transfer::call::transfer::transfer_helper_call` (kptr field
+        // resolution, ref consumption, R0 = PtrToMapKptrOrNull). The
+        // proto here uses `Anything`/`Anything` so validate_helper_args
+        // admits the call; the kptr_xchg branch does the real work and
+        // returns early, so RetKind::Unknown is correct (the legacy R0
+        // path is never reached for this helper).
+        // ============================================================
+
+        // bpf_loop(nr_loops, callback_fn, callback_ctx, flags) -> int.
+        constants::BPF_LOOP => CallProto::with_args([
+            Anything,      // R1: nr_loops
+            PtrToCallback, // R2: callback_fn
+            Anything,      // R3: callback_ctx (stack-or-null)
+            Anything,      // R4: flags
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // bpf_find_vma(task, addr, callback_fn, callback_ctx, flags) -> int.
+        constants::BPF_FIND_VMA => CallProto::with_args([
+            PtrToTask,     // R1: task
+            Anything,      // R2: addr
+            PtrToCallback, // R3: callback_fn
+            Anything,      // R4: callback_ctx (stack-or-null)
+            Anything,      // R5: flags
+        ])
+        .ret(RetKind::Scalar),
+
+        // bpf_kptr_xchg(map_value+kptr_off, kptr) -> kptr_or_null.
+        // Args + R0 typing handled bespoke in `transfer_helper_call`;
+        // proto only needs to admit the call shape.
+        constants::BPF_KPTR_XCHG => CallProto::with_args([
+            Anything, // R1: &map_value->kptr_field (or &owned_kptr->inner_kptr)
+            Anything, // R2: kptr or NULL
+            DontCare, DontCare, DontCare,
+        ]),
+
         _ => return None,
     })
 }
