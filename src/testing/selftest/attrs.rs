@@ -145,11 +145,11 @@ fn apply_attrs(line: &str, cur: &mut ProgAttrs) {
     if let Some(flag_name) = extract_macro_ident(line, "__flag") {
         cur.prog_flags |= match flag_name.as_str() {
             "BPF_F_STRICT_ALIGNMENT" => crate::common::constants::F_LOAD_WITH_STRICT_ALIGNMENT,
-            // Other flags (BPF_F_TEST_STATE_FREQ, BPF_F_ANY_ALIGNMENT,
-            // BPF_F_SLEEPABLE, …) aren't currently consumed by the
-            // analysis — leave them as no-ops rather than failing the
-            // scrape. test_loader treats unknown values as a fatal
-            // error, but for us silent-ignore is sound.
+            "BPF_F_TEST_STATE_FREQ" => crate::common::constants::F_TEST_STATE_FREQ,
+            // Other flags (BPF_F_ANY_ALIGNMENT, BPF_F_SLEEPABLE, …) aren't
+            // currently consumed by the analysis — leave them as no-ops
+            // rather than failing the scrape. test_loader treats unknown
+            // values as a fatal error, but for us silent-ignore is sound.
             _ => 0,
         };
     }

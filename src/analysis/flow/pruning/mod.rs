@@ -422,6 +422,18 @@ pub fn should_prune(
         }
     }
 
+    // Under BPF_F_TEST_STATE_FREQ, bypass all subsumption-hit pruning
+    // (may_goto RANGE_WITHIN, loop pruning, standard pruning). The
+    // inf-loop trap above already ran. Kernel verifier.c L18998 sets
+    // `force_new_state=true` under this flag — every visit gets cached
+    // as a fresh entry and explored to completion. This is the
+    // load-bearing mechanism for iters.c::loop_state_deps1/2: their
+    // unsafe paths are reached only when each iteration's r6/r7 state
+    // is tracked distinctly rather than collapsed by subsumption.
+    if env.ctx.has_flag(crate::common::constants::F_TEST_STATE_FREQ) {
+        return false;
+    }
+
     // may_goto-specific RANGE_WITHIN prune class.
     if pc < prog.instrs.len()
         && matches!(prog.instrs[pc], Instr::If { .. } | Instr::MayGoto { .. })

@@ -327,6 +327,19 @@ pub const BTF_KIND_STRUCT: u8 = 4;
 // ==================================================
 pub const F_NEEDS_EFFICIENT_UNALIGNED_ACCESS: u32 = 1 << 0;
 pub const F_LOAD_WITH_STRICT_ALIGNMENT: u32 = 1 << 1;
+/// Kernel `BPF_F_TEST_STATE_FREQ` (include/uapi/linux/bpf.h, value `1U
+/// << 3`). When set, the kernel's `is_state_visited` flips
+/// `force_new_state=true` (verifier.c v6.15 L18998) which makes every
+/// processed instruction a state-cache addition point. In zovia we
+/// honor the flag by disabling subsumption-hit pruning entirely: every
+/// visit is explored independently. This matches the kernel's intended
+/// "behavior is undefined" debugging flag and is the load-bearing
+/// mechanism behind iters.c::loop_state_deps2 — the deliberate test
+/// vector that proves a verifier explores both inner-loop value paths
+/// (b=0 with c=-24 and b=1 with c=-25) only fires when state-frequency
+/// is forced; otherwise the verifier's standard pruning collapses the
+/// distinct paths and misses the unsafe `*(r10 + c)=…` access.
+pub const F_TEST_STATE_FREQ: u32 = 1 << 3;
 
 // ==================================================
 // BPF ELF Relocation Types
