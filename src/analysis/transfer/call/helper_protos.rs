@@ -903,6 +903,357 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         constants::BPF_DYNPTR_WRITE => return get_kfunc_proto("bpf_dynptr_write"),
         constants::BPF_DYNPTR_DATA => return get_kfunc_proto("bpf_dynptr_data"),
 
+        // ============================================================
+        // Helper proto enumeration (FR triage 2026-05-19, batch 1):
+        // kernel-faithful entries for helpers that previously had no
+        // proto, so `validate_helper_args` invoked the unknown-helper
+        // backstop and the kernel-ACCEPT selftest programs were
+        // false-rejected as "Invalid helper ID N". Every shape below
+        // mirrors the kernel proto (kernel/bpf/helpers.c,
+        // net/core/filter.c, kernel/trace/bpf_trace.c,
+        // drivers/media/rc/bpf-lirc.c, kernel/bpf/stackmap.c,
+        // kernel/bpf/cgroup.c, net/ipv4/bpf_tcp_ca.c) on v6.18-rc4
+        // (= the BPF_FUNC_MAPPER from vendor/linux uapi). R0 typing
+        // is RET_INTEGER (scalar) for all entries in this batch.
+        // ============================================================
+
+        // ---- Process / time / ID helpers (no-arg or pure-scalar) ----
+        // bpf_get_smp_processor_id() -> u32. kernel allow_fastcall.
+        constants::BPF_GET_SMP_PROCESSOR_ID => {
+            CallProto::with_args([DontCare, DontCare, DontCare, DontCare, DontCare])
+                .ret(RetKind::Scalar)
+        }
+        // bpf_get_current_cgroup_id() -> u64.
+        constants::BPF_GET_CURRENT_CGROUP_ID => {
+            CallProto::with_args([DontCare, DontCare, DontCare, DontCare, DontCare])
+                .ret(RetKind::Scalar)
+        }
+        // bpf_jiffies64() -> u64.
+        constants::BPF_JIFFIES64 => {
+            CallProto::with_args([DontCare, DontCare, DontCare, DontCare, DontCare])
+                .ret(RetKind::Scalar)
+        }
+        // bpf_send_signal_thread(sig) -> long.
+        constants::BPF_SEND_SIGNAL_THREAD => CallProto::with_args([
+            Anything, // R1: sig
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- SKB ctx + scalar arg helpers ----
+        // bpf_skb_cgroup_id(skb) -> u64.
+        constants::BPF_SKB_CGROUP_ID => CallProto::with_args([
+            PtrToCtx, // R1: skb
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        // bpf_skb_ancestor_cgroup_id(skb, ancestor_level) -> u64.
+        constants::BPF_SKB_ANCESTOR_CGROUP_ID => CallProto::with_args([
+            PtrToCtx, // R1: skb
+            Anything, // R2: ancestor_level
+            DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        // bpf_csum_level(skb, level) -> int.
+        constants::BPF_CSUM_LEVEL => CallProto::with_args([
+            PtrToCtx, // R1: skb
+            Anything, // R2: level
+            DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- Tunnel option helpers (ctx + mem + size) ----
+        // bpf_skb_get_tunnel_opt(skb, opt_buf, size) -> int. Writes opt_buf.
+        constants::BPF_SKB_GET_TUNNEL_OPT => CallProto::with_args([
+            PtrToCtx,       // R1: skb
+            PtrToUninitMem, // R2: opt (writable buffer)
+            ConstSize,      // R3: size
+            DontCare,
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::SKB_GET_TUNNEL_OPT)
+        .ret(RetKind::Scalar),
+        // bpf_skb_set_tunnel_opt(skb, opt, size) -> int. Reads opt.
+        constants::BPF_SKB_SET_TUNNEL_OPT => CallProto::with_args([
+            PtrToCtx,  // R1: skb
+            PtrToMem,  // R2: opt (rdonly source buffer)
+            ConstSize, // R3: size
+            DontCare,
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::SKB_SET_TUNNEL_OPT)
+        .ret(RetKind::Scalar),
+
+        // bpf_skb_get_xfrm_state(skb, index, xfrm_state, size, flags) -> int.
+        constants::BPF_SKB_GET_XFRM_STATE => CallProto::with_args([
+            PtrToCtx,       // R1: skb
+            Anything,       // R2: index
+            PtrToUninitMem, // R3: xfrm_state (writable)
+            ConstSize,      // R4: size
+            Anything,       // R5: flags
+        ])
+        .mem_size_pairs(&pairs::SKB_GET_XFRM_STATE)
+        .ret(RetKind::Scalar),
+        // bpf_skb_load_bytes_relative(skb, off, to, len, start_hdr) -> int.
+        constants::BPF_SKB_LOAD_BYTES_RELATIVE => CallProto::with_args([
+            PtrToCtx,       // R1: skb
+            Anything,       // R2: offset
+            PtrToUninitMem, // R3: to (writable)
+            ConstSize,      // R4: len
+            Anything,       // R5: start_header
+        ])
+        .mem_size_pairs(&pairs::SKB_LOAD_BYTES_RELATIVE)
+        .ret(RetKind::Scalar),
+
+        // ---- Sock helpers / setsockopt / bind / sock_ops ----
+        // bpf_setsockopt(ctx_or_sock, level, optname, optval, optlen) -> int.
+        // Kernel has 3 protos keyed by ProgramKind (sock_addr_setsockopt,
+        // sock_ops_setsockopt, unlocked_sk_setsockopt). R1 differs:
+        // sock_addr/sock_ops use ARG_PTR_TO_CTX; unlocked uses
+        // ARG_PTR_TO_BTF_ID_SOCK_COMMON. R2..R5 are identical across the
+        // three. We model R1 as `Anything` to accept all three call sites
+        // (the ctx-shape check is per-prog-type and the kernel rejects
+        // mismatches at the helper-dispatch layer; we'd need
+        // prog_type_allowlist to fully model — out of scope here, ≤BCF
+        // preserved because the prior reject was a zovia-only false neg).
+        constants::BPF_SETSOCKOPT => CallProto::with_args([
+            Anything,  // R1: ctx (sock_addr/sock_ops) or btf-sock (unlocked)
+            Anything,  // R2: level
+            Anything,  // R3: optname
+            PtrToMem,  // R4: optval (rdonly)
+            ConstSize, // R5: optlen
+        ])
+        .mem_size_pairs(&pairs::SETSOCKOPT)
+        .ret(RetKind::Scalar),
+        // bpf_bind(ctx, addr, addr_len) -> int.
+        constants::BPF_BIND => CallProto::with_args([
+            PtrToCtx,  // R1: bpf_sock_addr
+            PtrToMem,  // R2: addr (rdonly)
+            ConstSize, // R3: addr_len
+            DontCare,
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::BIND)
+        .ret(RetKind::Scalar),
+        // bpf_sock_ops_cb_flags_set(sock_ops, flags) -> int.
+        constants::BPF_SOCK_OPS_CB_FLAGS_SET => CallProto::with_args([
+            PtrToCtx, // R1: bpf_sock_ops
+            Anything, // R2: argval
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- Redirect-map family (xdp / sk / msg) ----
+        // bpf_redirect_map(map, key, flags) -> int. xdp variant — no ctx;
+        // the helper id is overloaded across program types. The other
+        // variants (id 52 sk_redirect_map, id 60 msg_redirect_map) take
+        // a ctx as R1.
+        constants::BPF_REDIRECT_MAP => CallProto::with_args([
+            ConstMapPtr, // R1: map
+            Anything,    // R2: key
+            Anything,    // R3: flags
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        // bpf_sk_redirect_map(skb, map, key, flags) -> int.
+        constants::BPF_SK_REDIRECT_MAP => CallProto::with_args([
+            PtrToCtx,    // R1: skb
+            ConstMapPtr, // R2: map
+            Anything,    // R3: key
+            Anything,    // R4: flags
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        // bpf_msg_redirect_map(msg, map, key, flags) -> int.
+        constants::BPF_MSG_REDIRECT_MAP => CallProto::with_args([
+            PtrToCtx,    // R1: sk_msg
+            ConstMapPtr, // R2: map
+            Anything,    // R3: key
+            Anything,    // R4: flags
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        // bpf_sock_hash_update(ctx, map, key, flags) -> int.
+        constants::BPF_SOCK_HASH_UPDATE => CallProto::with_args([
+            PtrToCtx,    // R1: bpf_sock_ops_kern
+            ConstMapPtr, // R2: map
+            PtrToMapKey, // R3: key
+            Anything,    // R4: flags
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        // bpf_sk_select_reuseport(reuse_kern, map, key, flags) -> int.
+        constants::BPF_SK_SELECT_REUSEPORT => CallProto::with_args([
+            PtrToCtx,    // R1: sk_reuseport_md
+            ConstMapPtr, // R2: map
+            PtrToMapKey, // R3: key
+            Anything,    // R4: flags
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- LWT (lightweight tunnel) helpers ----
+        // bpf_lwt_in_push_encap / bpf_lwt_xmit_push_encap (same shape;
+        // kernel dispatches by attach hook). (ctx, type, hdr, len) -> int.
+        constants::BPF_LWT_PUSH_ENCAP => CallProto::with_args([
+            PtrToCtx,  // R1: skb
+            Anything,  // R2: type
+            PtrToMem,  // R3: hdr (rdonly)
+            ConstSize, // R4: len
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::LWT_PUSH_ENCAP)
+        .ret(RetKind::Scalar),
+        // bpf_lwt_seg6_adjust_srh(ctx, offset, len) -> int.
+        constants::BPF_LWT_SEG6_ADJUST_SRH => CallProto::with_args([
+            PtrToCtx, // R1: skb
+            Anything, // R2: offset
+            Anything, // R3: len
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        // bpf_lwt_seg6_action(ctx, action, param, param_len) -> int.
+        constants::BPF_LWT_SEG6_ACTION => CallProto::with_args([
+            PtrToCtx,  // R1: skb
+            Anything,  // R2: action
+            PtrToMem,  // R3: param (rdonly)
+            ConstSize, // R4: param_len
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::LWT_SEG6_ACTION)
+        .ret(RetKind::Scalar),
+
+        // ---- Stack-ID + override-return + IR + sysctl ----
+        // bpf_get_stackid(ctx, map, flags) -> int.
+        constants::BPF_GET_STACKID => CallProto::with_args([
+            PtrToCtx,    // R1: ctx (pt_regs / xdp_md / skb / ...)
+            ConstMapPtr, // R2: stackmap
+            Anything,    // R3: flags
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        // bpf_override_return(pt_regs, rc) -> int. kprobe-only in kernel
+        // (gpl_only). Modeled with PtrToCtx for R1 — kprobe ctx.
+        constants::BPF_OVERRIDE_RETURN => CallProto::with_args([
+            PtrToCtx, // R1: pt_regs
+            Anything, // R2: rc
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        // bpf_rc_keydown(ctx, protocol, scancode, toggle) -> int. LIRC mode2.
+        constants::BPF_RC_KEYDOWN => CallProto::with_args([
+            PtrToCtx, // R1: bpf_lirc_mode2 ctx
+            Anything, // R2: protocol
+            Anything, // R3: scancode
+            Anything, // R4: toggle
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        // bpf_probe_write_user(dst_user, src, size) -> int. dst is
+        // ARG_ANYTHING (user-space pointer, not validated).
+        constants::BPF_PROBE_WRITE_USER => CallProto::with_args([
+            Anything,  // R1: dst (user pointer)
+            PtrToMem,  // R2: src (rdonly source)
+            ConstSize, // R3: size
+            DontCare,
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::PROBE_WRITE_USER)
+        .ret(RetKind::Scalar),
+        // bpf_sysctl_get_name(ctx, buf, len, flags) -> int. buf is
+        // MEM_WRITE; modeled as PtrToUninitMem (zovia's writable-mem
+        // gate, mirrors existing get_sockopt / check_mtu pattern).
+        constants::BPF_SYSCTL_GET_NAME => CallProto::with_args([
+            PtrToCtx,       // R1: bpf_sysctl
+            PtrToUninitMem, // R2: buf (writable)
+            ConstSize,      // R3: buf_len
+            Anything,       // R4: flags
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::SYSCTL_GET_NAME)
+        .ret(RetKind::Scalar),
+
+        // ---- TCP / branch records / get_ns_pid_tgid ----
+        // bpf_tcp_send_ack(tcp_sock, rcv_nxt) -> int. R1 is a kernel
+        // `struct tcp_sock *` BTF-id pointer (kernel ARG_PTR_TO_BTF_ID
+        // with tcp_sock_id). PtrToBtfIdNamed{"tcp_sock"} matches.
+        constants::BPF_TCP_SEND_ACK => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "tcp_sock" }, // R1: tcp_sock
+            Anything,                                  // R2: rcv_nxt
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        // bpf_read_branch_records(ctx, buf, size, flags) -> int. buf is
+        // ARG_PTR_TO_MEM_OR_NULL with ARG_CONST_SIZE_OR_ZERO size.
+        constants::BPF_READ_BRANCH_RECORDS => CallProto::with_args([
+            PtrToCtx,         // R1: perf ctx
+            PtrToMemOrNull,   // R2: buf
+            ConstSizeOrZero,  // R3: size
+            Anything,         // R4: flags
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::READ_BRANCH_RECORDS)
+        .ret(RetKind::Scalar),
+        // bpf_get_ns_current_pid_tgid(dev, ino, nsdata, size) -> int.
+        // R1/R2 = ARG_ANYTHING (dev/ino scalars), R3 = uninit_mem, R4 =
+        // const_size.
+        constants::BPF_GET_NS_CURRENT_PID_TGID => CallProto::with_args([
+            Anything,       // R1: dev
+            Anything,       // R2: ino
+            PtrToUninitMem, // R3: nsdata
+            ConstSize,      // R4: size
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::GET_NS_CURRENT_PID_TGID)
+        .ret(RetKind::Scalar),
+
+        // ---- seq_file helpers (BPF iterators) ----
+        // bpf_seq_printf(seq, fmt, fmt_sz, data, data_len) -> int. R1 is
+        // ARG_PTR_TO_BTF_ID with seq_file btf-id; R4/R5 is the
+        // nullable data array pair.
+        constants::BPF_SEQ_PRINTF => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "seq_file" }, // R1: seq
+            PtrToMem,                                  // R2: fmt (rdonly)
+            ConstSize,                                 // R3: fmt_size
+            PtrToMemOrNull,                            // R4: data (u64[])
+            ConstSizeOrZero,                           // R5: data_len
+        ])
+        .mem_size_pairs(&pairs::SEQ_PRINTF)
+        .ret(RetKind::Scalar),
+        // bpf_seq_write(seq, data, len) -> int. size_or_zero accepted.
+        constants::BPF_SEQ_WRITE => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "seq_file" }, // R1: seq
+            PtrToMem,                                  // R2: data (rdonly)
+            ConstSizeOrZero,                           // R3: len
+            DontCare,
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::SEQ_WRITE)
+        .ret(RetKind::Scalar),
+
+        // bpf_skb_event_output (helper id 111 BPF_SKB_OUTPUT): like
+        // bpf_perf_event_output but R1 is a kernel `struct sk_buff *`
+        // BTF-id pointer (tracing/raw_tp programs that received the skb
+        // as a kernel struct). R5 is size_or_zero.
+        constants::BPF_SKB_OUTPUT => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "sk_buff" }, // R1: sk_buff
+            ConstMapPtr,                              // R2: map (PERF_EVENT_ARRAY)
+            Anything,                                 // R3: flags
+            PtrToMem,                                 // R4: data (rdonly)
+            ConstSizeOrZero,                          // R5: size
+        ])
+        .mem_size_pairs(&pairs::SKB_OUTPUT)
+        .ret(RetKind::Scalar),
+
         _ => return None,
     })
 }

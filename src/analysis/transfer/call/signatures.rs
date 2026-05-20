@@ -714,4 +714,37 @@ pub(crate) mod pairs {
     // ---- bpf_copy_from_user_str(R1=dst, R2=size, R3=unsafe_ptr, R4=flags) ----
     // size=0 accepted (kernel returns 0 / no-op).
     pub static COPY_FROM_USER_STR: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R1, Reg::R2)];
+
+    // ---- Helper proto enumeration batch (FR triage 2026-05-19) ----
+    // bpf_setsockopt(ctx_or_sock, level, optname, optval, optlen): R4/R5
+    pub static SETSOCKOPT: [MemSizePair; 1] = [MemSizePair::new(Reg::R4, Reg::R5)];
+    // bpf_bind(ctx, addr, addr_len): R2/R3
+    pub static BIND: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    // bpf_skb_get_tunnel_opt(ctx, opt, size): R2/R3
+    pub static SKB_GET_TUNNEL_OPT: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    // bpf_skb_set_tunnel_opt(ctx, opt, size): R2/R3
+    pub static SKB_SET_TUNNEL_OPT: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    // bpf_skb_get_xfrm_state(ctx, index, xfrm, size, flags): R3/R4
+    pub static SKB_GET_XFRM_STATE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+    // bpf_skb_load_bytes_relative(ctx, offset, to, len, start_header): R3/R4
+    pub static SKB_LOAD_BYTES_RELATIVE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+    // bpf_probe_write_user(dst_user, src, size): R2/R3
+    pub static PROBE_WRITE_USER: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    // bpf_read_branch_records(ctx, buf, size, flags): R2/R3 (buf may be NULL when size=0)
+    pub static READ_BRANCH_RECORDS: [MemSizePair; 1] =
+        [MemSizePair::new_nullable(Reg::R2, Reg::R3)];
+    // bpf_seq_printf(seq, fmt, fmt_sz, data, data_len): R4/R5 (data nullable when len=0)
+    pub static SEQ_PRINTF: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R4, Reg::R5)];
+    // bpf_seq_write(seq, data, len): R2/R3 (size_or_zero accepted)
+    pub static SEQ_WRITE: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R2, Reg::R3)];
+    // bpf_skb_output(skb, map, flags, data, size): R4/R5 (data size_or_zero accepted)
+    pub static SKB_OUTPUT: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R4, Reg::R5)];
+    // bpf_get_ns_current_pid_tgid(dev, ino, nsdata, size): R3/R4
+    pub static GET_NS_CURRENT_PID_TGID: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+    // bpf_sysctl_get_name(ctx, buf, len, flags): R2/R3 (write-only buffer)
+    pub static SYSCTL_GET_NAME: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    // bpf_lwt_*_push_encap(ctx, type, hdr, len): R3/R4
+    pub static LWT_PUSH_ENCAP: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+    // bpf_lwt_seg6_action(ctx, action, param, param_len): R3/R4
+    pub static LWT_SEG6_ACTION: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
 }
