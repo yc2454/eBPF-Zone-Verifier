@@ -472,27 +472,31 @@ fn record_pruning_misses(env: &mut VerifierEnv, pc: usize, miss_idxs: &[usize]) 
         .map(|a| a.force_checkpoint)
         .unwrap_or(false);
 
+    // Read `branches` per cached state for the kernel-faithful `n`
+    // formula (verifier.c v6.18-rc4 L20444):
+    //   n = is_force_checkpoint && sl->state.branches > 0 ? 64 : 3
+    // `branches > 0` means the cached state's downstream DFS is still in
+    // progress (it's part of an active SCC iteration); the kernel
+    // protects these from premature eviction at force-checkpoint pcs.
+    let branches_by_idx: std::collections::HashMap<usize, u32> = if let Some(states) =
+        env.explored_states.get(&pc)
+    {
+        miss_idxs
+            .iter()
+            .filter_map(|&i| states.get(i).map(|s| (i, s.branches)))
+            .collect()
+    } else {
+        std::collections::HashMap::new()
+    };
+
     let mut to_evict: Vec<usize> = Vec::new();
     if let Some(metrics) = env.state_metrics.get_mut(&pc) {
         for &i in miss_idxs {
             if let Some(m) = metrics.get_mut(i) {
                 m.miss_cnt = m.miss_cnt.saturating_add(1);
-                // Kernel formula (verifier.c L19222):
-                //   n = is_force_checkpoint && sl->state.branches > 0 ? 64 : 3
-                // We don't track `branches`. Approximate via `hit_cnt`:
-                // cached states that have been hit at least once are
-                // "proven useful"; keep them longer (n=64 at force-
-                // checkpoint pcs). Unhit states use the smaller n,
-                // matching the kernel's `branches == 0` fast-evict.
-                // Non-force-checkpoint pcs use a slightly raised n=8
-                // (vs kernel's n=3) because we always increment miss_cnt
-                // — kernel gates that on the `add_new_state` heuristic
-                // (verifier.c L19141-L19144) which we don't model.
-                let n: u32 = if force {
-                    if m.hit_cnt > 0 { 64 } else { 3 }
-                } else {
-                    8
-                };
+                // Kernel L20444 exactly: n = force_checkpoint && branches>0 ? 64 : 3
+                let branches = branches_by_idx.get(&i).copied().unwrap_or(0);
+                let n: u32 = if force && branches > 0 { 64 } else { 3 };
                 if m.miss_cnt > m.hit_cnt.saturating_mul(n).saturating_add(n) {
                     to_evict.push(i);
                 }
@@ -504,6 +508,15 @@ fn record_pruning_misses(env: &mut VerifierEnv, pc: usize, miss_idxs: &[usize]) 
     }
     // Sort descending so removals don't shift later indices.
     to_evict.sort_unstable_by(|a, b| b.cmp(a));
+    // Collect cache_ids of evicted entries for cache_loc_by_id cleanup.
+    let evicted_ids: Vec<u32> = if let Some(states) = env.explored_states.get(&pc) {
+        to_evict
+            .iter()
+            .filter_map(|&i| states.get(i).and_then(|s| s.cache_id))
+            .collect()
+    } else {
+        Vec::new()
+    };
     if let Some(states) = env.explored_states.get_mut(&pc) {
         for &i in &to_evict {
             if i < states.len() {
@@ -515,6 +528,18 @@ fn record_pruning_misses(env: &mut VerifierEnv, pc: usize, miss_idxs: &[usize]) 
         for &i in &to_evict {
             if i < metrics.len() {
                 metrics.remove(i);
+            }
+        }
+    }
+    // cache_loc_by_id cleanup: drop evicted ids, re-index survivors. Same
+    // invariant as the FIFO drain in `merging::record_state`.
+    for id in evicted_ids {
+        env.cache_loc_by_id.remove(&id);
+    }
+    if let Some(states) = env.explored_states.get(&pc) {
+        for (new_idx, s) in states.iter().enumerate() {
+            if let Some(id) = s.cache_id {
+                env.cache_loc_by_id.insert(id, (pc, new_idx));
             }
         }
     }

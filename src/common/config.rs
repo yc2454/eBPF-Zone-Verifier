@@ -108,7 +108,7 @@ impl Default for VerifierConfig {
             domain_mode: DomainMode::Zone,
             skip_dbm_check: false,
             use_widening: false,
-            max_states_per_pc: 16,
+            max_states_per_pc: 64,
             log_interval: 100_000,
             debug_pc: None,
             enable_path_trace: false,
