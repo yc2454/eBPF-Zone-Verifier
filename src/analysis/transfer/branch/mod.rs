@@ -444,9 +444,45 @@ fn unreachable_base_pc(env: &VerifierEnv, state: &State) -> Option<usize> {
         // +0x4c → ~115-clause over-walk vs the kernel's 9). This is
         // additive: it only ever *excludes* more, tightening toward the
         // kernel's reg_masks — never widens the tracked set.
+        // Per-pointer-kind const-offset detection. Kernel's
+        // `tnum_is_const(reg->var_off)` captures every fresh non-scalar
+        // pointer because the kernel uses a single `var_off` field for
+        // offset across all ptr types. Zovia splits that representation
+        // across the `RegType` enum; for kernel-faithful exclusion we
+        // need an explicit case per ptr kind whose offset is structurally
+        // constant (i.e. not modeled in the value-tnum). Calico-trace
+        // 2026-05-20: missing `PtrToCtx` here caused R9 to leak into
+        // `target_regs` at every BCF discharge, the walker could never
+        // drain R9 (its definition is the caller's frame, not any
+        // in-program insn), and `bcf_suffix_base_pc` always returned
+        // `None` → full-lineage `children_unsafe` marking → 26× cache
+        // invalidation → 1M-insn TIMEOUT. The kernel-side `[ZK]` probe
+        // confirmed kernel `reg_masks=0x73` (excludes R9=PtrToCtx);
+        // matching it brings the suffix base from None to a tight pc.
         let const_offset = state.get_tnum(r).is_const()
             || matches!(ty, RegType::PtrToMapValue { offset: Some(_), .. })
-            || matches!(ty, RegType::PtrToMapValueOrNull { .. });
+            || matches!(ty, RegType::PtrToMapValueOrNull { .. })
+            // Below: ptr types whose "offset" component is structurally 0
+            // (no variable-offset arithmetic possible in normal use).
+            // PtrToPacket is the only ptr type with variable offset
+            // (`ptr += scalar`) and is deliberately NOT excluded.
+            || matches!(ty, RegType::PtrToCtx)
+            || matches!(ty, RegType::PtrToPacketEnd)
+            || matches!(ty, RegType::PtrToSocket { .. })
+            || matches!(ty, RegType::PtrToSocketOrNull { .. })
+            || matches!(ty, RegType::PtrToSockCommon { .. })
+            || matches!(ty, RegType::PtrToSockCommonOrNull { .. })
+            || matches!(ty, RegType::PtrToTcpSock { .. })
+            || matches!(ty, RegType::PtrToTcpSockOrNull { .. })
+            || matches!(ty, RegType::PtrToCpumask { .. })
+            || matches!(ty, RegType::PtrToCpumaskOrNull { .. })
+            || matches!(ty, RegType::PtrToArena { .. })
+            || matches!(ty, RegType::PtrToArenaOrNull { .. })
+            || matches!(ty, RegType::PtrToCgroup { .. })
+            || matches!(ty, RegType::PtrToCgroupOrNull { .. })
+            || matches!(ty, RegType::PtrToBtfId { .. })
+            || matches!(ty, RegType::PtrToOwnedKptr { .. })
+            || matches!(ty, RegType::PtrToMapKptr { .. });
         if !matches!(ty, RegType::ScalarValue) && const_offset {
             continue;
         }
