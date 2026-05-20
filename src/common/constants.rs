@@ -196,6 +196,23 @@ pub const BPF_DYNPTR_DATA: u32 = 203;
 pub const BPF_USER_RINGBUF_DRAIN: u32 = 209;
 pub const BPF_CGRP_STORAGE_GET: u32 = 210;
 pub const BPF_CGRP_STORAGE_DELETE: u32 = 211;
+// Helper IDs missing from earlier coverage (FR triage 2026-05-19 batch 2).
+// IDs match `__BPF_FUNC_MAPPER` in `include/uapi/linux/bpf.h` v6.18-rc4.
+pub const BPF_LOAD_HDR_OPT: u32 = 142;
+pub const BPF_SNPRINTF_BTF: u32 = 149;
+pub const BPF_BPRM_OPTS_SET: u32 = 159;
+pub const BPF_IMA_INODE_HASH: u32 = 161;
+pub const BPF_SYS_BPF: u32 = 166;
+pub const BPF_GET_FUNC_IP: u32 = 173;
+pub const BPF_GET_ATTACH_COOKIE: u32 = 174;
+pub const BPF_GET_FUNC_ARG_CNT: u32 = 185;
+pub const BPF_GET_RETVAL: u32 = 186;
+pub const BPF_SET_RETVAL: u32 = 187;
+pub const BPF_XDP_GET_BUFF_LEN: u32 = 188;
+pub const BPF_XDP_LOAD_BYTES: u32 = 189;
+pub const BPF_TCP_RAW_GEN_SYNCOOKIE_IPV4: u32 = 204;
+pub const BPF_KTIME_GET_TAI_NS: u32 = 208;
+
 pub const BPF_KFUNC_CALL_DUMMY: u32 = 213;
 pub const BPF_RCU_READ_LOCK: u32 = 217;
 pub const BPF_RCU_READ_UNLOCK: u32 = 218;

@@ -1254,6 +1254,285 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         .mem_size_pairs(&pairs::SKB_OUTPUT)
         .ret(RetKind::Scalar),
 
+        // ============================================================
+        // Helper proto enumeration batch 2 (FR triage 2026-05-19):
+        // BTF-typed sock casts, per-cpu pointer, map-element queue,
+        // ringbuf_discard, probe_read_str variants, tracing/retval
+        // helpers, syscall/snprintf_btf/sysbpf, etc.
+        //
+        // R0 typing for sock-cast / per-cpu / task / file helpers is
+        // already handled by the legacy arms in
+        // `transfer::types::update_call_types`; those entries use the
+        // default `RetKind::Unknown` so the proto-side applier defers
+        // to legacy. Pure RET_INTEGER entries use `RetKind::Scalar`.
+        // ============================================================
+
+        // ---- Map-element queue/stack helpers ----
+        // bpf_map_push_elem(map, value, flags) -> int. R2 reads value.
+        constants::BPF_MAP_PUSH_ELEM => CallProto::with_args([
+            ConstMapPtr,   // R1: map (QUEUE/STACK)
+            PtrToMapValue, // R2: value
+            Anything,      // R3: flags
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        // bpf_map_pop_elem(map, value) -> int. R2 is writable, uninit.
+        constants::BPF_MAP_POP_ELEM => CallProto::with_args([
+            ConstMapPtr,         // R1: map
+            PtrToUninitMapValue, // R2: value (writable)
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        // bpf_map_peek_elem(map, value) -> int. Same shape as POP.
+        constants::BPF_MAP_PEEK_ELEM => CallProto::with_args([
+            ConstMapPtr,         // R1: map
+            PtrToUninitMapValue, // R2: value (writable)
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- Ringbuf discard (legacy API, parallel to RINGBUF_SUBMIT) ----
+        // bpf_ringbuf_discard(data, flags). Mirrors RINGBUF_SUBMIT —
+        // both consume an alloc-mem pointer. Modeled here as a Scalar
+        // return; kernel RET_VOID but BPF callers see scalar R0.
+        constants::BPF_RINGBUF_DISCARD => {
+            CallProto::with_args([PtrToAllocMem, Anything, DontCare, DontCare, DontCare])
+                .ret(RetKind::Scalar)
+        }
+
+        // ---- probe_read_*_str variants (mirror PROBE_READ shape) ----
+        // bpf_probe_read_user_str(dst, size, user_ptr) -> int.
+        constants::BPF_PROBE_READ_USER_STR => CallProto::with_args([
+            PtrToUninitMem,  // R1: dst
+            ConstSizeOrZero, // R2: size
+            Anything,        // R3: unsafe_ptr (user)
+            DontCare,
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::PROBE_READ)
+        .ret(RetKind::Scalar),
+        // bpf_probe_read_kernel_str(dst, size, kernel_ptr) -> int.
+        constants::BPF_PROBE_READ_KERNEL_STR => CallProto::with_args([
+            PtrToUninitMem,  // R1: dst
+            ConstSizeOrZero, // R2: size
+            Anything,        // R3: unsafe_ptr (kernel)
+            DontCare,
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::PROBE_READ)
+        .ret(RetKind::Scalar),
+
+        // ---- BTF-typed sock cast helpers (skc_to_*) ----
+        // R0 typing in update_call_types matches `kernel struct` names
+        // (tcp_sock / tcp6_sock / tcp_request_sock / unix_sock /
+        // mptcp_sock). Kernel arg1 = ARG_PTR_TO_BTF_ID_SOCK_COMMON
+        // except mptcp_sock which uses ARG_PTR_TO_SOCK_COMMON.
+        constants::BPF_SKC_TO_TCP_SOCK => CallProto::with_args([
+            PtrToBTFIdSockCommon, // R1: sock_common
+            DontCare, DontCare, DontCare, DontCare,
+        ]),
+        constants::BPF_SKC_TO_TCP6_SOCK => CallProto::with_args([
+            PtrToBTFIdSockCommon,
+            DontCare, DontCare, DontCare, DontCare,
+        ]),
+        constants::BPF_SKC_TO_TCP_REQUEST_SOCK => CallProto::with_args([
+            PtrToBTFIdSockCommon,
+            DontCare, DontCare, DontCare, DontCare,
+        ]),
+        constants::BPF_SKC_TO_UNIX_SOCK => CallProto::with_args([
+            PtrToBTFIdSockCommon,
+            DontCare, DontCare, DontCare, DontCare,
+        ]),
+        constants::BPF_SKC_TO_MPTCP_SOCK => CallProto::with_args([
+            PtrToSockCommon, // R1: sock_common (no BTF wrapping per kernel)
+            DontCare, DontCare, DontCare, DontCare,
+        ]),
+
+        // bpf_get_listener_sock(sock) -> sock_or_null. R0 typed by
+        // legacy update_call_types arm (PtrToSocketOrNull, no ref).
+        constants::BPF_GET_LISTENER_SOCK => CallProto::with_args([
+            PtrToSockCommon, // R1: sock_common
+            DontCare, DontCare, DontCare, DontCare,
+        ]),
+
+        // bpf_sock_from_file(file) -> socket_or_null. R0 typed by
+        // legacy arm as PtrToBtfIdOrNull{"socket", TRUSTED}. Kernel
+        // arg1 = ARG_PTR_TO_BTF_ID with bpf_sock_from_file_btf_ids[1]
+        // = `struct file *`. PtrToBtfIdNamed{"file"} enforces that.
+        constants::BPF_SOCK_FROM_FILE => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "file" }, // R1: file
+            DontCare, DontCare, DontCare, DontCare,
+        ]),
+
+        // bpf_task_pt_regs(task) -> pt_regs. R0 typed by legacy arm.
+        constants::BPF_TASK_PT_REGS => CallProto::with_args([
+            PtrToTask, // R1: task_struct
+            DontCare, DontCare, DontCare, DontCare,
+        ]),
+
+        // ---- per-cpu / this-cpu ptr (R0 typing legacy) ----
+        // Kernel arg1 = ARG_PTR_TO_PERCPU_BTF_ID. zovia accepts the
+        // input via legacy R0-typing in update_call_types which handles
+        // both `PtrToBtfId` (typed __ksym) and `PtrToMapKptr` (per-cpu
+        // map field) inputs. The arg-side `Anything` lets either pass;
+        // the R0 typer rejects unresolved inputs by leaving R0 scalar.
+        constants::BPF_PER_CPU_PTR => CallProto::with_args([
+            Anything, // R1: percpu_ptr (typed __ksym or map_kptr)
+            Anything, // R2: cpu
+            DontCare, DontCare, DontCare,
+        ]),
+        constants::BPF_THIS_CPU_PTR => CallProto::with_args([
+            Anything, // R1: percpu_ptr
+            DontCare, DontCare, DontCare, DontCare,
+        ]),
+
+        // ---- Tracing helpers (get_func_ip / get_attach_cookie / ...) ----
+        // bpf_get_func_ip(ctx) -> u64. Multiple kernel protos
+        // (kprobe / tracing / kprobe_multi / uprobe_multi) all share
+        // (PtrToCtx) -> RET_INTEGER shape.
+        constants::BPF_GET_FUNC_IP => CallProto::with_args([
+            PtrToCtx, // R1: ctx (pt_regs / tracing ctx)
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        // bpf_get_attach_cookie(ctx) -> u64. Multiple kernel protos
+        // (perf_event / kprobe / kprobe_multi / uprobe_multi / trace);
+        // all share (PtrToCtx) -> RET_INTEGER.
+        constants::BPF_GET_ATTACH_COOKIE => CallProto::with_args([
+            PtrToCtx, // R1: ctx
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        // bpf_get_func_arg_cnt(ctx) -> int.
+        constants::BPF_GET_FUNC_ARG_CNT => CallProto::with_args([
+            PtrToCtx, // R1: tracing ctx
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- Cgroup-prog retval helpers ----
+        // bpf_get_retval() -> int. No args.
+        constants::BPF_GET_RETVAL => {
+            CallProto::with_args([DontCare, DontCare, DontCare, DontCare, DontCare])
+                .ret(RetKind::Scalar)
+        }
+        // bpf_set_retval(rc) -> int.
+        constants::BPF_SET_RETVAL => CallProto::with_args([
+            Anything, // R1: rc
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // ---- XDP buf-len / load-bytes ----
+        // bpf_xdp_get_buff_len(xdp_md) -> u64.
+        constants::BPF_XDP_GET_BUFF_LEN => CallProto::with_args([
+            PtrToCtx, // R1: xdp_md
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        // bpf_xdp_load_bytes(ctx, off, buf, len) -> int.
+        constants::BPF_XDP_LOAD_BYTES => CallProto::with_args([
+            PtrToCtx,       // R1: xdp_md
+            Anything,       // R2: offset
+            PtrToUninitMem, // R3: buf
+            ConstSize,      // R4: len
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::XDP_LOAD_BYTES)
+        .ret(RetKind::Scalar),
+
+        // bpf_ktime_get_tai_ns() -> u64.
+        constants::BPF_KTIME_GET_TAI_NS => {
+            CallProto::with_args([DontCare, DontCare, DontCare, DontCare, DontCare])
+                .ret(RetKind::Scalar)
+        }
+
+        // ---- LSM ----
+        // bpf_bprm_opts_set(bprm, flags) -> int. R1 = struct linux_binprm.
+        constants::BPF_BPRM_OPTS_SET => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "linux_binprm" }, // R1: bprm
+            Anything,                                      // R2: flags
+            DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+        // bpf_ima_inode_hash(inode, dst, size) -> int. MIGHT_SLEEP.
+        constants::BPF_IMA_INODE_HASH => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "inode" }, // R1: inode
+            PtrToUninitMem,                         // R2: dst
+            ConstSize,                              // R3: size
+            DontCare,
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::IMA_INODE_HASH)
+        .flags(CallFlags::MIGHT_SLEEP)
+        .ret(RetKind::Scalar),
+
+        // ---- Syscall helper ----
+        // bpf_sys_bpf(cmd, attr, attr_size) -> int. tracing/syscall prog
+        // type can call this; arg2 is rdonly mem.
+        constants::BPF_SYS_BPF => CallProto::with_args([
+            Anything,  // R1: cmd
+            PtrToMem,  // R2: attr (rdonly)
+            ConstSize, // R3: attr_size
+            DontCare,
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::SYS_BPF)
+        .ret(RetKind::Scalar),
+
+        // ---- snprintf_btf (BTF type-aware snprintf) ----
+        // bpf_snprintf_btf(str, str_sz, ptr, ptr_size, flags) -> int.
+        // Kernel proto: arg1 = ARG_PTR_TO_MEM (output buf; kernel
+        // doesn't set MEM_WRITE explicitly but writes to it). arg2 =
+        // CONST_SIZE. arg3 = PTR_TO_MEM|MEM_RDONLY (btf_ptr struct).
+        // arg4 = CONST_SIZE. arg5 = ANYTHING. We use PtrToUninitMem for
+        // R1 (tighter; matches the helper's write semantic and
+        // mirrors snprintf's R1 convention) and PtrToMem for R3.
+        constants::BPF_SNPRINTF_BTF => CallProto::with_args([
+            PtrToUninitMem, // R1: str (writable output)
+            ConstSize,      // R2: str_size
+            PtrToMem,       // R3: btf_ptr (rdonly)
+            ConstSize,      // R4: btf_ptr_size
+            Anything,       // R5: flags
+        ])
+        .mem_size_pairs(&pairs::SNPRINTF_BTF)
+        .ret(RetKind::Scalar),
+
+        // ---- sock_ops header-option helper ----
+        // bpf_sock_ops_load_hdr_opt(ctx, search, len, flags) -> int.
+        // arg2 is MEM_WRITE — the helper writes the matched option's
+        // payload into the buffer. PtrToUninitMem matches.
+        constants::BPF_LOAD_HDR_OPT => CallProto::with_args([
+            PtrToCtx,       // R1: bpf_sock_ops_kern
+            PtrToUninitMem, // R2: search (writable)
+            ConstSize,      // R3: search_len
+            Anything,       // R4: flags
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::LOAD_HDR_OPT)
+        .ret(RetKind::Scalar),
+
+        // ---- TCP raw syncookie (IPv4) ----
+        // bpf_tcp_raw_gen_syncookie_ipv4(iph, th, th_len) -> int.
+        // Kernel arg1 = ARG_PTR_TO_FIXED_SIZE_MEM (size=sizeof(iphdr));
+        // not modeled here as fixed-size, falls through to plain
+        // PtrToMem (no explicit pair on R1). arg2/arg3 is the normal
+        // mem+size pair (R2 mem, R3 const_size_or_zero).
+        constants::BPF_TCP_RAW_GEN_SYNCOOKIE_IPV4 => CallProto::with_args([
+            PtrToMem,        // R1: iph (kernel verifies fixed size internally)
+            PtrToMem,        // R2: th
+            ConstSizeOrZero, // R3: th_len
+            DontCare,
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::TCP_RAW_GEN_SYNCOOKIE_IPV4)
+        .ret(RetKind::Scalar),
+
         _ => return None,
     })
 }

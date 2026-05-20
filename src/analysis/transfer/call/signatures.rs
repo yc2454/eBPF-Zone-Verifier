@@ -747,4 +747,22 @@ pub(crate) mod pairs {
     pub static LWT_PUSH_ENCAP: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
     // bpf_lwt_seg6_action(ctx, action, param, param_len): R3/R4
     pub static LWT_SEG6_ACTION: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+
+    // ---- Helper proto enumeration batch 2 ----
+    // bpf_ima_inode_hash(inode, dst, size): R2/R3
+    pub static IMA_INODE_HASH: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    // bpf_sys_bpf(cmd, attr, attr_size): R2/R3 (attr is rdonly mem)
+    pub static SYS_BPF: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    // bpf_xdp_load_bytes(ctx, off, buf, len): R3/R4
+    pub static XDP_LOAD_BYTES: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+    // bpf_tcp_raw_gen_syncookie_ipv4(iph, th, th_len): R2/R3 (size_or_zero)
+    pub static TCP_RAW_GEN_SYNCOOKIE_IPV4: [MemSizePair; 1] =
+        [MemSizePair::new_nullable(Reg::R2, Reg::R3)];
+    // bpf_snprintf_btf(str, str_sz, ptr, ptr_size, flags): R1/R2 + R3/R4
+    pub static SNPRINTF_BTF: [MemSizePair; 2] = [
+        MemSizePair::new(Reg::R1, Reg::R2),
+        MemSizePair::new(Reg::R3, Reg::R4),
+    ];
+    // bpf_sock_ops_load_hdr_opt(ctx, search, len, flags): R2/R3 (writable)
+    pub static LOAD_HDR_OPT: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
 }
