@@ -121,7 +121,26 @@ fn handle_loop_pruning(
             // simpler "prev itself open" approximation captures the
             // load-bearing case for loop-state-deps and avoids the
             // multi-hop chain walk on the hot path.
-            let force_exact = prev.branches > 0;
+            // Kernel `force_exact = loop_entry && loop_entry->branches > 0`
+            // (verifier.c L19175): walk prev's loop_entry chain to its
+            // outermost loop header, then check whether THAT header is
+            // still on the DFS path. The simpler `prev.branches > 0`
+            // misses cases where prev itself has finished but is part of
+            // a still-open enclosing SCC (e.g. inner-loop body state in
+            // loop_state_deps2). We also keep `prev.branches > 0` as a
+            // direct trigger: prev itself open ⇒ enclosing loop open.
+            let force_exact = prev.branches > 0
+                || prev
+                    .cache_id
+                    .and_then(|cid| env.get_loop_entry(cid))
+                    .and_then(|lcid| env.cache_loc_by_id.get(&lcid).copied())
+                    .and_then(|(lpc, lidx)| {
+                        env.explored_states
+                            .get(&lpc)
+                            .and_then(|v| v.get(lidx))
+                            .map(|s| s.branches > 0)
+                    })
+                    .unwrap_or(false);
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     h = Some(i);
@@ -193,7 +212,26 @@ fn handle_standard_pruning(
             if prev.children_unsafe {
                 continue;
             }
-            let force_exact = prev.branches > 0;
+            // Kernel `force_exact = loop_entry && loop_entry->branches > 0`
+            // (verifier.c L19175): walk prev's loop_entry chain to its
+            // outermost loop header, then check whether THAT header is
+            // still on the DFS path. The simpler `prev.branches > 0`
+            // misses cases where prev itself has finished but is part of
+            // a still-open enclosing SCC (e.g. inner-loop body state in
+            // loop_state_deps2). We also keep `prev.branches > 0` as a
+            // direct trigger: prev itself open ⇒ enclosing loop open.
+            let force_exact = prev.branches > 0
+                || prev
+                    .cache_id
+                    .and_then(|cid| env.get_loop_entry(cid))
+                    .and_then(|lcid| env.cache_loc_by_id.get(&lcid).copied())
+                    .and_then(|(lpc, lidx)| {
+                        env.explored_states
+                            .get(&lpc)
+                            .and_then(|v| v.get(lidx))
+                            .map(|s| s.branches > 0)
+                    })
+                    .unwrap_or(false);
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     hit_idx = Some(i);

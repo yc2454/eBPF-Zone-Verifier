@@ -39,6 +39,26 @@ pub(crate) fn handle_add(
             let dst_is_ptr = in_types.get(dst).is_pointer();
 
             if dst_is_ptr && !src_is_ptr {
+                // Kernel `check_reg_sane_offset` (verifier.c v6.15 L13923+):
+                // when forming a new variable-offset pointer via `ptr +=
+                // scalar`, the scalar's smin must not be `S64_MIN`. An
+                // unbounded-below scalar produces a pointer whose offset
+                // could underflow the base's region, so the kernel rejects
+                // with "math between %s pointer and register with unbounded
+                // min value is not allowed". This is the load-bearing check
+                // for iters.c::loop_state_deps2 — the unsafe `*(r10 + r8)`
+                // path reaches this site with r8 having been merged across
+                // iter-loop iterations into an unbounded scalar, and the
+                // kernel rejects here.
+                let (s_lo, _s_hi) = state.domain.get_interval(*r);
+                if s_lo == i64::MIN {
+                    env.fail(
+                        crate::analysis::machine::error::VerificationError::InvalidPointerArithmetic {
+                            pc: state.pc,
+                        },
+                    );
+                    return;
+                }
                 // ptr += scalar: preserve relational info if possible.
                 //
                 // record the scalar contributor in
