@@ -623,24 +623,69 @@ fn run_worklist(
             }
         }
 
-        // Audit probe: dump compact state at the requested PC. Gated on
-        // `ZOVIA_DUMP_STATES_AT_PC=N`. Used to inspect why many "equivalent"
-        // states accumulate at a single pc (path-explosion diagnostic).
+        // Audit probe: dump compact state at the requested PC(s). Gated on
+        // `ZOVIA_DUMP_STATES_AT_PC=N[,M,...]`. Used to inspect why many
+        // "equivalent" states accumulate at a single pc (path-explosion
+        // diagnostic). Comma-separated list, e.g.
+        // `ZOVIA_DUMP_STATES_AT_PC=1587,1856`. Each line includes R0..R9 +
+        // their precision marks + a few key stack slot scalars so we can
+        // compare what changes across visits to a loop head.
         if let Ok(s) = std::env::var("ZOVIA_DUMP_STATES_AT_PC") {
-            if let Ok(target_pc) = s.parse::<usize>() {
-                if state.pc == target_pc {
-                    let mut row = format!("pc={} ", state.pc);
-                    for r in [Reg::R0, Reg::R1, Reg::R6, Reg::R7, Reg::R8, Reg::R9] {
-                        let ty = state.types.get(r);
-                        let (ilo, ihi) = state.domain.get_interval(r);
-                        let sid = state.scalar_ids.get(&r).copied().unwrap_or(0);
-                        row.push_str(&format!(
-                            "R{}={:?}[{}..{}],sid={} ",
-                            r as u8, ty, ilo, ihi, sid,
-                        ));
-                    }
-                    eprintln!("[STATE@PC] {}", row);
+            let targets: Vec<usize> = s
+                .split(',')
+                .filter_map(|t| t.trim().parse::<usize>().ok())
+                .collect();
+            if targets.iter().any(|&t| t == state.pc) {
+                use crate::analysis::machine::reg_types::RegType;
+                let mut row = format!("pc={} ", state.pc);
+                for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5,
+                          Reg::R6, Reg::R7, Reg::R8, Reg::R9] {
+                    let ty = state.types.get(r);
+                    let (ilo, ihi) = state.domain.get_interval(r);
+                    let sid = state.scalar_ids.get(&r).copied().unwrap_or(0);
+                    let p = if state.precise_regs.contains(&r) { "P" } else { "_" };
+                    // Compact-print: SV[lo..hi]sid=N {P|_}  for scalars,
+                    // or ptr-type tag for pointers.
+                    let tag = match ty {
+                        RegType::ScalarValue => format!("SV[{}..{}]", ilo, ihi),
+                        RegType::PtrToMapValue { offset, map_idx, .. } => {
+                            format!("MV(m{},off={:?})", map_idx, offset)
+                        }
+                        RegType::PtrToCtx => "Ctx".into(),
+                        RegType::PtrToStack { .. } => format!("Stk[{}..{}]", ilo, ihi),
+                        RegType::PtrToPacket => "Pkt".into(),
+                        RegType::PtrToPacketEnd => "PktEnd".into(),
+                        RegType::NotInit => "NI".into(),
+                        _ => format!("{:?}", ty),
+                    };
+                    let r_index = (r as u8).saturating_sub(1);
+                    row.push_str(&format!(
+                        "r{}={}{}sid={} ",
+                        r_index, tag, p, sid,
+                    ));
                 }
+                // Append the top frame's spilled scalar slots (off, bounds,
+                // precise) up to ~10 most-recent for sanity. We're interested
+                // in fp-336 (proto-byte spill) and fp-400 in particular.
+                let frame = state.frames.current();
+                let mut slot_keys: Vec<i16> = frame.stack.slot_offsets().into_iter().collect();
+                slot_keys.sort();
+                let mut sn = 0;
+                for off in slot_keys.iter().rev() {
+                    let Some(slot) = frame.stack.slots.get(off) else { continue; };
+                    if !matches!(slot.reg_type, RegType::ScalarValue) {
+                        continue;
+                    }
+                    row.push_str(&format!(
+                        "fp{}=SV[{}..{}]sid={}{} ",
+                        off, slot.bounds.min, slot.bounds.max,
+                        slot.scalar_id.unwrap_or(0),
+                        if slot.precise { "P" } else { "_" },
+                    ));
+                    sn += 1;
+                    if sn >= 8 { break; }
+                }
+                eprintln!("[STATE@PC] {}", row);
             }
         }
 
@@ -892,8 +937,8 @@ fn dump_pc_visit_count(env: &VerifierEnv) {
     pairs.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
     eprintln!("\n=== ZOVIA per-PC visit count (non-pruned expansions) ===");
     eprintln!("  total expansions: {}    distinct pcs: {}", env.insn_processed, pairs.len());
-    eprintln!("  top 40 pcs by visit count:");
-    for (pc, n) in pairs.iter().take(40) {
+    eprintln!("  top 100 pcs by visit count:");
+    for (pc, n) in pairs.iter().take(100) {
         eprintln!("    pc={:<5} visits={}", pc, n);
     }
 }
@@ -986,6 +1031,10 @@ fn dump_subsumption_miss_histogram(env: &VerifierEnv) {
     eprintln!(
         "    may_goto RANGE_WITHIN hits: {}",
         ps.may_goto_range_within_hits
+    );
+    eprintln!(
+        "    children_unsafe skips:    {:>10}    ← BCF-discharge cache invalidations",
+        ps.children_unsafe_skips
     );
     eprintln!(
         "  cache hits: {total_hits}    cache misses: {total_misses_lifetime} (per-reason histogram below sums to {total_misses})    miss-PCs: {n_pcs}"

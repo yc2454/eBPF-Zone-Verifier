@@ -204,12 +204,14 @@ fn handle_standard_pruning(
     let mut hit_idx: Option<usize> = None;
     let mut miss_idxs: Vec<usize> = Vec::new();
     let mut miss_reasons: Vec<SubsumptionMissReason> = Vec::new();
+    let mut local_children_unsafe_skips: u64 = 0;
     if let Some(prev_states) = env.explored_states.get(&pc) {
         for (i, prev) in prev_states.iter().enumerate() {
             // Kernel children_unsafe (bcf_refine, verifier.c:24580-81):
             // a path-unreachable refinement marked this cached ancestor
             // not-prune-safe. Don't let it subsume a later arrival.
             if prev.children_unsafe {
+                local_children_unsafe_skips += 1;
                 continue;
             }
             // Kernel `force_exact = loop_entry && loop_entry->branches > 0`
@@ -244,6 +246,8 @@ fn handle_standard_pruning(
             }
         }
     }
+    env.pruning_stats.children_unsafe_skips =
+        env.pruning_stats.children_unsafe_skips.saturating_add(local_children_unsafe_skips);
     if let Some(idx) = hit_idx {
         record_pruning_hit(env, pc, idx);
         // Kernel-aligned propagate_precision (per-path lineage walk).

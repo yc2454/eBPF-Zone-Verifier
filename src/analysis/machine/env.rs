@@ -103,6 +103,12 @@ pub struct PruningStats {
     /// these monotonic counters give the true picture.
     pub lifetime_hits: u64,
     pub lifetime_misses: u64,
+    /// Number of times a cached state was skipped in `handle_standard_pruning`
+    /// because it had `children_unsafe=true` (i.e., an earlier BCF
+    /// path-unreachable discharge invalidated it for subsumption).
+    /// Counts the SUBSUMPTION ATTEMPTS that were short-circuited; not
+    /// the number of distinct invalidated cache entries.
+    pub children_unsafe_skips: u64,
 }
 
 impl SubsumptionMissReason {
@@ -678,6 +684,10 @@ impl<'a> VerifierEnv<'a> {
     pub fn mark_path_children_unsafe(&mut self, cur: &State, base_pc: Option<usize>) {
         let mut id = cur.parent_cache_id;
         let mut budget: usize = 16_384;
+        let dump = std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1");
+        let mut marked = 0usize;
+        let mut first_pc: Option<usize> = None;
+        let mut last_pc: Option<usize> = None;
         while let Some(cid) = id {
             if budget == 0 {
                 break;
@@ -707,7 +717,16 @@ impl<'a> VerifierEnv<'a> {
                 break;
             }
             s.children_unsafe = true;
+            marked += 1;
+            if first_pc.is_none() { first_pc = Some(pc); }
+            last_pc = Some(pc);
             id = s.parent_cache_id;
+        }
+        if dump {
+            eprintln!(
+                "[disc] marked {} ancestors  pc=[{:?}..{:?}]  base_pc={:?}",
+                marked, last_pc, first_pc, base_pc
+            );
         }
     }
 
@@ -753,7 +772,12 @@ impl<'a> VerifierEnv<'a> {
         target_regs: &[Reg],
     ) -> Option<usize> {
         let debug = std::env::var("ZOVIA_BCF_TRACK_DEBUG").is_ok();
+        let probe = std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1");
+        if probe {
+            eprintln!("[bcf-track-start] history_idx={} targets={:?}", history_idx, target_regs);
+        }
         if target_regs.is_empty() {
+            if probe { eprintln!("[bcf-track-none] reason=EMPTY_TARGETS history_idx={}", history_idx); }
             return None;
         }
         // Initial precision lives in the reject state's call frame. zovia
@@ -766,6 +790,7 @@ impl<'a> VerifierEnv<'a> {
             bt.set_reg(start_depth, r);
         }
         if bt.is_empty() {
+            if probe { eprintln!("[bcf-track-none] reason=BT_INIT_EMPTY"); }
             return None;
         }
         if debug {
@@ -779,6 +804,8 @@ impl<'a> VerifierEnv<'a> {
         let mut current_parent_id: Option<u32> = parent_cache_id;
         let mut budget: usize = 16_384;
         let mut skip_first = true;
+        let mut last_pc_walked: Option<usize> = None;
+        let mut first_pc_walked: Option<usize> = None;
 
         'outer: loop {
             let parent_loc = current_parent_id
@@ -817,6 +844,8 @@ impl<'a> VerifierEnv<'a> {
                 let step_pc = step.pc;
                 let step_depth = step.depth;
                 let step_stack_access = step.stack_access;
+                if first_pc_walked.is_none() { first_pc_walked = Some(step_pc); }
+                last_pc_walked = Some(step_pc);
 
                 if !skip_first {
                     if backtrack_insn_step(&mut bt, &instr_copy, step_depth, step_stack_access).is_err() {
@@ -831,6 +860,7 @@ impl<'a> VerifierEnv<'a> {
                                 step_pc, instr_copy
                             );
                         }
+                        if probe { eprintln!("[bcf-track-none] reason=BACKTRACK_INSN_ERR pc={} instr={:?} regs={:?} stack={:?}", step_pc, instr_copy, bt.reg_masks, bt.stack_masks); }
                         return None;
                     }
                     if debug {
@@ -867,6 +897,41 @@ impl<'a> VerifierEnv<'a> {
             current_history = parent_history_stop;
         }
 
+        // Kernel-faithful program-entry termination. If the walker reached
+        // pc 0 (the BPF program's first insn — clang's `r9 = r1` ctx-arg
+        // capture is the canonical case) and the only remaining bits in
+        // `bt` are BPF input arg regs (R1..R5) in the entry frame, those
+        // regs are defined by the caller (the BPF runtime), not by any
+        // in-program insn. The kernel's `backtrack_states` handles this
+        // implicitly because input-arg precision is satisfied at frame
+        // entry; the kernel's `bt_reg_mask(bt) & BPF_REGMASK_ARGS` is the
+        // exact analog of `BacktrackState::args_set`.
+        //
+        // Without this drain, every BCF discharge that walks back to pc 0
+        // returns `None`, which `mark_path_children_unsafe` interprets as
+        // "no suffix bound — mark the whole lineage `children_unsafe`."
+        // That over-marking is what blows calico_tc_main from 1,801 insns
+        // (base verifier, no --bcf) to 1M timeout (with --bcf):
+        // 750 discharges × ~73 ancestors marked each, 96% of subsumption
+        // attempts short-circuit on poisoned cache entries.
+        if last_pc_walked == Some(0) {
+            for arg in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                bt.clear_reg(start_depth, arg);
+            }
+            if bt.is_empty() {
+                if probe {
+                    eprintln!("[bcf-track-entry-drain] succeeded → returning Some(0)");
+                }
+                return Some(0);
+            }
+        }
+
+        if probe {
+            eprintln!(
+                "[bcf-track-none] reason=WALKED_WHOLE_HISTORY budget_used={} first_pc={:?} last_pc={:?} regs_still_in_bt={:?} stack_still_in_bt={:?}",
+                16_384 - budget, first_pc_walked, last_pc_walked, bt.reg_masks, bt.stack_masks
+            );
+        }
         None
     }
 }

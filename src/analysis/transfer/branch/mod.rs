@@ -479,6 +479,9 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         return false;
     }
     let base_pc = unreachable_base_pc(env, state);
+    if std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1") {
+        eprintln!("[disc] reject@pc={} base_pc={:?}", state.pc, base_pc);
+    }
     let Some(ok) = try_prove_unreachable(state, base_pc) else {
         return false;
     };
