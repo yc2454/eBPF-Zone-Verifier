@@ -212,6 +212,11 @@ pub struct VerifierEnv<'a> {
 
     // --- Dynamic State ---
     pub insn_processed: usize,
+    /// Per-PC visit counter (only populated when `ZOVIA_DUMP_VISITS=1`).
+    /// Bumped once per non-pruned state expansion. Used by the per-PC
+    /// audit dump to localize path-explosion hotspots vs the kernel
+    /// verifier's per-PC visit count from the log_level-2 trace.
+    pub pc_visit_count: HashMap<usize, u64>,
     /// Holds the FIRST critical failure encountered.
     /// If this is Some, the analysis should halt immediately.
     pub error: Option<VerificationError>,
@@ -310,6 +315,7 @@ impl<'a> VerifierEnv<'a> {
             cb_body_store_offsets: compute_cb_body_store_offsets(prog),
             cb_body_can_reinit_dynptr: compute_cb_body_can_reinit_dynptr(prog, &ctx.btf),
             insn_processed: 0,
+            pc_visit_count: HashMap::new(),
             error: None,
             history: History::new(),
             certificate,

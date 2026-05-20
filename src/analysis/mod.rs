@@ -317,6 +317,9 @@ pub fn analyze_program_full(
     if std::env::var("ZOVIA_DUMP_PRUNING").ok().as_deref() == Some("1") {
         dump_subsumption_miss_histogram(&env);
     }
+    if std::env::var("ZOVIA_DUMP_VISITS").ok().as_deref() == Some("1") {
+        dump_pc_visit_count(&env);
+    }
 
     // --- BCF bundle emit ---
     if let Some(path) = config.bcf_bundle_out.as_deref() {
@@ -620,6 +623,27 @@ fn run_worklist(
             }
         }
 
+        // Audit probe: dump compact state at the requested PC. Gated on
+        // `ZOVIA_DUMP_STATES_AT_PC=N`. Used to inspect why many "equivalent"
+        // states accumulate at a single pc (path-explosion diagnostic).
+        if let Ok(s) = std::env::var("ZOVIA_DUMP_STATES_AT_PC") {
+            if let Ok(target_pc) = s.parse::<usize>() {
+                if state.pc == target_pc {
+                    let mut row = format!("pc={} ", state.pc);
+                    for r in [Reg::R0, Reg::R1, Reg::R6, Reg::R7, Reg::R8, Reg::R9] {
+                        let ty = state.types.get(r);
+                        let (ilo, ihi) = state.domain.get_interval(r);
+                        let sid = state.scalar_ids.get(&r).copied().unwrap_or(0);
+                        row.push_str(&format!(
+                            "R{}={:?}[{}..{}],sid={} ",
+                            r as u8, ty, ilo, ihi, sid,
+                        ));
+                    }
+                    eprintln!("[STATE@PC] {}", row);
+                }
+            }
+        }
+
         // A.b PRUNING CHECK
         if pruning::should_prune(env, &mut state, config, prog) {
             if diag_hit {
@@ -646,6 +670,13 @@ fn run_worklist(
 
         // B. Global Complexity Limit (only count non-pruned states)
         env.insn_processed += 1;
+        // Per-PC visit counter (audit hook, ZOVIA_DUMP_VISITS=1). Bumped
+        // ONLY on non-pruned expansions so the count reflects state
+        // expansions per pc, comparable to the kernel verifier's
+        // per-insn visit count in the log_level-2 trace.
+        if std::env::var("ZOVIA_DUMP_VISITS").ok().as_deref() == Some("1") {
+            *env.pc_visit_count.entry(state.pc).or_insert(0) += 1;
+        }
         if env.insn_processed > config.max_insn {
             // We use error! with target="analysis" to auto-trigger the crash dump
             error!(target: "analysis", "[Verifier] Hit complexity limit ({} instructions). Aborting.", config.max_insn);
@@ -848,6 +879,22 @@ fn pct(n: u64, d: u64) -> f64 {
         0.0
     } else {
         (n as f64 / d as f64) * 100.0
+    }
+}
+
+/// Audit dump: per-PC non-pruned state-expansion count.
+/// Triggered by `ZOVIA_DUMP_VISITS=1`. Used to localize path-explosion
+/// hotspots by diffing against the kernel verifier's per-PC visit
+/// count from the log_level-2 trace (`<pc>: (...) <insn>` lines).
+fn dump_pc_visit_count(env: &VerifierEnv) {
+    let mut pairs: Vec<(usize, u64)> =
+        env.pc_visit_count.iter().map(|(&pc, &n)| (pc, n)).collect();
+    pairs.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
+    eprintln!("\n=== ZOVIA per-PC visit count (non-pruned expansions) ===");
+    eprintln!("  total expansions: {}    distinct pcs: {}", env.insn_processed, pairs.len());
+    eprintln!("  top 40 pcs by visit count:");
+    for (pc, n) in pairs.iter().take(40) {
+        eprintln!("    pc={:<5} visits={}", pc, n);
     }
 }
 
