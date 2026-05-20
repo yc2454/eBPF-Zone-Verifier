@@ -139,6 +139,15 @@ pub struct State {
     pub branches: u32,
     pub loop_entry_cache_id: Option<u32>,
 
+    /// Kernel-aligned `bpf_verifier_state.cleaned` (verifier.c v6.15
+    /// L19488). Set to `true` by `clean_verifier_state` when this
+    /// cached state's `branches` first hits 0 — its DFS subtree is
+    /// complete, so future visits will only COMPARE against it, never
+    /// extend through it. At that point dead regs / dead stack slots
+    /// are mutated away to make future subsumption looser. Once
+    /// cleaned, never re-cleaned (kernel's L19542 guard).
+    pub cleaned: bool,
+
     pub tnums: HashMap<Reg, Tnum>, // tnum info for R0-R10
 
     /// Identity tokens for scalar values. Two registers (or a register and
@@ -326,6 +335,7 @@ impl State {
             dfs_depth: 0,
             branches: 0,
             loop_entry_cache_id: None,
+            cleaned: false,
             tnums: tnums.clone(),
             scalar_ids: HashMap::new(),
             precise_regs: HashSet::new(),

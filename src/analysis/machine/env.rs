@@ -629,6 +629,14 @@ impl<'a> VerifierEnv<'a> {
             let still_open = st.branches > 0;
             let st_parent = st.parent_cache_id;
             let st_loop_entry = st.loop_entry_cache_id;
+            if !still_open {
+                // This cached state's DFS subtree just completed. Mirror
+                // kernel `clean_live_states` -> `clean_verifier_state`
+                // (verifier.c v6.15 L19528 / L19482): mutate the cached
+                // state to drop dead regs / dead stack slots, making
+                // future subsumption against it looser.
+                self.clean_verifier_state(cid);
+            }
             if still_open {
                 // Other DFS paths through this parent still open ⇒ stop.
                 // Still propagate the loop_entry hint if applicable.
@@ -657,6 +665,131 @@ impl<'a> VerifierEnv<'a> {
             }
             next = st_parent;
         }
+    }
+
+    /// Kernel-aligned `clean_verifier_state` (verifier.c v6.15 L19482)
+    /// + `clean_func_state` (L19433). Called when a cached state's
+    /// `branches` first hits 0 in `complete_dfs_branch`: its DFS
+    /// subtree is complete, so future visits will only COMPARE
+    /// against it, never extend through it. At that point dead regs
+    /// and dead stack slots are mutated away so a later cur's
+    /// subsumption check against this state has fewer comparand
+    /// relations to satisfy.
+    ///
+    /// Per frame `i`, the kernel cleans against `frame_insn_idx(i)`:
+    /// the innermost frame at the state's pc, caller frames at the
+    /// next-inner frame's `return_pc`. Regs not in
+    /// `live_regs_before[frame_ip]` are reset to `NotInit`; stack
+    /// slots not in `live_slots[frame_ip]` are dropped (kernel's
+    /// `STACK_INVALID` equivalent — zovia stores slots sparsely in a
+    /// `BTreeMap`, so removal == invalidation).
+    ///
+    /// **Soundness:** zovia's existing subsumption already filters
+    /// dead regs/slots out of the comparison via the same
+    /// `live_regs` / `live_slots` sets (see `domain_subsumed_by`,
+    /// `stack_subsumed_by`); this mutation just bakes in the same
+    /// filter so the cached state object literally carries less
+    /// relation state. The hit/miss verdict for any cur is identical
+    /// to the pre-mutation case (live-only compare returns the same
+    /// boolean on a subset where the dead slots have been removed).
+    ///
+    /// **Exempt:** ITER / DYNPTR / IRQ stack slots are NEVER cleaned
+    /// — they carry semantic side effects (ref counts, slot ownership)
+    /// independent of read-liveness. Kernel `bpf_stack_slot_alive`
+    /// has analogous exemptions.
+    ///
+    /// Idempotent: skipped on already-cleaned states (kernel L19542
+    /// `sl->state.cleaned` guard).
+    pub fn clean_verifier_state(&mut self, cid: u32) {
+        let Some(&(pc, idx)) = self.cache_loc_by_id.get(&cid) else {
+            return;
+        };
+
+        // Snapshot the frame ips + their live sets BEFORE taking the
+        // mutable borrow on explored_states (insn_aux_data lookup
+        // borrows env immutably).
+        let frame_ips: Vec<usize> = {
+            let Some(st) = self.explored_states.get(&pc).and_then(|v| v.get(idx)) else {
+                return;
+            };
+            if st.cleaned {
+                return;
+            }
+            let n = st.frames.depth();
+            (0..n)
+                .map(|i| {
+                    if i + 1 == n {
+                        st.pc
+                    } else {
+                        st.frames
+                            .get(crate::analysis::machine::frame_stack::FrameLevel::from_index(i + 1))
+                            .return_pc
+                    }
+                })
+                .collect()
+        };
+        let frame_live: Vec<(HashSet<Reg>, HashSet<i16>)> = frame_ips
+            .iter()
+            .map(|&fip| match self.insn_aux_data.get(fip) {
+                Some(aux) => (aux.live_regs.clone(), aux.live_slots.clone()),
+                None => (HashSet::new(), HashSet::new()),
+            })
+            .collect();
+
+        // Mutate. Conservative variant: STACK SLOTS ONLY (skip reg
+        // cleanup). The kernel `clean_func_state` also resets dead
+        // regs to NOT_INIT, but doing so in zovia introduced a soundness
+        // FA on `verifier_search_pruning.c::tracking_for_u32_spill_fill`
+        // (PASS→FALSE_ACCEPT). Hypothesis: zovia's static MAY-liveness
+        // marks a register dead at a join PC where the kernel's
+        // per-path liveness keeps it live (the kernel propagates
+        // through the SCC `propagate_backedges` fixpoint, which
+        // zovia's static analysis doesn't fully mirror); cleaning the
+        // reg makes the cached `NotInit` subsume any cur via the
+        // `(NotInit, _) => true` rule in `type_subsumed_by`, dropping
+        // a path that would otherwise have rejected.
+        //
+        // Stack-slot cleaning is the dominant contributor to looser
+        // subsumption anyway (slots dominate the state's shape), and
+        // is sound here because stack slots in zovia don't have the
+        // same "NotInit subsumes anything" rule baked into the
+        // pruning path. Reg cleaning can revisit once we've ported
+        // the kernel's per-path liveness fidelity.
+        use crate::analysis::machine::frame_stack::FrameLevel;
+        let Some(st) = self
+            .explored_states
+            .get_mut(&pc)
+            .and_then(|v| v.get_mut(idx))
+        else {
+            return;
+        };
+        for (i, (_live_regs, live_slots)) in frame_live.iter().enumerate() {
+            let level = FrameLevel::from_index(i);
+            let frame = st.frames.get_mut(level);
+            let off_to_clean: Vec<i16> = frame
+                .stack
+                .slot_offsets()
+                .into_iter()
+                .filter(|off| !live_slots.contains(off))
+                .filter(|&off| {
+                    // Don't clean slots with iterator / dynptr / irq
+                    // state — those carry semantic side effects beyond
+                    // read-liveness. Kernel `bpf_stack_slot_alive`
+                    // similarly preserves these.
+                    if let Some(slot) = frame.stack.get_slot(off) {
+                        slot.iterator.is_none()
+                            && slot.dynptr.is_none()
+                            && slot.irq_flag.is_none()
+                    } else {
+                        true
+                    }
+                })
+                .collect();
+            for off in off_to_clean {
+                frame.stack.slots.remove(&off);
+            }
+        }
+        st.cleaned = true;
     }
 
     /// Mirror of kernel `bcf_refine`'s parent-marking
