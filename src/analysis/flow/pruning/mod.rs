@@ -15,11 +15,25 @@ use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
 use crate::ast::{Instr, Program};
 use crate::common::config::VerifierConfig;
-use subsumption::state_subsumed_by;
+use subsumption::{iter_active_depths_differ, state_exact_equal, state_subsumed_by};
 use widening::{
     arrived_via_back_edge, is_at_loop_point, is_prune_point, loop_body_has_force_checkpoint,
     loop_has_conditional_exit, loop_has_if_exit, this_loop_iter_pre_widening,
 };
+
+/// Mirrors the kernel's "skip_inf_loop_check" paths in `is_state_visited`
+/// (verifier.c v6.15 L19073 / L19111): the inf-loop trap doesn't fire at
+/// iter_next kfunc call sites (those are handled by `process_iter_next_call`
+/// + iter_active_depths_differ) or at sync-callback-call helper sites
+/// (bpf_loop / bpf_for_each_map_elem / bpf_timer_set_callback — the
+/// callback's own iteration accounting drives convergence). zovia flags
+/// both classes via `force_checkpoint=true` set at the `Call` insn. We
+/// gate on the insn kind plus the flag so MayGoto pcs (also
+/// force-checkpoint) still run the inf-loop check, matching the kernel's
+/// fall-through at L19103-L19109.
+fn is_inf_loop_skip_pc(prog: &Program, pc: usize) -> bool {
+    matches!(prog.instrs.get(pc), Some(Instr::Call { .. }))
+}
 
 /// Handle pruning decision at a loop point.
 /// Returns Some(true) to prune, Some(false) to continue, None if no previous states.
@@ -286,6 +300,51 @@ pub fn should_prune(
             env.insn_aux_data.get(fpc).map(|a| a.live_slots.clone())
         })
         .collect();
+
+    // Kernel-faithful infinite-loop trap (verifier.c v6.15 L19114-L19127,
+    // `is_state_visited`'s inf-loop check). For any cached state at this
+    // pc whose topmost-frame regs are bytewise identical to cur AND whose
+    // full state matches EXACT AND iter active depths don't differ AND
+    // may_goto_depth matches ⇒ "infinite loop detected".
+    //
+    // Skipped at iter_next call sites and sync-callback-call helper sites
+    // (kernel `is_iter_next_insn` / `calls_callback` short-circuits at
+    // L19073 / L19111). MayGoto is NOT skipped: the may_goto_depth
+    // equality gate inside the check naturally lets it through (the
+    // taken edge bumps the depth, so a recurrence with same depth means
+    // no progress on the may_goto counter ⇒ stuck).
+    // Only run the inf-loop trap at actual back-edge TARGETS (loop heads).
+    // The kernel's is_state_visited fires at every prune point, but
+    // zovia's per-state liveness/precision bookkeeping isn't granular
+    // enough to mirror the kernel's `live`-flag discrimination — so at
+    // mid-loop convergence prune points (`is_at_loop_point=false`) the
+    // check over-fires on legitimate cilium loops whose iterations
+    // happen to produce byte-identical zovia abstract states even
+    // though the kernel sees per-iter progress. Restricting to true
+    // loop heads keeps the trap narrow enough to detect genuine
+    // verifier-divergent infinite loops (the conditional_loop /
+    // infinite_loop_* / mov64sx_s32_varoff_1 family) while avoiding
+    // the cilium FR-regression.
+    if in_loop
+        && pc < prog.instrs.len()
+        && let Some(prev_states) = env.explored_states.get(&pc).cloned()
+        && !is_inf_loop_skip_pc(prog, pc)
+    {
+        for prev in prev_states.iter() {
+            if prev.may_goto_depth != state.may_goto_depth {
+                continue;
+            }
+            if iter_active_depths_differ(prev, state) {
+                continue;
+            }
+            if state_exact_equal(prev, state) {
+                env.fail(crate::analysis::machine::error::VerificationError::InfiniteLoopDetected {
+                    pc,
+                });
+                return true;
+            }
+        }
+    }
 
     // may_goto-specific RANGE_WITHIN prune class.
     if pc < prog.instrs.len()

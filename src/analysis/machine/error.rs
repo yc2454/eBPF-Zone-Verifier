@@ -107,6 +107,9 @@ pub enum VerificationError {
     ComplexityLimitExceeded {
         limit: usize,
     },
+    InfiniteLoopDetected {
+        pc: usize,
+    },
     RegisterNotReadable {
         pc: usize,
         reg: Reg,
@@ -525,6 +528,9 @@ impl VerificationError {
             }
             VerificationError::ComplexityLimitExceeded { limit } => {
                 format!("Complexity limit of {} exceeded", limit)
+            }
+            VerificationError::InfiniteLoopDetected { pc } => {
+                format!("infinite loop detected at insn {}", pc)
             }
             VerificationError::CfgError(msg) => {
                 format!("CFG error: {}", msg)

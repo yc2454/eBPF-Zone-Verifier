@@ -16,6 +16,119 @@ fn callee_saved_regs() -> HashSet<Reg> {
     [Reg::R6, Reg::R7, Reg::R8, Reg::R9].into_iter().collect()
 }
 
+/// Mirror of kernel `states_maybe_looping` (verifier.c v6.15 L18884).
+/// Topmost frame registers R0..R10 must be bytewise identical and the
+/// call-stack depth must match. The kernel uses `memcmp` ignoring the
+/// `parent` pointer; zovia compares the abstract fields that together
+/// constitute the per-reg state at this site.
+pub(super) fn states_maybe_looping(prev: &State, cur: &State) -> bool {
+    if prev.frames.depth() != cur.frames.depth() {
+        return false;
+    }
+    // Compare the "hard" semantic state: type, numeric value bounds, and
+    // scalar-id linkage. tnum/precise_regs are intentionally EXCLUDED:
+    // the kernel sets precision via mark_chain_precision (backward walk
+    // that updates BOTH cached and current state), and refines tnum via
+    // reg_set_min_max only on scalar registers — zovia eager-propagates
+    // both forward, which makes cached vs current state diverge on
+    // bookkeeping that the kernel keeps in lock-step. The faithful
+    // signal for "this state is identical at this pc" is the abstract
+    // value + type, which is what actually determines verifier progress.
+    for r in Reg::ALL {
+        if prev.types.get(r) != cur.types.get(r) {
+            return false;
+        }
+        if prev.scalar_ids.get(&r) != cur.scalar_ids.get(&r) {
+            return false;
+        }
+        if prev.domain.get_interval(r) != cur.domain.get_interval(r) {
+            return false;
+        }
+        if prev.domain.get_u32_bounds(r) != cur.domain.get_u32_bounds(r) {
+            return false;
+        }
+        if prev.tnums.get(&r) != cur.tnums.get(&r) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Mirror of kernel `iter_active_depths_differ` (verifier.c v6.15 L18965).
+/// Walks all frames' stack slots; for each slot whose `prev` carries an
+/// ACTIVE iterator, the matching slot in `cur` must have the same
+/// `iter.depth`. A differing depth means the loop IS making progress and
+/// the infinite-loop trap should NOT fire.
+pub(super) fn iter_active_depths_differ(prev: &State, cur: &State) -> bool {
+    use crate::analysis::machine::frame_stack::FrameLevel;
+    use crate::analysis::machine::stack_state::IterState;
+
+    let depth = prev.frames.depth().min(cur.frames.depth());
+    for fi in 0..depth {
+        let level = FrameLevel::from_index(fi);
+        let prev_frame = prev.frames.get(level);
+        let cur_frame = cur.frames.get(level);
+        for off in prev_frame.stack.slot_offsets() {
+            let Some(prev_slot) = prev_frame.stack.slots.get(&off) else { continue; };
+            let Some(prev_it) = prev_slot.iterator else { continue; };
+            if prev_it.state != IterState::Active {
+                continue;
+            }
+            // The matching slot in cur. If absent or no iter ⇒ treat as
+            // different depth (the loop's iter context changed).
+            let Some(cur_slot) = cur_frame.stack.slots.get(&off) else { return true; };
+            let Some(cur_it) = cur_slot.iterator else { return true; };
+            if cur_it.depth != prev_it.depth {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Mirror of kernel `states_equal(old, cur, EXACT)` (verifier.c v6.15
+/// L18838-L18883). Strict equality used by the infinite-loop trap; ranges
+/// must match exactly (no widening allowed). Compared field-by-field
+/// against `prev`. Returns true iff every semantic field zovia tracks is
+/// identical between `prev` and `cur`. Path-bookkeeping fields
+/// (`history_idx`, `parent_cache_id`, `cache_id`, `children_unsafe`) and
+/// the BCF symbolic state are intentionally excluded — they don't bear on
+/// the kernel's notion of "same verifier state".
+pub(super) fn state_exact_equal(prev: &State, cur: &State) -> bool {
+    if !states_maybe_looping(prev, cur) {
+        return false;
+    }
+    // Per-frame stack equality, plus caller register/domain/tnum snapshots
+    // on non-top frames. `CallFrame: PartialEq` covers this.
+    use crate::analysis::machine::frame_stack::FrameLevel;
+    if prev.frames.depth() != cur.frames.depth() {
+        return false;
+    }
+    for fi in 0..prev.frames.depth() {
+        let level = FrameLevel::from_index(fi);
+        if prev.frames.get(level) != cur.frames.get(level) {
+            return false;
+        }
+    }
+    // Lock / ref / preempt / rcu / irq state — every per-path semantic field.
+    if prev.active_refs != cur.active_refs
+        || prev.active_lock != cur.active_lock
+        || prev.rcu_read_depth != cur.rcu_read_depth
+        || prev.implicit_rcu_at_entry != cur.implicit_rcu_at_entry
+        || prev.active_preempt_locks != cur.active_preempt_locks
+        || prev.acquired_irq_ids != cur.acquired_irq_ids
+        || prev.acquired_res_locks != cur.acquired_res_locks
+        || prev.goto_budget != cur.goto_budget
+        || prev.var_off_contributor != cur.var_off_contributor
+        || prev.ptr_const_off != cur.ptr_const_off
+        || prev.btf_field_refs != cur.btf_field_refs
+        || prev.kernel_tnum_imprecise != cur.kernel_tnum_imprecise
+    {
+        return false;
+    }
+    true
+}
+
 /// Check if `cur` is subsumed by `old` (old covers all behaviors of cur).
 /// Returns `Ok(())` on success or `Err(reason)` identifying the *first*
 /// sub-check that rejected. The reason is what the
