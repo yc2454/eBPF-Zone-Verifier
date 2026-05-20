@@ -1586,6 +1586,34 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             DontCare, DontCare, DontCare,
         ]),
 
+        // ============================================================
+        // Helper proto enumeration follow-up (post-batch-3 triage):
+        // two helpers surfaced as still-FR on the post-batch-3 sweep
+        // but trivially mirror existing kernel protos.
+        // ============================================================
+
+        // bpf_skc_to_tcp_timewait_sock(sock_common) -> tcp_timewait_sock_or_null.
+        // R0 typing for the timewait variant already wired in
+        // `update_call_types` alongside the other skc_to_* helpers.
+        constants::BPF_SKC_TO_TCP_TIMEWAIT_SOCK => CallProto::with_args([
+            PtrToBTFIdSockCommon, // R1: sock_common
+            DontCare, DontCare, DontCare, DontCare,
+        ]),
+
+        // bpf_seq_printf_btf(seq, btf_ptr, ptr_size, flags) -> int.
+        // Kernel proto (kernel/trace/bpf_trace.c bpf_seq_printf_btf_proto):
+        // arg1=PTR_TO_BTF_ID(seq_file), arg2=PTR_TO_MEM|MEM_RDONLY,
+        // arg3=CONST_SIZE_OR_ZERO, arg4=ANYTHING.
+        constants::BPF_SEQ_PRINTF_BTF => CallProto::with_args([
+            PtrToBtfIdNamed { type_name: "seq_file" }, // R1: seq
+            PtrToMem,                                  // R2: btf_ptr (rdonly)
+            ConstSizeOrZero,                           // R3: ptr_size
+            Anything,                                  // R4: flags
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::SEQ_WRITE)
+        .ret(RetKind::Scalar),
+
         _ => return None,
     })
 }

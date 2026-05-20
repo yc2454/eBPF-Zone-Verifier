@@ -200,6 +200,7 @@ pub const BPF_CGRP_STORAGE_DELETE: u32 = 211;
 // IDs match `__BPF_FUNC_MAPPER` in `include/uapi/linux/bpf.h` v6.18-rc4.
 pub const BPF_LOAD_HDR_OPT: u32 = 142;
 pub const BPF_SNPRINTF_BTF: u32 = 149;
+pub const BPF_SEQ_PRINTF_BTF: u32 = 150;
 pub const BPF_BPRM_OPTS_SET: u32 = 159;
 pub const BPF_IMA_INODE_HASH: u32 = 161;
 pub const BPF_SYS_BPF: u32 = 166;
