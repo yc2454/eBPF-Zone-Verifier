@@ -627,6 +627,10 @@ fn run_worklist(
             }
             info!("Pruned state at pc {}", state.pc);
             prune_count += 1;
+            // SCC: this DFS path is done (subsumed by a cached state).
+            // Decrement parent.branches up the chain; if a parent's
+            // branches hits 0 propagate its loop_entry to its parent.
+            env.complete_dfs_branch(state.parent_cache_id);
             continue;
         }
         if diag_hit {
@@ -718,6 +722,9 @@ fn run_worklist(
 
         // F. Transfer Function
         let diag_cur_pc = state.pc;
+        // SCC: save fields needed after `state` is moved into transfer.
+        let cur_dfs_depth = state.dfs_depth;
+        let cur_parent_cache_id = state.parent_cache_id;
         state.domain.set_current_pc(state.pc);
         let mut successors = transfer::transfer(env, state, instr);
         if diag_hit {
@@ -790,8 +797,15 @@ fn run_worklist(
         // Prioritize exit-path successors over loop-back successors.
         let mut loop_back = Vec::new();
         let mut other = Vec::new();
+        let succ_count = successors.len();
         for mut succ in successors.into_iter() {
             succ.history_idx = current_step_idx;
+            // SCC: child inherits its DFS depth from parent + 1, and its
+            // initial branches=1 (this one in-flight path through succ).
+            // The parent's branches gets bumped once per pushed successor
+            // below.
+            succ.dfs_depth = cur_dfs_depth.saturating_add(1);
+            succ.branches = 1;
             let is_loop_back = current_step_idx
                 .map(|idx| env.history.is_back_edge(idx, succ.pc, succ.num_frames()))
                 .unwrap_or(false);
@@ -800,6 +814,22 @@ fn run_worklist(
             } else {
                 other.push(succ);
             }
+        }
+        // SCC: bump parent.branches once per pushed successor (kernel
+        // `push_stack` L2045). state.parent_cache_id is the just-recorded
+        // cache_id at this pc (set at A.c above), so each successor is a
+        // new in-flight DFS path through it.
+        if succ_count > 0
+            && let Some(pcid) = cur_parent_cache_id
+            && let Some(&(ppc, pidx)) = env.cache_loc_by_id.get(&pcid)
+            && let Some(p) = env.explored_states.get_mut(&ppc).and_then(|v| v.get_mut(pidx))
+        {
+            p.branches = p.branches.saturating_add(succ_count as u32);
+        }
+        if succ_count == 0 {
+            // No successors (e.g. Exit): this DFS path terminated.
+            // Decrement parent chain analogously to the prune-hit path.
+            env.complete_dfs_branch(cur_parent_cache_id);
         }
         for succ in loop_back {
             worklist.push_back(succ);

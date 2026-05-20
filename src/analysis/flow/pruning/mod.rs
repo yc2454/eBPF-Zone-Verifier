@@ -115,7 +115,14 @@ fn handle_loop_pruning(
             if prev.children_unsafe {
                 continue;
             }
-            match state_subsumed_by(state, prev, live_regs, frame_live_slots, config) {
+            // SCC force_exact: prev is on the current DFS path iff its
+            // branches > 0 (cached but DFS through it not yet finished).
+            // The kernel uses `get_loop_entry(sl)->branches > 0`; the
+            // simpler "prev itself open" approximation captures the
+            // load-bearing case for loop-state-deps and avoids the
+            // multi-hop chain walk on the hot path.
+            let force_exact = prev.branches > 0;
+            match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     h = Some(i);
                     break;
@@ -140,6 +147,20 @@ fn handle_loop_pruning(
         // so the path's continuation tracks the same precision contract.
         if let Some(prev) = env.explored_states.get(&pc).and_then(|v| v.get(idx)).cloned() {
             env.propagate_precision(state, &prev);
+            // SCC: at a force_exact hit, propagate prev's loop_entry to
+            // cur (verifier.c L19178). cur is about to be pruned and
+            // complete_dfs_branch will walk up; carrying the loop_entry
+            // lets the propagation reach the parent chain. We also seed
+            // from prev's cache_id when prev itself is the entry.
+            if prev.branches > 0 {
+                let le = prev
+                    .cache_id
+                    .and_then(|cid| env.get_loop_entry(cid))
+                    .or(prev.cache_id);
+                if let Some(lcid) = le {
+                    env.update_loop_entry(state, lcid);
+                }
+            }
         }
         env.pruning_stats.loop_walks_pruned_via_convergence += 1;
         return true;
@@ -172,7 +193,8 @@ fn handle_standard_pruning(
             if prev.children_unsafe {
                 continue;
             }
-            match state_subsumed_by(state, prev, live_regs, frame_live_slots, config) {
+            let force_exact = prev.branches > 0;
+            match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     hit_idx = Some(i);
                     break;
@@ -325,7 +347,23 @@ pub fn should_prune(
     // verifier-divergent infinite loops (the conditional_loop /
     // infinite_loop_* / mov64sx_s32_varoff_1 family) while avoiding
     // the cilium FR-regression.
+    // Additionally skip when ANY frame has an active iterator: the kernel
+    // gates iter-loop convergence on `iter_active_depths_differ` + SCC
+    // (`loop_entry` / `dfs_depth` / `branches`, verifier.c L1885+). zovia
+    // tracks depth-differ but not SCC, so at body pcs inside an iter
+    // loop where the depth has stabilized (legit pruning iteration), the
+    // EXACT check fires on byte-identical body states that the kernel
+    // distinguishes via SCC's per-state `branches` count. Skipping at
+    // any-active-iter avoids the false-reject regression on
+    // verifier_bits_iter.c::max_words and the like; iter_next sites
+    // themselves are already covered by `is_inf_loop_skip_pc` for the
+    // kernel's `is_iter_next_insn` short-circuit.
+    let any_active_iter = state
+        .frames
+        .iter()
+        .any(|f| f.stack.has_active_iterators());
     if in_loop
+        && !any_active_iter
         && pc < prog.instrs.len()
         && let Some(prev_states) = env.explored_states.get(&pc).cloned()
         && !is_inf_loop_skip_pc(prog, pc)
@@ -483,7 +521,11 @@ fn may_goto_range_within_prune(
         // they would inflate the "stack" / "tnum" buckets with the
         // precision-stripped clone's behaviour, which isn't the same
         // as the standard subsumption pipeline we're trying to measure.
-        if state_subsumed_by(&relaxed, prev, live_regs, frame_live_slots, config).is_ok() {
+        // may_goto RANGE_WITHIN prune class explicitly relaxes precision;
+        // pass force_exact=false so domain_subsumed_by keeps its NOT_EXACT
+        // semantics for non-precise regs (the relaxed clone has cleared
+        // precise_regs anyway).
+        if state_subsumed_by(&relaxed, prev, live_regs, frame_live_slots, config, false).is_ok() {
             return true;
         }
     }

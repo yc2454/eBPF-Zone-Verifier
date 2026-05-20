@@ -118,6 +118,27 @@ pub struct State {
     /// `handle_*_pruning`. Set by `mark_path_children_unsafe`.
     pub children_unsafe: bool,
 
+    /// SCC bookkeeping — mirror of kernel `bpf_verifier_state.{dfs_depth,
+    /// branches, loop_entry}` (verifier.c v6.15 L1675+, L1885+). Drives
+    /// the `force_exact` gate in `is_state_visited` that decides whether
+    /// subsumption uses RANGE_WITHIN (strict, inside an open SCC) or
+    /// NOT_EXACT (lax, outside). Without this gate, zovia silently
+    /// subsumes iter-loop body states whose `r6=0` vs `r6=1` would force
+    /// the kernel to explore both, masking the deps2-family soundness
+    /// FAs.
+    ///
+    /// `dfs_depth`: state's DFS depth. Successors inherit parent's +1.
+    /// `branches`: count of in-flight DFS children through this cached
+    /// state. Bumped on each successor push, decremented when a child's
+    /// DFS terminates (pruned/exit/reject). 0 ⇒ all DFS through this
+    /// state finished.
+    /// `loop_entry_cache_id`: cache_id of the outermost loop-header
+    /// ancestor on the current DFS path, set by `update_loop_entry` at
+    /// back-edges or via `update_branch_counts` propagation.
+    pub dfs_depth: u32,
+    pub branches: u32,
+    pub loop_entry_cache_id: Option<u32>,
+
     pub tnums: HashMap<Reg, Tnum>, // tnum info for R0-R10
 
     /// Identity tokens for scalar values. Two registers (or a register and
@@ -302,6 +323,9 @@ impl State {
             parent_cache_id: None,
             cache_id: None,
             children_unsafe: false,
+            dfs_depth: 0,
+            branches: 0,
+            loop_entry_cache_id: None,
             tnums: tnums.clone(),
             scalar_ids: HashMap::new(),
             precise_regs: HashSet::new(),

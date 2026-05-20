@@ -139,6 +139,7 @@ pub(super) fn state_subsumed_by(
     live_regs: &HashSet<Reg>,
     frame_live_slots: &[Option<HashSet<i16>>],
     config: &VerifierConfig,
+    force_exact: bool,
 ) -> Result<(), SubsumptionMissReason> {
     // Order matters for instrumentation: the *first* rejecting check
     // is what we record, so cheaper / more-fundamental checks come
@@ -167,7 +168,7 @@ pub(super) fn state_subsumed_by(
         return Err(SubsumptionMissReason::Types);
     }
     if !config.skip_dbm_check
-        && !domain_subsumed_by(&cur.domain, &old.domain, live_regs, &old.precise_regs)
+        && !domain_subsumed_by(&cur.domain, &old.domain, live_regs, &old.precise_regs, force_exact)
     {
         return Err(SubsumptionMissReason::Domain);
     }
@@ -245,6 +246,7 @@ pub(super) fn state_subsumed_by(
                 &old_frame.caller_domain,
                 &saved,
                 &HashSet::new(),
+                false,
             )
         {
             return Err(SubsumptionMissReason::CallerFrame);
@@ -573,13 +575,23 @@ fn domain_subsumed_by(
     old: &NumericDomain,
     live_regs: &HashSet<Reg>,
     precise: &HashSet<Reg>,
+    force_exact: bool,
 ) -> bool {
     // Kernel `regsafe` rule (verifier.c v6.15 L18357 / L18387):
     //   - precise → range_within (old ⊇ cur)
-    //   - !precise → accept (kernel doesn't compare imprecise scalars
-    //     across cur/old at all).
+    //   - !precise → accept under NOT_EXACT (kernel doesn't compare
+    //     imprecise scalars across cur/old at all).
+    //   - !precise under RANGE_WITHIN (force_exact=true, we're inside
+    //     an open SCC): kernel still checks range_within — the SCC's
+    //     soundness depends on each iteration's state being covered,
+    //     even for non-precise regs (verifier.c L18313 — the early-
+    //     return on `!rold->precise && exact == NOT_EXACT` doesn't
+    //     fire when exact != NOT_EXACT). This is the gate that fixes
+    //     iters.c::loop_state_deps2: visit-2 with `r6=1` doesn't get
+    //     subsumed by visit-1's `r6=0` once the inner-iter SCC is
+    //     still open.
     for &r in live_regs {
-        if !precise.contains(&r) {
+        if !precise.contains(&r) && !force_exact {
             continue;
         }
         let (old_min, old_max) = old.get_interval(r);

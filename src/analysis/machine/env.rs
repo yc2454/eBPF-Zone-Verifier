@@ -528,6 +528,125 @@ impl<'a> VerifierEnv<'a> {
         }
     }
 
+    /// Read a cached state's (branches, dfs_depth, loop_entry_cache_id)
+    /// without holding a borrow on env.explored_states. Returns None if
+    /// the cache_id has been evicted.
+    fn cached_scc_info(&self, cid: u32) -> Option<(u32, u32, Option<u32>)> {
+        let &(pc, idx) = self.cache_loc_by_id.get(&cid)?;
+        let st = self.explored_states.get(&pc)?.get(idx)?;
+        Some((st.branches, st.dfs_depth, st.loop_entry_cache_id))
+    }
+
+    /// Mirror of kernel `get_loop_entry` (verifier.c v6.15 L1919). Walks
+    /// the loop_entry chain to the OUTERMOST loop entry. Returns the
+    /// final cache_id (or `None` if `start` has no loop_entry).
+    pub fn get_loop_entry(&self, start_cache_id: u32) -> Option<u32> {
+        let (_, _, mut le) = self.cached_scc_info(start_cache_id)?;
+        let mut steps: u32 = 0;
+        while let Some(cid) = le {
+            // Defensive bound: walks deeper than max plausible DFS depth
+            // indicate a cycle in the loop_entry chain (a bug).
+            steps += 1;
+            if steps > 4096 {
+                break;
+            }
+            match self.cached_scc_info(cid) {
+                Some((_, _, Some(next))) => le = Some(next),
+                _ => return Some(cid),
+            }
+        }
+        // Edge: start had loop_entry=Some(cid) but that cid had no entry
+        // → outermost was `cid`.
+        self.cached_scc_info(start_cache_id)
+            .and_then(|(_, _, le)| le)
+    }
+
+    /// Mirror of kernel `update_loop_entry` (verifier.c v6.15 L1934).
+    /// If `hdr_cache_id`'s branches > 0 (hdr's DFS is still open / hdr is
+    /// on the current DFS path) AND hdr's dfs_depth is less than
+    /// `cur`'s effective loop_entry depth, set cur.loop_entry = hdr.
+    /// `cur` here is a worklist state (not yet cached), so we mutate it
+    /// directly.
+    pub fn update_loop_entry(&self, cur: &mut State, hdr_cache_id: u32) {
+        let Some((hdr_br, hdr_depth, _)) = self.cached_scc_info(hdr_cache_id) else {
+            return;
+        };
+        if hdr_br == 0 {
+            return;
+        }
+        // Effective depth: cur.loop_entry's depth if set, else cur's own.
+        let cur_eff_depth = match cur.loop_entry_cache_id {
+            Some(le_cid) => self
+                .cached_scc_info(le_cid)
+                .map(|(_, d, _)| d)
+                .unwrap_or(cur.dfs_depth),
+            None => cur.dfs_depth,
+        };
+        if hdr_depth < cur_eff_depth {
+            cur.loop_entry_cache_id = Some(hdr_cache_id);
+        }
+    }
+
+    /// Decrement-and-walk on `parent_cache_id` lineage: mirrors kernel
+    /// `update_branch_counts` (verifier.c L1955). Called when a worklist
+    /// state's DFS exploration terminates (pruned/exit/reject/forked).
+    /// `start_cache_id` is the parent_cache_id of the completing state.
+    /// At each cached parent:
+    /// - branches -= 1
+    /// - if branches becomes 0 AND this state has a loop_entry, propagate
+    ///   it to the grandparent via update_loop_entry
+    /// - if branches > 0, stop (other DFS paths through parent still open)
+    /// - else continue walking up
+    pub fn complete_dfs_branch(&mut self, start_cache_id: Option<u32>) {
+        let mut next = start_cache_id;
+        let mut budget: u32 = 16_384;
+        while let Some(cid) = next {
+            if budget == 0 {
+                break;
+            }
+            budget -= 1;
+            let Some(&(pc, idx)) = self.cache_loc_by_id.get(&cid) else {
+                break;
+            };
+            let Some(st) = self.explored_states.get_mut(&pc).and_then(|v| v.get_mut(idx)) else {
+                break;
+            };
+            if st.branches > 0 {
+                st.branches -= 1;
+            }
+            let still_open = st.branches > 0;
+            let st_parent = st.parent_cache_id;
+            let st_loop_entry = st.loop_entry_cache_id;
+            if still_open {
+                // Other DFS paths through this parent still open ⇒ stop.
+                // Still propagate the loop_entry hint if applicable.
+                if let (Some(le), Some(parent_cid)) = (st_loop_entry, st_parent) {
+                    // Read le's info first (immutable borrow), then mutate
+                    // parent record. Cloning the &(ppc,pidx) tuple makes
+                    // the lookup borrow short.
+                    let hdr_info = self.cached_scc_info(le);
+                    let parent_loc = self.cache_loc_by_id.get(&parent_cid).copied();
+                    if let (Some((hbr, hd, _)), Some((ppc, pidx))) = (hdr_info, parent_loc)
+                        && let Some(p) = self
+                            .explored_states
+                            .get_mut(&ppc)
+                            .and_then(|v| v.get_mut(pidx))
+                    {
+                        let p_eff_depth = match p.loop_entry_cache_id {
+                            Some(_) => p.dfs_depth, // approximation; chain-walk skipped to avoid re-borrow
+                            None => p.dfs_depth,
+                        };
+                        if hbr > 0 && hd < p_eff_depth {
+                            p.loop_entry_cache_id = Some(le);
+                        }
+                    }
+                }
+                break;
+            }
+            next = st_parent;
+        }
+    }
+
     /// Mirror of kernel `bcf_refine`'s parent-marking
     /// (verifier.c:24580-81: `for i in 0..vstate_cnt-1:
     /// parents[i]->children_unsafe = true`). After a path-unreachable

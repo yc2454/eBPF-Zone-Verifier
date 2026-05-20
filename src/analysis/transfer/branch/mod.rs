@@ -274,11 +274,14 @@ pub(crate) fn transfer_if(
         // marking the conditional reg precise causes precision blow-up
         // on bits_iter / iter_nested_deeply_iters.
         let back_edge_imm = matches!(right, Operand::Imm(_)) && target < state.pc;
-        let in_iter_loop = state
-            .frames
-            .iter()
-            .any(|f| f.stack.has_active_iterators());
-        let fire = static_resolves || (back_edge_imm && !in_iter_loop);
+        // Previously gated on `!in_iter_loop` to dodge precision-mark
+        // blow-up on bits_iter / iter_nested_deeply_iters. With SCC
+        // bookkeeping (`State.branches/dfs_depth/loop_entry_cache_id`)
+        // and `force_exact` subsumption gating, iter-loop convergence
+        // now uses RANGE_WITHIN strictness while open — kernel-faithful,
+        // and the precision marks INSIDE iter loops are needed for the
+        // RANGE_WITHIN check to distinguish iterations (loop_state_deps1/2).
+        let fire = static_resolves || back_edge_imm;
         if fire {
             let pcid = state.parent_cache_id;
             env.mark_chain_precision_backward(hidx, pcid, left);
