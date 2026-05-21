@@ -351,9 +351,27 @@ pub fn should_prune(
 
     let in_loop = is_at_loop_point(env, state, pc, prog);
 
+    // iter_next call sites are virtual loop heads: the kernel's
+    // is_state_visited runs the RANGE_WITHIN + active-iter check at
+    // the iter_next CALL pc (verifier.c v6.15 L19078-L19101), and the
+    // cached state at this pc is the convergence target for the loop.
+    // Mirror that by NOT shortcut-skipping on `is_on_path && !in_loop`
+    // when this pc is a force-checkpointed Call (force_checkpoint at
+    // a Call instruction = iter_next or sync-callback helper site).
+    // Without this, under ZOVIA_KERNEL_ENGINE=1's sparse caching the
+    // iter loop's back-edge target (a body pc) isn't cached, the
+    // iter_next call site IS cached but pruning short-circuits via
+    // on_path → bpf_iter_num loops never converge → timeout.
+    let pc_is_iter_next_call = matches!(prog.instrs.get(pc), Some(Instr::Call { .. }))
+        && env
+            .insn_aux_data
+            .get(pc)
+            .map(|a| a.force_checkpoint)
+            .unwrap_or(false);
+
     // Re-entry to a PC from a different depth (e.g. repeated call in a loop).
     // Must continue to reach the actual loop back-edge.
-    if is_on_path && !in_loop {
+    if is_on_path && !in_loop && !pc_is_iter_next_call {
         env.pruning_stats.on_path_skip += 1;
         return false;
     }
