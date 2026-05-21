@@ -736,26 +736,16 @@ impl<'a> VerifierEnv<'a> {
             })
             .collect();
 
-        // Mutate. Conservative variant: STACK SLOTS ONLY (skip reg
-        // cleanup). The kernel `clean_func_state` also resets dead
-        // regs to NOT_INIT, but doing so in zovia introduced a soundness
-        // FA on `verifier_search_pruning.c::tracking_for_u32_spill_fill`
-        // (PASS→FALSE_ACCEPT). Hypothesis: zovia's static MAY-liveness
-        // marks a register dead at a join PC where the kernel's
-        // per-path liveness keeps it live (the kernel propagates
-        // through the SCC `propagate_backedges` fixpoint, which
-        // zovia's static analysis doesn't fully mirror); cleaning the
-        // reg makes the cached `NotInit` subsume any cur via the
-        // `(NotInit, _) => true` rule in `type_subsumed_by`, dropping
-        // a path that would otherwise have rejected.
+        // Mutate. Full clean (kernel `clean_func_state` faithful):
+        // both stack slots AND register state. Per-frame live_regs /
+        // live_slots comes from static MAY-liveness (matches the
+        // kernel's `live_regs_before`).
         //
-        // Stack-slot cleaning is the dominant contributor to looser
-        // subsumption anyway (slots dominate the state's shape), and
-        // is sound here because stack slots in zovia don't have the
-        // same "NotInit subsumes anything" rule baked into the
-        // pruning path. Reg cleaning can revisit once we've ported
-        // the kernel's per-path liveness fidelity.
+        // ITER/DYNPTR/IRQ stack slots are NEVER cleaned — they carry
+        // semantic side effects beyond read-liveness. Kernel
+        // `bpf_stack_slot_alive` has analogous exemptions.
         use crate::analysis::machine::frame_stack::FrameLevel;
+        use crate::analysis::machine::reg_types::RegType;
         let Some(st) = self
             .explored_states
             .get_mut(&pc)
@@ -763,19 +753,30 @@ impl<'a> VerifierEnv<'a> {
         else {
             return;
         };
-        for (i, (_live_regs, live_slots)) in frame_live.iter().enumerate() {
+        let n_frames = st.frames.depth();
+        // Snapshot slot_anchored BEFORE any slot cleaning (subsequent
+        // per-frame loop drops dead slots).
+        let mut slot_anchored: std::collections::HashSet<Reg> = std::collections::HashSet::new();
+        for fi in 0..n_frames {
+            let frame = st.frames.get(FrameLevel::from_index(fi));
+            for off in frame.stack.slot_offsets() {
+                if let Some(slot) = frame.stack.get_slot(off)
+                    && let Some(src) = slot.source_reg
+                {
+                    slot_anchored.insert(src);
+                }
+            }
+        }
+        for (i, (live_regs, live_slots)) in frame_live.iter().enumerate() {
             let level = FrameLevel::from_index(i);
             let frame = st.frames.get_mut(level);
+            // Slot clean.
             let off_to_clean: Vec<i16> = frame
                 .stack
                 .slot_offsets()
                 .into_iter()
                 .filter(|off| !live_slots.contains(off))
                 .filter(|&off| {
-                    // Don't clean slots with iterator / dynptr / irq
-                    // state — those carry semantic side effects beyond
-                    // read-liveness. Kernel `bpf_stack_slot_alive`
-                    // similarly preserves these.
                     if let Some(slot) = frame.stack.get_slot(off) {
                         slot.iterator.is_none()
                             && slot.dynptr.is_none()
@@ -788,7 +789,60 @@ impl<'a> VerifierEnv<'a> {
             for off in off_to_clean {
                 frame.stack.slots.remove(&off);
             }
+            // Caller-frame reg snapshot clean (only for non-innermost
+            // frames; innermost frame's regs live in top-level
+            // st.types, handled below).
+            if i + 1 < n_frames {
+                for r in Reg::ALL {
+                    if r == Reg::R10 || r == Reg::Zero {
+                        continue;
+                    }
+                    if !live_regs.contains(&r) {
+                        frame.caller_types.set(r, RegType::NotInit);
+                    }
+                }
+            }
         }
+        // Innermost frame: regs in st.types. Don't clean a reg whose
+        // value is currently anchored to a spilled scalar slot via
+        // `source_reg` — the spill/fill chain depends on the reg's
+        // value being recoverable from the slot, and the kernel's
+        // `clean_func_state` is sound here only because
+        // `bpf_live_stack_query_init` propagates per-path read marks
+        // we don't yet mirror. Carve-out preserves
+        // `tracking_for_u32_spill_fill`-style soundness without
+        // requiring the full per-path liveness port.
+        let inner_live = frame_live
+            .last()
+            .map(|(r, _)| r.clone())
+            .unwrap_or_default();
+        for r in Reg::ALL {
+            if r == Reg::R10 || r == Reg::Zero {
+                continue;
+            }
+            if !inner_live.contains(&r) && !slot_anchored.contains(&r) {
+                st.types.set(r, RegType::NotInit);
+                st.tnums.remove(&r);
+                st.scalar_ids.remove(&r);
+                st.precise_regs.remove(&r);
+            }
+        }
+        // Audit dump (ZOVIA_DUMP_CLEAN=1): which regs got reset to
+        // NotInit at this cached state's pc. Used to diagnose
+        // tracking_for_u32_spill_fill-style FAs where the static
+        // MAY-liveness incorrectly marks a reg dead.
+        if std::env::var("ZOVIA_DUMP_CLEAN").ok().as_deref() == Some("1") {
+            let cleaned_regs: Vec<usize> = (0..10)
+                .filter(|i| !inner_live.iter().any(|r| {
+                    crate::analysis::machine::reg::reg_to_index(*r) == Some(*i)
+                }))
+                .collect();
+            eprintln!(
+                "[clean] pc={} cid={} cleaned_innermost_regs={:?} (live_regs={:?})",
+                pc, cid, cleaned_regs, inner_live
+            );
+        }
+
         st.cleaned = true;
     }
 
