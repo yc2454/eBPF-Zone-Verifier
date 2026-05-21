@@ -17,7 +17,7 @@ use crate::pcc::{
 use log::{debug, error, info};
 use std::collections::{HashMap, VecDeque};
 
-use self::flow::{cfg, liveness, merging, pruning, subprog};
+use self::flow::{cfg, liveness, merging, pruning, scc, subprog};
 use self::machine::context::ExecContext;
 use self::machine::env::VerifierEnv;
 use self::machine::reg_types::RegType;
@@ -153,6 +153,14 @@ pub fn analyze_program_full(
 
     // Compute liveness information for all registers.
     liveness::compute_liveness(prog, &mut env);
+
+    // Compute SCCs over the CFG. Annotates `insn_aux_data[pc].scc_id`
+    // (1+ for multi-vertex SCCs / singletons-with-self-edge, 0
+    // otherwise — kernel convention from `compute_scc`,
+    // verifier.c v6.15 L25809). Read by `maybe_enter_scc` /
+    // `maybe_exit_scc` / `add_scc_backedge` / `incomplete_read_marks`
+    // to drive SCC-scoped backedge precision propagation.
+    scc::compute_scc(prog, &mut env);
 
     // 2. Initialize Entry State based on domain mode
     let pcc_mode = config.certificate_output.is_some()

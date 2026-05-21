@@ -24,6 +24,14 @@ pub struct InsnAuxData {
     /// (bpf_loop / bpf_for_each_map_elem / bpf_user_ringbuf_drain),
     /// and may_goto instructions.
     pub force_checkpoint: bool,
+    /// Kernel `insn_aux_data[i].scc` (verifier.c v6.15 ~L25775). SCC
+    /// identifier (1+) assigned by Tarjan's algorithm in compute_scc;
+    /// 0 means the insn is a singleton SCC without self-edge
+    /// (kernel convention — "not in SCC" for the purposes of
+    /// `bpf_scc_callchain`). Read by maybe_enter_scc /
+    /// maybe_exit_scc / add_scc_backedge / incomplete_read_marks
+    /// to identify SCC membership for `propagate_backedges`.
+    pub scc_id: u32,
 }
 
 /// per-cached-state hit/miss counters for explored-states
