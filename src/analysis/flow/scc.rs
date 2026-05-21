@@ -187,3 +187,104 @@ fn successors(prog: &Program, pc: usize) -> Vec<usize> {
 // above — keep the import name in scope for future expansions.
 #[allow(dead_code)]
 fn _operand_anchor(_: &Operand) {}
+
+// ════════════════════════════════════════════════════════════════════
+//  SCC visit lifecycle — mirror of kernel bpf_scc_callchain /
+//  bpf_scc_visit / bpf_scc_backedge (include/linux/bpf_verifier.h
+//  L703-L725, verifier.c L2142-L2351).
+// ════════════════════════════════════════════════════════════════════
+
+use crate::analysis::machine::frame_stack::FrameLevel;
+use crate::analysis::machine::state::State;
+use std::collections::HashMap;
+
+/// Mirror of kernel `bpf_scc_callchain`: a tuple of (outer-frame
+/// callsites, SCC id of the innermost SCC-bearing frame). Two states
+/// with the same callchain belong to the same SCC visit instance.
+///
+/// `callsites[i]` is the call-instruction pc of frame i (frames are
+/// numbered from outermost = 0 to innermost = curframe). For the
+/// frame whose pc is in an SCC, no callsite is recorded — we stop
+/// there and record `scc_id` instead. If no frame's pc is in an SCC,
+/// `compute_scc_callchain` returns `None` (the state is not in any SCC).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SccCallchain {
+    pub callsites: Vec<usize>,
+    pub scc_id: u32,
+}
+
+/// Mirror of kernel `bpf_scc_backedge`: a cur-state snapshot saved at
+/// the moment of a RANGE_WITHIN convergence hit, plus the cache_id of
+/// the cached state that subsumed it (`equal_state` in kernel terms).
+/// Stored on the SCC visit's backedges list; consumed by
+/// `propagate_backedges` at SCC exit to bring precision marks to
+/// fixpoint along the convergence cycle.
+#[derive(Clone, Debug)]
+pub struct SccBackedge {
+    pub state: State,
+    pub equal_state_cache_id: u32,
+    pub insn_idx: usize,
+}
+
+/// Mirror of kernel `bpf_scc_visit`. One per (callchain) seen during a
+/// verification run. `entry_state_cache_id` is the cache_id of the
+/// FIRST state on the current verification path that entered this
+/// SCC's visit instance — when that state's DFS subtree completes
+/// (`branches → 0` in `complete_dfs_branch`), the visit exits and
+/// `propagate_backedges` fires.
+#[derive(Clone, Debug, Default)]
+pub struct SccVisit {
+    pub entry_state_cache_id: Option<u32>,
+    pub backedges: Vec<SccBackedge>,
+}
+
+/// Compute the SCC callchain for a state. Returns `None` if no frame's
+/// pc is in any SCC.
+///
+/// Walks frames outermost-to-innermost. For each frame i:
+///   * Frame ip = innermost frame uses `state.pc`; caller frames use
+///     the next-inner frame's `return_pc - 1` (the call insn pc).
+///   * If `insn_aux_data[ip].scc_id != 0`, this is the SCC-bearing
+///     frame; record its scc_id and stop.
+///   * Otherwise, if it's not the innermost frame, record the
+///     callsite and continue outward.
+///   * If we reach the innermost frame without finding any SCC,
+///     return None (state not in any SCC).
+pub fn compute_scc_callchain(
+    state: &State,
+    insn_aux_data: &[crate::analysis::machine::env::InsnAuxData],
+) -> Option<SccCallchain> {
+    let n = state.frames.depth();
+    let mut callsites: Vec<usize> = Vec::with_capacity(n.saturating_sub(1));
+    for i in 0..n {
+        let insn_idx = if i + 1 == n {
+            state.pc
+        } else {
+            // Callsite of frame i = the call insn that pushed frame
+            // i+1. zovia stores `return_pc` (= callsite + 1) on the
+            // next-inner frame; recover the callsite by subtracting 1.
+            let next = state.frames.get(FrameLevel::from_index(i + 1));
+            next.return_pc.saturating_sub(1)
+        };
+        let scc_id = insn_aux_data
+            .get(insn_idx)
+            .map(|a| a.scc_id)
+            .unwrap_or(0);
+        if scc_id != 0 {
+            return Some(SccCallchain {
+                callsites,
+                scc_id,
+            });
+        } else if i + 1 < n {
+            callsites.push(insn_idx);
+        } else {
+            return None;
+        }
+    }
+    None
+}
+
+/// Map keyed by `SccCallchain`, storing per-visit state. Lives on
+/// `VerifierEnv.scc_visits`. Allocated lazily on first
+/// `maybe_enter_scc` for a callchain.
+pub type SccVisitMap = HashMap<SccCallchain, SccVisit>;

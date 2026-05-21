@@ -219,6 +219,24 @@ pub fn record_state(
         flush(cur_pc, &row);
     }
 
+    // Kernel `maybe_enter_scc` (verifier.c v6.15 L20592 — called from
+    // is_state_visited right after `kzalloc` for a new state list
+    // entry). Ensures a `SccVisit` exists for the new cached state's
+    // callchain and records this state as the visit's entry if it's
+    // the first to reach it on the current path.
+    //
+    // Read the cached state back to compute its callchain (we just
+    // pushed it; the snapshot it points to is the cached form, post
+    // mark_all_scalars_imprecise).
+    if let Some(cached) = env
+        .explored_states
+        .get(&pc)
+        .and_then(|v| v.iter().find(|s| s.cache_id == Some(cache_id)))
+        .cloned()
+    {
+        env.maybe_enter_scc(&cached, cache_id);
+    }
+
     cache_id
 }
 

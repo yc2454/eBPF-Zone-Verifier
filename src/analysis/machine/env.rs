@@ -307,6 +307,20 @@ pub struct VerifierEnv<'a> {
     /// site via the cached `scalar_ids` map: the widener checks the
     /// reg's id against all regs in cur/prev that share that id.
     pub precise_pcs: HashSet<(usize, Reg)>,
+
+    /// Mirror of kernel `env->scc_info` / per-callchain `bpf_scc_visit`
+    /// (verifier.c v6.15 ~L2165, include/linux/bpf_verifier.h L717).
+    /// Keyed by `SccCallchain`: callsites of outer frames + scc_id of
+    /// the innermost SCC-bearing frame. Lifecycle:
+    ///   * `maybe_enter_scc` (called on each cache event) populates
+    ///     the visit and records the FIRST cur cache_id as
+    ///     `entry_state_cache_id` if not yet set.
+    ///   * `add_scc_backedge` (called from handle_loop_pruning on a
+    ///     RANGE_WITHIN hit) appends backedge snapshots.
+    ///   * `maybe_exit_scc` (called from complete_dfs_branch when the
+    ///     entry state's branches → 0) drains backedges into
+    ///     propagate_backedges and clears `entry_state_cache_id`.
+    pub scc_visits: crate::analysis::flow::scc::SccVisitMap,
 }
 
 impl<'a> VerifierEnv<'a> {
@@ -337,6 +351,7 @@ impl<'a> VerifierEnv<'a> {
             next_cache_id: 0,
             cache_loc_by_id: HashMap::new(),
             precise_pcs: HashSet::new(),
+            scc_visits: crate::analysis::flow::scc::SccVisitMap::new(),
             bcf_proofs: Vec::new(),
             bcf_size_reg: None,
             bcf_path_unreachable: false,
@@ -548,6 +563,70 @@ impl<'a> VerifierEnv<'a> {
         }
     }
 
+    /// Mirror of kernel `maybe_enter_scc` (verifier.c v6.15 L2228).
+    /// Called on every cache event (right after `record_state` mints
+    /// a new cache_id). If the new state's frame chain leads into an
+    /// SCC, ensure a `SccVisit` entry exists for its callchain; if
+    /// the visit is fresh (no entry_state recorded yet), assign
+    /// `entry_state_cache_id = cid` so we know which cached state to
+    /// pair with `maybe_exit_scc` when its DFS subtree drains.
+    pub fn maybe_enter_scc(&mut self, state: &State, cid: u32) {
+        let Some(callchain) =
+            crate::analysis::flow::scc::compute_scc_callchain(state, &self.insn_aux_data)
+        else {
+            return;
+        };
+        let visit = self.scc_visits.entry(callchain).or_default();
+        if visit.entry_state_cache_id.is_none() {
+            visit.entry_state_cache_id = Some(cid);
+        }
+    }
+
+    /// Mirror of kernel `maybe_exit_scc` (verifier.c v6.15 L2253).
+    /// Called from `complete_dfs_branch` when a cached state's
+    /// `branches` first hits 0. If that state was the SCC visit's
+    /// `entry_state`, the visit is now done — flush backedges via
+    /// `propagate_backedges` (landed in step 3) and clear
+    /// `entry_state_cache_id` so a later re-entry creates a fresh
+    /// visit.
+    ///
+    /// For step 2 (current): the data structures are in place but the
+    /// backedges list is always empty (no collection yet) and
+    /// propagate_backedges is a no-op. Wiring is here so step 3 can
+    /// plug in the fixpoint without re-doing the lifecycle.
+    pub fn maybe_exit_scc(&mut self, cid: u32) {
+        // Identify the callchain belonging to `cid`'s cached state.
+        let Some(&(pc, idx)) = self.cache_loc_by_id.get(&cid) else {
+            return;
+        };
+        // Snapshot the State so we can compute the callchain without
+        // holding a long mutable borrow.
+        let state_snapshot = match self
+            .explored_states
+            .get(&pc)
+            .and_then(|v| v.get(idx))
+        {
+            Some(s) => s.clone(),
+            None => return,
+        };
+        let Some(callchain) =
+            crate::analysis::flow::scc::compute_scc_callchain(&state_snapshot, &self.insn_aux_data)
+        else {
+            return;
+        };
+        let Some(visit) = self.scc_visits.get_mut(&callchain) else {
+            return;
+        };
+        if visit.entry_state_cache_id != Some(cid) {
+            // This state isn't the SCC visit's entry; nothing to do.
+            return;
+        }
+        // Step 3 will run propagate_backedges here. For now just
+        // clear the visit so re-entry into the same SCC starts fresh.
+        visit.backedges.clear();
+        visit.entry_state_cache_id = None;
+    }
+
     /// Read a cached state's (branches, dfs_depth, loop_entry_cache_id)
     /// without holding a borrow on env.explored_states. Returns None if
     /// the cache_id has been evicted.
@@ -644,6 +723,14 @@ impl<'a> VerifierEnv<'a> {
                 // state to drop dead regs / dead stack slots, making
                 // future subsumption against it looser.
                 self.clean_verifier_state(cid);
+                // Kernel `maybe_exit_scc` (verifier.c L2253, called
+                // from update_branch_counts when branches→0): if this
+                // cached state is the entry of an SCC visit, the
+                // visit is now done — propagate_backedges fires and
+                // the visit is reset. Step 2 (current): backedges
+                // list is empty; this is a no-op. Step 3 wires
+                // propagate_backedges into maybe_exit_scc proper.
+                self.maybe_exit_scc(cid);
             }
             if still_open {
                 // Other DFS paths through this parent still open ⇒ stop.
