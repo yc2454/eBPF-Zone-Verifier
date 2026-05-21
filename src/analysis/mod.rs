@@ -732,7 +732,7 @@ fn run_worklist(
         let kernel_engine =
             std::env::var("ZOVIA_KERNEL_ENGINE").ok().as_deref() == Some("1");
         let at_prune_point = pruning::widening::is_prune_point(env, state.pc);
-        let force_new_state = env
+        let insn_aux_force = env
             .insn_aux_data
             .get(state.pc)
             .map(|a| a.force_checkpoint)
@@ -743,6 +743,12 @@ fn run_worklist(
         let insns_delta = state
             .path_insn_count
             .saturating_sub(state.prev_insn_at_cache);
+        // Kernel L18998-L19000: `force_new_state` includes the
+        // long-history safety valve `cur->insn_hist_end -
+        // cur->insn_hist_start > 40`. Without it, long no-jump
+        // stretches starve the heuristic and the cache is sparser
+        // than the kernel's, producing parent-chain shape mismatches.
+        let force_new_state = insn_aux_force || insns_delta > 40;
         let outer_gate = !kernel_engine || at_prune_point;
         let add_new_state = !kernel_engine
             || force_new_state
