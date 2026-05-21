@@ -594,16 +594,59 @@ fn domain_subsumed_by(
         if !precise.contains(&r) && !force_exact {
             continue;
         }
-        let (old_min, old_max) = old.get_interval(r);
-        let (cur_min, cur_max) = cur.get_interval(r);
-        if !(old_min <= cur_min && old_max >= cur_max) {
+        // Kernel `range_within` (verifier.c v6.15 L19360): all 8
+        // dimensions of cur must be contained in old's. Tighter than
+        // checking only signed 64-bit. The 32-bit halves help when
+        // upstream transfers tracked them precisely
+        // (sync_bounds-aware ops like apply_add); for ops that haven't
+        // been wired yet, the 32-bit halves stay at full range and
+        // the corresponding dim is automatically vacuous (old is
+        // full ⇒ contains anything).
+        let (old_smin, old_smax) = old.get_interval(r);
+        let (cur_smin, cur_smax) = cur.get_interval(r);
+        if !(old_smin <= cur_smin && old_smax >= cur_smax) {
             if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
                 eprintln!(
-                    "[domain_miss] reg={:?} precise old=[{},{}] cur=[{},{}]",
-                    r, old_min, old_max, cur_min, cur_max
+                    "[domain_miss] reg={:?} precise s64 old=[{},{}] cur=[{},{}]",
+                    r, old_smin, old_smax, cur_smin, cur_smax
                 );
             }
             return false;
+        }
+        // The 64-bit unsigned + 32-bit halves are only meaningful in
+        // interval mode (Zone mode's bounds live elsewhere). Skip
+        // the extra checks for Zone mode to preserve its existing
+        // behavior — the 8-bound probe is interval-mode-only.
+        if let (NumericDomain::Interval(old_ivl), NumericDomain::Interval(cur_ivl)) = (old, cur) {
+            let ob = old_ivl.get_bounds(r);
+            let cb = cur_ivl.get_bounds(r);
+            if !(ob.umin <= cb.umin && ob.umax >= cb.umax) {
+                if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
+                    eprintln!(
+                        "[domain_miss] reg={:?} precise u64 old=[{},{}] cur=[{},{}]",
+                        r, ob.umin, ob.umax, cb.umin, cb.umax
+                    );
+                }
+                return false;
+            }
+            if !(ob.s32_min <= cb.s32_min && ob.s32_max >= cb.s32_max) {
+                if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
+                    eprintln!(
+                        "[domain_miss] reg={:?} precise s32 old=[{},{}] cur=[{},{}]",
+                        r, ob.s32_min, ob.s32_max, cb.s32_min, cb.s32_max
+                    );
+                }
+                return false;
+            }
+            if !(ob.u32_min <= cb.u32_min && ob.u32_max >= cb.u32_max) {
+                if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
+                    eprintln!(
+                        "[domain_miss] reg={:?} precise u32 old=[{},{}] cur=[{},{}]",
+                        r, ob.u32_min, ob.u32_max, cb.u32_min, cb.u32_max
+                    );
+                }
+                return false;
+            }
         }
     }
 
