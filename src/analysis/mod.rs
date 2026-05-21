@@ -768,11 +768,27 @@ fn run_worklist(
             env_jmps_delta >= 2 && env_insns_delta >= 8;
         let path_heuristic =
             path_jmps_delta >= 2 && path_insns_delta >= 8;
+        // ZOVIA_KERNEL_ENGINE_AND=1 selects the more-restrictive AND
+        // mode: cache only when BOTH env-wide AND per-path heuristics
+        // fire. Default is OR (either fires) — see commit 61d60ac. AND
+        // mode produces MORE bundle entries (sparser caching → more
+        // exploration paths reach each rejection site). The two modes
+        // produce DIFFERENT entry sets that overlap; running both
+        // passes with ZOVIA_BUNDLE_KEEP=1 (main.rs) merges by hash via
+        // the existing write_bundle dedup. 61d60ac measured 20 unique
+        // entries across AND+OR merge for calico_tc_main, covering all
+        // 9 known kernel discharge hashes.
+        let kernel_engine_and =
+            std::env::var("ZOVIA_KERNEL_ENGINE_AND").ok().as_deref() == Some("1");
+        let combined_heuristic = if kernel_engine_and {
+            env_heuristic && path_heuristic
+        } else {
+            env_heuristic || path_heuristic
+        };
         let outer_gate = !kernel_engine || at_prune_point;
         let add_new_state = !kernel_engine
             || force_new_state
-            || env_heuristic
-            || path_heuristic;
+            || combined_heuristic;
         if outer_gate && add_new_state {
             let cache_id =
                 merging::record_state(env, state.clone(), config.max_states_per_pc);
