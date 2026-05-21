@@ -220,12 +220,27 @@ impl ScalarBounds {
         }
     }
 
+    /// Reset 32-bit halves to full range, then re-derive tightest
+    /// possible values from the current 64-bit bounds via
+    /// `sync_bounds`. Use at the end of ALU transfers that mutated
+    /// the 64-bit bounds but don't have a precise 32-bit-aware path.
+    /// Safer than carrying potentially-stale 32-bit halves forward
+    /// when the underlying value just changed.
+    pub fn forget_32_then_sync(&mut self) {
+        self.s32_min = i32::MIN;
+        self.s32_max = i32::MAX;
+        self.u32_min = 0;
+        self.u32_max = u32::MAX;
+        self.sync_bounds();
+    }
+
     /// Apply signed constraint: value <= c
     pub fn assume_sle(&mut self, c: i64) {
         self.smax = self.smax.min(c);
         if c >= 0 {
             self.umax = self.umax.min(c as u64);
         }
+        self.sync_bounds();
     }
 
     /// Apply signed constraint: value >= c
@@ -234,6 +249,7 @@ impl ScalarBounds {
         if c >= 0 {
             self.umin = self.umin.max(c as u64);
         }
+        self.sync_bounds();
     }
 
     /// Apply unsigned constraint: value <= c
@@ -243,6 +259,7 @@ impl ScalarBounds {
         if c <= i64::MAX as u64 {
             self.smax = self.smax.min(c as i64);
         }
+        self.sync_bounds();
     }
 
     /// Apply unsigned constraint: value >= c
@@ -252,6 +269,7 @@ impl ScalarBounds {
         if c <= i64::MAX as u64 && self.smin >= 0 {
             self.smin = self.smin.max(c as i64);
         }
+        self.sync_bounds();
     }
 }
 

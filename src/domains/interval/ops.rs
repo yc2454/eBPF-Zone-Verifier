@@ -139,7 +139,7 @@ pub fn assign_reg_offset(state: &mut IntervalState, dst: Reg, src: Reg, imm: i64
     }
 
     let src_interval = state.get(src).clone();
-    let new_bounds = ScalarBounds {
+    let mut new_bounds = ScalarBounds {
         smin: src_interval.bounds.smin.saturating_add(imm),
         smax: src_interval.bounds.smax.saturating_add(imm),
         umin: src_interval.bounds.umin.saturating_add(imm as u64),
@@ -147,6 +147,8 @@ pub fn assign_reg_offset(state: &mut IntervalState, dst: Reg, src: Reg, imm: i64
         scalar_id: None, // Arithmetic breaks scalar relationship
         ..ScalarBounds::unknown()
     };
+    // 8-bound: derive 32-bit halves from the post-add 64-bit.
+    new_bounds.forget_32_then_sync();
 
     // Preserve pointer offset info, adjusting the fixed offset
     // Also preserve range if set, adjusting for the offset change
@@ -207,13 +209,17 @@ pub fn assign_interval(state: &mut IntervalState, r: Reg, min: i64, max: i64) {
         state.set(
             r,
             RegInterval {
-                bounds: ScalarBounds {
-                    smin: min,
-                    smax: max,
-                    umin: if min >= 0 { min as u64 } else { 0 },
-                    umax: if max >= 0 { max as u64 } else { u64::MAX },
-                    scalar_id: None,
-                    ..ScalarBounds::unknown()
+                bounds: {
+                    let mut b = ScalarBounds {
+                        smin: min,
+                        smax: max,
+                        umin: if min >= 0 { min as u64 } else { 0 },
+                        umax: if max >= 0 { max as u64 } else { u64::MAX },
+                        scalar_id: None,
+                        ..ScalarBounds::unknown()
+                    };
+                    b.forget_32_then_sync();
+                    b
                 },
                 ptr_offset: None,
             },
@@ -395,6 +401,13 @@ pub fn apply_sub_reg(state: &mut IntervalState, dst: Reg, src: Reg) {
     dst_bounds.umin = dst_bounds.umin.saturating_sub(src_bounds.umax);
     dst_bounds.umax = dst_bounds.umax.saturating_sub(src_bounds.umin);
     dst_bounds.scalar_id = None; // Arithmetic breaks scalar relationship
+    // 8-bound: 32-bit halves subtracted with 32-bit saturation;
+    // sync_bounds derives further tightening from 64-bit.
+    dst_bounds.u32_min = dst_bounds.u32_min.saturating_sub(src_bounds.u32_max);
+    dst_bounds.u32_max = dst_bounds.u32_max.saturating_sub(src_bounds.u32_min);
+    dst_bounds.s32_min = dst_bounds.s32_min.saturating_sub(src_bounds.s32_max);
+    dst_bounds.s32_max = dst_bounds.s32_max.saturating_sub(src_bounds.s32_min);
+    dst_bounds.sync_bounds();
 
     // Update pointer offset if present: ptr -= [smin, smax]
     // Minimum offset after sub: off - smax
@@ -425,6 +438,10 @@ pub fn apply_and_imm(state: &mut IntervalState, dst: Reg, mask: i64) {
         bounds.umin = 0;
         bounds.umax = mask as u64;
         bounds.scalar_id = None; // Arithmetic breaks scalar relationship
+        // 8-bound: AND constrains the low 32 bits too. For mask
+        // fitting in u32, the 32-bit halves are also [0, mask].
+        // Otherwise reset+sync derives what it can.
+        bounds.forget_32_then_sync();
     } else {
         // Negative mask - conservative
         *bounds = ScalarBounds::unknown();
@@ -453,7 +470,7 @@ pub fn apply_mul_imm(state: &mut IntervalState, dst: Reg, imm: i64) {
 
     if imm > 0 {
         // Positive multiplier preserves sign
-        let new_bounds = ScalarBounds {
+        let mut new_bounds = ScalarBounds {
             smin: bounds.smin.saturating_mul(imm),
             smax: bounds.smax.saturating_mul(imm),
             umin: bounds.umin.saturating_mul(imm as u64),
@@ -461,6 +478,9 @@ pub fn apply_mul_imm(state: &mut IntervalState, dst: Reg, imm: i64) {
             scalar_id: None, // Arithmetic breaks scalar relationship
             ..ScalarBounds::unknown()
         };
+        // 8-bound: reset 32-bit halves to full and let sync_bounds
+        // derive tight values from the post-mul 64-bit bounds.
+        new_bounds.forget_32_then_sync();
         state.get_bounds_mut(dst).clone_from(&new_bounds);
     } else {
         // Negative multiplier - go conservative
@@ -482,7 +502,7 @@ pub fn apply_div_imm(state: &mut IntervalState, reg: Reg, imm: i64) {
 
     // Only handle positive divisor with non-negative dividend
     if imm > 0 && bounds.smin >= 0 {
-        let new_bounds = ScalarBounds {
+        let mut new_bounds = ScalarBounds {
             smin: bounds.smin / imm,
             smax: bounds.smax / imm,
             umin: bounds.umin / (imm as u64),
@@ -490,6 +510,7 @@ pub fn apply_div_imm(state: &mut IntervalState, reg: Reg, imm: i64) {
             scalar_id: None, // Arithmetic breaks scalar relationship
             ..ScalarBounds::unknown()
         };
+        new_bounds.forget_32_then_sync();
         state.get_bounds_mut(reg).clone_from(&new_bounds);
     } else {
         forget(state, reg);
@@ -533,7 +554,7 @@ pub fn apply_neg(state: &mut IntervalState, reg: Reg) {
         return;
     }
 
-    let new_bounds = ScalarBounds {
+    let mut new_bounds = ScalarBounds {
         smin: neg_smin,
         smax: neg_smax,
         umin: 0, // Conservative for unsigned after negation
@@ -541,6 +562,7 @@ pub fn apply_neg(state: &mut IntervalState, reg: Reg) {
         scalar_id: None, // Arithmetic breaks scalar relationship
         ..ScalarBounds::unknown()
     };
+    new_bounds.forget_32_then_sync();
     state.get_bounds_mut(reg).clone_from(&new_bounds);
 
     // Negation destroys pointer relationship
