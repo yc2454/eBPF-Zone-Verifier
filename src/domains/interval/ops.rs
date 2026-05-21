@@ -130,6 +130,12 @@ pub fn intersect_eq_reg(state: &mut IntervalState, x: Reg, y: Reg) {
     xb.smax = xb.smax.min(yb.smax);
     xb.umin = xb.umin.max(yb.umin);
     xb.umax = xb.umax.min(yb.umax);
+    // 8-bound: intersect the 32-bit halves the same way + sync.
+    xb.s32_min = xb.s32_min.max(yb.s32_min);
+    xb.s32_max = xb.s32_max.min(yb.s32_max);
+    xb.u32_min = xb.u32_min.max(yb.u32_min);
+    xb.u32_max = xb.u32_max.min(yb.u32_max);
+    xb.sync_bounds();
 }
 
 /// Establishes the relationship dst = src + imm
