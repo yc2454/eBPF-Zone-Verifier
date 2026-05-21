@@ -590,10 +590,6 @@ impl<'a> VerifierEnv<'a> {
     /// `entry_state_cache_id` so a later re-entry creates a fresh
     /// visit.
     ///
-    /// For step 2 (current): the data structures are in place but the
-    /// backedges list is always empty (no collection yet) and
-    /// propagate_backedges is a no-op. Wiring is here so step 3 can
-    /// plug in the fixpoint without re-doing the lifecycle.
     pub fn maybe_exit_scc(&mut self, cid: u32) {
         // Identify the callchain belonging to `cid`'s cached state.
         let Some(&(pc, idx)) = self.cache_loc_by_id.get(&cid) else {
@@ -614,17 +610,124 @@ impl<'a> VerifierEnv<'a> {
         else {
             return;
         };
+        // Check entry + take backedges out without holding a long borrow.
+        let backedges = {
+            let Some(visit) = self.scc_visits.get_mut(&callchain) else {
+                return;
+            };
+            if visit.entry_state_cache_id != Some(cid) {
+                return;
+            }
+            visit.entry_state_cache_id = None;
+            std::mem::take(&mut visit.backedges)
+        };
+        // Kernel `propagate_backedges` (verifier.c v6.15 L20079):
+        // iterate the backedges list, calling propagate_precision on
+        // each until fixpoint or MAX_BACKEDGE_ITERS. Each iteration
+        // propagates precision marks from equal_state into the
+        // backedge state's lineage. Kernel caps at 64; beyond that
+        // it falls back to mark_all_scalars_precise on every
+        // backedge (conservative).
+        const MAX_BACKEDGE_ITERS: usize = 64;
+        if backedges.is_empty() {
+            return;
+        }
+        for _ in 0..MAX_BACKEDGE_ITERS {
+            let mut changed = false;
+            for be in &backedges {
+                // Look up equal_state by cache_id; if evicted, skip
+                // this backedge.
+                let Some(&(epc, eidx)) = self.cache_loc_by_id.get(&be.equal_state_cache_id) else {
+                    continue;
+                };
+                let Some(equal_state) = self
+                    .explored_states
+                    .get(&epc)
+                    .and_then(|v| v.get(eidx))
+                    .cloned()
+                else {
+                    continue;
+                };
+                // propagate_precision(cur=be.state, old=equal_state)
+                // — pull equal_state's precise_regs into be.state's
+                // ancestor lineage (parent_cache_id chain). The
+                // method already exists for the same purpose in
+                // standard subsumption hits; here we run it
+                // post-hoc per backedge.
+                let precise: Vec<Reg> = equal_state.precise_regs.iter().copied().collect();
+                if precise.is_empty() {
+                    continue;
+                }
+                if let Some(hidx) = be.state.history_idx {
+                    let before = self.precise_pcs.len();
+                    for r in precise {
+                        self.mark_chain_precision_backward(hidx, be.state.parent_cache_id, r);
+                    }
+                    if self.precise_pcs.len() != before {
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+    }
+
+    /// Mirror of kernel `incomplete_read_marks` (verifier.c v6.15
+    /// L2327). Returns true iff the cached state's SCC visit has any
+    /// pending backedges (i.e., the SCC hasn't yet been processed by
+    /// `propagate_backedges`). Used in step 4 to gate
+    /// RANGE_WITHIN vs NOT_EXACT subsumption strictness — replaces
+    /// zovia's current `prev.branches > 0` approximation.
+    pub fn incomplete_read_marks(&self, state: &State) -> bool {
+        let Some(callchain) =
+            crate::analysis::flow::scc::compute_scc_callchain(state, &self.insn_aux_data)
+        else {
+            return false;
+        };
+        self.scc_visits
+            .get(&callchain)
+            .map(|v| !v.backedges.is_empty())
+            .unwrap_or(false)
+    }
+
+    /// Add a backedge to the SCC visit owning `equal_state_cache_id`'s
+    /// callchain. Called from handle_loop_pruning at the hit point
+    /// when the cached state belongs to an open SCC visit. Mirror of
+    /// kernel `add_scc_backedge` (verifier.c v6.15 L2295).
+    pub fn add_scc_backedge(
+        &mut self,
+        cur: &State,
+        equal_state_cache_id: u32,
+        insn_idx: usize,
+    ) {
+        // The kernel keys add_scc_backedge on `sl->state` (the cached
+        // state we hit against) — same callchain as cur because both
+        // are in the same SCC visit instance.
+        let Some(&(epc, eidx)) = self.cache_loc_by_id.get(&equal_state_cache_id) else {
+            return;
+        };
+        let Some(equal_state) = self.explored_states.get(&epc).and_then(|v| v.get(eidx)) else {
+            return;
+        };
+        let Some(callchain) =
+            crate::analysis::flow::scc::compute_scc_callchain(equal_state, &self.insn_aux_data)
+        else {
+            return;
+        };
         let Some(visit) = self.scc_visits.get_mut(&callchain) else {
             return;
         };
-        if visit.entry_state_cache_id != Some(cid) {
-            // This state isn't the SCC visit's entry; nothing to do.
+        // Don't accumulate if the visit is closed (no entry_state).
+        if visit.entry_state_cache_id.is_none() {
             return;
         }
-        // Step 3 will run propagate_backedges here. For now just
-        // clear the visit so re-entry into the same SCC starts fresh.
-        visit.backedges.clear();
-        visit.entry_state_cache_id = None;
+        visit.backedges.push(crate::analysis::flow::scc::SccBackedge {
+            state: cur.clone(),
+            equal_state_cache_id,
+            insn_idx,
+        });
     }
 
     /// Read a cached state's (branches, dfs_depth, loop_entry_cache_id)

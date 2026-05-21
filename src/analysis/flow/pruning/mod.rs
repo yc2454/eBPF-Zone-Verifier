@@ -180,6 +180,25 @@ fn handle_loop_pruning(
                     env.update_loop_entry(state, lcid);
                 }
             }
+            // Kernel `add_scc_backedge` (verifier.c v6.15 L20506):
+            // when a loop-pruning hit happens at a cached state that
+            // belongs to an OPEN SCC visit (prev.branches > 0 ⇒
+            // visit's entry hasn't exited), save cur as a backedge.
+            // `propagate_backedges` at SCC exit will replay
+            // propagate_precision until fixpoint, ensuring the
+            // RANGE_WITHIN convergence's precision marks are
+            // complete.
+            //
+            // Slightly more permissive than the kernel (which gates
+            // on `incomplete_read_marks`, i.e. visit.backedges
+            // non-empty). Overcollecting is sound — extra backedges
+            // just re-run propagate_precision (already-fixed-points
+            // exit the loop quickly via the `changed` flag).
+            if prev.branches > 0
+                && let Some(prev_cid) = prev.cache_id
+            {
+                env.add_scc_backedge(state, prev_cid, pc);
+            }
         }
         env.pruning_stats.loop_walks_pruned_via_convergence += 1;
         return true;
