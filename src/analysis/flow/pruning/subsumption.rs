@@ -38,9 +38,20 @@ pub(super) fn states_maybe_looping(prev: &State, cur: &State) -> bool {
         if prev.types.get(r) != cur.types.get(r) {
             return false;
         }
-        if prev.scalar_ids.get(&r) != cur.scalar_ids.get(&r) {
-            return false;
-        }
+        // scalar_ids intentionally NOT compared here. Kernel's
+        // `states_maybe_looping` does `memcmp(prev_reg, cur_reg,
+        // offsetof(frameno))` which compares the byte representation
+        // of bpf_reg_state up to frameno; the `id` field gets compared
+        // too in principle, but the kernel canonicalizes ids via
+        // `check_ids` before this point so that semantically-equivalent
+        // states have equal ids. zovia mints fresh `scalar_id` on every
+        // memory load (e.g. `r3 = *(u8*)(r10-N)` each iteration),
+        // producing per-iteration distinct ids for the same abstract
+        // value. That's a zovia-internal bookkeeping artifact, not a
+        // semantic difference. Comparing ids here would spuriously
+        // suppress the infinite-loop trap (mov64sx_s32_varoff_1 family),
+        // letting unsound programs through. Type + abstract value +
+        // tnum capture the actual reg state for the trap.
         if prev.domain.get_interval(r) != cur.domain.get_interval(r) {
             return false;
         }
