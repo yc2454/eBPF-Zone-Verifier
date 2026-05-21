@@ -95,6 +95,10 @@ pub fn record_state(
     // from the worklist state — typically None unless a back-edge
     // detected on the way here.
     state.branches = 0;
+    // Kernel-faithful "open paths" counter, parallel to `branches`. Init
+    // 1 = the single in-flight cur path that just hit this checkpoint.
+    // See State::dfs_paths doc comment for full semantics.
+    state.dfs_paths = 1;
 
     // Kernel-aligned `mark_all_scalars_imprecise` (verifier.c v6.15
     // L4543): cached snapshots are checkpointed in maximally-permissive

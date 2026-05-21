@@ -450,6 +450,27 @@ pub fn should_prune(
         && !is_inf_loop_skip_pc(prog, pc)
     {
         for prev in prev_states.iter() {
+            // Kernel-faithful gate (verifier.c v6.15 L19024): the entire
+            // inf-loop check is wrapped in `if (sl->state.branches)`. A
+            // cached state with branches==0 (kernel semantics) has had
+            // its entire downstream DFS completed — a second arrival
+            // that byte-matches it is the normal subsumption case, NOT
+            // a stuck loop. Without this gate zovia false-rejects
+            // programs like pro_epilogue_goto_start where the first
+            // back-edge arrival at the loop head takes a terminating
+            // branch (e.g. r1=0 → if r1==0 → exit) and fully completes
+            // before a second back-edge arrival via a different
+            // predecessor path lands at the same state.
+            //
+            // Zovia checks `dfs_paths` instead of `branches` because
+            // zovia's `branches` field has different (per-push)
+            // accounting than the kernel's `branches`; changing it to
+            // kernel semantics broke ~125 selftests (iters.c family
+            // etc.). `dfs_paths` is the parallel kernel-faithful
+            // counter dedicated to this gate. See State::dfs_paths.
+            if prev.dfs_paths == 0 {
+                continue;
+            }
             if prev.may_goto_depth != state.may_goto_depth {
                 continue;
             }

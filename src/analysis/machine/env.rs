@@ -827,6 +827,12 @@ impl<'a> VerifierEnv<'a> {
             if st.branches > 0 {
                 st.branches -= 1;
             }
+            // Kernel-faithful dfs_paths decrement (parallel counter, see
+            // State::dfs_paths). Walks the SAME chain as branches but
+            // its 0-floor is what the inf-loop trap gate consults.
+            if st.dfs_paths > 0 {
+                st.dfs_paths -= 1;
+            }
             let still_open = st.branches > 0;
             let st_parent = st.parent_cache_id;
             let st_loop_entry = st.loop_entry_cache_id;

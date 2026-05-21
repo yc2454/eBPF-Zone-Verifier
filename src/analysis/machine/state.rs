@@ -137,6 +137,28 @@ pub struct State {
     /// back-edges or via `update_branch_counts` propagation.
     pub dfs_depth: u32,
     pub branches: u32,
+    /// Kernel-faithful "open paths through this cached state" counter,
+    /// parallel to `branches` (which has zovia-internal accounting tied
+    /// to subsumption / cleaning / loop-entry tracking and cannot be
+    /// changed without breaking dozens of selftests). `dfs_paths` mirrors
+    /// the kernel `bpf_verifier_state.branches` field semantics exactly:
+    /// - init to 1 at cache creation (kernel `elem->st.branches = 1`,
+    ///   verifier.c v6.15 L2816)
+    /// - bump parent.dfs_paths by (succ_count - 1) at fork sites — only
+    ///   the EXTRA siblings count (kernel `push_stack` L2045 is called
+    ///   once per ALT, not once per total successor)
+    /// - decremented exactly once per completion (exit OR prune-hit)
+    ///   in `complete_dfs_branch`, walking up parent chain until a
+    ///   cache with dfs_paths > 0 is found
+    /// - reaches 0 iff the entire DFS subtree through this cached state
+    ///   has completed
+    /// Used by the inf-loop trap gate (`prev.dfs_paths == 0` ⇒ skip
+    /// trap, mirroring kernel verifier.c L19024
+    /// `if (sl->state.branches)`). The existing `branches` field is
+    /// untouched because the subsumption/eviction/loop-entry call
+    /// sites in zovia have been tuned against its bumped-per-push
+    /// semantics.
+    pub dfs_paths: u32,
     pub loop_entry_cache_id: Option<u32>,
 
     /// Per-path counters for the `add_new_state` sparse-cache heuristic
@@ -348,6 +370,7 @@ impl State {
             children_unsafe: false,
             dfs_depth: 0,
             branches: 0,
+            dfs_paths: 0,
             loop_entry_cache_id: None,
             path_insn_count: 0,
             path_jmp_count: 0,

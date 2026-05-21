@@ -979,12 +979,23 @@ fn run_worklist(
         // `push_stack` L2045). state.parent_cache_id is the just-recorded
         // cache_id at this pc (set at A.c above), so each successor is a
         // new in-flight DFS path through it.
+        //
+        // ALSO bump parent.dfs_paths kernel-faithfully: only by
+        // (succ_count - 1), because the kernel's push_stack is invoked
+        // once per ALT — i.e. once per fork-extra, NOT per total
+        // successor. The cur continuation is already counted by
+        // dfs_paths=1 at cache creation. Linear chains (succ_count==1)
+        // get no bump. This is the load-bearing signal for the inf-loop
+        // trap gate (`prev.dfs_paths == 0` skip).
         if succ_count > 0
             && let Some(pcid) = cur_parent_cache_id
             && let Some(&(ppc, pidx)) = env.cache_loc_by_id.get(&pcid)
             && let Some(p) = env.explored_states.get_mut(&ppc).and_then(|v| v.get_mut(pidx))
         {
             p.branches = p.branches.saturating_add(succ_count as u32);
+            if succ_count > 1 {
+                p.dfs_paths = p.dfs_paths.saturating_add((succ_count - 1) as u32);
+            }
         }
         if succ_count == 0 {
             // No successors (e.g. Exit): this DFS path terminated.
