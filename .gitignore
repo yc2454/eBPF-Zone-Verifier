@@ -17,3 +17,7 @@ tests/baselines/selftest_kernel.json
 tests/baselines/selftest_zone_backport.json
 tests/baselines/selftest_kernel_backport.json
 tests/baselines/prevail.json
+
+# Pre-built kernel + loader binaries pulled from cloudlab (too large for git;
+# ship via GitHub Releases once tagged)
+artifacts/
