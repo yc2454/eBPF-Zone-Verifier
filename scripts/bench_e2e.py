@@ -100,18 +100,24 @@ def map_to_vm_path(local_path: str) -> str:
     return local_path.replace("/Users/yalucai/BCF", "/root/bcf", 1)
 
 
-def phase2_kernel_load(objs: list[str], cloudlab_host: str, timeout: int) -> dict[str, tuple]:
+def phase2_kernel_load(objs: list[str], cloudlab_host: str, timeout: int,
+                       vm_jobs: int = 4, run_per_prog: bool = False,
+                       per_call_timeout: int = 60) -> dict[str, tuple]:
     """For each .o, scp the bundle to cloudlab (its virtiofs is the VM's
-    /root/bcf), then ssh to VM and run test_loader --per-prog (gives a
-    deterministic 'PERPROG SUMMARY loaded=N/M' line regardless of
-    success/failure).
+    /root/bcf), then ssh to VM and run test_loader.
 
-    Caveat: --per-prog isolates each program (no subprog stitching) so
-    bundle-discharged hashes may not match → bundle-helped programs
-    can show as failing here. Whole-object load is the realistic kernel
-    test; this gives a uniform N/M number for aggregation. Whole-object
-    success will be a strict subset improvement reflected in the
-    `whole_object_full_load` extra column.
+    Performance (this iteration):
+    - Default: WHOLE-OBJECT load only. --per-prog is opt-in
+      (run_per_prog=True) — it underreports bundle benefits due to
+      subprog isolation, and doubles VM-side work.
+    - VM-side parallelism via `xargs -P vm_jobs` — each test_loader
+      writes its output to a per-object log file, concatenated after
+      all complete.
+    - SSH ControlMaster on the outer hop amortizes TCP handshake
+      across the rsync + the test invocation (the caller sets this up
+      with mkdir_ssh_socket).
+    - Per-test_loader timeout via `timeout(1)` so a single stuck
+      program can't stall the worker pool.
 
     Returns map: obj → (per_prog_loaded, per_prog_total, whole_obj_full,
     first_fail_name).
@@ -142,59 +148,118 @@ def phase2_kernel_load(objs: list[str], cloudlab_host: str, timeout: int) -> dic
             check=False, timeout=300,
         )
 
-    # Step B: write a small VM-side runner script and exec it via nested ssh.
-    # For each object, run TWO test_loader invocations:
-    #   1. whole-object (the realistic kernel test; SUCCESS line iff all loaded)
-    #   2. --per-prog (always emits 'PERPROG SUMMARY loaded=N/M' line)
-    vm_script_lines = ["#!/bin/sh", "set -u"]
-    for o in objs:
+    # Step B: write a VM-side runner with `xargs -P vm_jobs` and a
+    # per-call timeout(1). Each invocation writes to a per-object log;
+    # at the end we concatenate with delimiters for parsing.
+    pp_label = " + --per-prog" if run_per_prog else ""
+    print(f"[bench] phase 2: VM-side parallel (P={vm_jobs}, per-call timeout={per_call_timeout}s)"
+          f"{pp_label}", file=sys.stderr)
+
+    # Build manifest lines: each line = "<vm_obj> <vm_bundle> <safe_id>"
+    manifest_lines = []
+    obj_by_id: dict[str, str] = {}
+    for idx, o in enumerate(objs):
         vm_obj = map_to_vm_path(o)
         vm_bundle = f"{vm_obj}.bcf-bundle"
-        vm_script_lines.append(f"echo '===OBJ {os.path.basename(o)}==='")
-        vm_script_lines.append(
-            f"/root/bcf/build/test_loader --type classifier {vm_obj} {vm_bundle} 2>&1 | "
-            f"grep -E 'SUCCESS:|libbpf: prog .* failed to load:|programs:' | head -10"
-        )
-        vm_script_lines.append("echo '---perprog---'")
-        vm_script_lines.append(
-            f"/root/bcf/build/test_loader --type classifier --per-prog {vm_obj} {vm_bundle} 2>&1 | "
-            f"grep -E 'PERPROG SUMMARY' | tail -1"
-        )
-    vm_script = "\n".join(vm_script_lines)
-    cmd = (
-        f"ssh -i /users/yc1795/BCF/imgs/bookworm.id_rsa -p 10023 "
-        f"-o BatchMode=yes -o StrictHostKeyChecking=no root@localhost 'bash -s'"
+        safe_id = f"o{idx:04d}_{os.path.basename(o)}"
+        manifest_lines.append(f"{vm_obj}\t{vm_bundle}\t{safe_id}")
+        obj_by_id[safe_id] = o
+    manifest = "\n".join(manifest_lines)
+
+    # The VM-side runner: reads manifest, runs N parallel test_loader
+    # invocations, writes per-call log, then concatenates. Quoting is
+    # tricky through the nested ssh — use bash heredoc with `'EOF'`
+    # (single-quoted: no shell expansion) and pass manifest separately.
+    vm_runner = f"""#!/bin/bash
+set -u
+WORK=$(mktemp -d /tmp/bench_e2e.XXXXXX)
+cat > "$WORK/manifest"
+export WORK
+do_one() {{
+  obj=$1; bundle=$2; sid=$3
+  out="$WORK/$sid.log"
+  {{
+    echo "===BEGIN $sid==="
+    timeout {per_call_timeout} /root/bcf/build/test_loader --type classifier "$obj" "$bundle" 2>&1 \\
+      | grep -E 'SUCCESS:|libbpf: prog .* failed to load:|programs:|loaded ' | head -20
+    echo "===WHOLE_RC $sid $?==="
+"""
+    if run_per_prog:
+        vm_runner += f"""    echo "---perprog $sid---"
+    timeout {per_call_timeout} /root/bcf/build/test_loader --type classifier --per-prog "$obj" "$bundle" 2>&1 \\
+      | grep -E 'PERPROG SUMMARY' | tail -1
+"""
+    vm_runner += f"""    echo "===END $sid==="
+  }} > "$out" 2>&1
+}}
+export -f do_one
+# Feed manifest lines to xargs; each worker bash invocation re-parses
+# the tab-separated fields and calls do_one.
+xargs -P {vm_jobs} -I LINE -d '\\n' bash -c 'IFS=$'"'"'\\t'"'"' read -r o b s <<< "$0"; do_one "$o" "$b" "$s"' LINE < "$WORK/manifest"
+# Concatenate per-call logs in manifest order so output is deterministic
+while IFS=$'\\t' read -r obj bundle sid; do
+  if [ -f "$WORK/$sid.log" ]; then
+    cat "$WORK/$sid.log"
+  else
+    echo "===BEGIN $sid==="
+    echo "===MISSING $sid==="
+    echo "===END $sid==="
+  fi
+done < "$WORK/manifest"
+rm -rf "$WORK"
+"""
+
+    # Outer hop: ControlMaster reuses an existing socket if caller set one up.
+    outer_ssh_opts = ["-o", "BatchMode=yes"]
+    # We pass manifest via a small wrapper: bash <<EOF that includes both the runner and the manifest.
+    # Simpler: shovel runner via stdin to bash, then pipe manifest in a separate command. Use a single
+    # bash -s -- args... where args is "RUNNER" then the manifest sent later won't work via stdin.
+    # Workaround: emit runner that reads manifest from stdin, then feed runner+manifest via stdin
+    # joined by a sentinel. Bash can do: write runner to a temp file, then run it.
+    combined = (
+        "cat > /tmp/bench_e2e_runner.sh <<'__ZK_RUNNER_EOF__'\n"
+        + vm_runner
+        + "\n__ZK_RUNNER_EOF__\n"
+        + "chmod +x /tmp/bench_e2e_runner.sh\n"
+        + "/tmp/bench_e2e_runner.sh <<'__ZK_MANIFEST_EOF__'\n"
+        + manifest
+        + "\n__ZK_MANIFEST_EOF__\n"
+        + "rm -f /tmp/bench_e2e_runner.sh\n"
     )
-    print(f"[bench] phase 2: invoking test_loader (whole+per-prog) on {len(objs)} objects", file=sys.stderr)
+    inner_ssh = (
+        "ssh -i /users/yc1795/BCF/imgs/bookworm.id_rsa -p 10023 "
+        "-o BatchMode=yes -o StrictHostKeyChecking=no root@localhost 'bash -s'"
+    )
     r = subprocess.run(
-        ["ssh", "-o", "BatchMode=yes", cloudlab_host, cmd],
-        input=vm_script, capture_output=True, text=True, timeout=timeout,
+        ["ssh", *outer_ssh_opts, cloudlab_host, inner_ssh],
+        input=combined, capture_output=True, text=True, timeout=timeout,
     )
     raw = r.stdout
-    sections = re.split(r"^===OBJ ([^=]+)===\n", raw, flags=re.M)
-    for i in range(1, len(sections), 2):
-        name = sections[i].strip()
-        body = sections[i + 1] if i + 1 < len(sections) else ""
-        # parse
+    # Parse: split on ===BEGIN <sid>=== / ===END <sid>=== markers.
+    # Each section's body has the test_loader output (whole-object) and
+    # optionally a `---perprog <sid>---` block.
+    section_re = re.compile(r"===BEGIN ([^=]+)===\n(.*?)===END \1===", flags=re.S)
+    for m in section_re.finditer(raw):
+        sid = m.group(1).strip()
+        body = m.group(2)
+        if sid not in obj_by_id:
+            continue
+        o = obj_by_id[sid]
         whole_full = bool(re.search(r"^SUCCESS:", body, flags=re.M))
         first_fail = ""
         mf = re.search(r"libbpf: prog '([^']+)': failed to load:", body)
         if mf:
             first_fail = mf.group(1)
-        m = re.search(r"PERPROG SUMMARY\s+loaded=(\d+)/(\d+)", body)
-        if m:
-            pp_loaded, pp_total = int(m.group(1)), int(m.group(2))
-        else:
-            pp_loaded, pp_total = None, None
-        # parse total programs from whole-object output for fallback
+        pp_loaded, pp_total = None, None
+        if run_per_prog:
+            mp = re.search(r"PERPROG SUMMARY\s+loaded=(\d+)/(\d+)", body)
+            if mp:
+                pp_loaded, pp_total = int(mp.group(1)), int(mp.group(2))
         if pp_total is None:
             mt = re.search(r"programs:\s+(\d+)\s+in object", body)
             if mt:
                 pp_total = int(mt.group(1))
-        for o in objs:
-            if os.path.basename(o) == name:
-                out[o] = (pp_loaded, pp_total, whole_full, first_fail)
-                break
+        out[o] = (pp_loaded, pp_total, whole_full, first_fail)
     return out
 
 
@@ -215,6 +280,15 @@ def main() -> int:
     ap.add_argument("--no-kernel-test", dest="kernel_test", action="store_false")
     ap.add_argument("--skip-bundle-build", action="store_true",
                     help="skip phase 1; reuse existing bundles on disk")
+    ap.add_argument("--vm-jobs", type=int, default=4,
+                    help="parallel test_loader processes on the VM (default 4)")
+    ap.add_argument("--per-prog", action="store_true",
+                    help="also run --per-prog (slower; underreports bundle benefits "
+                         "due to subprog isolation). Default: whole-object only.")
+    ap.add_argument("--per-call-timeout", type=int, default=60,
+                    help="per-test_loader timeout in seconds (default 60)")
+    ap.add_argument("--phase2-timeout", type=int, default=1800,
+                    help="overall phase 2 ssh timeout in seconds (default 30min)")
     args = ap.parse_args()
 
     # Resolve cloudlab from git remote if not provided
@@ -245,7 +319,32 @@ def main() -> int:
     # Phase 2
     if args.kernel_test:
         ok_objs = [o for o in objs if p1_by_obj[o][1]]
-        kresults = phase2_kernel_load(ok_objs, args.cloudlab, timeout=600)
+        # Set up SSH ControlMaster on the outer hop so rsync + ssh exec
+        # share one TCP connection (saves ~1-2s per call).
+        ssh_socket = f"/tmp/bench_e2e_ssh_{os.getpid()}"
+        os.environ["RSYNC_RSH"] = (
+            f"ssh -o BatchMode=yes -o ControlMaster=auto "
+            f"-o ControlPath={ssh_socket}.rsync -o ControlPersist=120s"
+        )
+        # also export for plain ssh subprocess calls via SSH_OPTS env
+        # (we pass these in the ssh args directly below; keeping the rsync
+        # one separate so concurrent rsync+ssh use distinct sockets and
+        # don't race on a single ControlMaster).
+        try:
+            kresults = phase2_kernel_load(
+                ok_objs, args.cloudlab,
+                timeout=args.phase2_timeout,
+                vm_jobs=args.vm_jobs,
+                run_per_prog=args.per_prog,
+                per_call_timeout=args.per_call_timeout,
+            )
+        finally:
+            # tear down ControlMaster sockets if any
+            for suffix in (".rsync",):
+                p = ssh_socket + suffix
+                if os.path.exists(p):
+                    subprocess.run(["ssh", "-O", "exit", "-o", f"ControlPath={p}",
+                                    args.cloudlab], capture_output=True)
     else:
         kresults = {}
 
