@@ -17,13 +17,27 @@ pub fn new_scalar_id() -> u32 {
 }
 
 /// Scalar interval bounds for a single register
-/// Mirrors kernel's smin_value, smax_value, umin_value, umax_value
+/// Mirrors kernel's `bpf_reg_state` 8-bound layout: signed and
+/// unsigned bounds in BOTH 64-bit and 32-bit views. The 32-bit halves
+/// describe the LOW 32 bits of the value interpreted as either signed
+/// or unsigned. Kernel keeps them consistent via reg_bounds_sync; in
+/// zovia we initialize them conservatively (full range) and let
+/// per-op transfers tighten them. range_within checks all 8.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScalarBounds {
-    pub smin: i64, // Signed minimum
-    pub smax: i64, // Signed maximum
-    pub umin: u64, // Unsigned minimum
-    pub umax: u64, // Unsigned maximum
+    pub smin: i64, // Signed 64-bit minimum
+    pub smax: i64, // Signed 64-bit maximum
+    pub umin: u64, // Unsigned 64-bit minimum
+    pub umax: u64, // Unsigned 64-bit maximum
+    // Kernel `bpf_reg_state.{s32_min_value, s32_max_value,
+    // u32_min_value, u32_max_value}`. Describe the LOW 32 bits of the
+    // value. For a fully unknown scalar these are full type range
+    // (i32::MIN..=i32::MAX, 0..=u32::MAX); a known constant pins all
+    // four to its truncated 32-bit view.
+    pub s32_min: i32,
+    pub s32_max: i32,
+    pub u32_min: u32,
+    pub u32_max: u32,
     /// Scalar ID for tracking related scalars (copied registers share the same ID)
     /// When bounds are refined on one register, the refinement propagates to all
     /// registers with matching scalar_id
@@ -38,17 +52,30 @@ impl ScalarBounds {
             smax: i64::MAX,
             umin: 0,
             umax: u64::MAX,
+            s32_min: i32::MIN,
+            s32_max: i32::MAX,
+            u32_min: 0,
+            u32_max: u32::MAX,
             scalar_id: None,
         }
     }
 
     /// Create bounds for a known constant
     pub fn constant(val: i64) -> Self {
+        // Constants pin all 8 bounds. The 32-bit halves describe the
+        // low 32 bits of the constant: re-interpret val as u64 then
+        // truncate; sign view = the same low 32 bits as i32.
+        let low = val as u64 as u32;
+        let low_signed = low as i32;
         ScalarBounds {
             smin: val,
             smax: val,
             umin: val as u64,
             umax: val as u64,
+            s32_min: low_signed,
+            s32_max: low_signed,
+            u32_min: low,
+            u32_max: low,
             scalar_id: None, // Constants don't need tracking
         }
     }
@@ -56,11 +83,22 @@ impl ScalarBounds {
     /// Create bounds for a non-negative value in range [0, max]
     #[allow(dead_code)]
     pub fn nonnegative(max: u64) -> Self {
+        // 32-bit views: tight iff max fits in u32; otherwise stay at
+        // full u32 range. Same for the signed 32 view.
+        let (s32_min, s32_max, u32_min, u32_max) = if max <= u32::MAX as u64 {
+            (0i32, max as i32, 0u32, max as u32)
+        } else {
+            (i32::MIN, i32::MAX, 0u32, u32::MAX)
+        };
         ScalarBounds {
             smin: 0,
             smax: max as i64,
             umin: 0,
             umax: max,
+            s32_min,
+            s32_max,
+            u32_min,
+            u32_max,
             scalar_id: None,
         }
     }
@@ -107,6 +145,10 @@ impl ScalarBounds {
             smax: self.smax.min(other.smax),
             umin: self.umin.max(other.umin),
             umax: self.umax.min(other.umax),
+            s32_min: self.s32_min.max(other.s32_min),
+            s32_max: self.s32_max.min(other.s32_max),
+            u32_min: self.u32_min.max(other.u32_min),
+            u32_max: self.u32_max.min(other.u32_max),
             // Preserve scalar_id if both have the same ID
             scalar_id: if self.scalar_id == other.scalar_id {
                 self.scalar_id
@@ -124,6 +166,10 @@ impl ScalarBounds {
             smax: self.smax.max(other.smax),
             umin: self.umin.min(other.umin),
             umax: self.umax.max(other.umax),
+            s32_min: self.s32_min.min(other.s32_min),
+            s32_max: self.s32_max.max(other.s32_max),
+            u32_min: self.u32_min.min(other.u32_min),
+            u32_max: self.u32_max.max(other.u32_max),
             // Preserve scalar_id if both have the same ID
             scalar_id: if self.scalar_id == other.scalar_id {
                 self.scalar_id
