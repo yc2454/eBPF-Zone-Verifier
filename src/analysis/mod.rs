@@ -737,26 +737,48 @@ fn run_worklist(
             .get(state.pc)
             .map(|a| a.force_checkpoint)
             .unwrap_or(false);
-        let jmps_delta = state
+        // Kernel L18999-L19013 uses ENV-WIDE counters. But zovia's
+        // worklist interleaves paths, so env-wide deltas are noisy:
+        // they can be inflated (other paths' work) OR understated
+        // (after a cache event, the same path may re-pop with no
+        // env increment between). Neither alone exactly matches the
+        // kernel's linear-DFS env behavior. Solution: OR env-wide
+        // and per-path heuristics — fire if EITHER triggers. This
+        // produces a SUPERSET cache pattern (more entries than
+        // either alone), maximising bundle coverage. The kernel
+        // matches by HASH; extra entries are ignored.
+        let env_jmps_delta = env
+            .jmps_processed
+            .saturating_sub(env.prev_jmps_processed);
+        let env_insns_delta = env
+            .insn_processed
+            .saturating_sub(env.prev_insn_processed);
+        let path_jmps_delta = state
             .path_jmp_count
             .saturating_sub(state.prev_jmp_at_cache);
-        let insns_delta = state
+        let path_insns_delta = state
             .path_insn_count
             .saturating_sub(state.prev_insn_at_cache);
-        // Kernel L18998-L19000: `force_new_state` includes the
-        // long-history safety valve `cur->insn_hist_end -
-        // cur->insn_hist_start > 40`. Without it, long no-jump
-        // stretches starve the heuristic and the cache is sparser
-        // than the kernel's, producing parent-chain shape mismatches.
-        let force_new_state = insn_aux_force || insns_delta > 40;
+        // Kernel L18998-L19000: long-history safety valve. Fire when
+        // either env-wide or per-path window > 40 insns since last
+        // cache event.
+        let long_history = env_insns_delta > 40 || path_insns_delta > 40;
+        let force_new_state = insn_aux_force || long_history;
+        let env_heuristic =
+            env_jmps_delta >= 2 && env_insns_delta >= 8;
+        let path_heuristic =
+            path_jmps_delta >= 2 && path_insns_delta >= 8;
         let outer_gate = !kernel_engine || at_prune_point;
         let add_new_state = !kernel_engine
             || force_new_state
-            || (jmps_delta >= 2 && insns_delta >= 8);
+            || env_heuristic
+            || path_heuristic;
         if outer_gate && add_new_state {
             let cache_id =
                 merging::record_state(env, state.clone(), config.max_states_per_pc);
             state.parent_cache_id = Some(cache_id);
+            env.prev_jmps_processed = env.jmps_processed;
+            env.prev_insn_processed = env.insn_processed;
             state.prev_jmp_at_cache = state.path_jmp_count;
             state.prev_insn_at_cache = state.path_insn_count;
         }
