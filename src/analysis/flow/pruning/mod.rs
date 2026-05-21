@@ -140,7 +140,17 @@ fn handle_loop_pruning(
                             .and_then(|v| v.get(lidx))
                             .map(|s| s.branches > 0)
                     })
-                    .unwrap_or(false);
+                    .unwrap_or(false)
+                // Kernel `incomplete_read_marks` (verifier.c v6.15
+                // L2327) — true iff prev's SCC visit has pending
+                // backedges (collected on prior loop-pruning hits,
+                // not yet flushed by propagate_backedges at SCC
+                // exit). Additive: catches the rare case where
+                // prev.branches has hit 0 but the propagate_backedges
+                // fixpoint hasn't run yet (e.g. an inner SCC closed
+                // while an outer is still in flight), so we want
+                // RANGE_WITHIN strictness anyway.
+                || env.incomplete_read_marks(prev);
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     h = Some(i);
@@ -252,7 +262,17 @@ fn handle_standard_pruning(
                             .and_then(|v| v.get(lidx))
                             .map(|s| s.branches > 0)
                     })
-                    .unwrap_or(false);
+                    .unwrap_or(false)
+                // Kernel `incomplete_read_marks` (verifier.c v6.15
+                // L2327) — true iff prev's SCC visit has pending
+                // backedges (collected on prior loop-pruning hits,
+                // not yet flushed by propagate_backedges at SCC
+                // exit). Additive: catches the rare case where
+                // prev.branches has hit 0 but the propagate_backedges
+                // fixpoint hasn't run yet (e.g. an inner SCC closed
+                // while an outer is still in flight), so we want
+                // RANGE_WITHIN strictness anyway.
+                || env.incomplete_read_marks(prev);
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     hit_idx = Some(i);
