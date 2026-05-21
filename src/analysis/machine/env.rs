@@ -226,6 +226,14 @@ pub struct VerifierEnv<'a> {
 
     // --- Dynamic State ---
     pub insn_processed: usize,
+    /// Kernel `bpf_verifier_env::jmps_processed` (verifier.c v6.15
+    /// L19553). Incremented once per BPF_JMP/JMP32-class insn. Used by
+    /// the `add_new_state` sparse-cache heuristic.
+    pub jmps_processed: usize,
+    /// Snapshots at the most recent cache event (kernel
+    /// `prev_jmps_processed` / `prev_insn_processed` L19260-L19261).
+    pub prev_jmps_processed: usize,
+    pub prev_insn_processed: usize,
     /// Per-PC visit counter (only populated when `ZOVIA_DUMP_VISITS=1`).
     /// Bumped once per non-pruned state expansion. Used by the per-PC
     /// audit dump to localize path-explosion hotspots vs the kernel
@@ -343,6 +351,9 @@ impl<'a> VerifierEnv<'a> {
             cb_body_store_offsets: compute_cb_body_store_offsets(prog),
             cb_body_can_reinit_dynptr: compute_cb_body_can_reinit_dynptr(prog, &ctx.btf),
             insn_processed: 0,
+            jmps_processed: 0,
+            prev_jmps_processed: 0,
+            prev_insn_processed: 0,
             pc_visit_count: HashMap::new(),
             error: None,
             history: History::new(),
@@ -1258,12 +1269,16 @@ impl<'a> VerifierEnv<'a> {
                         if debug {
                             eprintln!("[bcf-track] bt empty at pc={}", step_pc);
                         }
-                        // Base reached. The kernel's `bcf_track` re-runs
-                        // the suffix starting at the parent state — i.e.
-                        // from `step_pc` forward. Branches emitted in
-                        // the suffix get tagged with their JMP PC, all
-                        // ≥ `step_pc`. Return that as the cutoff.
-                        return Some(step_pc);
+                        // Kernel `backtrack_states` L24578-L24584 on
+                        // bt_empty: `base = st->parent`. zovia's analog
+                        // is `parent_loc` (the cached state at the
+                        // current parent_cache_id, i.e. `st->parent` at
+                        // this outer-iter level). Return its PC, NOT
+                        // step_pc (which is kernel's `i`, the per-insn
+                        // walk variable). Under sparse caching
+                        // (`ZOVIA_KERNEL_ENGINE=1`), this yields a
+                        // base_pc that matches the kernel's chain.
+                        return parent_loc.map(|(pc, _)| pc);
                     }
                 } else if debug {
                     eprintln!(

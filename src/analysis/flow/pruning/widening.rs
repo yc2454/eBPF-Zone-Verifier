@@ -78,7 +78,7 @@ pub(super) fn loop_has_conditional_exit(env: &VerifierEnv, state: &State, pc: us
 }
 
 /// Check if current PC is a designated prune point (set by CFG init).
-pub(super) fn is_prune_point(env: &VerifierEnv, pc: usize) -> bool {
+pub(crate) fn is_prune_point(env: &VerifierEnv, pc: usize) -> bool {
     env.insn_aux_data
         .get(pc)
         .map(|aux| aux.prune_point)

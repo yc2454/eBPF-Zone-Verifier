@@ -7,7 +7,7 @@ pub mod transfer;
 
 use crate::analysis::machine::frame_stack::FrameLevel;
 use crate::analysis::machine::reg::Reg;
-use crate::ast::Program;
+use crate::ast::{Instr, Program};
 use crate::common::config::{DomainMode, VerifierConfig};
 use crate::domains::dbm::Dbm;
 use crate::domains::numeric::NumericDomain;
@@ -569,6 +569,11 @@ fn run_worklist(
     let mut diag_arrivals: HashMap<usize, usize> = HashMap::new();
 
     while let Some(mut state) = worklist.pop_back() {
+        // Per-path counter bump for the kernel-engine sparse-cache
+        // heuristic (`ZOVIA_KERNEL_ENGINE=1`). Counts THIS path's
+        // progress (not env-wide), so worklist interleaving doesn't
+        // pollute the deltas with other paths' work.
+        state.path_insn_count = state.path_insn_count.saturating_add(1);
         // Per-instruction scope for the BCF `detect_conflict_eq`
         // path-unreachable flag: only the instruction that set it (its
         // own transfer) consumes it. Reset here so a set from a
@@ -714,12 +719,41 @@ fn run_worklist(
             eprintln!("[DIAG PRUNE] pc={} pruned=false (recorded)", state.pc);
         }
 
-        // A.c RECORD STATE
-        // Cache the cur state and link the continuing state's parent
-        // chain to the just-cached entry. Subsequent path forks
-        // inherit this `parent_cache_id` until the next checkpoint.
-        let cache_id = merging::record_state(env, state.clone(), config.max_states_per_pc);
-        state.parent_cache_id = Some(cache_id);
+        // A.c RECORD STATE — kernel-faithful `is_state_visited` shape.
+        // Gated by `ZOVIA_KERNEL_ENGINE=1`. Two kernel-shape gates layered:
+        //   (1) Outer: cache only at PRUNE POINTS (kernel `do_check` only
+        //       calls `is_state_visited` when is_prune_point fires).
+        //       zovia's dense default mode caches at EVERY popped state;
+        //       that produces a parent_cache_id chain with consecutive-pc
+        //       deltas the kernel never has. Gate fixes that.
+        //   (2) Inner: `add_new_state` heuristic (verifier.c v6.15
+        //       L18998-L19013): force_new_state || (jmps_delta>=2 &&
+        //       insns_delta>=8). Counters are PER-PATH on State.
+        let kernel_engine =
+            std::env::var("ZOVIA_KERNEL_ENGINE").ok().as_deref() == Some("1");
+        let at_prune_point = pruning::widening::is_prune_point(env, state.pc);
+        let force_new_state = env
+            .insn_aux_data
+            .get(state.pc)
+            .map(|a| a.force_checkpoint)
+            .unwrap_or(false);
+        let jmps_delta = state
+            .path_jmp_count
+            .saturating_sub(state.prev_jmp_at_cache);
+        let insns_delta = state
+            .path_insn_count
+            .saturating_sub(state.prev_insn_at_cache);
+        let outer_gate = !kernel_engine || at_prune_point;
+        let add_new_state = !kernel_engine
+            || force_new_state
+            || (jmps_delta >= 2 && insns_delta >= 8);
+        if outer_gate && add_new_state {
+            let cache_id =
+                merging::record_state(env, state.clone(), config.max_states_per_pc);
+            state.parent_cache_id = Some(cache_id);
+            state.prev_jmp_at_cache = state.path_jmp_count;
+            state.prev_insn_at_cache = state.path_insn_count;
+        }
 
         // B. Global Complexity Limit (only count non-pruned states)
         env.insn_processed += 1;
@@ -810,6 +844,20 @@ fn run_worklist(
         let cur_dfs_depth = state.dfs_depth;
         let cur_parent_cache_id = state.parent_cache_id;
         state.domain.set_current_pc(state.pc);
+        // Kernel `env->jmps_processed++` (verifier.c L19553): bump on
+        // JMP-class insn for the add_new_state sparse-cache heuristic.
+        // Bumped on BOTH env-wide and per-path counters; the heuristic
+        // uses the per-path one. The env-wide field stays for any
+        // downstream consumer that wants the cumulative figure.
+        let is_jmp_class = matches!(
+            instr,
+            Instr::If { .. } | Instr::Jmp { .. } | Instr::MayGoto { .. }
+                | Instr::Call { .. } | Instr::CallRel { .. } | Instr::Exit
+        );
+        if is_jmp_class {
+            env.jmps_processed += 1;
+            state.path_jmp_count = state.path_jmp_count.saturating_add(1);
+        }
         let mut successors = transfer::transfer(env, state, instr);
         if diag_hit {
             let succ_dump: Vec<String> = successors

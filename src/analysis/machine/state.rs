@@ -139,6 +139,20 @@ pub struct State {
     pub branches: u32,
     pub loop_entry_cache_id: Option<u32>,
 
+    /// Per-path counters for the `add_new_state` sparse-cache heuristic
+    /// (`ZOVIA_KERNEL_ENGINE=1`). The kernel's linear `do_check` flow
+    /// uses env-wide `insn_processed` / `jmps_processed` because cur
+    /// IS the one in-flight path. Zovia's worklist interleaves paths,
+    /// so we instead carry per-path counters on each State (cloned at
+    /// branches; bumped in run_worklist per popped insn / jmp). The
+    /// `prev_*_at_cache` snapshots are set at the most recent cache
+    /// event on this path's lineage (kernel `prev_jmps_processed` /
+    /// `prev_insn_processed` semantics, L19260-L19261).
+    pub path_insn_count: usize,
+    pub path_jmp_count: usize,
+    pub prev_insn_at_cache: usize,
+    pub prev_jmp_at_cache: usize,
+
     /// Kernel-aligned `bpf_verifier_state.cleaned` (verifier.c v6.15
     /// L19488). Set to `true` by `clean_verifier_state` when this
     /// cached state's `branches` first hits 0 — its DFS subtree is
@@ -335,6 +349,10 @@ impl State {
             dfs_depth: 0,
             branches: 0,
             loop_entry_cache_id: None,
+            path_insn_count: 0,
+            path_jmp_count: 0,
+            prev_insn_at_cache: 0,
+            prev_jmp_at_cache: 0,
             cleaned: false,
             tnums: tnums.clone(),
             scalar_ids: HashMap::new(),

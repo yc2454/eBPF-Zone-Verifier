@@ -6,7 +6,7 @@
 // Subsumption predicates live in subsumption.rs.
 
 mod subsumption;
-mod widening;
+pub(crate) mod widening;
 
 use std::collections::HashSet;
 
