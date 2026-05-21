@@ -239,55 +239,25 @@ pub(crate) fn transfer_if(
     // every register and stack slot sharing its scalar id.
     propagate_scalar_links(&mut state_then, &mut state_else, left);
 
-    // a back-edge compare-to-imm is a precision sink for
-    // the compared register. The kernel's `mark_chain_precision` walks
-    // backward from such sinks; without it, the loop counter widens at
-    // intermediate may_goto sites, the bounds derived from this compare
-    // don't propagate to downstream pointer arithmetic, and accumulator-
-    // style loops (test1: `*R2=R1; R2+=8; R1++`) run away in abstract
-    // interp because R1 widens before the next iteration's compare.
-    //
-    // Gate on **back-edge** (target < state.pc) to differentiate the
-    // loop-back-to-head pattern from forward-exit conditionals. A
-    // forward `if r < N goto exit` doesn't need the precision (the
-    // loop head's re-refinement on entry handles each iteration), and
-    // marking precise there blocks widening at the may_goto inside the
-    // body (cond_break1's pattern). A backward `if r != K goto head`
-    // (test1) does need it.
     // Precision sink at conditional branches. Kernel
-    // `check_cond_jmp_op` calls `mark_chain_precision` only after
-    // `is_branch_taken` decides the branch (one side is dead). Marking
-    // precise on every conditional causes precision-mark blow-up that
-    // `propagate_precision` then spreads further (bits_iter
-    // state-explosion).
-    if let Some(hidx) = state.history_idx {
-        let static_resolves = condition_outcome(&state, width, left, op, &right).is_some();
-        // Back-edge compare-to-imm catches tight scalar loops where the
-        // exit predicate is `if r & C goto head` — the conditional
-        // doesn't statically resolve (r is imprecise), but without
-        // marking r precise the back-jump's precision contract isn't
-        // tracked and convergence happily prunes the loop after one
-        // iteration even when the kernel rejects via complexity limit
-        // (verifier_search_pruning.c::short_loop1). Suppress this
-        // sink when an iter slot is active on the stack — iter loops
-        // get their convergence proof from iter-id mechanics, and
-        // marking the conditional reg precise causes precision blow-up
-        // on bits_iter / iter_nested_deeply_iters.
-        let back_edge_imm = matches!(right, Operand::Imm(_)) && target < state.pc;
-        // Previously gated on `!in_iter_loop` to dodge precision-mark
-        // blow-up on bits_iter / iter_nested_deeply_iters. With SCC
-        // bookkeeping (`State.branches/dfs_depth/loop_entry_cache_id`)
-        // and `force_exact` subsumption gating, iter-loop convergence
-        // now uses RANGE_WITHIN strictness while open — kernel-faithful,
-        // and the precision marks INSIDE iter loops are needed for the
-        // RANGE_WITHIN check to distinguish iterations (loop_state_deps1/2).
-        let fire = static_resolves || back_edge_imm;
-        if fire {
-            let pcid = state.parent_cache_id;
-            env.mark_chain_precision_backward(hidx, pcid, left);
-            if let Operand::Reg(r) = right {
-                env.mark_chain_precision_backward(hidx, pcid, r);
-            }
+    // `check_cond_jmp_op` (verifier.c v6.15 L16450-L16462) calls
+    // `mark_chain_precision` ONLY when `is_branch_taken` resolves
+    // (pred >= 0, one side dead). Firing on every conditional —
+    // including the previous `back_edge_imm` heuristic for unresolved
+    // back-edge compare-to-imm — eagerly over-marks loop counters and
+    // accumulators precise, blocking subsumption across iterations and
+    // multiplying calico-class visit counts. short_loop1 stays
+    // kernel-REJECT without back_edge_imm: its JSET (`if r7 & 0x702000
+    // goto head`) statically resolves (high bits of r7's tnum are
+    // known after `r7 += 0x1ab064b9` from a u16 load), so the
+    // static_resolves arm catches it.
+    if let Some(hidx) = state.history_idx
+        && condition_outcome(&state, width, left, op, &right).is_some()
+    {
+        let pcid = state.parent_cache_id;
+        env.mark_chain_precision_backward(hidx, pcid, left);
+        if let Operand::Reg(r) = right {
+            env.mark_chain_precision_backward(hidx, pcid, r);
         }
     }
 
