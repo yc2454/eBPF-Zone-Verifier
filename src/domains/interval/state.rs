@@ -179,6 +179,47 @@ impl ScalarBounds {
         }
     }
 
+    /// Mirror of kernel `reg_bounds_sync` (verifier.c v6.15 L2999) —
+    /// specifically the `__reg32_deduce_bounds` body (L2690). Derives
+    /// tighter 32-bit bounds from the 64-bit ones when the upper 32
+    /// bits are constant or sign-consistent, plus cross-syncs between
+    /// signed and unsigned 32-bit views. Safe to call any time;
+    /// monotonically tightens (never widens) the 32-bit fields.
+    pub fn sync_bounds(&mut self) {
+        // (1) u64 → u32 when upper 32 bits constant.
+        if (self.umin >> 32) == (self.umax >> 32) {
+            let lo_min = self.umin as u32;
+            let lo_max = self.umax as u32;
+            self.u32_min = self.u32_min.max(lo_min);
+            self.u32_max = self.u32_max.min(lo_max);
+            if (self.umin as i32) <= (self.umax as i32) {
+                self.s32_min = self.s32_min.max(self.umin as i32);
+                self.s32_max = self.s32_max.min(self.umax as i32);
+            }
+        }
+        // (2) s64 → {u32, s32} when upper 32 bits constant.
+        if (self.smin >> 32) == (self.smax >> 32) {
+            if (self.smin as u32) <= (self.smax as u32) {
+                self.u32_min = self.u32_min.max(self.smin as u32);
+                self.u32_max = self.u32_max.min(self.smax as u32);
+            }
+            if (self.smin as i32) <= (self.smax as i32) {
+                self.s32_min = self.s32_min.max(self.smin as i32);
+                self.s32_max = self.s32_max.min(self.smax as i32);
+            }
+        }
+        // (3) u32 → s32 if sign-bit consistent.
+        if (self.u32_min as i32) <= (self.u32_max as i32) {
+            self.s32_min = self.s32_min.max(self.u32_min as i32);
+            self.s32_max = self.s32_max.min(self.u32_max as i32);
+        }
+        // (4) s32 → u32 if sign-bit consistent.
+        if (self.s32_min as u32) <= (self.s32_max as u32) {
+            self.u32_min = self.u32_min.max(self.s32_min as u32);
+            self.u32_max = self.u32_max.min(self.s32_max as u32);
+        }
+    }
+
     /// Apply signed constraint: value <= c
     pub fn assume_sle(&mut self, c: i64) {
         self.smax = self.smax.min(c);

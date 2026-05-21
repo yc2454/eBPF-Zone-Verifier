@@ -237,6 +237,19 @@ pub fn apply_add_imm(state: &mut IntervalState, dst: Reg, imm: i64) {
     bounds.umin = bounds.umin.saturating_add(imm as u64);
     bounds.umax = bounds.umax.saturating_add(imm as u64);
     bounds.scalar_id = None; // Arithmetic breaks scalar relationship
+    // 8-bound: also tighten the 32-bit halves by adding imm
+    // truncated to 32 bits. Mirrors kernel `adjust_scalar_min_max_vals`
+    // 32-bit path. `reg_bounds_sync` (called via sync_bounds below)
+    // would also derive these from the updated 64-bit fields when
+    // upper 32 bits stay constant, but direct update is tighter for
+    // the case where 64-bit add wraps but 32-bit add doesn't.
+    let imm32 = imm as u32;
+    let imm32_signed = imm as i32;
+    bounds.u32_min = bounds.u32_min.saturating_add(imm32);
+    bounds.u32_max = bounds.u32_max.saturating_add(imm32);
+    bounds.s32_min = bounds.s32_min.saturating_add(imm32_signed);
+    bounds.s32_max = bounds.s32_max.saturating_add(imm32_signed);
+    bounds.sync_bounds();
 
     // Update pointer offset if present
     if let Some(ref mut po) = state.get_mut(dst).ptr_offset {
@@ -261,6 +274,16 @@ pub fn apply_add_reg(state: &mut IntervalState, dst: Reg, src: Reg) {
     dst_bounds.umin = dst_bounds.umin.saturating_add(src_bounds.umin);
     dst_bounds.umax = dst_bounds.umax.saturating_add(src_bounds.umax);
     dst_bounds.scalar_id = None; // Arithmetic breaks scalar relationship
+    // 8-bound: 32-bit halves added with 32-bit saturation. The
+    // saturating add on i32/u32 keeps the 32-bit view tight for
+    // values that don't wrap past 32 bits; reg_bounds_sync below
+    // then back-derives tighter values when the 64-bit upper bits
+    // stayed constant.
+    dst_bounds.u32_min = dst_bounds.u32_min.saturating_add(src_bounds.u32_min);
+    dst_bounds.u32_max = dst_bounds.u32_max.saturating_add(src_bounds.u32_max);
+    dst_bounds.s32_min = dst_bounds.s32_min.saturating_add(src_bounds.s32_min);
+    dst_bounds.s32_max = dst_bounds.s32_max.saturating_add(src_bounds.s32_max);
+    dst_bounds.sync_bounds();
 
     // Adding variable destroys fixed pointer offset precision
     // But we can preserve if src is constant
