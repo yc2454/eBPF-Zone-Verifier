@@ -95,18 +95,20 @@ pub fn hash_expr(root: u32, exprs: &[BcfExpr]) -> u64 {
     // `pr_warn("bcf_canonical_hash: buf.len=...")`. Lets us byte-diff
     // against `dmesg | grep bcf_canonical_hash` to localise DAG-shape
     // divergence without a kernel rebuild.
+    let mut hasher = SipHasher24::new_with_keys(0, 0);
+    hasher.write(&buf);
+    let h = hasher.finish();
+
     if std::env::var("ZOVIA_BCF_DUMP_HASH_BYTES").is_ok() {
         let hex: String = buf
             .iter()
             .map(|b| format!("{:02x}", b))
             .collect::<Vec<_>>()
             .join(" ");
-        eprintln!("[zovia] bcf_canonical_hash: buf.len={} bytes: {}", buf.len(), hex);
+        eprintln!("[zovia] bcf_canonical_hash: buf.len={} hash=0x{:016x} bytes: {}", buf.len(), h, hex);
     }
 
-    let mut hasher = SipHasher24::new_with_keys(0, 0);
-    hasher.write(&buf);
-    hasher.finish()
+    h
 }
 
 fn encode(

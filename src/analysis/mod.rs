@@ -328,6 +328,32 @@ pub fn analyze_program_full(
     if std::env::var("ZOVIA_DUMP_VISITS").ok().as_deref() == Some("1") {
         dump_pc_visit_count(&env);
     }
+    // Cache-topology probe: when ZOVIA_DUMP_CACHE_AT_PC=N is set, dump
+    // the count and per-entry reg/range/type snapshot for every cached
+    // state at PC=N. Used to diagnose cache-event divergence vs the
+    // kernel (e.g. is zovia caching 2 distinct states at PC 1674 like
+    // the kernel does for to_wep's MISS trajectory, or merging via
+    // subsumption to just 1?). Cheap one-shot diagnostic, gate-off by
+    // default. See feedback_bytematch_revised_2026-05-21.md.
+    if let Ok(pcs) = std::env::var("ZOVIA_DUMP_CACHE_AT_PC") {
+        for pc_s in pcs.split(',') {
+            if let Ok(pc) = pc_s.trim().parse::<usize>() {
+                let entries = env.explored_states.get(&pc);
+                let n = entries.map(|v| v.len()).unwrap_or(0);
+                eprintln!("[cache-probe] pc={} cached_states={}", pc, n);
+                if let Some(vec) = entries {
+                    for (i, st) in vec.iter().enumerate() {
+                        eprintln!(
+                            "  [{}] cache_id={:?} parent_cache_id={:?} history_idx={:?}",
+                            i, st.cache_id, st.parent_cache_id, st.history_idx,
+                        );
+                        eprintln!("      Types:  {}", st.types.reg_types_str());
+                        eprintln!("      Ranges: {}", st.reg_ranges_str());
+                    }
+                }
+            }
+        }
+    }
 
     // --- BCF bundle emit ---
     if let Some(path) = config.bcf_bundle_out.as_deref() {

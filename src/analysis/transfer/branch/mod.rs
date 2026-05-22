@@ -491,7 +491,7 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // parent_cache_id of cur — they can differ). The filter uses this
     // to identify the immediate-predecessor branch cond (the kernel's
     // record_path_cond push at insn=base_pc, verifier.c:21117).
-    let prev_insn_pc = {
+    let (prev_insn_pc, base_cid_dbg) = {
         use crate::analysis::machine::reg::Reg;
         use crate::analysis::machine::reg_types::RegType;
         const VARREGS: [Reg; 10] = [
@@ -526,12 +526,26 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
             })
             .collect();
         let hidx = env.current_step_idx.or(state.history_idx);
-        hidx.and_then(|hidx| env.bcf_suffix_base_pc_and_cache_id(hidx, state.parent_cache_id, &targets))
-            .and_then(|(_base_pc, base_cid)| env.cached_prev_insn_pc(base_cid))
+        let landed = hidx.and_then(|hidx| {
+            env.bcf_suffix_base_pc_and_cache_id(hidx, state.parent_cache_id, &targets)
+        });
+        // Use only the immediate cache the suffix walker landed on (no
+        // chain-skip). A previous attempt walked back through
+        // parent_cache_id to find the first branch-target cache, but
+        // that over-eagerly added upstream conds to trajectories whose
+        // kernel-faithful prev_insn was actually NOT a scalar branch,
+        // changing their hash and breaking the byte-match for existing
+        // kernel-matched entries (e.g. anchor calico_tc_main hash
+        // 0xd13031db2681349e flipped to MISS). Closing this requires
+        // also aligning cache topology (sparse caching), not just
+        // walker logic.
+        let pp = landed.and_then(|(_base_pc, base_cid)| env.cached_prev_insn_pc(base_cid));
+        let cid = landed.map(|(_, cid)| cid);
+        (pp, cid)
     };
     if std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1") {
-        eprintln!("[disc] reject@pc={} base_pc={:?} prev_insn_pc={:?}",
-                  state.pc, base_pc, prev_insn_pc);
+        eprintln!("[disc] reject@pc={} base_pc={:?} prev_insn_pc={:?} parent_cid={:?} base_cid={:?}",
+                  state.pc, base_pc, prev_insn_pc, state.parent_cache_id, base_cid_dbg);
     }
     let Some(ok) = try_prove_unreachable(state, base_pc, prev_insn_pc) else {
         return false;
