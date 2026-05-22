@@ -86,6 +86,13 @@ pub struct GlobalOpts {
     #[arg(long, global = true, value_name = "PC")]
     pub debug_pc: Option<usize>,
 
+    /// Path to target kernel BTF blob (e.g. snapshot of /sys/kernel/btf/vmlinux).
+    /// When set, CO-RE relocations in ELF objects carrying .BTF.ext are
+    /// applied during ELF→AST lowering. Default off — programs without
+    /// CO-RE relos are unaffected.
+    #[arg(long = "target-btf", global = true, value_name = "PATH")]
+    pub target_btf: Option<String>,
+
     /// Map size override `NAME:SIZE` (repeatable)
     #[arg(long = "map-override", global = true, value_name = "NAME:SIZE")]
     pub map_overrides: Vec<String>,
@@ -363,6 +370,9 @@ impl GlobalOpts {
         }
         if let Some(pc) = self.debug_pc {
             c.debug_pc = Some(pc);
+        }
+        if let Some(p) = &self.target_btf {
+            c.target_btf_path = Some(p.clone());
         }
 
         for spec in &self.map_overrides {

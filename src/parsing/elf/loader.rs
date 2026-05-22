@@ -155,14 +155,98 @@ pub fn try_load_function_with_subprogs_from_elf(
     maps: &[BpfMapDef],
     extra_roots: &[(String, String)],
 ) -> Result<(Program, HashMap<usize, RelocInfo>, HashMap<String, usize>), String> {
-    let combined = combine_function_with_subprogs(path, maps, section, func_name, extra_roots)
-        .map_err(|e| format!("Failed to combine function with subprogs: {:?}", e))?;
+    try_load_function_with_subprogs_from_elf_with_relo(
+        path, section, func_name, maps, extra_roots, None,
+    )
+}
+
+/// CO-RE-aware variant: when `core_relo_ctx` is `Some((program_btf,
+/// target_btf))`, applies CO-RE relocations from `program_btf.btf_ext`
+/// to the entry section's raw instructions BEFORE lowering to AST.
+/// Mirrors libbpf's `bpf_object__relocate_core` (`tools/lib/bpf/libbpf.c`
+/// → `tools/lib/bpf/relo_core.c::bpf_core_apply_relo_insn`). Only the
+/// entry section's relos are applied; cross-section subprog relos are a
+/// follow-up. Calico's calico_tc_main lives entirely in section "tc"
+/// with all its co-re relos in "tc", so this covers ~all of the 32
+/// co-re failers from the 66-corpus audit.
+pub fn try_load_function_with_subprogs_from_elf_with_relo(
+    path: &str,
+    section: &str,
+    func_name: &str,
+    maps: &[BpfMapDef],
+    extra_roots: &[(String, String)],
+    core_relo_ctx: Option<(&crate::parsing::btf::BtfContext, &crate::parsing::btf::BtfContext)>,
+) -> Result<(Program, HashMap<usize, RelocInfo>, HashMap<String, usize>), String> {
+    let mut combined =
+        combine_function_with_subprogs(path, maps, section, func_name, extra_roots)
+            .map_err(|e| format!("Failed to combine function with subprogs: {:?}", e))?;
 
     if combined.raw_insns.is_empty() {
         return Err(format!(
             "Function '{}' not found in section '{}'",
             func_name, section
         ));
+    }
+
+    if let Some((program_btf, target_btf)) = core_relo_ctx
+        && let Some(ext) = program_btf.btf_ext.as_ref()
+    {
+        // Build a `(section_byte_off, size) → function_name` map for
+        // every section this combined load knows about. A CO-RE relo
+        // carries its insn_off as a byte offset within its CONTAINING
+        // ELF section (not the combined stream). We map it to the
+        // combined insn index by:
+        //   1. find which function (in `combined.func_offsets`) the
+        //      byte offset falls inside;
+        //   2. translate to combined PC =
+        //      `func_offsets[func] + (insn_off - func.section_offset) / 8`.
+        // Relos whose insn_off doesn't land in any combined function
+        // are skipped (the kernel would also skip them when loading
+        // just this entry function — they belong to siblings).
+        use std::collections::HashMap;
+        let mut sec_to_funcs: HashMap<&str, Vec<crate::parsing::elf::prog::BpfFuncInfo>> =
+            HashMap::new();
+        for sec_name in ext.core_relos_by_section.iter().map(|(s, _)| s.as_str()) {
+            if let Ok(funcs) = crate::parsing::elf::prog::get_functions_in_section(path, sec_name) {
+                sec_to_funcs.insert(sec_name, funcs);
+            }
+        }
+        let mut total_applied = 0u32;
+        let mut total_no_op = 0u32;
+        let mut total_skipped_oof = 0u32;
+        let mut total_unsupported = 0u32;
+        for (sec_name, relos) in &ext.core_relos_by_section {
+            let funcs = match sec_to_funcs.get(sec_name.as_str()) {
+                Some(v) => v,
+                None => continue,
+            };
+            let stats = crate::parsing::btf::apply_core_relos(
+                program_btf,
+                target_btf,
+                relos,
+                &mut combined.raw_insns,
+                |relo_byte_off| {
+                    let relo_off = relo_byte_off as usize;
+                    let f = funcs
+                        .iter()
+                        .find(|f| relo_off >= f.offset && relo_off < f.offset + f.size)?;
+                    let func_pc = *combined.func_offsets.get(&f.name)?;
+                    let in_func_byte = relo_off - f.offset;
+                    Some(func_pc + in_func_byte / 8)
+                },
+            );
+            total_applied += stats.enum_exists_applied + stats.field_exists_applied;
+            total_no_op += stats.no_op;
+            total_skipped_oof += stats.enum_exists_skipped + stats.field_exists_skipped;
+            total_unsupported += stats.unsupported_kind;
+        }
+        if total_applied + total_skipped_oof + total_unsupported > 0 {
+            println!(
+                "[co-re] {}/{}: applied={} (no_op={}) skipped_oof={} unsupported={}",
+                section, func_name, total_applied, total_no_op,
+                total_skipped_oof, total_unsupported
+            );
+        }
     }
 
     let prog = bpf_to_ast::lower_raw_to_program(&combined.raw_insns).map_err(|e| {

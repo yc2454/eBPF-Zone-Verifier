@@ -620,6 +620,14 @@ pub struct Analyzer {
     pub config: VerifierConfig,
     pub maps: Vec<BpfMapDef>,
     pub btf: BtfContext,
+    /// Optional kernel target BTF (e.g. a snapshot of `/sys/kernel/btf/vmlinux`
+    /// from the cloudlab VM zovia is mirroring). When present, CO-RE
+    /// relocation application kicks in during ELF→AST lowering for
+    /// objects carrying a `.BTF.ext` section. Mirrors libbpf's
+    /// `bpf_object__relocate_core` behavior. Default `None` preserves
+    /// the prior unrelocated path for selftests / objects that don't
+    /// need target-BTF lookups.
+    pub target_btf: Option<BtfContext>,
     /// cached `subprog → (ops_struct, member)` bindings extracted
     /// from `.struct_ops*` data sections + relocations. Empty for ELFs
     /// without struct_ops content. Used to seed entry-state arg types
@@ -843,11 +851,39 @@ impl Analyzer {
             })
             .unwrap_or_default();
 
+        // Load optional target BTF (for CO-RE relocation application).
+        // Path is taken from config; on failure we log and proceed with
+        // None (relos stay unapplied, preserving prior unrelocated behavior).
+        let target_btf = config.target_btf_path.as_deref().and_then(|tbtf_path| {
+            match std::fs::read(tbtf_path) {
+                Ok(bytes) => match btf::parse_btf(&bytes) {
+                    Ok(ctx) => {
+                        if config.verbosity > 0 {
+                            println!(
+                                "[co-re] loaded target BTF: {} ({} types)",
+                                tbtf_path, ctx.types.len()
+                            );
+                        }
+                        Some(ctx)
+                    }
+                    Err(e) => {
+                        eprintln!("[co-re] target BTF parse failed ({}): {}", tbtf_path, e);
+                        None
+                    }
+                },
+                Err(e) => {
+                    eprintln!("[co-re] target BTF read failed ({}): {}", tbtf_path, e);
+                    None
+                }
+            }
+        });
+
         Analyzer {
             path: path.to_string(),
             config,
             maps: all_maps,
             btf,
+            target_btf,
             struct_ops_bindings,
             license,
         }
@@ -1073,12 +1109,17 @@ impl Analyzer {
             })
             .into_iter()
             .collect();
-        let (prog, pc_to_reloc, func_offsets) = match try_load_function_with_subprogs_from_elf(
+        let core_relo_ctx = self
+            .target_btf
+            .as_ref()
+            .map(|tbtf| (&self.btf, tbtf));
+        let (prog, pc_to_reloc, func_offsets) = match crate::parsing::elf::try_load_function_with_subprogs_from_elf_with_relo(
             &self.path,
             section,
             &func.name,
             &self.maps,
             &cb_extra_roots,
+            core_relo_ctx,
         ) {
             Ok(t) => t,
             Err(e) => {
