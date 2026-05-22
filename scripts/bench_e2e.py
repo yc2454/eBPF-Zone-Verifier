@@ -39,9 +39,30 @@ from typing import Optional
 # ───── Phase 1: parallel zovia bundle build ─────────────────────────
 
 
-def build_one(args):
-    obj_path, zovia_bin, timeout = args
+def is_bundle_fresh(obj_path: str, zovia_bin: str, harness: str = __file__) -> bool:
+    """Bundle on disk is reusable iff its mtime is newer than every input
+    that could have changed its contents: the .o, the zovia binary, and
+    this harness. Returns False if the bundle is missing.
+    """
     bundle = f"{obj_path}.bcf-bundle"
+    if not os.path.exists(bundle):
+        return False
+    try:
+        b_m = os.path.getmtime(bundle)
+        return all(b_m >= os.path.getmtime(p) for p in (obj_path, zovia_bin, harness))
+    except OSError:
+        return False
+
+
+def build_one(args):
+    obj_path, zovia_bin, timeout, cache_bundles = args
+    bundle = f"{obj_path}.bcf-bundle"
+
+    # Cache hit: bundle is newer than (.o, zovia, harness). Skip rebuild.
+    if cache_bundles and is_bundle_fresh(obj_path, zovia_bin):
+        size = os.path.getsize(bundle)
+        return (obj_path, True, size, 0.0, "cached")
+
     try:
         if os.path.exists(bundle):
             os.remove(bundle)
@@ -71,10 +92,12 @@ def build_one(args):
     return (obj_path, ok, size, elapsed, ",".join(notes))
 
 
-def phase1_build_bundles(objs: list[str], zovia: str, jobs: int, timeout: int) -> list[tuple]:
+def phase1_build_bundles(objs: list[str], zovia: str, jobs: int, timeout: int,
+                         cache_bundles: bool = False) -> list[tuple]:
+    cache_note = " [cache enabled]" if cache_bundles else ""
     print(f"[bench] phase 1: building bundles for {len(objs)} objects "
-          f"(jobs={jobs}, per-obj timeout={timeout}s)", file=sys.stderr)
-    work = [(o, zovia, timeout) for o in objs]
+          f"(jobs={jobs}, per-obj timeout={timeout}s){cache_note}", file=sys.stderr)
+    work = [(o, zovia, timeout, cache_bundles) for o in objs]
     results: list[tuple] = []
     with ProcessPoolExecutor(max_workers=jobs) as ex:
         futs = {ex.submit(build_one, w): w[0] for w in work}
@@ -82,6 +105,9 @@ def phase1_build_bundles(objs: list[str], zovia: str, jobs: int, timeout: int) -
             results.append(fut.result())
             if i % 5 == 0 or i == len(objs):
                 print(f"[bench] phase 1: {i}/{len(objs)}", file=sys.stderr)
+    if cache_bundles:
+        n_cached = sum(1 for r in results if r[4] == "cached")
+        print(f"[bench] phase 1: {n_cached}/{len(results)} reused from cache", file=sys.stderr)
     return results
 
 
@@ -280,6 +306,10 @@ def main() -> int:
     ap.add_argument("--no-kernel-test", dest="kernel_test", action="store_false")
     ap.add_argument("--skip-bundle-build", action="store_true",
                     help="skip phase 1; reuse existing bundles on disk")
+    ap.add_argument("--cache-bundles", action="store_true",
+                    help="reuse existing .bcf-bundle iff its mtime is newer than "
+                         "(.o, zovia binary, this harness). Per-object granularity; "
+                         "stale entries are rebuilt. Default: off (deterministic per-commit).")
     ap.add_argument("--vm-jobs", type=int, default=4,
                     help="parallel test_loader processes on the VM (default 4)")
     ap.add_argument("--per-prog", action="store_true",
@@ -309,7 +339,8 @@ def main() -> int:
 
     # Phase 1
     if not args.skip_bundle_build:
-        p1 = phase1_build_bundles(objs, args.zovia, args.jobs, args.timeout)
+        p1 = phase1_build_bundles(objs, args.zovia, args.jobs, args.timeout,
+                                  cache_bundles=args.cache_bundles)
         p1_by_obj = {r[0]: r for r in p1}
     else:
         p1_by_obj = {o: (o, os.path.exists(f"{o}.bcf-bundle"),
